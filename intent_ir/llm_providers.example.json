@@ -1,0 +1,10 @@
+{
+  "claude-sonnet-4-5": {
+    "base_url": "https://x666.me/v1",
+    "api_key": "PUT_YOUR_KEY_HERE"
+  },
+  "claude-sonnet-4.5": {
+    "base_url": "https://ai.hybgzs.com/v1",
+    "api_key": "PUT_YOUR_KEY_HERE"
+  }
+}

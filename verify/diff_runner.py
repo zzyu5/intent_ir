@@ -1,0 +1,315 @@
+"""
+Differential runner comparing intent interpreter vs reference runner.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Iterable, List, Tuple
+
+import numpy as np
+
+from intent_ir.ir_types import IntentFunction
+from verify.gen_cases import TestCase
+from verify.interpreter import execute_intent
+
+
+@dataclass
+class DiffResult:
+    ok: bool
+    max_abs_err: float
+    max_rel_err: float
+    first_bad_index: Tuple[int, ...] | None
+    summary: str
+
+
+@dataclass
+class Counterexample:
+    case: TestCase
+    diff: DiffResult
+    intent_json: Dict[str, Any]
+    facts_summary: Dict[str, Any] | None
+    hints: List[str]
+
+
+def run_diff(
+    intent: IntentFunction,
+    run_ref_fn: Callable[[TestCase], Dict[str, np.ndarray]],
+    cases: Iterable[TestCase],
+    constraints=None,
+    tolerances=None,
+) -> Tuple[List[DiffResult], List[Counterexample]]:
+    if tolerances is None:
+        tolerances = {"atol": 1e-3, "rtol": 1e-3}
+    diffs: List[DiffResult] = []
+    counterexamples: List[Counterexample] = []
+    for case in cases:
+        ref_out = run_ref_fn(case)
+        # Make IO naming robust: LLM may emit Input/Output while runner returns input/output
+        # (or *_ptr variants). Add non-destructive aliases so interpreter can resolve names.
+        ref_out = _with_io_aliases(intent, ref_out)
+        # derive bindings and align input shapes
+        bindings = dict(case.shapes)
+        if "group" in bindings and "num_groups" not in bindings:
+            bindings["num_groups"] = bindings["group"]
+        if "num_groups" in bindings and "C" in bindings and "group_size" not in bindings:
+            g = int(bindings["num_groups"])
+            c = int(bindings["C"])
+            if g <= 0:
+                raise ValueError(f"invalid num_groups: {g}")
+            bindings["group_size"] = c // g if (c % g == 0) else (c + g - 1) // g
+        if "group_size" in bindings and "HW" in bindings and "num_elements" not in bindings:
+            try:
+                bindings["num_elements"] = int(bindings["group_size"]) * int(bindings["HW"])
+            except Exception:
+                pass
+        inputs = {k: v for k, v in ref_out.items() if k not in intent.outputs}
+        # Strict "original view" check: inputs must match declared tensor shapes exactly.
+        # If the LLM needs a grouped/view shape, it must introduce explicit reshape ops
+        # inside IntentIR, rather than redefining the input tensor shape.
+        for name, arr in list(inputs.items()):
+            if name not in intent.tensors:
+                continue
+            expected_shape = _resolve_tensor_shape(intent.tensors[name], bindings)
+            if expected_shape is None:
+                # If an input tensor shape contains unbound symbols, we cannot reliably
+                # check semantics; treat as failure so the LLM must align with runtime axes.
+                diff = DiffResult(
+                    ok=False,
+                    max_abs_err=0.0,
+                    max_rel_err=0.0,
+                    first_bad_index=None,
+                    summary=f"unbound symbols in input shape for {name}: intent shape={intent.tensors[name].shape}",
+                )
+                diffs.append(diff)
+                counterexamples.append(
+                    Counterexample(
+                        case=case,
+                        diff=diff,
+                        intent_json=intent.to_json_dict(),
+                        facts_summary=None,
+                        hints=["ensure all input tensor dims are bound by case shapes (e.g., N/C/HW), and keep original view"],
+                    )
+                )
+                break
+            if tuple(arr.shape) != tuple(expected_shape):
+                diff = DiffResult(
+                    ok=False,
+                    max_abs_err=0.0,
+                    max_rel_err=0.0,
+                    first_bad_index=None,
+                    summary=f"input shape mismatch for {name}: ref {arr.shape} vs intent {expected_shape}",
+                )
+                diffs.append(diff)
+                counterexamples.append(
+                    Counterexample(
+                        case=case,
+                        diff=diff,
+                        intent_json=intent.to_json_dict(),
+                        facts_summary=None,
+                        hints=[
+                            "keep original input view; if you need grouped/view shapes, add intent.reshape/broadcast_in_dim ops",
+                        ],
+                    )
+                )
+                break
+        else:
+            # Feed symbolic shape bindings from TestCase for broadcast/reshape
+            try:
+                with np.errstate(all="ignore"):
+                    pred = execute_intent(intent, inputs, shape_bindings=bindings)
+                diff = _compare_outputs(pred, ref_out, intent.outputs, tolerances)
+            except Exception as e:
+                diff = DiffResult(
+                    ok=False,
+                    max_abs_err=0.0,
+                    max_rel_err=0.0,
+                    first_bad_index=None,
+                    summary=f"interpreter error: {type(e).__name__}: {e}",
+                )
+                pred = {}
+            diffs.append(diff)
+            if not diff.ok:
+                counterexamples.append(
+                    Counterexample(
+                        case=case,
+                        diff=diff,
+                        intent_json=intent.to_json_dict(),
+                        facts_summary=None,
+                        hints=["check missing ops/reshape/broadcast or wrong reduce axes"],
+                    )
+                )
+    return diffs, counterexamples
+
+
+def _normalize_io_name(name: str) -> str:
+    s = str(name).strip()
+    s = s.strip("_")
+    s = s.lower()
+    # common ptr naming patterns
+    if s.startswith("ptr_"):
+        s = s[4:]
+    if s.endswith("_ptr"):
+        s = s[:-4]
+    if s.endswith("ptr") and len(s) > 3:
+        # e.g. inputptr -> input
+        s = s[:-3]
+    # Common shorthand aliases from copied kernels.
+    if s == "in":
+        s = "input"
+    if s == "out":
+        s = "output"
+    return s
+
+
+def _with_io_aliases(intent: IntentFunction, ref_io: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    """
+    Return a shallow-copied dict that contains the original ref_io plus aliases
+    for intent tensor names (case-insensitive + *_ptr tolerant).
+    """
+    out = dict(ref_io)
+    # build normalized->original ref keys (prefer exact if collision)
+    norm_to_keys: Dict[str, List[str]] = {}
+    for k in ref_io.keys():
+        norm_to_keys.setdefault(_normalize_io_name(k), []).append(k)
+
+    # Add aliases for all intent tensor names and outputs.
+    wanted = set(intent.tensors.keys()) | set(intent.outputs)
+    for name in wanted:
+        if name in out:
+            continue
+        norm = _normalize_io_name(name)
+        keys = norm_to_keys.get(norm) or []
+        if len(keys) == 1:
+            out[name] = ref_io[keys[0]]
+            continue
+        # Fallback: substring match on normalized keys (e.g., out_mean_ptr -> Mean).
+        candidates = [k for k in ref_io.keys() if norm and (norm in _normalize_io_name(k))]
+        if len(candidates) == 1:
+            out[name] = ref_io[candidates[0]]
+    return out
+
+
+def _compare_outputs(pred: Dict[str, np.ndarray], ref: Dict[str, np.ndarray], outputs: list[str], tol) -> DiffResult:
+    max_abs = 0.0
+    max_rel = 0.0
+    bad_idx = None
+    for name in outputs:
+        if name not in ref:
+            return DiffResult(False, max_abs, max_rel, bad_idx, f"reference missing output {name}")
+        ref_arr = ref[name]
+        if name not in pred:
+            return DiffResult(False, max_abs, max_rel, bad_idx, f"missing output {name}")
+        p = pred[name]
+        if p.shape != ref_arr.shape:
+            # Allow only "reshape-equivalent" alignments that preserve structure:
+            # squeeze extra unit (size=1) dims from prediction to match reference.
+            p2 = _squeeze_unit_dims_to_match(p, ref_arr.shape)
+            if p2 is None:
+                return DiffResult(False, max_abs, max_rel, bad_idx, f"shape mismatch for {name}: {p.shape} vs {ref_arr.shape}")
+            p = p2
+        if ref_arr.dtype == bool or p.dtype == bool:
+            abs_err = np.not_equal(p, ref_arr).astype(np.int32)
+        else:
+            # Be strict about non-finite values: allow them only if the pattern AND
+            # values match (e.g., NaN vs NaN at the same indices).
+            p_nonfinite = ~np.isfinite(p)
+            r_nonfinite = ~np.isfinite(ref_arr)
+            if np.any(p_nonfinite) or np.any(r_nonfinite):
+                if not np.array_equal(p_nonfinite, r_nonfinite):
+                    return DiffResult(False, float("inf"), float("inf"), None, f"non-finite pattern mismatch in {name}")
+                if not np.array_equal(p[p_nonfinite], ref_arr[r_nonfinite]):
+                    return DiffResult(False, float("inf"), float("inf"), None, f"non-finite values mismatch in {name}")
+            finite = ~(p_nonfinite | r_nonfinite)
+            abs_err = np.zeros_like(ref_arr, dtype=np.float64)
+            if np.any(finite):
+                abs_err[finite] = np.abs(p[finite] - ref_arr[finite]).astype(np.float64)
+        max_abs_err = abs_err.max()
+        max_abs = max(max_abs, max_abs_err)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            if ref_arr.dtype == bool or p.dtype == bool:
+                rel_err = abs_err / (np.abs(ref_arr) + 1e-8)
+            else:
+                # Avoid NaNs from 0/NaN at non-finite positions by only computing
+                # rel error on finite elements.
+                rel_err = np.zeros_like(abs_err, dtype=np.float64)
+                if np.any(finite):
+                    rel_err[finite] = abs_err[finite] / (np.abs(ref_arr[finite]) + 1e-8)
+        max_rel_err = rel_err.max()
+        max_rel = max(max_rel, max_rel_err)
+        # If anything went wrong and we still ended up with NaN, treat as failure.
+        if not np.isfinite(max_abs_err) or not np.isfinite(max_rel_err):
+            return DiffResult(False, float("inf"), float("inf"), None, f"non-finite error metric in {name}")
+        if max_abs_err > tol["atol"] and max_rel_err > tol["rtol"]:
+            bad_idx = tuple(np.unravel_index(np.argmax(abs_err), abs_err.shape))
+            return DiffResult(False, max_abs, max_rel, bad_idx, f"mismatch in {name}")
+    return DiffResult(True, max_abs, max_rel, bad_idx, "ok")
+
+
+def _squeeze_unit_dims_to_match(arr: np.ndarray, target_shape: tuple[int, ...]) -> np.ndarray | None:
+    """
+    Try to drop ONLY size=1 dimensions from `arr` so that it matches `target_shape`.
+    This allows [N,G] <-> [N,G,1] etc, but will never allow flattening like [N,G] <-> [NG].
+    """
+    if tuple(arr.shape) == tuple(target_shape):
+        return arr
+    pred_shape = tuple(arr.shape)
+    ref_shape = tuple(target_shape)
+    if len(pred_shape) < len(ref_shape):
+        return None
+
+    drop_axes: List[int] = []
+    i = 0
+    j = 0
+    while i < len(pred_shape) and j < len(ref_shape):
+        if pred_shape[i] == ref_shape[j]:
+            i += 1
+            j += 1
+            continue
+        if pred_shape[i] == 1:
+            drop_axes.append(i)
+            i += 1
+            continue
+        return None
+    # remaining pred dims must all be unit dims
+    while i < len(pred_shape):
+        if pred_shape[i] == 1:
+            drop_axes.append(i)
+            i += 1
+            continue
+        return None
+    if j != len(ref_shape):
+        return None
+    if not drop_axes:
+        return None
+    squeezed = np.squeeze(arr, axis=tuple(drop_axes))
+    return squeezed if tuple(squeezed.shape) == ref_shape else None
+
+
+def _numel(shape):
+    n = 1
+    for d in shape:
+        n *= d
+    return n
+
+
+def _resolve_tensor_shape(tensor, bindings: Dict[str, int]):
+    shape = []
+    for d in tensor.shape:
+        if hasattr(d, "kind") and getattr(d, "kind") == "sym":
+            val = bindings.get(d.value)
+            if val is None:
+                return None
+            shape.append(val)
+        elif hasattr(d, "kind") and getattr(d, "kind") == "const":
+            shape.append(int(d.value))
+        elif isinstance(d, str) and d in bindings:
+            shape.append(bindings[d])
+        elif isinstance(d, (int, float)):
+            shape.append(int(d))
+        else:
+            return None
+    return tuple(shape)
+
+
+__all__ = ["DiffResult", "Counterexample", "run_diff"]
