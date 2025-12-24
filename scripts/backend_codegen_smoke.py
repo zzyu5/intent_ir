@@ -1,0 +1,176 @@
+"""
+Backend codegen smoke test (no LLM, no remote).
+
+For each kernel artifact under `artifacts/full_pipeline_verify/`, this script:
+  - loads expanded IntentIR (or expands macros)
+  - loads baseline inputs/outputs from `<kernel>.baseline.npz`
+  - invokes Task6 backend codegen (C++ tool) to generate a standalone C program
+  - compiles and runs the C program locally to compare against baseline outputs
+
+This validates "IntentIR ops -> C" backend generation end-to-end, without
+requiring an RVV host.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+import numpy as np
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from backend_spmd_rvv.codegen.intentir_to_c import lower_intent_to_c_with_files  # noqa: E402
+from intent_ir.ir_types import IntentFunction  # noqa: E402
+from intent_ir.macro_expand import expand_macros  # noqa: E402
+
+
+DEFAULT_KERNELS = [
+    "any_kernel_dim",
+    "group_norm_kernel",
+    "_attn_fwd",
+    "softmax_inner",
+    "layer_norm_persistent",
+    "upsample_bicubic2d_aa",
+]
+
+
+def _load_intent(report: dict) -> IntentFunction:
+    intent_macro = IntentFunction.from_json_dict(report["intent"])
+    intent_expanded_json = report.get("intent_expanded")
+    if isinstance(intent_expanded_json, dict):
+        return IntentFunction.from_json_dict(intent_expanded_json)
+    return expand_macros(intent_macro)
+
+
+def _external_inputs(intent: IntentFunction) -> tuple[list[str], list[str]]:
+    produced = {op.output for op in intent.ops if op.output}
+    used: set[str] = set()
+    for op in intent.ops:
+        used.update(op.inputs)
+    external_inputs = sorted([n for n in used if n in intent.tensors and n not in produced])
+    return external_inputs, list(intent.outputs)
+
+
+def _write_bin(path: Path, arr: np.ndarray, dtype: str) -> None:
+    if dtype in {"bool", "i1"}:
+        raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
+    else:
+        raw = np.asarray(arr, dtype=np.float32).tobytes(order="C")
+    path.write_bytes(raw)
+
+
+def run_one(kernel: str, *, keep_tmp: bool = False) -> dict:
+    report_path = ROOT / "artifacts" / "full_pipeline_verify" / f"{kernel}.json"
+    baseline_npz_path = ROOT / "artifacts" / "full_pipeline_verify" / f"{kernel}.baseline.npz"
+    if not report_path.exists():
+        raise FileNotFoundError(f"missing artifact report: {report_path}")
+    if not baseline_npz_path.exists():
+        raise FileNotFoundError(f"missing baseline npz: {baseline_npz_path}")
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    intent = _load_intent(report)
+
+    baseline = dict(np.load(baseline_npz_path, allow_pickle=False))
+    external_inputs, outputs = _external_inputs(intent)
+
+    bindings = ((report.get("baseline") or {}).get("shapes") or {}) if isinstance(report.get("baseline"), dict) else {}
+    # Common axis aliases (match pipeline/runner conventions).
+    if "batch" in bindings and "Z" not in bindings:
+        bindings["Z"] = bindings["batch"]
+    if "Z" in bindings and "batch" not in bindings:
+        bindings["batch"] = bindings["Z"]
+    if "group" in bindings and "num_groups" not in bindings:
+        bindings["num_groups"] = bindings["group"]
+    if "num_groups" in bindings and "C" in bindings and "group_size" not in bindings:
+        try:
+            g = int(bindings["num_groups"])
+            c = int(bindings["C"])
+            if g > 0:
+                bindings["group_size"] = c // g if (c % g == 0) else (c + g - 1) // g
+        except Exception:
+            pass
+    if "group_size" in bindings and "HW" in bindings and "num_elements" not in bindings:
+        try:
+            bindings["num_elements"] = int(bindings["group_size"]) * int(bindings["HW"])
+        except Exception:
+            pass
+    tol = {
+        "any_kernel_dim": (0.0, 0.0),
+        "group_norm_kernel": (1e-3, 1e-3),
+        "_attn_fwd": (1e-2, 1e-2),
+        "softmax_inner": (1e-3, 1e-3),
+        "layer_norm_persistent": (1e-3, 1e-3),
+        "upsample_bicubic2d_aa": (1e-3, 1e-3),
+    }
+    atol, rtol = tol.get(kernel, (1e-3, 1e-3))
+
+    tmp_ctx = tempfile.TemporaryDirectory(prefix=f"intentir_codegen_smoke_{kernel}_")
+    td = Path(tmp_ctx.name)
+    try:
+        # Write inputs / reference outputs.
+        for name in external_inputs:
+            if name not in baseline:
+                raise RuntimeError(f"baseline missing input {name} for {kernel}")
+            _write_bin(td / f"{name}.bin", np.asarray(baseline[name]), intent.tensors[name].dtype)
+        for name in outputs:
+            if name not in baseline:
+                raise RuntimeError(f"baseline missing output {name} for {kernel}")
+            _write_bin(td / f"{name}_ref.bin", np.asarray(baseline[name]), intent.tensors[name].dtype)
+
+        c_src = lower_intent_to_c_with_files(intent, shape_bindings=bindings, atol=float(atol), rtol=float(rtol))
+        (td / "main.c").write_text(c_src, encoding="utf-8")
+
+        compile_cmd = ["gcc", "-O2", "-std=c11", "-o", str(td / "run"), str(td / "main.c"), "-lm"]
+        cp = subprocess.run(compile_cmd, cwd=td, capture_output=True, text=True)
+        if cp.returncode != 0:
+            raise RuntimeError(f"compile failed:\n{cp.stderr or cp.stdout}")
+
+        rp = subprocess.run([str(td / "run")], cwd=td, capture_output=True, text=True)
+        return {
+            "kernel": kernel,
+            "ok": rp.returncode == 0,
+            "rc": rp.returncode,
+            "stdout": (rp.stdout or "").strip(),
+            "stderr": (rp.stderr or "").strip(),
+            "tmpdir": str(td) if keep_tmp else None,
+        }
+    finally:
+        if keep_tmp:
+            tmp_ctx.cleanup = lambda: None  # type: ignore[attr-defined]
+        else:
+            tmp_ctx.cleanup()
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--kernel", action="append", default=[], help="repeatable; default runs 6 kernels")
+    ap.add_argument("--keep-tmp", action="store_true", help="keep generated C + binaries in a temp dir")
+    args = ap.parse_args()
+
+    kernels = args.kernel or DEFAULT_KERNELS
+    results = []
+    ok_all = True
+    for k in kernels:
+        r = run_one(k, keep_tmp=bool(args.keep_tmp))
+        results.append(r)
+        ok_all = ok_all and bool(r["ok"])
+        status = "OK" if r["ok"] else "FAIL"
+        print(f"[{k}] {status} rc={r['rc']}")
+        if r["stdout"]:
+            print(r["stdout"])
+        if r["stderr"]:
+            print(r["stderr"])
+        if args.keep_tmp and r.get("tmpdir"):
+            print(f"  tmpdir={r['tmpdir']}")
+    raise SystemExit(0 if ok_all else 1)
+
+
+if __name__ == "__main__":
+    main()

@@ -67,9 +67,22 @@ SUPPORTED_OPS = {
     "max",
     "min",
     "ne",
+    "lt",
+    "le",
+    "gt",
+    "ge",
+    "and",
+    "or",
+    "not",
     "exp",
     "relu",
     "rsqrt",
+    "abs",
+    "floor",
+    "cast",
+    "where",
+    "iota",
+    "gather",
     "identity",
     "const",
     "reduce_sum",
@@ -81,9 +94,8 @@ SUPPORTED_OPS = {
     "reshape",
     "layout_cast",
     "conv2d",
-    # Generic escape hatch: allows front-end to attach a callee name and
-    # let a lowering pass/dispatcher implement it without proliferating op names.
-    "custom_call",
+    # Macro ops (semantic ops expanded/lowered later)
+    "upsample_bicubic2d_aa",
 }
 
 EPILOGUE_ELEMWISE_OPS = {
@@ -425,6 +437,46 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
     elif op.op == "const":
         if "value" not in attrs:
             raise IntentIRValidationError(f"op[{idx}] const requires attrs.value")
+        dtype = attrs.get("dtype")
+        if dtype is not None and dtype not in SUPPORTED_DTYPES:
+            raise IntentIRValidationError(f"op[{idx}].attrs.dtype unsupported: {dtype}")
+    elif op.op == "cast":
+        to = attrs.get("to")
+        if to is None and "dtype" in attrs:
+            raise IntentIRValidationError(f"op[{idx}] cast requires attrs.to (not attrs.dtype)")
+        if to is None:
+            raise IntentIRValidationError(f"op[{idx}] cast requires attrs.to")
+        if to not in SUPPORTED_DTYPES:
+            raise IntentIRValidationError(f"op[{idx}] cast.to unsupported: {to}")
+    elif op.op == "iota":
+        shape = attrs.get("shape")
+        axis = attrs.get("axis")
+        if axis is None and "dimension" in attrs:
+            raise IntentIRValidationError(f"op[{idx}] iota requires attrs.axis (not attrs.dimension)")
+        dtype = attrs.get("dtype", "i32")
+        if not isinstance(shape, list) or not shape:
+            raise IntentIRValidationError(f"op[{idx}] iota.shape must be non-empty list")
+        for d in shape:
+            parse_dim(d)
+        if axis is None:
+            raise IntentIRValidationError(f"op[{idx}] iota requires attrs.axis")
+        if not isinstance(axis, int):
+            raise IntentIRValidationError(f"op[{idx}] iota.axis must be int, got {type(axis).__name__}")
+        if dtype not in SUPPORTED_DTYPES:
+            raise IntentIRValidationError(f"op[{idx}] iota.dtype unsupported: {dtype}")
+    elif op.op == "gather":
+        # gather(data, i0, i1, ...) where number of indices equals data rank.
+        if len(op.inputs) < 2:
+            raise IntentIRValidationError(f"op[{idx}] gather requires data + index tensors")
+    elif op.op == "where":
+        if len(op.inputs) != 3:
+            raise IntentIRValidationError(f"op[{idx}] where requires 3 inputs (cond, x, y)")
+    elif op.op in {"abs", "floor", "not"}:
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] {op.op} requires 1 input")
+    elif op.op in {"lt", "le", "gt", "ge", "and", "or"}:
+        if len(op.inputs) != 2:
+            raise IntentIRValidationError(f"op[{idx}] {op.op} requires 2 inputs")
     elif op.op in {"reduce_sum", "reduce_max", "reduce_any"}:
         dims = attrs.get("dims", attrs.get("axis"))
         if dims is None:
@@ -464,10 +516,53 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
         target = attrs.get("to")
         if not isinstance(target, str):
             raise IntentIRValidationError(f"op[{idx}] layout_cast.to must be string")
-    elif op.op == "custom_call":
-        callee = attrs.get("callee")
-        if not isinstance(callee, str) or not callee:
-            raise IntentIRValidationError(f"op[{idx}] custom_call requires attrs.callee string")
+    elif op.op == "upsample_bicubic2d_aa":
+        # Macro op: output = upsample_bicubic2d_aa(input) with OH/OW derived from output tensor shape.
+        # Inputs: [input_tensor]
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] upsample_bicubic2d_aa requires 1 input (the input tensor)")
+        # Optional attrs (macro impl spec / lowering hints). Keep type checks lightweight:
+        # - Allow both "flat" attrs (legacy) and a structured "impl" object (preferred).
+        impl = attrs.get("impl")
+        if impl is not None and not isinstance(impl, dict):
+            raise IntentIRValidationError(f"op[{idx}] upsample_bicubic2d_aa.attrs.impl must be object when provided")
+
+        a = attrs.get("a")
+        if a is not None and not isinstance(a, (int, float)):
+            raise IntentIRValidationError(f"op[{idx}] upsample_bicubic2d_aa.attrs.a must be number when provided")
+        support = attrs.get("support")
+        if support is not None and not isinstance(support, (int, float)):
+            raise IntentIRValidationError(f"op[{idx}] upsample_bicubic2d_aa.attrs.support must be number when provided")
+        invscale = attrs.get("invscale")
+        if invscale is not None and not isinstance(invscale, (int, float)):
+            raise IntentIRValidationError(f"op[{idx}] upsample_bicubic2d_aa.attrs.invscale must be number when provided")
+        for key in ("kernel", "center_formula", "start_formula", "clamp_policy", "span_size_formula", "tap_enable_policy", "abs_arg", "normalize_avoid_div0", "compute_order", "mask_policy", "reuse"):
+            v = attrs.get(key)
+            if v is not None and not isinstance(v, str):
+                raise IntentIRValidationError(f"op[{idx}] upsample_bicubic2d_aa.attrs.{key} must be string when provided")
+        for key in ("normalize_weights", "separable"):
+            v = attrs.get(key)
+            if v is not None and not isinstance(v, bool):
+                raise IntentIRValidationError(f"op[{idx}] upsample_bicubic2d_aa.attrs.{key} must be bool when provided")
+        other = attrs.get("other_value")
+        if other is not None and not isinstance(other, (int, float)):
+            raise IntentIRValidationError(f"op[{idx}] upsample_bicubic2d_aa.attrs.other_value must be number when provided")
+        hoist = attrs.get("hoist")
+        if hoist is not None and not (isinstance(hoist, list) and all(isinstance(x, str) for x in hoist)):
+            raise IntentIRValidationError(f"op[{idx}] upsample_bicubic2d_aa.attrs.hoist must be list[str] when provided")
+        piecewise = attrs.get("piecewise")
+        if piecewise is not None and not isinstance(piecewise, (dict, str)):
+            raise IntentIRValidationError(f"op[{idx}] upsample_bicubic2d_aa.attrs.piecewise must be object/string when provided")
+
+        # Validate a few common structured impl keys (do not over-constrain; this evolves).
+        if isinstance(impl, dict):
+            for key in ("kernel", "index_plan", "composition"):
+                v = impl.get(key)
+                if v is not None and not isinstance(v, dict):
+                    raise IntentIRValidationError(f"op[{idx}] upsample_bicubic2d_aa.attrs.impl.{key} must be object when provided")
+            h = impl.get("hoist")
+            if h is not None and not (isinstance(h, list) and all(isinstance(x, str) for x in h)):
+                raise IntentIRValidationError(f"op[{idx}] upsample_bicubic2d_aa.attrs.impl.hoist must be list[str] when provided")
 
 
 def _validate_epilogue(node: Any, path: str) -> None:

@@ -7,10 +7,12 @@ doc/
 # Artifacts directory
 artifacts/
 
+# C++ codegen build output
+backend_spmd_rvv/cpp_codegen/build/
+
 # Python cache
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .pytest_cache/
-

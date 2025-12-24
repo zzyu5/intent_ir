@@ -125,7 +125,7 @@ def _fmt_op_line(op: str, out: str, inputs: List[str], attrs: Dict[str, Any], in
     attr_str = ""
     if opts.emit_attrs:
         attr_str = _fmt_attrs(op, attrs)
-    if op in {"add", "sub", "mul", "div", "max", "min", "exp", "relu", "rsqrt"}:
+    if op in {"add", "sub", "mul", "div", "max", "min", "exp", "relu", "rsqrt", "abs", "floor"}:
         if opts.prefer_elemwise_sugar:
             return f"{out} = intent.{op}({', '.join(inputs)}){attr_str}"
         return f'{out} = intent.elemwise("{op}", {", ".join(inputs)}){attr_str}'
@@ -150,11 +150,16 @@ def _fmt_op_line(op: str, out: str, inputs: List[str], attrs: Dict[str, Any], in
         return f"{out} = intent.layout_cast({', '.join(inputs)}){attr_str}"
     if op == "conv2d":
         return f"{out} = intent.conv2d({', '.join(inputs)}){attr_str}"
-    if op == "custom_call":
-        callee = (attrs or {}).get("callee", "")
-        callee_s = _fmt_value_any(callee) if callee else "\"\""
-        # Keep attrs printing stable; include callee in the call head as well.
-        return f"{out} = intent.custom_call({callee_s}, {', '.join(inputs)}){attr_str}"
+    if op == "where":
+        return f"{out} = intent.where({', '.join(inputs)}){attr_str}"
+    if op == "cast":
+        return f"{out} = intent.cast({', '.join(inputs)}){attr_str}"
+    if op in {"lt", "le", "gt", "ge", "and", "or", "not"}:
+        return f"{out} = intent.{op}({', '.join(inputs)}){attr_str}"
+    if op == "iota":
+        return f"{out} = intent.iota(){attr_str}"
+    if op == "gather":
+        return f"{out} = intent.gather({', '.join(inputs)}){attr_str}"
     return f"{out} = intent.{op}({', '.join(inputs)}){attr_str}"
 
 

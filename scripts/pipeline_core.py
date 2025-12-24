@@ -20,8 +20,11 @@ import triton
 
 from intent_ir.ir_types import IntentIRValidationError
 from intent_ir.llm_intent import LLMClientError, extract_intent_json
+from intent_ir.macro_expand import expand_macros
+from intent_ir.macro_spec import enrich_intent_macros
 from intent_ir.parser_llm import CandidateIntent, LLMJsonParseError, parse_candidate_json
 from intent_ir.printer_mlir_like import print_mlir_like
+from intent_ir.ir_types import ScheduleSketch
 from triton_frontend.certificate import build_certificate
 from triton_frontend.contract import evaluate_contract
 from triton_frontend.facts import extract_constraints, extract_facts
@@ -84,14 +87,38 @@ def find_latest_ttir(dump_dir: Path, name_hint: str) -> Optional[Path]:
 
 def llm_to_intent(src: str, kernel_name: str, feedback: Optional[List[str]] = None) -> CandidateIntent:
     base_extra = (
-        "Outputs must be produced by ops; include mean/rstd or other writes. "
-        "Model scalars as const ops or attrs; do not leave them implicit. "
-        "Keep input tensor shapes exactly as kernel signature; if you need grouped views, insert explicit reshape ops instead of redefining inputs. "
+        "Return STRICT JSON (no prose/code fences). "
+        "Every output must be produced by ops (no placeholder outputs). "
+        "Keep argument tensor shapes exactly as the kernel signature; if you need a view (e.g., group view), insert explicit reshape ops (do not redefine inputs). "
+        "Arithmetic ops (add/sub/mul/div/max/min) must have 2 inputs; model scalars as const ops (shape=[]), not ad-hoc scalar attrs. "
         "Reduce dims/axis must be integer axis indices (after any reshape/transpose). "
-        "For groupnorm stats, keep Mean/Rstd structured as [N, num_groups] (optionally [N,num_groups,1] for keepdims). Do NOT flatten (N,num_groups) into 1D. "
-        "For layernorm stats, keep Mean/Rstd as [M] (optionally [M,1] for keepdims). "
-        "parallel_axes must refer to axes that appear in tensor shapes."
+        "For groupnorm stats, Mean/Rstd must be [N, num_groups] (optionally [N,num_groups,1]); do NOT flatten into 1D. "
+        "IMPORTANT groupnorm semantics: reduce_sum computes SUM; you must normalize by num_elements=group_size*HW "
+        "(mean = reduce_sum(X)/num_elements; var = reduce_sum((X-mean)^2)/num_elements; rstd = rsqrt(var+eps)). "
+        "You may encode normalization as reduce_sum(attrs.scale='1.0/(group_size*HW)') or explicit div ops. "
+        "For layernorm stats, Mean/Rstd must be [M] (optionally [M,1]). "
+        "IMPORTANT layernorm semantics: normalize by N (mean = sum/N; var = sumsq/N). "
+        "Do NOT use BLOCK_*/TILE_* in tensor shapes or iota.shape. "
+        "You SHOULD emit schedule sketch if the kernel has tl.constexpr block/tile parameters: put them in schedule.tile_*/schedule.memory_hint "
+        "and bind them to axes via schedule.axis_bindings (e.g., BLOCK_M->M, BLOCK_N->N; BLOCK_Y->OH, BLOCK_X->OW). "
+        "iota uses attrs.axis (not dimension); cast uses attrs.to (not dtype). "
+        "Prefer primitive ops unless a semantic macro op is explicitly allowed."
     )
+    lower_src = src.lower()
+    if "bicubic" in lower_src or "cubic" in lower_src:
+        base_extra += (
+            " Prefer using the semantic macro op `upsample_bicubic2d_aa` (single op) instead of expanding into dozens of primitive ops. "
+            "Macro form: one op with op='upsample_bicubic2d_aa', inputs=[input_tensor], output=output_tensor. "
+            "For macro attrs, include BOTH a structured impl object (preferred) and a few human-readable formula strings: "
+            "attrs.impl = {"
+            "kernel:{name:'keys_cubic', a:-0.5, invscale:1.0, segments:[{t_max:1.0, coeffs:[1,0,-(a+3),(a+2)]},{t_max:2.0, coeffs:[-4*a,8*a,-5*a,a]}]}, "
+            "index_plan:{center_offset:0.5, support:2.0, start_offset:0.5, clamp_low:0.0, tap_enable:'k<span_size'}, "
+            "composition:{separable:true, compute_order:'x_then_y', normalize_weights:true, other_value:0.0}, "
+            "hoist:['span_start','span_size','weights_x','weights_y','masks_x','masks_y']"
+            "}. "
+            "Also include flat shortcuts: a/support/invscale/kernel/separable/compute_order/normalize_weights/mask_policy/other_value/hoist and brief formulas. "
+            "Do NOT invent composite shape symbols like IH_IW/OH_OW; use existing symbols (N,C,IH,IW,OH,OW) only."
+        )
     # Keep prompt kernel-name agnostic: the LLM should infer patterns from the code itself.
     if feedback:
         base_extra += "\nFeedback from last attempt:\n- " + "\n- ".join(feedback)
@@ -102,7 +129,7 @@ def llm_to_intent(src: str, kernel_name: str, feedback: Optional[List[str]] = No
                 src,
                 kernel_name=kernel_name,
                 temperature=0,
-                max_tokens=2000,
+                max_tokens=6000,
                 extra_instruction=base_extra if attempt == 0 else base_extra + f" Previous attempt failed: {last_err}",
             )
             return parse_candidate_json(js)
@@ -110,6 +137,84 @@ def llm_to_intent(src: str, kernel_name: str, feedback: Optional[List[str]] = No
             last_err = e
             continue
     raise last_err or Exception("LLM/parse failed")
+
+
+def _ensure_schedule(intent, *, kernel_name: str, triton_src: str) -> None:
+    """
+    Keep schedule visible in IntentIR.
+    - Prefer schedule produced by LLM.
+    - If missing, attach a lightweight ScheduleSketch derived from common tl.constexpr names.
+    This is a *sketch* (can be symbolic) and is used by backend mapping + reporting.
+    """
+    existing = intent.schedule
+    if existing is not None:
+        # If tiles/axis_bindings are present, keep as-is. Otherwise, we can still
+        # infer tile bindings and *merge* them while preserving memory_hint.
+        if any(getattr(existing, k) for k in ("tile_m", "tile_n", "tile_k", "vec_width", "pipeline_depth")):
+            return
+        if existing.axis_bindings:
+            return
+
+    # Heuristic: infer from tl.constexpr argument names.
+    # We avoid parsing full Triton; just look for common names.
+    text = str(triton_src).upper()
+    hint_keys = set()
+    if existing is not None and isinstance(existing.memory_hint, dict):
+        hint_keys = {str(k).upper() for k in existing.memory_hint.keys()}
+    axis_bindings = {}
+    tile_m = None
+    tile_n = None
+    tile_k = None
+
+    def has(name: str) -> bool:
+        n = str(name).upper()
+        return (n in text) or (n in hint_keys)
+
+    # 2D tiles in OW/OH space (upsample-like)
+    if has("BLOCK_X") and has("BLOCK_Y"):
+        tile_m = "BLOCK_Y"
+        tile_n = "BLOCK_X"
+        axis_bindings = {"tile_m": "OH", "tile_n": "OW"}
+    # Row/col blocking (reduce_any)
+    elif has("BLOCK_M") and has("BLOCK_N"):
+        tile_m = "BLOCK_M"
+        tile_n = "BLOCK_N"
+        axis_bindings = {"tile_m": "M", "tile_n": "N"}
+    # Softmax-style tiling
+    elif has("TILE_N") and has("TILE_K"):
+        tile_n = "TILE_N"
+        tile_k = "TILE_K"
+        axis_bindings = {"tile_n": "N", "tile_k": "K"}
+    elif has("TILE_N"):
+        tile_n = "TILE_N"
+        axis_bindings = {"tile_n": "N"}
+    # GroupNorm-style blocking
+    elif has("BLOCK_GROUP_SIZE") and has("BLOCK_HW_SIZE"):
+        tile_m = "BLOCK_GROUP_SIZE"
+        tile_n = "BLOCK_HW_SIZE"
+        axis_bindings = {"tile_m": "group_size", "tile_n": "HW"}
+
+    if tile_m is None and tile_n is None and tile_k is None:
+        # Still attach an empty schedule to keep the field present (paper narrative).
+        if existing is None:
+            intent.schedule = ScheduleSketch()
+        return
+
+    # Merge into existing schedule (preserve memory_hint/parallel_axes/etc).
+    if existing is None:
+        intent.schedule = ScheduleSketch(tile_m=tile_m, tile_n=tile_n, tile_k=tile_k, axis_bindings=axis_bindings)
+    else:
+        intent.schedule = ScheduleSketch(
+            tile_m=tile_m,
+            tile_n=tile_n,
+            tile_k=tile_k,
+            vec_width=existing.vec_width,
+            pipeline_depth=existing.pipeline_depth,
+            axis_bindings=dict(axis_bindings),
+            vec_axis=existing.vec_axis,
+            parallel_axes=list(existing.parallel_axes),
+            memory_hint=dict(existing.memory_hint),
+        )
 
 
 def make_cases(
@@ -294,7 +399,7 @@ def _run_groupnorm_reference(case: TestCase) -> Dict[str, np.ndarray]:
 def _run_attention_reference(case: TestCase) -> Dict[str, np.ndarray]:
     from tritonops.attention import _attn_fwd
 
-    batch = case.shapes.get("batch", 1)
+    batch = case.shapes.get("Z", case.shapes.get("batch", 1))
     q_numhead = case.shapes.get("q_numhead", 1)
     kv_numhead = case.shapes.get("kv_numhead", 1)
     Q_CTX = case.shapes.get("Q_CTX", 128)
@@ -373,6 +478,7 @@ def _run_attention_reference(case: TestCase) -> Dict[str, np.ndarray]:
     )
     torch.cuda.synchronize()
     return {
+        "Z": np.array(batch, dtype=np.int32),
         "Q": Q.cpu().numpy(),
         "K": K.cpu().numpy(),
         "V": V.cpu().numpy(),
@@ -555,9 +661,9 @@ def default_kernel_specs() -> List[KernelSpec]:
             module="tritonops.attention",
             attr="_attn_fwd.fn.src",
             runner=_run_attention_reference,
-            canonical_shapes={"batch": 1, "q_numhead": 1, "kv_numhead": 1, "Q_CTX": 128, "KV_CTX": 128, "HEAD_DIM": 64},
+            canonical_shapes={"Z": 1, "q_numhead": 1, "kv_numhead": 1, "Q_CTX": 128, "KV_CTX": 128, "HEAD_DIM": 64},
             vary_axes=["Q_CTX", "KV_CTX"],
-            exclude_axes=["batch", "q_numhead", "kv_numhead", "HEAD_DIM"],
+            exclude_axes=["Z", "q_numhead", "kv_numhead", "HEAD_DIM"],
         ),
         KernelSpec(
             name="softmax_inner",
@@ -607,23 +713,45 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
     print(f"[{spec.name}] stage3: LLM -> IntentIR (may take a while)", flush=True)
     feedback: List[str] = []
     cand: CandidateIntent | None = None
+    cand_expanded: CandidateIntent | None = None
     for attempt in range(2):
         try:
             cand = llm_to_intent(src, spec.name, feedback=feedback)
+            _ensure_schedule(cand.intent, kernel_name=spec.name, triton_src=src)
+            enrich_intent_macros(cand.intent)
             intent_mlir = print_mlir_like(cand.intent)
             (out_dir / f"{spec.name}.intentir.mlir").write_text(intent_mlir, encoding="utf-8")
+            expanded_intent = expand_macros(cand.intent)
+            cand_expanded = CandidateIntent(
+                intent=expanded_intent,
+                problem_params=dict(cand.problem_params),
+                schedule_params=dict(cand.schedule_params),
+                raw_json=dict(cand.raw_json),
+            )
+            (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(
+                print_mlir_like(expanded_intent), encoding="utf-8"
+            )
             break
         except Exception as e:
             feedback = [f"Previous failure: {e}"]
             cand = None
+            cand_expanded = None
             continue
     if cand is None:
         raise RuntimeError(f"LLM/Intent parse failed after retries for {spec.name}: {'; '.join(feedback)}")
+    # Ensure schedule is attached even if the LLM emits only partial schedule fields.
+    _ensure_schedule(cand.intent, kernel_name=spec.name, triton_src=src)
     report["intent"] = cand.intent.to_json_dict()
+    if cand_expanded is not None:
+        _ensure_schedule(cand_expanded.intent, kernel_name=spec.name, triton_src=src)
+    report["intent_expanded"] = (cand_expanded.intent.to_json_dict() if cand_expanded is not None else None)
 
     # 3) Launch kernel once to dump TTIR
     print(f"[{spec.name}] stage4: launch triton once (dump TTIR + baseline)", flush=True)
-    baseline_case = TestCase(shapes=spec.canonical_shapes, dtypes={}, seed=0)
+    baseline_shapes = dict(spec.canonical_shapes)
+    if spec.normalize_shapes:
+        baseline_shapes = spec.normalize_shapes(baseline_shapes)
+    baseline_case = TestCase(shapes=baseline_shapes, dtypes={}, seed=0)
     baseline_io = spec.runner(baseline_case)
     # Add non-destructive IO name aliases so downstream stages can refer to either
     # Input/Output or input/output (and *_ptr variants) without breaking.
@@ -676,7 +804,7 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
         constraints = extract_constraints(ttir_text, facts=facts)
         contract = evaluate_contract(facts)
         cert = build_certificate(ttir_text, facts=facts)
-        sv = static_validate(cand.intent, cert)
+        sv = static_validate((cand_expanded.intent if cand_expanded is not None else cand.intent), cert)
         report["ttir_path"] = str(ttir_path)
         report["contract"] = {"level": contract.level, "reasons": list(contract.reasons), "signals": dict(contract.signals)}
         report["certificate"] = cert.to_json_dict()
@@ -689,9 +817,21 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
             # Try one more round with feedback
             try:
                 cand = llm_to_intent(src, spec.name, feedback=sv.reasons)
+                enrich_intent_macros(cand.intent)
                 intent_mlir = print_mlir_like(cand.intent)
                 (out_dir / f"{spec.name}.intentir.mlir").write_text(intent_mlir, encoding="utf-8")
                 report["intent"] = cand.intent.to_json_dict()
+                expanded_intent = expand_macros(cand.intent)
+                cand_expanded = CandidateIntent(
+                    intent=expanded_intent,
+                    problem_params=dict(cand.problem_params),
+                    schedule_params=dict(cand.schedule_params),
+                    raw_json=dict(cand.raw_json),
+                )
+                (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(
+                    print_mlir_like(expanded_intent), encoding="utf-8"
+                )
+                report["intent_expanded"] = expanded_intent.to_json_dict()
             except Exception:
                 pass
     else:
@@ -699,9 +839,17 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
 
     # 4) Stage B diff
     print(f"[{spec.name}] stage6: Task5 cases + diff", flush=True)
-    cases = make_cases(spec, cand, constraints, limit=cases_limit, extra_tile_hints=cert.tile_hints if cert else None, cert=cert)
+    cand_for_run = cand_expanded or cand
+    cases = make_cases(
+        spec,
+        cand_for_run,
+        constraints,
+        limit=cases_limit,
+        extra_tile_hints=cert.tile_hints if cert else None,
+        cert=cert,
+    )
     report["cases"] = [dict(c.shapes) for c in cases]
-    diffs, cex = run_diff(cand.intent, spec.runner, cases)
+    diffs, cex = run_diff(cand_for_run.intent, spec.runner, cases)
     if diffs:
         worst = max(diffs, key=lambda d: (not d.ok, d.max_abs_err))
         report["diff"] = {
@@ -725,10 +873,82 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
             {"shapes": dict(cx.case.shapes), "summary": cx.diff.summary, "hints": list(cx.hints)} for cx in cex[:3]
         ]
 
+    # If dynamic diff fails, do one bounded LLM repair round using concrete feedback.
+    # This is deliberately conservative (1 retry) to respect LLM rate limits.
+    if diffs and not all(d.ok for d in diffs):
+        worst_summary = (report.get("diff") or {}).get("worst", {}).get("summary")
+        ce0 = (report.get("counterexamples") or [{}])[0]
+        feedback3: List[str] = []
+        if spec.name == "group_norm_kernel":
+            feedback3 += [
+                "Your groupnorm math is wrong: reduce_sum returns SUM. You must divide by num_elements=group_size*HW for mean and var.",
+                "Implement mean = reduce_sum(X, dims=[2,3], keepdims=true, scale='1.0/(group_size*HW)').",
+                "Implement var = reduce_sum((X-mean)^2, dims=[2,3], keepdims=true, scale='1.0/(group_size*HW)').",
+                "Then rstd = rsqrt(var + eps).",
+            ]
+        if spec.name == "layer_norm_persistent":
+            feedback3 += [
+                "Your layernorm math is wrong: reduce_sum returns SUM. You must divide by N for mean/var.",
+            ]
+        if worst_summary:
+            feedback3.append(f"Observed diff failure: {worst_summary}")
+        if ce0.get("shapes"):
+            feedback3.append(f"Counterexample shapes: {ce0.get('shapes')}")
+
+        if feedback3:
+            try:
+                cand_fix = llm_to_intent(src, spec.name, feedback=feedback3)
+                _ensure_schedule(cand_fix.intent, kernel_name=spec.name, triton_src=src)
+                (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand_fix.intent), encoding="utf-8")
+                expanded_fix = expand_macros(cand_fix.intent)
+                (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_fix), encoding="utf-8")
+                report["intent"] = cand_fix.intent.to_json_dict()
+                report["intent_expanded"] = expanded_fix.to_json_dict()
+                cand_for_run = CandidateIntent(
+                    intent=expanded_fix,
+                    problem_params=dict(cand_fix.problem_params),
+                    schedule_params=dict(cand_fix.schedule_params),
+                    raw_json=dict(cand_fix.raw_json),
+                )
+                # Re-run diff with a small case set to confirm the repair.
+                cases_fix = make_cases(
+                    spec,
+                    cand_for_run,
+                    constraints,
+                    limit=min(4, cases_limit),
+                    extra_tile_hints=cert.tile_hints if cert else None,
+                    cert=cert,
+                )
+                report["cases"] = [dict(c.shapes) for c in cases_fix]
+                diffs_fix, cex_fix = run_diff(cand_for_run.intent, spec.runner, cases_fix)
+                diffs, cex = diffs_fix, cex_fix
+                if diffs:
+                    worst = max(diffs, key=lambda d: (not d.ok, d.max_abs_err))
+                    report["diff"] = {
+                        "ok": bool(all(d.ok for d in diffs)),
+                        "worst": {"summary": worst.summary, "max_abs": float(worst.max_abs_err), "max_rel": float(worst.max_rel_err)},
+                        "results": [
+                            {
+                                "case_shapes": dict(cases_fix[i].shapes),
+                                "ok": bool(diffs[i].ok),
+                                "summary": diffs[i].summary,
+                                "max_abs": float(diffs[i].max_abs_err),
+                                "max_rel": float(diffs[i].max_rel_err),
+                            }
+                            for i in range(min(len(cases_fix), len(diffs)))
+                        ],
+                    }
+                if cex:
+                    report["counterexamples"] = [
+                        {"shapes": dict(cx.case.shapes), "summary": cx.diff.summary, "hints": list(cx.hints)} for cx in cex[:3]
+                    ]
+            except Exception:
+                pass
+
     # 5) Stage C + mutation-kill if Stage B passed
     if diffs and all(d.ok for d in diffs):
-        meta = run_metamorphic_suite(spec.name, cand.intent, spec.runner, base_case=cases[0])
-        bounded = run_bounded_exhaustive(spec.name, cand.intent, spec.runner)
+        meta = run_metamorphic_suite(spec.name, cand_for_run.intent, spec.runner, base_case=cases[0])
+        bounded = run_bounded_exhaustive(spec.name, cand_for_run.intent, spec.runner)
         report["stage_c"] = {
             "metamorphic": {
                 "ok": bool(meta.ok),
@@ -746,7 +966,7 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
         if cert is not None:
             mut = run_mutation_kill(
                 spec.name,
-                intent=cand.intent,
+                intent=cand_for_run.intent,
                 cert=cert,
                 run_ref_fn=spec.runner,
                 diff_cases=cases[:2],

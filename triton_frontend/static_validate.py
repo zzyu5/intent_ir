@@ -70,6 +70,41 @@ def static_validate(intent: IntentFunction, cert: SemanticCertificate) -> Static
             obligations.append(Obligation(id=f"SV_output_tensor_{out}", status="FAIL", detail="output not declared"))
             reasons.append(f"output {out} not declared in tensors")
 
+    # Shape symbol sanity: do not allow invented/unbound shape symbols in reshape/broadcast/iota shapes.
+    allowed_syms = set(intent.parallel_axes or [])
+    # Symbols from tensor shapes
+    for t in intent.tensors.values():
+        for d in t.shape:
+            if getattr(d, "kind", None) == "sym":
+                allowed_syms.add(str(d.value))
+    # Also allow scalar tensor names (commonly used as derived symbols like group_size/C/HW).
+    for name, t in intent.tensors.items():
+        if len(t.shape) == 0:
+            allowed_syms.add(name)
+
+    unknown: set[str] = set()
+    for op in intent.ops:
+        attrs = op.attrs or {}
+        if op.op in {"reshape", "broadcast_in_dim", "iota"}:
+            shape_list = None
+            if op.op == "broadcast_in_dim":
+                shape_list = attrs.get("out_shape")
+            else:
+                shape_list = attrs.get("shape")
+            if isinstance(shape_list, list):
+                for dim in shape_list:
+                    if isinstance(dim, str) and dim and (not dim.isdigit()) and (dim not in allowed_syms):
+                        unknown.add(dim)
+    if unknown:
+        obligations.append(
+            Obligation(
+                id="SV_unknown_shape_symbols",
+                status="FAIL",
+                detail=f"unknown symbols in shape attrs: {sorted(unknown)}",
+            )
+        )
+        reasons.append(f"unknown symbols used in reshape/broadcast/iota shapes: {sorted(unknown)}")
+
     # Structural witness: TTIR distinct store pointer groups should not exceed
     # the number of declared outputs (helps catch missing Mean/Rstd etc).
     if cert.pointer_groups:

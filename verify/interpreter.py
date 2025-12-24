@@ -12,20 +12,66 @@ from typing import Any, Dict
 from intent_ir.ir_types import IntentFunction, Op
 
 
-ELEM_OPS = {
+NUM_BIN_OPS = {
     "add": np.add,
     "sub": np.subtract,
     "mul": np.multiply,
     "div": np.divide,
     "max": np.maximum,
     "min": np.minimum,
-    "or": np.maximum,
+}
+
+NUM_UNARY_OPS = {
     "relu": lambda x: np.maximum(x, 0),
     "exp": np.exp,
     "rsqrt": lambda x: 1.0 / np.sqrt(x),
-    "ne": np.not_equal,
+    "abs": np.abs,
+    "floor": np.floor,
     "identity": lambda x: x,
 }
+
+CMP_BIN_OPS = {
+    "ne": np.not_equal,
+    "lt": np.less,
+    "le": np.less_equal,
+    "gt": np.greater,
+    "ge": np.greater_equal,
+}
+
+BOOL_BIN_OPS = {
+    "and": np.logical_and,
+    "or": np.logical_or,
+}
+
+BOOL_UNARY_OPS = {
+    "not": np.logical_not,
+}
+
+
+def _np_dtype(dtype: str | None) -> Any:
+    if dtype is None:
+        return None
+    dt = str(dtype)
+    if dt in {"f16"}:
+        return np.float16
+    if dt in {"bf16"}:
+        # NumPy has no native bfloat16 in older versions; use fp16 for interpreter purposes.
+        return np.float16
+    if dt in {"f32"}:
+        return np.float32
+    if dt in {"f64"}:
+        return np.float64
+    if dt in {"i32"}:
+        return np.int32
+    if dt in {"i64"}:
+        return np.int64
+    if dt in {"i8"}:
+        return np.int8
+    if dt in {"u8"}:
+        return np.uint8
+    if dt in {"bool", "i1"}:
+        return np.bool_
+    raise ValueError(f"unsupported dtype for interpreter: {dtype}")
 
 
 def execute_intent(intent: IntentFunction, inputs: Dict[str, np.ndarray], shape_bindings: Dict[str, int] | None = None) -> Dict[str, np.ndarray]:
@@ -38,7 +84,7 @@ def execute_intent(intent: IntentFunction, inputs: Dict[str, np.ndarray], shape_
 
 
 def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shape_bindings: Dict[str, int]) -> np.ndarray:
-    if op.op in ELEM_OPS:
+    if op.op in NUM_BIN_OPS:
         args = [_get(env, name) for name in op.inputs]
         if len(args) == 1:
             # allow implicit second operand from attrs (common in LLM outputs)
@@ -52,9 +98,26 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
                 args.append(_resolve_value(op.attrs["mul_factor"], env, shape_bindings))
             elif op.op in {"max", "min"} and "other" in op.attrs:
                 args.append(_resolve_value(op.attrs["other"], env, shape_bindings))
-        if len(args) == 2:
-            args = list(_align_shapes_for_elemwise(args[0], args[1]))
-        return ELEM_OPS[op.op](*args)
+        if len(args) != 2:
+            raise ValueError(f"{op.op} requires 2 inputs (or 1+attrs)")
+        a, b = _align_shapes_for_elemwise(args[0], args[1])
+        return NUM_BIN_OPS[op.op](a, b)
+    if op.op in NUM_UNARY_OPS:
+        x = _get(env, op.inputs[0])
+        return NUM_UNARY_OPS[op.op](x)
+    if op.op in CMP_BIN_OPS:
+        a = _get(env, op.inputs[0])
+        b = _get(env, op.inputs[1])
+        a, b = _align_shapes_for_elemwise(a, b)
+        return CMP_BIN_OPS[op.op](a, b)
+    if op.op in BOOL_BIN_OPS:
+        a = _get(env, op.inputs[0]).astype(bool)
+        b = _get(env, op.inputs[1]).astype(bool)
+        a, b = _align_shapes_for_elemwise(a, b)
+        return BOOL_BIN_OPS[op.op](a, b)
+    if op.op in BOOL_UNARY_OPS:
+        x = _get(env, op.inputs[0]).astype(bool)
+        return BOOL_UNARY_OPS[op.op](x)
     if op.op == "broadcast_in_dim":
         x = _get(env, op.inputs[0])
         out_shape = _shape_from_attr(op.attrs.get("out_shape"), shape_bindings)
@@ -72,6 +135,37 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         return np.reshape(x, shape)
     if op.op == "layout_cast":
         return _get(env, op.inputs[0])
+    if op.op == "cast":
+        x = _get(env, op.inputs[0])
+        to = op.attrs.get("to")
+        return x.astype(_np_dtype(to))
+    if op.op == "iota":
+        shp = _shape_from_attr(op.attrs.get("shape"), shape_bindings)
+        axis = int(op.attrs.get("axis", 0))
+        dt = _np_dtype(op.attrs.get("dtype", "i32"))
+        if axis < 0 or axis >= len(shp):
+            raise ValueError(f"iota axis out of range: axis={axis} rank={len(shp)}")
+        ar = np.arange(int(shp[axis]), dtype=dt)
+        view_shape = [1] * len(shp)
+        view_shape[axis] = int(shp[axis])
+        return np.broadcast_to(ar.reshape(view_shape), shp)
+    if op.op == "gather":
+        data = _get(env, op.inputs[0])
+        idxs = [_get(env, n) for n in op.inputs[1:]]
+        if not idxs:
+            raise ValueError("gather requires at least one index tensor")
+        idxs_b = np.broadcast_arrays(*idxs)
+        idxs_b = [np.asarray(ix, dtype=np.int64) for ix in idxs_b]
+        return data[tuple(idxs_b)]
+    if op.op == "where":
+        cond = _get(env, op.inputs[0]).astype(bool)
+        x = _get(env, op.inputs[1])
+        y = _get(env, op.inputs[2])
+        # Help some LLM outputs that forget singleton dims.
+        cond, x = _align_shapes_for_elemwise(cond, x)
+        cond, y = _align_shapes_for_elemwise(cond, y)
+        x, y = _align_shapes_for_elemwise(x, y)
+        return np.where(cond, x, y)
     if op.op == "reduce_sum":
         x = _get(env, op.inputs[0])
         dims_raw = op.attrs.get("axes", op.attrs.get("dims", op.attrs.get("axis")))
@@ -109,39 +203,9 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         if epilogue:
             acc = _eval_epilogue(epilogue, env | {"$x": acc})
         return acc
-    if op.op == "custom_call":
-        callee = op.attrs.get("callee")
-        if callee == "upsample_bicubic2d_aa":
-            # Model the Triton `upsample_bicubic2d_aa_kernel` semantics directly.
-            # Expected:
-            #   Input: [N,C,IH,IW]
-            #   Output: [N,C,OH,OW]
-            # Inputs optionally include scalar tensors `reciprocal_scale_h`/`reciprocal_scale_w`.
-            x = _get(env, op.inputs[0])
-            if x.ndim != 4:
-                raise ValueError("upsample_bicubic2d_aa expects Input rank-4 (N,C,IH,IW)")
-            N, C, IH, IW = (int(s) for s in x.shape)
-            # Resolve reciprocal scales (prefer scalar tensors provided as inputs).
-            rs_h = None
-            rs_w = None
-            for name in op.inputs[1:]:
-                if "reciprocal_scale_h" in str(name):
-                    rs_h = float(np.asarray(_get(env, name)).reshape(()))
-                if "reciprocal_scale_w" in str(name):
-                    rs_w = float(np.asarray(_get(env, name)).reshape(()))
-            if rs_h is None:
-                rs_h = float(_resolve_value(op.attrs.get("reciprocal_scale_h", IH / max(1, shape_bindings.get("OH", IH))), env, shape_bindings).reshape(()))
-            if rs_w is None:
-                rs_w = float(_resolve_value(op.attrs.get("reciprocal_scale_w", IW / max(1, shape_bindings.get("OW", IW))), env, shape_bindings).reshape(()))
-            # Output sizes from bindings if present, else infer as "same size".
-            OH = int(shape_bindings.get("OH", IH))
-            OW = int(shape_bindings.get("OW", IW))
-            a = float(op.attrs.get("a", -0.5))
-            return _upsample_bicubic2d_aa_numpy(x, OH=OH, OW=OW, rs_h=rs_h, rs_w=rs_w, a=a)
-        raise ValueError(f"Unsupported custom_call callee: {callee}")
-    # Note: legacy op name `upsample_bicubic2d_aa` is normalized to custom_call by Task2 parser.
     if op.op == "const":
         val = op.attrs.get("value")
+        dtype = op.attrs.get("dtype")
         if isinstance(val, str):
             if val.startswith("placeholder:"):
                 raise ValueError(f"placeholder const is not a valid semantic value: {val}")
@@ -161,80 +225,9 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
                             val = eval(val, {}, dict(shape_bindings))
                         except Exception:
                             raise ValueError(f"unresolved const value: {val}")
-        return np.array(val)
+        np_dt = _np_dtype(dtype) if dtype is not None else None
+        return np.array(val, dtype=np_dt)
     raise ValueError(f"Unsupported op: {op.op}")
-
-
-def _cubic_weight(t: np.ndarray, a: float) -> np.ndarray:
-    t = np.abs(t).astype(np.float32)
-    w1 = ((a + 2.0) * t - (a + 3.0)) * t * t + 1.0
-    w2 = (((t - 5.0) * t + 8.0) * t - 4.0) * a
-    return np.where(t < 1.0, w1, np.where(t < 2.0, w2, 0.0)).astype(np.float32)
-
-
-def _upsample_bicubic2d_aa_numpy(x: np.ndarray, *, OH: int, OW: int, rs_h: float, rs_w: float, a: float) -> np.ndarray:
-    """
-    Numpy implementation matching `tritonops.upsample_bicubic2d_aa.upsample_bicubic2d_aa_kernel`.
-    This is the "upsample only" path where support=2.0 and invscale=1.0.
-    """
-    x = np.asarray(x, dtype=np.float32)
-    N, C, IH, IW = (int(s) for s in x.shape)
-    out = np.zeros((N, C, int(OH), int(OW)), dtype=np.float32)
-    support_w = 2.0
-    support_h = 2.0
-    invscale_w = 1.0
-    invscale_h = 1.0
-
-    for oh in range(int(OH)):
-        center_h = (oh + 0.5) * float(rs_h)
-        span_start_h = int(max(center_h - support_h + 0.5, 0.0))
-        span_size_h = int(min(center_h + support_h + 0.5, float(IH)) - span_start_h)
-        start_minus_center_h = float(span_start_h) - float(center_h)
-        wy = np.zeros((5,), dtype=np.float32)
-        for y in range(5):
-            if y < span_size_h:
-                t = (y + start_minus_center_h + 0.5) * invscale_h
-                wy[y] = float(_cubic_weight(np.array(t, dtype=np.float32), a))
-        s = float(np.sum(wy))
-        if s == 0.0:
-            s = 1.0
-        wy /= s
-
-        for ow in range(int(OW)):
-            center_w = (ow + 0.5) * float(rs_w)
-            span_start_w = int(max(center_w - support_w + 0.5, 0.0))
-            span_size_w = int(min(center_w + support_w + 0.5, float(IW)) - span_start_w)
-            start_minus_center_w = float(span_start_w) - float(center_w)
-            wx = np.zeros((5,), dtype=np.float32)
-            for xk in range(5):
-                if xk < span_size_w:
-                    t = (xk + start_minus_center_w + 0.5) * invscale_w
-                    wx[xk] = float(_cubic_weight(np.array(t, dtype=np.float32), a))
-            sx = float(np.sum(wx))
-            if sx == 0.0:
-                sx = 1.0
-            wx /= sx
-
-            for n in range(N):
-                for c in range(C):
-                    acc = 0.0
-                    for y in range(5):
-                        iy = span_start_h + y
-                        if iy < 0 or iy >= IH:
-                            continue
-                        wyv = float(wy[y])
-                        if wyv == 0.0:
-                            continue
-                        for xk in range(5):
-                            ix = span_start_w + xk
-                            if ix < 0 or ix >= IW:
-                                continue
-                            wxv = float(wx[xk])
-                            if wxv == 0.0:
-                                continue
-                            acc += float(x[n, c, iy, ix]) * wyv * wxv
-                    out[n, c, oh, ow] = np.float32(acc)
-    return out
 
 
 def _eval_epilogue(node: Any, env: Dict[str, np.ndarray]) -> np.ndarray:
@@ -243,9 +236,25 @@ def _eval_epilogue(node: Any, env: Dict[str, np.ndarray]) -> np.ndarray:
     op = node.get("op")
     inputs = node.get("inputs", [])
     args = [_eval_epilogue(inp, env) if isinstance(inp, dict) else _get(env, inp) for inp in inputs]
-    if op not in ELEM_OPS:
+    if op in NUM_BIN_OPS:
+        if len(args) != 2:
+            raise ValueError(f"epilogue {op} expects 2 inputs")
+        a, b = _align_shapes_for_elemwise(args[0], args[1])
+        return NUM_BIN_OPS[op](a, b)
+    if op in NUM_UNARY_OPS:
+        if len(args) != 1:
+            raise ValueError(f"epilogue {op} expects 1 input")
+        return NUM_UNARY_OPS[op](args[0])
+    if op not in CMP_BIN_OPS and op not in BOOL_BIN_OPS and op not in BOOL_UNARY_OPS:
         raise ValueError(f"Unsupported epilogue op: {op}")
-    return ELEM_OPS[op](*args)
+    if op in CMP_BIN_OPS:
+        a, b = _align_shapes_for_elemwise(args[0], args[1])
+        return CMP_BIN_OPS[op](a, b)
+    if op in BOOL_BIN_OPS:
+        a, b = _align_shapes_for_elemwise(args[0].astype(bool), args[1].astype(bool))
+        return BOOL_BIN_OPS[op](a, b)
+    # not
+    return BOOL_UNARY_OPS[op](args[0].astype(bool))
 
 
 def _broadcast_in_dim(x: np.ndarray, out_shape, broadcast_dims):
@@ -352,8 +361,10 @@ def _resolve_dims(dims_raw, x: np.ndarray):
 
 
 def _align_shapes_for_elemwise(a: np.ndarray, b: np.ndarray):
-    # Heuristic: if leading dimension matches and ndims differ, pad trailing ones on the smaller
-    if a.shape and b.shape and a.shape[0] == b.shape[0]:
+    # Conservative heuristic for some LLM outputs that drop singleton dims:
+    # only reshape when one side is 1D and the leading dimension matches.
+    # (Avoid breaking numpy-style trailing-dim broadcasting, e.g. [OH,OW] with [N,C,OH,OW].)
+    if a.shape and b.shape and a.shape[0] == b.shape[0] and (min(a.ndim, b.ndim) == 1):
         max_nd = max(a.ndim, b.ndim)
         if a.ndim < max_nd:
             a = a.reshape(a.shape + (1,) * (max_nd - a.ndim))

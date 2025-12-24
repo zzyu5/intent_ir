@@ -33,6 +33,7 @@ def _default_providers_skeleton() -> Dict[str, Dict[str, str]]:
     return {
         "claude-sonnet-4-5": {"base_url": "https://x666.me/v1", "api_key": ""},
         "claude-sonnet-4.5": {"base_url": "https://ai.hybgzs.com/v1", "api_key": ""},
+        "claude-sonnet-4-5-20250929": {"base_url": "https://ck67.top/v1", "api_key": ""},
     }
 
 
@@ -97,17 +98,28 @@ def _select_provider(model: str) -> Dict[str, str]:
 
 
 def _candidate_models(requested_model: str) -> List[str]:
-    # Try requested model first; if it fails, fall back to the other provider/model.
+    # Try requested model first; if it fails, fall back to other configured providers/models.
     models: List[str] = []
     providers = _load_providers()
     if requested_model in providers:
         models.append(requested_model)
-    for m in ("claude-sonnet-4.5", "claude-sonnet-4-5"):
-        if m in providers and m not in models:
+    # Ensure DEFAULT_MODEL is tried early (if different).
+    if DEFAULT_MODEL in providers and DEFAULT_MODEL not in models:
+        models.append(DEFAULT_MODEL)
+    # Then try all remaining configured providers in a stable order.
+    for m in sorted(providers.keys()):
+        if m not in models:
             models.append(m)
     if not models:
         models = [DEFAULT_MODEL]
     return models
+
+
+def candidate_models(requested_model: str) -> List[str]:
+    """
+    Public helper: resolve the ordered list of provider/model names to try.
+    """
+    return _candidate_models(requested_model)
 
 
 def chat_completion(
@@ -117,6 +129,8 @@ def chat_completion(
     base_url: str | None = None,
     stream: bool = False,
     timeout: int = 600,
+    max_retries: int = 2,
+    max_total_wait_s: int = 45,
     use_cache: bool = True,
     cache_dir: Optional[str | Path] = None,
     **extra: Any,
@@ -126,13 +140,11 @@ def chat_completion(
     Provider and key are selected from local config with automatic fallback.
     """
     providers = _load_providers()
-    if base_url is None:
-        base_url = _default_base_url(providers)
     cache_path: Path | None = None
     if use_cache:
         cd = Path(cache_dir) if cache_dir is not None else DEFAULT_CACHE_DIR
         cd.mkdir(parents=True, exist_ok=True)
-        cache_key_obj = {"messages": messages, "model": model, "stream": stream, "extra": extra}
+        cache_key_obj = {"messages": messages, "model": model, "stream": stream, "extra": extra, "base_url": base_url}
         cache_key = hashlib.sha256(json.dumps(cache_key_obj, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
         cache_path = cd / f"{cache_key}.json"
         if cache_path.exists():
@@ -145,7 +157,9 @@ def chat_completion(
     errors: List[str] = []
     for m in _candidate_models(model):
         provider = _select_provider(m)
-        url_base = provider["base_url"]
+        # If caller overrides base_url, honor it; otherwise use per-provider base_url
+        # so fallback can actually switch providers.
+        url_base = provider["base_url"] if base_url is None else base_url
         api_key = provider["api_key"]
         if not api_key:
             errors.append(
@@ -164,15 +178,31 @@ def chat_completion(
             "stream": stream,
             **extra,
         }
-        # Retry a little on transient failures or rate limits.
-        for attempt in range(3):
+        # Retry on transient failures or rate limits.
+        # Keep bounded: user reported long stalls when providers are unstable.
+        total_wait = 0.0
+        for attempt in range(max(1, int(max_retries))):
             try:
                 resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
             except requests.Timeout:
-                errors.append(f"{m}@{url_base}: timeout after {timeout}s (attempt {attempt+1}/3)")
+                wait_s = min(10.0, 1.5 * (2**attempt))
+                errors.append(
+                    f"{m}@{url_base}: timeout after {timeout}s (attempt {attempt+1}/{max_retries}), waiting {wait_s:.1f}s"
+                )
+                if total_wait + wait_s > float(max_total_wait_s):
+                    break
+                time.sleep(wait_s)
+                total_wait += wait_s
                 continue
             except requests.RequestException as e:
-                errors.append(f"{m}@{url_base}: request failed: {e} (attempt {attempt+1}/3)")
+                wait_s = min(5.0, 1.0 * (attempt + 1))
+                errors.append(
+                    f"{m}@{url_base}: request failed: {e} (attempt {attempt+1}/{max_retries}), waiting {wait_s:.1f}s"
+                )
+                if total_wait + wait_s > float(max_total_wait_s):
+                    break
+                time.sleep(wait_s)
+                total_wait += wait_s
                 continue
 
             if resp.status_code == 429:
@@ -182,13 +212,25 @@ def chat_completion(
                     wait_s = int(retry_after) if retry_after is not None else 15
                 except Exception:
                     wait_s = 15
-                errors.append(f"{m}@{url_base}: 429 rate limited, waiting {wait_s}s (attempt {attempt+1}/3)")
-                time.sleep(max(1, min(wait_s, 60)))
+                wait_s = float(max(1, min(wait_s, 20)))
+                errors.append(
+                    f"{m}@{url_base}: 429 rate limited, waiting {wait_s:.0f}s (attempt {attempt+1}/{max_retries})"
+                )
+                if total_wait + wait_s > float(max_total_wait_s):
+                    break
+                time.sleep(wait_s)
+                total_wait += wait_s
                 continue
 
             if resp.status_code >= 500:
-                errors.append(f"{m}@{url_base}: {resp.status_code} server error (attempt {attempt+1}/3)")
-                time.sleep(1.0 + attempt)
+                wait_s = min(10.0, 1.0 * (attempt + 1) * (attempt + 1))
+                errors.append(
+                    f"{m}@{url_base}: {resp.status_code} server error (attempt {attempt+1}/{max_retries}), waiting {wait_s:.1f}s"
+                )
+                if total_wait + wait_s > float(max_total_wait_s):
+                    break
+                time.sleep(wait_s)
+                total_wait += wait_s
                 continue
 
             if resp.status_code != 200:
@@ -211,4 +253,4 @@ def chat_completion(
     raise LLMClientError(" | ".join(errors))
 
 
-__all__ = ["LLMClientError", "LLMResponse", "chat_completion", "DEFAULT_MODEL"]
+__all__ = ["LLMClientError", "LLMResponse", "chat_completion", "candidate_models", "DEFAULT_MODEL"]

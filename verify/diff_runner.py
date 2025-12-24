@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, Iterable, List, Tuple
 import numpy as np
 
 from intent_ir.ir_types import IntentFunction
+from intent_ir.macro_expand import expand_macros
 from verify.gen_cases import TestCase
 from verify.interpreter import execute_intent
 
@@ -41,15 +42,40 @@ def run_diff(
 ) -> Tuple[List[DiffResult], List[Counterexample]]:
     if tolerances is None:
         tolerances = {"atol": 1e-3, "rtol": 1e-3}
+    cases_list = list(cases)
+    try:
+        intent_exec = expand_macros(intent)
+    except Exception as e:
+        diff = DiffResult(
+            ok=False,
+            max_abs_err=0.0,
+            max_rel_err=0.0,
+            first_bad_index=None,
+            summary=f"macro expansion error: {type(e).__name__}: {e}",
+        )
+        return [diff for _ in cases_list], [
+            Counterexample(
+                case=cases_list[0] if cases_list else TestCase(shapes={}, dtypes={}, seed=0),
+                diff=diff,
+                intent_json=intent.to_json_dict(),
+                facts_summary=None,
+                hints=["fix compiler macro expansion (not an LLM issue)"],
+            )
+        ]
     diffs: List[DiffResult] = []
     counterexamples: List[Counterexample] = []
-    for case in cases:
+    for case in cases_list:
         ref_out = run_ref_fn(case)
         # Make IO naming robust: LLM may emit Input/Output while runner returns input/output
         # (or *_ptr variants). Add non-destructive aliases so interpreter can resolve names.
-        ref_out = _with_io_aliases(intent, ref_out)
+        ref_out = _with_io_aliases(intent_exec, ref_out)
         # derive bindings and align input shapes
         bindings = dict(case.shapes)
+        # Common axis aliases (align kernel-signature symbols with user-friendly names).
+        if "batch" in bindings and "Z" not in bindings:
+            bindings["Z"] = bindings["batch"]
+        if "Z" in bindings and "batch" not in bindings:
+            bindings["batch"] = bindings["Z"]
         if "group" in bindings and "num_groups" not in bindings:
             bindings["num_groups"] = bindings["group"]
         if "num_groups" in bindings and "C" in bindings and "group_size" not in bindings:
@@ -63,14 +89,14 @@ def run_diff(
                 bindings["num_elements"] = int(bindings["group_size"]) * int(bindings["HW"])
             except Exception:
                 pass
-        inputs = {k: v for k, v in ref_out.items() if k not in intent.outputs}
+        inputs = {k: v for k, v in ref_out.items() if k not in intent_exec.outputs}
         # Strict "original view" check: inputs must match declared tensor shapes exactly.
         # If the LLM needs a grouped/view shape, it must introduce explicit reshape ops
         # inside IntentIR, rather than redefining the input tensor shape.
         for name, arr in list(inputs.items()):
-            if name not in intent.tensors:
+            if name not in intent_exec.tensors:
                 continue
-            expected_shape = _resolve_tensor_shape(intent.tensors[name], bindings)
+            expected_shape = _resolve_tensor_shape(intent_exec.tensors[name], bindings)
             if expected_shape is None:
                 # If an input tensor shape contains unbound symbols, we cannot reliably
                 # check semantics; treat as failure so the LLM must align with runtime axes.
@@ -79,7 +105,7 @@ def run_diff(
                     max_abs_err=0.0,
                     max_rel_err=0.0,
                     first_bad_index=None,
-                    summary=f"unbound symbols in input shape for {name}: intent shape={intent.tensors[name].shape}",
+                    summary=f"unbound symbols in input shape for {name}: intent shape={intent_exec.tensors[name].shape}",
                 )
                 diffs.append(diff)
                 counterexamples.append(
@@ -117,8 +143,8 @@ def run_diff(
             # Feed symbolic shape bindings from TestCase for broadcast/reshape
             try:
                 with np.errstate(all="ignore"):
-                    pred = execute_intent(intent, inputs, shape_bindings=bindings)
-                diff = _compare_outputs(pred, ref_out, intent.outputs, tolerances)
+                    pred = execute_intent(intent_exec, inputs, shape_bindings=bindings)
+                diff = _compare_outputs(pred, ref_out, intent_exec.outputs, tolerances)
             except Exception as e:
                 diff = DiffResult(
                     ok=False,
@@ -155,6 +181,18 @@ def _normalize_io_name(name: str) -> str:
         # e.g. inputptr -> input
         s = s[:-3]
     # Common shorthand aliases from copied kernels.
+    if s == "i":
+        s = "input"
+    if s == "o":
+        s = "output"
+    if s == "x":
+        s = "input"
+    if s == "y":
+        s = "output"
+    if s == "w":
+        s = "weight"
+    if s == "b":
+        s = "bias"
     if s == "in":
         s = "input"
     if s == "out":
@@ -184,9 +222,11 @@ def _with_io_aliases(intent: IntentFunction, ref_io: Dict[str, np.ndarray]) -> D
             out[name] = ref_io[keys[0]]
             continue
         # Fallback: substring match on normalized keys (e.g., out_mean_ptr -> Mean).
-        candidates = [k for k in ref_io.keys() if norm and (norm in _normalize_io_name(k))]
-        if len(candidates) == 1:
-            out[name] = ref_io[candidates[0]]
+        # Avoid overly-short names (e.g., "N", "C") accidentally matching "input".
+        if len(norm) >= 3:
+            candidates = [k for k in ref_io.keys() if norm and (norm in _normalize_io_name(k))]
+            if len(candidates) == 1:
+                out[name] = ref_io[candidates[0]]
     return out
 
 
@@ -203,8 +243,10 @@ def _compare_outputs(pred: Dict[str, np.ndarray], ref: Dict[str, np.ndarray], ou
         p = pred[name]
         if p.shape != ref_arr.shape:
             # Allow only "reshape-equivalent" alignments that preserve structure:
-            # squeeze extra unit (size=1) dims from prediction to match reference.
+            # squeeze/unsqueeze extra unit (size=1) dims to match reference.
             p2 = _squeeze_unit_dims_to_match(p, ref_arr.shape)
+            if p2 is None:
+                p2 = _unsqueeze_unit_dims_to_match(p, ref_arr.shape)
             if p2 is None:
                 return DiffResult(False, max_abs, max_rel, bad_idx, f"shape mismatch for {name}: {p.shape} vs {ref_arr.shape}")
             p = p2
@@ -284,6 +326,38 @@ def _squeeze_unit_dims_to_match(arr: np.ndarray, target_shape: tuple[int, ...]) 
         return None
     squeezed = np.squeeze(arr, axis=tuple(drop_axes))
     return squeezed if tuple(squeezed.shape) == ref_shape else None
+
+
+def _unsqueeze_unit_dims_to_match(arr: np.ndarray, target_shape: tuple[int, ...]) -> np.ndarray | None:
+    """
+    Try to insert ONLY size=1 dimensions into `arr` so that it matches `target_shape`.
+    This allows [OH,OW] <-> [1,1,OH,OW] etc, but never allows flattening or reordering.
+    """
+    if tuple(arr.shape) == tuple(target_shape):
+        return arr
+    pred_shape = tuple(arr.shape)
+    ref_shape = tuple(target_shape)
+    if len(pred_shape) > len(ref_shape):
+        return None
+
+    new_shape: List[int] = []
+    i = 0
+    for d in ref_shape:
+        if i < len(pred_shape) and pred_shape[i] == d:
+            new_shape.append(int(d))
+            i += 1
+            continue
+        if d == 1:
+            new_shape.append(1)
+            continue
+        return None
+    if i != len(pred_shape):
+        return None
+    try:
+        reshaped = np.reshape(arr, tuple(new_shape))
+    except Exception:
+        return None
+    return reshaped if tuple(reshaped.shape) == ref_shape else None
 
 
 def _numel(shape):

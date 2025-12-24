@@ -2,7 +2,7 @@
 Prototype: end-to-end RVV remote run for supported kernels.
 
 Current support:
-- any_kernel_dim (reduce_any) via backend_spmd_rvv.codegen_rvv
+- generic IntentIR ops lowering to a standalone C program (default: C++ codegen).
 
 Usage:
   INTENTIR_SSH_PASSWORD=... python scripts/rvv_remote_run.py --kernel any_kernel_dim --host <host> --user <user>
@@ -26,14 +26,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backend_spmd_rvv.codegen_rvv import (
-    generate_rvv,
-    generate_reduce_any_with_data,
-    generate_groupnorm_with_files,
-    generate_attention_with_files,
-    lower_intent_to_c_with_files,
-)
+from backend_spmd_rvv.codegen.intentir_to_c import lower_intent_to_c_with_files
 from intent_ir.ir_types import IntentFunction
+from intent_ir.macro_expand import expand_macros
 from verify.gen_cases import TestCase
 
 
@@ -45,6 +40,19 @@ def _normalize_io_name(name: str) -> str:
         s = s[:-4]
     if s.endswith("ptr") and len(s) > 3:
         s = s[:-3]
+    # Single-letter IO names from some kernels/LLM outputs.
+    if s == "i":
+        s = "input"
+    if s == "o":
+        s = "output"
+    if s == "x":
+        s = "input"
+    if s == "y":
+        s = "output"
+    if s == "w":
+        s = "weight"
+    if s == "b":
+        s = "bias"
     if s == "in":
         s = "input"
     if s == "out":
@@ -62,13 +70,30 @@ def _with_io_aliases(intent: IntentFunction, io: dict) -> dict:
         if name in out:
             continue
         keys = norm_to_keys.get(_normalize_io_name(name)) or []
-        if len(keys) == 1:
-            out[name] = io[keys[0]]
+        if keys:
+            if len(keys) == 1:
+                out[name] = io[keys[0]]
+                continue
+            # If collisions exist (e.g., both "Input" and "input"), pick a stable best match.
+            lower_name = str(name).lower()
+            norm = _normalize_io_name(name)
+            preferred = None
+            for k in keys:
+                if str(k).lower() == lower_name:
+                    preferred = k
+                    break
+            if preferred is None and norm in io:
+                preferred = norm
+            if preferred is None:
+                preferred = keys[0]
+            out[name] = io[preferred]
             continue
         norm = _normalize_io_name(name)
-        candidates = [k for k in io.keys() if norm and (norm in _normalize_io_name(k))]
-        if len(candidates) == 1:
-            out[name] = io[candidates[0]]
+        # Avoid overly-short names (e.g., "N") accidentally matching "input".
+        if len(norm) >= 3:
+            candidates = [k for k in io.keys() if norm and (norm in _normalize_io_name(k))]
+            if len(candidates) == 1:
+                out[name] = io[candidates[0]]
     return out
 
 
@@ -103,13 +128,38 @@ def run_remote(
     if not report_path.exists():
         raise FileNotFoundError(f"artifact not found: {report_path}, please run scripts/full_pipeline_verify.py first")
     report = json.loads(report_path.read_text())
-    intent = IntentFunction.from_json_dict(report["intent"])
+    intent_macro = IntentFunction.from_json_dict(report["intent"])
+    intent_expanded_json = report.get("intent_expanded")
+    if isinstance(intent_expanded_json, dict):
+        intent = IntentFunction.from_json_dict(intent_expanded_json)
+    else:
+        intent = expand_macros(intent_macro)
     # Select shapes from cases (for binding), but baseline outputs must come from a real Triton run
     cases = report.get("cases") or []
     case_idx = min(max(case_index, 0), len(cases) - 1)
     bindings = dict(cases[case_idx]) if cases else {}
     if shape_overrides:
         bindings.update(shape_overrides)
+    # Common axis aliases (align kernel-signature symbols with user-friendly names).
+    if "batch" in bindings and "Z" not in bindings:
+        bindings["Z"] = bindings["batch"]
+    if "Z" in bindings and "batch" not in bindings:
+        bindings["batch"] = bindings["Z"]
+    if "group" in bindings and "num_groups" not in bindings:
+        bindings["num_groups"] = bindings["group"]
+    if "num_groups" in bindings and "C" in bindings and "group_size" not in bindings:
+        try:
+            g = int(bindings["num_groups"])
+            c = int(bindings["C"])
+            if g > 0:
+                bindings["group_size"] = c // g if (c % g == 0) else (c + g - 1) // g
+        except Exception:
+            pass
+    if "group_size" in bindings and "HW" in bindings and "num_elements" not in bindings:
+        try:
+            bindings["num_elements"] = int(bindings["group_size"]) * int(bindings["HW"])
+        except Exception:
+            pass
 
     baseline = None
     npz_path = baseline_npz or (report.get("baseline") or {}).get("npz_path")
@@ -148,8 +198,16 @@ def run_remote(
     if baseline_shapes:
         bindings = dict(baseline_shapes) | dict(shape_overrides or {})
 
+    # Common axis aliases (align kernel-signature symbols with user-friendly names).
+    if "batch" in bindings and "Z" not in bindings:
+        bindings["Z"] = bindings["batch"]
+    if "Z" in bindings and "batch" not in bindings:
+        bindings["batch"] = bindings["Z"]
+
     # Add naming aliases to baseline to match IntentIR tensor names.
-    baseline = _with_io_aliases(intent, baseline)
+    # Add naming aliases to baseline to match IntentIR tensor names.
+    # Use the macro intent here to avoid iterating over a huge expanded tensor set.
+    baseline = _with_io_aliases(intent_macro, baseline)
 
     # Derive a few common implicit symbols.
     if "group" in bindings and "num_groups" not in bindings:
@@ -221,6 +279,7 @@ def run_remote(
     }
     atol_use, rtol_use = tol.get(kernel, (1e-3, 1e-3))
     src = lower_intent_to_c_with_files(intent, shape_bindings=bindings, atol=float(atol_use), rtol=float(rtol_use))
+    backend_used = "cpp"
     with sftp.file(remote_c, "w") as f:
         f.write(src)
 
@@ -264,7 +323,14 @@ def run_remote(
             baseline_summary = {"out_ptr_len": int(o.size), "out_ptr_mean": float(o.mean()), "out_ptr_std": float(o.std())}
     except Exception:
         baseline_summary = {}
-    return {"compile_rc": rc, "run_rc": run_rc, "stdout": run_out, "stderr": run_err, "baseline_summary": baseline_summary}
+    return {
+        "backend": backend_used,
+        "compile_rc": rc,
+        "run_rc": run_rc,
+        "stdout": run_out,
+        "stderr": run_err,
+        "baseline_summary": baseline_summary,
+    }
 
 
 def main():
