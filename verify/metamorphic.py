@@ -19,7 +19,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from intent_ir.ir_types import IntentFunction
+from intent_ir.ir import IntentFunction
 from verify.diff_runner import DiffResult, run_diff
 from verify.gen_cases import TestCase
 

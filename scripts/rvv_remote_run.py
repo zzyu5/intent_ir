@@ -26,9 +26,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backend_spmd_rvv.codegen.intentir_to_c import lower_intent_to_c_with_files
-from intent_ir.ir_types import IntentFunction
-from intent_ir.macro_expand import expand_macros
+from backends.spmd_rvv.codegen.intentir_to_c import lower_intent_to_c_with_files
+from intent_ir.ir import IntentFunction
+from intent_ir.macros import expand_macros
 from verify.gen_cases import TestCase
 
 
@@ -126,7 +126,9 @@ def run_remote(
 ):
     report_path = ROOT / "artifacts" / "full_pipeline_verify" / f"{kernel}.json"
     if not report_path.exists():
-        raise FileNotFoundError(f"artifact not found: {report_path}, please run scripts/full_pipeline_verify.py first")
+        raise FileNotFoundError(
+            f"artifact not found: {report_path}, please run scripts/triton/full_pipeline_verify.py first"
+        )
     report = json.loads(report_path.read_text())
     intent_macro = IntentFunction.from_json_dict(report["intent"])
     intent_expanded_json = report.get("intent_expanded")
@@ -176,7 +178,7 @@ def run_remote(
     # to get baseline IO. This keeps Task6 usable on machines with CUDA.
     if baseline is None:
         try:
-            from scripts.pipeline_core import default_kernel_specs
+            from pipeline.triton.core import default_kernel_specs
 
             spec_map = {s.name: s for s in default_kernel_specs()}
             if kernel not in spec_map:
@@ -188,7 +190,7 @@ def run_remote(
         except Exception as e:
             raise RuntimeError(
                 "baseline not available: no cached baseline .npz in artifacts and live Triton launch failed. "
-                "Run `python scripts/full_pipeline_verify.py` on a CUDA machine to produce "
+                "Run `python scripts/triton/full_pipeline_verify.py` on a CUDA machine to produce "
                 "`artifacts/full_pipeline_verify/<kernel>.baseline.npz`, or pass --baseline-npz.\n"
                 f"live launch error: {type(e).__name__}: {e}"
             ) from e

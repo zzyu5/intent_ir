@@ -1,14 +1,7 @@
-import pathlib
-import sys
-
 import pytest
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from intent_ir.ir_types import IntentFunction
-from intent_ir.printer_mlir_like import print_mlir_like
+from intent_ir.ir import IntentFunction
+from intent_ir.ir.printer_mlir_like import print_mlir_like
 
 
 def _base_intent_json():

@@ -21,9 +21,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from intent_ir.ir_types import IntentFunction, Op
-from triton_frontend.certificate import SemanticCertificate
-from triton_frontend.static_validate import static_validate
+from intent_ir.ir import IntentFunction, Op
 from verify.diff_runner import DiffResult, run_diff
 from verify.gen_cases import TestCase
 from verify.metamorphic import MetamorphicSuiteReport, run_bounded_exhaustive, run_metamorphic_suite
@@ -78,10 +76,10 @@ def run_mutation_kill(
     kernel_name: str,
     *,
     intent: IntentFunction,
-    cert: SemanticCertificate,
     run_ref_fn: _Runner,
     diff_cases: Sequence[TestCase],
     metamorphic_base_case: TestCase,
+    static_validate_fn: Callable[[IntentFunction], object] | None = None,
     n_mutants: int = 16,
     seed: int = 0,
     atol: float = 1e-3,
@@ -93,17 +91,29 @@ def run_mutation_kill(
     outcomes: List[MutationOutcome] = []
 
     for mid, m in enumerate(mutants):
-        # Stage A: static validation (may also fail due to invalid placeholders etc)
-        try:
-            sv = static_validate(m, cert)
-        except Exception as e:
-            killed_by["invalid"] += 1
-            outcomes.append(MutationOutcome(mutant_id=mid, killed_by="invalid", detail=f"static_validate error: {type(e).__name__}: {e}"))
-            continue
-        if not sv.ok:
-            killed_by["A_static"] += 1
-            outcomes.append(MutationOutcome(mutant_id=mid, killed_by="A_static", detail="; ".join(sv.reasons) or "static obligations failed"))
-            continue
+        # Stage A: optional frontend static validation (certificate/obligations).
+        if static_validate_fn is not None:
+            try:
+                sv = static_validate_fn(m)
+                ok = bool(getattr(sv, "ok", False))
+                reasons = getattr(sv, "reasons", None)
+                reasons_list = reasons if isinstance(reasons, list) else []
+            except Exception as e:
+                killed_by["invalid"] += 1
+                outcomes.append(
+                    MutationOutcome(mutant_id=mid, killed_by="invalid", detail=f"static_validate error: {type(e).__name__}: {e}")
+                )
+                continue
+            if not ok:
+                killed_by["A_static"] += 1
+                outcomes.append(
+                    MutationOutcome(
+                        mutant_id=mid,
+                        killed_by="A_static",
+                        detail="; ".join(str(x) for x in reasons_list) or "static obligations failed",
+                    )
+                )
+                continue
 
         # Stage B: dynamic diff (reuse the same cases as the pipeline, but keep it small)
         try:

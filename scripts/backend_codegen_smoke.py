@@ -26,9 +26,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backend_spmd_rvv.codegen.intentir_to_c import lower_intent_to_c_with_files  # noqa: E402
-from intent_ir.ir_types import IntentFunction  # noqa: E402
-from intent_ir.macro_expand import expand_macros  # noqa: E402
+from backends.spmd_rvv.codegen.intentir_to_c import lower_intent_to_c_with_files  # noqa: E402
+from intent_ir.ir import IntentFunction  # noqa: E402
+from intent_ir.macros import expand_macros  # noqa: E402
 
 
 DEFAULT_KERNELS = [

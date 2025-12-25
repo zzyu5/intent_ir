@@ -1,4 +1,4 @@
-from .ir_types import (
+from .ir.ir_types import (
     IntentIRValidationError,
     Dim,
     TensorLayout,

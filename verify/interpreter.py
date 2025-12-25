@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 from typing import Any, Dict
 
-from intent_ir.ir_types import IntentFunction, Op
+from intent_ir.ir import IntentFunction, Op
 
 
 NUM_BIN_OPS = {

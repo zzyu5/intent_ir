@@ -8,7 +8,7 @@ doc/
 artifacts/
 
 # C++ codegen build output
-backend_spmd_rvv/cpp_codegen/build/
+backends/spmd_rvv/cpp_codegen/build/
 
 # Python cache
 __pycache__/

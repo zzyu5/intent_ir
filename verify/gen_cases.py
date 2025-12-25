@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional
 import numpy as np
 
-from intent_ir.ir_types import IntentFunction
-from triton_frontend.facts import TTIRConstraints
+from intent_ir.ir import IntentFunction
+from pipeline.interfaces import FrontendConstraints
 from typing import Sequence
 
 
@@ -28,7 +28,7 @@ EDGE_VALUES = [1, 2, 3, 7, 8, 15, 16, 17, 31, 32, 33]
 
 def generate_cases(
     intent: IntentFunction,
-    constraints: Optional[TTIRConstraints] = None,
+    constraints: Optional[FrontendConstraints] = None,
     limit: int = 10,
     seed: int = 0,
     tile_hints: Sequence[int] | None = None,

@@ -1,16 +1,11 @@
-import sys
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from backend_spmd_rvv import SPMDProfile, choose_tiles, generate_c  # noqa: E402
-from backend_spmd_rvv.analysis.hardware_profile import RVVHardwareProfile  # noqa: E402
-from backend_spmd_rvv.analysis.cost_model import GEMMCostModel  # noqa: E402
-from intent_ir.ir_types import IntentFunction  # noqa: E402
+from backends.spmd_rvv import SPMDProfile, choose_tiles, generate_c  # noqa: E402
+from backends.spmd_rvv.analysis.hardware_profile import RVVHardwareProfile  # noqa: E402
+from backends.spmd_rvv.analysis.cost_model import GEMMCostModel  # noqa: E402
+from intent_ir.ir import IntentFunction  # noqa: E402
 
 
 def _make_matmul_intent():

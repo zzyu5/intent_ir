@@ -9,8 +9,8 @@ from typing import Any, Callable, Dict, Iterable, List, Tuple
 
 import numpy as np
 
-from intent_ir.ir_types import IntentFunction
-from intent_ir.macro_expand import expand_macros
+from intent_ir.ir import IntentFunction
+from intent_ir.macros import expand_macros
 from verify.gen_cases import TestCase
 from verify.interpreter import execute_intent
 
