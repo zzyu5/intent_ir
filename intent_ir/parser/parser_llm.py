@@ -39,6 +39,7 @@ class CandidateIntent:
     problem_params: Dict[str, Any] = field(default_factory=dict)
     schedule_params: Dict[str, Any] = field(default_factory=dict)
     raw_json: Dict[str, Any] = field(default_factory=dict)
+    llm_trace: Dict[str, Any] = field(default_factory=dict)
 
 
 def merge_tensor_and_symbol_json(tensor_d: Dict[str, Any], symbol_d: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

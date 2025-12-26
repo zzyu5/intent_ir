@@ -13,7 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -83,6 +83,7 @@ class LLMClientError(Exception):
 @dataclass
 class LLMResponse:
     raw: Dict[str, Any]
+    meta: Dict[str, Any] = field(default_factory=dict)
 
     def first_message(self) -> str:
         """Return the first message content if present, else empty string."""
@@ -135,6 +136,7 @@ def chat_completion(
     max_total_wait_s: int = 45,
     use_cache: bool = True,
     cache_dir: Optional[str | Path] = None,
+    allow_fallback: bool = True,
     **extra: Any,
 ) -> LLMResponse:
     """
@@ -146,18 +148,36 @@ def chat_completion(
     if use_cache:
         cd = Path(cache_dir) if cache_dir is not None else DEFAULT_CACHE_DIR
         cd.mkdir(parents=True, exist_ok=True)
-        cache_key_obj = {"messages": messages, "model": model, "stream": stream, "extra": extra, "base_url": base_url}
+        cache_key_obj = {
+            "messages": messages,
+            "model": model,
+            "stream": stream,
+            "extra": extra,
+            "base_url": base_url,
+            "allow_fallback": bool(allow_fallback),
+        }
         cache_key = hashlib.sha256(json.dumps(cache_key_obj, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
         cache_path = cd / f"{cache_key}.json"
         if cache_path.exists():
             try:
-                return LLMResponse(raw=json.loads(cache_path.read_text(encoding="utf-8")))
+                data = json.loads(cache_path.read_text(encoding="utf-8"))
+                return LLMResponse(
+                    raw=data,
+                    meta={
+                        "cache_hit": True,
+                        "requested_model": model,
+                        "response_model": data.get("model"),
+                        "base_url": base_url,
+                        "cache_path": str(cache_path),
+                    },
+                )
             except Exception:
                 # Corrupt cache; ignore and re-fetch.
                 pass
 
     errors: List[str] = []
-    for m in _candidate_models(model):
+    models = _candidate_models(model) if allow_fallback else [model]
+    for m in models:
         provider = _select_provider(m)
         # If caller overrides base_url, honor it; otherwise use per-provider base_url
         # so fallback can actually switch providers.
@@ -250,7 +270,17 @@ def chat_completion(
                     cache_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
                 except Exception:
                     pass
-            return LLMResponse(raw=data)
+            return LLMResponse(
+                raw=data,
+                meta={
+                    "cache_hit": False,
+                    "requested_model": model,
+                    "model": m,
+                    "response_model": data.get("model"),
+                    "base_url": url_base,
+                    "cache_path": str(cache_path) if cache_path is not None else None,
+                },
+            )
 
     raise LLMClientError(" | ".join(errors))
 

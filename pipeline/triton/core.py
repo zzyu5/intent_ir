@@ -15,11 +15,11 @@ import numpy as np
 import torch
 import triton
 
-from intent_ir.ir import IntentIRValidationError, ScheduleSketch
-from frontends.triton.llm_intent import extract_intent_json
+from intent_ir.ir import ScheduleSketch
 from frontends.triton.dump import find_latest_ttir, prepare_dump_and_cache_dirs
+from intent_ir.llm import LLMIntentHub
 from intent_ir.macros import expand_macros, enrich_intent_macros
-from intent_ir.parser import CandidateIntent, LLMJsonParseError, parse_candidate_json
+from intent_ir.parser import CandidateIntent
 from intent_ir.ir.printer_mlir_like import print_mlir_like
 from frontends.triton.static_validate import static_validate
 from pipeline import registry as pipeline_registry
@@ -32,6 +32,7 @@ from verify.mutation import run_mutation_kill
 
 
 ROOT = Path(__file__).resolve().parents[2]
+_LLM_HUB = LLMIntentHub()
 
 
 @dataclass
@@ -44,58 +45,11 @@ class KernelSpec:
     vary_axes: List[str]
     exclude_axes: Optional[List[str]] = None
     normalize_shapes: Optional[Callable[[Dict[str, int]], Dict[str, int]]] = None
-def llm_to_intent(src: str, kernel_name: str, feedback: Optional[List[str]] = None) -> CandidateIntent:
-    base_extra = (
-        "Return STRICT JSON (no prose/code fences). "
-        "Every output must be produced by ops (no placeholder outputs). "
-        "Keep argument tensor shapes exactly as the kernel signature; if you need a view (e.g., group view), insert explicit reshape ops (do not redefine inputs). "
-        "Arithmetic ops (add/sub/mul/div/max/min) must have 2 inputs; model scalars as const ops (shape=[]), not ad-hoc scalar attrs. "
-        "Reduce dims/axis must be integer axis indices (after any reshape/transpose). "
-        "For groupnorm stats, Mean/Rstd must be [N, num_groups] (optionally [N,num_groups,1]); do NOT flatten into 1D. "
-        "IMPORTANT groupnorm semantics: reduce_sum computes SUM; you must normalize by num_elements=group_size*HW "
-        "(mean = reduce_sum(X)/num_elements; var = reduce_sum((X-mean)^2)/num_elements; rstd = rsqrt(var+eps)). "
-        "You may encode normalization as reduce_sum(attrs.scale='1.0/(group_size*HW)') or explicit div ops. "
-        "For layernorm stats, Mean/Rstd must be [M] (optionally [M,1]). "
-        "IMPORTANT layernorm semantics: normalize by N (mean = sum/N; var = sumsq/N). "
-        "Do NOT use BLOCK_*/TILE_* in tensor shapes or iota.shape. "
-        "You SHOULD emit schedule sketch if the kernel has tl.constexpr block/tile parameters: put them in schedule.tile_*/schedule.memory_hint "
-        "and bind them to axes via schedule.axis_bindings (e.g., BLOCK_M->M, BLOCK_N->N; BLOCK_Y->OH, BLOCK_X->OW). "
-        "iota uses attrs.axis (not dimension); cast uses attrs.to (not dtype). "
-        "Prefer primitive ops unless a semantic macro op is explicitly allowed."
-    )
-    lower_src = src.lower()
-    if "bicubic" in lower_src or "cubic" in lower_src:
-        base_extra += (
-            " Prefer using the semantic macro op `upsample_bicubic2d_aa` (single op) instead of expanding into dozens of primitive ops. "
-            "Macro form: one op with op='upsample_bicubic2d_aa', inputs=[input_tensor], output=output_tensor. "
-            "For macro attrs, include BOTH a structured impl object (preferred) and a few human-readable formula strings: "
-            "attrs.impl = {"
-            "kernel:{name:'keys_cubic', a:-0.5, invscale:1.0, segments:[{t_max:1.0, coeffs:[1,0,-(a+3),(a+2)]},{t_max:2.0, coeffs:[-4*a,8*a,-5*a,a]}]}, "
-            "index_plan:{center_offset:0.5, support:2.0, start_offset:0.5, clamp_low:0.0, tap_enable:'k<span_size'}, "
-            "composition:{separable:true, compute_order:'x_then_y', normalize_weights:true, other_value:0.0}, "
-            "hoist:['span_start','span_size','weights_x','weights_y','masks_x','masks_y']"
-            "}. "
-            "Also include flat shortcuts: a/support/invscale/kernel/separable/compute_order/normalize_weights/mask_policy/other_value/hoist and brief formulas. "
-            "Do NOT invent composite shape symbols like IH_IW/OH_OW; use existing symbols (N,C,IH,IW,OH,OW) only."
-        )
-    # Keep prompt kernel-name agnostic: the LLM should infer patterns from the code itself.
-    if feedback:
-        base_extra += "\nFeedback from last attempt:\n- " + "\n- ".join(feedback)
-    last_err = None
-    for attempt in range(2):
-        try:
-            js = extract_intent_json(
-                src,
-                kernel_name=kernel_name,
-                temperature=0,
-                max_tokens=6000,
-                extra_instruction=base_extra if attempt == 0 else base_extra + f" Previous attempt failed: {last_err}",
-            )
-            return parse_candidate_json(js)
-        except (LLMJsonParseError, IntentIRValidationError) as e:
-            last_err = e
-            continue
-    raise last_err or Exception("LLM/parse failed")
+def llm_to_intent(desc, feedback: Optional[List[str]] = None) -> CandidateIntent:
+    """
+    Backward-compatible helper: lift a KernelDescriptor into a CandidateIntent.
+    """
+    return _LLM_HUB.lift(desc, feedback=list(feedback or []))
 
 
 def _ensure_schedule(intent, *, kernel_name: str, triton_src: str) -> None:
@@ -673,14 +627,53 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
     report["triton_src_path"] = str(out_dir / f"{spec.name}.triton_src.txt")
     report["descriptor"] = desc.to_json_dict()
 
-    # 2) LLM -> IntentIR
-    print(f"[{spec.name}] stage3: LLM -> IntentIR (may take a while)", flush=True)
+    # 2) Launch kernel once to dump TTIR (and capture a baseline IO snapshot)
+    print(f"[{spec.name}] stage3: launch triton once (dump TTIR + baseline)", flush=True)
+    baseline_shapes = dict(spec.canonical_shapes)
+    if spec.normalize_shapes:
+        baseline_shapes = spec.normalize_shapes(baseline_shapes)
+    baseline_case = TestCase(shapes=baseline_shapes, dtypes={}, seed=0)
+    baseline_io_raw = spec.runner(baseline_case)
+    report["baseline"] = {
+        "shapes": dict(baseline_case.shapes),
+        "seed": int(baseline_case.seed),
+        "npz_path": None,
+        "keys": sorted(list(baseline_io_raw.keys())),
+    }
+
+    desc = adapter.ensure_artifacts(desc, spec)
+    report["descriptor"] = desc.to_json_dict()
+    if desc.meta.get("descriptor_path"):
+        report["descriptor_path"] = str(desc.meta.get("descriptor_path"))
+
+    ttir_path = find_latest_ttir(dump_dir, spec.name)
+    constraints = None
+    cert = None
+    contract = None
+    sv = None
+    if ttir_path and ttir_path.exists():
+        print(f"[{spec.name}] stage4: Task4 facts/contract/certificate", flush=True)
+        facts = adapter.extract_facts(desc)
+        constraints = adapter.extract_constraints(desc, facts)
+        contract = adapter.evaluate_contract(facts, constraints, None)
+        cert = adapter.build_certificate(desc, facts, constraints)
+        report["ttir_path"] = str(desc.artifacts.ttir_path or ttir_path)
+        if desc.meta.get("ttir_original_path"):
+            report["ttir_dump_path"] = str(desc.meta.get("ttir_original_path"))
+        report["contract"] = {"level": contract.level, "reasons": list(contract.reasons), "signals": dict(contract.signals)}
+        report["certificate"] = cert.to_json_dict()
+    else:
+        report["ttir_path"] = None
+
+    # 3) LLM -> IntentIR (KernelDescriptor -> CandidateIntent)
+    print(f"[{spec.name}] stage5: LLM -> IntentIR (may take a while)", flush=True)
     feedback: List[str] = []
     cand: CandidateIntent | None = None
     cand_expanded: CandidateIntent | None = None
     for attempt in range(2):
         try:
-            cand = llm_to_intent(src, spec.name, feedback=feedback)
+            cand = llm_to_intent(desc, feedback=feedback)
+            report["llm_trace"] = dict(cand.llm_trace)
             _ensure_schedule(cand.intent, kernel_name=spec.name, triton_src=src)
             enrich_intent_macros(cand.intent)
             intent_mlir = print_mlir_like(cand.intent)
@@ -691,10 +684,9 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
                 problem_params=dict(cand.problem_params),
                 schedule_params=dict(cand.schedule_params),
                 raw_json=dict(cand.raw_json),
+                llm_trace=dict(cand.llm_trace),
             )
-            (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(
-                print_mlir_like(expanded_intent), encoding="utf-8"
-            )
+            (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_intent), encoding="utf-8")
             break
         except Exception as e:
             feedback = [f"Previous failure: {e}"]
@@ -710,103 +702,47 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
         _ensure_schedule(cand_expanded.intent, kernel_name=spec.name, triton_src=src)
     report["intent_expanded"] = (cand_expanded.intent.to_json_dict() if cand_expanded is not None else None)
 
-    # 3) Launch kernel once to dump TTIR
-    print(f"[{spec.name}] stage4: launch triton once (dump TTIR + baseline)", flush=True)
-    baseline_shapes = dict(spec.canonical_shapes)
-    if spec.normalize_shapes:
-        baseline_shapes = spec.normalize_shapes(baseline_shapes)
-    baseline_case = TestCase(shapes=baseline_shapes, dtypes={}, seed=0)
-    baseline_io = spec.runner(baseline_case)
-    # Add non-destructive IO name aliases so downstream stages can refer to either
-    # Input/Output or input/output (and *_ptr variants) without breaking.
-    try:
-        from verify.diff_runner import _with_io_aliases as _with_io_aliases_for_diff
-
-        baseline_io = _with_io_aliases_for_diff(cand.intent, baseline_io)
-    except Exception:
-        pass
-    # Cache baseline IO (inputs + outputs) as an .npz artifact so downstream stages
-    # (e.g., Task6 remote run) can reuse it without re-launching Triton.
-    try:
-        total_bytes = 0
-        for v in baseline_io.values():
-            arr = np.asarray(v)
-            total_bytes += int(arr.size) * int(arr.dtype.itemsize)
-        # Avoid writing huge blobs (e.g., attention) into artifacts by default.
-        if total_bytes <= 16 * 1024 * 1024:
-            npz_path = out_dir / f"{spec.name}.baseline.npz"
-            np.savez_compressed(npz_path, **{k: np.asarray(v) for k, v in baseline_io.items()})
-            report["baseline"] = {
-                "shapes": dict(baseline_case.shapes),
-                "seed": int(baseline_case.seed),
-                "npz_path": str(npz_path),
-                "keys": sorted(list(baseline_io.keys())),
-                "bytes": int(total_bytes),
-            }
-        else:
-            report["baseline"] = {
-                "shapes": dict(baseline_case.shapes),
-                "seed": int(baseline_case.seed),
-                "npz_path": None,
-                "keys": sorted(list(baseline_io.keys())),
-                "bytes": int(total_bytes),
-                "skipped": "baseline too large to cache (over 16MB)",
-            }
-    except Exception as e:
-        report["baseline"] = {"shapes": dict(baseline_case.shapes), "seed": int(baseline_case.seed), "error": str(e)}
-    desc = adapter.ensure_artifacts(desc, spec)
-    report["descriptor"] = desc.to_json_dict()
-    if desc.meta.get("descriptor_path"):
-        report["descriptor_path"] = str(desc.meta.get("descriptor_path"))
-
-    ttir_path = find_latest_ttir(dump_dir, spec.name)
-    constraints = None
-    cert = None
-    contract = None
-    sv = None
-    if ttir_path and ttir_path.exists():
-        print(f"[{spec.name}] stage5: Task4 facts/contract/certificate + static validation", flush=True)
-        facts = adapter.extract_facts(desc)
-        constraints = adapter.extract_constraints(desc, facts)
-        contract = adapter.evaluate_contract(facts, constraints, None)
-        cert = adapter.build_certificate(desc, facts, constraints)
+    # 4) Static validation (Intent vs certificate), if TTIR certificate exists.
+    if cert is not None:
+        print(f"[{spec.name}] stage6: Task4 static validation", flush=True)
         sv = static_validate((cand_expanded.intent if cand_expanded is not None else cand.intent), cert)
-        report["ttir_path"] = str(desc.artifacts.ttir_path or ttir_path)
-        if desc.meta.get("ttir_original_path"):
-            report["ttir_dump_path"] = str(desc.meta.get("ttir_original_path"))
-        report["contract"] = {"level": contract.level, "reasons": list(contract.reasons), "signals": dict(contract.signals)}
-        report["certificate"] = cert.to_json_dict()
         report["static_validation"] = {
             "ok": bool(sv.ok),
             "reasons": list(sv.reasons),
             "obligations": [{"id": o.id, "status": o.status, "detail": o.detail} for o in sv.obligations],
         }
         if not sv.ok:
-            # Try one more round with feedback
+            # One conservative repair round using certificate-derived feedback.
             try:
-                cand = llm_to_intent(src, spec.name, feedback=sv.reasons)
+                cand = llm_to_intent(desc, feedback=list(sv.reasons))
+                report["llm_trace"] = dict(cand.llm_trace)
+                _ensure_schedule(cand.intent, kernel_name=spec.name, triton_src=src)
                 enrich_intent_macros(cand.intent)
-                intent_mlir = print_mlir_like(cand.intent)
-                (out_dir / f"{spec.name}.intentir.mlir").write_text(intent_mlir, encoding="utf-8")
-                report["intent"] = cand.intent.to_json_dict()
+                (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
                 expanded_intent = expand_macros(cand.intent)
                 cand_expanded = CandidateIntent(
                     intent=expanded_intent,
                     problem_params=dict(cand.problem_params),
                     schedule_params=dict(cand.schedule_params),
                     raw_json=dict(cand.raw_json),
+                    llm_trace=dict(cand.llm_trace),
                 )
                 (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(
                     print_mlir_like(expanded_intent), encoding="utf-8"
                 )
+                report["intent"] = cand.intent.to_json_dict()
                 report["intent_expanded"] = expanded_intent.to_json_dict()
+                sv = static_validate((cand_expanded.intent if cand_expanded is not None else cand.intent), cert)
+                report["static_validation"] = {
+                    "ok": bool(sv.ok),
+                    "reasons": list(sv.reasons),
+                    "obligations": [{"id": o.id, "status": o.status, "detail": o.detail} for o in sv.obligations],
+                }
             except Exception:
                 pass
-    else:
-        report["ttir_path"] = None
 
-    # 4) Stage B diff
-    print(f"[{spec.name}] stage6: Task5 cases + diff", flush=True)
+    # 5) Stage B diff
+    print(f"[{spec.name}] stage7: Task5 cases + diff", flush=True)
     cand_for_run = cand_expanded or cand
     cases = make_cases(
         spec,
@@ -865,19 +801,23 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
 
         if feedback3:
             try:
-                cand_fix = llm_to_intent(src, spec.name, feedback=feedback3)
+                cand_fix = llm_to_intent(desc, feedback=feedback3)
+                report["llm_trace"] = dict(cand_fix.llm_trace)
+                cand = cand_fix
                 _ensure_schedule(cand_fix.intent, kernel_name=spec.name, triton_src=src)
                 (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand_fix.intent), encoding="utf-8")
                 expanded_fix = expand_macros(cand_fix.intent)
                 (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_fix), encoding="utf-8")
                 report["intent"] = cand_fix.intent.to_json_dict()
                 report["intent_expanded"] = expanded_fix.to_json_dict()
-                cand_for_run = CandidateIntent(
+                cand_expanded = CandidateIntent(
                     intent=expanded_fix,
                     problem_params=dict(cand_fix.problem_params),
                     schedule_params=dict(cand_fix.schedule_params),
                     raw_json=dict(cand_fix.raw_json),
+                    llm_trace=dict(cand_fix.llm_trace),
                 )
+                cand_for_run = cand_expanded
                 # Re-run diff with a small case set to confirm the repair.
                 cases_fix = make_cases(
                     spec,
@@ -950,6 +890,42 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
                 "killed_by_stage": dict(mut.killed_by_stage),
                 "outcomes": [{"mutant_id": o.mutant_id, "killed_by": o.killed_by, "detail": o.detail, "diff_summary": o.diff_summary} for o in mut.outcomes],
             }
+
+    # Persist baseline IO aligned to the final macro intent, so Task6 tools can
+    # reuse the same snapshot without re-launching Triton.
+    try:
+        baseline_io = dict(baseline_io_raw)
+        try:
+            from verify.diff_runner import _with_io_aliases as _with_io_aliases_for_diff
+
+            baseline_io = _with_io_aliases_for_diff(cand.intent, baseline_io)
+        except Exception:
+            pass
+        total_bytes = 0
+        for v in baseline_io.values():
+            arr = np.asarray(v)
+            total_bytes += int(arr.size) * int(arr.dtype.itemsize)
+        if total_bytes <= 16 * 1024 * 1024:
+            npz_path = out_dir / f"{spec.name}.baseline.npz"
+            np.savez_compressed(npz_path, **{k: np.asarray(v) for k, v in baseline_io.items()})
+            report["baseline"] = {
+                "shapes": dict(baseline_case.shapes),
+                "seed": int(baseline_case.seed),
+                "npz_path": str(npz_path),
+                "keys": sorted(list(baseline_io.keys())),
+                "bytes": int(total_bytes),
+            }
+        else:
+            report["baseline"] = {
+                "shapes": dict(baseline_case.shapes),
+                "seed": int(baseline_case.seed),
+                "npz_path": None,
+                "keys": sorted(list(baseline_io.keys())),
+                "bytes": int(total_bytes),
+                "skipped": "baseline too large to cache (over 16MB)",
+            }
+    except Exception as e:
+        report["baseline"] = {"shapes": dict(baseline_case.shapes), "seed": int(baseline_case.seed), "error": str(e)}
     return report
 
 
