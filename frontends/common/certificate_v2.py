@@ -7,30 +7,11 @@ op-name strings. Only CanonicalEvidence and stable summaries belong here.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Literal, Optional
+from dataclasses import dataclass, field
+from typing import Any, Dict
 
 from .evidence import CanonicalEvidence
-
-
-@dataclass(frozen=True)
-class ObligationResultV2:
-    """
-    MVP obligation payload: ID + status + witness.
-
-    PR#5 will formalize obligation IDs and evaluation rules.
-    """
-
-    id: str
-    status: Literal["PASS", "FAIL", "UNKNOWN"]
-    witness: Dict[str, Any] = field(default_factory=dict)
-    reason: str = ""
-
-    def to_json_dict(self) -> Dict[str, Any]:
-        out = {"id": str(self.id), "status": str(self.status), "witness": dict(self.witness)}
-        if self.reason:
-            out["reason"] = str(self.reason)
-        return out
+from .obligations import ObligationResult
 
 
 @dataclass
@@ -57,7 +38,7 @@ class SemanticCertificateV2:
         def encode(obj: Any) -> Any:
             if isinstance(obj, CanonicalEvidence):
                 return obj.to_json_dict()
-            if isinstance(obj, ObligationResultV2):
+            if isinstance(obj, ObligationResult):
                 return obj.to_json_dict()
             if isinstance(obj, list):
                 return [encode(x) for x in obj]
@@ -73,5 +54,4 @@ class SemanticCertificateV2:
         }
 
 
-__all__ = ["ObligationResultV2", "SemanticCertificateV2"]
-
+__all__ = ["ObligationResult", "SemanticCertificateV2"]

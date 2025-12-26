@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pipeline.interfaces import KernelDescriptor
 
-from frontends.common.certificate_v2 import ObligationResultV2, SemanticCertificateV2
+from frontends.common.certificate_v2 import SemanticCertificateV2
 from frontends.common.evidence import AccessSummary, CanonicalEvidence, IndexExpr, Predicate, sort_accesses
 
 from .facts import TTIRFacts, extract_facts
@@ -414,8 +414,6 @@ def build_certificate_v2(
     """
     facts = facts or extract_facts(ttir)
     kernel_kind = _infer_kernel_kind(facts)
-    contract = evaluate_contract(facts)
-
     accesses, symbols = _collect_accesses_canonical(ttir, facts, desc=desc)
     anchors = {
         "kernel_kind_hint": kernel_kind,
@@ -433,24 +431,12 @@ def build_certificate_v2(
         meta={"symbols": symbols},
     ).canonicalize()
 
-    # MVP obligations (carry over v1-style checks, but keep witnesses stable).
-    obligations: List[ObligationResultV2] = []
-    anchor_ok = (kernel_kind == "matmul" and facts.has_dot) or (kernel_kind in {"reduce", "attention"} and facts.has_reduce) or (
-        kernel_kind == "unknown"
-    )
-    obligations.append(ObligationResultV2(id="O1_anchor_present", status="PASS" if anchor_ok else "FAIL", witness={"anchors": anchors}))
-    obligations.append(ObligationResultV2(id="O2_no_atomic", status="FAIL" if facts.has_atomic else "PASS", witness={}))
-    needs_mask = any(a.predicate is not None and a.predicate.clauses for a in accesses)
-    obligations.append(ObligationResultV2(id="O3_mask_present", status="PASS" if needs_mask else "UNKNOWN", witness={}))
-
     cert = SemanticCertificateV2(
         schema_version="cert_v2.0",
         semantic_facts={
             "anchors": anchors,
             "io_spec": (dict(desc.io_spec) if desc is not None else {}),
             "canonical_evidence": evidence,
-            "obligations": obligations,
-            "contract": asdict(contract),
         },
         schedule_hints=dict(schedule_hints),
         meta={},

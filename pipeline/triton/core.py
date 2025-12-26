@@ -30,6 +30,8 @@ from verify.gen_cases import TestCase, generate_cases
 from frontends.common.certificate_v2 import SemanticCertificateV2
 from frontends.common.evidence import CanonicalEvidence
 from frontends.triton.certificate import SemanticCertificate, build_certificate_v2
+from frontends.common.obligations import evaluate_obligations
+from frontends.triton.contract import evaluate_contract_v2
 from verify.metamorphic import run_bounded_exhaustive, run_metamorphic_suite
 from verify.mutation import run_mutation_kill
 
@@ -704,7 +706,8 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
         print(f"[{spec.name}] stage4: Task4 facts/contract/certificate", flush=True)
         facts = adapter.extract_facts(desc)
         constraints = adapter.extract_constraints(desc, facts)
-        contract = adapter.evaluate_contract(facts, constraints, None)
+        # Legacy contract (v1) for fallback/debug; v2 contract is derived from obligations.
+        contract_legacy = adapter.evaluate_contract(facts, constraints, None)
         cert = adapter.build_certificate(desc, facts, constraints)
         # CertificateV2 (stable semantic_facts + canonical evidence).
         try:
@@ -715,16 +718,43 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
                 ttir_text = Path(str(ttir_path)).read_text(encoding="utf-8")
             if ttir_text:
                 cert_v2 = build_certificate_v2(ttir_text, desc=desc, facts=facts)
+                obligations = evaluate_obligations(desc, cert_v2)
+                # Store obligations inside cert_v2 semantic_facts (stable, schema-versioned).
+                cert_v2.semantic_facts["obligations"] = [o.to_json_dict() for o in obligations]
+                contract = evaluate_contract_v2(desc, cert_v2, obligations, constraints=constraints)
                 report["certificate_v2"] = cert_v2.to_json_dict()
                 (out_dir / f"{spec.name}.certificate_v2.json").write_text(
                     json.dumps(report["certificate_v2"], indent=2), encoding="utf-8"
                 )
+                report["obligations"] = [o.to_json_dict() for o in obligations]
+                report["contract"] = {
+                    "level": contract.level,
+                    "reasons": list(contract.reasons),
+                    "assumptions": list(contract.assumptions),
+                    "signals": dict(contract.signals),
+                }
+                (out_dir / f"{spec.name}.contract.json").write_text(json.dumps(report["contract"], indent=2), encoding="utf-8")
         except Exception as e:
             report["certificate_v2_error"] = str(e)
+        # Always include a contract summary (prefer v2; fall back to legacy if v2 failed).
+        report.setdefault(
+            "contract",
+            {
+                "level": contract_legacy.level,
+                "reasons": list(contract_legacy.reasons),
+                "assumptions": list(contract_legacy.assumptions),
+                "signals": dict(contract_legacy.signals),
+            },
+        )
+        report["contract_legacy"] = {
+            "level": contract_legacy.level,
+            "reasons": list(contract_legacy.reasons),
+            "assumptions": list(contract_legacy.assumptions),
+            "signals": dict(contract_legacy.signals),
+        }
         report["ttir_path"] = str(desc.artifacts.ttir_path or ttir_path)
         if desc.meta.get("ttir_original_path"):
             report["ttir_dump_path"] = str(desc.meta.get("ttir_original_path"))
-        report["contract"] = {"level": contract.level, "reasons": list(contract.reasons), "signals": dict(contract.signals)}
         report["certificate"] = cert.to_json_dict()
     else:
         report["ttir_path"] = None
