@@ -1,11 +1,11 @@
-from dataclasses import dataclass
-from typing import Any, Callable, Dict, List
+from typing import Dict
 
 import numpy as np
 
 from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, TensorType
 from verify.gen_cases import TestCase
 
+from .spec import TileLangKernelSpec
 
 def make_gemm_prim_func(
     *,
@@ -86,19 +86,6 @@ def gemm_intent() -> IntentFunction:
     )
 
 
-@dataclass
-class TileLangKernelSpec:
-    name: str
-    prim_func: Any
-    arg_names: List[str]
-    canonical_shapes: Dict[str, int]
-    vary_axes: List[str]
-    runner: Callable[[TestCase], Dict[str, np.ndarray]]
-    intent_builder: Callable[[], IntentFunction]
-    exclude_axes: List[str] | None = None
-    constexpr_names: List[str] | None = None
-
-
 def gemm_spec() -> TileLangKernelSpec:
     return TileLangKernelSpec(
         name="tilelang_gemm",
@@ -113,4 +100,4 @@ def gemm_spec() -> TileLangKernelSpec:
     )
 
 
-__all__ = ["TileLangKernelSpec", "make_gemm_prim_func", "gemm_reference", "gemm_intent", "gemm_spec"]
+__all__ = ["make_gemm_prim_func", "gemm_reference", "gemm_intent", "gemm_spec"]

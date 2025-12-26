@@ -8,11 +8,8 @@ This mirrors the Triton pipeline shape, but uses the TileLang adapter:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List
-
-import numpy as np
+from typing import Dict, List
 
 from frontends.common.contract_v2 import evaluate_contract_v2
 from frontends.common.obligations import evaluate_obligations
@@ -24,53 +21,61 @@ from verify.metamorphic import run_bounded_exhaustive, run_metamorphic_suite
 from verify.mutation import run_mutation_kill
 
 from intent_ir.parser import CandidateIntent
-from intent_ir.ir import IntentFunction
 from intent_ir.ir.printer_mlir_like import print_mlir_like
 
+from kernels.tilelang.ops.any_kernel_dim import any_kernel_dim_spec
+from kernels.tilelang.ops.groupnorm import group_norm_kernel_spec
+from kernels.tilelang.ops.softmax_inner import softmax_inner_spec
+from kernels.tilelang.ops.layernorm import layer_norm_persistent_spec
+from kernels.tilelang.ops.upsample_bicubic2d_aa import upsample_bicubic2d_aa_spec
+from kernels.tilelang.ops._attn_fwd import attn_fwd_spec
 from kernels.tilelang.ops.gemm import gemm_spec
+from kernels.tilelang.ops.spec import TileLangKernelSpec
 
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@dataclass
-class KernelSpec:
-    name: str
-    kernel_obj: object
-    runner: Callable[[TestCase], Dict[str, np.ndarray]]
-    intent_builder: Callable[[], IntentFunction]
-    canonical_shapes: Dict[str, int]
-    vary_axes: List[str]
-    exclude_axes: List[str] | None = None
+def mvp_kernel_specs() -> List[TileLangKernelSpec]:
+    """
+    PR#9 original MVP: one anchor-strong kernel to prove the pipeline can host TileLang.
+    """
+    return [gemm_spec()]
 
 
-def default_kernel_specs() -> List[KernelSpec]:
-    s = gemm_spec()
+def default_kernel_specs() -> List[TileLangKernelSpec]:
+    """
+    Regression suite: mirror Triton's 6 representative kernels (by name).
+    """
     return [
-        KernelSpec(
-            name=s.name,
-            kernel_obj=s,
-            runner=s.runner,
-            intent_builder=s.intent_builder,
-            canonical_shapes=dict(s.canonical_shapes),
-            vary_axes=list(s.vary_axes),
-            exclude_axes=list(s.exclude_axes or []),
-        )
+        any_kernel_dim_spec(),
+        group_norm_kernel_spec(),
+        attn_fwd_spec(),
+        softmax_inner_spec(),
+        layer_norm_persistent_spec(),
+        upsample_bicubic2d_aa_spec(),
     ]
 
 
-def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int = 8) -> Dict[str, object]:
+def run_pipeline_for_spec(
+    spec: TileLangKernelSpec,
+    *,
+    out_dir: Path,
+    cases_limit: int = 8,
+    stage_c: bool = True,
+    mutation_kill: bool = True,
+) -> Dict[str, object]:
     report: Dict[str, object] = {"kernel": spec.name, "frontend": "tilelang"}
     out_dir.mkdir(parents=True, exist_ok=True)
     adapter = pipeline_registry.get("tilelang")
 
     # 1) Descriptor / facts / constraints / certificate
-    desc = adapter.build_descriptor(spec.kernel_obj)
+    desc = adapter.build_descriptor(spec)
     desc.meta["artifact_dir"] = str(out_dir)
     (out_dir / f"{spec.name}.tilelang_tir.py").write_text(desc.source_text, encoding="utf-8")
     report["descriptor"] = desc.to_json_dict()
 
-    desc = adapter.ensure_artifacts(desc, spec.kernel_obj)
+    desc = adapter.ensure_artifacts(desc, spec)
     facts = adapter.extract_facts(desc)
     constraints: FrontendConstraints = adapter.extract_constraints(desc, facts)
     cert_v2 = adapter.build_certificate(desc, facts, constraints)
@@ -113,29 +118,36 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
     diffs_in, _ = run_diff(cand.intent, spec.runner, cases_in)
     report["diff"] = {"ok": bool(diffs_in and all(d.ok for d in diffs_in)), "results": [d.__dict__ for d in diffs_in]}
 
-    # Optional Stage C (metamorphic/bounded/mutation-kill): mostly skips for MVP kernels.
-    base_case = TestCase(shapes=dict(spec.canonical_shapes), dtypes={}, seed=0)
-    meta = run_metamorphic_suite(spec.name, cand.intent, spec.runner, base_case=base_case)
-    bounded = run_bounded_exhaustive(spec.name, cand.intent, spec.runner, max_cases=64)
-    diff_cases = cases_in[:2] if cases_in else [base_case]
-    metamorphic_base = cases_in[0] if cases_in else base_case
-    mut = run_mutation_kill(
-        spec.name,
-        intent=cand.intent,
-        run_ref_fn=spec.runner,
-        diff_cases=diff_cases,
-        metamorphic_base_case=metamorphic_base,
-        static_validate_fn=None,
-        n_mutants=8,
-        seed=0,
-    )
-    report["stage_c"] = {
-        "metamorphic": {"ok": bool(meta.ok), "results": [r.__dict__ for r in meta.results]},
-        "bounded_exhaustive": bounded.__dict__,
-    }
-    report["mutation_kill"] = mut.__dict__
+    if stage_c:
+        base_case = TestCase(shapes=dict(spec.canonical_shapes), dtypes={}, seed=0)
+        meta = run_metamorphic_suite(spec.name, cand.intent, spec.runner, base_case=base_case)
+        bounded = run_bounded_exhaustive(spec.name, cand.intent, spec.runner, max_cases=64)
+        report["stage_c"] = {
+            "metamorphic": {"ok": bool(meta.ok), "results": [r.__dict__ for r in meta.results]},
+            "bounded_exhaustive": bounded.__dict__,
+        }
+    else:
+        report["stage_c"] = {"skipped": True}
+
+    if mutation_kill:
+        base_case = TestCase(shapes=dict(spec.canonical_shapes), dtypes={}, seed=0)
+        diff_cases = cases_in[:2] if cases_in else [base_case]
+        metamorphic_base = cases_in[0] if cases_in else base_case
+        mut = run_mutation_kill(
+            spec.name,
+            intent=cand.intent,
+            run_ref_fn=spec.runner,
+            diff_cases=diff_cases,
+            metamorphic_base_case=metamorphic_base,
+            static_validate_fn=None,
+            n_mutants=8,
+            seed=0,
+        )
+        report["mutation_kill"] = mut.__dict__
+    else:
+        report["mutation_kill"] = {"skipped": True}
 
     return report
 
 
-__all__ = ["KernelSpec", "default_kernel_specs", "run_pipeline_for_spec"]
+__all__ = ["TileLangKernelSpec", "mvp_kernel_specs", "default_kernel_specs", "run_pipeline_for_spec"]

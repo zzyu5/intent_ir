@@ -118,8 +118,10 @@ def generate_cases_split(
         if _satisfies_assumptions(base, parsed_assumps):
             in_contract.append(TestCase(shapes=base, dtypes={}, seed=seed))
     for c in candidates:
-        if _satisfies_assumptions(c.shapes, parsed_assumps):
-            in_contract.append(c)
+        full_shapes = dict(base_shapes or {})
+        full_shapes.update(dict(c.shapes))
+        if _satisfies_assumptions(full_shapes, parsed_assumps):
+            in_contract.append(TestCase(shapes=full_shapes, dtypes=dict(c.dtypes or {}), seed=int(c.seed)))
         if len(in_contract) >= limit:
             break
 

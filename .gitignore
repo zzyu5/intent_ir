@@ -16,3 +16,6 @@ __pycache__/
 *.pyo
 *.pyd
 .pytest_cache/
+
+# Local logs
+autotuner.log
