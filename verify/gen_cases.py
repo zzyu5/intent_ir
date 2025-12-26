@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from intent_ir.ir import IntentFunction
 from pipeline.interfaces import FrontendConstraints
 from typing import Sequence
+import re
 
 
 @dataclass
@@ -24,6 +25,143 @@ class TestCase:
 
 
 EDGE_VALUES = [1, 2, 3, 7, 8, 15, 16, 17, 31, 32, 33]
+
+
+@dataclass
+class GeneratedCases:
+    """
+    PR#6: split cases by contract boundary.
+
+    - `in_contract`: must satisfy all assumptions; used for correctness gating.
+    - `out_of_contract`: violates exactly one assumption; used only for behavior probing.
+    """
+
+    in_contract: List[TestCase]
+    out_of_contract: List[TestCase]
+
+
+_ASSUMP_MOD_EQ0_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*%\s*(\d+)\s*==\s*0\s*$")
+
+
+def _parse_assumptions(assumptions: Sequence[str] | None) -> List[Tuple[str, int]]:
+    out: List[Tuple[str, int]] = []
+    for a in assumptions or []:
+        if not isinstance(a, str):
+            continue
+        m = _ASSUMP_MOD_EQ0_RE.match(a)
+        if not m:
+            continue
+        axis = m.group(1)
+        try:
+            mod = int(m.group(2))
+        except Exception:
+            continue
+        if mod > 0:
+            out.append((axis, mod))
+    return out
+
+
+def _satisfies_assumptions(shapes: Dict[str, int], assumptions: List[Tuple[str, int]]) -> bool:
+    for axis, mod in assumptions:
+        if axis not in shapes:
+            continue
+        try:
+            v = int(shapes[axis])
+        except Exception:
+            return False
+        if v % mod != 0:
+            return False
+    return True
+
+
+def generate_cases_split(
+    intent: IntentFunction,
+    constraints: Optional[FrontendConstraints] = None,
+    *,
+    limit: int = 10,
+    seed: int = 0,
+    tile_hints: Sequence[int] | None = None,
+    axes: Sequence[str] | None = None,
+    exclude_axes: Sequence[str] | None = None,
+    extra_sizes: Sequence[int] | None = None,
+    predicate_clauses: Sequence[str] | None = None,
+    assumptions: Sequence[str] | None = None,
+    base_shapes: Dict[str, int] | None = None,
+) -> GeneratedCases:
+    """
+    Deterministic case generation with a contract boundary.
+
+    - in_contract: filters cases to satisfy `assumptions` (simple `X % k == 0` today).
+    - out_of_contract: for each assumption, emit one case that violates ONLY that assumption.
+    """
+    parsed_assumps = _parse_assumptions(assumptions)
+
+    # Reuse the existing generator to produce a diverse candidate pool, then split.
+    candidates = generate_cases(
+        intent,
+        constraints=constraints,
+        limit=max(50, limit * 8),
+        seed=seed,
+        tile_hints=tile_hints,
+        axes=axes,
+        exclude_axes=exclude_axes,
+        extra_sizes=extra_sizes,
+        predicate_clauses=predicate_clauses,
+    )
+
+    in_contract: List[TestCase] = []
+    for c in candidates:
+        if _satisfies_assumptions(c.shapes, parsed_assumps):
+            in_contract.append(c)
+        if len(in_contract) >= limit:
+            break
+
+    # Ensure we have at least one in-contract shape to anchor out-of-contract probing.
+    anchor_shapes = dict(base_shapes or (in_contract[0].shapes if in_contract else {}))
+    if parsed_assumps and anchor_shapes and not _satisfies_assumptions(anchor_shapes, parsed_assumps):
+        # Try to find any satisfying candidate to use as anchor.
+        for c in candidates:
+            if _satisfies_assumptions(c.shapes, parsed_assumps):
+                anchor_shapes = dict(c.shapes)
+                break
+
+    out_of_contract: List[TestCase] = []
+    seen = set(tuple(sorted(c.shapes.items())) for c in in_contract)
+    # One violation at a time.
+    for axis, mod in parsed_assumps:
+        if axis not in anchor_shapes:
+            continue
+        shapes = dict(anchor_shapes)
+        v = int(shapes[axis])
+        # Pick a nearby violating value deterministically.
+        cand_vals = [max(1, v - 1), v + 1, max(1, mod - 1), mod + 1, 2 * mod + 1]
+        bad = None
+        for vv in cand_vals:
+            if vv % mod != 0:
+                bad = vv
+                break
+        if bad is None:
+            continue
+        shapes[axis] = int(bad)
+        # Must violate exactly this assumption, and satisfy all others.
+        ok_other = True
+        for ax2, mod2 in parsed_assumps:
+            if ax2 == axis:
+                continue
+            if ax2 in shapes and int(shapes[ax2]) % int(mod2) != 0:
+                ok_other = False
+                break
+        if not ok_other:
+            continue
+        key = tuple(sorted(shapes.items()))
+        if key in seen:
+            continue
+        seen.add(key)
+        out_of_contract.append(TestCase(shapes=shapes, dtypes={}, seed=seed))
+        if len(out_of_contract) >= min(limit, len(parsed_assumps)):
+            break
+
+    return GeneratedCases(in_contract=in_contract, out_of_contract=out_of_contract)
 
 
 def generate_cases(
@@ -127,4 +265,4 @@ def _collect_tile_hints(intent: IntentFunction) -> List[int]:
     return tiles or [16]
 
 
-__all__ = ["TestCase", "generate_cases"]
+__all__ = ["TestCase", "GeneratedCases", "generate_cases", "generate_cases_split"]

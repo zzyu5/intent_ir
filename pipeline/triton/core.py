@@ -26,7 +26,7 @@ from frontends.triton.static_validate import static_validate
 from pipeline import registry as pipeline_registry
 from pipeline.interfaces import FrontendConstraints
 from verify.diff_runner import run_diff
-from verify.gen_cases import TestCase, generate_cases
+from verify.gen_cases import GeneratedCases, TestCase, generate_cases_split
 from frontends.common.certificate_v2 import SemanticCertificateV2
 from frontends.common.evidence import CanonicalEvidence
 from frontends.triton.certificate import SemanticCertificate, build_certificate_v2
@@ -144,11 +144,12 @@ def make_cases(
     extra_tile_hints: Optional[List[int]] = None,
     cert: Optional[SemanticCertificate] = None,
     cert_v2: SemanticCertificateV2 | None = None,
-) -> List[TestCase]:
+    assumptions: List[str] | None = None,
+) -> GeneratedCases:
     base = dict(spec.canonical_shapes)
     if spec.normalize_shapes:
         base = spec.normalize_shapes(base)
-    cases = [TestCase(shapes=base, dtypes={}, seed=0)]
+    base_case = TestCase(shapes=base, dtypes={}, seed=0)
     tile_hints = []
     if extra_tile_hints:
         tile_hints.extend(int(x) for x in extra_tile_hints if isinstance(x, int))
@@ -233,7 +234,7 @@ def make_cases(
         except Exception:
             pass
 
-    generated = generate_cases(
+    generated = generate_cases_split(
         intent.intent,
         constraints=constraints,
         limit=limit,
@@ -243,15 +244,38 @@ def make_cases(
         exclude_axes=spec.exclude_axes,
         extra_sizes=extra_sizes,
         predicate_clauses=predicate_clauses,
+        assumptions=list(assumptions or []),
+        base_shapes=dict(base),
     )
-    for c in generated:
+
+    def merge_case(c: TestCase) -> TestCase:
         merged = dict(spec.canonical_shapes)
         merged.update(c.shapes)
         if spec.normalize_shapes:
             merged = spec.normalize_shapes(merged)
         c.shapes = merged
-        cases.append(c)
-    return cases
+        return c
+
+    in_cases: List[TestCase] = []
+    seen = set()
+    for c in [base_case] + list(generated.in_contract):
+        c = merge_case(c)
+        key = tuple(sorted(c.shapes.items()))
+        if key in seen:
+            continue
+        seen.add(key)
+        in_cases.append(c)
+
+    out_cases: List[TestCase] = []
+    for c in list(generated.out_of_contract):
+        c = merge_case(c)
+        key = tuple(sorted(c.shapes.items()))
+        if key in seen:
+            continue
+        seen.add(key)
+        out_cases.append(c)
+
+    return GeneratedCases(in_contract=in_cases, out_of_contract=out_cases)
 
 
 # ---------------------- default kernel runners ----------------------
@@ -839,7 +863,13 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
     # 5) Stage B diff
     print(f"[{spec.name}] stage7: Task5 cases + diff", flush=True)
     cand_for_run = cand_expanded or cand
-    cases = make_cases(
+    assumptions = []
+    try:
+        if isinstance(report.get("contract"), dict):
+            assumptions = list((report.get("contract") or {}).get("assumptions") or [])
+    except Exception:
+        assumptions = []
+    cases_pack = make_cases(
         spec,
         cand_for_run,
         constraints,
@@ -847,35 +877,65 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
         extra_tile_hints=cert.tile_hints if cert else None,
         cert=cert,
         cert_v2=cert_v2,
+        assumptions=assumptions,
     )
-    report["cases"] = [dict(c.shapes) for c in cases]
-    diffs, cex = run_diff(cand_for_run.intent, spec.runner, cases)
-    if diffs:
-        worst = max(diffs, key=lambda d: (not d.ok, d.max_abs_err))
+    cases_in = list(cases_pack.in_contract)
+    cases_out = list(cases_pack.out_of_contract)
+    report["cases"] = {"in_contract": [dict(c.shapes) for c in cases_in], "out_of_contract": [dict(c.shapes) for c in cases_out]}
+
+    diffs_in, cex_in = run_diff(cand_for_run.intent, spec.runner, cases_in)
+    if diffs_in:
+        worst = max(diffs_in, key=lambda d: (not d.ok, d.max_abs_err))
         report["diff"] = {
-            "ok": bool(all(d.ok for d in diffs)),
+            "ok": bool(all(d.ok for d in diffs_in)),
             "worst": {"summary": worst.summary, "max_abs": float(worst.max_abs_err), "max_rel": float(worst.max_rel_err)},
             "results": [
                 {
-                    "case_shapes": dict(cases[i].shapes),
-                    "ok": bool(diffs[i].ok),
-                    "summary": diffs[i].summary,
-                    "max_abs": float(diffs[i].max_abs_err),
-                    "max_rel": float(diffs[i].max_rel_err),
+                    "case_shapes": dict(cases_in[i].shapes),
+                    "ok": bool(diffs_in[i].ok),
+                    "summary": diffs_in[i].summary,
+                    "max_abs": float(diffs_in[i].max_abs_err),
+                    "max_rel": float(diffs_in[i].max_rel_err),
                 }
-                for i in range(min(len(cases), len(diffs)))
+                for i in range(min(len(cases_in), len(diffs_in)))
             ],
         }
     else:
         report["diff"] = {"ok": False, "error": "no diff results"}
-    if cex:
+    if cex_in:
         report["counterexamples"] = [
-            {"shapes": dict(cx.case.shapes), "summary": cx.diff.summary, "hints": list(cx.hints)} for cx in cex[:3]
+            {"shapes": dict(cx.case.shapes), "summary": cx.diff.summary, "hints": list(cx.hints)} for cx in cex_in[:3]
         ]
+
+    # Out-of-contract probing (does NOT affect correctness gate).
+    if cases_out:
+        diffs_out, cex_out = run_diff(cand_for_run.intent, spec.runner, cases_out)
+        if diffs_out:
+            worst = max(diffs_out, key=lambda d: (not d.ok, d.max_abs_err))
+            report["diff_out_of_contract"] = {
+                "ok": bool(all(d.ok for d in diffs_out)),
+                "worst": {"summary": worst.summary, "max_abs": float(worst.max_abs_err), "max_rel": float(worst.max_rel_err)},
+                "results": [
+                    {
+                        "case_shapes": dict(cases_out[i].shapes),
+                        "ok": bool(diffs_out[i].ok),
+                        "summary": diffs_out[i].summary,
+                        "max_abs": float(diffs_out[i].max_abs_err),
+                        "max_rel": float(diffs_out[i].max_rel_err),
+                    }
+                    for i in range(min(len(cases_out), len(diffs_out)))
+                ],
+            }
+        else:
+            report["diff_out_of_contract"] = {"ok": False, "error": "no diff results"}
+        if cex_out:
+            report["out_of_contract_counterexamples"] = [
+                {"shapes": dict(cx.case.shapes), "summary": cx.diff.summary, "hints": list(cx.hints)} for cx in cex_out[:3]
+            ]
 
     # If dynamic diff fails, do one bounded LLM repair round using concrete feedback.
     # This is deliberately conservative (1 retry) to respect LLM rate limits.
-    if diffs and not all(d.ok for d in diffs):
+    if diffs_in and not all(d.ok for d in diffs_in):
         worst_summary = (report.get("diff") or {}).get("worst", {}).get("summary")
         ce0 = (report.get("counterexamples") or [{}])[0]
         feedback3: List[str] = []
@@ -915,7 +975,7 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
                 )
                 cand_for_run = cand_expanded
                 # Re-run diff with a small case set to confirm the repair.
-                cases_fix = make_cases(
+                cases_fix_pack = make_cases(
                     spec,
                     cand_for_run,
                     constraints,
@@ -923,36 +983,38 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
                     extra_tile_hints=cert.tile_hints if cert else None,
                     cert=cert,
                     cert_v2=cert_v2,
+                    assumptions=assumptions,
                 )
-                report["cases"] = [dict(c.shapes) for c in cases_fix]
+                cases_fix = list(cases_fix_pack.in_contract)
+                report["cases"] = {"in_contract": [dict(c.shapes) for c in cases_fix], "out_of_contract": []}
                 diffs_fix, cex_fix = run_diff(cand_for_run.intent, spec.runner, cases_fix)
-                diffs, cex = diffs_fix, cex_fix
-                if diffs:
-                    worst = max(diffs, key=lambda d: (not d.ok, d.max_abs_err))
+                diffs_in, cex_in = diffs_fix, cex_fix
+                if diffs_in:
+                    worst = max(diffs_in, key=lambda d: (not d.ok, d.max_abs_err))
                     report["diff"] = {
-                        "ok": bool(all(d.ok for d in diffs)),
+                        "ok": bool(all(d.ok for d in diffs_in)),
                         "worst": {"summary": worst.summary, "max_abs": float(worst.max_abs_err), "max_rel": float(worst.max_rel_err)},
                         "results": [
                             {
                                 "case_shapes": dict(cases_fix[i].shapes),
-                                "ok": bool(diffs[i].ok),
-                                "summary": diffs[i].summary,
-                                "max_abs": float(diffs[i].max_abs_err),
-                                "max_rel": float(diffs[i].max_rel_err),
+                                "ok": bool(diffs_in[i].ok),
+                                "summary": diffs_in[i].summary,
+                                "max_abs": float(diffs_in[i].max_abs_err),
+                                "max_rel": float(diffs_in[i].max_rel_err),
                             }
-                            for i in range(min(len(cases_fix), len(diffs)))
+                            for i in range(min(len(cases_fix), len(diffs_in)))
                         ],
                     }
-                if cex:
+                if cex_in:
                     report["counterexamples"] = [
-                        {"shapes": dict(cx.case.shapes), "summary": cx.diff.summary, "hints": list(cx.hints)} for cx in cex[:3]
+                        {"shapes": dict(cx.case.shapes), "summary": cx.diff.summary, "hints": list(cx.hints)} for cx in cex_in[:3]
                     ]
             except Exception:
                 pass
 
     # 5) Stage C + mutation-kill if Stage B passed
-    if diffs and all(d.ok for d in diffs):
-        meta = run_metamorphic_suite(spec.name, cand_for_run.intent, spec.runner, base_case=cases[0])
+    if diffs_in and all(d.ok for d in diffs_in):
+        meta = run_metamorphic_suite(spec.name, cand_for_run.intent, spec.runner, base_case=cases_in[0])
         bounded = run_bounded_exhaustive(spec.name, cand_for_run.intent, spec.runner)
         report["stage_c"] = {
             "metamorphic": {
@@ -973,8 +1035,8 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
                 spec.name,
                 intent=cand_for_run.intent,
                 run_ref_fn=spec.runner,
-                diff_cases=cases[:2],
-                metamorphic_base_case=cases[0],
+                diff_cases=cases_in[:2],
+                metamorphic_base_case=cases_in[0],
                 static_validate_fn=(lambda m, _cert=cert: static_validate(m, _cert)),
                 n_mutants=16,
                 seed=0,
