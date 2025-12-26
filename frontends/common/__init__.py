@@ -9,6 +9,7 @@ should translate their IR facts into these schemas.
 from .evidence import AccessSummary, CanonicalEvidence, IndexExpr, Predicate
 from .obligations import ObligationResult
 from .certificate_v2 import SemanticCertificateV2
+from .smt_o3 import O3Report, check_mask_implies_inbounds
 
 __all__ = [
     "IndexExpr",
@@ -17,4 +18,6 @@ __all__ = [
     "CanonicalEvidence",
     "ObligationResult",
     "SemanticCertificateV2",
+    "O3Report",
+    "check_mask_implies_inbounds",
 ]

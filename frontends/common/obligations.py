@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Literal, Optional, Set, TYPE_CHECKING
 
 from .evidence import CanonicalEvidence, IndexExpr
+from .smt_o3 import check_mask_implies_inbounds
 
 if TYPE_CHECKING:  # pragma: no cover
     from pipeline.interfaces import KernelDescriptor
@@ -44,74 +45,7 @@ class ObligationResult:
         return out
 
 
-_CMP_RE = re.compile(r"^(?P<lhs>.+?)\s*(?P<op><=|>=|==|!=|<|>)\s*(?P<rhs>.+?)\s*$")
 _ARG_INDEX_RE = re.compile(r"^arg\d+$")
-
-
-def _parse_cmp(clause: str) -> Optional[Tuple[str, str, str]]:
-    m = _CMP_RE.match(str(clause).strip())
-    if not m:
-        return None
-    return (m.group("lhs").strip(), m.group("op").strip(), m.group("rhs").strip())
-
-
-def _parse_affine_expr(expr: str) -> Optional[IndexExpr]:
-    """
-    Parse a simple affine expression formatted by `frontends.triton.certificate._format_index_expr`.
-    Supported tokens: var, int, +/- separators, and `c*var`.
-    """
-    s = str(expr).strip()
-    if not s or s == "<unresolved>":
-        return None
-    # Normalize: turn subtraction into "+ -term"
-    s = s.replace("-", "+-")
-    parts = [p.strip() for p in s.split("+") if p.strip()]
-    terms: Dict[str, int] = {}
-    const = 0
-    for p in parts:
-        if "*" in p:
-            a, b = p.split("*", 1)
-            try:
-                c = int(a.strip())
-            except Exception:
-                return None
-            v = b.strip()
-            if not v:
-                return None
-            terms[v] = terms.get(v, 0) + c
-            continue
-        if p.lstrip("-").isdigit():
-            const += int(p)
-            continue
-        # bare var, maybe with unary '-'
-        if p.startswith("-") and len(p) > 1:
-            v = p[1:].strip()
-            if not v:
-                return None
-            terms[v] = terms.get(v, 0) - 1
-        else:
-            v = p.strip()
-            if not v:
-                return None
-            terms[v] = terms.get(v, 0) + 1
-    terms = {k: v for k, v in terms.items() if v != 0}
-    return IndexExpr(terms=terms, const=int(const))
-
-
-def _prove_nonneg_affine(ix: IndexExpr, *, nonneg_vars: Set[str]) -> Optional[bool]:
-    """
-    Conservative proof attempt:
-    - If all coefficients are >=0 and all vars are known non-negative and const >=0 -> PROVE >=0.
-    - Otherwise -> UNKNOWN (None).
-    """
-    if ix.const < 0:
-        return None
-    for v, c in ix.terms.items():
-        if c < 0:
-            return None
-        if v not in nonneg_vars:
-            return None
-    return True
 
 
 def _extract_canonical_evidence(cert_v2: "SemanticCertificateV2") -> Optional[CanonicalEvidence]:
@@ -263,68 +197,31 @@ def evaluate_obligations(desc: "KernelDescriptor", cert_v2: "SemanticCertificate
     if not clauses:
         results.append(ObligationResult(id=O3_MASK_IMPLIES_INBOUNDS, status="UNKNOWN", reason="no predicate clauses extracted"))
     else:
-        # Known non-negative variables: pid*, r*.
-        nonneg_vars: Set[str] = set({"pid0", "pid1", "pid2"})
-        ce_meta = ce.meta if ce is not None else {}
-        if isinstance(ce_meta, dict):
-            syms = ce_meta.get("symbols")
-            if isinstance(syms, dict):
-                ranges = syms.get("ranges")
-                if isinstance(ranges, dict):
-                    nonneg_vars.update(str(k) for k in ranges.keys())
-        # Also treat all axis symbols as non-negative.
-        nonneg_vars.update(v for v in allowed_syms if v.isidentifier())
-        # Treat positional arg indices as non-negative in MVP (usually dims/strides).
-        nonneg_vars.update({f"arg{i}" for i in range(0, 64)})
+        ranges = {}
+        if ce is not None and isinstance(ce.meta, dict):
+            syms = ce.meta.get("symbols")
+            if isinstance(syms, dict) and isinstance(syms.get("ranges"), dict):
+                ranges = dict(syms.get("ranges") or {})
+        # Use KernelDescriptor canonical shapes as shape hints for DIM symbols.
+        shape_hints = {}
+        if isinstance(desc.launch, dict) and isinstance(desc.launch.get("canonical_shapes"), dict):
+            for k, v in desc.launch.get("canonical_shapes").items():
+                if isinstance(k, str) and isinstance(v, (int, float)):
+                    shape_hints[str(k)] = int(v)
 
-        first_unknown: Optional[str] = None
-        for c in clauses:
-            parsed = _parse_cmp(c)
-            if parsed is None:
-                first_unknown = f"unparseable clause: {c!r}"
-                break
-            lhs, op, rhs = parsed
-            if op in {"<", "<="}:
-                ix = _parse_affine_expr(lhs)
-                if ix is None:
-                    first_unknown = f"cannot parse lhs affine: {lhs!r}"
-                    break
-                proved = _prove_nonneg_affine(ix, nonneg_vars=nonneg_vars)
-                if proved is not True:
-                    first_unknown = f"cannot prove nonneg for lhs: {lhs!r}"
-                    break
-            elif op in {">", ">="}:
-                # Treat as rhs <= lhs; try to prove rhs nonneg similarly.
-                ix = _parse_affine_expr(rhs)
-                if ix is None:
-                    first_unknown = f"cannot parse rhs affine: {rhs!r}"
-                    break
-                proved = _prove_nonneg_affine(ix, nonneg_vars=nonneg_vars)
-                if proved is not True:
-                    first_unknown = f"cannot prove nonneg for rhs: {rhs!r}"
-                    break
-            else:
-                # == / != are not used in MVP proof.
-                continue
-
-        if first_unknown is None:
-            results.append(
-                ObligationResult(
-                    id=O3_MASK_IMPLIES_INBOUNDS,
-                    status="PASS",
-                    witness={"num_clauses": len(clauses)},
-                    reason="proved non-negativity for bounded indices (MVP); full SMT witness in PR#7",
-                )
+        o3 = check_mask_implies_inbounds(accesses, symbol_ranges=ranges, shape_hints=shape_hints)
+        results.append(
+            ObligationResult(
+                id=O3_MASK_IMPLIES_INBOUNDS,
+                status=o3.status,
+                reason=(
+                    "mask ⇒ inbounds proved"
+                    if o3.status == "PASS"
+                    else ("counterexample found" if o3.status == "FAIL" else "insufficient evidence/proof")
+                ),
+                witness=o3.to_json_dict(),
             )
-        else:
-            results.append(
-                ObligationResult(
-                    id=O3_MASK_IMPLIES_INBOUNDS,
-                    status="UNKNOWN",
-                    reason=first_unknown,
-                    witness={"example_clause": str(clauses[0]) if clauses else ""},
-                )
-            )
+        )
 
     # Deterministic order for reporting.
     order = [
