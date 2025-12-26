@@ -35,6 +35,7 @@ def generate_cases(
     axes: Sequence[str] | None = None,
     exclude_axes: Sequence[str] | None = None,
     extra_sizes: Sequence[int] | None = None,
+    predicate_clauses: Sequence[str] | None = None,
 ) -> List[TestCase]:
     """
     Deterministic, constraint-aware case generation.
@@ -49,7 +50,9 @@ def generate_cases(
     if exclude_axes:
         exclude = set(exclude_axes)
         axes_list = [ax for ax in axes_list if ax not in exclude]
-    needs_mask = constraints.needs_mask if constraints else False
+    needs_mask = bool(constraints.needs_mask) if constraints else False
+    if predicate_clauses:
+        needs_mask = True
     tile_list: List[int] = []
     if tile_hints:
         tile_list.extend(int(t) for t in tile_hints if isinstance(t, (int, float)))
@@ -59,6 +62,20 @@ def generate_cases(
 
     per_axis_vals = []
     extra_set = set(int(x) for x in (extra_sizes or []) if isinstance(x, (int, float)) and int(x) > 0)
+    if predicate_clauses:
+        import re
+
+        num_re = re.compile(r"(-?\d+)")
+        for c in predicate_clauses:
+            if not isinstance(c, str):
+                continue
+            for m in num_re.findall(c):
+                try:
+                    v = int(m)
+                except Exception:
+                    continue
+                if 0 < v <= 2048:
+                    extra_set.update({v, max(1, v - 1), v + 1})
     for ax in axes_list:
         vals = set(EDGE_VALUES[:3])  # 1,2,3
         for t in tile_list:

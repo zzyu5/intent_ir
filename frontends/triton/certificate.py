@@ -8,14 +8,18 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass, field
-import re
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, List, Literal, Optional, Tuple
+
+from pipeline.interfaces import KernelDescriptor
+
+from frontends.common.certificate_v2 import ObligationResultV2, SemanticCertificateV2
+from frontends.common.evidence import AccessSummary, CanonicalEvidence, IndexExpr, Predicate, sort_accesses
 
 from .facts import TTIRFacts, extract_facts
 from .contract import evaluate_contract, ContractReport
 from .ttir_witness import MaskWitness, PointerGroup, build_mask_witnesses, build_pointer_groups
 from .ttir_witness import parse_function_args, parse_ssa_defs
-from .affine_expr import build_aliases, expr_to_str
+from .affine_expr import AffineExpr, affine_from_ssa, build_aliases, expr_to_str
 from .smt_check import check_mask_constraints_inbounds
 
 
@@ -203,6 +207,257 @@ def build_certificate(ttir: str, facts: TTIRFacts | None = None) -> SemanticCert
     )
 
 
+_PTR_ELEM_RE = re.compile(r"!tt\.ptr<([^>,]+)")
+_ARG_RE = re.compile(r"^%arg(\d+)$")
+_RANGE_TERM_RE = re.compile(r"^range\(\s*(-?\d+)\s*,\s*(-?\d+)\s*\)$")
+
+
+def _format_index_expr(ix: IndexExpr) -> str:
+    parts: List[str] = []
+    for var, c in sorted(ix.terms.items()):
+        if c == 1:
+            parts.append(f"{var}")
+        elif c == -1:
+            parts.append(f"-{var}")
+        else:
+            parts.append(f"{c}*{var}")
+    if ix.const != 0 or not parts:
+        parts.append(str(ix.const))
+    return " + ".join(parts).replace("+ -", "- ")
+
+
+def _canonicalize_term_var(var: str, symbols: Dict[str, Any]) -> str:
+    # pid canonicalization
+    pid_map = symbols.setdefault("pids", {"pid_x": "pid0", "pid_y": "pid1", "pid_z": "pid2"})
+    if var in pid_map:
+        return pid_map[var]
+
+    # range canonicalization: range(a,b) -> rK with stable first-appearance assignment
+    m = _RANGE_TERM_RE.match(var)
+    if m:
+        a = int(m.group(1))
+        b = int(m.group(2))
+        ranges = symbols.setdefault("ranges", {})
+        for name, spec in ranges.items():
+            if spec.get("start") == a and spec.get("end") == b:
+                return name
+        name = f"r{len(ranges)}"
+        ranges[name] = {"start": a, "end": b}
+        return name
+
+    # Strip leading '%' from SSA-ish names (avoid frontend syntax leaking into keys).
+    return var[1:] if var.startswith("%") else var
+
+
+def _index_expr_from_affine(expr: AffineExpr, symbols: Dict[str, Any]) -> Tuple[IndexExpr, bool]:
+    """
+    Convert AffineExpr -> IndexExpr, with best-effort canonicalization.
+    Returns (IndexExpr, unresolved) where unresolved indicates unstable SSA terms.
+    """
+    if expr.non_affine:
+        return IndexExpr(terms={}, const=0), True
+    unresolved = False
+    terms: Dict[str, int] = {}
+    for raw_var, c in expr.coeff.items():
+        # Reject raw SSA temporaries (e.g., %17) to avoid TTIR-version instability.
+        if raw_var.startswith("%") and not raw_var.startswith("%arg"):
+            unresolved = True
+            continue
+        v = _canonicalize_term_var(str(raw_var), symbols)
+        if c:
+            terms[v] = terms.get(v, 0) + int(c)
+    # Drop zero coefficients
+    terms = {k: v for k, v in terms.items() if v != 0}
+    return IndexExpr(terms=terms, const=int(expr.const)), unresolved
+
+
+def _dtype_from_ttir_type(type_str: str) -> str:
+    m = _PTR_ELEM_RE.search(type_str)
+    if m:
+        return str(m.group(1)).strip()
+    return "unknown"
+
+
+def _tensor_name_for_base(base_arg: str, *, desc: KernelDescriptor | None) -> str:
+    m = _ARG_RE.match(base_arg)
+    if m and desc and isinstance(desc.io_spec.get("arg_names"), list):
+        try:
+            idx = int(m.group(1))
+            names = list(desc.io_spec.get("arg_names") or [])
+            if 0 <= idx < len(names) and str(names[idx]):
+                return str(names[idx])
+        except Exception:
+            pass
+    # Fallback: argN without '%' prefix.
+    return base_arg[1:] if base_arg.startswith("%") else base_arg
+
+
+def _collect_accesses_canonical(
+    ttir: str,
+    facts: TTIRFacts,
+    *,
+    desc: KernelDescriptor | None,
+) -> Tuple[List[AccessSummary], Dict[str, Any]]:
+    """
+    Build CanonicalEvidence.accesses from TTIR loads/stores using:
+    - pointer base grouping (arg pointers)
+    - best-effort affine offsets (flat index)
+    - best-effort predicate clauses from mask cmp chains
+    """
+    arg_types = parse_function_args(ttir)
+    func_args = set(arg_types.keys())
+    defs = parse_ssa_defs(ttir)
+
+    # Aliases help keep expressions stable (pid/range); also map %argN -> arg name when available.
+    aliases = build_aliases(defs)
+    for a in sorted(func_args):
+        pretty = _tensor_name_for_base(a, desc=desc)
+        aliases[a] = pretty
+
+    symbols: Dict[str, Any] = {"pids": {"pid_x": "pid0", "pid_y": "pid1", "pid_z": "pid2"}, "ranges": {}}
+
+    # Precompute mask predicates (shared across accesses that use the same mask SSA).
+    kind_to_op = {
+        "slt": "<",
+        "ult": "<",
+        "sle": "<=",
+        "ule": "<=",
+        "sgt": ">",
+        "ugt": ">",
+        "sge": ">=",
+        "uge": ">=",
+        "eq": "==",
+        "ne": "!=",
+    }
+    mask_witnesses = build_mask_witnesses(ttir, facts)
+    mask_predicates: Dict[str, Predicate] = {}
+    for mask, w in mask_witnesses.items():
+        clauses: List[str] = []
+        for c in w.cmps:
+            if not c.lhs or not c.rhs:
+                continue
+            lhs_aff = affine_from_ssa(c.lhs, defs, aliases=aliases)
+            rhs_aff = affine_from_ssa(c.rhs, defs, aliases=aliases)
+            lhs_ix, lhs_unres = _index_expr_from_affine(lhs_aff, symbols)
+            rhs_ix, rhs_unres = _index_expr_from_affine(rhs_aff, symbols)
+            op = kind_to_op.get(c.kind or "", c.kind or "?")
+            lhs_s = _format_index_expr(lhs_ix) if not lhs_unres else "<unresolved>"
+            rhs_s = _format_index_expr(rhs_ix) if not rhs_unres else "<unresolved>"
+            clauses.append(f"{lhs_s} {op} {rhs_s}")
+        if clauses:
+            mask_predicates[mask] = Predicate(clauses=clauses)
+
+    # Pointer groups give element types; fall back to TTIR arg types.
+    pointer_groups = build_pointer_groups(ttir, facts)
+
+    accesses: List[AccessSummary] = []
+    for site in list(facts.load_sites) + list(facts.store_sites):
+        ptr = getattr(site, "ptr", None)
+        if not isinstance(ptr, str) or not ptr.startswith("%"):
+            continue
+        base, offsets = _trace_addptr_chain(ptr, defs, func_args)
+        if base is None:
+            continue
+
+        # Sum affine offsets (flat index in elements).
+        total = AffineExpr(const=0, coeff={})
+        unresolved_any = False
+        for off in offsets:
+            a = affine_from_ssa(off, defs, aliases=aliases)
+            if a.non_affine:
+                unresolved_any = True
+            total = total.add(a)
+        ix, unresolved_ix = _index_expr_from_affine(total, symbols)
+        unresolved_any = unresolved_any or unresolved_ix
+
+        tensor = _tensor_name_for_base(base, desc=desc)
+        dtype = "unknown"
+        if base in pointer_groups and pointer_groups[base].element_type:
+            dtype = str(pointer_groups[base].element_type)
+        elif base in arg_types:
+            dtype = _dtype_from_ttir_type(str(arg_types[base]))
+
+        pred = None
+        mask = getattr(site, "mask", None)
+        if site.has_mask and isinstance(mask, str) and mask in mask_predicates:
+            pred = mask_predicates[mask]
+
+        meta: Dict[str, Any] = {}
+        if unresolved_any:
+            meta["unresolved"] = True
+
+        accesses.append(
+            AccessSummary(
+                kind=site.kind,
+                tensor=tensor,
+                dtype=dtype,
+                rank=1,
+                index_exprs=[ix],
+                predicate=pred,
+                address_space="global",
+                meta=meta,
+            )
+        )
+
+    return sort_accesses(accesses), symbols
+
+
+def build_certificate_v2(
+    ttir: str,
+    *,
+    desc: KernelDescriptor | None = None,
+    facts: TTIRFacts | None = None,
+) -> SemanticCertificateV2:
+    """
+    Build a stable CertificateV2 from TTIR by translating TTIR-derived witnesses into
+    CanonicalEvidence. The resulting `semantic_facts` should avoid TTIR line numbers.
+    """
+    facts = facts or extract_facts(ttir)
+    kernel_kind = _infer_kernel_kind(facts)
+    contract = evaluate_contract(facts)
+
+    accesses, symbols = _collect_accesses_canonical(ttir, facts, desc=desc)
+    anchors = {
+        "kernel_kind_hint": kernel_kind,
+        "has_dot": bool(facts.has_dot),
+        "has_reduce": bool(facts.has_reduce),
+        "has_atomic": bool(facts.has_atomic),
+        "op_counts": dict(facts.op_counts),
+    }
+    schedule_hints = {"tile_hints": _extract_tile_hints(ttir, facts)}
+
+    evidence = CanonicalEvidence(
+        anchors=dict(anchors),
+        accesses=accesses,
+        schedule_hints=dict(schedule_hints),
+        meta={"symbols": symbols},
+    ).canonicalize()
+
+    # MVP obligations (carry over v1-style checks, but keep witnesses stable).
+    obligations: List[ObligationResultV2] = []
+    anchor_ok = (kernel_kind == "matmul" and facts.has_dot) or (kernel_kind in {"reduce", "attention"} and facts.has_reduce) or (
+        kernel_kind == "unknown"
+    )
+    obligations.append(ObligationResultV2(id="O1_anchor_present", status="PASS" if anchor_ok else "FAIL", witness={"anchors": anchors}))
+    obligations.append(ObligationResultV2(id="O2_no_atomic", status="FAIL" if facts.has_atomic else "PASS", witness={}))
+    needs_mask = any(a.predicate is not None and a.predicate.clauses for a in accesses)
+    obligations.append(ObligationResultV2(id="O3_mask_present", status="PASS" if needs_mask else "UNKNOWN", witness={}))
+
+    cert = SemanticCertificateV2(
+        schema_version="cert_v2.0",
+        semantic_facts={
+            "anchors": anchors,
+            "io_spec": (dict(desc.io_spec) if desc is not None else {}),
+            "canonical_evidence": evidence,
+            "obligations": obligations,
+            "contract": asdict(contract),
+        },
+        schedule_hints=dict(schedule_hints),
+        meta={},
+    )
+    return cert.canonicalize()
+
+
 def _extract_index_maps(ttir: str, facts: TTIRFacts) -> Dict[str, List[str]]:
     """
     Best-effort index expression witness for pointer groups.
@@ -380,4 +635,4 @@ def _trace_addptr_chain(
     return None, []
 
 
-__all__ = ["SemanticCertificate", "Obligation", "build_certificate"]
+__all__ = ["SemanticCertificate", "Obligation", "build_certificate", "build_certificate_v2"]

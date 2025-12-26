@@ -6,9 +6,11 @@ This is deliberately lightweight: it checks presence of expected anchors and bas
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
+from typing import Any, List
 
 from intent_ir.ir import IntentFunction
+from frontends.common.certificate_v2 import SemanticCertificateV2
+from frontends.common.evidence import CanonicalEvidence
 from .certificate import SemanticCertificate, Obligation
 
 
@@ -19,10 +21,92 @@ class StaticValidationResult:
     reasons: List[str]
 
 
-def static_validate(intent: IntentFunction, cert: SemanticCertificate) -> StaticValidationResult:
+def _kernel_kind_from_cert(cert: SemanticCertificate | SemanticCertificateV2) -> str:
+    if isinstance(cert, SemanticCertificate):
+        return str(cert.kernel_kind)
+    anchors = (cert.semantic_facts or {}).get("anchors") or {}
+    if isinstance(anchors, dict):
+        k = anchors.get("kernel_kind_hint") or anchors.get("kernel_kind")
+        if k:
+            return str(k)
+        # derive (best-effort)
+        if anchors.get("has_atomic"):
+            return "unknown"
+        if anchors.get("has_dot") and anchors.get("has_reduce"):
+            return "attention"
+        if anchors.get("has_dot"):
+            return "matmul"
+        if anchors.get("has_reduce"):
+            return "reduce"
+    return "unknown"
+
+
+def _iter_accesses_from_cert(cert: SemanticCertificateV2) -> list[dict[str, Any]]:
+    """
+    Return a list of access dicts from cert_v2, supporting both in-memory objects
+    (CanonicalEvidence) and JSON-like dict payloads.
+    """
+    ce = (cert.semantic_facts or {}).get("canonical_evidence")
+    if isinstance(ce, CanonicalEvidence):
+        return [a.to_json_dict() for a in ce.accesses]
+    if isinstance(ce, dict):
+        acc = ce.get("accesses")
+        if isinstance(acc, list):
+            return [a for a in acc if isinstance(a, dict)]
+    return []
+
+
+def _needs_mask_from_cert(cert: SemanticCertificate | SemanticCertificateV2) -> bool:
+    if isinstance(cert, SemanticCertificate):
+        return bool(cert.needs_mask)
+    for a in _iter_accesses_from_cert(cert):
+        pred = a.get("predicate")
+        if isinstance(pred, dict) and pred.get("clauses"):
+            return True
+    return False
+
+
+def _store_group_count(cert: SemanticCertificate | SemanticCertificateV2) -> int | None:
+    if isinstance(cert, SemanticCertificate):
+        if not cert.pointer_groups:
+            return None
+        return sum(1 for g in cert.pointer_groups.values() if g.stores)
+    store_tensors: set[str] = set()
+    for a in _iter_accesses_from_cert(cert):
+        if a.get("kind") == "store":
+            t = a.get("tensor")
+            if isinstance(t, str) and t:
+                store_tensors.add(t)
+    return len(store_tensors) if store_tensors else None
+
+
+def _contract_level_from_cert(cert: SemanticCertificate | SemanticCertificateV2) -> str | None:
+    if isinstance(cert, SemanticCertificate):
+        return getattr(cert.contract, "level", None) if cert.contract is not None else None
+    c = (cert.semantic_facts or {}).get("contract")
+    if isinstance(c, dict):
+        lvl = c.get("level")
+        return str(lvl) if isinstance(lvl, str) else None
+    return None
+
+
+def _seed_obligations(cert: SemanticCertificate | SemanticCertificateV2) -> list[Obligation]:
+    if isinstance(cert, SemanticCertificate):
+        return list(cert.obligations)
+    out: list[Obligation] = []
+    obs = (cert.semantic_facts or {}).get("obligations")
+    if isinstance(obs, list):
+        for o in obs:
+            if isinstance(o, dict):
+                out.append(Obligation(id=str(o.get("id", "O?")), status=str(o.get("status", "UNKNOWN")), detail=o.get("reason")))
+    return out
+
+
+def static_validate(intent: IntentFunction, cert: SemanticCertificate | SemanticCertificateV2) -> StaticValidationResult:
     reasons: List[str] = []
-    obligations = list(cert.obligations)
-    if cert.contract and cert.contract.level == "OUT_OF_SCOPE":
+    obligations = _seed_obligations(cert)
+    contract_level = _contract_level_from_cert(cert)
+    if contract_level == "OUT_OF_SCOPE":
         obligations.append(Obligation(id="SV_contract_out_of_scope", status="FAIL", detail="contract OUT_OF_SCOPE"))
         reasons.append("contract OUT_OF_SCOPE")
     # Outputs must be produced by ops (not just declared in tensors).
@@ -42,24 +126,25 @@ def static_validate(intent: IntentFunction, cert: SemanticCertificate) -> Static
                     reasons.append(f"output {out} is placeholder const; must be produced by real ops")
     # Anchor check: intent ops should contain matmul/reduce/softmax depending on kernel_kind
     ops = [op.op for op in intent.ops]
-    if cert.kernel_kind == "matmul":
+    kernel_kind = _kernel_kind_from_cert(cert)
+    if kernel_kind == "matmul":
         if "matmul" not in ops:
             obligations.append(Obligation(id="SV_matmul_missing", status="FAIL", detail="matmul op absent"))
             reasons.append("matmul op missing")
         else:
             obligations.append(Obligation(id="SV_matmul_present", status="PASS", detail=None))
-    if cert.kernel_kind in {"reduce", "attention"}:
+    if kernel_kind in {"reduce", "attention"}:
         # TTIR uses reduce ops for many patterns (e.g., softmax). In IntentIR, a single
         # `softmax` op is allowed to represent the internal reduce_max/reduce_sum.
         has_reduce = any(op.op.startswith("reduce") for op in intent.ops)
-        if cert.kernel_kind == "attention" and "softmax" in ops:
+        if kernel_kind == "attention" and "softmax" in ops:
             has_reduce = True
         if not has_reduce:
             obligations.append(Obligation(id="SV_reduce_missing", status="FAIL", detail="reduce op absent"))
             reasons.append("reduce op missing")
         else:
             obligations.append(Obligation(id="SV_reduce_present", status="PASS", detail=None))
-    if cert.kernel_kind == "attention":
+    if kernel_kind == "attention":
         if "softmax" not in ops:
             obligations.append(Obligation(id="SV_softmax_missing", status="FAIL", detail="softmax op missing"))
             reasons.append("softmax op missing")
@@ -107,8 +192,8 @@ def static_validate(intent: IntentFunction, cert: SemanticCertificate) -> Static
 
     # Structural witness: TTIR distinct store pointer groups should not exceed
     # the number of declared outputs (helps catch missing Mean/Rstd etc).
-    if cert.pointer_groups:
-        num_store_groups = sum(1 for g in cert.pointer_groups.values() if g.stores)
+    num_store_groups = _store_group_count(cert)
+    if num_store_groups is not None:
         if num_store_groups > len(intent.outputs):
             obligations.append(
                 Obligation(
@@ -126,7 +211,7 @@ def static_validate(intent: IntentFunction, cert: SemanticCertificate) -> Static
                     detail=f"store_groups={num_store_groups} outputs={len(intent.outputs)}",
                 )
             )
-    if cert.needs_mask and not any(op.op.startswith("reduce") for op in intent.ops):
+    if _needs_mask_from_cert(cert) and not any(op.op.startswith("reduce") for op in intent.ops):
         obligations.append(Obligation(id="SV_mask_without_reduce", status="UNKNOWN", detail="needs_mask but no reduce op"))
     ok = all(ob.status != "FAIL" for ob in obligations)
     return StaticValidationResult(ok=ok, obligations=obligations, reasons=reasons)

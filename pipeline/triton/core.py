@@ -7,6 +7,7 @@ the same helpers by constructing a KernelSpec and calling `run_pipeline_for_spec
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
@@ -26,7 +27,9 @@ from pipeline import registry as pipeline_registry
 from pipeline.interfaces import FrontendConstraints
 from verify.diff_runner import run_diff
 from verify.gen_cases import TestCase, generate_cases
-from frontends.triton.certificate import SemanticCertificate
+from frontends.common.certificate_v2 import SemanticCertificateV2
+from frontends.common.evidence import CanonicalEvidence
+from frontends.triton.certificate import SemanticCertificate, build_certificate_v2
 from verify.metamorphic import run_bounded_exhaustive, run_metamorphic_suite
 from verify.mutation import run_mutation_kill
 
@@ -138,6 +141,7 @@ def make_cases(
     *,
     extra_tile_hints: Optional[List[int]] = None,
     cert: Optional[SemanticCertificate] = None,
+    cert_v2: SemanticCertificateV2 | None = None,
 ) -> List[TestCase]:
     base = dict(spec.canonical_shapes)
     if spec.normalize_shapes:
@@ -155,6 +159,20 @@ def make_cases(
     if cert and (cert.mask_constraints or cert.needs_mask):
         constraints = constraints or FrontendConstraints(needs_mask=True, suggested_edge_cases=[])
         constraints.needs_mask = True
+    if cert_v2 is not None:
+        try:
+            ce = (cert_v2.semantic_facts or {}).get("canonical_evidence")
+            accesses = []
+            if isinstance(ce, CanonicalEvidence):
+                accesses = [a.to_json_dict() for a in ce.accesses]
+            elif isinstance(ce, dict):
+                accesses = [a for a in (ce.get("accesses") or []) if isinstance(a, dict)]
+            needs_mask_v2 = any(isinstance(a.get("predicate"), dict) and a.get("predicate", {}).get("clauses") for a in accesses)
+            if needs_mask_v2:
+                constraints = constraints or FrontendConstraints(needs_mask=True, suggested_edge_cases=[])
+                constraints.needs_mask = True
+        except Exception:
+            pass
 
     extra_sizes: List[int] = []
     if cert:
@@ -184,6 +202,35 @@ def make_cases(
                 pass
         extra_sizes = sorted(set(extra_sizes))
 
+    predicate_clauses: List[str] = []
+    if cert_v2 is not None:
+        try:
+            ce = (cert_v2.semantic_facts or {}).get("canonical_evidence")
+            if isinstance(ce, CanonicalEvidence):
+                for a in ce.accesses:
+                    if a.predicate and a.predicate.clauses:
+                        predicate_clauses.extend(list(a.predicate.clauses))
+                symbols = (ce.meta or {}).get("symbols") or {}
+            elif isinstance(ce, dict):
+                for a in (ce.get("accesses") or []):
+                    if isinstance(a, dict):
+                        pred = a.get("predicate")
+                        if isinstance(pred, dict) and pred.get("clauses"):
+                            predicate_clauses.extend(list(pred.get("clauses") or []))
+                symbols = ((ce.get("meta") or {}).get("symbols") or {}) if isinstance(ce.get("meta"), dict) else {}
+            else:
+                symbols = {}
+            # Add range ends as candidate sizes (helps non-divisible edge generation).
+            for spec_range in (symbols.get("ranges") or {}).values():
+                try:
+                    end = int(spec_range.get("end"))
+                except Exception:
+                    continue
+                if 0 < end <= 2048:
+                    extra_sizes.extend([end, max(1, end - 1), end + 1])
+        except Exception:
+            pass
+
     generated = generate_cases(
         intent.intent,
         constraints=constraints,
@@ -193,6 +240,7 @@ def make_cases(
         axes=spec.vary_axes,
         exclude_axes=spec.exclude_axes,
         extra_sizes=extra_sizes,
+        predicate_clauses=predicate_clauses,
     )
     for c in generated:
         merged = dict(spec.canonical_shapes)
@@ -649,6 +697,7 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
     ttir_path = find_latest_ttir(dump_dir, spec.name)
     constraints = None
     cert = None
+    cert_v2: SemanticCertificateV2 | None = None
     contract = None
     sv = None
     if ttir_path and ttir_path.exists():
@@ -657,6 +706,21 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
         constraints = adapter.extract_constraints(desc, facts)
         contract = adapter.evaluate_contract(facts, constraints, None)
         cert = adapter.build_certificate(desc, facts, constraints)
+        # CertificateV2 (stable semantic_facts + canonical evidence).
+        try:
+            ttir_text = None
+            if desc.artifacts.ttir_path:
+                ttir_text = Path(str(desc.artifacts.ttir_path)).read_text(encoding="utf-8")
+            elif ttir_path:
+                ttir_text = Path(str(ttir_path)).read_text(encoding="utf-8")
+            if ttir_text:
+                cert_v2 = build_certificate_v2(ttir_text, desc=desc, facts=facts)
+                report["certificate_v2"] = cert_v2.to_json_dict()
+                (out_dir / f"{spec.name}.certificate_v2.json").write_text(
+                    json.dumps(report["certificate_v2"], indent=2), encoding="utf-8"
+                )
+        except Exception as e:
+            report["certificate_v2_error"] = str(e)
         report["ttir_path"] = str(desc.artifacts.ttir_path or ttir_path)
         if desc.meta.get("ttir_original_path"):
             report["ttir_dump_path"] = str(desc.meta.get("ttir_original_path"))
@@ -705,7 +769,8 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
     # 4) Static validation (Intent vs certificate), if TTIR certificate exists.
     if cert is not None:
         print(f"[{spec.name}] stage6: Task4 static validation", flush=True)
-        sv = static_validate((cand_expanded.intent if cand_expanded is not None else cand.intent), cert)
+        sv_cert = cert_v2 or cert
+        sv = static_validate((cand_expanded.intent if cand_expanded is not None else cand.intent), sv_cert)
         report["static_validation"] = {
             "ok": bool(sv.ok),
             "reasons": list(sv.reasons),
@@ -732,7 +797,7 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
                 )
                 report["intent"] = cand.intent.to_json_dict()
                 report["intent_expanded"] = expanded_intent.to_json_dict()
-                sv = static_validate((cand_expanded.intent if cand_expanded is not None else cand.intent), cert)
+                sv = static_validate((cand_expanded.intent if cand_expanded is not None else cand.intent), sv_cert)
                 report["static_validation"] = {
                     "ok": bool(sv.ok),
                     "reasons": list(sv.reasons),
@@ -751,6 +816,7 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
         limit=cases_limit,
         extra_tile_hints=cert.tile_hints if cert else None,
         cert=cert,
+        cert_v2=cert_v2,
     )
     report["cases"] = [dict(c.shapes) for c in cases]
     diffs, cex = run_diff(cand_for_run.intent, spec.runner, cases)
@@ -826,6 +892,7 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
                     limit=min(4, cases_limit),
                     extra_tile_hints=cert.tile_hints if cert else None,
                     cert=cert,
+                    cert_v2=cert_v2,
                 )
                 report["cases"] = [dict(c.shapes) for c in cases_fix]
                 diffs_fix, cex_fix = run_diff(cand_for_run.intent, spec.runner, cases_fix)
