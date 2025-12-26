@@ -1,0 +1,87 @@
+{
+  "anchors": {
+    "has_atomic": false,
+    "has_dot": false,
+    "has_reduce": true,
+    "kernel_kind_hint": "reduce"
+  },
+  "canonical_evidence": {
+    "accesses": [
+      {
+        "address_space": "global",
+        "dtype": "f32",
+        "index_exprs": [
+          {
+            "const": 0,
+            "terms": {}
+          }
+        ],
+        "kind": "load",
+        "meta": {
+          "unresolved": true
+        },
+        "predicate": {
+          "clauses": [
+            "r0 < N"
+          ]
+        },
+        "rank": 1,
+        "tensor": "input_ptr"
+      },
+      {
+        "address_space": "global",
+        "dtype": "f32",
+        "index_exprs": [
+          {
+            "const": 0,
+            "terms": {}
+          }
+        ],
+        "kind": "store",
+        "meta": {
+          "unresolved": true
+        },
+        "predicate": {
+          "clauses": [
+            "r0 < N"
+          ]
+        },
+        "rank": 1,
+        "tensor": "output_ptr"
+      }
+    ],
+    "anchors": {
+      "has_atomic": false,
+      "has_dot": false,
+      "has_reduce": true,
+      "kernel_kind_hint": "reduce"
+    },
+    "meta": {
+      "symbols": {
+        "pids": {
+          "pid_x": "pid0",
+          "pid_y": "pid1",
+          "pid_z": "pid2"
+        },
+        "ranges": [
+          "r0"
+        ]
+      }
+    },
+    "schedule_hints": {}
+  },
+  "io_spec": {
+    "arg_names": [
+      "output_ptr",
+      "input_ptr",
+      "M",
+      "N",
+      "TILE_N",
+      "ONE_TILE_PER_CTA"
+    ],
+    "constexpr_names": [
+      "TILE_N",
+      "ONE_TILE_PER_CTA"
+    ]
+  }
+}

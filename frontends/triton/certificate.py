@@ -420,15 +420,18 @@ def build_certificate_v2(
         "has_dot": bool(facts.has_dot),
         "has_reduce": bool(facts.has_reduce),
         "has_atomic": bool(facts.has_atomic),
-        "op_counts": dict(facts.op_counts),
     }
-    schedule_hints = {"tile_hints": _extract_tile_hints(ttir, facts)}
+    # NOTE: `schedule_hints` is allowed to drift across compiler versions and must
+    # never be part of the golden-locked `semantic_facts`.
+    symbol_ranges = dict(symbols.get("ranges") or {}) if isinstance(symbols, dict) else {}
+    schedule_hints = {"tile_hints": _extract_tile_hints(ttir, facts), "symbol_ranges": symbol_ranges}
 
     evidence = CanonicalEvidence(
         anchors=dict(anchors),
         accesses=accesses,
-        schedule_hints=dict(schedule_hints),
-        meta={"symbols": symbols},
+        # Keep `semantic_facts` schedule-free: domains/tile hints live in cert.schedule_hints.
+        schedule_hints={},
+        meta={"symbols": {"pids": dict(symbols.get("pids") or {}), "ranges": sorted(list(symbol_ranges.keys()))}},
     ).canonicalize()
 
     cert = SemanticCertificateV2(
@@ -439,7 +442,7 @@ def build_certificate_v2(
             "canonical_evidence": evidence,
         },
         schedule_hints=dict(schedule_hints),
-        meta={},
+        meta={"ttir_facts": {"op_counts": dict(facts.op_counts)}},
     )
     return cert.canonicalize()
 

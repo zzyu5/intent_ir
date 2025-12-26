@@ -77,6 +77,12 @@ def _allowed_symbols(desc: "KernelDescriptor", cert_v2: "SemanticCertificateV2")
     if isinstance(canonical_shapes, dict):
         allowed.update(str(k) for k in canonical_shapes.keys())
     # Range symbols from evidence meta (r0/r1/...)
+    # Prefer schedule_hints domains (symbol_ranges), but keep back-compat with older meta layouts.
+    sh = getattr(cert_v2, "schedule_hints", None)
+    if isinstance(sh, dict):
+        sr = sh.get("symbol_ranges")
+        if isinstance(sr, dict):
+            allowed.update(str(k) for k in sr.keys())
     ce = _extract_canonical_evidence(cert_v2)
     if ce and isinstance(ce.meta, dict):
         syms = ce.meta.get("symbols")
@@ -84,6 +90,8 @@ def _allowed_symbols(desc: "KernelDescriptor", cert_v2: "SemanticCertificateV2")
             ranges = syms.get("ranges")
             if isinstance(ranges, dict):
                 allowed.update(str(k) for k in ranges.keys())
+            if isinstance(ranges, list):
+                allowed.update(str(k) for k in ranges if isinstance(k, str) and k)
     return allowed
 
 
@@ -198,7 +206,15 @@ def evaluate_obligations(desc: "KernelDescriptor", cert_v2: "SemanticCertificate
         results.append(ObligationResult(id=O3_MASK_IMPLIES_INBOUNDS, status="UNKNOWN", reason="no predicate clauses extracted"))
     else:
         ranges = {}
-        if ce is not None and isinstance(ce.meta, dict):
+        # Prefer schedule_hints for symbol domains (tile sizes / make_range endpoints are schedule-level).
+        try:
+            sh = getattr(cert_v2, "schedule_hints", None)
+            if isinstance(sh, dict) and isinstance(sh.get("symbol_ranges"), dict):
+                ranges = dict(sh.get("symbol_ranges") or {})
+        except Exception:
+            pass
+        # Back-compat: older certificates stored domains under canonical_evidence.meta.symbols.ranges.
+        if not ranges and ce is not None and isinstance(ce.meta, dict):
             syms = ce.meta.get("symbols")
             if isinstance(syms, dict) and isinstance(syms.get("ranges"), dict):
                 ranges = dict(syms.get("ranges") or {})

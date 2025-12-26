@@ -1,0 +1,166 @@
+{
+  "anchors": {
+    "has_atomic": false,
+    "has_dot": false,
+    "has_reduce": true,
+    "kernel_kind_hint": "reduce"
+  },
+  "canonical_evidence": {
+    "accesses": [
+      {
+        "address_space": "global",
+        "dtype": "f32",
+        "index_exprs": [
+          {
+            "const": 0,
+            "terms": {
+              "r0": 1
+            }
+          }
+        ],
+        "kind": "load",
+        "meta": {},
+        "predicate": {
+          "clauses": [
+            "r0 < N"
+          ]
+        },
+        "rank": 1,
+        "tensor": "bias_ptr"
+      },
+      {
+        "address_space": "global",
+        "dtype": "f32",
+        "index_exprs": [
+          {
+            "const": 0,
+            "terms": {}
+          }
+        ],
+        "kind": "load",
+        "meta": {
+          "unresolved": true
+        },
+        "predicate": {
+          "clauses": [
+            "r0 < N"
+          ]
+        },
+        "rank": 1,
+        "tensor": "in_ptr"
+      },
+      {
+        "address_space": "global",
+        "dtype": "f32",
+        "index_exprs": [
+          {
+            "const": 0,
+            "terms": {
+              "r0": 1
+            }
+          }
+        ],
+        "kind": "load",
+        "meta": {},
+        "predicate": {
+          "clauses": [
+            "r0 < N"
+          ]
+        },
+        "rank": 1,
+        "tensor": "weight_ptr"
+      },
+      {
+        "address_space": "global",
+        "dtype": "f32",
+        "index_exprs": [
+          {
+            "const": 0,
+            "terms": {
+              "pid0": 1
+            }
+          }
+        ],
+        "kind": "store",
+        "meta": {},
+        "predicate": null,
+        "rank": 1,
+        "tensor": "out_mean_ptr"
+      },
+      {
+        "address_space": "global",
+        "dtype": "f32",
+        "index_exprs": [
+          {
+            "const": 0,
+            "terms": {}
+          }
+        ],
+        "kind": "store",
+        "meta": {
+          "unresolved": true
+        },
+        "predicate": {
+          "clauses": [
+            "r0 < N"
+          ]
+        },
+        "rank": 1,
+        "tensor": "out_ptr"
+      },
+      {
+        "address_space": "global",
+        "dtype": "f32",
+        "index_exprs": [
+          {
+            "const": 0,
+            "terms": {
+              "pid0": 1
+            }
+          }
+        ],
+        "kind": "store",
+        "meta": {},
+        "predicate": null,
+        "rank": 1,
+        "tensor": "out_rstd_ptr"
+      }
+    ],
+    "anchors": {
+      "has_atomic": false,
+      "has_dot": false,
+      "has_reduce": true,
+      "kernel_kind_hint": "reduce"
+    },
+    "meta": {
+      "symbols": {
+        "pids": {
+          "pid_x": "pid0",
+          "pid_y": "pid1",
+          "pid_z": "pid2"
+        },
+        "ranges": [
+          "r0"
+        ]
+      }
+    },
+    "schedule_hints": {}
+  },
+  "io_spec": {
+    "arg_names": [
+      "in_ptr",
+      "out_ptr",
+      "weight_ptr",
+      "bias_ptr",
+      "out_mean_ptr",
+      "out_rstd_ptr",
+      "M",
+      "N",
+      "eps",
+      "TILE_N"
+    ],
+    "constexpr_names": [
+      "TILE_N"
+    ]
+  }
+}
