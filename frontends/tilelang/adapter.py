@@ -1,8 +1,8 @@
 """
 TileLang FrontendAdapter (PR#9): MVP second frontend.
 
-This adapter treats the TileLang kernel source as a structured JSON DSL and
-builds CertificateV2 directly.
+This adapter consumes a real TileLang `tvm.tir.PrimFunc` (TVMScript) and
+extracts CanonicalEvidence by traversing TIR (anchors + structured indexing).
 """
 
 from __future__ import annotations
@@ -23,10 +23,17 @@ from .certificate import build_certificate_v2
 
 
 def _safe_versions() -> Dict[str, Any]:
+    tilelang_version: str | None = None
+    try:
+        import tilelang  # noqa: PLC0415
+
+        tilelang_version = str(getattr(tilelang, "__version__", None) or "")
+    except Exception:
+        tilelang_version = None
     return {
         "python": sys.version.split()[0],
         "platform": platform.platform(),
-        "tilelang": "mvp",
+        "tilelang": tilelang_version or "unavailable",
     }
 
 
@@ -35,12 +42,25 @@ class TileLangAdapter:
 
     def build_descriptor(self, kernel: Any) -> KernelDescriptor:
         spec = kernel
+        prim_func = getattr(spec, "prim_func", None)
+        source_text = ""
+        source_kind = "ir"
+        if prim_func is not None:
+            try:
+                source_text = prim_func.script(show_meta=False)
+            except Exception:
+                source_text = str(prim_func)
+        else:
+            # Backward-compat: allow passing a raw string (e.g., tests) but the
+            # TileLang frontend is intended to consume real TVMScript.
+            source_kind = "source"
+            source_text = str(getattr(spec, "source_text", ""))
         desc = KernelDescriptor(
             schema_version="kernel_desc_v1.0",
             name=str(getattr(spec, "name", "tilelang_kernel")),
             frontend="tilelang",
-            source_kind="dsl",
-            source_text=str(getattr(spec, "source_text", "")),
+            source_kind=source_kind,
+            source_text=source_text,
         )
         desc.launch = {
             "canonical_shapes": dict(getattr(spec, "canonical_shapes", {}) or {}),
@@ -55,6 +75,7 @@ class TileLangAdapter:
         return desc
 
     def ensure_artifacts(self, desc: KernelDescriptor, _kernel: Any) -> KernelDescriptor:
+        kernel = _kernel
         artifact_dir_raw = desc.meta.get("artifact_dir")
         if not artifact_dir_raw:
             return desc
@@ -66,10 +87,27 @@ class TileLangAdapter:
             desc.meta["descriptor_path"] = str(out_path)
         except Exception:
             pass
+        # Persist a TVM JSON IR snapshot for deterministic downstream parsing.
+        # (TVMScript parsing requires the right decorator/macro environment.)
+        try:
+            prim_func = getattr(kernel, "prim_func", None)
+            if prim_func is not None:
+                import tilelang  # noqa: PLC0415
+
+                tvm = tilelang.tvm
+                ir_json = tvm.ir.save_json(prim_func)
+                ir_path = artifact_dir / f"{desc.name}.tilelang_tvm_ir.json"
+                ir_path.write_text(ir_json, encoding="utf-8")
+                desc.meta["tvm_ir_json_path"] = str(ir_path)
+        except Exception:
+            pass
         return desc
 
     def extract_facts(self, desc: KernelDescriptor) -> TileLangFacts:
-        facts = extract_facts(desc.source_text)
+        facts = extract_facts(
+            desc.source_text,
+            tvm_ir_json_path=(str(desc.meta["tvm_ir_json_path"]) if "tvm_ir_json_path" in desc.meta else None),
+        )
         desc.frontend_facts = {
             "anchors": dict(facts.anchors),
             "num_accesses": int(len(facts.accesses)),
@@ -93,4 +131,3 @@ class TileLangAdapter:
 registry.register(TileLangAdapter())
 
 __all__ = ["TileLangAdapter"]
-

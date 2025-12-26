@@ -1,8 +1,5 @@
-from __future__ import annotations
-
-import json
 from dataclasses import dataclass
-from typing import Callable, Dict, List
+from typing import Any, Callable, Dict, List
 
 import numpy as np
 
@@ -10,41 +7,53 @@ from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, 
 from verify.gen_cases import TestCase
 
 
-GEMM_TILELANG_DSL = json.dumps(
-    {
-        "schema_version": "tilelang_dsl_v0.1",
-        "kernel": "gemm",
-        "anchors": {"kernel_kind_hint": "matmul", "has_dot": True, "has_reduce": False, "has_atomic": False},
-        "accesses": [
-            {
-                "kind": "load",
-                "tensor": "A",
-                "dtype": "f32",
-                "rank": 2,
-                "index_exprs": [{"terms": {"pid0": 1}, "const": 0}, {"terms": {"r0": 1}, "const": 0}],
-                "predicate": {"clauses": ["0 <= pid0", "pid0 < M", "0 <= r0", "r0 < K"]},
-            },
-            {
-                "kind": "load",
-                "tensor": "B",
-                "dtype": "f32",
-                "rank": 2,
-                "index_exprs": [{"terms": {"r0": 1}, "const": 0}, {"terms": {"pid1": 1}, "const": 0}],
-                "predicate": {"clauses": ["0 <= pid1", "pid1 < N", "0 <= r0", "r0 < K"]},
-            },
-            {
-                "kind": "store",
-                "tensor": "C",
-                "dtype": "f32",
-                "rank": 2,
-                "index_exprs": [{"terms": {"pid0": 1}, "const": 0}, {"terms": {"pid1": 1}, "const": 0}],
-                "predicate": {"clauses": ["0 <= pid0", "pid0 < M", "0 <= pid1", "pid1 < N"]},
-            },
-        ],
-    },
-    indent=2,
-    sort_keys=True,
-)
+def make_gemm_prim_func(
+    *,
+    block_m: int = 8,
+    block_n: int = 8,
+    block_k: int = 8,
+    num_stages: int = 1,
+    threads: int = 128,
+    in_dtype: str = "float16",
+    out_dtype: str = "float16",
+    accum_dtype: str = "float32",
+):
+    """
+    Real TileLang kernel (PrimFunc) for GEMM.
+
+    This is intentionally small and "anchor-strong" for the TileLang MVP:
+      - T.copy regions are explicit (structured indexing).
+      - T.gemm provides a robust dot anchor.
+    """
+    import tilelang.language as T
+
+    M = T.dynamic("M")
+    N = T.dynamic("N")
+    K = T.dynamic("K")
+
+    A_shape = (M, K)
+    B_shape = (K, N)
+    A_shared_shape = (block_m, block_k)
+    B_shared_shape = (block_k, block_n)
+
+    @T.prim_func
+    def main(
+        A: T.Tensor(A_shape, in_dtype),
+        B: T.Tensor(B_shape, in_dtype),
+        C: T.Tensor((M, N), out_dtype),
+    ):
+        with T.Kernel(T.ceildiv(N, block_n), T.ceildiv(M, block_m), threads=threads) as (bx, by):
+            A_shared = T.alloc_shared(A_shared_shape, in_dtype)
+            B_shared = T.alloc_shared(B_shared_shape, in_dtype)
+            C_local = T.alloc_fragment((block_m, block_n), accum_dtype)
+            T.clear(C_local)
+            for k in T.Pipelined(T.ceildiv(K, block_k), num_stages=num_stages):
+                T.copy(A[by * block_m, k * block_k], A_shared)
+                T.copy(B[k * block_k, bx * block_n], B_shared)
+                T.gemm(A_shared, B_shared, C_local, False, False)
+            T.copy(C_local, C[by * block_m, bx * block_n])
+
+    return main
 
 
 def gemm_reference(case: TestCase) -> Dict[str, np.ndarray]:
@@ -80,7 +89,7 @@ def gemm_intent() -> IntentFunction:
 @dataclass
 class TileLangKernelSpec:
     name: str
-    source_text: str
+    prim_func: Any
     arg_names: List[str]
     canonical_shapes: Dict[str, int]
     vary_axes: List[str]
@@ -93,9 +102,9 @@ class TileLangKernelSpec:
 def gemm_spec() -> TileLangKernelSpec:
     return TileLangKernelSpec(
         name="tilelang_gemm",
-        source_text=GEMM_TILELANG_DSL,
+        prim_func=make_gemm_prim_func(block_m=8, block_n=8, block_k=8, num_stages=1, threads=128),
         arg_names=["A", "B", "C", "M", "N", "K"],
-        canonical_shapes={"M": 4, "N": 8, "K": 16},
+        canonical_shapes={"M": 16, "N": 16, "K": 16},
         vary_axes=["M", "N", "K"],
         runner=gemm_reference,
         intent_builder=gemm_intent,
@@ -104,5 +113,4 @@ def gemm_spec() -> TileLangKernelSpec:
     )
 
 
-__all__ = ["TileLangKernelSpec", "GEMM_TILELANG_DSL", "gemm_reference", "gemm_intent", "gemm_spec"]
-
+__all__ = ["TileLangKernelSpec", "make_gemm_prim_func", "gemm_reference", "gemm_intent", "gemm_spec"]

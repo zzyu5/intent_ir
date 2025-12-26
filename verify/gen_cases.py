@@ -110,6 +110,13 @@ def generate_cases_split(
     )
 
     in_contract: List[TestCase] = []
+    # Always try to include the provided base shape as an in-contract anchor when possible.
+    # This prevents empty in-contract sets when assumptions are strict (e.g., M%16==0,N%16==0,K%16==0)
+    # but the Cartesian product order hits many small non-divisible shapes first.
+    if base_shapes:
+        base = dict(base_shapes)
+        if _satisfies_assumptions(base, parsed_assumps):
+            in_contract.append(TestCase(shapes=base, dtypes={}, seed=seed))
     for c in candidates:
         if _satisfies_assumptions(c.shapes, parsed_assumps):
             in_contract.append(c)

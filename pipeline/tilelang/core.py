@@ -67,7 +67,7 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
     # 1) Descriptor / facts / constraints / certificate
     desc = adapter.build_descriptor(spec.kernel_obj)
     desc.meta["artifact_dir"] = str(out_dir)
-    (out_dir / f"{spec.name}.tilelang_src.json").write_text(desc.source_text, encoding="utf-8")
+    (out_dir / f"{spec.name}.tilelang_tir.py").write_text(desc.source_text, encoding="utf-8")
     report["descriptor"] = desc.to_json_dict()
 
     desc = adapter.ensure_artifacts(desc, spec.kernel_obj)
@@ -92,7 +92,7 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
     # 2) Deterministic "intent" (no LLM for TileLang MVP).
     intent = spec.intent_builder()
     (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(intent), encoding="utf-8")
-    cand = CandidateIntent(intent=intent, llm_trace={"provider": "tilelang_mvp"})
+    cand = CandidateIntent(intent=intent, llm_trace={"provider": "tilelang"})
     report["intent"] = intent.to_json_dict()
 
     # 3) Stage B: cases + diff
