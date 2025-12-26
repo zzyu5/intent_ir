@@ -7,12 +7,9 @@ the same helpers by constructing a KernelSpec and calling `run_pipeline_for_spec
 
 from __future__ import annotations
 
-import json
-import os
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional
 
 import numpy as np
 import torch
@@ -20,13 +17,12 @@ import triton
 
 from intent_ir.ir import IntentIRValidationError, ScheduleSketch
 from frontends.triton.llm_intent import extract_intent_json
+from frontends.triton.dump import find_latest_ttir, prepare_dump_and_cache_dirs
 from intent_ir.macros import expand_macros, enrich_intent_macros
 from intent_ir.parser import CandidateIntent, LLMJsonParseError, parse_candidate_json
 from intent_ir.ir.printer_mlir_like import print_mlir_like
-from frontends.triton.certificate import build_certificate
-from frontends.triton.contract import evaluate_contract
-from frontends.triton.facts import extract_constraints, extract_facts
 from frontends.triton.static_validate import static_validate
+from pipeline import registry as pipeline_registry
 from pipeline.interfaces import FrontendConstraints
 from verify.diff_runner import run_diff
 from verify.gen_cases import TestCase, generate_cases
@@ -48,42 +44,6 @@ class KernelSpec:
     vary_axes: List[str]
     exclude_axes: Optional[List[str]] = None
     normalize_shapes: Optional[Callable[[Dict[str, int]], Dict[str, int]]] = None
-
-
-def _get_src(mod_name: str, attr: str) -> str:
-    mod = __import__(mod_name, fromlist=["dummy"])
-    obj = mod
-    for part in attr.split("."):
-        obj = getattr(obj, part)
-    return str(obj)
-
-
-def prepare_dump_and_cache_dirs(base_dir: Path, kernel_name: str, *, clean: bool = True) -> tuple[Path, Path]:
-    """
-    Use per-kernel dump/cache directories so each run reliably produces TTIR.
-    """
-    dump_dir = base_dir / "_triton_dump" / kernel_name
-    cache_dir = base_dir / "_triton_cache" / kernel_name
-    if clean:
-        shutil.rmtree(dump_dir, ignore_errors=True)
-        shutil.rmtree(cache_dir, ignore_errors=True)
-    dump_dir.mkdir(parents=True, exist_ok=True)
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    os.environ["TRITON_KERNEL_DUMP"] = "1"
-    os.environ["TRITON_DUMP_DIR"] = str(dump_dir)
-    os.environ["TRITON_CACHE_DIR"] = str(cache_dir)
-    os.environ.setdefault("TRITON_ALLOW_NON_CONSTEXPR_GLOBALS", "1")
-    return dump_dir, cache_dir
-
-
-def find_latest_ttir(dump_dir: Path, name_hint: str) -> Optional[Path]:
-    ttirs = sorted(dump_dir.rglob("*.ttir"), key=lambda p: p.stat().st_mtime, reverse=True)
-    for p in ttirs:
-        if name_hint in p.name:
-            return p
-    return ttirs[0] if ttirs else None
-
-
 def llm_to_intent(src: str, kernel_name: str, feedback: Optional[List[str]] = None) -> CandidateIntent:
     base_extra = (
         "Return STRICT JSON (no prose/code fences). "
@@ -695,6 +655,7 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
     Returns the report dict (also written to JSON).
     """
     report: Dict[str, object] = {"kernel": spec.name}
+    adapter = pipeline_registry.get("triton")
     print(f"[{spec.name}] stage1: prepare triton dump/cache", flush=True)
     dump_dir, cache_dir = prepare_dump_and_cache_dirs(out_dir, spec.name, clean=True)
     report["triton_dump_dir"] = str(dump_dir)
@@ -702,9 +663,15 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
 
     # 1) Load source
     print(f"[{spec.name}] stage2: load triton source", flush=True)
-    src = _get_src(spec.module, spec.attr)
+    desc = adapter.build_descriptor(spec)
+    # Attach run-specific artifact paths for adapter extraction.
+    desc.meta["artifact_dir"] = str(out_dir)
+    desc.meta["triton_dump_dir"] = str(dump_dir)
+    desc.meta["triton_cache_dir"] = str(cache_dir)
+    src = desc.source_text
     (out_dir / f"{spec.name}.triton_src.txt").write_text(src, encoding="utf-8")
     report["triton_src_path"] = str(out_dir / f"{spec.name}.triton_src.txt")
+    report["descriptor"] = desc.to_json_dict()
 
     # 2) LLM -> IntentIR
     print(f"[{spec.name}] stage3: LLM -> IntentIR (may take a while)", flush=True)
@@ -787,6 +754,11 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
             }
     except Exception as e:
         report["baseline"] = {"shapes": dict(baseline_case.shapes), "seed": int(baseline_case.seed), "error": str(e)}
+    desc = adapter.ensure_artifacts(desc, spec)
+    report["descriptor"] = desc.to_json_dict()
+    if desc.meta.get("descriptor_path"):
+        report["descriptor_path"] = str(desc.meta.get("descriptor_path"))
+
     ttir_path = find_latest_ttir(dump_dir, spec.name)
     constraints = None
     cert = None
@@ -794,15 +766,14 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
     sv = None
     if ttir_path and ttir_path.exists():
         print(f"[{spec.name}] stage5: Task4 facts/contract/certificate + static validation", flush=True)
-        ttir_text = ttir_path.read_text()
-        ttir_copy = out_dir / f"{spec.name}.ttir"
-        ttir_copy.write_text(ttir_text, encoding="utf-8")
-        facts = extract_facts(ttir_text)
-        constraints = extract_constraints(ttir_text, facts=facts)
-        contract = evaluate_contract(facts)
-        cert = build_certificate(ttir_text, facts=facts)
+        facts = adapter.extract_facts(desc)
+        constraints = adapter.extract_constraints(desc, facts)
+        contract = adapter.evaluate_contract(facts, constraints, None)
+        cert = adapter.build_certificate(desc, facts, constraints)
         sv = static_validate((cand_expanded.intent if cand_expanded is not None else cand.intent), cert)
-        report["ttir_path"] = str(ttir_path)
+        report["ttir_path"] = str(desc.artifacts.ttir_path or ttir_path)
+        if desc.meta.get("ttir_original_path"):
+            report["ttir_dump_path"] = str(desc.meta.get("ttir_original_path"))
         report["contract"] = {"level": contract.level, "reasons": list(contract.reasons), "signals": dict(contract.signals)}
         report["certificate"] = cert.to_json_dict()
         report["static_validation"] = {
