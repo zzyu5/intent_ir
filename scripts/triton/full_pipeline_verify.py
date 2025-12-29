@@ -7,6 +7,7 @@ separate from generic scripts (backend smoke, remote RVV run, etc).
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -19,26 +20,28 @@ from pipeline.triton.core import default_kernel_specs, run_pipeline_for_spec
 
 
 def main() -> None:
-    out_dir = ROOT / "artifacts" / "full_pipeline_verify"
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--kernel", action="append", default=None, help="Run a single kernel by name (repeatable)")
+    ap.add_argument("--list", action="store_true", help="List available kernels and exit")
+    ap.add_argument("--cases-limit", type=int, default=8)
+    ap.add_argument("--out-dir", type=str, default=None)
+    args = ap.parse_args()
+
+    out_dir = Path(args.out_dir) if args.out_dir else (ROOT / "artifacts" / "full_pipeline_verify")
     out_dir.mkdir(parents=True, exist_ok=True)
-    # Optional: run a subset via `--kernel name` (can pass multiple).
-    wanted = set()
-    if "--kernel" in sys.argv:
-        idxs = [i for i, a in enumerate(sys.argv) if a == "--kernel"]
-        for i in idxs:
-            if i + 1 < len(sys.argv):
-                wanted.add(sys.argv[i + 1])
-    if "--list" in sys.argv:
+
+    if args.list:
         for s in default_kernel_specs():
             print(s.name)
         return
+    wanted = set(args.kernel or [])
 
     for spec in default_kernel_specs():
         if wanted and spec.name not in wanted:
             continue
         print(f"\n=== {spec.name} ===")
         try:
-            report = run_pipeline_for_spec(spec, out_dir=out_dir, cases_limit=8)
+            report = run_pipeline_for_spec(spec, out_dir=out_dir, cases_limit=int(args.cases_limit))
         except Exception as e:
             print("Pipeline failed:", e)
             continue

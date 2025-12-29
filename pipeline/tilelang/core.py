@@ -123,8 +123,18 @@ def run_pipeline_for_spec(
         meta = run_metamorphic_suite(spec.name, cand.intent, spec.runner, base_case=base_case)
         bounded = run_bounded_exhaustive(spec.name, cand.intent, spec.runner, max_cases=64)
         report["stage_c"] = {
-            "metamorphic": {"ok": bool(meta.ok), "results": [r.__dict__ for r in meta.results]},
-            "bounded_exhaustive": bounded.__dict__,
+            "metamorphic": {
+                "ok": bool(meta.ok),
+                "results": [{"relation": r.relation, "ok": bool(r.ok), "detail": r.detail} for r in meta.results],
+            },
+            "bounded_exhaustive": {
+                "ok": bool(bounded.ok),
+                "checked": int(bounded.checked),
+                "total": int(bounded.total),
+                "detail": bounded.detail,
+                "first_failure": (dict(bounded.first_failure_case.shapes) if bounded.first_failure_case else None),
+                "first_failure_summary": bounded.first_failure_summary,
+            },
         }
     else:
         report["stage_c"] = {"skipped": True}
@@ -143,7 +153,17 @@ def run_pipeline_for_spec(
             n_mutants=8,
             seed=0,
         )
-        report["mutation_kill"] = mut.__dict__
+        report["mutation_kill"] = {
+            "kill_rate": float(mut.kill_rate),
+            "total": int(mut.total),
+            "killed": int(mut.killed),
+            "survived": int(mut.survived),
+            "killed_by_stage": dict(mut.killed_by_stage),
+            "outcomes": [
+                {"mutant_id": o.mutant_id, "killed_by": o.killed_by, "detail": o.detail, "diff_summary": o.diff_summary}
+                for o in mut.outcomes
+            ],
+        }
     else:
         report["mutation_kill"] = {"skipped": True}
 

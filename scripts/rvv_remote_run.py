@@ -7,7 +7,8 @@ Current support:
 Usage:
   INTENTIR_SSH_PASSWORD=... python scripts/rvv_remote_run.py --kernel any_kernel_dim --host <host> --user <user>
   # or omit INTENTIR_SSH_PASSWORD and type it when prompted
-Requires: `artifacts/full_pipeline_verify/<kernel>.json` produced beforehand.
+Requires: `artifacts/<frontend>_full_pipeline/<kernel>.json` produced beforehand
+(Triton uses `artifacts/full_pipeline_verify/` for historical reasons).
 """
 
 from __future__ import annotations
@@ -115,6 +116,7 @@ def _sftp_write_bytes(sftp: paramiko.SFTPClient, path: str, data: bytes) -> None
 
 def run_remote(
     kernel: str,
+    frontend: str,
     host: str,
     user: str,
     password: str,
@@ -124,10 +126,11 @@ def run_remote(
     baseline_npz: str | None = None,
     prefer_live_baseline: bool = False,
 ):
-    report_path = ROOT / "artifacts" / "full_pipeline_verify" / f"{kernel}.json"
+    artifact_dir = "full_pipeline_verify" if frontend == "triton" else "tilelang_full_pipeline"
+    report_path = ROOT / "artifacts" / artifact_dir / f"{kernel}.json"
     if not report_path.exists():
         raise FileNotFoundError(
-            f"artifact not found: {report_path}, please run scripts/triton/full_pipeline_verify.py first"
+            f"artifact not found: {report_path}, please run scripts/{frontend}/full_pipeline_verify.py first"
         )
     report = json.loads(report_path.read_text())
     intent_macro = IntentFunction.from_json_dict(report["intent"])
@@ -136,9 +139,18 @@ def run_remote(
         intent = IntentFunction.from_json_dict(intent_expanded_json)
     else:
         intent = expand_macros(intent_macro)
-    # Select shapes from cases (for binding), but baseline outputs must come from a real Triton run
-    cases = report.get("cases") or []
-    case_idx = min(max(case_index, 0), len(cases) - 1)
+    # Select shapes from cases (for binding).
+    cases_raw = report.get("cases") or []
+    cases: list[dict] = []
+    if isinstance(cases_raw, dict):
+        # v1.2 format: {"in_contract":[...], "out_of_contract":[...]}
+        in_contract = cases_raw.get("in_contract")
+        if isinstance(in_contract, list):
+            cases = [c for c in in_contract if isinstance(c, dict)]
+    elif isinstance(cases_raw, list):
+        # legacy: list[dict]
+        cases = [c for c in cases_raw if isinstance(c, dict)]
+    case_idx = min(max(int(case_index), 0), len(cases) - 1) if cases else 0
     bindings = dict(cases[case_idx]) if cases else {}
     if shape_overrides:
         bindings.update(shape_overrides)
@@ -178,15 +190,26 @@ def run_remote(
     # to get baseline IO. This keeps Task6 usable on machines with CUDA.
     if baseline is None:
         try:
-            from pipeline.triton.core import default_kernel_specs
+            if frontend == "triton":
+                from pipeline.triton.core import default_kernel_specs
 
-            spec_map = {s.name: s for s in default_kernel_specs()}
-            if kernel not in spec_map:
-                raise RuntimeError(f"unknown kernel {kernel}")
-            spec = spec_map[kernel]
-            if not bindings:
-                bindings = dict(spec.canonical_shapes)
-            baseline = spec.runner(TestCase(shapes=bindings, dtypes={}, seed=0))
+                spec_map = {s.name: s for s in default_kernel_specs()}
+                if kernel not in spec_map:
+                    raise RuntimeError(f"unknown kernel {kernel}")
+                spec = spec_map[kernel]
+                if not bindings:
+                    bindings = dict(spec.canonical_shapes)
+                baseline = spec.runner(TestCase(shapes=bindings, dtypes={}, seed=0))
+            else:
+                from pipeline.tilelang.core import default_kernel_specs, mvp_kernel_specs
+
+                spec_map = {s.name: s for s in (mvp_kernel_specs() + default_kernel_specs())}
+                if kernel not in spec_map:
+                    raise RuntimeError(f"unknown kernel {kernel}")
+                spec = spec_map[kernel]
+                if not bindings:
+                    bindings = dict(spec.canonical_shapes)
+                baseline = spec.runner(TestCase(shapes=bindings, dtypes={}, seed=0))
         except Exception as e:
             raise RuntimeError(
                 "baseline not available: no cached baseline .npz in artifacts and live Triton launch failed. "
@@ -197,7 +220,7 @@ def run_remote(
 
     # Prefer baseline shapes (the embedded inputs correspond to that launch).
     baseline_shapes = ((report.get("baseline") or {}).get("shapes") or {}) if isinstance(report.get("baseline"), dict) else {}
-    if baseline_shapes:
+    if baseline_shapes and frontend == "triton":
         bindings = dict(baseline_shapes) | dict(shape_overrides or {})
 
     # Common axis aliases (align kernel-signature symbols with user-friendly names).
@@ -338,6 +361,7 @@ def run_remote(
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--kernel", default="any_kernel_dim")
+    ap.add_argument("--frontend", choices=["triton", "tilelang"], default="triton")
     ap.add_argument("--host", required=True)
     ap.add_argument("--user", default="ubuntu")
     ap.add_argument("--password", default=None, help="SSH password (prefer env INTENTIR_SSH_PASSWORD or prompt)")
@@ -351,6 +375,7 @@ def main():
         password = getpass.getpass(f"SSH password for {args.user}@{args.host}: ")
     res = run_remote(
         args.kernel,
+        args.frontend,
         args.host,
         args.user,
         password,
