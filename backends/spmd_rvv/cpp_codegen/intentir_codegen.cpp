@@ -571,10 +571,22 @@ std::vector<std::string> emit_unary_abs(const std::string& out, const std::strin
   const std::string in_ct = ctype_for_dtype(in_dt);
   const std::string out_ct = ctype_for_dtype(out_dt);
   std::vector<std::string> lines;
-  lines.push_back("  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) {");
   if (in_ct == "float" && out_ct == "float") {
-    lines.push_back("    " + out + "[i] = fabsf(" + a + "[i]);");
-  } else if (in_ct == "double" && out_ct == "double") {
+    lines.push_back("#if defined(__riscv_vector) || defined(__riscv_v)");
+    lines.push_back("  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ) {");
+    lines.push_back("    size_t vl = __riscv_vsetvl_e32m1((size_t)" + std::to_string(n) + " - i);");
+    lines.push_back("    vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + a + "[i], vl);");
+    lines.push_back("    vfloat32m1_t vy = __riscv_vfabs_v_f32m1(vx, vl);");
+    lines.push_back("    __riscv_vse32_v_f32m1(&" + out + "[i], vy, vl);");
+    lines.push_back("    i += vl;");
+    lines.push_back("  }");
+    lines.push_back("#else");
+    lines.push_back("  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) { " + out + "[i] = fabsf(" + a + "[i]); }");
+    lines.push_back("#endif");
+    return lines;
+  }
+  lines.push_back("  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) {");
+  if (in_ct == "double" && out_ct == "double") {
     lines.push_back("    " + out + "[i] = fabs(" + a + "[i]);");
   } else {
     lines.push_back("    " + in_ct + " x = " + a + "[i];");
@@ -596,9 +608,18 @@ std::vector<std::string> emit_floor(const std::string& out, const std::string& a
 std::vector<std::string> emit_rsqrt(const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
   const int64_t n = numel(out_shape);
   return {
-      "  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) {",
-      "    " + out + "[i] = 1.0f / sqrtf(" + a + "[i]);",
+      "#if defined(__riscv_vector) || defined(__riscv_v)",
+      "  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ) {",
+      "    size_t vl = __riscv_vsetvl_e32m1((size_t)" + std::to_string(n) + " - i);",
+      "    vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + a + "[i], vl);",
+      "    vfloat32m1_t vs = __riscv_vfsqrt_v_f32m1(vx, vl);",
+      "    vfloat32m1_t vy = __riscv_vfrdiv_vf_f32m1(vs, 1.0f, vl);",
+      "    __riscv_vse32_v_f32m1(&" + out + "[i], vy, vl);",
+      "    i += vl;",
       "  }",
+      "#else",
+      "  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) { " + out + "[i] = 1.0f / sqrtf(" + a + "[i]); }",
+      "#endif",
   };
 }
 
@@ -727,6 +748,84 @@ std::vector<std::string> emit_reduce_sum(const std::string& out, const std::stri
     if (out_rank != r - (int)dims_set.size()) fail("reduce_sum out rank mismatch");
   }
 
+  // Fast path: 2D row-reduction over the last axis.
+  if (r == 2 && dims_set.size() == 1 && dims_set[0] == 1) {
+    int64_t M = D[0], K = D[1];
+    std::vector<std::string> lines;
+    lines.push_back("#if defined(__riscv_vector) || defined(__riscv_v)");
+    lines.push_back("  for (int m = 0; m < " + std::to_string(M) + "; ++m) {");
+    lines.push_back("    size_t vlmax = __riscv_vsetvl_e32m1((size_t)" + std::to_string(K) + ");");
+    lines.push_back("    vfloat32m1_t vsum = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);");
+    lines.push_back("    for (int k = 0; k < " + std::to_string(K) + "; ) {");
+    lines.push_back("      size_t vl = __riscv_vsetvl_e32m1((size_t)(" + std::to_string(K) + " - k));");
+    lines.push_back("      vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + a + "[idx2(m,k," + std::to_string(K) + ")], vl);");
+    lines.push_back("      vsum = __riscv_vfadd_vv_f32m1(vsum, vx, vl);");
+    lines.push_back("      k += (int)vl;");
+    lines.push_back("    }");
+    lines.push_back("    vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);");
+    lines.push_back("    vfloat32m1_t vres = __riscv_vfredusum_vs_f32m1_f32m1(vsum, v0, vlmax);");
+    lines.push_back("    float intentir_sum_scalar = __riscv_vfmv_f_s_f32m1_f32(vres);");
+    if (scale.has_value()) lines.push_back("    intentir_sum_scalar *= " + c_float(scale.value()) + ";");
+    if (keepdims) lines.push_back("    " + out + "[idx2(m,0,1)] = intentir_sum_scalar;");
+    else lines.push_back("    " + out + "[(size_t)m] = intentir_sum_scalar;");
+    lines.push_back("  }");
+    lines.push_back("#else");
+    lines.push_back("  for (int m = 0; m < " + std::to_string(M) + "; ++m) {");
+    lines.push_back("    double intentir_sum_scalar = 0.0;");
+    lines.push_back("    for (int k = 0; k < " + std::to_string(K) + "; ++k) { intentir_sum_scalar += (double)" + a + "[idx2(m,k," + std::to_string(K) + ")]; }");
+    if (scale.has_value()) lines.push_back("    intentir_sum_scalar *= (double)" + c_float(scale.value()) + ";");
+    if (keepdims) lines.push_back("    " + out + "[idx2(m,0,1)] = (float)intentir_sum_scalar;");
+    else lines.push_back("    " + out + "[(size_t)m] = (float)intentir_sum_scalar;");
+    lines.push_back("  }");
+    lines.push_back("#endif");
+    return lines;
+  }
+
+  // Fast path: 4D reduce over the innermost 2 dims (e.g., [N,G,group_size,HW] -> [N,G,1,1]).
+  if (r == 4 && keepdims && dims_set.size() == 2) {
+    std::vector<int> ds = dims_set;
+    std::sort(ds.begin(), ds.end());
+    if (ds[0] == 2 && ds[1] == 3 && OD.size() == 4 && OD[0] == D[0] && OD[1] == D[1] && OD[2] == 1 && OD[3] == 1) {
+      int64_t N = D[0], G = D[1], GS = D[2], HW = D[3];
+      const int64_t len = GS * HW;
+      std::vector<std::string> lines;
+      lines.push_back("#if defined(__riscv_vector) || defined(__riscv_v)");
+      lines.push_back("  for (int n0 = 0; n0 < " + std::to_string(N) + "; ++n0) {");
+      lines.push_back("    for (int g0 = 0; g0 < " + std::to_string(G) + "; ++g0) {");
+      lines.push_back("      const size_t base = ((size_t)n0 * (size_t)" + std::to_string(G) + " + (size_t)g0) * (size_t)" + std::to_string(len) + ";");
+      lines.push_back("      size_t vlmax = __riscv_vsetvl_e32m1((size_t)" + std::to_string(len) + ");");
+      lines.push_back("      vfloat32m1_t vsum = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);");
+      lines.push_back("      for (size_t i = 0; i < (size_t)" + std::to_string(len) + "; ) {");
+      lines.push_back("        size_t vl = __riscv_vsetvl_e32m1((size_t)" + std::to_string(len) + " - i);");
+      lines.push_back("        vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + a + "[base + i], vl);");
+      lines.push_back("        vsum = __riscv_vfadd_vv_f32m1(vsum, vx, vl);");
+      lines.push_back("        i += vl;");
+      lines.push_back("      }");
+      lines.push_back("      vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);");
+      lines.push_back("      vfloat32m1_t vres = __riscv_vfredusum_vs_f32m1_f32m1(vsum, v0, vlmax);");
+      lines.push_back("      float intentir_sum_scalar = __riscv_vfmv_f_s_f32m1_f32(vres);");
+      if (scale.has_value()) lines.push_back("      intentir_sum_scalar *= " + c_float(scale.value()) + ";");
+      lines.push_back("      " + out + "[(size_t)n0 * (size_t)" + std::to_string(G) + " + (size_t)g0] = intentir_sum_scalar;");
+      lines.push_back("    }");
+      lines.push_back("  }");
+      lines.push_back("#else");
+      lines.push_back("  for (int n0 = 0; n0 < " + std::to_string(N) + "; ++n0) {");
+      lines.push_back("    for (int g0 = 0; g0 < " + std::to_string(G) + "; ++g0) {");
+      lines.push_back("      double intentir_sum_scalar = 0.0;");
+      lines.push_back("      for (int gs = 0; gs < " + std::to_string(GS) + "; ++gs) {");
+      lines.push_back("        for (int hw = 0; hw < " + std::to_string(HW) + "; ++hw) {");
+      lines.push_back("          intentir_sum_scalar += (double)" + a + "[idx4(n0,g0,gs,hw," + std::to_string(G) + "," + std::to_string(GS) + "," + std::to_string(HW) + ")];");
+      lines.push_back("        }");
+      lines.push_back("      }");
+      if (scale.has_value()) lines.push_back("      intentir_sum_scalar *= (double)" + c_float(scale.value()) + ";");
+      lines.push_back("      " + out + "[(size_t)n0 * (size_t)" + std::to_string(G) + " + (size_t)g0] = (float)intentir_sum_scalar;");
+      lines.push_back("    }");
+      lines.push_back("  }");
+      lines.push_back("#endif");
+      return lines;
+    }
+  }
+
   std::vector<std::string> out_vars;
   for (int i = 0; i < out_rank; ++i) out_vars.push_back("o" + std::to_string(i));
   std::vector<std::string> lines;
@@ -802,6 +901,38 @@ std::vector<std::string> emit_reduce_max(const std::string& out, const std::stri
   } else {
     if (out_rank != r - (int)dims_set.size()) fail("reduce_max out rank mismatch");
   }
+
+  // Fast path: 2D row-reduction over the last axis.
+  if (r == 2 && dims_set.size() == 1 && dims_set[0] == 1) {
+    int64_t M = D[0], K = D[1];
+    std::vector<std::string> lines;
+    lines.push_back("#if defined(__riscv_vector) || defined(__riscv_v)");
+    lines.push_back("  for (int m = 0; m < " + std::to_string(M) + "; ++m) {");
+    lines.push_back("    size_t vlmax = __riscv_vsetvl_e32m1((size_t)" + std::to_string(K) + ");");
+    lines.push_back("    vfloat32m1_t vmax = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);");
+    lines.push_back("    for (int k = 0; k < " + std::to_string(K) + "; ) {");
+    lines.push_back("      size_t vl = __riscv_vsetvl_e32m1((size_t)(" + std::to_string(K) + " - k));");
+    lines.push_back("      vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + a + "[idx2(m,k," + std::to_string(K) + ")], vl);");
+    lines.push_back("      vmax = __riscv_vfmax_vv_f32m1(vmax, vx, vl);");
+    lines.push_back("      k += (int)vl;");
+    lines.push_back("    }");
+    lines.push_back("    vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);");
+    lines.push_back("    vfloat32m1_t vres = __riscv_vfredmax_vs_f32m1_f32m1(vmax, v0, vlmax);");
+    lines.push_back("    float intentir_max_scalar = __riscv_vfmv_f_s_f32m1_f32(vres);");
+    if (keepdims) lines.push_back("    " + out + "[idx2(m,0,1)] = intentir_max_scalar;");
+    else lines.push_back("    " + out + "[(size_t)m] = intentir_max_scalar;");
+    lines.push_back("  }");
+    lines.push_back("#else");
+    lines.push_back("  for (int m = 0; m < " + std::to_string(M) + "; ++m) {");
+    lines.push_back("    float intentir_max_scalar = -INFINITY;");
+    lines.push_back("    for (int k = 0; k < " + std::to_string(K) + "; ++k) { intentir_max_scalar = fmaxf(intentir_max_scalar, " + a + "[idx2(m,k," + std::to_string(K) + ")]); }");
+    if (keepdims) lines.push_back("    " + out + "[idx2(m,0,1)] = intentir_max_scalar;");
+    else lines.push_back("    " + out + "[(size_t)m] = intentir_max_scalar;");
+    lines.push_back("  }");
+    lines.push_back("#endif");
+    return lines;
+  }
+
   std::vector<std::string> out_vars;
   for (int i = 0; i < out_rank; ++i) out_vars.push_back("o" + std::to_string(i));
   std::vector<std::string> lines;
@@ -1495,7 +1626,18 @@ int main(int argc, char** argv) {
         lines.push_back("  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) { " + out + "[i] = expf(" + op.inputs[0] + "[i]); }");
       } else if (op.op == "relu") {
         int64_t n = numel(out_shape);
+        lines.push_back("#if defined(__riscv_vector) || defined(__riscv_v)");
+        lines.push_back("  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ) {");
+        lines.push_back("    size_t vl = __riscv_vsetvl_e32m1((size_t)" + std::to_string(n) + " - i);");
+        lines.push_back("    vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + op.inputs[0] + "[i], vl);");
+        lines.push_back("    vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(0.0f, vl);");
+        lines.push_back("    vfloat32m1_t vy = __riscv_vfmax_vv_f32m1(vx, v0, vl);");
+        lines.push_back("    __riscv_vse32_v_f32m1(&" + out + "[i], vy, vl);");
+        lines.push_back("    i += vl;");
+        lines.push_back("  }");
+        lines.push_back("#else");
         lines.push_back("  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) { float v = " + op.inputs[0] + "[i]; " + out + "[i] = v > 0.0f ? v : 0.0f; }");
+        lines.push_back("#endif");
       } else if (op.op == "softmax") {
         int axis = op.attrs.value("axis", -1);
         auto bl = emit_softmax(out, op.inputs[0], shape_env[op.inputs[0]], axis);
