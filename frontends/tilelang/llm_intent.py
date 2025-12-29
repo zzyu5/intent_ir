@@ -37,6 +37,7 @@ SYSTEM_PROMPT = """You are an expert compiler engineer. Given a TileLang kernel
   shapes must come from existing kernel signature symbols.
 - Every output tensor MUST be declared in tensors and produced by an op.
   If the kernel writes Mean/Rstd or similar, add the corresponding reduce/compute ops.
+- Each op.output name MUST be unique across the ops list (no duplicates).
 - Reduce dims/axis must be integer axis indices (after any reshape/transpose), not symbolic names.
 - IMPORTANT groupnorm semantics:
   reduce_sum computes SUM; normalize by num_elements=group_size*HW
@@ -44,6 +45,8 @@ SYSTEM_PROMPT = """You are an expert compiler engineer. Given a TileLang kernel
   Prefer explicit arithmetic ops; model eps/num_elements/group_size as `const` ops (scalar tensors)
   unless they are runtime scalar tensors in the kernel signature.
 - IMPORTANT layernorm semantics: normalize by N (mean=sum/N; var=sumsq/N - mean^2).
+- IMPORTANT attention kernels: represent score computation as `matmul` + `mul(sm_scale)` + `softmax`, then `matmul` with V.
+  Do NOT implement matmul via ad-hoc reduce_sum with wrong axes; prefer `matmul` primitive.
 - Do NOT model low-level thread/block/program mapping in tensor shapes or iota.shape.
   Treat logical axes (M/N/K/OH/OW/etc) as full ranges. You MAY emit a schedule sketch:
   - schedule.tile_m/tile_n/tile_k/vec_width/pipeline_depth when obvious tile constants exist.
@@ -75,4 +78,3 @@ def build_messages(
 
 
 __all__ = ["SYSTEM_PROMPT", "build_messages"]
-

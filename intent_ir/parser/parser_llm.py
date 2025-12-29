@@ -83,6 +83,8 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
             t["dtype"] = "f16"
         elif dtype in {"float32", "fp32", "float"}:
             t["dtype"] = "f32"
+        elif dtype in {"bfloat16", "bf16"}:
+            t["dtype"] = "bf16"
         if "shape" not in t:
             t["shape"] = []
         # replace tile symbols with axis symbols for downstream bindings
@@ -177,6 +179,22 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
         if op.get("op") == "cast":
             if "to" not in op["attrs"] and "dtype" in op["attrs"]:
                 op["attrs"]["to"] = op["attrs"].pop("dtype")
+            # Normalize dtype spellings commonly emitted by providers.
+            to = op["attrs"].get("to")
+            if to in {"float16", "fp16"}:
+                op["attrs"]["to"] = "f16"
+            elif to in {"float32", "fp32", "float"}:
+                op["attrs"]["to"] = "f32"
+            elif to in {"bfloat16", "bf16"}:
+                op["attrs"]["to"] = "bf16"
+        if op.get("op") == "const":
+            dt = op["attrs"].get("dtype")
+            if dt in {"float16", "fp16"}:
+                op["attrs"]["dtype"] = "f16"
+            elif dt in {"float32", "fp32", "float"}:
+                op["attrs"]["dtype"] = "f32"
+            elif dt in {"bfloat16", "bf16"}:
+                op["attrs"]["dtype"] = "bf16"
 
         # Canonicalize scalar shorthand for numeric binary ops into explicit const + binary op.
         # This keeps downstream stages simple/strict (interpreter, C lowering, RVV lowering).

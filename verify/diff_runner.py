@@ -89,7 +89,13 @@ def run_diff(
                 bindings["num_elements"] = int(bindings["group_size"]) * int(bindings["HW"])
             except Exception:
                 pass
-        inputs = {k: v for k, v in ref_out.items() if k not in intent_exec.outputs}
+        # Only feed/validate true external inputs (values consumed by the ops graph).
+        produced = {op.output for op in intent_exec.ops if op.output}
+        used: set[str] = set()
+        for op in intent_exec.ops:
+            used.update(op.inputs)
+        external_inputs = {n for n in used if (n in intent_exec.tensors and n not in produced)}
+        inputs = {k: v for k, v in ref_out.items() if k in external_inputs}
         # Strict "original view" check: inputs must match declared tensor shapes exactly.
         # If the LLM needs a grouped/view shape, it must introduce explicit reshape ops
         # inside IntentIR, rather than redefining the input tensor shape.
