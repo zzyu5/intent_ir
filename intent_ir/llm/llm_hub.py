@@ -36,7 +36,9 @@ def _evidence_blob(descriptor: KernelDescriptor) -> str:
         "launch": descriptor.launch,
         "frontend_facts": descriptor.frontend_facts,
         "frontend_constraints": descriptor.frontend_constraints,
-        "meta": {"versions": descriptor.meta.get("triton") or descriptor.meta.get("torch") or None},
+        "meta": {
+            "versions": {k: descriptor.meta.get(k) for k in ("triton", "torch", "tilelang") if descriptor.meta.get(k) is not None}
+        },
     }
     return json.dumps(ev, indent=2, ensure_ascii=False, sort_keys=True)
 
@@ -108,8 +110,11 @@ class LLMIntentHub:
             from frontends.triton.llm_intent import build_messages
 
             return build_messages(descriptor.source_text, kernel_name=descriptor.name, extra_instruction=extra_instruction)
+        if descriptor.frontend == "tilelang":
+            from frontends.tilelang.llm_intent import build_messages
+
+            return build_messages(descriptor.source_text, kernel_name=descriptor.name, extra_instruction=extra_instruction)
         raise NotImplementedError(f"LLMIntentHub does not support frontend={descriptor.frontend}")
 
 
 __all__ = ["LLMIntentHub"]
-
