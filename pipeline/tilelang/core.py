@@ -71,10 +71,13 @@ def _rm_layout() -> TensorLayout:
 
 
 def _any_kernel_dim_reference(case: TestCase) -> Dict[str, np.ndarray]:
-    rng = np.random.default_rng(int(case.seed))
-    m = int(case.shapes["M"])
-    n = int(case.shapes["N"])
-    inp = rng.integers(0, 2, size=(m, n)).astype(np.float32)
+    if case.inputs and "inp" in case.inputs:
+        inp = np.asarray(case.inputs["inp"])
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        m = int(case.shapes["M"])
+        n = int(case.shapes["N"])
+        inp = rng.integers(0, 2, size=(m, n)).astype(np.float32)
     out = np.any(inp != 0, axis=1)
     return {"inp": inp, "out": out}
 
@@ -98,7 +101,6 @@ def _any_kernel_dim_intent() -> IntentFunction:
 
 
 def _group_norm_reference(case: TestCase) -> Dict[str, np.ndarray]:
-    rng = np.random.default_rng(int(case.seed))
     n = int(case.shapes["N"])
     c = int(case.shapes["C"])
     hw = int(case.shapes["HW"])
@@ -106,9 +108,21 @@ def _group_norm_reference(case: TestCase) -> Dict[str, np.ndarray]:
     if g <= 0 or c % g != 0:
         raise ValueError(f"invalid group config: C={c} num_groups={g}")
     group_size = c // g
-    x = rng.standard_normal((n, c, hw), dtype=np.float32)
-    w = rng.standard_normal((c,), dtype=np.float32)
-    b = rng.standard_normal((c,), dtype=np.float32)
+    if case.inputs and "X" in case.inputs:
+        x = np.asarray(case.inputs["X"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        x = rng.standard_normal((n, c, hw), dtype=np.float32)
+    if case.inputs and "W" in case.inputs:
+        w = np.asarray(case.inputs["W"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        w = rng.standard_normal((c,), dtype=np.float32)
+    if case.inputs and "B" in case.inputs:
+        b = np.asarray(case.inputs["B"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        b = rng.standard_normal((c,), dtype=np.float32)
     eps = np.float32(1e-5)
 
     x4 = x.reshape(n, g, group_size, hw)
@@ -199,10 +213,13 @@ def _group_norm_intent() -> IntentFunction:
 
 
 def _softmax_inner_reference(case: TestCase) -> Dict[str, np.ndarray]:
-    rng = np.random.default_rng(int(case.seed))
-    m = int(case.shapes["M"])
-    n = int(case.shapes["N"])
-    x = rng.standard_normal((m, n), dtype=np.float32)
+    if case.inputs and "input_ptr" in case.inputs:
+        x = np.asarray(case.inputs["input_ptr"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        m = int(case.shapes["M"])
+        n = int(case.shapes["N"])
+        x = rng.standard_normal((m, n), dtype=np.float32)
     x_max = np.max(x, axis=1, keepdims=True)
     e = np.exp(x - x_max)
     y = e / np.sum(e, axis=1, keepdims=True)
@@ -228,12 +245,23 @@ def _softmax_inner_intent() -> IntentFunction:
 
 
 def _layer_norm_persistent_reference(case: TestCase) -> Dict[str, np.ndarray]:
-    rng = np.random.default_rng(int(case.seed))
     m = int(case.shapes["M"])
     n = int(case.shapes["N"])
-    x = rng.standard_normal((m, n), dtype=np.float32)
-    w = rng.standard_normal((n,), dtype=np.float32)
-    b = rng.standard_normal((n,), dtype=np.float32)
+    if case.inputs and "in_ptr" in case.inputs:
+        x = np.asarray(case.inputs["in_ptr"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        x = rng.standard_normal((m, n), dtype=np.float32)
+    if case.inputs and "weight_ptr" in case.inputs:
+        w = np.asarray(case.inputs["weight_ptr"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        w = rng.standard_normal((n,), dtype=np.float32)
+    if case.inputs and "bias_ptr" in case.inputs:
+        b = np.asarray(case.inputs["bias_ptr"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        b = rng.standard_normal((n,), dtype=np.float32)
     eps = np.float32(1e-5)
     mean = np.mean(x, axis=1, keepdims=True)
     var = np.mean((x - mean) ** 2, axis=1, keepdims=True)
@@ -315,14 +343,28 @@ def _layer_norm_persistent_intent() -> IntentFunction:
 
 
 def _attn_fwd_reference(case: TestCase) -> Dict[str, np.ndarray]:
-    rng = np.random.default_rng(int(case.seed))
     q_ctx = int(case.shapes.get("Q_CTX", 16))
     kv_ctx = int(case.shapes.get("KV_CTX", 16))
     head_dim = int(case.shapes.get("HEAD_DIM", 16))
-    q = rng.standard_normal((q_ctx, head_dim), dtype=np.float32)
-    k = rng.standard_normal((kv_ctx, head_dim), dtype=np.float32)
-    v = rng.standard_normal((kv_ctx, head_dim), dtype=np.float32)
-    sm_scale = np.array(1.0 / np.sqrt(float(head_dim)), dtype=np.float32)
+    if case.inputs and "Q" in case.inputs:
+        q = np.asarray(case.inputs["Q"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        q = rng.standard_normal((q_ctx, head_dim), dtype=np.float32)
+    if case.inputs and "K" in case.inputs:
+        k = np.asarray(case.inputs["K"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        k = rng.standard_normal((kv_ctx, head_dim), dtype=np.float32)
+    if case.inputs and "V" in case.inputs:
+        v = np.asarray(case.inputs["V"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        v = rng.standard_normal((kv_ctx, head_dim), dtype=np.float32)
+    if case.inputs and "sm_scale" in case.inputs:
+        sm_scale = np.asarray(case.inputs["sm_scale"], dtype=np.float32).reshape(())
+    else:
+        sm_scale = np.array(1.0 / np.sqrt(float(head_dim)), dtype=np.float32)
 
     scores = (q @ k.T) * sm_scale
     scores_max = np.max(scores, axis=-1, keepdims=True)
@@ -382,7 +424,6 @@ def _upsample_bicubic2d_aa_reference(case: TestCase) -> Dict[str, np.ndarray]:
     import torch
     import torch.nn.functional as F
 
-    rng = np.random.default_rng(int(case.seed))
     n = int(case.shapes.get("N", 1))
     c = int(case.shapes.get("C", 1))
     ih = int(case.shapes.get("IH", 4))
@@ -390,7 +431,11 @@ def _upsample_bicubic2d_aa_reference(case: TestCase) -> Dict[str, np.ndarray]:
     oh = int(case.shapes.get("OH", 8))
     ow = int(case.shapes.get("OW", 8))
 
-    x = rng.standard_normal((n, c, ih, iw), dtype=np.float32)
+    if case.inputs and "I" in case.inputs:
+        x = np.asarray(case.inputs["I"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        x = rng.standard_normal((n, c, ih, iw), dtype=np.float32)
 
     align_corners = False
     reciprocal_scale_h = _bicubic_reciprocal_scale(ih, oh, align_corners, scale=None)
@@ -436,12 +481,19 @@ def _upsample_bicubic2d_aa_intent() -> IntentFunction:
 
 
 def _gemm_relu_reference(case: TestCase) -> Dict[str, np.ndarray]:
-    rng = np.random.default_rng(int(case.seed))
     m = int(case.shapes["M"])
     n = int(case.shapes["N"])
     k = int(case.shapes["K"])
-    a = rng.standard_normal((m, k), dtype=np.float32).astype(np.float16)
-    b = rng.standard_normal((k, n), dtype=np.float32).astype(np.float16)
+    if case.inputs and "A" in case.inputs:
+        a = np.asarray(case.inputs["A"], dtype=np.float16)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        a = rng.standard_normal((m, k), dtype=np.float32).astype(np.float16)
+    if case.inputs and "B" in case.inputs:
+        b = np.asarray(case.inputs["B"], dtype=np.float16)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        b = rng.standard_normal((k, n), dtype=np.float32).astype(np.float16)
     c = np.maximum((a.astype(np.float32) @ b.astype(np.float32)), 0.0).astype(np.float16)
     return {"A": a, "B": b, "C": c}
 
@@ -695,10 +747,11 @@ def run_pipeline_for_spec(
         ],
     }
 
+    stage_c_ref_fn = spec.runner
     if stage_c and diff_ok and cases_in:
         base_case = TestCase(shapes=dict(spec.canonical_shapes), dtypes={}, seed=0)
-        meta = run_metamorphic_suite(spec.name, cand.intent, run_ref_fn, base_case=base_case)
-        bounded = run_bounded_exhaustive(spec.name, cand.intent, run_ref_fn, max_cases=64)
+        meta = run_metamorphic_suite(spec.name, cand.intent, stage_c_ref_fn, base_case=base_case)
+        bounded = run_bounded_exhaustive(spec.name, cand.intent, stage_c_ref_fn, max_cases=64)
         report["stage_c"] = {
             "metamorphic": {
                 "ok": bool(meta.ok),
@@ -723,7 +776,7 @@ def run_pipeline_for_spec(
         mut = run_mutation_kill(
             spec.name,
             intent=cand.intent,
-            run_ref_fn=run_ref_fn,
+            run_ref_fn=stage_c_ref_fn,
             diff_cases=diff_cases,
             metamorphic_base_case=metamorphic_base,
             static_validate_fn=None,

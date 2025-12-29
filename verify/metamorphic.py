@@ -301,16 +301,26 @@ def _default_relations(
             k = np.asarray(inputs["K"], dtype=np.float32)
             v = np.asarray(inputs["V"], dtype=np.float32)
             mask = np.asarray(inputs.get("attn_mask", 0.0), dtype=np.float32)
-            if k.ndim != 4 or v.ndim != 4:
-                raise ValueError(f"expected K/V rank-4, got K={k.shape} V={v.shape}")
-            kv = k.shape[2]
-            perm = rng.permutation(kv)
-            out = dict(inputs)
-            out["K"] = k[:, :, perm, :]
-            out["V"] = v[:, :, perm, :]
-            if mask.ndim == 4:
-                out["attn_mask"] = mask[:, :, :, perm]
-            return out
+            # Support both common layouts:
+            # - Triton attention: [Z, H, KV, D]
+            # - TileLang MVP attention: [KV, D]
+            if k.ndim == 4 and v.ndim == 4:
+                kv = k.shape[2]
+                perm = rng.permutation(kv)
+                out = dict(inputs)
+                out["K"] = k[:, :, perm, :]
+                out["V"] = v[:, :, perm, :]
+                if mask.ndim == 4:
+                    out["attn_mask"] = mask[:, :, :, perm]
+                return out
+            if k.ndim == 2 and v.ndim == 2:
+                kv = k.shape[0]
+                perm = rng.permutation(kv)
+                out = dict(inputs)
+                out["K"] = k[perm, :]
+                out["V"] = v[perm, :]
+                return out
+            raise ValueError(f"expected K/V rank-2 or rank-4, got K={k.shape} V={v.shape}")
 
         def _check(base_out: Dict[str, np.ndarray], tr_out: Dict[str, np.ndarray], bindings: Dict[str, int], *, atol: float, rtol: float) -> Tuple[bool, str]:
             o0, o1 = np.asarray(base_out["Out"]), np.asarray(tr_out["Out"])
