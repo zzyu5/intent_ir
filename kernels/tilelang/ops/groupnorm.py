@@ -38,7 +38,7 @@ def make_group_norm_kernel_prim_func(*, c: int = 64, hw: int = 16, num_groups: i
             g = pid_g
             c0 = g * group_size
 
-            x_tile = T.alloc_fragment((1, group_size, HW), "float32")
+            x_tile = T.alloc_fragment((group_size, HW), "float32")
             T.copy(X[n, c0, 0], x_tile)
             w_tile = T.alloc_fragment((group_size,), "float32")
             T.copy(W[c0], w_tile)
@@ -46,34 +46,32 @@ def make_group_norm_kernel_prim_func(*, c: int = 64, hw: int = 16, num_groups: i
             T.copy(B[c0], b_tile)
 
             # sum(x)
-            sum_hw = T.alloc_fragment((1, group_size, 1), "float32")
-            T.reduce_sum(x_tile, sum_hw, dim=2)
-            sum_all = T.alloc_fragment((1, 1, 1), "float32")
-            T.reduce_sum(sum_hw, sum_all, dim=1)
-            mean = sum_all[0, 0, 0] / denom
+            sum_hw = T.alloc_fragment((group_size,), "float32")
+            T.reduce_sum(x_tile, sum_hw, dim=1)
+            sum_all = T.alloc_fragment((1,), "float32")
+            T.reduce_sum(sum_hw, sum_all, dim=0)
+            mean = sum_all[0] / denom
 
             # sum(x^2)
-            x2_tile = T.alloc_fragment((1, group_size, HW), "float32")
-            for c1 in T.serial(group_size):
-                for h1 in T.serial(HW):
-                    v = x_tile[0, c1, h1]
-                    x2_tile[0, c1, h1] = v * v
-            sum2_hw = T.alloc_fragment((1, group_size, 1), "float32")
-            T.reduce_sum(x2_tile, sum2_hw, dim=2)
-            sum2_all = T.alloc_fragment((1, 1, 1), "float32")
-            T.reduce_sum(sum2_hw, sum2_all, dim=1)
-            mean2 = sum2_all[0, 0, 0] / denom
+            x2_tile = T.alloc_fragment((group_size, HW), "float32")
+            for ci0 in T.serial(group_size):
+                for hi0 in T.serial(HW):
+                    v = x_tile[ci0, hi0]
+                    x2_tile[ci0, hi0] = v * v
+            sum2_hw = T.alloc_fragment((group_size,), "float32")
+            T.reduce_sum(x2_tile, sum2_hw, dim=1)
+            sum2_all = T.alloc_fragment((1,), "float32")
+            T.reduce_sum(sum2_hw, sum2_all, dim=0)
+            mean2 = sum2_all[0] / denom
             var = mean2 - mean * mean
             rstd = T.rsqrt(var + eps)
 
             Mean[n, g] = mean
             Rstd[n, g] = rstd
 
-            y_tile = T.alloc_fragment((1, group_size, HW), "float32")
-            for c1 in T.serial(group_size):
-                for h1 in T.serial(HW):
-                    y_tile[0, c1, h1] = (x_tile[0, c1, h1] - mean) * rstd * w_tile[c1] + b_tile[c1]
-            T.copy(y_tile, Y[n, c0, 0])
+            for ci1 in T.serial(group_size):
+                for hi1 in T.serial(HW):
+                    Y[n, c0 + ci1, hi1] = (x_tile[ci1, hi1] - mean) * rstd * w_tile[ci1] + b_tile[ci1]
 
     return main
 
