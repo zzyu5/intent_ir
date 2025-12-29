@@ -393,10 +393,15 @@ std::vector<std::string> emit_elemwise_bin(const Intent& intent, const std::unor
     if (pa[i] != 1 && pa[i] != out_shape[i]) fail("elemwise broadcast mismatch (a)");
     if (pb[i] != 1 && pb[i] != out_shape[i]) fail("elemwise broadcast mismatch (b)");
   }
+  const std::string out_ct = ctype_for_dtype(out_dtype);
+  const int64_t n_total = numel(out_shape);
+  const bool is_contig_elemwise = (pa == out_shape) && (pb == out_shape);
+
   std::vector<std::string> idx = {"i0","i1","i2","i3"};
   idx.resize(r);
-  std::vector<std::string> lines;
-  for (int i = 0; i < r; ++i) lines.push_back("  for (int " + idx[i] + " = 0; " + idx[i] + " < " + std::to_string(out_shape[i]) + "; ++" + idx[i] + ") {");
+
+  std::vector<std::string> scalar_lines;
+  for (int i = 0; i < r; ++i) scalar_lines.push_back("  for (int " + idx[i] + " = 0; " + idx[i] + " < " + std::to_string(out_shape[i]) + "; ++" + idx[i] + ") {");
   std::string out_idx = flat_idx_expr(idx, out_shape);
   auto idx_expr = [&](const std::vector<int64_t>& padded) -> std::string {
     std::vector<std::string> in_vars;
@@ -406,7 +411,6 @@ std::vector<std::string> emit_elemwise_bin(const Intent& intent, const std::unor
   };
   std::string a_idx = idx_expr(pa);
   std::string b_idx = idx_expr(pb);
-  const std::string out_ct = ctype_for_dtype(out_dtype);
   std::string expr;
   if (op == "max" || op == "min") {
     if (out_ct == "float") {
@@ -423,8 +427,34 @@ std::vector<std::string> emit_elemwise_bin(const Intent& intent, const std::unor
     if (c_op.empty()) fail("unsupported elemwise op: " + op);
     expr = "(" + a + "[" + a_idx + "] " + c_op + " " + b + "[" + b_idx + "])";
   }
-  lines.push_back("    " + out + "[" + out_idx + "] = (" + out_ct + ")" + expr + ";");
-  for (int i = 0; i < r; ++i) lines.push_back("  }");
+  scalar_lines.push_back("    " + out + "[" + out_idx + "] = (" + out_ct + ")" + expr + ";");
+  for (int i = 0; i < r; ++i) scalar_lines.push_back("  }");
+
+  if (out_ct != "float" || !is_contig_elemwise || n_total <= 0) {
+    return scalar_lines;
+  }
+  if (op != "add" && op != "sub" && op != "mul" && op != "div" && op != "max" && op != "min") {
+    return scalar_lines;
+  }
+
+  std::vector<std::string> lines;
+  lines.push_back("#if defined(__riscv_vector) || defined(__riscv_v)");
+  lines.push_back("  for (size_t i = 0; i < (size_t)" + std::to_string(n_total) + "; ) {");
+  lines.push_back("    size_t vl = __riscv_vsetvl_e32m1((size_t)" + std::to_string(n_total) + " - i);");
+  lines.push_back("    vfloat32m1_t va = __riscv_vle32_v_f32m1(&" + a + "[i], vl);");
+  lines.push_back("    vfloat32m1_t vb = __riscv_vle32_v_f32m1(&" + b + "[i], vl);");
+  if (op == "add") lines.push_back("    vfloat32m1_t vc = __riscv_vfadd_vv_f32m1(va, vb, vl);");
+  else if (op == "sub") lines.push_back("    vfloat32m1_t vc = __riscv_vfsub_vv_f32m1(va, vb, vl);");
+  else if (op == "mul") lines.push_back("    vfloat32m1_t vc = __riscv_vfmul_vv_f32m1(va, vb, vl);");
+  else if (op == "div") lines.push_back("    vfloat32m1_t vc = __riscv_vfdiv_vv_f32m1(va, vb, vl);");
+  else if (op == "max") lines.push_back("    vfloat32m1_t vc = __riscv_vfmax_vv_f32m1(va, vb, vl);");
+  else if (op == "min") lines.push_back("    vfloat32m1_t vc = __riscv_vfmin_vv_f32m1(va, vb, vl);");
+  lines.push_back("    __riscv_vse32_v_f32m1(&" + out + "[i], vc, vl);");
+  lines.push_back("    i += vl;");
+  lines.push_back("  }");
+  lines.push_back("#else");
+  lines.insert(lines.end(), scalar_lines.begin(), scalar_lines.end());
+  lines.push_back("#endif");
   return lines;
 }
 
@@ -890,6 +920,27 @@ std::vector<std::string> emit_matmul(const std::string& out, const std::string& 
     int64_t N = transpose_b ? b_shape[0] : b_shape[1];
     if (K2 != K) fail("matmul shape mismatch (2D)");
     if (out_shape.size() != 2 || out_shape[0] != M || out_shape[1] != N) fail("matmul output shape mismatch (2D)");
+    if (!transpose_a) {
+      lines.push_back("#if defined(__riscv_vector) || defined(__riscv_v)");
+      lines.push_back("  for (int m = 0; m < " + std::to_string(M) + "; ++m) {");
+      lines.push_back("    for (int n0 = 0; n0 < " + std::to_string(N) + "; ) {");
+      lines.push_back("      size_t vl = __riscv_vsetvl_e32m1((size_t)(" + std::to_string(N) + " - n0));");
+      lines.push_back("      vfloat32m1_t vacc = __riscv_vfmv_v_f_f32m1(0.0f, vl);");
+      lines.push_back("      for (int k = 0; k < " + std::to_string(K) + "; ++k) {");
+      lines.push_back("        float av = " + a + "[idx2(m,k," + std::to_string(K) + ")];");
+      if (!transpose_b) {
+        lines.push_back("        vfloat32m1_t vb = __riscv_vle32_v_f32m1(&" + b + "[idx2(k,n0," + std::to_string(N) + ")], vl);");
+      } else {
+        lines.push_back("        vfloat32m1_t vb = __riscv_vlse32_v_f32m1(&" + b + "[idx2(n0,k," + std::to_string(K) + ")], (ptrdiff_t)((size_t)" + std::to_string(K) + " * sizeof(float)), vl);");
+      }
+      lines.push_back("        vacc = __riscv_vfmacc_vf_f32m1(vacc, av, vb, vl);");
+      lines.push_back("      }");
+      lines.push_back("      __riscv_vse32_v_f32m1(&" + out + "[idx2(m,n0," + std::to_string(N) + ")], vacc, vl);");
+      lines.push_back("      n0 += (int)vl;");
+      lines.push_back("    }");
+      lines.push_back("  }");
+      lines.push_back("#else");
+    }
     lines.push_back("  for (int m = 0; m < " + std::to_string(M) + "; ++m) {");
     lines.push_back("    for (int n = 0; n < " + std::to_string(N) + "; ++n) {");
     lines.push_back("      double acc = 0.0;");
@@ -901,6 +952,7 @@ std::vector<std::string> emit_matmul(const std::string& out, const std::string& 
     lines.push_back("      " + out + "[idx2(m,n," + std::to_string(N) + ")] = (float)acc;");
     lines.push_back("    }");
     lines.push_back("  }");
+    if (!transpose_a) lines.push_back("#endif");
     return lines;
   }
   if (a_shape.size() == 4 && b_shape.size() == 4 && out_shape.size() == 4) {
@@ -912,6 +964,31 @@ std::vector<std::string> emit_matmul(const std::string& out, const std::string& 
     int64_t N = transpose_b ? b_shape[2] : b_shape[3];
     if (B2 != B0 || H2 != H0 || K2 != K) fail("matmul shape mismatch (4D)");
     if (out_shape[0] != B0 || out_shape[1] != H0 || out_shape[2] != M || out_shape[3] != N) fail("matmul output shape mismatch (4D)");
+    if (!transpose_a) {
+      lines.push_back("#if defined(__riscv_vector) || defined(__riscv_v)");
+      lines.push_back("  for (int b0 = 0; b0 < " + std::to_string(B0) + "; ++b0) {");
+      lines.push_back("    for (int h0 = 0; h0 < " + std::to_string(H0) + "; ++h0) {");
+      lines.push_back("      for (int m0 = 0; m0 < " + std::to_string(M) + "; ++m0) {");
+      lines.push_back("        for (int n0 = 0; n0 < " + std::to_string(N) + "; ) {");
+      lines.push_back("          size_t vl = __riscv_vsetvl_e32m1((size_t)(" + std::to_string(N) + " - n0));");
+      lines.push_back("          vfloat32m1_t vacc = __riscv_vfmv_v_f_f32m1(0.0f, vl);");
+      lines.push_back("          for (int k0 = 0; k0 < " + std::to_string(K) + "; ++k0) {");
+      lines.push_back("            float av = " + a + "[idx4(b0,h0,m0,k0," + std::to_string(H0) + "," + std::to_string(M) + "," + std::to_string(K) + ")];");
+      if (!transpose_b) {
+        lines.push_back("            vfloat32m1_t vb = __riscv_vle32_v_f32m1(&" + b + "[idx4(b0,h0,k0,n0," + std::to_string(H0) + "," + std::to_string(K) + "," + std::to_string(N) + ")], vl);");
+      } else {
+        lines.push_back("            vfloat32m1_t vb = __riscv_vlse32_v_f32m1(&" + b + "[idx4(b0,h0,n0,k0," + std::to_string(H0) + "," + std::to_string(N) + "," + std::to_string(K) + ")], (ptrdiff_t)((size_t)" + std::to_string(K) + " * sizeof(float)), vl);");
+      }
+      lines.push_back("            vacc = __riscv_vfmacc_vf_f32m1(vacc, av, vb, vl);");
+      lines.push_back("          }");
+      lines.push_back("          __riscv_vse32_v_f32m1(&" + out + "[idx4(b0,h0,m0,n0," + std::to_string(H0) + "," + std::to_string(M) + "," + std::to_string(N) + ")], vacc, vl);");
+      lines.push_back("          n0 += (int)vl;");
+      lines.push_back("        }");
+      lines.push_back("      }");
+      lines.push_back("    }");
+      lines.push_back("  }");
+      lines.push_back("#else");
+    }
     lines.push_back("  for (int b0 = 0; b0 < " + std::to_string(B0) + "; ++b0) {");
     lines.push_back("    for (int h0 = 0; h0 < " + std::to_string(H0) + "; ++h0) {");
     lines.push_back("      for (int m0 = 0; m0 < " + std::to_string(M) + "; ++m0) {");
@@ -931,6 +1008,7 @@ std::vector<std::string> emit_matmul(const std::string& out, const std::string& 
     lines.push_back("      }");
     lines.push_back("    }");
     lines.push_back("  }");
+    if (!transpose_a) lines.push_back("#endif");
     return lines;
   }
   fail("matmul supports rank-2 or rank-4");

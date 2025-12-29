@@ -676,17 +676,20 @@ def run_pipeline_for_spec(
     out_dir.mkdir(parents=True, exist_ok=True)
     adapter = pipeline_registry.get("tilelang")
 
-    # 1) Descriptor / facts / constraints / certificate
+    print(f"[{spec.name}] stage1: build tilelang descriptor", flush=True)
     desc = adapter.build_descriptor(spec)
     desc.meta["artifact_dir"] = str(out_dir)
     (out_dir / f"{spec.name}.tilelang_tir.py").write_text(desc.source_text, encoding="utf-8")
     report["descriptor"] = desc.to_json_dict()
 
+    print(f"[{spec.name}] stage2: ensure tilelang artifacts", flush=True)
     desc = adapter.ensure_artifacts(desc, spec)
+    print(f"[{spec.name}] stage3: Task4 facts/constraints/certificate", flush=True)
     facts = adapter.extract_facts(desc)
     constraints: FrontendConstraints = adapter.extract_constraints(desc, facts)
     cert_v2 = adapter.build_certificate(desc, facts, constraints)
 
+    print(f"[{spec.name}] stage4: Task4 obligations/contract", flush=True)
     obligations = evaluate_obligations(desc, cert_v2)
     cert_v2.semantic_facts["obligations"] = [o.to_json_dict() for o in obligations]
     contract = evaluate_contract_v2(desc, cert_v2, obligations, constraints=constraints)
@@ -702,6 +705,7 @@ def run_pipeline_for_spec(
     (out_dir / f"{spec.name}.contract.json").write_text(json.dumps(report["contract"], indent=2), encoding="utf-8")
 
     # 2) IntentIR: LLM (default) or deterministic fallback (tests/CI).
+    print(f"[{spec.name}] stage5: LLM -> IntentIR (may take a while)", flush=True)
     if use_llm:
         cand = _LLM_HUB.lift(desc, model=llm_model)
         enrich_intent_macros(cand.intent)
@@ -715,6 +719,7 @@ def run_pipeline_for_spec(
     report["intent"] = cand.intent.to_json_dict()
 
     # 3) Stage B: cases + diff
+    print(f"[{spec.name}] stage6: Task5 cases + diff", flush=True)
     use_rt_ref = bool(use_tilelang_runtime) and (contract.level != "OUT_OF_SCOPE")
     run_ref_fn = (lambda c: _run_tilelang_ref(spec, c)) if use_rt_ref else spec.runner
     cases_pack: GeneratedCases = generate_cases_split(
@@ -749,6 +754,7 @@ def run_pipeline_for_spec(
 
     stage_c_ref_fn = spec.runner
     if stage_c and diff_ok and cases_in:
+        print(f"[{spec.name}] stage7: Task5 stage C (metamorphic + bounded)", flush=True)
         base_case = TestCase(shapes=dict(spec.canonical_shapes), dtypes={}, seed=0)
         meta = run_metamorphic_suite(spec.name, cand.intent, stage_c_ref_fn, base_case=base_case)
         bounded = run_bounded_exhaustive(spec.name, cand.intent, stage_c_ref_fn, max_cases=64)
@@ -770,6 +776,7 @@ def run_pipeline_for_spec(
         report["stage_c"] = {"skipped": True, "reason": ("diff_failed" if stage_c and not diff_ok else "disabled_or_no_cases")}
 
     if mutation_kill and diff_ok and cases_in:
+        print(f"[{spec.name}] stage7: Task5 mutation-kill", flush=True)
         base_case = TestCase(shapes=dict(spec.canonical_shapes), dtypes={}, seed=0)
         diff_cases = cases_in[:2] if cases_in else [base_case]
         metamorphic_base = cases_in[0] if cases_in else base_case
