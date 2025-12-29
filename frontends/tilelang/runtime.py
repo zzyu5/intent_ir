@@ -147,6 +147,21 @@ def infer_written_global_buffers(prim_func: Any) -> List[str]:
 _PRIMFUNC_REGISTRY: Dict[int, Any] = {}
 
 
+@lru_cache(maxsize=64)
+def _compile_cached(fid: int, flags_key: Tuple[str, ...], target: str, backend: str):
+    """
+    Process-wide cache for TileLang compilation.
+
+    Note: `tilelang.compile` already has an internal cache, but we keep this
+    wrapper to avoid repeated Python-level compilation calls (and the noisy
+    "kernel_cache" warnings) when the pipeline re-runs.
+    """
+    import tilelang  # noqa: PLC0415
+
+    pf = _PRIMFUNC_REGISTRY[fid]
+    return tilelang.compile(pf, target=target, execution_backend=backend, compile_flags=list(flags_key))
+
+
 def compile_tilelang_kernel(
     prim_func: Any,
     *,
@@ -164,18 +179,12 @@ def compile_tilelang_kernel(
     if extra_compile_flags:
         flags.extend([str(x) for x in extra_compile_flags])
 
-    # tilelang.compile uses its own persistent cache; additionally memoize per-process
-    # to avoid repeated Python-level work.
+    # tilelang.compile uses its own cache; additionally memoize per-process to avoid
+    # repeated Python-level work (and repeated cache warnings).
     fid = id(prim_func)
     _PRIMFUNC_REGISTRY[fid] = prim_func
     key = tuple(flags)
-
-    @lru_cache(maxsize=32)
-    def _compile_local(_fid: int, _key: Tuple[str, ...], _target: str, _backend: str):
-        pf = _PRIMFUNC_REGISTRY[_fid]
-        return tilelang.compile(pf, target=_target, execution_backend=_backend, compile_flags=list(_key))
-
-    return _compile_local(fid, key, str(target), str(execution_backend))
+    return _compile_cached(fid, key, str(target), str(execution_backend))
 
 
 def run_tilelang_kernel_io(
