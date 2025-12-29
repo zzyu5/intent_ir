@@ -8,8 +8,9 @@ This mirrors the Triton pipeline shape, but uses the TileLang adapter:
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 
@@ -25,22 +26,443 @@ from verify.mutation import run_mutation_kill
 from intent_ir.llm import LLMIntentHub
 from intent_ir.macros import enrich_intent_macros
 from intent_ir.parser import CandidateIntent
+from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, TensorType
 from intent_ir.ir.printer_mlir_like import print_mlir_like
 
 from frontends.tilelang.runtime import infer_written_global_buffers, run_tilelang_kernel_io
 
-from kernels.tilelang.ops.any_kernel_dim import any_kernel_dim_spec
-from kernels.tilelang.ops.groupnorm import group_norm_kernel_spec
-from kernels.tilelang.ops.softmax_inner import softmax_inner_spec
-from kernels.tilelang.ops.layernorm import layer_norm_persistent_spec
-from kernels.tilelang.ops.upsample_bicubic2d_aa import upsample_bicubic2d_aa_spec
-from kernels.tilelang.ops._attn_fwd import attn_fwd_spec
-from kernels.tilelang.ops.gemm import gemm_spec
-from kernels.tilelang.ops.spec import TileLangKernelSpec
+from kernels.tilelang.ops.any_kernel_dim import make_any_kernel_dim_prim_func
+from kernels.tilelang.ops.groupnorm import make_group_norm_kernel_prim_func
+from kernels.tilelang.ops.softmax_inner import make_softmax_inner_prim_func
+from kernels.tilelang.ops.layernorm import make_layer_norm_persistent_prim_func
+from kernels.tilelang.ops.upsample_bicubic2d_aa import make_upsample_bicubic2d_aa_prim_func
+from kernels.tilelang.ops._attn_fwd import make_attn_fwd_prim_func
+from kernels.tilelang.ops.gemm import make_gemm_relu_prim_func
 
 
 ROOT = Path(__file__).resolve().parents[2]
 _LLM_HUB = LLMIntentHub()
+
+
+@dataclass
+class KernelSpec:
+    """
+    TileLang pipeline kernel spec (internal).
+
+    Keeping this spec in the pipeline (not under kernels/) mirrors the Triton layout:
+    - `kernels/tilelang/ops/*`: clean TileLang kernels only
+    - `pipeline/tilelang/core.py`: runners, deterministic intent builders, and suite composition
+    """
+
+    name: str
+    prim_func: Any
+    canonical_shapes: Dict[str, int]
+    vary_axes: List[str]
+    runner: Callable[[TestCase], Dict[str, np.ndarray]]
+    intent_builder: Callable[[], IntentFunction]
+    exclude_axes: List[str] | None = None
+    constexpr_names: List[str] | None = None
+    # For LLM evidence only (not used by TileLang runtime executor).
+    arg_names: List[str] | None = None
+
+
+def _rm_layout() -> TensorLayout:
+    return TensorLayout(kind="row_major", params={})
+
+
+def _any_kernel_dim_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    rng = np.random.default_rng(int(case.seed))
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    inp = rng.integers(0, 2, size=(m, n)).astype(np.float32)
+    out = np.any(inp != 0, axis=1)
+    return {"inp": inp, "out": out}
+
+
+def _any_kernel_dim_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors = {
+        "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "out": TensorType(dtype="bool", shape=[Dim("sym", "M")], layout=rm),
+    }
+    ops = [Op(op="reduce_any", inputs=["inp"], output="out", attrs={"axes": [1], "keepdims": False})]
+    schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="any_kernel_dim",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "reduction"},
+    )
+
+
+def _group_norm_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    rng = np.random.default_rng(int(case.seed))
+    n = int(case.shapes["N"])
+    c = int(case.shapes["C"])
+    hw = int(case.shapes["HW"])
+    g = int(case.shapes["num_groups"])
+    if g <= 0 or c % g != 0:
+        raise ValueError(f"invalid group config: C={c} num_groups={g}")
+    group_size = c // g
+    x = rng.standard_normal((n, c, hw), dtype=np.float32)
+    w = rng.standard_normal((c,), dtype=np.float32)
+    b = rng.standard_normal((c,), dtype=np.float32)
+    eps = np.float32(1e-5)
+
+    x4 = x.reshape(n, g, group_size, hw)
+    mean = np.mean(x4, axis=(2, 3), keepdims=True)
+    var = np.mean((x4 - mean) ** 2, axis=(2, 3), keepdims=True)
+    rstd = 1.0 / np.sqrt(var + eps)
+    x_hat = (x4 - mean) * rstd
+    x_hat3 = x_hat.reshape(n, c, hw)
+    y = x_hat3 * w[None, :, None] + b[None, :, None]
+    return {
+        "X": x,
+        "W": w,
+        "B": b,
+        "Y": y.astype(np.float32),
+        "Mean": mean.reshape(n, g).astype(np.float32),
+        "Rstd": rstd.reshape(n, g).astype(np.float32),
+    }
+
+
+def _group_norm_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors = {
+        "X": TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "C"), Dim("sym", "HW")], layout=rm),
+        "W": TensorType(dtype="f32", shape=[Dim("sym", "C")], layout=rm),
+        "B": TensorType(dtype="f32", shape=[Dim("sym", "C")], layout=rm),
+        "Y": TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "C"), Dim("sym", "HW")], layout=rm),
+        "Mean": TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups")], layout=rm),
+        "Rstd": TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups")], layout=rm),
+    }
+    ops: list[Op] = []
+
+    ops.append(Op(op="reshape", inputs=["X"], output="X4", attrs={"shape": ["N", "num_groups", "group_size", "HW"]}))
+    tensors["X4"] = TensorType(
+        dtype="f32",
+        shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("sym", "group_size"), Dim("sym", "HW")],
+        layout=rm,
+    )
+
+    ops.append(Op(op="reduce_sum", inputs=["X4"], output="sum", attrs={"axes": [2, 3], "keepdims": True}))
+    tensors["sum"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("const", 1), Dim("const", 1)], layout=rm)
+    ops.append(Op(op="div", inputs=["sum"], output="mean4", attrs={"divisor": "num_elements"}))
+    tensors["mean4"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("const", 1), Dim("const", 1)], layout=rm)
+
+    ops.append(Op(op="sub", inputs=["X4", "mean4"], output="diff", attrs={}))
+    tensors["diff"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("sym", "group_size"), Dim("sym", "HW")], layout=rm)
+    ops.append(Op(op="mul", inputs=["diff", "diff"], output="sq", attrs={}))
+    tensors["sq"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("sym", "group_size"), Dim("sym", "HW")], layout=rm)
+    ops.append(Op(op="reduce_sum", inputs=["sq"], output="var_sum", attrs={"axes": [2, 3], "keepdims": True}))
+    tensors["var_sum"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("const", 1), Dim("const", 1)], layout=rm)
+    ops.append(Op(op="div", inputs=["var_sum"], output="var4", attrs={"divisor": "num_elements"}))
+    tensors["var4"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("const", 1), Dim("const", 1)], layout=rm)
+
+    ops.append(Op(op="const", inputs=[], output="eps", attrs={"value": 1e-5, "dtype": "f32"}))
+    tensors["eps"] = TensorType(dtype="f32", shape=[], layout=rm)
+    ops.append(Op(op="add", inputs=["var4", "eps"], output="var_eps", attrs={}))
+    tensors["var_eps"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("const", 1), Dim("const", 1)], layout=rm)
+    ops.append(Op(op="rsqrt", inputs=["var_eps"], output="rstd4", attrs={}))
+    tensors["rstd4"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("const", 1), Dim("const", 1)], layout=rm)
+
+    ops.append(Op(op="mul", inputs=["diff", "rstd4"], output="xhat4", attrs={}))
+    tensors["xhat4"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("sym", "group_size"), Dim("sym", "HW")], layout=rm)
+
+    ops.append(Op(op="reshape", inputs=["xhat4"], output="xhat3", attrs={"shape": ["N", "C", "HW"]}))
+    tensors["xhat3"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "C"), Dim("sym", "HW")], layout=rm)
+
+    ops.append(Op(op="broadcast_in_dim", inputs=["W"], output="W3", attrs={"out_shape": ["N", "C", "HW"], "broadcast_dims": [1]}))
+    tensors["W3"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "C"), Dim("sym", "HW")], layout=rm)
+    ops.append(Op(op="broadcast_in_dim", inputs=["B"], output="B3", attrs={"out_shape": ["N", "C", "HW"], "broadcast_dims": [1]}))
+    tensors["B3"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "C"), Dim("sym", "HW")], layout=rm)
+
+    ops.append(Op(op="mul", inputs=["xhat3", "W3"], output="scaled", attrs={}))
+    tensors["scaled"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "C"), Dim("sym", "HW")], layout=rm)
+    ops.append(Op(op="add", inputs=["scaled", "B3"], output="Y", attrs={}))
+
+    # Mean/Rstd outputs: reshape [N,G,1,1] -> [N,G]
+    ops.append(Op(op="reshape", inputs=["mean4"], output="Mean", attrs={"shape": ["N", "num_groups"]}))
+    ops.append(Op(op="reshape", inputs=["rstd4"], output="Rstd", attrs={"shape": ["N", "num_groups"]}))
+
+    schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="group_norm_kernel",
+        tensors=tensors,
+        ops=ops,
+        outputs=["Y", "Mean", "Rstd"],
+        schedule=schedule,
+        axis_roles={"N": "batch", "C": "channel", "HW": "spatial", "num_groups": "channel"},
+    )
+
+
+def _softmax_inner_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    rng = np.random.default_rng(int(case.seed))
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    x = rng.standard_normal((m, n), dtype=np.float32)
+    x_max = np.max(x, axis=1, keepdims=True)
+    e = np.exp(x - x_max)
+    y = e / np.sum(e, axis=1, keepdims=True)
+    return {"input_ptr": x, "output_ptr": y}
+
+
+def _softmax_inner_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors = {
+        "input_ptr": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "output_ptr": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+    }
+    ops = [Op(op="softmax", inputs=["input_ptr"], output="output_ptr", attrs={"axis": -1})]
+    schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="softmax_inner",
+        tensors=tensors,
+        ops=ops,
+        outputs=["output_ptr"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "channel"},
+    )
+
+
+def _layer_norm_persistent_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    rng = np.random.default_rng(int(case.seed))
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    x = rng.standard_normal((m, n), dtype=np.float32)
+    w = rng.standard_normal((n,), dtype=np.float32)
+    b = rng.standard_normal((n,), dtype=np.float32)
+    eps = np.float32(1e-5)
+    mean = np.mean(x, axis=1, keepdims=True)
+    var = np.mean((x - mean) ** 2, axis=1, keepdims=True)
+    rstd = 1.0 / np.sqrt(var + eps)
+    y = (x - mean) * rstd * w[None, :] + b[None, :]
+    return {
+        "in_ptr": x,
+        "weight_ptr": w,
+        "bias_ptr": b,
+        "out_ptr": y.astype(np.float32),
+        "out_mean_ptr": mean.reshape(-1).astype(np.float32),
+        "out_rstd_ptr": rstd.reshape(-1).astype(np.float32),
+    }
+
+
+def _layer_norm_persistent_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors = {
+        "in_ptr": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "weight_ptr": TensorType(dtype="f32", shape=[Dim("sym", "N")], layout=rm),
+        "bias_ptr": TensorType(dtype="f32", shape=[Dim("sym", "N")], layout=rm),
+        "out_ptr": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "out_mean_ptr": TensorType(dtype="f32", shape=[Dim("sym", "M")], layout=rm),
+        "out_rstd_ptr": TensorType(dtype="f32", shape=[Dim("sym", "M")], layout=rm),
+    }
+    ops: list[Op] = []
+
+    ops.append(Op(op="reduce_sum", inputs=["in_ptr"], output="sum_row", attrs={"axes": [1], "keepdims": True}))
+    tensors["sum_row"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
+
+    ops.append(Op(op="div", inputs=["sum_row"], output="mean_row", attrs={"divisor": "N"}))
+    tensors["mean_row"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
+
+    ops.append(Op(op="sub", inputs=["in_ptr", "mean_row"], output="diff", attrs={}))
+    tensors["diff"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+
+    ops.append(Op(op="mul", inputs=["diff", "diff"], output="sq", attrs={}))
+    tensors["sq"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+
+    ops.append(Op(op="reduce_sum", inputs=["sq"], output="var_sum", attrs={"axes": [1], "keepdims": True}))
+    tensors["var_sum"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
+
+    ops.append(Op(op="div", inputs=["var_sum"], output="var", attrs={"divisor": "N"}))
+    tensors["var"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
+
+    ops.append(Op(op="const", inputs=[], output="eps", attrs={"value": 1e-5, "dtype": "f32"}))
+    tensors["eps"] = TensorType(dtype="f32", shape=[], layout=rm)
+
+    ops.append(Op(op="add", inputs=["var", "eps"], output="var_eps", attrs={}))
+    tensors["var_eps"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
+
+    ops.append(Op(op="rsqrt", inputs=["var_eps"], output="rstd_row", attrs={}))
+    tensors["rstd_row"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
+
+    ops.append(Op(op="mul", inputs=["diff", "rstd_row"], output="xhat", attrs={}))
+    tensors["xhat"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+
+    ops.append(Op(op="broadcast_in_dim", inputs=["weight_ptr"], output="w_b", attrs={"out_shape": ["M", "N"], "broadcast_dims": [1]}))
+    tensors["w_b"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="broadcast_in_dim", inputs=["bias_ptr"], output="b_b", attrs={"out_shape": ["M", "N"], "broadcast_dims": [1]}))
+    tensors["b_b"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+
+    ops.append(Op(op="mul", inputs=["xhat", "w_b"], output="scaled", attrs={}))
+    tensors["scaled"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="add", inputs=["scaled", "b_b"], output="out_ptr", attrs={}))
+
+    ops.append(Op(op="reshape", inputs=["mean_row"], output="out_mean_ptr", attrs={"shape": ["M"]}))
+    ops.append(Op(op="reshape", inputs=["rstd_row"], output="out_rstd_ptr", attrs={"shape": ["M"]}))
+
+    schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="layer_norm_persistent",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out_ptr", "out_mean_ptr", "out_rstd_ptr"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "channel"},
+    )
+
+
+def _attn_fwd_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    rng = np.random.default_rng(int(case.seed))
+    q_ctx = int(case.shapes.get("Q_CTX", 16))
+    kv_ctx = int(case.shapes.get("KV_CTX", 16))
+    head_dim = int(case.shapes.get("HEAD_DIM", 16))
+    q = rng.standard_normal((q_ctx, head_dim), dtype=np.float32)
+    k = rng.standard_normal((kv_ctx, head_dim), dtype=np.float32)
+    v = rng.standard_normal((kv_ctx, head_dim), dtype=np.float32)
+    sm_scale = np.array(1.0 / np.sqrt(float(head_dim)), dtype=np.float32)
+
+    scores = (q @ k.T) * sm_scale
+    scores_max = np.max(scores, axis=-1, keepdims=True)
+    probs = np.exp(scores - scores_max)
+    probs = probs / np.sum(probs, axis=-1, keepdims=True)
+    out = probs @ v
+    return {"Q": q, "K": k, "V": v, "sm_scale": sm_scale, "Out": out.astype(np.float32)}
+
+
+def _attn_fwd_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors = {
+        "Q": TensorType(dtype="f32", shape=[Dim("sym", "Q_CTX"), Dim("sym", "HEAD_DIM")], layout=rm),
+        "K": TensorType(dtype="f32", shape=[Dim("sym", "KV_CTX"), Dim("sym", "HEAD_DIM")], layout=rm),
+        "V": TensorType(dtype="f32", shape=[Dim("sym", "KV_CTX"), Dim("sym", "HEAD_DIM")], layout=rm),
+        "sm_scale": TensorType(dtype="f32", shape=[], layout=rm),
+        "Out": TensorType(dtype="f32", shape=[Dim("sym", "Q_CTX"), Dim("sym", "HEAD_DIM")], layout=rm),
+    }
+
+    ops: list[Op] = []
+    ops.append(Op(op="transpose", inputs=["K"], output="K_t", attrs={"perm": [1, 0]}))
+    tensors["K_t"] = TensorType(dtype="f32", shape=[Dim("sym", "HEAD_DIM"), Dim("sym", "KV_CTX")], layout=rm)
+
+    ops.append(Op(op="matmul", inputs=["Q", "K_t"], output="scores", attrs={}))
+    tensors["scores"] = TensorType(dtype="f32", shape=[Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")], layout=rm)
+
+    ops.append(Op(op="mul", inputs=["scores", "sm_scale"], output="scores_s", attrs={}))
+    tensors["scores_s"] = TensorType(dtype="f32", shape=[Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")], layout=rm)
+
+    ops.append(Op(op="softmax", inputs=["scores_s"], output="probs", attrs={"axis": -1}))
+    tensors["probs"] = TensorType(dtype="f32", shape=[Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")], layout=rm)
+
+    ops.append(Op(op="matmul", inputs=["probs", "V"], output="Out", attrs={}))
+
+    schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=16, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="_attn_fwd",
+        tensors=tensors,
+        ops=ops,
+        outputs=["Out"],
+        schedule=schedule,
+        axis_roles={"Q_CTX": "spatial", "KV_CTX": "reduction", "HEAD_DIM": "channel"},
+    )
+
+
+def _bicubic_reciprocal_scale(src_size: int, dst_size: int, align_corners: bool, scale: float | None) -> float:
+    if align_corners:
+        if dst_size > 1:
+            return float(src_size - 1) / float(dst_size - 1)
+        return 0.0
+    if scale is not None and scale > 0:
+        return 1.0 / float(scale)
+    return float(src_size) / float(dst_size)
+
+
+def _upsample_bicubic2d_aa_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    import torch
+    import torch.nn.functional as F
+
+    rng = np.random.default_rng(int(case.seed))
+    n = int(case.shapes.get("N", 1))
+    c = int(case.shapes.get("C", 1))
+    ih = int(case.shapes.get("IH", 4))
+    iw = int(case.shapes.get("IW", 4))
+    oh = int(case.shapes.get("OH", 8))
+    ow = int(case.shapes.get("OW", 8))
+
+    x = rng.standard_normal((n, c, ih, iw), dtype=np.float32)
+
+    align_corners = False
+    reciprocal_scale_h = _bicubic_reciprocal_scale(ih, oh, align_corners, scale=None)
+    reciprocal_scale_w = _bicubic_reciprocal_scale(iw, ow, align_corners, scale=None)
+
+    xt = torch.from_numpy(x)
+    yt = F.interpolate(xt, size=(oh, ow), mode="bicubic", align_corners=align_corners, antialias=True)
+    y = yt.numpy().astype(np.float32)
+
+    return {
+        "I": x,
+        "reciprocal_scale_h": np.array(reciprocal_scale_h, dtype=np.float32),
+        "reciprocal_scale_w": np.array(reciprocal_scale_w, dtype=np.float32),
+        "O": y,
+    }
+
+
+def _upsample_bicubic2d_aa_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors = {
+        "I": TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "C"), Dim("sym", "IH"), Dim("sym", "IW")], layout=rm),
+        "reciprocal_scale_h": TensorType(dtype="f32", shape=[], layout=rm),
+        "reciprocal_scale_w": TensorType(dtype="f32", shape=[], layout=rm),
+        "O": TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "C"), Dim("sym", "OH"), Dim("sym", "OW")], layout=rm),
+    }
+    ops = [
+        Op(
+            op="upsample_bicubic2d_aa",
+            inputs=["I"],
+            output="O",
+            attrs={"a": -0.5, "support": 2.0, "invscale": 1.0, "separable": True, "normalize_weights": True},
+        )
+    ]
+    schedule = ScheduleSketch(tile_m="BLOCK_Y", tile_n="BLOCK_X", tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="upsample_bicubic2d_aa",
+        tensors=tensors,
+        ops=ops,
+        outputs=["O"],
+        schedule=schedule,
+        axis_roles={"N": "batch", "C": "channel", "IH": "spatial", "IW": "spatial", "OH": "spatial", "OW": "spatial"},
+    )
+
+
+def _gemm_relu_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    rng = np.random.default_rng(int(case.seed))
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    k = int(case.shapes["K"])
+    a = rng.standard_normal((m, k), dtype=np.float32).astype(np.float16)
+    b = rng.standard_normal((k, n), dtype=np.float32).astype(np.float16)
+    c = np.maximum((a.astype(np.float32) @ b.astype(np.float32)), 0.0).astype(np.float16)
+    return {"A": a, "B": b, "C": c}
+
+
+def _gemm_relu_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors = {
+        "A": TensorType(dtype="f16", shape=[Dim("sym", "M"), Dim("sym", "K")], layout=rm),
+        "B": TensorType(dtype="f16", shape=[Dim("sym", "K"), Dim("sym", "N")], layout=rm),
+        "C": TensorType(dtype="f16", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+    }
+    ops = [Op(op="matmul", inputs=["A", "B"], output="mm", attrs={}), Op(op="relu", inputs=["mm"], output="C", attrs={})]
+    schedule = ScheduleSketch(tile_m=128, tile_n=128, tile_k=32, vec_width=1, pipeline_depth=3)
+    return IntentFunction(
+        name="tilelang_gemm_relu",
+        tensors=tensors,
+        ops=ops,
+        outputs=["C"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "spatial", "K": "reduction"},
+    )
 
 
 def _ensure_schedule_tilelang(intent, spec) -> None:
@@ -73,7 +495,7 @@ def _buffer_param_names(prim_func) -> List[str]:
         return []
 
 
-def _run_tilelang_ref(spec: TileLangKernelSpec, case: TestCase) -> Dict[str, np.ndarray]:
+def _run_tilelang_ref(spec: KernelSpec, case: TestCase) -> Dict[str, np.ndarray]:
     """
     Execute the real TileLang kernel to produce a reference IO snapshot.
 
@@ -93,29 +515,102 @@ def _run_tilelang_ref(spec: TileLangKernelSpec, case: TestCase) -> Dict[str, np.
     return io
 
 
-def mvp_kernel_specs() -> List[TileLangKernelSpec]:
+def mvp_kernel_specs() -> List[KernelSpec]:
     """
     PR#9 original MVP: one anchor-strong kernel to prove the pipeline can host TileLang.
     """
-    return [gemm_spec()]
+    prim = make_gemm_relu_prim_func(block_m=128, block_n=128, block_k=32, num_stages=3, threads=128)
+    return [
+        KernelSpec(
+            name="tilelang_gemm",
+            prim_func=prim,
+            arg_names=["A", "B", "C", "M", "N", "K"],
+            canonical_shapes={"M": 256, "N": 256, "K": 256},
+            vary_axes=["M", "N", "K"],
+            runner=_gemm_relu_reference,
+            intent_builder=_gemm_relu_intent,
+            exclude_axes=[],
+            constexpr_names=[],
+        )
+    ]
 
 
-def default_kernel_specs() -> List[TileLangKernelSpec]:
+def default_kernel_specs() -> List[KernelSpec]:
     """
     Regression suite: mirror Triton's 6 representative kernels (by name).
     """
     return [
-        any_kernel_dim_spec(),
-        group_norm_kernel_spec(),
-        attn_fwd_spec(),
-        softmax_inner_spec(),
-        layer_norm_persistent_spec(),
-        upsample_bicubic2d_aa_spec(),
+        KernelSpec(
+            name="any_kernel_dim",
+            prim_func=make_any_kernel_dim_prim_func(n=16, threads=128),
+            arg_names=["inp", "out", "M", "N"],
+            canonical_shapes={"M": 16, "N": 16},
+            vary_axes=["M"],
+            runner=_any_kernel_dim_reference,
+            intent_builder=_any_kernel_dim_intent,
+            exclude_axes=[],
+            constexpr_names=[],
+        ),
+        KernelSpec(
+            name="group_norm_kernel",
+            prim_func=make_group_norm_kernel_prim_func(c=64, hw=16, num_groups=4, threads=128),
+            arg_names=["X", "Y", "W", "B", "Mean", "Rstd", "N", "C", "HW", "num_groups"],
+            canonical_shapes={"N": 16, "C": 64, "HW": 16, "num_groups": 4},
+            vary_axes=["N"],
+            runner=_group_norm_reference,
+            intent_builder=_group_norm_intent,
+            exclude_axes=["group_size", "num_elements"],
+            constexpr_names=[],
+        ),
+        KernelSpec(
+            name="_attn_fwd",
+            prim_func=make_attn_fwd_prim_func(q_ctx=16, kv_ctx=16, head_dim=16, threads=128),
+            arg_names=["Q", "K", "V", "sm_scale", "Out", "Q_CTX", "KV_CTX", "HEAD_DIM"],
+            canonical_shapes={"Q_CTX": 16, "KV_CTX": 16, "HEAD_DIM": 16},
+            vary_axes=[],
+            runner=_attn_fwd_reference,
+            intent_builder=_attn_fwd_intent,
+            exclude_axes=[],
+            constexpr_names=[],
+        ),
+        KernelSpec(
+            name="softmax_inner",
+            prim_func=make_softmax_inner_prim_func(n=16, threads=128),
+            arg_names=["output_ptr", "input_ptr", "row_max_ptr", "row_sum_ptr", "M", "N"],
+            canonical_shapes={"M": 16, "N": 16},
+            vary_axes=["M"],
+            runner=_softmax_inner_reference,
+            intent_builder=_softmax_inner_intent,
+            exclude_axes=[],
+            constexpr_names=[],
+        ),
+        KernelSpec(
+            name="layer_norm_persistent",
+            prim_func=make_layer_norm_persistent_prim_func(n=16, threads=128),
+            arg_names=["in_ptr", "out_ptr", "weight_ptr", "bias_ptr", "out_mean_ptr", "out_rstd_ptr", "M", "N"],
+            canonical_shapes={"M": 16, "N": 16},
+            vary_axes=["M"],
+            runner=_layer_norm_persistent_reference,
+            intent_builder=_layer_norm_persistent_intent,
+            exclude_axes=[],
+            constexpr_names=[],
+        ),
+        KernelSpec(
+            name="upsample_bicubic2d_aa",
+            prim_func=make_upsample_bicubic2d_aa_prim_func(threads=128),
+            arg_names=["I", "reciprocal_scale_h", "reciprocal_scale_w", "O", "N", "C", "IH", "IW", "OH", "OW"],
+            canonical_shapes={"N": 1, "C": 1, "IH": 4, "IW": 4, "OH": 8, "OW": 8},
+            vary_axes=[],
+            runner=_upsample_bicubic2d_aa_reference,
+            intent_builder=_upsample_bicubic2d_aa_intent,
+            exclude_axes=[],
+            constexpr_names=[],
+        ),
     ]
 
 
 def run_pipeline_for_spec(
-    spec: TileLangKernelSpec,
+    spec: KernelSpec,
     *,
     out_dir: Path,
     cases_limit: int = 8,
@@ -185,8 +680,9 @@ def run_pipeline_for_spec(
     report["cases"] = {"in_contract": [dict(c.shapes) for c in cases_in], "out_of_contract": [dict(c.shapes) for c in cases_out]}
 
     diffs_in, _ = run_diff(cand.intent, run_ref_fn, cases_in)
+    diff_ok = bool(diffs_in and all(d.ok for d in diffs_in))
     report["diff"] = {
-        "ok": bool(diffs_in and all(d.ok for d in diffs_in)),
+        "ok": bool(diff_ok),
         "results": [
             {
                 "ok": bool(d.ok),
@@ -199,7 +695,7 @@ def run_pipeline_for_spec(
         ],
     }
 
-    if stage_c:
+    if stage_c and diff_ok and cases_in:
         base_case = TestCase(shapes=dict(spec.canonical_shapes), dtypes={}, seed=0)
         meta = run_metamorphic_suite(spec.name, cand.intent, run_ref_fn, base_case=base_case)
         bounded = run_bounded_exhaustive(spec.name, cand.intent, run_ref_fn, max_cases=64)
@@ -218,9 +714,9 @@ def run_pipeline_for_spec(
             },
         }
     else:
-        report["stage_c"] = {"skipped": True}
+        report["stage_c"] = {"skipped": True, "reason": ("diff_failed" if stage_c and not diff_ok else "disabled_or_no_cases")}
 
-    if mutation_kill:
+    if mutation_kill and diff_ok and cases_in:
         base_case = TestCase(shapes=dict(spec.canonical_shapes), dtypes={}, seed=0)
         diff_cases = cases_in[:2] if cases_in else [base_case]
         metamorphic_base = cases_in[0] if cases_in else base_case
@@ -246,7 +742,7 @@ def run_pipeline_for_spec(
             ],
         }
     else:
-        report["mutation_kill"] = {"skipped": True}
+        report["mutation_kill"] = {"skipped": True, "reason": ("diff_failed" if mutation_kill and not diff_ok else "disabled_or_no_cases")}
 
     # Persist baseline IO for Task6 tools (remote RVV / backend codegen smoke).
     try:
@@ -287,4 +783,4 @@ def run_pipeline_for_spec(
     return report
 
 
-__all__ = ["TileLangKernelSpec", "mvp_kernel_specs", "default_kernel_specs", "run_pipeline_for_spec"]
+__all__ = ["KernelSpec", "mvp_kernel_specs", "default_kernel_specs", "run_pipeline_for_spec"]

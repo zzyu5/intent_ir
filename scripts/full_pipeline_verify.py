@@ -25,8 +25,6 @@ def main() -> None:
     ap.add_argument("--list", action="store_true", help="List available kernels and exit")
     ap.add_argument("--cases-limit", type=int, default=8)
     ap.add_argument("--out-dir", type=str, default=None)
-    ap.add_argument("--no-stage-c", action="store_true", help="(tilelang) skip stage C")
-    ap.add_argument("--no-mutation-kill", action="store_true", help="(tilelang) skip mutation-kill")
     args = ap.parse_args()
 
     wanted = set(args.kernel or [])
@@ -53,11 +51,11 @@ def main() -> None:
         return
 
     # tilelang
-    from pipeline.tilelang.core import default_kernel_specs, mvp_kernel_specs, run_pipeline_for_spec
+    from pipeline.tilelang.core import default_kernel_specs, run_pipeline_for_spec
 
     out_dir = Path(args.out_dir) if args.out_dir else (ROOT / "artifacts" / "tilelang_full_pipeline")
     out_dir.mkdir(parents=True, exist_ok=True)
-    specs = list(mvp_kernel_specs()) + list(default_kernel_specs())
+    specs = list(default_kernel_specs())
     if args.list:
         for s in specs:
             print(s.name)
@@ -66,13 +64,7 @@ def main() -> None:
         if wanted and spec.name not in wanted:
             continue
         print(f"\n=== {spec.name} ===")
-        report = run_pipeline_for_spec(
-            spec,
-            out_dir=out_dir,
-            cases_limit=int(args.cases_limit),
-            stage_c=not bool(args.no_stage_c),
-            mutation_kill=not bool(args.no_mutation_kill),
-        )
+        report = run_pipeline_for_spec(spec, out_dir=out_dir, cases_limit=int(args.cases_limit))
         out_path = out_dir / f"{spec.name}.json"
         out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
         diff_ok = bool((report.get("diff") or {}).get("ok"))
@@ -82,4 +74,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
