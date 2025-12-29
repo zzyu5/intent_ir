@@ -1,6 +1,8 @@
 #include <cmath>
+#include <cctype>
 #include <cstdint>
 #include <cstdlib>
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -88,6 +90,94 @@ std::vector<int64_t> broadcast_shape(const std::vector<int64_t>& a, const std::v
   out.reserve(r);
   for (int i = 0; i < r; ++i) {
     const int64_t da = aa[i], db = bb[i];
+    if (da == db) out.push_back(da);
+    else if (da == 1) out.push_back(db);
+    else if (db == 1) out.push_back(da);
+    else fail("broadcast shape mismatch");
+  }
+  return out;
+}
+
+bool is_digits(const std::string& s) {
+  return !s.empty() && std::all_of(s.begin(), s.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+}
+
+std::optional<int64_t> resolve_dim_token(const json& tok, const std::unordered_map<std::string, int64_t>& bindings) {
+  if (tok.is_number_integer()) return tok.get<int64_t>();
+  if (tok.is_number()) return static_cast<int64_t>(tok.get<double>());
+  if (tok.is_string()) {
+    std::string s = tok.get<std::string>();
+    if (is_digits(s)) return std::stoll(s);
+    auto it = bindings.find(s);
+    if (it != bindings.end()) return it->second;
+  }
+  return std::nullopt;
+}
+
+std::optional<int> match_axis_1d_to_tensor(const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings,
+                                           const std::string& vec_name, const std::string& tensor_name, int tensor_rank) {
+  auto vit = intent.tensors.find(vec_name);
+  auto tit = intent.tensors.find(tensor_name);
+  if (vit == intent.tensors.end() || tit == intent.tensors.end()) return std::nullopt;
+  const auto& vshape = vit->second.shape;
+  const auto& tshape = tit->second.shape;
+  if (vshape.size() != 1 || static_cast<int>(tshape.size()) != tensor_rank) return std::nullopt;
+
+  const json& v0 = vshape[0];
+  // 1) Exact symbol match (strongest).
+  if (v0.is_string()) {
+    std::string sym = v0.get<std::string>();
+    if (!is_digits(sym)) {
+      std::vector<int> hits;
+      for (int i = 0; i < tensor_rank; ++i) {
+        if (tshape[i].is_string() && tshape[i].get<std::string>() == sym) hits.push_back(i);
+      }
+      if (hits.size() == 1) return hits[0];
+    }
+  }
+  // 2) Resolved numeric match (weaker; can be ambiguous when symbols bind equal).
+  auto vnum = resolve_dim_token(v0, bindings);
+  if (!vnum) return std::nullopt;
+  std::vector<int> hits;
+  for (int i = 0; i < tensor_rank; ++i) {
+    auto tnum = resolve_dim_token(tshape[i], bindings);
+    if (tnum && *tnum == *vnum) hits.push_back(i);
+  }
+  if (hits.size() == 1) return hits[0];
+  return std::nullopt;
+}
+
+std::vector<int64_t> pad_for_broadcast(const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings,
+                                       const std::string& name, const std::vector<int64_t>& shape,
+                                       const std::string& other_name, const std::vector<int64_t>& other_shape, int out_rank) {
+  std::vector<int64_t> padded(out_rank, 1);
+  for (int i = 0; i < (int)shape.size(); ++i) padded[out_rank - (int)shape.size() + i] = shape[i];
+
+  if ((int)shape.size() == 1 && out_rank >= 2 && (int)other_shape.size() == out_rank) {
+    auto ax = match_axis_1d_to_tensor(intent, bindings, name, other_name, out_rank);
+    if (ax && *ax >= 0 && *ax < out_rank) {
+      if (shape[0] == other_shape[*ax]) {
+        std::vector<int64_t> named(out_rank, 1);
+        named[*ax] = shape[0];
+        return named;
+      }
+    }
+  }
+  return padded;
+}
+
+std::vector<int64_t> broadcast_shape_named(const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings,
+                                           const std::string& a_name, const std::string& b_name,
+                                           const std::vector<int64_t>& a, const std::vector<int64_t>& b) {
+  const int ra = static_cast<int>(a.size());
+  const int rb = static_cast<int>(b.size());
+  const int r = std::max(ra, rb);
+  std::vector<int64_t> pa = pad_for_broadcast(intent, bindings, a_name, a, b_name, b, r);
+  std::vector<int64_t> pb = pad_for_broadcast(intent, bindings, b_name, b, a_name, a, r);
+  std::vector<int64_t> out;
+  out.reserve(r);
+  for (int i = 0; i < r; ++i) {
+    const int64_t da = pa[i], db = pb[i];
     if (da == db) out.push_back(da);
     else if (da == 1) out.push_back(db);
     else if (db == 1) out.push_back(da);
@@ -291,14 +381,14 @@ double resolve_const_value(const json& v, const std::unordered_map<std::string, 
 
 // ---- emit helpers ----
 
-std::vector<std::string> emit_elemwise_bin(const std::string& op, const std::string& out, const std::string& a, const std::string& b,
+std::vector<std::string> emit_elemwise_bin(const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings,
+                                           const std::string& op, const std::string& out, const std::string& a, const std::string& b,
                                            const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape,
                                            const std::string& out_dtype) {
   const int r = static_cast<int>(out_shape.size());
   if (r > 4) fail("elemwise broadcast supports rank<=4");
-  std::vector<int64_t> pa(r, 1), pb(r, 1);
-  for (int i = 0; i < (int)a_shape.size(); ++i) pa[r - (int)a_shape.size() + i] = a_shape[i];
-  for (int i = 0; i < (int)b_shape.size(); ++i) pb[r - (int)b_shape.size() + i] = b_shape[i];
+  std::vector<int64_t> pa = pad_for_broadcast(intent, bindings, a, a_shape, b, b_shape, r);
+  std::vector<int64_t> pb = pad_for_broadcast(intent, bindings, b, b_shape, a, a_shape, r);
   for (int i = 0; i < r; ++i) {
     if (pa[i] != 1 && pa[i] != out_shape[i]) fail("elemwise broadcast mismatch (a)");
     if (pb[i] != 1 && pb[i] != out_shape[i]) fail("elemwise broadcast mismatch (b)");
@@ -339,12 +429,12 @@ std::vector<std::string> emit_elemwise_bin(const std::string& op, const std::str
 }
 
 std::vector<std::string> emit_cmp(const std::string& cmp_op, const std::string& out, const std::string& a, const std::string& b,
-                                  const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape) {
+                                  const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape,
+                                  const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings) {
   const int r = static_cast<int>(out_shape.size());
   if (r > 4) fail("cmp broadcast supports rank<=4");
-  std::vector<int64_t> pa(r, 1), pb(r, 1);
-  for (int i = 0; i < (int)a_shape.size(); ++i) pa[r - (int)a_shape.size() + i] = a_shape[i];
-  for (int i = 0; i < (int)b_shape.size(); ++i) pb[r - (int)b_shape.size() + i] = b_shape[i];
+  std::vector<int64_t> pa = pad_for_broadcast(intent, bindings, a, a_shape, b, b_shape, r);
+  std::vector<int64_t> pb = pad_for_broadcast(intent, bindings, b, b_shape, a, a_shape, r);
   for (int i = 0; i < r; ++i) {
     if (pa[i] != 1 && pa[i] != out_shape[i]) fail("cmp broadcast mismatch (a)");
     if (pb[i] != 1 && pb[i] != out_shape[i]) fail("cmp broadcast mismatch (b)");
@@ -374,12 +464,12 @@ std::vector<std::string> emit_cmp(const std::string& cmp_op, const std::string& 
 }
 
 std::vector<std::string> emit_ne(const std::string& out, const std::string& a, const std::string& b,
-                                 const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape) {
+                                 const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape,
+                                 const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings) {
   const int r = static_cast<int>(out_shape.size());
   if (r > 4) fail("ne broadcast supports rank<=4");
-  std::vector<int64_t> pa(r, 1), pb(r, 1);
-  for (int i = 0; i < (int)a_shape.size(); ++i) pa[r - (int)a_shape.size() + i] = a_shape[i];
-  for (int i = 0; i < (int)b_shape.size(); ++i) pb[r - (int)b_shape.size() + i] = b_shape[i];
+  std::vector<int64_t> pa = pad_for_broadcast(intent, bindings, a, a_shape, b, b_shape, r);
+  std::vector<int64_t> pb = pad_for_broadcast(intent, bindings, b, b_shape, a, a_shape, r);
   for (int i = 0; i < r; ++i) {
     if (pa[i] != 1 && pa[i] != out_shape[i]) fail("ne broadcast mismatch (a)");
     if (pb[i] != 1 && pb[i] != out_shape[i]) fail("ne broadcast mismatch (b)");
@@ -789,17 +879,24 @@ std::vector<std::string> emit_transpose_4d_0132(const std::string& out, const st
 }
 
 std::vector<std::string> emit_matmul(const std::string& out, const std::string& a, const std::string& b,
-                                     const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape) {
+                                     const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape,
+                                     bool transpose_a, bool transpose_b) {
   // Scalar matmul (rank-2 or rank-4).
   std::vector<std::string> lines;
   if (a_shape.size() == 2 && b_shape.size() == 2) {
-    int64_t M = a_shape[0], K = a_shape[1], K2 = b_shape[0], N = b_shape[1];
+    int64_t M = transpose_a ? a_shape[1] : a_shape[0];
+    int64_t K = transpose_a ? a_shape[0] : a_shape[1];
+    int64_t K2 = transpose_b ? b_shape[1] : b_shape[0];
+    int64_t N = transpose_b ? b_shape[0] : b_shape[1];
     if (K2 != K) fail("matmul shape mismatch (2D)");
+    if (out_shape.size() != 2 || out_shape[0] != M || out_shape[1] != N) fail("matmul output shape mismatch (2D)");
     lines.push_back("  for (int m = 0; m < " + std::to_string(M) + "; ++m) {");
     lines.push_back("    for (int n = 0; n < " + std::to_string(N) + "; ++n) {");
     lines.push_back("      double acc = 0.0;");
     lines.push_back("      for (int k = 0; k < " + std::to_string(K) + "; ++k) {");
-    lines.push_back("        acc += (double)" + a + "[idx2(m,k," + std::to_string(K) + ")] * (double)" + b + "[idx2(k,n," + std::to_string(N) + ")];");
+    std::string a_idx = transpose_a ? ("idx2(k,m," + std::to_string(M) + ")") : ("idx2(m,k," + std::to_string(K) + ")");
+    std::string b_idx = transpose_b ? ("idx2(n,k," + std::to_string(K) + ")") : ("idx2(k,n," + std::to_string(N) + ")");
+    lines.push_back("        acc += (double)" + a + "[" + a_idx + "] * (double)" + b + "[" + b_idx + "];");
     lines.push_back("      }");
     lines.push_back("      " + out + "[idx2(m,n," + std::to_string(N) + ")] = (float)acc;");
     lines.push_back("    }");
@@ -807,17 +904,27 @@ std::vector<std::string> emit_matmul(const std::string& out, const std::string& 
     return lines;
   }
   if (a_shape.size() == 4 && b_shape.size() == 4 && out_shape.size() == 4) {
-    int64_t B0 = a_shape[0], H0 = a_shape[1], M = a_shape[2], K = a_shape[3];
-    int64_t B2 = b_shape[0], H2 = b_shape[1], K2 = b_shape[2], N = b_shape[3];
+    int64_t B0 = a_shape[0], H0 = a_shape[1];
+    int64_t M = transpose_a ? a_shape[3] : a_shape[2];
+    int64_t K = transpose_a ? a_shape[2] : a_shape[3];
+    int64_t B2 = b_shape[0], H2 = b_shape[1];
+    int64_t K2 = transpose_b ? b_shape[3] : b_shape[2];
+    int64_t N = transpose_b ? b_shape[2] : b_shape[3];
     if (B2 != B0 || H2 != H0 || K2 != K) fail("matmul shape mismatch (4D)");
+    if (out_shape[0] != B0 || out_shape[1] != H0 || out_shape[2] != M || out_shape[3] != N) fail("matmul output shape mismatch (4D)");
     lines.push_back("  for (int b0 = 0; b0 < " + std::to_string(B0) + "; ++b0) {");
     lines.push_back("    for (int h0 = 0; h0 < " + std::to_string(H0) + "; ++h0) {");
     lines.push_back("      for (int m0 = 0; m0 < " + std::to_string(M) + "; ++m0) {");
     lines.push_back("        for (int n0 = 0; n0 < " + std::to_string(N) + "; ++n0) {");
     lines.push_back("          double acc = 0.0;");
     lines.push_back("          for (int k0 = 0; k0 < " + std::to_string(K) + "; ++k0) {");
-    lines.push_back("            acc += (double)" + a + "[idx4(b0,h0,m0,k0," + std::to_string(H0) + "," + std::to_string(M) + "," + std::to_string(K) + ")]"
-                     " * (double)" + b + "[idx4(b0,h0,k0,n0," + std::to_string(H0) + "," + std::to_string(K) + "," + std::to_string(N) + ")];");
+    std::string a_idx = transpose_a
+                            ? ("idx4(b0,h0,k0,m0," + std::to_string(H0) + "," + std::to_string(K) + "," + std::to_string(M) + ")")
+                            : ("idx4(b0,h0,m0,k0," + std::to_string(H0) + "," + std::to_string(M) + "," + std::to_string(K) + ")");
+    std::string b_idx = transpose_b
+                            ? ("idx4(b0,h0,n0,k0," + std::to_string(H0) + "," + std::to_string(N) + "," + std::to_string(K) + ")")
+                            : ("idx4(b0,h0,k0,n0," + std::to_string(H0) + "," + std::to_string(K) + "," + std::to_string(N) + ")");
+    lines.push_back("            acc += (double)" + a + "[" + a_idx + "] * (double)" + b + "[" + b_idx + "];");
     lines.push_back("          }");
     lines.push_back("          " + out + "[idx4(b0,h0,m0,n0," + std::to_string(H0) + "," + std::to_string(M) + "," + std::to_string(N) + ")] = (float)acc;");
     lines.push_back("        }");
@@ -981,14 +1088,14 @@ int main(int argc, char** argv) {
       if (kind == "add" || kind == "sub" || kind == "mul" || kind == "div" || kind == "max" || kind == "min") {
         const auto& sa = get_shape(op.inputs[0]);
         const auto& sb = get_shape(op.inputs[1]);
-        shape_env[out] = broadcast_shape(sa, sb);
+        shape_env[out] = broadcast_shape_named(intent, bindings, op.inputs[0], op.inputs[1], sa, sb);
         dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
       }
       if (kind == "ne" || kind == "lt" || kind == "le" || kind == "gt" || kind == "ge" || kind == "and" || kind == "or") {
         const auto& sa = get_shape(op.inputs[0]);
         const auto& sb = get_shape(op.inputs[1]);
-        shape_env[out] = broadcast_shape(sa, sb);
+        shape_env[out] = broadcast_shape_named(intent, bindings, op.inputs[0], op.inputs[1], sa, sb);
         dtype_env[out] = "bool";
         continue;
       }
@@ -1064,13 +1171,27 @@ int main(int argc, char** argv) {
       if (kind == "matmul") {
         const auto& sa = get_shape(op.inputs[0]);
         const auto& sb = get_shape(op.inputs[1]);
+        bool ta = op.attrs.value("transpose_a", false);
+        bool tb = op.attrs.value("transpose_b", false);
         if (sa.size() == 2 && sb.size() == 2) {
-          shape_env[out] = {sa[0], sb[1]};
+          int64_t M = ta ? sa[1] : sa[0];
+          int64_t K = ta ? sa[0] : sa[1];
+          int64_t K2 = tb ? sb[1] : sb[0];
+          int64_t N = tb ? sb[0] : sb[1];
+          if (K2 != K) fail("matmul infer shape mismatch (2D)");
+          shape_env[out] = {M, N};
           dtype_env[out] = "f32";
           continue;
         }
         if (sa.size() == 4 && sb.size() == 4) {
-          shape_env[out] = {sa[0], sa[1], sa[2], sb[3]};
+          if (sa[0] != sb[0] || sa[1] != sb[1]) fail("matmul infer shape mismatch (4D batch/head)");
+          int64_t B = sa[0], H = sa[1];
+          int64_t M = ta ? sa[3] : sa[2];
+          int64_t K = ta ? sa[2] : sa[3];
+          int64_t K2 = tb ? sb[3] : sb[2];
+          int64_t N = tb ? sb[2] : sb[3];
+          if (K2 != K) fail("matmul infer shape mismatch (4D)");
+          shape_env[out] = {B, H, M, N};
           dtype_env[out] = "f32";
           continue;
         }
@@ -1232,13 +1353,13 @@ int main(int argc, char** argv) {
         lines.push_back("    " + out + "[" + out_idx + "] = " + inp + "[" + in_idx + "];");
         for (int i = 0; i < r_out; ++i) lines.push_back("  }");
       } else if (op.op == "add" || op.op == "sub" || op.op == "mul" || op.op == "div" || op.op == "max" || op.op == "min") {
-        auto bl = emit_elemwise_bin(op.op, out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape, dtype_env[out]);
+        auto bl = emit_elemwise_bin(intent, bindings, op.op, out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape, dtype_env[out]);
         lines.insert(lines.end(), bl.begin(), bl.end());
       } else if (op.op == "ne") {
-        auto bl = emit_ne(out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape);
+        auto bl = emit_ne(out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape, intent, bindings);
         lines.insert(lines.end(), bl.begin(), bl.end());
       } else if (op.op == "lt" || op.op == "le" || op.op == "gt" || op.op == "ge") {
-        auto bl = emit_cmp(op.op, out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape);
+        auto bl = emit_cmp(op.op, out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape, intent, bindings);
         lines.insert(lines.end(), bl.begin(), bl.end());
       } else if (op.op == "and" || op.op == "or") {
         auto bl = emit_bool_bin(op.op, out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape);
@@ -1302,7 +1423,9 @@ int main(int argc, char** argv) {
         auto bl = emit_softmax(out, op.inputs[0], shape_env[op.inputs[0]], axis);
         lines.insert(lines.end(), bl.begin(), bl.end());
       } else if (op.op == "matmul") {
-        auto bl = emit_matmul(out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape);
+        bool ta = op.attrs.value("transpose_a", false);
+        bool tb = op.attrs.value("transpose_b", false);
+        auto bl = emit_matmul(out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape, ta, tb);
         lines.insert(lines.end(), bl.begin(), bl.end());
       } else {
         fail("unsupported op lowering: " + op.op);

@@ -30,12 +30,32 @@ def ensure_cpp_codegen_built(*, build_type: str = "Release") -> Path:
     JSON directly (no extra backend IR). Python remains orchestration only.
     """
     bin_path = _cpp_codegen_bin()
-    if bin_path.exists():
-        return bin_path
-
     src_dir = _cpp_codegen_dir()
     build_dir = _cpp_codegen_build_dir()
     build_dir.mkdir(parents=True, exist_ok=True)
+
+    def sources_newer_than_bin() -> bool:
+        if not bin_path.exists():
+            return True
+        try:
+            bin_mtime = bin_path.stat().st_mtime
+        except FileNotFoundError:
+            return True
+        for p in src_dir.rglob("*"):
+            if build_dir in p.parents:
+                continue
+            if not p.is_file():
+                continue
+            if p.name == "CMakeLists.txt" or p.suffix in {".cpp", ".cc", ".c", ".h", ".hpp", ".cmake"}:
+                try:
+                    if p.stat().st_mtime > bin_mtime:
+                        return True
+                except FileNotFoundError:
+                    continue
+        return False
+
+    if not sources_newer_than_bin():
+        return bin_path
 
     cfg = [
         "cmake",
