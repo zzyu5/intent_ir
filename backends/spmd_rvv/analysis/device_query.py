@@ -60,7 +60,12 @@ def query_remote_device(
     - If paramiko is available and password is given, use paramiko.
     - Otherwise fall back to system ssh (expects key-based login).
     """
-    probe_path = Path(probe_script) if probe_script else Path(__file__).parents[1] / "scripts" / "rvv_probe.sh"
+    # Default probe lives in repo-root `scripts/rvv_probe.sh`.
+    probe_path = (
+        Path(probe_script)
+        if probe_script
+        else Path(__file__).resolve().parents[3] / "scripts" / "rvv_probe.sh"
+    )
     if not probe_path.exists():
         raise FileNotFoundError(f"probe script not found: {probe_path}")
     script_content = probe_path.read_text(encoding="utf-8")

@@ -28,6 +28,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backends.spmd_rvv.codegen.intentir_to_c import lower_intent_to_c_with_files
+from backends.spmd_rvv.analysis.device_query import load_profile, query_remote_device
+from backends.spmd_rvv.analysis.tuning import TuningRequest, parse_constraints, parse_locks, select_schedule
 from intent_ir.ir import IntentFunction
 from intent_ir.macros import expand_macros
 from verify.gen_cases import TestCase
@@ -125,6 +127,8 @@ def run_remote(
     shape_overrides: dict | None = None,
     baseline_npz: str | None = None,
     prefer_live_baseline: bool = False,
+    tune_request: TuningRequest | None = None,
+    tune_profile: str | None = None,
 ):
     artifact_dir = "full_pipeline_verify" if frontend == "triton" else "tilelang_full_pipeline"
     report_path = ROOT / "artifacts" / artifact_dir / f"{kernel}.json"
@@ -250,6 +254,29 @@ def run_remote(
         except Exception:
             pass
 
+    tuning_info: dict | None = None
+    if tune_request is not None:
+        if tune_profile:
+            prof = load_profile(str(tune_profile))
+            prof_src = str(tune_profile)
+        else:
+            prof = query_remote_device(host, user=user, password=password, port=port, timeout=20)
+            prof_src = "remote"
+        shape_bindings_int: dict[str, int] = {}
+        for k, v in dict(bindings).items():
+            try:
+                shape_bindings_int[str(k)] = int(v)
+            except Exception:
+                continue
+        tuned = select_schedule(intent, shape_bindings=shape_bindings_int, profile=prof, request=tune_request)
+        intent.schedule = tuned.schedule
+        tuning_info = {
+            "profile_source": prof_src,
+            "profile": prof.__dict__,
+            "notes": list(tuned.notes),
+            "schedule": (intent.to_json_dict().get("schedule") or {}),
+        }
+
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     client.connect(hostname=host, port=port, username=user, password=password, timeout=20)
@@ -357,6 +384,7 @@ def run_remote(
         "stdout": run_out,
         "stderr": run_err,
         "baseline_summary": baseline_summary,
+        "tuning": tuning_info,
     }
 
 
@@ -371,10 +399,23 @@ def main():
     ap.add_argument("--case-index", type=int, default=0, help="pick case from artifacts report (default 0)")
     ap.add_argument("--baseline-npz", default=None, help="override baseline npz path (default: from artifact report)")
     ap.add_argument("--prefer-live-baseline", action="store_true", help="re-launch Triton for baseline even if npz exists")
+    ap.add_argument("--no-tune", action="store_true", help="disable backend schedule selection (use IntentIR schedule as-is)")
+    ap.add_argument("--tune-mode", choices=["auto", "guided", "locked"], default="auto")
+    ap.add_argument("--lock", action="append", default=[], help="repeatable; e.g. --lock tile_n=128")
+    ap.add_argument("--constraint", action="append", default=[], help="repeatable; e.g. --constraint 'tile_n in (64,128)'")
+    ap.add_argument("--profile", default=None, help="RVV profile name or JSON path (default: query remote host)")
     args = ap.parse_args()
     password = args.password or os.getenv("INTENTIR_SSH_PASSWORD")
     if password is None:
         password = getpass.getpass(f"SSH password for {args.user}@{args.host}: ")
+    tune_req = None
+    if not bool(args.no_tune):
+        tune_req = TuningRequest(
+            mode=str(args.tune_mode),
+            budget=0,
+            locks=parse_locks(args.lock or []),
+            constraints=parse_constraints(args.constraint or []),
+        )
     res = run_remote(
         args.kernel,
         args.frontend,
@@ -385,6 +426,8 @@ def main():
         case_index=args.case_index,
         baseline_npz=args.baseline_npz,
         prefer_live_baseline=bool(args.prefer_live_baseline),
+        tune_request=tune_req,
+        tune_profile=str(args.profile) if args.profile else None,
     )
     print(res)
 

@@ -62,7 +62,8 @@ class GEMMCostModel:
             * self.profile.frequency_ghz
             * 2.0
         )  # approximate GFLOPs peak
-        memory_peak = (self.profile.mem_bandwidth_gbps * ai) / self.dtype_size
+        # mem_bandwidth_gbps is treated as GB/s; AI is FLOPs/byte -> memory roofline in GFLOPs is GB/s * FLOPs/byte.
+        memory_peak = self.profile.mem_bandwidth_gbps * ai
         achievable = min(compute_peak, memory_peak)
         if cache_level == "DRAM":
             achievable *= 0.5

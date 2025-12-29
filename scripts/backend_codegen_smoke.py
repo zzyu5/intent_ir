@@ -27,6 +27,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backends.spmd_rvv.codegen.intentir_to_c import lower_intent_to_c_with_files  # noqa: E402
+from backends.spmd_rvv.analysis.device_query import load_profile  # noqa: E402
+from backends.spmd_rvv.analysis.tuning import TuningRequest, parse_constraints, parse_locks, select_schedule  # noqa: E402
 from intent_ir.ir import IntentFunction  # noqa: E402
 from intent_ir.macros import expand_macros  # noqa: E402
 from verify.diff_runner import _with_io_aliases as _with_io_aliases_for_diff  # noqa: E402
@@ -67,7 +69,14 @@ def _write_bin(path: Path, arr: np.ndarray, dtype: str) -> None:
     path.write_bytes(raw)
 
 
-def run_one(kernel: str, *, frontend: str = "triton", keep_tmp: bool = False) -> dict:
+def run_one(
+    kernel: str,
+    *,
+    frontend: str = "triton",
+    keep_tmp: bool = False,
+    tune_request: TuningRequest | None = None,
+    tune_profile: str | None = None,
+) -> dict:
     artifact_dir = "full_pipeline_verify" if frontend == "triton" else "tilelang_full_pipeline"
     report_path = ROOT / "artifacts" / artifact_dir / f"{kernel}.json"
     baseline_npz_path = ROOT / "artifacts" / artifact_dir / f"{kernel}.baseline.npz"
@@ -104,6 +113,10 @@ def run_one(kernel: str, *, frontend: str = "triton", keep_tmp: bool = False) ->
             bindings["num_elements"] = int(bindings["group_size"]) * int(bindings["HW"])
         except Exception:
             pass
+    if tune_request is not None:
+        prof = load_profile(tune_profile or "generic_rvv_256")
+        tuned = select_schedule(intent, shape_bindings=bindings, profile=prof, request=tune_request)
+        intent.schedule = tuned.schedule
     tol = {
         "any_kernel_dim": (0.0, 0.0),
         "group_norm_kernel": (1e-3, 1e-3),
@@ -156,13 +169,31 @@ def main() -> None:
     ap.add_argument("--frontend", choices=["triton", "tilelang"], default="triton")
     ap.add_argument("--kernel", action="append", default=[], help="repeatable; default runs 6 kernels")
     ap.add_argument("--keep-tmp", action="store_true", help="keep generated C + binaries in a temp dir")
+    ap.add_argument("--tune-mode", choices=["auto", "guided", "locked"], default=None)
+    ap.add_argument("--lock", action="append", default=[], help="repeatable; e.g. --lock tile_n=128")
+    ap.add_argument("--constraint", action="append", default=[], help="repeatable; e.g. --constraint 'tile_n in (64,128)'")
+    ap.add_argument("--profile", default=None, help="RVV profile name or JSON path (default: generic_rvv_256 when tuning)")
     args = ap.parse_args()
 
     kernels = args.kernel or DEFAULT_KERNELS
+    tune_req = None
+    if args.tune_mode:
+        tune_req = TuningRequest(
+            mode=str(args.tune_mode),
+            budget=0,
+            locks=parse_locks(args.lock or []),
+            constraints=parse_constraints(args.constraint or []),
+        )
     results = []
     ok_all = True
     for k in kernels:
-        r = run_one(k, frontend=str(args.frontend), keep_tmp=bool(args.keep_tmp))
+        r = run_one(
+            k,
+            frontend=str(args.frontend),
+            keep_tmp=bool(args.keep_tmp),
+            tune_request=tune_req,
+            tune_profile=str(args.profile) if args.profile else None,
+        )
         results.append(r)
         ok_all = ok_all and bool(r["ok"])
         status = "OK" if r["ok"] else "FAIL"
