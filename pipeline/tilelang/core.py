@@ -168,7 +168,8 @@ def run_pipeline_for_spec(
     report["intent"] = cand.intent.to_json_dict()
 
     # 3) Stage B: cases + diff
-    run_ref_fn = (lambda c: _run_tilelang_ref(spec, c)) if use_tilelang_runtime else spec.runner
+    use_rt_ref = bool(use_tilelang_runtime) and (contract.level != "OUT_OF_SCOPE")
+    run_ref_fn = (lambda c: _run_tilelang_ref(spec, c)) if use_rt_ref else spec.runner
     cases_pack: GeneratedCases = generate_cases_split(
         cand.intent,
         constraints=constraints,
@@ -184,7 +185,19 @@ def run_pipeline_for_spec(
     report["cases"] = {"in_contract": [dict(c.shapes) for c in cases_in], "out_of_contract": [dict(c.shapes) for c in cases_out]}
 
     diffs_in, _ = run_diff(cand.intent, run_ref_fn, cases_in)
-    report["diff"] = {"ok": bool(diffs_in and all(d.ok for d in diffs_in)), "results": [d.__dict__ for d in diffs_in]}
+    report["diff"] = {
+        "ok": bool(diffs_in and all(d.ok for d in diffs_in)),
+        "results": [
+            {
+                "ok": bool(d.ok),
+                "max_abs_err": float(d.max_abs_err),
+                "max_rel_err": float(d.max_rel_err),
+                "first_bad_index": ([int(x) for x in d.first_bad_index] if d.first_bad_index is not None else None),
+                "summary": str(d.summary),
+            }
+            for d in diffs_in
+        ],
+    }
 
     if stage_c:
         base_case = TestCase(shapes=dict(spec.canonical_shapes), dtypes={}, seed=0)
