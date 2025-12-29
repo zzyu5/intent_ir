@@ -85,7 +85,8 @@ def execute_intent(intent: IntentFunction, inputs: Dict[str, np.ndarray], shape_
 
 def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shape_bindings: Dict[str, int]) -> np.ndarray:
     if op.op in NUM_BIN_OPS:
-        args = [_get(env, name) for name in op.inputs]
+        input_names = list(op.inputs)
+        args = [_get(env, name) for name in input_names]
         if len(args) == 1:
             # allow implicit second operand from attrs (common in LLM outputs)
             if op.op == "div" and "divisor" in op.attrs:
@@ -100,20 +101,26 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
                 args.append(_resolve_value(op.attrs["other"], env, shape_bindings))
         if len(args) != 2:
             raise ValueError(f"{op.op} requires 2 inputs (or 1+attrs)")
-        a, b = _align_shapes_for_elemwise(args[0], args[1])
+        a_name = input_names[0] if input_names else None
+        b_name = input_names[1] if len(input_names) > 1 else None
+        a, b = _align_shapes_for_elemwise_named(intent, a_name, args[0], b_name, args[1], shape_bindings)
         return NUM_BIN_OPS[op.op](a, b)
     if op.op in NUM_UNARY_OPS:
         x = _get(env, op.inputs[0])
         return NUM_UNARY_OPS[op.op](x)
     if op.op in CMP_BIN_OPS:
-        a = _get(env, op.inputs[0])
-        b = _get(env, op.inputs[1])
-        a, b = _align_shapes_for_elemwise(a, b)
+        a_name = op.inputs[0]
+        b_name = op.inputs[1]
+        a = _get(env, a_name)
+        b = _get(env, b_name)
+        a, b = _align_shapes_for_elemwise_named(intent, a_name, a, b_name, b, shape_bindings)
         return CMP_BIN_OPS[op.op](a, b)
     if op.op in BOOL_BIN_OPS:
-        a = _get(env, op.inputs[0]).astype(bool)
-        b = _get(env, op.inputs[1]).astype(bool)
-        a, b = _align_shapes_for_elemwise(a, b)
+        a_name = op.inputs[0]
+        b_name = op.inputs[1]
+        a = _get(env, a_name).astype(bool)
+        b = _get(env, b_name).astype(bool)
+        a, b = _align_shapes_for_elemwise_named(intent, a_name, a, b_name, b, shape_bindings)
         return BOOL_BIN_OPS[op.op](a, b)
     if op.op in BOOL_UNARY_OPS:
         x = _get(env, op.inputs[0]).astype(bool)
@@ -158,13 +165,15 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         idxs_b = [np.asarray(ix, dtype=np.int64) for ix in idxs_b]
         return data[tuple(idxs_b)]
     if op.op == "where":
-        cond = _get(env, op.inputs[0]).astype(bool)
-        x = _get(env, op.inputs[1])
-        y = _get(env, op.inputs[2])
-        # Help some LLM outputs that forget singleton dims.
-        cond, x = _align_shapes_for_elemwise(cond, x)
-        cond, y = _align_shapes_for_elemwise(cond, y)
-        x, y = _align_shapes_for_elemwise(x, y)
+        cond_name = op.inputs[0]
+        x_name = op.inputs[1]
+        y_name = op.inputs[2]
+        cond = _get(env, cond_name).astype(bool)
+        x = _get(env, x_name)
+        y = _get(env, y_name)
+        cond, x = _align_shapes_for_elemwise_named(intent, cond_name, cond, x_name, x, shape_bindings)
+        cond, y = _align_shapes_for_elemwise_named(intent, cond_name, cond, y_name, y, shape_bindings)
+        x, y = _align_shapes_for_elemwise_named(intent, x_name, x, y_name, y, shape_bindings)
         return np.where(cond, x, y)
     if op.op == "reduce_sum":
         x = _get(env, op.inputs[0])
@@ -198,6 +207,12 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
     if op.op == "matmul":
         a = _get(env, op.inputs[0])
         b = _get(env, op.inputs[1])
+        ta = bool(op.attrs.get("transpose_a", False))
+        tb = bool(op.attrs.get("transpose_b", False))
+        if ta:
+            a = np.swapaxes(a, -1, -2)
+        if tb:
+            b = np.swapaxes(b, -1, -2)
         acc = np.matmul(a, b)
         epilogue = op.attrs.get("epilogue")
         if epilogue:
@@ -361,15 +376,101 @@ def _resolve_dims(dims_raw, x: np.ndarray):
 
 
 def _align_shapes_for_elemwise(a: np.ndarray, b: np.ndarray):
-    # Conservative heuristic for some LLM outputs that drop singleton dims:
-    # only reshape when one side is 1D and the leading dimension matches.
-    # (Avoid breaking numpy-style trailing-dim broadcasting, e.g. [OH,OW] with [N,C,OH,OW].)
-    if a.shape and b.shape and a.shape[0] == b.shape[0] and (min(a.ndim, b.ndim) == 1):
-        max_nd = max(a.ndim, b.ndim)
-        if a.ndim < max_nd:
-            a = a.reshape(a.shape + (1,) * (max_nd - a.ndim))
-        if b.ndim < max_nd:
-            b = b.reshape(b.shape + (1,) * (max_nd - b.ndim))
+    # Kept for backward compatibility with older call sites. Prefer
+    # `_align_shapes_for_elemwise_named`, which can use IntentIR shape symbols to
+    # disambiguate 1D-vs-2D broadcasting.
+    return a, b
+
+
+def _align_shapes_for_elemwise_named(
+    intent: IntentFunction,
+    a_name: str | None,
+    a: np.ndarray,
+    b_name: str | None,
+    b: np.ndarray,
+    shape_bindings: Dict[str, int],
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Disambiguate broadcasting between a 1D vector and a higher-rank tensor using
+    IntentIR tensor shapes (symbol names / constants).
+
+    Motivation: NumPy aligns 1D on the trailing axis. For patterns like softmax:
+      mx: [M] = reduce_max(x[M,N], axis=1, keepdims=false)
+      x - mx   # intended mx -> [M,1] (broadcast across N)
+    the IR's declared shape carries the intent ("M" matches axis0), so we can
+    reshape mx safely without breaking cases like weights [N] for [M,N].
+    """
+
+    def decl_tokens(name: str | None) -> list[object] | None:
+        if not name or name not in intent.tensors:
+            return None
+        t = intent.tensors[name]
+        toks: list[object] = []
+        for d in t.shape:
+            # Dim(kind="sym"/"const", value=...)
+            if hasattr(d, "kind") and hasattr(d, "value"):
+                if getattr(d, "kind") == "sym":
+                    toks.append(str(getattr(d, "value")))
+                elif getattr(d, "kind") == "const":
+                    toks.append(int(getattr(d, "value")))
+                else:
+                    toks.append(None)
+                continue
+            if isinstance(d, str):
+                toks.append(d)
+            elif isinstance(d, int):
+                toks.append(int(d))
+            else:
+                toks.append(None)
+        return toks
+
+    def resolved(tok: object | None) -> int | None:
+        if tok is None:
+            return None
+        if isinstance(tok, int):
+            return int(tok)
+        if isinstance(tok, str) and tok in shape_bindings:
+            return int(shape_bindings[tok])
+        return None
+
+    def match_axis(vec_name: str | None, tensor_name: str | None, tensor_rank: int) -> int | None:
+        v = decl_tokens(vec_name)
+        t = decl_tokens(tensor_name)
+        if not v or len(v) != 1 or not t or len(t) != tensor_rank:
+            return None
+        v0 = v[0]
+        # 1) Exact symbol match (strongest signal).
+        if isinstance(v0, str):
+            hits = [i for i, tt in enumerate(t) if tt == v0]
+            if len(hits) == 1:
+                return int(hits[0])
+        # 2) Resolved numeric match (weaker; can be ambiguous when symbols bind equal).
+        v_num = resolved(v0)
+        if v_num is None:
+            return None
+        hits = [i for i, tt in enumerate(t) if resolved(tt) == v_num]
+        if len(hits) == 1:
+            return int(hits[0])
+        return None
+
+    def reshape_vec_for_axis(vec: np.ndarray, axis: int, target_rank: int, target_shape: tuple[int, ...]) -> np.ndarray:
+        if vec.ndim != 1 or axis < 0 or axis >= target_rank:
+            return vec
+        if vec.shape[0] != int(target_shape[axis]):
+            return vec
+        new_shape = [1] * target_rank
+        new_shape[axis] = int(vec.shape[0])
+        return vec.reshape(tuple(new_shape))
+
+    # Align 1D -> higher rank using declared shapes.
+    if a.ndim == 1 and b.ndim >= 2:
+        ax = match_axis(a_name, b_name, b.ndim)
+        if ax is not None:
+            a = reshape_vec_for_axis(a, ax, b.ndim, b.shape)
+    if b.ndim == 1 and a.ndim >= 2:
+        ax = match_axis(b_name, a_name, a.ndim)
+        if ax is not None:
+            b = reshape_vec_for_axis(b, ax, a.ndim, a.shape)
     return a, b
 
 

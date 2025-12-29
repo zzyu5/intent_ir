@@ -68,3 +68,34 @@ def test_diff_runner_reports_failure():
     assert len(diffs) == 1
     assert not diffs[0].ok
     assert cex, "should produce counterexample when mismatch occurs"
+
+
+def test_interpreter_softmax_row_broadcast_from_reduce_vector():
+    # Regression: disambiguate broadcasting of a reduce result [M] with a 2D tensor [M,N].
+    # NumPy aligns 1D on the trailing axis; IntentIR uses shape symbols to mean "row-wise".
+    js = {
+        "name": "softmax_like",
+        "tensors": {
+            "X": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            "mx": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+            "Xc": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            "E": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            "sm": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+            "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+        },
+        "ops": [
+            {"op": "reduce_max", "inputs": ["X"], "output": "mx", "attrs": {"axis": [1], "keepdims": False}},
+            {"op": "sub", "inputs": ["X", "mx"], "output": "Xc"},
+            {"op": "exp", "inputs": ["Xc"], "output": "E"},
+            {"op": "reduce_sum", "inputs": ["E"], "output": "sm", "attrs": {"axis": [1], "keepdims": False}},
+            {"op": "div", "inputs": ["E", "sm"], "output": "out"},
+        ],
+        "outputs": ["out"],
+    }
+    intent = IntentFunction.from_json_dict(js)
+    X = np.arange(6, dtype=np.float32).reshape(2, 3)
+    out = execute_intent(intent, {"X": X})["out"]
+    mx = np.max(X, axis=1, keepdims=True)
+    E = np.exp(X - mx)
+    expected = E / np.sum(E, axis=1, keepdims=True)
+    assert np.allclose(out, expected, atol=1e-6, rtol=1e-6)
