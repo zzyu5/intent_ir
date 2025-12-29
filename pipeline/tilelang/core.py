@@ -239,6 +239,12 @@ def run_pipeline_for_spec(
     try:
         baseline_case = TestCase(shapes=dict(spec.canonical_shapes), dtypes={}, seed=0)
         baseline_io = run_ref_fn(baseline_case)
+        try:
+            from verify.diff_runner import _with_io_aliases as _with_io_aliases_for_diff
+
+            baseline_io = _with_io_aliases_for_diff(cand.intent, baseline_io)
+        except Exception:
+            pass
         total_bytes = 0
         for v in baseline_io.values():
             arr = np.asarray(v)

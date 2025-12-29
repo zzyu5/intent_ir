@@ -1,7 +1,7 @@
 """
 Backend codegen smoke test (no LLM, no remote).
 
-For each kernel artifact under `artifacts/full_pipeline_verify/`, this script:
+For each kernel artifact under `artifacts/<frontend>_full_pipeline/`, this script:
   - loads expanded IntentIR (or expands macros)
   - loads baseline inputs/outputs from `<kernel>.baseline.npz`
   - invokes Task6 backend codegen (C++ tool) to generate a standalone C program
@@ -29,6 +29,7 @@ if str(ROOT) not in sys.path:
 from backends.spmd_rvv.codegen.intentir_to_c import lower_intent_to_c_with_files  # noqa: E402
 from intent_ir.ir import IntentFunction  # noqa: E402
 from intent_ir.macros import expand_macros  # noqa: E402
+from verify.diff_runner import _with_io_aliases as _with_io_aliases_for_diff  # noqa: E402
 
 
 DEFAULT_KERNELS = [
@@ -66,9 +67,10 @@ def _write_bin(path: Path, arr: np.ndarray, dtype: str) -> None:
     path.write_bytes(raw)
 
 
-def run_one(kernel: str, *, keep_tmp: bool = False) -> dict:
-    report_path = ROOT / "artifacts" / "full_pipeline_verify" / f"{kernel}.json"
-    baseline_npz_path = ROOT / "artifacts" / "full_pipeline_verify" / f"{kernel}.baseline.npz"
+def run_one(kernel: str, *, frontend: str = "triton", keep_tmp: bool = False) -> dict:
+    artifact_dir = "full_pipeline_verify" if frontend == "triton" else "tilelang_full_pipeline"
+    report_path = ROOT / "artifacts" / artifact_dir / f"{kernel}.json"
+    baseline_npz_path = ROOT / "artifacts" / artifact_dir / f"{kernel}.baseline.npz"
     if not report_path.exists():
         raise FileNotFoundError(f"missing artifact report: {report_path}")
     if not baseline_npz_path.exists():
@@ -78,6 +80,7 @@ def run_one(kernel: str, *, keep_tmp: bool = False) -> dict:
     intent = _load_intent(report)
 
     baseline = dict(np.load(baseline_npz_path, allow_pickle=False))
+    baseline = _with_io_aliases_for_diff(intent, baseline)
     external_inputs, outputs = _external_inputs(intent)
 
     bindings = ((report.get("baseline") or {}).get("shapes") or {}) if isinstance(report.get("baseline"), dict) else {}
@@ -150,6 +153,7 @@ def run_one(kernel: str, *, keep_tmp: bool = False) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--frontend", choices=["triton", "tilelang"], default="triton")
     ap.add_argument("--kernel", action="append", default=[], help="repeatable; default runs 6 kernels")
     ap.add_argument("--keep-tmp", action="store_true", help="keep generated C + binaries in a temp dir")
     args = ap.parse_args()
@@ -158,7 +162,7 @@ def main() -> None:
     results = []
     ok_all = True
     for k in kernels:
-        r = run_one(k, keep_tmp=bool(args.keep_tmp))
+        r = run_one(k, frontend=str(args.frontend), keep_tmp=bool(args.keep_tmp))
         results.append(r)
         ok_all = ok_all and bool(r["ok"])
         status = "OK" if r["ok"] else "FAIL"

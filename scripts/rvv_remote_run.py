@@ -220,8 +220,10 @@ def run_remote(
 
     # Prefer baseline shapes (the embedded inputs correspond to that launch).
     baseline_shapes = ((report.get("baseline") or {}).get("shapes") or {}) if isinstance(report.get("baseline"), dict) else {}
-    if baseline_shapes and frontend == "triton":
-        bindings = dict(baseline_shapes) | dict(shape_overrides or {})
+    if baseline_shapes:
+        bindings = dict(baseline_shapes)
+    if shape_overrides:
+        bindings.update(dict(shape_overrides))
 
     # Common axis aliases (align kernel-signature symbols with user-friendly names).
     if "batch" in bindings and "Z" not in bindings:
