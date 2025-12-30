@@ -13,3 +13,8 @@ importable modules (e.g., `pipeline/triton/core.py`, or backend/verify packages)
 - `rvv_remote_run.py`: run Task6 on a remote RVV host and compare with saved baseline.
 - `triton/pipeline_report.py`: generate a compact per-kernel report (LLM + TTIR).
 - `triton/verify_ops.py`: per-op verification runner (debugging).
+
+## Experiments
+
+- `experiments/mutation_kill_ablation.py`: summarize mutation-kill outcomes from existing artifacts.
+- `experiments/rvv_e2e_case_study.py`: run `rvv_remote_run.py` across the 6-kernel suite and collect a single JSON report.

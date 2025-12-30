@@ -49,6 +49,14 @@ class TuningResult:
     model_mnk: Optional[Tuple[int, int, int]] = None
 
 
+@dataclass(frozen=True)
+class ScheduleCandidate:
+    schedule: ScheduleSketch
+    score: float
+    tile_mnk: Optional[Tuple[int, int, int]] = None
+    notes: List[str] = field(default_factory=list)
+
+
 def _parse_kv_int(s: str) -> Tuple[str, int]:
     m = _EQ_RE.match(str(s).strip())
     if not m:
@@ -218,6 +226,97 @@ def _candidate_tiles(profile: RVVHardwareProfile, *, allowed: Dict[str, Optional
     return out or [(tm_list[0], tn_list[0], tk_list[0])]
 
 
+def propose_schedule_candidates(
+    intent: IntentFunction,
+    *,
+    shape_bindings: Dict[str, int],
+    profile: RVVHardwareProfile,
+    request: TuningRequest | None = None,
+    limit: int | None = None,
+) -> List[ScheduleCandidate]:
+    """
+    Propose ranked schedule candidates (MVP: matmul tiling).
+
+    This is used by higher-level tools (e.g. remote autotune) to:
+    - enumerate a small candidate set from constraints/locks
+    - rank by analytical cost model (predicted GFLOPs)
+    - optionally benchmark top-K candidates on real hardware
+    """
+    req = request or TuningRequest()
+
+    # vec_width: default to vector lanes; can be constrained/locked.
+    vec_lanes = max(1, int(profile.rvv_vlen_bits) // 32)
+    vec_allowed = _allowed_set(req, "vec_width")
+    if vec_allowed:
+        vec_width = sorted(vec_allowed)[0]
+        vec_notes = [f"vec_width constrained={sorted(vec_allowed)}"]
+    else:
+        vec_width = vec_lanes
+        vec_notes = [f"vec_width default=lanes({vec_lanes})"]
+
+    pipeline_depth = (intent.schedule.pipeline_depth if intent.schedule else None)
+    if "pipeline_depth" in req.locks:
+        pipeline_depth = int(req.locks["pipeline_depth"])
+        vec_notes.append(f"lock pipeline_depth={pipeline_depth}")
+
+    model_op_idx, mnk = _pick_model_matmul(intent, shape_bindings)
+    if mnk and model_op_idx is not None:
+        M, N, K = mnk
+        allowed = {
+            "tile_m": _allowed_set(req, "tile_m"),
+            "tile_n": _allowed_set(req, "tile_n"),
+            "tile_k": _allowed_set(req, "tile_k"),
+        }
+        tiles = _candidate_tiles(profile, allowed=allowed, M=M, N=N, K=K)
+        model = GEMMCostModel(profile, M=M, N=N, K=K)
+
+        base = intent.schedule or ScheduleSketch()
+        out: List[ScheduleCandidate] = []
+        for tm, tn, tk in tiles:
+            est = model.evaluate_tile(int(tm), int(tn), int(tk))
+            sched = ScheduleSketch(
+                tile_m=int(tm),
+                tile_n=int(tn),
+                tile_k=int(tk),
+                vec_width=int(vec_width),
+                pipeline_depth=pipeline_depth,
+                axis_bindings=dict(base.axis_bindings) if base else {},
+                vec_axis=(base.vec_axis if base else None),
+                parallel_axes=list(base.parallel_axes) if base else [],
+                memory_hint=dict(base.memory_hint) if base else {},
+            )
+            notes = list(vec_notes) + [f"cache={est.cache_level}", f"ai={est.intensity:.2f}", f"pred_gflops={est.gflops:.2f}"]
+            out.append(ScheduleCandidate(schedule=sched, score=float(est.gflops), tile_mnk=(int(tm), int(tn), int(tk)), notes=notes))
+        out.sort(key=lambda c: c.score, reverse=True)
+        if limit is not None:
+            out = out[: max(0, int(limit))]
+        return out
+
+    # No matmul (or unbound): return the existing schedule as the only candidate.
+    base = intent.schedule or ScheduleSketch()
+    tile_m = base.tile_m if isinstance(base.tile_m, int) else None
+    tile_n = base.tile_n if isinstance(base.tile_n, int) else None
+    tile_k = base.tile_k if isinstance(base.tile_k, int) else None
+    if "tile_m" in req.locks:
+        tile_m = int(req.locks["tile_m"])
+    if "tile_n" in req.locks:
+        tile_n = int(req.locks["tile_n"])
+    if "tile_k" in req.locks:
+        tile_k = int(req.locks["tile_k"])
+    sched = ScheduleSketch(
+        tile_m=tile_m,
+        tile_n=tile_n,
+        tile_k=tile_k,
+        vec_width=int(vec_width),
+        pipeline_depth=pipeline_depth,
+        axis_bindings=dict(base.axis_bindings) if base else {},
+        vec_axis=(base.vec_axis if base else None),
+        parallel_axes=list(base.parallel_axes) if base else [],
+        memory_hint=dict(base.memory_hint) if base else {},
+    )
+    return [ScheduleCandidate(schedule=sched, score=0.0, tile_mnk=None, notes=list(vec_notes) + ["no bound matmul"])]
+
+
 def select_schedule(
     intent: IntentFunction,
     *,
@@ -238,82 +337,24 @@ def select_schedule(
     req = request or TuningRequest()
     notes: List[str] = [f"mode={req.mode}"]
 
+    candidates = propose_schedule_candidates(intent, shape_bindings=shape_bindings, profile=profile, request=req)
+    best = candidates[0] if candidates else None
+    if best is None:
+        return TuningResult(schedule=(intent.schedule or ScheduleSketch()), notes=notes + ["no candidates"], model_op=None, model_mnk=None)
+
+    schedule = best.schedule
+    notes.extend(list(best.notes))
+    if best.tile_mnk is not None:
+        tm, tn, tk = best.tile_mnk
+        notes.append(f"picked_tile=({tm},{tn},{tk})")
+
     model_op_idx, mnk = _pick_model_matmul(intent, shape_bindings)
-    tile_m = tile_n = tile_k = None
-
-    # vec_width: default to vector lanes; can be constrained/locked.
-    vec_lanes = max(1, int(profile.rvv_vlen_bits) // 32)
-    vec_allowed = _allowed_set(req, "vec_width")
-    if vec_allowed:
-        vec_width = sorted(vec_allowed)[0]
-        notes.append(f"vec_width constrained={sorted(vec_allowed)}")
-    else:
-        vec_width = vec_lanes
-        notes.append(f"vec_width default=lanes({vec_lanes})")
-
-    if mnk and model_op_idx is not None:
-        M, N, K = mnk
-        allowed = {
-            "tile_m": _allowed_set(req, "tile_m"),
-            "tile_n": _allowed_set(req, "tile_n"),
-            "tile_k": _allowed_set(req, "tile_k"),
-        }
-        candidates = _candidate_tiles(profile, allowed=allowed, M=M, N=N, K=K)
-
-        # Guided: add neighborhood around existing schedule if it is concrete.
-        if req.mode == "guided" and intent.schedule:
-            for key in ("tile_m", "tile_n", "tile_k"):
-                v = getattr(intent.schedule, key, None)
-                if isinstance(v, int) and v > 0:
-                    for cand in (v // 2, v, v * 2):
-                        if cand > 0:
-                            # We only inject candidates for the matching axis, keeping others from the grid.
-                            pass
-            notes.append("guided: existing schedule ints are noted (neighborhood search TODO)")
-
-        model = GEMMCostModel(profile, M=M, N=N, K=K)
-        best = model.search_best_tile(candidates)
-        tile_m, tile_n, tile_k = best.tile_m, best.tile_n, best.tile_k
-        notes.extend(list(best.notes))
-        notes.append(f"picked_tile=({tile_m},{tile_n},{tile_k}) for M,N,K=({M},{N},{K})")
-    else:
-        # No matmul (or no concrete bindings): keep existing schedule tiles if present.
-        if intent.schedule:
-            if isinstance(intent.schedule.tile_m, int):
-                tile_m = intent.schedule.tile_m
-            if isinstance(intent.schedule.tile_n, int):
-                tile_n = intent.schedule.tile_n
-            if isinstance(intent.schedule.tile_k, int):
-                tile_k = intent.schedule.tile_k
-        notes.append("no bound matmul; keep existing tile hints if any")
-
-    # Apply locks last (strongest).
-    if "tile_m" in req.locks:
-        tile_m = int(req.locks["tile_m"])
-    if "tile_n" in req.locks:
-        tile_n = int(req.locks["tile_n"])
-    if "tile_k" in req.locks:
-        tile_k = int(req.locks["tile_k"])
-    if "vec_width" in req.locks:
-        vec_width = int(req.locks["vec_width"])
-        notes.append(f"lock vec_width={vec_width}")
-    pipeline_depth = (intent.schedule.pipeline_depth if intent.schedule else None)
-    if "pipeline_depth" in req.locks:
-        pipeline_depth = int(req.locks["pipeline_depth"])
-        notes.append(f"lock pipeline_depth={pipeline_depth}")
-
-    schedule = ScheduleSketch(
-        tile_m=tile_m,
-        tile_n=tile_n,
-        tile_k=tile_k,
-        vec_width=vec_width,
-        pipeline_depth=pipeline_depth,
-        axis_bindings=(dict(intent.schedule.axis_bindings) if intent.schedule else {}),
-        vec_axis=(intent.schedule.vec_axis if intent.schedule else None),
-        parallel_axes=(list(intent.schedule.parallel_axes) if intent.schedule else []),
-        memory_hint=(dict(intent.schedule.memory_hint) if intent.schedule else {}),
+    return TuningResult(
+        schedule=schedule,
+        notes=notes,
+        model_op=(f"ops[{model_op_idx}].matmul" if model_op_idx is not None else None),
+        model_mnk=mnk,
     )
-    return TuningResult(schedule=schedule, notes=notes, model_op=(f"ops[{model_op_idx}].matmul" if model_op_idx is not None else None), model_mnk=mnk)
 
 
 __all__ = [
@@ -322,5 +363,7 @@ __all__ = [
     "TuningResult",
     "parse_locks",
     "parse_constraints",
+    "ScheduleCandidate",
+    "propose_schedule_candidates",
     "select_schedule",
 ]

@@ -29,7 +29,7 @@ if str(ROOT) not in sys.path:
 
 from backends.spmd_rvv.codegen.intentir_to_c import lower_intent_to_c_with_files
 from backends.spmd_rvv.analysis.device_query import load_profile, query_remote_device
-from backends.spmd_rvv.analysis.tuning import TuningRequest, parse_constraints, parse_locks, select_schedule
+from backends.spmd_rvv.analysis.tuning import TuningRequest, parse_constraints, parse_locks, propose_schedule_candidates, select_schedule
 from intent_ir.ir import IntentFunction
 from intent_ir.macros import expand_macros
 from verify.gen_cases import TestCase
@@ -257,6 +257,7 @@ def run_remote(
             pass
 
     tuning_info: dict | None = None
+    tune_candidates = None
     if tune_request is not None:
         if tune_profile:
             prof = load_profile(str(tune_profile))
@@ -264,20 +265,66 @@ def run_remote(
         else:
             prof = query_remote_device(host, user=user, password=password, port=port, timeout=20)
             prof_src = "remote"
+
         shape_bindings_int: dict[str, int] = {}
         for k, v in dict(bindings).items():
             try:
                 shape_bindings_int[str(k)] = int(v)
             except Exception:
                 continue
-        tuned = select_schedule(intent, shape_bindings=shape_bindings_int, profile=prof, request=tune_request)
-        intent.schedule = tuned.schedule
-        tuning_info = {
-            "profile_source": prof_src,
-            "profile": prof.__dict__,
-            "notes": list(tuned.notes),
-            "schedule": (intent.to_json_dict().get("schedule") or {}),
-        }
+
+        budget = int(getattr(tune_request, "budget", 0) or 0)
+        if budget > 1:
+            if int(bench_iters) <= 0:
+                raise ValueError("tune-budget > 1 requires --bench-iters > 0 (measured autotune)")
+            tune_candidates = propose_schedule_candidates(
+                intent,
+                shape_bindings=shape_bindings_int,
+                profile=prof,
+                request=tune_request,
+                limit=budget,
+            )
+            if not tune_candidates:
+                tune_candidates = propose_schedule_candidates(intent, shape_bindings=shape_bindings_int, profile=prof, request=tune_request, limit=1)
+            # Keep a deterministic default schedule in case benchmarking fails.
+            if tune_candidates:
+                intent.schedule = tune_candidates[0].schedule
+            tuning_info = {
+                "profile_source": prof_src,
+                "profile": prof.__dict__,
+                "mode": str(tune_request.mode),
+                "budget": int(budget),
+                "candidates_pred": [
+                    {
+                        "score": float(c.score),
+                        "tile_mnk": (list(c.tile_mnk) if c.tile_mnk is not None else None),
+                        "notes": list(c.notes),
+                        "schedule": {
+                            "tile_m": c.schedule.tile_m,
+                            "tile_n": c.schedule.tile_n,
+                            "tile_k": c.schedule.tile_k,
+                            "vec_width": c.schedule.vec_width,
+                            "pipeline_depth": c.schedule.pipeline_depth,
+                            "axis_bindings": dict(c.schedule.axis_bindings or {}),
+                            "vec_axis": c.schedule.vec_axis,
+                            "parallel_axes": list(c.schedule.parallel_axes or []),
+                            "memory_hint": dict(c.schedule.memory_hint or {}),
+                        },
+                    }
+                    for c in tune_candidates
+                ],
+            }
+        else:
+            tuned = select_schedule(intent, shape_bindings=shape_bindings_int, profile=prof, request=tune_request)
+            intent.schedule = tuned.schedule
+            tuning_info = {
+                "profile_source": prof_src,
+                "profile": prof.__dict__,
+                "mode": str(tune_request.mode),
+                "budget": int(budget),
+                "notes": list(tuned.notes),
+                "schedule": (intent.to_json_dict().get("schedule") or {}),
+            }
 
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -334,42 +381,118 @@ def run_remote(
         "upsample_bicubic2d_aa": (1e-3, 1e-3),
     }
     atol_use, rtol_use = tol.get(kernel, (1e-3, 1e-3))
-    src = lower_intent_to_c_with_files(intent, shape_bindings=bindings, atol=float(atol_use), rtol=float(rtol_use))
     backend_used = "cpp"
-    with sftp.file(remote_c, "w") as f:
-        f.write(src)
+
+    def _compile_and_run(schedule) -> dict:
+        # Generate + upload code for this schedule.
+        intent.schedule = schedule
+        src = lower_intent_to_c_with_files(intent, shape_bindings=bindings, atol=float(atol_use), rtol=float(rtol_use))
+        with sftp.file(remote_c, "w") as f:
+            f.write(src)
+
+        compile_cmd = f"gcc -O2 -std=c11 -march=rv64gcv -o {remote_bin} {remote_c} -lm -lrt"
+        stdin, stdout, stderr = client.exec_command(compile_cmd, timeout=60)
+        comp_out = stdout.read().decode()
+        comp_err = stderr.read().decode()
+        compile_rc = stdout.channel.recv_exit_status()
+        if compile_rc != 0:
+            return {"compile_rc": compile_rc, "compile_stdout": comp_out, "compile_stderr": comp_err, "run_rc": None, "stdout": "", "stderr": "", "bench": None}
+
+        run_cmd = f"cd {remote_dir} && {remote_bin}"
+        if int(bench_iters) > 0:
+            bi = int(bench_iters)
+            bw = int(bench_warmup)
+            if bw < 0:
+                bw = 0
+            run_cmd = f"cd {remote_dir} && INTENTIR_BENCH_ITERS={bi} INTENTIR_BENCH_WARMUP={bw} {remote_bin}"
+        stdin, stdout, stderr = client.exec_command(run_cmd, timeout=60)
+        run_out = stdout.read().decode()
+        run_err = stderr.read().decode()
+        run_rc = stdout.channel.recv_exit_status()
+
+        bench = None
+        try:
+            for ln in str(run_out).splitlines():
+                if ln.startswith("INTENTIR_BENCH "):
+                    bench = json.loads(ln[len("INTENTIR_BENCH ") :].strip())
+                    break
+        except Exception:
+            bench = None
+
+        return {
+            "compile_rc": compile_rc,
+            "compile_stdout": comp_out,
+            "compile_stderr": comp_err,
+            "run_rc": run_rc,
+            "stdout": run_out,
+            "stderr": run_err,
+            "bench": bench,
+        }
+
+    chosen_schedule = intent.schedule
+    chosen = None
+    if tune_candidates is not None and len(tune_candidates) > 0:
+        # Measured autotune: benchmark top-K candidates and pick the best passing one.
+        cand_runs: list[dict] = []
+        best_idx = None
+        best_ns = None
+        for i, c in enumerate(tune_candidates):
+            r = _compile_and_run(c.schedule)
+            cand_runs.append(
+                {
+                    "idx": int(i),
+                    "pred_score": float(c.score),
+                    "tile_mnk": (list(c.tile_mnk) if c.tile_mnk is not None else None),
+                    "notes": list(c.notes),
+                    "schedule": {
+                        "tile_m": c.schedule.tile_m,
+                        "tile_n": c.schedule.tile_n,
+                        "tile_k": c.schedule.tile_k,
+                        "vec_width": c.schedule.vec_width,
+                        "pipeline_depth": c.schedule.pipeline_depth,
+                    },
+                    "compile_rc": r.get("compile_rc"),
+                    "run_rc": r.get("run_rc"),
+                    "bench": r.get("bench"),
+                }
+            )
+            if r.get("compile_rc") != 0 or r.get("run_rc") != 0:
+                continue
+            b = r.get("bench") or {}
+            ns = b.get("ns_per_iter")
+            if isinstance(ns, (int, float)) and ns > 0:
+                if best_ns is None or float(ns) < float(best_ns):
+                    best_ns = float(ns)
+                    best_idx = int(i)
+                    chosen = r
+                    chosen_schedule = c.schedule
+            elif best_idx is None:
+                # No bench info (shouldn't happen if bench_iters>0), but keep the first passing run.
+                best_idx = int(i)
+                chosen = r
+                chosen_schedule = c.schedule
+
+        if tuning_info is None:
+            tuning_info = {}
+        tuning_info["measured_autotune"] = {
+            "evaluated": cand_runs,
+            "best_index": best_idx,
+            "best_ns_per_iter": best_ns,
+        }
+        if chosen is None:
+            # Fallback: run once with the current schedule (already set to the first candidate above).
+            chosen = _compile_and_run(intent.schedule)
+    else:
+        chosen = _compile_and_run(intent.schedule)
 
     sftp.close()
-
-    compile_cmd = f"gcc -O2 -std=c11 -march=rv64gcv -o {remote_bin} {remote_c} -lm -lrt"
-    stdin, stdout, stderr = client.exec_command(compile_cmd, timeout=60)
-    comp_out = stdout.read().decode()
-    comp_err = stderr.read().decode()
-    rc = stdout.channel.recv_exit_status()
-    if rc != 0:
-        client.close()
-        raise RuntimeError(f"remote compile failed rc={rc} stderr={comp_err}")
-
-    run_cmd = f"cd {remote_dir} && {remote_bin}"
-    if int(bench_iters) > 0:
-        bi = int(bench_iters)
-        bw = int(bench_warmup)
-        if bw < 0:
-            bw = 0
-        run_cmd = f"cd {remote_dir} && INTENTIR_BENCH_ITERS={bi} INTENTIR_BENCH_WARMUP={bw} {remote_bin}"
-    stdin, stdout, stderr = client.exec_command(run_cmd, timeout=60)
-    run_out = stdout.read().decode()
-    run_err = stderr.read().decode()
-    run_rc = stdout.channel.recv_exit_status()
     client.close()
-    bench = None
-    try:
-        for ln in str(run_out).splitlines():
-            if ln.startswith("INTENTIR_BENCH "):
-                bench = json.loads(ln[len("INTENTIR_BENCH ") :].strip())
-                break
-    except Exception:
-        bench = None
+
+    rc = int(chosen.get("compile_rc") or 0)
+    run_rc = int(chosen.get("run_rc") or 0)
+    run_out = str(chosen.get("stdout") or "")
+    run_err = str(chosen.get("stderr") or "")
+    bench = chosen.get("bench")
     # Include a compact baseline summary for quick inspection (avoid huge blobs).
     baseline_summary = {}
     try:
@@ -419,11 +542,13 @@ def main():
     ap.add_argument("--prefer-live-baseline", action="store_true", help="re-launch Triton for baseline even if npz exists")
     ap.add_argument("--no-tune", action="store_true", help="disable backend schedule selection (use IntentIR schedule as-is)")
     ap.add_argument("--tune-mode", choices=["auto", "guided", "locked"], default="auto")
+    ap.add_argument("--tune-budget", type=int, default=1, help="if >1, benchmark top-K predicted schedules (requires --bench-iters>0)")
     ap.add_argument("--lock", action="append", default=[], help="repeatable; e.g. --lock tile_n=128")
     ap.add_argument("--constraint", action="append", default=[], help="repeatable; e.g. --constraint 'tile_n in (64,128)'")
     ap.add_argument("--profile", default=None, help="RVV profile name or JSON path (default: query remote host)")
     ap.add_argument("--bench-iters", type=int, default=0, help="if >0, run microbenchmark loop and print INTENTIR_BENCH JSON line")
     ap.add_argument("--bench-warmup", type=int, default=1, help="warmup iterations for benchmark loop")
+    ap.add_argument("--json", action="store_true", help="print result as JSON (stable for tooling)")
     args = ap.parse_args()
     password = args.password or os.getenv("INTENTIR_SSH_PASSWORD")
     if password is None:
@@ -432,7 +557,7 @@ def main():
     if not bool(args.no_tune):
         tune_req = TuningRequest(
             mode=str(args.tune_mode),
-            budget=0,
+            budget=int(args.tune_budget),
             locks=parse_locks(args.lock or []),
             constraints=parse_constraints(args.constraint or []),
         )
@@ -451,7 +576,10 @@ def main():
         bench_iters=int(args.bench_iters),
         bench_warmup=int(args.bench_warmup),
     )
-    print(res)
+    if args.json:
+        print(json.dumps(res, indent=2, ensure_ascii=False))
+    else:
+        print(res)
 
 
 if __name__ == "__main__":

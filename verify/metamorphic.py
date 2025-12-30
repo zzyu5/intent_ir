@@ -68,10 +68,27 @@ def _derive_bindings(case: TestCase) -> Dict[str, int]:
     return bindings
 
 
-def _as_inputs_for_intent(intent: IntentFunction, ref_io: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
-    # Keep the same convention as `verify.diff_runner.run_diff`:
-    # everything that is not a declared output is considered an input.
-    return {k: v for k, v in ref_io.items() if k not in intent.outputs}
+def _alias_io(intent: IntentFunction, ref_io: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    """
+    Reuse Stage B's IO aliasing (Input/output vs *_ptr, case-insensitive).
+    Without this, Stage C may accidentally treat outputs as inputs when runner
+    names differ from IntentIR/LLM names.
+    """
+    from verify.diff_runner import _with_io_aliases as _with_io_aliases_for_diff
+
+    return _with_io_aliases_for_diff(intent, ref_io)
+
+
+def _external_inputs(intent: IntentFunction, ref_io: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    """
+    Extract only true external inputs consumed by the ops graph.
+    """
+    produced = {op.output for op in intent.ops if op.output}
+    used: set[str] = set()
+    for op in intent.ops:
+        used.update(op.inputs)
+    external = {n for n in used if (n in intent.tensors and n not in produced)}
+    return {k: v for k, v in ref_io.items() if k in external}
 
 
 def _allclose(a: np.ndarray, b: np.ndarray, *, atol: float, rtol: float) -> bool:
@@ -101,9 +118,26 @@ def run_metamorphic_suite(
     results: List[MetamorphicResult] = []
 
     # 1) Run once to sample a concrete input, then "freeze" it into case.inputs.
-    sampled = run_ref_fn(base_case)
-    base_inputs = _as_inputs_for_intent(intent, sampled)
-    base_case_fixed = TestCase(shapes=dict(base_case.shapes), dtypes=base_case.dtypes or {}, seed=base_case.seed, inputs=base_inputs)
+    sampled_raw = run_ref_fn(base_case)
+    sampled = _alias_io(intent, sampled_raw)
+
+    # Freeze inputs in a runner-compatible way:
+    # - keep runner's original input keys (so subsequent launches reuse the same input)
+    # - also include IntentIR external input names (so transforms can be written once)
+    from verify.diff_runner import _normalize_io_name as _normalize_io_name_for_diff
+
+    external_intent_inputs = _external_inputs(intent, sampled)
+    external_norms = {_normalize_io_name_for_diff(n) for n in external_intent_inputs.keys()}
+    runner_inputs = {k: v for k, v in sampled_raw.items() if _normalize_io_name_for_diff(k) in external_norms}
+
+    base_inputs = dict(runner_inputs)
+    base_inputs.update(external_intent_inputs)
+    base_case_fixed = TestCase(
+        shapes=dict(base_case.shapes),
+        dtypes=base_case.dtypes or {},
+        seed=base_case.seed,
+        inputs=base_inputs,
+    )
 
     relations = _default_relations(kernel_name)
     if not relations:
@@ -137,17 +171,21 @@ def run_metamorphic_suite(
                 continue
 
             # Metamorphic invariant check against reference outputs, and interpreter outputs.
-            ref_base = run_ref_fn(base_case_fixed)
-            ref_tr = run_ref_fn(transformed_case)
+            ref_base = _alias_io(intent, run_ref_fn(base_case_fixed))
+            ref_tr = _alias_io(intent, run_ref_fn(transformed_case))
 
             from verify.interpreter import execute_intent
 
             with np.errstate(all="ignore"):
                 pred_base = execute_intent(
-                    intent, _as_inputs_for_intent(intent, ref_base), shape_bindings=_derive_bindings(base_case_fixed)
+                    intent,
+                    _external_inputs(intent, ref_base),
+                    shape_bindings=_derive_bindings(base_case_fixed),
                 )
                 pred_tr = execute_intent(
-                    intent, _as_inputs_for_intent(intent, ref_tr), shape_bindings=_derive_bindings(transformed_case)
+                    intent,
+                    _external_inputs(intent, ref_tr),
+                    shape_bindings=_derive_bindings(transformed_case),
                 )
 
             ok_ref, msg_ref = check_outputs(ref_base, ref_tr, bindings, atol=atol, rtol=rtol)
@@ -223,6 +261,14 @@ def run_bounded_exhaustive(
             C = int(shape_bindings["W"][0])
             inputs.setdefault("W", np.ones((C,), dtype=np.float32))
             inputs.setdefault("B", np.zeros((C,), dtype=np.float32))
+        if kernel_name == "softmax_inner":
+            # Triton runner uses "input"/"output" for stability; provide both names.
+            if "input_ptr" in inputs:
+                inputs.setdefault("input", np.asarray(inputs["input_ptr"]))
+        if kernel_name == "layer_norm_persistent":
+            N = int(shape_bindings["weight_ptr"][0])
+            inputs.setdefault("weight_ptr", np.ones((N,), dtype=np.float32))
+            inputs.setdefault("bias_ptr", np.zeros((N,), dtype=np.float32))
 
         case_shapes = _case_shapes_from_input_shapes(kernel_name, shape_bindings)
         case = TestCase(shapes=case_shapes, dtypes={}, seed=0, inputs=inputs)
@@ -296,6 +342,140 @@ def _default_relations(
 
         relations.append(("MR_groupnorm_shift", _transform, _check))
 
+    if kernel_name == "softmax_inner":
+        def _transform_shift(inputs: Dict[str, np.ndarray], bindings: Dict[str, int], rng: np.random.Generator) -> Dict[str, np.ndarray]:
+            x = np.asarray(inputs.get("input_ptr") if "input_ptr" in inputs else inputs["input"], dtype=np.float32)
+            c = np.float32(0.37)
+            out = dict(inputs)
+            x2 = x + c
+            if "input_ptr" in out:
+                out["input_ptr"] = x2
+            if "input" in out:
+                out["input"] = x2
+            if "input_ptr" not in out and "input" not in out:
+                out["input"] = x2
+            return out
+
+        def _check_shift(
+            base_out: Dict[str, np.ndarray],
+            tr_out: Dict[str, np.ndarray],
+            bindings: Dict[str, int],
+            *,
+            atol: float,
+            rtol: float,
+        ) -> Tuple[bool, str]:
+            y0 = np.asarray(base_out.get("output_ptr") if "output_ptr" in base_out else base_out["output"])
+            y1 = np.asarray(tr_out.get("output_ptr") if "output_ptr" in tr_out else tr_out["output"])
+            ok = _allclose(y0, y1, atol=atol, rtol=rtol)
+            return ok, ("softmax shift invariance holds" if ok else "softmax changed under constant shift")
+
+        relations.append(("MR_softmax_shift", _transform_shift, _check_shift))
+
+        def _transform_rev_cols(inputs: Dict[str, np.ndarray], bindings: Dict[str, int], rng: np.random.Generator) -> Dict[str, np.ndarray]:
+            x = np.asarray(inputs.get("input_ptr") if "input_ptr" in inputs else inputs["input"], dtype=np.float32)
+            if x.ndim != 2:
+                raise ValueError(f"expected rank-2 input, got {x.shape}")
+            out = dict(inputs)
+            x2 = x[:, ::-1].copy()
+            if "input_ptr" in out:
+                out["input_ptr"] = x2
+            if "input" in out:
+                out["input"] = x2
+            if "input_ptr" not in out and "input" not in out:
+                out["input"] = x2
+            return out
+
+        def _check_rev_cols(
+            base_out: Dict[str, np.ndarray],
+            tr_out: Dict[str, np.ndarray],
+            bindings: Dict[str, int],
+            *,
+            atol: float,
+            rtol: float,
+        ) -> Tuple[bool, str]:
+            y0 = np.asarray(base_out.get("output_ptr") if "output_ptr" in base_out else base_out["output"])
+            y1 = np.asarray(tr_out.get("output_ptr") if "output_ptr" in tr_out else tr_out["output"])
+            ok = _allclose(y0[:, ::-1], y1, atol=atol, rtol=rtol)
+            return ok, ("softmax equiv under column reverse" if ok else "softmax not equiv under column reverse")
+
+        relations.append(("MR_softmax_reverse_cols", _transform_rev_cols, _check_rev_cols))
+
+    if kernel_name == "layer_norm_persistent":
+        def _transform(inputs: Dict[str, np.ndarray], bindings: Dict[str, int], rng: np.random.Generator) -> Dict[str, np.ndarray]:
+            x = np.asarray(
+                inputs.get("Input")
+                if "Input" in inputs
+                else (inputs.get("in_ptr") if "in_ptr" in inputs else inputs["input"]),
+                dtype=np.float32,
+            )
+            c = np.float32(0.37)
+            out = dict(inputs)
+            x2 = x + c
+            if "Input" in out:
+                out["Input"] = x2
+            if "in_ptr" in out:
+                out["in_ptr"] = x2
+            if "input" in out:
+                out["input"] = x2
+            if "Input" not in out and "in_ptr" not in out and "input" not in out:
+                out["input"] = x2
+            return out
+
+        def _check(
+            base_out: Dict[str, np.ndarray],
+            tr_out: Dict[str, np.ndarray],
+            bindings: Dict[str, int],
+            *,
+            atol: float,
+            rtol: float,
+        ) -> Tuple[bool, str]:
+            c = np.float32(0.37)
+            y0 = np.asarray(
+                base_out.get("Output")
+                if "Output" in base_out
+                else (base_out.get("out_ptr") if "out_ptr" in base_out else base_out["output"]),
+                dtype=np.float32,
+            )
+            y1 = np.asarray(
+                tr_out.get("Output")
+                if "Output" in tr_out
+                else (tr_out.get("out_ptr") if "out_ptr" in tr_out else tr_out["output"]),
+                dtype=np.float32,
+            )
+            m0 = np.asarray(
+                base_out.get("Mean")
+                if "Mean" in base_out
+                else (base_out.get("out_mean_ptr") if "out_mean_ptr" in base_out else base_out.get("mean", 0.0)),
+                dtype=np.float32,
+            )
+            m1 = np.asarray(
+                tr_out.get("Mean")
+                if "Mean" in tr_out
+                else (tr_out.get("out_mean_ptr") if "out_mean_ptr" in tr_out else tr_out.get("mean", 0.0)),
+                dtype=np.float32,
+            )
+            r0 = np.asarray(
+                base_out.get("Rstd")
+                if "Rstd" in base_out
+                else (base_out.get("out_rstd_ptr") if "out_rstd_ptr" in base_out else base_out.get("rstd", 0.0)),
+                dtype=np.float32,
+            )
+            r1 = np.asarray(
+                tr_out.get("Rstd")
+                if "Rstd" in tr_out
+                else (tr_out.get("out_rstd_ptr") if "out_rstd_ptr" in tr_out else tr_out.get("rstd", 0.0)),
+                dtype=np.float32,
+            )
+            ok_y = _allclose(y0, y1, atol=atol, rtol=rtol)
+            ok_m = _allclose(m0 + c, m1, atol=atol, rtol=rtol)
+            ok_r = _allclose(r0, r1, atol=atol, rtol=rtol)
+            ok = bool(ok_y and ok_m and ok_r)
+            if ok:
+                return True, "shift invariance holds"
+            return False, f"shift invariance violated (Output={ok_y}, Mean={ok_m}, Rstd={ok_r})"
+
+        relations.append(("MR_layernorm_shift", _transform, _check))
+
     if kernel_name == "_attn_fwd":
         def _transform(inputs: Dict[str, np.ndarray], bindings: Dict[str, int], rng: np.random.Generator) -> Dict[str, np.ndarray]:
             k = np.asarray(inputs["K"], dtype=np.float32)
@@ -329,6 +509,60 @@ def _default_relations(
 
         relations.append(("MR_attn_perm_kv", _transform, _check))
 
+        def _transform_scale_v(inputs: Dict[str, np.ndarray], bindings: Dict[str, int], rng: np.random.Generator) -> Dict[str, np.ndarray]:
+            v = np.asarray(inputs["V"], dtype=np.float32)
+            s = np.float32(0.5)
+            out = dict(inputs)
+            out["V"] = v * s
+            return out
+
+        def _check_scale_v(base_out: Dict[str, np.ndarray], tr_out: Dict[str, np.ndarray], bindings: Dict[str, int], *, atol: float, rtol: float) -> Tuple[bool, str]:
+            s = np.float32(0.5)
+            o0 = np.asarray(base_out["Out"], dtype=np.float32)
+            o1 = np.asarray(tr_out["Out"], dtype=np.float32)
+            ok = _allclose(o0 * s, o1, atol=atol, rtol=rtol)
+            return ok, ("Out scales with V" if ok else "Out not scaling with V")
+
+        relations.append(("MR_attn_scale_v", _transform_scale_v, _check_scale_v))
+
+    if kernel_name == "upsample_bicubic2d_aa":
+        def _transform_scale(inputs: Dict[str, np.ndarray], bindings: Dict[str, int], rng: np.random.Generator) -> Dict[str, np.ndarray]:
+            x = np.asarray(
+                inputs.get("I") if "I" in inputs else (inputs.get("Input") if "Input" in inputs else inputs["input"]),
+                dtype=np.float32,
+            )
+            s = np.float32(1.7)
+            out = dict(inputs)
+            x2 = x * s
+            if "I" in out:
+                out["I"] = x2
+            if "Input" in out:
+                out["Input"] = x2
+            if "input" in out:
+                out["input"] = x2
+            if "I" not in out and "Input" not in out and "input" not in out:
+                out["input"] = x2
+            return out
+
+        def _check_scale(base_out: Dict[str, np.ndarray], tr_out: Dict[str, np.ndarray], bindings: Dict[str, int], *, atol: float, rtol: float) -> Tuple[bool, str]:
+            s = np.float32(1.7)
+            y0 = np.asarray(
+                base_out.get("O")
+                if "O" in base_out
+                else (base_out.get("Output") if "Output" in base_out else base_out["output"]),
+                dtype=np.float32,
+            )
+            y1 = np.asarray(
+                tr_out.get("O")
+                if "O" in tr_out
+                else (tr_out.get("Output") if "Output" in tr_out else tr_out["output"]),
+                dtype=np.float32,
+            )
+            ok = _allclose(y0 * s, y1, atol=atol, rtol=rtol)
+            return ok, ("output scales with input" if ok else "output not scaling with input")
+
+        relations.append(("MR_upsample_scale_input", _transform_scale, _check_scale))
+
     return relations
 
 
@@ -347,6 +581,12 @@ def _bounded_specs(
     if kernel_name == "group_norm_kernel":
         # Tiny groupnorm: N=1, C=2, HW=2, num_groups=2 => X has 4 elems, domain 3^4=81.
         return ({"X": (1, 2, 2), "W": (2,), "B": (2,)}, ["X"], [-1.0, 0.0, 1.0])
+    if kernel_name == "softmax_inner":
+        # Tiny softmax: 1x2, domain 3^2=9.
+        return ({"input_ptr": (1, 2)}, ["input_ptr"], [-1.0, 0.0, 1.0])
+    if kernel_name == "layer_norm_persistent":
+        # Tiny layernorm: M=1,N=2, domain 3^2=9 for input only.
+        return ({"in_ptr": (1, 2), "weight_ptr": (2,), "bias_ptr": (2,)}, ["in_ptr"], [-1.0, 0.0, 1.0])
     return None
 
 
@@ -358,6 +598,12 @@ def _case_shapes_from_input_shapes(kernel_name: str, input_shapes: Dict[str, Tup
         n, c, hw = input_shapes["X"]
         # bounded spec chooses num_groups=2, group_size=1 for C=2
         return {"N": int(n), "C": int(c), "HW": int(hw), "num_groups": 2, "group_size": int(c) // 2}
+    if kernel_name == "softmax_inner":
+        m, n = input_shapes["input_ptr"]
+        return {"M": int(m), "N": int(n)}
+    if kernel_name == "layer_norm_persistent":
+        m, n = input_shapes["in_ptr"]
+        return {"M": int(m), "N": int(n)}
     raise ValueError(f"unknown kernel_name for bounded case shapes: {kernel_name}")
 
 
