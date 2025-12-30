@@ -108,6 +108,7 @@ class O3Report:
 
 _CMP_RE = re.compile(r"^(?P<lhs>.+?)\s*(?P<op><=|>=|==|!=|<|>)\s*(?P<rhs>.+?)\s*$")
 _ARG_INDEX_RE = re.compile(r"^arg\d+$")
+_R_INDEX_RE = re.compile(r"^r\d+$")
 
 
 def _parse_cmp(clause: str) -> Optional[Tuple[str, str, str]]:
@@ -304,15 +305,17 @@ def _default_domains(
         if v in symbol_ranges:
             s = int(symbol_ranges[v].get("start", 0))
             e = int(symbol_ranges[v].get("end", s + 1))
-            # Sample endpoints deterministically.
-            cand = [s, s + 1, e - 1]
+            # Sample endpoints + midpoint deterministically.
+            mid = (s + e) // 2
+            cand = [s, s + 1, mid, e - 1]
             cand = [x for x in cand if s <= x < e]
             domains[v] = sorted(set(cand)) or [s]
             lower_bounds[v] = s
             continue
         if v in shape_hints:
             base = max(1, int(shape_hints[v]))
-            cand = [1, base - 1, base, base + 1]
+            # Prioritize small + boundary values (deterministic).
+            cand = [1, 2, 3, 4, base - 1, base, base + 1]
             cand = [x for x in cand if x >= 1]
             domains[v] = sorted(set(cand))[:6]
             lower_bounds[v] = 1
@@ -321,7 +324,12 @@ def _default_domains(
             domains[v] = [0, 1, 2, 4, 8, 16]
             lower_bounds[v] = 0
             continue
-        # Unknown symbol: allow a small negative to find concrete counterexamples.
+        if _R_INDEX_RE.match(v):
+            # Loop/reduction indices are non-negative in TTIR/TIR semantics.
+            domains[v] = [0, 1, 2, 3, 4, 7, 8, 15, 16, 31]
+            lower_bounds[v] = 0
+            continue
+        # Unknown symbol: keep a tiny domain (may include negative offsets).
         domains[v] = [-1, 0, 1, 2, 3, 4]
         lower_bounds[v] = -1
 
@@ -390,6 +398,9 @@ def _bounded_model_search(
     value_lists = [domains[v] for v in vars_]
     checked = 0
     for values in itertools.product(*value_lists):
+        checked += 1
+        if checked > max_models:
+            break
         env = {vars_[i]: int(values[i]) for i in range(len(vars_))}
         ok = True
         for c in constraints:
@@ -404,10 +415,6 @@ def _bounded_model_search(
             if not _eval_constraint(cc, env):
                 continue
         return CounterexampleModel(assignments=env)
-        # bounded by construction
-        checked += 1
-        if checked >= max_models:
-            break
     return None
 
 

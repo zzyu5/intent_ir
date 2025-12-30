@@ -1041,6 +1041,37 @@ std::vector<std::string> emit_transpose_4d_0132(const std::string& out, const st
   };
 }
 
+std::vector<std::string> emit_transpose_generic(const std::string& out, const std::string& inp,
+                                               const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape,
+                                               const std::vector<int>& perm) {
+  const int r = static_cast<int>(in_shape.size());
+  if (static_cast<int>(out_shape.size()) != r) fail("transpose expects same-rank shapes");
+  if (static_cast<int>(perm.size()) != r) fail("transpose perm rank mismatch");
+  if (r > 4) fail("transpose supports rank<=4");
+  std::vector<int> seen(r, 0);
+  for (int p : perm) {
+    if (p < 0 || p >= r) fail("transpose perm out of range");
+    seen[p] += 1;
+  }
+  for (int i = 0; i < r; ++i) if (seen[i] != 1) fail("transpose perm must be a permutation");
+
+  std::vector<std::string> lines;
+  std::vector<std::string> iv = {"i0", "i1", "i2", "i3"};
+  iv.resize(r);
+  for (int i = 0; i < r; ++i) {
+    lines.push_back("  for (int " + iv[i] + " = 0; " + iv[i] + " < " + std::to_string(out_shape[i]) + "; ++" + iv[i] + ") {");
+  }
+  std::string out_idx = flat_idx_expr(iv, out_shape);
+  std::vector<std::string> in_iv(r, "0");
+  for (int od = 0; od < r; ++od) {
+    in_iv[perm[od]] = iv[od];
+  }
+  std::string in_idx = flat_idx_expr(in_iv, in_shape);
+  lines.push_back("    " + out + "[" + out_idx + "] = " + inp + "[" + in_idx + "];");
+  for (int i = 0; i < r; ++i) lines.push_back("  }");
+  return lines;
+}
+
 std::vector<std::string> emit_matmul(const std::string& out, const std::string& a, const std::string& b,
                                      const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape,
                                      bool transpose_a, bool transpose_b,
@@ -1674,8 +1705,12 @@ int main(int argc, char** argv) {
         const auto& in_shape = shape_env[op.inputs[0]];
         std::vector<int> perm;
         for (const auto& p : op.attrs["perm"]) perm.push_back(p.get<int>());
-        if (perm.size() != 4 || perm[0] != 0 || perm[1] != 1 || perm[2] != 3 || perm[3] != 2) fail("transpose supports only perm [0,1,3,2]");
-        auto bl = emit_transpose_4d_0132(out, op.inputs[0], in_shape, out_shape);
+        std::vector<std::string> bl;
+        if (perm.size() == 4 && perm[0] == 0 && perm[1] == 1 && perm[2] == 3 && perm[3] == 2) {
+          bl = emit_transpose_4d_0132(out, op.inputs[0], in_shape, out_shape);
+        } else {
+          bl = emit_transpose_generic(out, op.inputs[0], in_shape, out_shape, perm);
+        }
         compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
       } else if (op.op == "broadcast_in_dim") {
         const std::string& inp = op.inputs[0];
@@ -1816,8 +1851,12 @@ int main(int argc, char** argv) {
         const auto& in_shape = shape_env[op.inputs[0]];
         std::vector<int> perm;
         for (const auto& p : op.attrs["perm"]) perm.push_back(p.get<int>());
-        if (perm.size() != 4 || perm[0] != 0 || perm[1] != 1 || perm[2] != 3 || perm[3] != 2) fail("transpose supports only perm [0,1,3,2]");
-        auto bl = emit_transpose_4d_0132(out, op.inputs[0], in_shape, out_shape);
+        std::vector<std::string> bl;
+        if (perm.size() == 4 && perm[0] == 0 && perm[1] == 1 && perm[2] == 3 && perm[3] == 2) {
+          bl = emit_transpose_4d_0132(out, op.inputs[0], in_shape, out_shape);
+        } else {
+          bl = emit_transpose_generic(out, op.inputs[0], in_shape, out_shape, perm);
+        }
         lines.insert(lines.end(), bl.begin(), bl.end());
       } else if (op.op == "broadcast_in_dim") {
         // Use the scalar broadcast emitter logic by lowering it via per-index mapping (rank<=4).

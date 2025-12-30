@@ -1,0 +1,157 @@
+"""
+Run RVV remote tests across the 6-kernel suite (user-facing).
+
+This is the "remote equivalent" of `scripts/backend_codegen_smoke.py`:
+- backend_codegen_smoke: local compile+run (no SSH)
+- rvv_remote_suite: remote compile+run on a real RVV host (SSH)
+
+It reuses `scripts/rvv_remote_run.py` for the per-kernel logic.
+"""
+
+from __future__ import annotations
+
+import argparse
+import getpass
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any, Dict, List
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+DEFAULT_KERNELS = [
+    "any_kernel_dim",
+    "group_norm_kernel",
+    "_attn_fwd",
+    "softmax_inner",
+    "layer_norm_persistent",
+    "upsample_bicubic2d_aa",
+]
+
+
+def _run_one(cmd: List[str], *, env: Dict[str, str]) -> Dict[str, Any]:
+    proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, env=env)
+    if proc.returncode != 0:
+        return {
+            "ok": False,
+            "error": "subprocess failed",
+            "rc": int(proc.returncode),
+            "stdout": proc.stdout.strip(),
+            "stderr": proc.stderr.strip(),
+        }
+    try:
+        return json.loads(proc.stdout)
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": f"parse json failed: {type(e).__name__}: {e}",
+            "stdout": proc.stdout.strip(),
+            "stderr": proc.stderr.strip(),
+        }
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--frontend", choices=["triton", "tilelang", "both"], default="both")
+    ap.add_argument("--kernel", action="append", default=[], help="repeatable; default runs 6 kernels")
+    ap.add_argument("--host", required=True)
+    ap.add_argument("--user", default="ubuntu")
+    ap.add_argument("--port", type=int, default=22)
+    ap.add_argument("--password", default=None, help="SSH password (prefer env INTENTIR_SSH_PASSWORD or prompt)")
+    ap.add_argument("--case-index", type=int, default=0)
+    ap.add_argument("--no-tune", action="store_true")
+    ap.add_argument("--tune-mode", choices=["auto", "guided", "locked"], default="auto")
+    ap.add_argument("--tune-budget", type=int, default=1)
+    ap.add_argument("--profile", default=None)
+    ap.add_argument("--bench-iters", type=int, default=0)
+    ap.add_argument("--bench-warmup", type=int, default=1)
+    ap.add_argument("--out", default=None, help="write JSON report to this path (default: stdout)")
+    args = ap.parse_args()
+
+    kernels = args.kernel or list(DEFAULT_KERNELS)
+    frontends = ["triton", "tilelang"] if args.frontend == "both" else [str(args.frontend)]
+
+    password = args.password or os.getenv("INTENTIR_SSH_PASSWORD")
+    if password is None:
+        password = getpass.getpass(f"SSH password for {args.user}@{args.host}: ")
+
+    base_env = dict(os.environ)
+    base_env["INTENTIR_SSH_PASSWORD"] = str(password)
+
+    results: List[Dict[str, Any]] = []
+    ok_all = True
+    for fe in frontends:
+        for k in kernels:
+            cmd: List[str] = [
+                sys.executable,
+                str(ROOT / "scripts" / "rvv_remote_run.py"),
+                "--kernel",
+                str(k),
+                "--frontend",
+                str(fe),
+                "--host",
+                str(args.host),
+                "--user",
+                str(args.user),
+                "--port",
+                str(int(args.port)),
+                "--case-index",
+                str(int(args.case_index)),
+                "--tune-mode",
+                str(args.tune_mode),
+                "--tune-budget",
+                str(int(args.tune_budget)),
+                "--bench-iters",
+                str(int(args.bench_iters)),
+                "--bench-warmup",
+                str(int(args.bench_warmup)),
+                "--json",
+            ]
+            if args.no_tune:
+                cmd.append("--no-tune")
+            if args.profile:
+                cmd += ["--profile", str(args.profile)]
+
+            r = _run_one(cmd, env=base_env)
+            r["kernel"] = str(k)
+            r["frontend"] = str(fe)
+            r["ok"] = bool(r.get("compile_rc") == 0 and r.get("run_rc") == 0) if "compile_rc" in r else bool(r.get("ok"))
+            ok_all = ok_all and bool(r["ok"])
+            results.append(r)
+
+            status = "OK" if r["ok"] else "FAIL"
+            print(f"[{fe}:{k}] {status}")
+
+    out: Dict[str, Any] = {
+        "host": str(args.host),
+        "user": str(args.user),
+        "port": int(args.port),
+        "frontends": frontends,
+        "kernels": kernels,
+        "tuning": {
+            "enabled": (not bool(args.no_tune)),
+            "mode": str(args.tune_mode),
+            "budget": int(args.tune_budget),
+            "profile": (str(args.profile) if args.profile else None),
+            "bench_iters": int(args.bench_iters),
+            "bench_warmup": int(args.bench_warmup),
+        },
+        "results": results,
+        "ok": bool(ok_all),
+    }
+
+    text = json.dumps(out, indent=2, ensure_ascii=False)
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+    else:
+        print(text)
+
+    raise SystemExit(0 if ok_all else 1)
+
+
+if __name__ == "__main__":
+    main()
+
