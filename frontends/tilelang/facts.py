@@ -78,6 +78,8 @@ def extract_facts(source_text: str, *, tvm_ir_json_path: str | None = None, tvm_
         "has_dot": False,
         "has_reduce": False,
         "has_atomic": False,
+        "has_barrier": False,
+        "has_async": False,
     }
 
     accesses: List[AccessSummary] = []
@@ -205,6 +207,21 @@ def extract_facts(source_text: str, *, tvm_ir_json_path: str | None = None, tvm_
             anchors["has_reduce"] = True
         if "atomic" in op_name:
             anchors["has_atomic"] = True
+        if "barrier" in op_name or "syncthreads" in op_name or "thread_allreduce" in op_name or "allreduce" in op_name:
+            anchors["has_barrier"] = True
+        if "async" in op_name:
+            anchors["has_async"] = True
+        # Some syncs are expressed as extern calls; conservatively scan string args.
+        if op_name in {"tir.call_extern", "tir.call_packed"}:
+            for a in list(getattr(node, "args", []) or []):
+                try:
+                    s = str(a)
+                except Exception:
+                    continue
+                if "barrier" in s or "syncthreads" in s:
+                    anchors["has_barrier"] = True
+                if "async" in s:
+                    anchors["has_async"] = True
 
     tir.stmt_functor.post_order_visit(prim_func.body, visit)
 

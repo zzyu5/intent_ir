@@ -1482,6 +1482,38 @@ int main(int argc, char** argv) {
       }
     }
 
+    // Best-effort FLOPs accounting (for benchmarking / cost-model experiments).
+    // We only count matmul FLOPs for now (GEMM model validation).
+    double matmul_flops_total = 0.0;
+    for (const auto& op : intent.ops) {
+      if (op.op != "matmul") continue;
+      if (op.inputs.size() < 2) continue;
+      const auto& sa = shape_env[op.inputs[0]];
+      const auto& sb = shape_env[op.inputs[1]];
+      bool ta = op.attrs.value("transpose_a", false);
+      bool tb = op.attrs.value("transpose_b", false);
+      if (sa.size() == 2 && sb.size() == 2) {
+        int64_t M = ta ? sa[1] : sa[0];
+        int64_t K = ta ? sa[0] : sa[1];
+        int64_t K2 = tb ? sb[1] : sb[0];
+        int64_t N = tb ? sb[0] : sb[1];
+        if (K2 != K) continue;
+        matmul_flops_total += 2.0 * (double)M * (double)N * (double)K;
+        continue;
+      }
+      if (sa.size() == 4 && sb.size() == 4) {
+        int64_t B = sa[0];
+        int64_t H = sa[1];
+        int64_t M = ta ? sa[3] : sa[2];
+        int64_t K = ta ? sa[2] : sa[3];
+        int64_t K2 = tb ? sb[3] : sb[2];
+        int64_t N = tb ? sb[2] : sb[3];
+        if (K2 != K) continue;
+        matmul_flops_total += 2.0 * (double)B * (double)H * (double)M * (double)N * (double)K;
+        continue;
+      }
+    }
+
     // ---- emit C program ----
     std::vector<std::string> lines;
     lines.push_back("#include <math.h>");
@@ -1489,6 +1521,7 @@ int main(int argc, char** argv) {
     lines.push_back("#include <stddef.h>");
     lines.push_back("#include <stdio.h>");
     lines.push_back("#include <stdlib.h>");
+    lines.push_back("#include <time.h>");
     lines.push_back("#if defined(__riscv_vector) || defined(__riscv_v)\n#include <riscv_vector.h>\n#endif");
     lines.push_back("");
     {
@@ -1543,11 +1576,51 @@ int main(int argc, char** argv) {
     lines.push_back("static inline size_t idx3(int i, int j, int k, int D1, int D2) { return ((size_t)i * (size_t)D1 + (size_t)j) * (size_t)D2 + (size_t)k; }");
     lines.push_back("static inline size_t idx4(int i, int j, int k, int l, int D1, int D2, int D3) { return (((size_t)i * (size_t)D1 + (size_t)j) * (size_t)D2 + (size_t)k) * (size_t)D3 + (size_t)l; }");
     lines.push_back("");
+
+    // Global tensor pointers so we can optionally benchmark by calling `intentir_compute()` repeatedly.
+    {
+      std::vector<std::string> names;
+      names.reserve(shape_env.size());
+      for (const auto& kv : shape_env) names.push_back(kv.first);
+      std::sort(names.begin(), names.end());
+      lines.push_back("// intent tensors (globals)");
+      for (const auto& name : names) {
+        std::string ct = ctype_for_dtype(dtype_env[name]);
+        lines.push_back("static " + ct + "* " + name + " = NULL;");
+      }
+      lines.push_back("");
+    }
+
+    lines.push_back("static inline uint64_t intentir_now_ns(void) {");
+    lines.push_back("  struct timespec ts;");
+    lines.push_back("  timespec_get(&ts, TIME_UTC);");
+    lines.push_back("  return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;");
+    lines.push_back("}");
+    lines.push_back("");
+
+    lines.push_back("static void intentir_compute(void);");
+    lines.push_back("");
+
     lines.push_back("int main() {");
     lines.push_back("  setvbuf(stdout, NULL, _IONBF, 0);");
     lines.push_back("  setvbuf(stderr, NULL, _IONBF, 0);");
     lines.push_back("  const float ATOL = " + c_float(atol) + ";");
     lines.push_back("  const float RTOL = " + c_float(rtol) + ";");
+    {
+      std::ostringstream oss;
+      oss.setf(std::ios::fixed);
+      oss.precision(1);
+      oss << matmul_flops_total;
+      lines.push_back("  const double MATMUL_FLOPS = (double)" + oss.str() + ";");
+    }
+    lines.push_back("  int BENCH_ITERS = 0;");
+    lines.push_back("  int BENCH_WARMUP = 1;");
+    lines.push_back("  const char* _bench = getenv(\"INTENTIR_BENCH_ITERS\");");
+    lines.push_back("  if (_bench) BENCH_ITERS = atoi(_bench);");
+    lines.push_back("  const char* _warm = getenv(\"INTENTIR_BENCH_WARMUP\");");
+    lines.push_back("  if (_warm) BENCH_WARMUP = atoi(_warm);");
+    lines.push_back("  if (BENCH_ITERS < 0) BENCH_ITERS = 0;");
+    lines.push_back("  if (BENCH_WARMUP < 0) BENCH_WARMUP = 0;");
     lines.push_back("");
 
     // inputs
@@ -1556,7 +1629,7 @@ int main(int argc, char** argv) {
       int64_t n = numel(shp);
       std::string ct = ctype_for_dtype(dtype_env[name]);
       lines.push_back("  // input " + name + ": shape=" + std::to_string((int)shp.size()) + "D");
-      lines.push_back("  " + ct + "* " + name + " = (" + ct + "*)malloc(sizeof(" + ct + ") * (size_t)" + std::to_string(n) + ");");
+      lines.push_back("  " + name + " = (" + ct + "*)malloc(sizeof(" + ct + ") * (size_t)" + std::to_string(n) + ");");
       lines.push_back("  if (!" + name + ") { fprintf(stderr, \"alloc failed: " + name + "\\n\"); return 2; }");
       lines.push_back("  if (!read_bytes(\"" + name + ".bin\", " + name + ", sizeof(" + ct + ") * (size_t)" + std::to_string(n) + ")) return 2;");
       lines.push_back("");
@@ -1567,7 +1640,7 @@ int main(int argc, char** argv) {
       const std::string& name = kv.first;
       const ConstVal& cv = kv.second;
       const std::string ct = ctype_for_dtype(cv.dtype);
-      lines.push_back("  " + ct + "* " + name + " = (" + ct + "*)malloc(sizeof(" + ct + "));");
+      lines.push_back("  " + name + " = (" + ct + "*)malloc(sizeof(" + ct + "));");
       lines.push_back("  if (!" + name + ") { fprintf(stderr, \"alloc failed: " + name + "\\n\"); return 2; }");
       if (ct == "float") lines.push_back("  " + name + "[0] = " + c_float(cv.value) + ";");
       else if (ct == "double") {
@@ -1581,9 +1654,147 @@ int main(int argc, char** argv) {
       const auto& shp = shape_env[name];
       int64_t n = numel(shp);
       std::string ct = ctype_for_dtype(dtype_env[name]);
-      lines.push_back("  " + ct + "* " + name + " = (" + ct + "*)malloc(sizeof(" + ct + ") * (size_t)" + std::to_string(n) + ");");
+      lines.push_back("  " + name + " = (" + ct + "*)malloc(sizeof(" + ct + ") * (size_t)" + std::to_string(n) + ");");
       lines.push_back("  if (!" + name + ") { fprintf(stderr, \"alloc failed: " + name + "\\n\"); return 2; }");
     };
+
+    // Emit compute body as a separate function for benchmarking. This recomputes the op list using
+    // already-allocated global buffers, without re-allocating.
+    std::vector<std::string> compute_fn;
+    compute_fn.push_back("static void intentir_compute(void) {");
+    for (const auto& op : intent.ops) {
+      if (op.op == "const") continue;
+      const std::string& out = op.output;
+      if (op.op == "reshape" || op.op == "identity" || op.op == "layout_cast") {
+        continue;
+      }
+      const std::vector<int64_t>& out_shape = shape_env[out];
+      compute_fn.push_back("  // op " + op.op + " -> " + out);
+      if (op.op == "transpose") {
+        const auto& in_shape = shape_env[op.inputs[0]];
+        std::vector<int> perm;
+        for (const auto& p : op.attrs["perm"]) perm.push_back(p.get<int>());
+        if (perm.size() != 4 || perm[0] != 0 || perm[1] != 1 || perm[2] != 3 || perm[3] != 2) fail("transpose supports only perm [0,1,3,2]");
+        auto bl = emit_transpose_4d_0132(out, op.inputs[0], in_shape, out_shape);
+        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
+      } else if (op.op == "broadcast_in_dim") {
+        const std::string& inp = op.inputs[0];
+        const auto& in_shape = shape_env[inp];
+        std::vector<int> bcast_dims;
+        for (const auto& d : op.attrs["broadcast_dims"]) bcast_dims.push_back(d.get<int>());
+        std::vector<int64_t> strides(in_shape.size(), 1);
+        int64_t s = 1;
+        for (int i = (int)in_shape.size() - 1; i >= 0; --i) { strides[i] = s; s *= in_shape[i]; }
+        const int r_out = (int)out_shape.size();
+        if (r_out > 4) fail("broadcast_in_dim supports rank<=4");
+        std::vector<std::string> iv = {"i0","i1","i2","i3"};
+        iv.resize(r_out);
+        for (int i = 0; i < r_out; ++i) compute_fn.push_back("  for (int " + iv[i] + " = 0; " + iv[i] + " < " + std::to_string(out_shape[i]) + "; ++" + iv[i] + ") {");
+        std::string out_idx = flat_idx_expr(iv, out_shape);
+        std::vector<std::string> terms;
+        for (int in_dim = 0; in_dim < (int)in_shape.size(); ++in_dim) {
+          int od = bcast_dims[in_dim];
+          if (in_shape[in_dim] == 1) terms.push_back("0");
+          else terms.push_back("((size_t)" + iv[od] + " * (size_t)" + std::to_string(strides[in_dim]) + ")");
+        }
+        std::string in_idx = terms.empty() ? "0" : terms[0];
+        for (size_t t = 1; t < terms.size(); ++t) in_idx += " + " + terms[t];
+        compute_fn.push_back("    " + out + "[" + out_idx + "] = " + inp + "[" + in_idx + "];");
+        for (int i = 0; i < r_out; ++i) compute_fn.push_back("  }");
+      } else if (op.op == "add" || op.op == "sub" || op.op == "mul" || op.op == "div" || op.op == "max" || op.op == "min") {
+        auto bl = emit_elemwise_bin(intent, bindings, op.op, out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape, dtype_env[out]);
+        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
+      } else if (op.op == "ne") {
+        auto bl = emit_ne(out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape, intent, bindings);
+        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
+      } else if (op.op == "lt" || op.op == "le" || op.op == "gt" || op.op == "ge") {
+        auto bl = emit_cmp(op.op, out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape, intent, bindings);
+        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
+      } else if (op.op == "and" || op.op == "or") {
+        auto bl = emit_bool_bin(op.op, out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape);
+        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
+      } else if (op.op == "not") {
+        auto bl = emit_bool_not(out, op.inputs[0], out_shape);
+        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
+      } else if (op.op == "rsqrt") {
+        auto bl = emit_rsqrt(out, op.inputs[0], out_shape);
+        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
+      } else if (op.op == "abs") {
+        auto bl = emit_unary_abs(out, op.inputs[0], out_shape, dtype_env[op.inputs[0]], dtype_env[out]);
+        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
+      } else if (op.op == "floor") {
+        auto bl = emit_floor(out, op.inputs[0], out_shape);
+        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
+      } else if (op.op == "cast") {
+        auto bl = emit_cast(out, op.inputs[0], out_shape, dtype_env[op.inputs[0]], dtype_env[out]);
+        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
+      } else if (op.op == "where") {
+        auto bl = emit_where(out, op.inputs[0], op.inputs[1], op.inputs[2], shape_env[op.inputs[0]], shape_env[op.inputs[1]], shape_env[op.inputs[2]], out_shape, dtype_env[out]);
+        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
+      } else if (op.op == "iota") {
+        int axis = op.attrs.value("axis", 0);
+        auto bl = emit_iota(out, out_shape, axis, dtype_env[out]);
+        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
+      } else if (op.op == "gather") {
+        std::vector<std::string> idxs(op.inputs.begin() + 1, op.inputs.end());
+        std::vector<std::vector<int64_t>> idx_shapes;
+        for (const auto& nm : idxs) idx_shapes.push_back(shape_env[nm]);
+        auto bl = emit_gather(out, op.inputs[0], idxs, shape_env[op.inputs[0]], idx_shapes, out_shape, dtype_env[out]);
+        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
+      } else if (op.op == "reduce_sum") {
+        std::vector<int> dims;
+        for (const auto& d : op.attrs["dims"]) dims.push_back(d.get<int>());
+        bool keepdims = op.attrs.value("keepdims", false);
+        std::optional<double> scale;
+        if (op.attrs.contains("scale")) scale = resolve_const_value(op.attrs["scale"], bindings);
+        auto bl = emit_reduce_sum(out, op.inputs[0], shape_env[op.inputs[0]], out_shape, dims, keepdims, scale);
+        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
+      } else if (op.op == "reduce_max") {
+        std::vector<int> dims;
+        for (const auto& d : op.attrs["dims"]) dims.push_back(d.get<int>());
+        bool keepdims = op.attrs.value("keepdims", false);
+        auto bl = emit_reduce_max(out, op.inputs[0], shape_env[op.inputs[0]], out_shape, dims, keepdims);
+        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
+      } else if (op.op == "reduce_any") {
+        std::vector<int> dims;
+        for (const auto& d : op.attrs["dims"]) dims.push_back(d.get<int>());
+        bool keepdims = op.attrs.value("keepdims", false);
+        auto bl = emit_reduce_any(out, op.inputs[0], shape_env[op.inputs[0]], out_shape, dims, keepdims);
+        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
+      } else if (op.op == "exp") {
+        int64_t n = numel(out_shape);
+        compute_fn.push_back("  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) { " + out + "[i] = expf(" + op.inputs[0] + "[i]); }");
+      } else if (op.op == "relu") {
+        int64_t n = numel(out_shape);
+        compute_fn.push_back("#if defined(__riscv_vector) || defined(__riscv_v)");
+        compute_fn.push_back("  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ) {");
+        compute_fn.push_back("    size_t vl = intentir_vsetvl_e32m1((size_t)" + std::to_string(n) + " - i);");
+        compute_fn.push_back("    vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + op.inputs[0] + "[i], vl);");
+        compute_fn.push_back("    vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(0.0f, vl);");
+        compute_fn.push_back("    vfloat32m1_t vy = __riscv_vfmax_vv_f32m1(vx, v0, vl);");
+        compute_fn.push_back("    __riscv_vse32_v_f32m1(&" + out + "[i], vy, vl);");
+        compute_fn.push_back("    i += vl;");
+        compute_fn.push_back("  }");
+        compute_fn.push_back("#else");
+        compute_fn.push_back("  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) { float v = " + op.inputs[0] + "[i]; " + out + "[i] = v > 0.0f ? v : 0.0f; }");
+        compute_fn.push_back("#endif");
+      } else if (op.op == "softmax") {
+        int axis = op.attrs.value("axis", -1);
+        auto bl = emit_softmax(out, op.inputs[0], shape_env[op.inputs[0]], axis);
+        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
+      } else if (op.op == "matmul") {
+        bool ta = op.attrs.value("transpose_a", false);
+        bool tb = op.attrs.value("transpose_b", false);
+        auto bl = emit_matmul(out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape, ta, tb,
+                              sched_tile_m, sched_tile_n, sched_tile_k, sched_vec_width);
+        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
+      } else {
+        fail("unsupported op lowering: " + op.op);
+      }
+      compute_fn.push_back("");
+    }
+    compute_fn.push_back("}");
+    compute_fn.push_back("");
 
     // ops
     for (const auto& op : intent.ops) {
@@ -1592,7 +1803,7 @@ int main(int argc, char** argv) {
       if (op.op == "reshape" || op.op == "identity" || op.op == "layout_cast") {
         std::string ct = ctype_for_dtype(dtype_env[out]);
         lines.push_back("  // " + op.op + " alias");
-        lines.push_back("  " + ct + "* " + out + " = (" + ct + "*)" + op.inputs[0] + ";");
+        lines.push_back("  " + out + " = (" + ct + "*)" + op.inputs[0] + ";");
         lines.push_back("");
         continue;
       }
@@ -1730,6 +1941,20 @@ int main(int argc, char** argv) {
       lines.push_back("");
     }
 
+    // Optional compute microbenchmark (runs AFTER one warmup execution above).
+    lines.push_back("  if (BENCH_ITERS > 0) {");
+    lines.push_back("    for (int w = 0; w < BENCH_WARMUP; ++w) intentir_compute();");
+    lines.push_back("    uint64_t t0 = intentir_now_ns();");
+    lines.push_back("    for (int it = 0; it < BENCH_ITERS; ++it) intentir_compute();");
+    lines.push_back("    uint64_t t1 = intentir_now_ns();");
+    lines.push_back("    double ns_total = (double)(t1 - t0);");
+    lines.push_back("    double ns_per_iter = ns_total / (double)BENCH_ITERS;");
+    lines.push_back("    double gflops = (ns_per_iter > 0.0) ? (MATMUL_FLOPS / ns_per_iter) : 0.0;");
+    lines.push_back("    printf(\"INTENTIR_BENCH {\\\"iters\\\":%d,\\\"warmup\\\":%d,\\\"ns_total\\\":%llu,\\\"ns_per_iter\\\":%.1f,\\\"matmul_flops\\\":%.0f,\\\"matmul_gflops\\\":%.6f}\\n\",");
+    lines.push_back("           BENCH_ITERS, BENCH_WARMUP, (unsigned long long)(t1 - t0), ns_per_iter, MATMUL_FLOPS, gflops);");
+    lines.push_back("  }");
+    lines.push_back("");
+
     // compare outputs
     std::vector<std::string> ok_exprs;
     for (const auto& name : intent.outputs) {
@@ -1759,6 +1984,9 @@ int main(int argc, char** argv) {
     lines.push_back("  printf(ok ? \"PASS lowered\\n\" : \"FAIL lowered\\n\");");
     lines.push_back("  return ok ? 0 : 1;");
     lines.push_back("}");
+
+    // Append the benchmark compute function after `main` (declared above).
+    lines.insert(lines.end(), compute_fn.begin(), compute_fn.end());
 
     for (const auto& l : lines) std::cout << l << "\n";
     return 0;

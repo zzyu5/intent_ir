@@ -24,6 +24,7 @@ from .obligations import (
     O3_MASK_IMPLIES_INBOUNDS,
     O4_SHAPE_LAYOUT_MATCH,
     O5_NO_DATA_DEPENDENT_ADDRESS,
+    O6_STRUCTURED_SYNC,
     O7_NO_ATOMICS_OR_CONTROLLED_ATOMICS,
 )
 
@@ -66,6 +67,9 @@ def evaluate_contract_v2(
         return ContractReport(level="OUT_OF_SCOPE", kernel_kind_hint=kernel_kind_hint, reasons=reasons, assumptions=assumptions, signals={"anchors": anchors})
     if status(O7_NO_ATOMICS_OR_CONTROLLED_ATOMICS) == "FAIL":
         reasons.append("O7 FAIL: atomics present")
+        return ContractReport(level="OUT_OF_SCOPE", kernel_kind_hint=kernel_kind_hint, reasons=reasons, assumptions=assumptions, signals={"anchors": anchors})
+    if status(O6_STRUCTURED_SYNC) == "FAIL":
+        reasons.append("O6 FAIL: sync/barrier present")
         return ContractReport(level="OUT_OF_SCOPE", kernel_kind_hint=kernel_kind_hint, reasons=reasons, assumptions=assumptions, signals={"anchors": anchors})
     if status(O5_NO_DATA_DEPENDENT_ADDRESS) == "FAIL":
         reasons.append("O5 FAIL: data-dependent addressing suspected")
@@ -134,4 +138,3 @@ def evaluate_contract_v2(
 
 
 __all__ = ["ContractReport", "evaluate_contract_v2"]
-

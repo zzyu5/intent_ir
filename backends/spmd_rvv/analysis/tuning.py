@@ -294,13 +294,20 @@ def select_schedule(
         tile_n = int(req.locks["tile_n"])
     if "tile_k" in req.locks:
         tile_k = int(req.locks["tile_k"])
+    if "vec_width" in req.locks:
+        vec_width = int(req.locks["vec_width"])
+        notes.append(f"lock vec_width={vec_width}")
+    pipeline_depth = (intent.schedule.pipeline_depth if intent.schedule else None)
+    if "pipeline_depth" in req.locks:
+        pipeline_depth = int(req.locks["pipeline_depth"])
+        notes.append(f"lock pipeline_depth={pipeline_depth}")
 
     schedule = ScheduleSketch(
         tile_m=tile_m,
         tile_n=tile_n,
         tile_k=tile_k,
         vec_width=vec_width,
-        pipeline_depth=(intent.schedule.pipeline_depth if intent.schedule else None),
+        pipeline_depth=pipeline_depth,
         axis_bindings=(dict(intent.schedule.axis_bindings) if intent.schedule else {}),
         vec_axis=(intent.schedule.vec_axis if intent.schedule else None),
         parallel_axes=(list(intent.schedule.parallel_axes) if intent.schedule else []),
@@ -317,4 +324,3 @@ __all__ = [
     "parse_constraints",
     "select_schedule",
 ]
-

@@ -200,6 +200,8 @@ class TritonAdapter:
             "has_dot": bool(facts.has_dot),
             "has_reduce": bool(facts.has_reduce),
             "has_atomic": bool(facts.has_atomic),
+            "has_barrier": bool(facts.has_barrier),
+            "has_async": bool(facts.has_async),
             "num_loads": int(len(facts.load_sites)),
             "num_stores": int(len(facts.store_sites)),
             "num_masks": int(len(facts.mask_sites)),

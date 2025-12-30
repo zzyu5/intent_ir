@@ -1,0 +1,127 @@
+{
+  "anchors": {
+    "has_async": false,
+    "has_atomic": false,
+    "has_barrier": false,
+    "has_copy": true,
+    "has_dot": false,
+    "has_reduce": true,
+    "kernel_kind_hint": "tilelang_tileop"
+  },
+  "canonical_evidence": {
+    "accesses": [
+      {
+        "address_space": "global",
+        "dtype": "float32",
+        "index_exprs": [
+          {
+            "const": 0,
+            "terms": {}
+          }
+        ],
+        "kind": "load",
+        "meta": {
+          "dst_scope": "local.fragment",
+          "tileop": "copy"
+        },
+        "predicate": null,
+        "rank": 1,
+        "tensor": "bias_ptr"
+      },
+      {
+        "address_space": "global",
+        "dtype": "float32",
+        "index_exprs": [
+          {
+            "const": 0,
+            "terms": {
+              "bx": 1
+            }
+          },
+          {
+            "const": 0,
+            "terms": {}
+          }
+        ],
+        "kind": "load",
+        "meta": {
+          "dst_scope": "local.fragment",
+          "tileop": "copy"
+        },
+        "predicate": null,
+        "rank": 2,
+        "tensor": "in_ptr"
+      },
+      {
+        "address_space": "global",
+        "dtype": "float32",
+        "index_exprs": [
+          {
+            "const": 0,
+            "terms": {}
+          }
+        ],
+        "kind": "load",
+        "meta": {
+          "dst_scope": "local.fragment",
+          "tileop": "copy"
+        },
+        "predicate": null,
+        "rank": 1,
+        "tensor": "weight_ptr"
+      },
+      {
+        "address_space": "global",
+        "dtype": "float32",
+        "index_exprs": [
+          {
+            "const": 0,
+            "terms": {
+              "bx": 1
+            }
+          },
+          {
+            "const": 0,
+            "terms": {}
+          }
+        ],
+        "kind": "store",
+        "meta": {
+          "src_scope": "local.fragment",
+          "tileop": "copy"
+        },
+        "predicate": null,
+        "rank": 2,
+        "tensor": "out_ptr"
+      }
+    ],
+    "anchors": {
+      "has_async": false,
+      "has_atomic": false,
+      "has_barrier": false,
+      "has_copy": true,
+      "has_dot": false,
+      "has_reduce": true,
+      "kernel_kind_hint": "tilelang_tileop"
+    },
+    "meta": {
+      "symbols": {
+        "ranges": []
+      }
+    },
+    "schedule_hints": {}
+  },
+  "io_spec": {
+    "arg_names": [
+      "in_ptr",
+      "out_ptr",
+      "weight_ptr",
+      "bias_ptr",
+      "out_mean_ptr",
+      "out_rstd_ptr",
+      "M",
+      "N"
+    ],
+    "constexpr_names": []
+  }
+}

@@ -129,6 +129,8 @@ def run_remote(
     prefer_live_baseline: bool = False,
     tune_request: TuningRequest | None = None,
     tune_profile: str | None = None,
+    bench_iters: int = 0,
+    bench_warmup: int = 1,
 ):
     artifact_dir = "full_pipeline_verify" if frontend == "triton" else "tilelang_full_pipeline"
     report_path = ROOT / "artifacts" / artifact_dir / f"{kernel}.json"
@@ -339,7 +341,7 @@ def run_remote(
 
     sftp.close()
 
-    compile_cmd = f"gcc -O2 -std=c11 -march=rv64gcv -o {remote_bin} {remote_c} -lm"
+    compile_cmd = f"gcc -O2 -std=c11 -march=rv64gcv -o {remote_bin} {remote_c} -lm -lrt"
     stdin, stdout, stderr = client.exec_command(compile_cmd, timeout=60)
     comp_out = stdout.read().decode()
     comp_err = stderr.read().decode()
@@ -348,11 +350,26 @@ def run_remote(
         client.close()
         raise RuntimeError(f"remote compile failed rc={rc} stderr={comp_err}")
 
-    stdin, stdout, stderr = client.exec_command(f"cd {remote_dir} && {remote_bin}", timeout=60)
+    run_cmd = f"cd {remote_dir} && {remote_bin}"
+    if int(bench_iters) > 0:
+        bi = int(bench_iters)
+        bw = int(bench_warmup)
+        if bw < 0:
+            bw = 0
+        run_cmd = f"cd {remote_dir} && INTENTIR_BENCH_ITERS={bi} INTENTIR_BENCH_WARMUP={bw} {remote_bin}"
+    stdin, stdout, stderr = client.exec_command(run_cmd, timeout=60)
     run_out = stdout.read().decode()
     run_err = stderr.read().decode()
     run_rc = stdout.channel.recv_exit_status()
     client.close()
+    bench = None
+    try:
+        for ln in str(run_out).splitlines():
+            if ln.startswith("INTENTIR_BENCH "):
+                bench = json.loads(ln[len("INTENTIR_BENCH ") :].strip())
+                break
+    except Exception:
+        bench = None
     # Include a compact baseline summary for quick inspection (avoid huge blobs).
     baseline_summary = {}
     try:
@@ -385,6 +402,7 @@ def run_remote(
         "stderr": run_err,
         "baseline_summary": baseline_summary,
         "tuning": tuning_info,
+        "bench": bench,
     }
 
 
@@ -404,6 +422,8 @@ def main():
     ap.add_argument("--lock", action="append", default=[], help="repeatable; e.g. --lock tile_n=128")
     ap.add_argument("--constraint", action="append", default=[], help="repeatable; e.g. --constraint 'tile_n in (64,128)'")
     ap.add_argument("--profile", default=None, help="RVV profile name or JSON path (default: query remote host)")
+    ap.add_argument("--bench-iters", type=int, default=0, help="if >0, run microbenchmark loop and print INTENTIR_BENCH JSON line")
+    ap.add_argument("--bench-warmup", type=int, default=1, help="warmup iterations for benchmark loop")
     args = ap.parse_args()
     password = args.password or os.getenv("INTENTIR_SSH_PASSWORD")
     if password is None:
@@ -428,6 +448,8 @@ def main():
         prefer_live_baseline=bool(args.prefer_live_baseline),
         tune_request=tune_req,
         tune_profile=str(args.profile) if args.profile else None,
+        bench_iters=int(args.bench_iters),
+        bench_warmup=int(args.bench_warmup),
     )
     print(res)
 

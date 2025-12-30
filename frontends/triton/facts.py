@@ -36,6 +36,8 @@ class TTIRFacts:
     has_dot: bool
     has_reduce: bool
     has_atomic: bool
+    has_barrier: bool
+    has_async: bool
     load_sites: List[AccessSite] = field(default_factory=list)
     store_sites: List[AccessSite] = field(default_factory=list)
     mask_sites: List[MaskSite] = field(default_factory=list)
@@ -50,6 +52,8 @@ REDUCE_RE = re.compile(r"\breduce\b|\btt\.reduce\b")
 LOAD_RE = re.compile(r"\btt\.load\b")
 STORE_RE = re.compile(r"\btt\.store\b")
 ATOMIC_RE = re.compile(r"\batomic\b|\btt\.atomic\b|\batomic_rmw\b")
+BARRIER_RE = re.compile(r"\bgpu\.barrier\b|\bttg\.barrier\b|\bbarrier\b|\bsyncthreads\b")
+ASYNC_RE = re.compile(r"\basync_copy\b|\basync_wait\b|\bttg\.async\b|\btt\.async\b")
 MASK_IN_LINE_RE = re.compile(r"\bmask\b")
 CMP_RE = re.compile(r"\barith\.cmpi\s+([a-z]+)|\barith\.cmpf\s+([a-z]+)")
 
@@ -63,6 +67,8 @@ def extract_facts(ttir: str) -> TTIRFacts:
     has_dot = False
     has_reduce = False
     has_atomic = False
+    has_barrier = False
+    has_async = False
 
     for idx, line in enumerate(lines, start=1):
         text = line.strip()
@@ -73,6 +79,8 @@ def extract_facts(ttir: str) -> TTIRFacts:
             (LOAD_RE, "load"),
             (STORE_RE, "store"),
             (ATOMIC_RE, "atomic"),
+            (BARRIER_RE, "barrier"),
+            (ASYNC_RE, "async"),
         ]:
             if pat.search(text):
                 op_counts[name] = op_counts.get(name, 0) + 1
@@ -82,6 +90,10 @@ def extract_facts(ttir: str) -> TTIRFacts:
             has_reduce = True
         if ATOMIC_RE.search(text):
             has_atomic = True
+        if BARRIER_RE.search(text):
+            has_barrier = True
+        if ASYNC_RE.search(text):
+            has_async = True
         if LOAD_RE.search(text):
             operands = _extract_op_operands(text, "tt.load")
             has_mask = len(operands) >= 2
@@ -124,6 +136,8 @@ def extract_facts(ttir: str) -> TTIRFacts:
         has_dot=has_dot,
         has_reduce=has_reduce,
         has_atomic=has_atomic,
+        has_barrier=has_barrier,
+        has_async=has_async,
         load_sites=load_sites,
         store_sites=store_sites,
         mask_sites=mask_sites,

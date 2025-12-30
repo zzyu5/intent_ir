@@ -143,7 +143,7 @@ def run_one(
         c_src = lower_intent_to_c_with_files(intent, shape_bindings=bindings, atol=float(atol), rtol=float(rtol))
         (td / "main.c").write_text(c_src, encoding="utf-8")
 
-        compile_cmd = ["gcc", "-O2", "-std=c11", "-o", str(td / "run"), str(td / "main.c"), "-lm"]
+        compile_cmd = ["gcc", "-O2", "-std=c11", "-o", str(td / "run"), str(td / "main.c"), "-lm", "-lrt"]
         cp = subprocess.run(compile_cmd, cwd=td, capture_output=True, text=True)
         if cp.returncode != 0:
             raise RuntimeError(f"compile failed:\n{cp.stderr or cp.stdout}")

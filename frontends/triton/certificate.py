@@ -420,6 +420,8 @@ def build_certificate_v2(
         "has_dot": bool(facts.has_dot),
         "has_reduce": bool(facts.has_reduce),
         "has_atomic": bool(facts.has_atomic),
+        "has_barrier": bool(facts.has_barrier),
+        "has_async": bool(facts.has_async),
     }
     # NOTE: `schedule_hints` is allowed to drift across compiler versions and must
     # never be part of the golden-locked `semantic_facts`.

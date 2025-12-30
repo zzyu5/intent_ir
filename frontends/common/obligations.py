@@ -194,8 +194,27 @@ def evaluate_obligations(desc: "KernelDescriptor", cert_v2: "SemanticCertificate
     else:
         results.append(ObligationResult(id=O5_NO_DATA_DEPENDENT_ADDRESS, status="PASS", witness={"terms_subset_ok": True}))
 
-    # O6: structured sync (placeholder for future: barriers/async copies)
-    results.append(ObligationResult(id=O6_STRUCTURED_SYNC, status="UNKNOWN", reason="not implemented"))
+    # O6: structured sync
+    # MVP: if the frontend reports no sync/barrier usage, PASS; otherwise FAIL with a reason.
+    # (We keep this cross-frontend by relying only on the stable `anchors` payload.)
+    sync_keys = {"has_barrier", "has_async", "has_sync"}
+    has_sync_info = any(k in anchors for k in sync_keys)
+    has_barrier = bool(anchors.get("has_barrier"))
+    has_async = bool(anchors.get("has_async"))
+    has_sync = bool(anchors.get("has_sync") or has_barrier or has_async)
+    if not has_sync_info:
+        results.append(ObligationResult(id=O6_STRUCTURED_SYNC, status="UNKNOWN", reason="frontend did not report sync evidence"))
+    elif not has_sync:
+        results.append(ObligationResult(id=O6_STRUCTURED_SYNC, status="PASS", witness={"has_barrier": False, "has_async": False}))
+    else:
+        results.append(
+            ObligationResult(
+                id=O6_STRUCTURED_SYNC,
+                status="FAIL",
+                reason="sync/barrier ops detected (structured sync witness not implemented yet)",
+                witness={"has_barrier": has_barrier, "has_async": has_async},
+            )
+        )
 
     # O3: mask implies inbounds (MVP: check predicate clauses are parseable and LHS is provably non-negative)
     clauses: List[str] = []
