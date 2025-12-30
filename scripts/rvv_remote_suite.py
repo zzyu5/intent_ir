@@ -17,8 +17,9 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -90,7 +91,7 @@ def main() -> None:
     ap.add_argument("--no-tune", action="store_true")
     ap.add_argument("--tune-mode", choices=["auto", "guided", "locked"], default="auto")
     ap.add_argument("--tune-budget", type=int, default=1)
-    ap.add_argument("--profile", default=None)
+    ap.add_argument("--profile", default=None, help="RVV profile name/JSON path; default probes once and reuses")
     ap.add_argument("--bench-iters", type=int, default=0)
     ap.add_argument("--bench-warmup", type=int, default=1)
     ap.add_argument("--out", default=None, help="write JSON report to this path (default: stdout)")
@@ -107,6 +108,38 @@ def main() -> None:
         base_env["INTENTIR_SSH_PASSWORD"] = str(password)
     else:
         base_env.pop("INTENTIR_SSH_PASSWORD", None)
+
+    # Probe hardware profile once and reuse across all kernels (avoids repeated remote probe per subprocess).
+    profile_path: Optional[str] = str(args.profile) if args.profile else None
+    probed_profile: Optional[dict] = None
+    if (not bool(args.no_tune)) and profile_path is None:
+        try:
+            from backends.spmd_rvv.analysis.device_query import query_remote_device
+
+            t0 = time.time()
+            prof = query_remote_device(
+                host=str(args.host),
+                user=str(args.user),
+                password=(None if bool(args.use_key) else base_env.get("INTENTIR_SSH_PASSWORD")),
+                port=int(args.port),
+                timeout=60,
+            )
+            probed_profile = dict(prof.__dict__)
+            cache_dir = ROOT / "artifacts" / "rvv_profiles"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            safe_host = str(args.host).replace("/", "_").replace(":", "_")
+            profile_file = cache_dir / f"{safe_host}_{int(args.port)}.json"
+            profile_file.write_text(json.dumps(probed_profile, indent=2, ensure_ascii=False), encoding="utf-8")
+            profile_path = str(profile_file)
+            dt = time.time() - t0
+            print(f"[probe] cached RVV profile to {profile_file} ({dt:.2f}s)", file=sys.stderr, flush=True)
+        except Exception as e:
+            print(
+                f"[probe] WARNING: remote profile probe failed, will fall back to per-kernel probe: {type(e).__name__}: {e}",
+                file=sys.stderr,
+                flush=True,
+            )
+            profile_path = None
 
     results: List[Dict[str, Any]] = []
     ok_all = True
@@ -141,8 +174,8 @@ def main() -> None:
                 cmd.append("--use-key")
             if args.no_tune:
                 cmd.append("--no-tune")
-            if args.profile:
-                cmd += ["--profile", str(args.profile)]
+            if profile_path:
+                cmd += ["--profile", str(profile_path)]
 
             r = _run_one(cmd, env=base_env)
             r["kernel"] = str(k)
@@ -164,10 +197,11 @@ def main() -> None:
             "enabled": (not bool(args.no_tune)),
             "mode": str(args.tune_mode),
             "budget": int(args.tune_budget),
-            "profile": (str(args.profile) if args.profile else None),
+            "profile": (str(profile_path) if profile_path else None),
             "bench_iters": int(args.bench_iters),
             "bench_warmup": int(args.bench_warmup),
         },
+        "profile": (dict(probed_profile) if probed_profile else None),
         "results": results,
         "ok": bool(ok_all),
     }
