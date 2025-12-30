@@ -122,7 +122,7 @@ def run_remote(
     frontend: str,
     host: str,
     user: str,
-    password: str,
+    password: str | None,
     port: int = 22,
     case_index: int = 0,
     shape_overrides: dict | None = None,
@@ -556,6 +556,7 @@ def main():
     ap.add_argument("--host", required=True)
     ap.add_argument("--user", default="ubuntu")
     ap.add_argument("--password", default=None, help="SSH password (prefer env INTENTIR_SSH_PASSWORD or prompt)")
+    ap.add_argument("--use-key", action="store_true", help="use SSH key auth (no password prompt)")
     ap.add_argument("--port", type=int, default=22)
     ap.add_argument("--case-index", type=int, default=0, help="pick case from artifacts report (default 0)")
     ap.add_argument("--baseline-npz", default=None, help="override baseline npz path (default: from artifact report)")
@@ -571,9 +572,11 @@ def main():
     ap.add_argument("--json", action="store_true", help="print result as JSON (stable for tooling)")
     ap.add_argument("--quiet", action="store_true", help="disable progress logs")
     args = ap.parse_args()
-    password = args.password or os.getenv("INTENTIR_SSH_PASSWORD")
-    if password is None:
-        password = getpass.getpass(f"SSH password for {args.user}@{args.host}: ")
+    password: str | None = None
+    if not bool(args.use_key):
+        password = args.password or os.getenv("INTENTIR_SSH_PASSWORD")
+        if password is None:
+            password = getpass.getpass(f"SSH password for {args.user}@{args.host}: ")
     tune_req = None
     if not bool(args.no_tune):
         tune_req = TuningRequest(

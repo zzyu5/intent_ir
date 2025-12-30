@@ -85,6 +85,7 @@ def main() -> None:
     ap.add_argument("--user", default="ubuntu")
     ap.add_argument("--port", type=int, default=22)
     ap.add_argument("--password", default=None, help="SSH password (prefer env INTENTIR_SSH_PASSWORD or prompt)")
+    ap.add_argument("--use-key", action="store_true", help="use SSH key auth (no password prompt)")
     ap.add_argument("--case-index", type=int, default=0)
     ap.add_argument("--no-tune", action="store_true")
     ap.add_argument("--tune-mode", choices=["auto", "guided", "locked"], default="auto")
@@ -98,12 +99,14 @@ def main() -> None:
     kernels = args.kernel or list(DEFAULT_KERNELS)
     frontends = ["triton", "tilelang"] if args.frontend == "both" else [str(args.frontend)]
 
-    password = args.password or os.getenv("INTENTIR_SSH_PASSWORD")
-    if password is None:
-        password = getpass.getpass(f"SSH password for {args.user}@{args.host}: ")
-
     base_env = dict(os.environ)
-    base_env["INTENTIR_SSH_PASSWORD"] = str(password)
+    if not bool(args.use_key):
+        password = args.password or os.getenv("INTENTIR_SSH_PASSWORD")
+        if password is None:
+            password = getpass.getpass(f"SSH password for {args.user}@{args.host}: ")
+        base_env["INTENTIR_SSH_PASSWORD"] = str(password)
+    else:
+        base_env.pop("INTENTIR_SSH_PASSWORD", None)
 
     results: List[Dict[str, Any]] = []
     ok_all = True
@@ -134,6 +137,8 @@ def main() -> None:
                 str(int(args.bench_warmup)),
                 "--json",
             ]
+            if args.use_key:
+                cmd.append("--use-key")
             if args.no_tune:
                 cmd.append("--no-tune")
             if args.profile:
