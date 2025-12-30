@@ -17,16 +17,15 @@
 
 ### 4.3 局限性与改进空间
 
-#### ⚠️ 4.3.1 Cost Model 缺少实测验证
+#### 🟢 4.3.1 Cost Model 实测验证（已落地）
 
-**当前状态**：
-- Cost model 产出 `pred_gflops`（predicted GFLOPs），但项目中没有与**实测性能**的对比实验
-- 无法确认 cost model 的 ranking 是否准确（如 tile_128 是否真的比 tile_64 快）
+**当前状态（已落地）**：
+- 已提供实测验证 harness：在真实 RVV 设备上对多个 tile 配置做预测 vs 实测对比
+- 支持输出 Spearman rank correlation（用于验证“排序信号”是否可靠）
 
-**建议**（论文必需）：
-- 在 RISC-V 硬件（或 Spike 模拟器）上实测 5-10 组 tile configurations
-- 绘制 predicted vs measured GFLOPs 的散点图
-- 计算 Spearman's rank correlation（评估 ranking 准确性）
+**下一步建议（论文强化）**：
+- 把“实测对比”扩展到更多 kernel/shape（不仅 GEMM），形成 case study 表格
+- 在论文中报告：Spearman 相关系数 + top-k 命中率（例如 top-1/top-3）
 
 #### ⚠️ 4.3.2 Cost Model 仅支持 GEMM
 
@@ -40,21 +39,23 @@
 - 扩展为 `OpCostModel` 基类 + `GEMMCostModel` / `ReduceCostModel` 子类
 - 或参考 TVM cost model（支持 conv/reduce/elemwise）
 
-#### ⚠️ 4.3.3 Hardware Profile 是手工配置
+#### 🟡 4.3.3 Hardware Profile（已支持远程 probe，但仍需扩展）
 
-**当前状态**：`backends/spmd_rvv/analysis/hardware_profile.py` 定义 `RVVHardwareProfile`，参数需用户手动填写
+**当前状态**：
+- 已支持远程 probe：通过 SSH 在目标 RVV 机器上读取并返回 `RVVHardwareProfile`
+- 仍保留 JSON / preset 路径（用于离线/无 SSH 场景）
 
 **风险**：
 - 用户可能不知道 L1/L2 cache size
 - 不同 RISC-V 芯片（如 T-Head C920 vs StarFive JH7110）参数差异大
 
-**建议**：
-- 添加 `auto_detect_profile()` 函数（读取 `/proc/cpuinfo` + cache topology）
-- 提供预设 profiles（如 `profiles.C920_PRESET`）
+**下一步建议**：
+- 增强 probe 的覆盖：更可靠地拿到 cache/topology/bandwidth（必要时用 microbench）
+- 增加更多“设备 preset”（例如常见 C9xx/JH7110 等）
 
 ---
 
-### 4.4 结论：Cost Model 真实有用，但需实测验证
+### 4.4 结论：Cost Model 真实有用，且已具备“可验证证据链”
 
 **证据强度**：⭐⭐⭐⭐☆（4/5）
 
@@ -63,10 +64,9 @@
 2. ✅ Cost model 返回的 tile 被写入 `ScheduleSketch`
 3. ✅ Roofline 公式有学术基础（非 placeholder）
 
-**扣分原因**：
-1. ⚠️ 缺少实测性能对比（无法证明 predicted GFLOPs 准确）
-2. ⚠️ 仅支持 GEMM（覆盖率有限）
-3. ⚠️ Hardware profile 是手工配置（易出错）
+**仍可强化的点**：
+1. ⚠️ 仅支持 GEMM（覆盖率有限）
+2. ⚠️ hardware profile 的 probe/preset 仍需更完善（避免人为填参）
 
 **论文发表建议**：
 - **系统会议（如 CGO）**：必须补充实测实验（至少 3 个 kernels 在真实硬件上）
@@ -216,5 +216,4 @@
 | Cost Model 实测验证 | 证明 predicted vs measured 误差 < 20% | 5 天 |
 | Mutation-Kill Ablation | 证明各 verification stage 的独立贡献 | 3 天 |
 | End-to-End Case Study | 展示 Triton/TileLang → RVV 完整流程 | 3 天 |
-
 
