@@ -19,6 +19,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Callable
 
 import paramiko
 import numpy as np
@@ -131,13 +132,23 @@ def run_remote(
     tune_profile: str | None = None,
     bench_iters: int = 0,
     bench_warmup: int = 1,
+    log: Callable[[str], None] | None = None,
 ):
+    def _log(msg: str) -> None:
+        if log is None:
+            return
+        try:
+            log(str(msg))
+        except Exception:
+            pass
+
     artifact_dir = "full_pipeline_verify" if frontend == "triton" else "tilelang_full_pipeline"
     report_path = ROOT / "artifacts" / artifact_dir / f"{kernel}.json"
     if not report_path.exists():
         raise FileNotFoundError(
             f"artifact not found: {report_path}, please run scripts/{frontend}/full_pipeline_verify.py first"
         )
+    _log(f"[{frontend}:{kernel}] load artifact: {report_path}")
     report = json.loads(report_path.read_text())
     intent_macro = IntentFunction.from_json_dict(report["intent"])
     intent_expanded_json = report.get("intent_expanded")
@@ -184,6 +195,7 @@ def run_remote(
     baseline = None
     npz_path = baseline_npz or (report.get("baseline") or {}).get("npz_path")
     if (not prefer_live_baseline) and npz_path:
+        _log(f"[{frontend}:{kernel}] load baseline npz: {npz_path}")
         npz_path = str(npz_path)
         baseline_npz_path = Path(npz_path)
         if not baseline_npz_path.is_absolute():
@@ -195,6 +207,7 @@ def run_remote(
     # Fallback: if baseline is missing (or user forces live), try to re-launch Triton
     # to get baseline IO. This keeps Task6 usable on machines with CUDA.
     if baseline is None:
+        _log(f"[{frontend}:{kernel}] baseline npz missing; try live baseline launch")
         try:
             if frontend == "triton":
                 from pipeline.triton.core import default_kernel_specs
@@ -259,10 +272,12 @@ def run_remote(
     tuning_info: dict | None = None
     tune_candidates = None
     if tune_request is not None:
+        _log(f"[{frontend}:{kernel}] schedule selection: mode={tune_request.mode} budget={getattr(tune_request,'budget',0)}")
         if tune_profile:
             prof = load_profile(str(tune_profile))
             prof_src = str(tune_profile)
         else:
+            _log(f"[{frontend}:{kernel}] query remote RVV profile (probe)")
             prof = query_remote_device(host, user=user, password=password, port=port, timeout=20)
             prof_src = "remote"
 
@@ -328,10 +343,12 @@ def run_remote(
 
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    _log(f"[{frontend}:{kernel}] ssh connect: {user}@{host}:{port}")
     client.connect(hostname=host, port=port, username=user, password=password, timeout=20)
     sftp = client.open_sftp()
     remote_dir = f"/tmp/intentir_{kernel}_rvv"
     _sftp_mkdir_p(sftp, remote_dir)
+    _log(f"[{frontend}:{kernel}] remote dir: {remote_dir}")
 
     # Prepare code + data according to kernel kind.
     remote_c = f"{remote_dir}/main.c"
@@ -347,6 +364,7 @@ def run_remote(
     outputs = list(intent.outputs)
 
     # Upload inputs
+    _log(f"[{frontend}:{kernel}] upload inputs/refs")
     for name in external_inputs:
         if name not in baseline:
             raise RuntimeError(f"baseline missing input tensor {name} for {kernel}")
@@ -390,6 +408,7 @@ def run_remote(
         with sftp.file(remote_c, "w") as f:
             f.write(src)
 
+        _log(f"[{frontend}:{kernel}] remote compile")
         compile_cmd = f"gcc -O2 -std=c11 -march=rv64gcv -o {remote_bin} {remote_c} -lm -lrt"
         stdin, stdout, stderr = client.exec_command(compile_cmd, timeout=60)
         comp_out = stdout.read().decode()
@@ -398,6 +417,7 @@ def run_remote(
         if compile_rc != 0:
             return {"compile_rc": compile_rc, "compile_stdout": comp_out, "compile_stderr": comp_err, "run_rc": None, "stdout": "", "stderr": "", "bench": None}
 
+        _log(f"[{frontend}:{kernel}] remote run")
         run_cmd = f"cd {remote_dir} && {remote_bin}"
         if int(bench_iters) > 0:
             bi = int(bench_iters)
@@ -549,6 +569,7 @@ def main():
     ap.add_argument("--bench-iters", type=int, default=0, help="if >0, run microbenchmark loop and print INTENTIR_BENCH JSON line")
     ap.add_argument("--bench-warmup", type=int, default=1, help="warmup iterations for benchmark loop")
     ap.add_argument("--json", action="store_true", help="print result as JSON (stable for tooling)")
+    ap.add_argument("--quiet", action="store_true", help="disable progress logs")
     args = ap.parse_args()
     password = args.password or os.getenv("INTENTIR_SSH_PASSWORD")
     if password is None:
@@ -561,6 +582,11 @@ def main():
             locks=parse_locks(args.lock or []),
             constraints=parse_constraints(args.constraint or []),
         )
+    def _log(msg: str) -> None:
+        if bool(args.quiet):
+            return
+        print(str(msg), file=sys.stderr, flush=True)
+
     res = run_remote(
         args.kernel,
         args.frontend,
@@ -575,6 +601,7 @@ def main():
         tune_profile=str(args.profile) if args.profile else None,
         bench_iters=int(args.bench_iters),
         bench_warmup=int(args.bench_warmup),
+        log=_log,
     )
     if args.json:
         print(json.dumps(res, indent=2, ensure_ascii=False))

@@ -16,6 +16,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -33,23 +34,46 @@ DEFAULT_KERNELS = [
 
 
 def _run_one(cmd: List[str], *, env: Dict[str, str]) -> Dict[str, Any]:
-    proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, env=env)
-    if proc.returncode != 0:
+    proc = subprocess.Popen(cmd, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+    stderr_buf: List[str] = []
+
+    def _drain_stderr() -> None:
+        if proc.stderr is None:
+            return
+        for line in proc.stderr:
+            stderr_buf.append(line)
+            # Stream progress logs to the user (remote_run logs go to stderr).
+            sys.stderr.write(line)
+            sys.stderr.flush()
+
+    t = threading.Thread(target=_drain_stderr, daemon=True)
+    t.start()
+    stdout = ""
+    if proc.stdout is not None:
+        stdout = proc.stdout.read()
+    rc = proc.wait()
+    try:
+        t.join(timeout=2.0)
+    except Exception:
+        pass
+    stderr = "".join(stderr_buf).strip()
+
+    if rc != 0:
         return {
             "ok": False,
             "error": "subprocess failed",
-            "rc": int(proc.returncode),
-            "stdout": proc.stdout.strip(),
-            "stderr": proc.stderr.strip(),
+            "rc": int(rc),
+            "stdout": (stdout or "").strip(),
+            "stderr": stderr,
         }
     try:
-        return json.loads(proc.stdout)
+        return json.loads(stdout)
     except Exception as e:
         return {
             "ok": False,
             "error": f"parse json failed: {type(e).__name__}: {e}",
-            "stdout": proc.stdout.strip(),
-            "stderr": proc.stderr.strip(),
+            "stdout": (stdout or "").strip(),
+            "stderr": stderr,
         }
 
 
@@ -154,4 +178,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
