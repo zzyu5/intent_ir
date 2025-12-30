@@ -3,6 +3,8 @@ Cost-model validation harness (predicted vs measured GFLOPs) on a real RVV host.
 
 Example:
   PYTHONPATH=. python scripts/rvv_cost_model_validate.py --host 192.168.8.149 --user ubuntu --M 256 --N 256 --K 256
+  # key-based auth (no password prompt):
+  PYTHONPATH=. python scripts/rvv_cost_model_validate.py --host 192.168.8.149 --user ubuntu --use-key --M 256 --N 256 --K 256
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ def main() -> None:
     ap.add_argument("--host", required=True)
     ap.add_argument("--user", default="ubuntu")
     ap.add_argument("--password", default=None, help="SSH password (prefer env INTENTIR_SSH_PASSWORD or prompt)")
+    ap.add_argument("--use-key", action="store_true", help="use SSH key auth (no password prompt)")
     ap.add_argument("--port", type=int, default=22)
     ap.add_argument("--M", type=int, default=256)
     ap.add_argument("--N", type=int, default=256)
@@ -48,9 +51,11 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
-    password = args.password or os.getenv("INTENTIR_SSH_PASSWORD")
-    if password is None:
-        password = getpass.getpass(f"SSH password for {args.user}@{args.host}: ")
+    password: str | None = None
+    if not bool(args.use_key):
+        password = args.password or os.getenv("INTENTIR_SSH_PASSWORD")
+        if password is None:
+            password = getpass.getpass(f"SSH password for {args.user}@{args.host}: ")
 
     tiles: List[TileConfig] | None = None
     if args.tile:
@@ -59,7 +64,7 @@ def main() -> None:
     measurements, stats = validate_gemm_cost_model_remote(
         host=str(args.host),
         user=str(args.user),
-        password=str(password),
+        password=password,
         port=int(args.port),
         M=int(args.M),
         N=int(args.N),
@@ -84,4 +89,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

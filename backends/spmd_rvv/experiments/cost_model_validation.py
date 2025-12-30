@@ -166,7 +166,7 @@ def validate_gemm_cost_model_remote(
     *,
     host: str,
     user: str,
-    password: str,
+    password: str | None,
     port: int = 22,
     M: int = 256,
     N: int = 256,
@@ -178,7 +178,11 @@ def validate_gemm_cost_model_remote(
     profile_name_or_path: Optional[str] = None,
     seed: int = 0,
 ) -> Tuple[List[TileMeasurement], Dict[str, float]]:
-    profile = load_profile(profile_name_or_path) if profile_name_or_path else query_remote_device(host, user=user, password=password, port=port, timeout=30)
+    profile = (
+        load_profile(profile_name_or_path)
+        if profile_name_or_path
+        else query_remote_device(host, user=user, password=password, port=port, timeout=30)
+    )
     vec_lanes = max(1, int(profile.rvv_vlen_bits) // 32)
     tiles_use = list(tiles) if tiles is not None else _gen_tiles(profile, M=int(M), N=int(N), K=int(K), limit=int(tiles_limit))
 
@@ -275,4 +279,3 @@ __all__ = [
     "spearman_r",
     "validate_gemm_cost_model_remote",
 ]
-
