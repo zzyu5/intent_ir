@@ -14,6 +14,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "code_writer.h"
+
 using json = nlohmann::json;
 
 namespace {
@@ -36,6 +38,11 @@ struct Intent {
   std::vector<Op> ops;
   std::vector<std::string> outputs;
   json schedule;  // optional ScheduleSketch (tile/vec hints), may be null/object
+};
+
+struct ConstVal {
+  std::string dtype;
+  double value = 0.0;
 };
 
 [[noreturn]] void fail(const std::string& msg) {
@@ -383,10 +390,10 @@ double resolve_const_value(const json& v, const std::unordered_map<std::string, 
 
 // ---- emit helpers ----
 
-std::vector<std::string> emit_elemwise_bin(const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings,
-                                           const std::string& op, const std::string& out, const std::string& a, const std::string& b,
-                                           const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape,
-                                           const std::string& out_dtype) {
+void emit_elemwise_bin(CodeWriter& w, const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings,
+                       const std::string& op, const std::string& out, const std::string& a, const std::string& b,
+                       const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape,
+                       const std::string& out_dtype) {
   const int r = static_cast<int>(out_shape.size());
   if (r > 4) fail("elemwise broadcast supports rank<=4");
   std::vector<int64_t> pa = pad_for_broadcast(intent, bindings, a, a_shape, b, b_shape, r);
@@ -399,70 +406,80 @@ std::vector<std::string> emit_elemwise_bin(const Intent& intent, const std::unor
   const int64_t n_total = numel(out_shape);
   const bool is_contig_elemwise = (pa == out_shape) && (pb == out_shape);
 
-  std::vector<std::string> idx = {"i0","i1","i2","i3"};
-  idx.resize(r);
-
-  std::vector<std::string> scalar_lines;
-  for (int i = 0; i < r; ++i) scalar_lines.push_back("  for (int " + idx[i] + " = 0; " + idx[i] + " < " + std::to_string(out_shape[i]) + "; ++" + idx[i] + ") {");
-  std::string out_idx = flat_idx_expr(idx, out_shape);
-  auto idx_expr = [&](const std::vector<int64_t>& padded) -> std::string {
-    std::vector<std::string> in_vars;
-    in_vars.reserve(r);
-    for (int i = 0; i < r; ++i) in_vars.push_back(padded[i] == 1 ? "0" : idx[i]);
-    return flat_idx_expr(in_vars, padded);
-  };
-  std::string a_idx = idx_expr(pa);
-  std::string b_idx = idx_expr(pb);
-  std::string expr;
-  if (op == "max" || op == "min") {
-    if (out_ct == "float") {
-      expr = (op == "max" ? "fmaxf" : "fminf");
-      expr += "(" + a + "[" + a_idx + "], " + b + "[" + b_idx + "])";
-    } else if (out_ct == "double") {
-      expr = (op == "max" ? "fmax" : "fmin");
-      expr += "(" + a + "[" + a_idx + "], " + b + "[" + b_idx + "])";
-    } else {
-      expr = "(" + a + "[" + a_idx + "] " + (op == "max" ? ">" : "<") + " " + b + "[" + b_idx + "]) ? " + a + "[" + a_idx + "] : " + b + "[" + b_idx + "]";
+  auto emit_scalar = [&]() {
+    std::vector<std::string> idx = {"i0", "i1", "i2", "i3"};
+    idx.resize(r);
+    for (int i = 0; i < r; ++i) {
+      w.line("for (int " + idx[i] + " = 0; " + idx[i] + " < " + std::to_string(out_shape[i]) + "; ++" + idx[i] + ") {");
+      w.indent();
     }
-  } else {
-    const std::string c_op = (op == "add" ? "+" : op == "sub" ? "-" : op == "mul" ? "*" : op == "div" ? "/" : "");
-    if (c_op.empty()) fail("unsupported elemwise op: " + op);
-    expr = "(" + a + "[" + a_idx + "] " + c_op + " " + b + "[" + b_idx + "])";
-  }
-  scalar_lines.push_back("    " + out + "[" + out_idx + "] = (" + out_ct + ")" + expr + ";");
-  for (int i = 0; i < r; ++i) scalar_lines.push_back("  }");
+    std::string out_idx = flat_idx_expr(idx, out_shape);
+    auto idx_expr = [&](const std::vector<int64_t>& padded) -> std::string {
+      std::vector<std::string> in_vars;
+      in_vars.reserve(r);
+      for (int i = 0; i < r; ++i) in_vars.push_back(padded[i] == 1 ? "0" : idx[i]);
+      return flat_idx_expr(in_vars, padded);
+    };
+    std::string a_idx = idx_expr(pa);
+    std::string b_idx = idx_expr(pb);
+    std::string expr;
+    if (op == "max" || op == "min") {
+      if (out_ct == "float") {
+        expr = (op == "max" ? "fmaxf" : "fminf");
+        expr += "(" + a + "[" + a_idx + "], " + b + "[" + b_idx + "])";
+      } else if (out_ct == "double") {
+        expr = (op == "max" ? "fmax" : "fmin");
+        expr += "(" + a + "[" + a_idx + "], " + b + "[" + b_idx + "])";
+      } else {
+        expr = "(" + a + "[" + a_idx + "] " + (op == "max" ? ">" : "<") + " " + b + "[" + b_idx + "]) ? " + a + "[" + a_idx + "] : " + b + "[" + b_idx + "]";
+      }
+    } else {
+      const std::string c_op = (op == "add"   ? "+"
+                                : op == "sub" ? "-"
+                                : op == "mul" ? "*"
+                                : op == "div" ? "/"
+                                              : "");
+      if (c_op.empty()) fail("unsupported elemwise op: " + op);
+      expr = "(" + a + "[" + a_idx + "] " + c_op + " " + b + "[" + b_idx + "])";
+    }
+    w.line(out + "[" + out_idx + "] = (" + out_ct + ")" + expr + ";");
+    for (int i = 0; i < r; ++i) {
+      w.dedent();
+      w.line("}");
+    }
+  };
 
-  if (out_ct != "float" || !is_contig_elemwise || n_total <= 0) {
-    return scalar_lines;
-  }
-  if (op != "add" && op != "sub" && op != "mul" && op != "div" && op != "max" && op != "min") {
-    return scalar_lines;
+  const bool can_vector = (out_ct == "float") && is_contig_elemwise && (n_total > 0) &&
+                          (op == "add" || op == "sub" || op == "mul" || op == "div" || op == "max" || op == "min");
+  if (!can_vector) {
+    emit_scalar();
+    return;
   }
 
-  std::vector<std::string> lines;
-  lines.push_back("#if defined(__riscv_vector) || defined(__riscv_v)");
-  lines.push_back("  for (size_t i = 0; i < (size_t)" + std::to_string(n_total) + "; ) {");
-  lines.push_back("    size_t vl = intentir_vsetvl_e32m1((size_t)" + std::to_string(n_total) + " - i);");
-  lines.push_back("    vfloat32m1_t va = __riscv_vle32_v_f32m1(&" + a + "[i], vl);");
-  lines.push_back("    vfloat32m1_t vb = __riscv_vle32_v_f32m1(&" + b + "[i], vl);");
-  if (op == "add") lines.push_back("    vfloat32m1_t vc = __riscv_vfadd_vv_f32m1(va, vb, vl);");
-  else if (op == "sub") lines.push_back("    vfloat32m1_t vc = __riscv_vfsub_vv_f32m1(va, vb, vl);");
-  else if (op == "mul") lines.push_back("    vfloat32m1_t vc = __riscv_vfmul_vv_f32m1(va, vb, vl);");
-  else if (op == "div") lines.push_back("    vfloat32m1_t vc = __riscv_vfdiv_vv_f32m1(va, vb, vl);");
-  else if (op == "max") lines.push_back("    vfloat32m1_t vc = __riscv_vfmax_vv_f32m1(va, vb, vl);");
-  else if (op == "min") lines.push_back("    vfloat32m1_t vc = __riscv_vfmin_vv_f32m1(va, vb, vl);");
-  lines.push_back("    __riscv_vse32_v_f32m1(&" + out + "[i], vc, vl);");
-  lines.push_back("    i += vl;");
-  lines.push_back("  }");
-  lines.push_back("#else");
-  lines.insert(lines.end(), scalar_lines.begin(), scalar_lines.end());
-  lines.push_back("#endif");
-  return lines;
+  w.pp_line("#if defined(__riscv_vector) || defined(__riscv_v)");
+  w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n_total) + "; ) {");
+  w.indent();
+  w.line("size_t vl = intentir_vsetvl_e32m1((size_t)" + std::to_string(n_total) + " - i);");
+  w.line("vfloat32m1_t va = __riscv_vle32_v_f32m1(&" + a + "[i], vl);");
+  w.line("vfloat32m1_t vb = __riscv_vle32_v_f32m1(&" + b + "[i], vl);");
+  if (op == "add") w.line("vfloat32m1_t vc = __riscv_vfadd_vv_f32m1(va, vb, vl);");
+  else if (op == "sub") w.line("vfloat32m1_t vc = __riscv_vfsub_vv_f32m1(va, vb, vl);");
+  else if (op == "mul") w.line("vfloat32m1_t vc = __riscv_vfmul_vv_f32m1(va, vb, vl);");
+  else if (op == "div") w.line("vfloat32m1_t vc = __riscv_vfdiv_vv_f32m1(va, vb, vl);");
+  else if (op == "max") w.line("vfloat32m1_t vc = __riscv_vfmax_vv_f32m1(va, vb, vl);");
+  else if (op == "min") w.line("vfloat32m1_t vc = __riscv_vfmin_vv_f32m1(va, vb, vl);");
+  w.line("__riscv_vse32_v_f32m1(&" + out + "[i], vc, vl);");
+  w.line("i += vl;");
+  w.dedent();
+  w.line("}");
+  w.pp_line("#else");
+  emit_scalar();
+  w.pp_line("#endif");
 }
 
-std::vector<std::string> emit_cmp(const std::string& cmp_op, const std::string& out, const std::string& a, const std::string& b,
-                                  const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape,
-                                  const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings) {
+void emit_cmp(CodeWriter& w, const std::string& cmp_op, const std::string& out, const std::string& a, const std::string& b,
+              const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape,
+              const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings) {
   const int r = static_cast<int>(out_shape.size());
   if (r > 4) fail("cmp broadcast supports rank<=4");
   std::vector<int64_t> pa = pad_for_broadcast(intent, bindings, a, a_shape, b, b_shape, r);
@@ -471,10 +488,12 @@ std::vector<std::string> emit_cmp(const std::string& cmp_op, const std::string& 
     if (pa[i] != 1 && pa[i] != out_shape[i]) fail("cmp broadcast mismatch (a)");
     if (pb[i] != 1 && pb[i] != out_shape[i]) fail("cmp broadcast mismatch (b)");
   }
-  std::vector<std::string> idx = {"i0","i1","i2","i3"};
+  std::vector<std::string> idx = {"i0", "i1", "i2", "i3"};
   idx.resize(r);
-  std::vector<std::string> lines;
-  for (int i = 0; i < r; ++i) lines.push_back("  for (int " + idx[i] + " = 0; " + idx[i] + " < " + std::to_string(out_shape[i]) + "; ++" + idx[i] + ") {");
+  for (int i = 0; i < r; ++i) {
+    w.line("for (int " + idx[i] + " = 0; " + idx[i] + " < " + std::to_string(out_shape[i]) + "; ++" + idx[i] + ") {");
+    w.indent();
+  }
   std::string out_idx = flat_idx_expr(idx, out_shape);
   auto idx_expr = [&](const std::vector<int64_t>& padded) -> std::string {
     std::vector<std::string> in_vars;
@@ -490,14 +509,16 @@ std::vector<std::string> emit_cmp(const std::string& cmp_op, const std::string& 
   else if (cmp_op == "gt") cop = ">";
   else if (cmp_op == "ge") cop = ">=";
   else fail("unsupported cmp op");
-  lines.push_back("    " + out + "[" + out_idx + "] = (" + a + "[" + a_idx + "] " + cop + " " + b + "[" + b_idx + "]) ? 1 : 0;");
-  for (int i = 0; i < r; ++i) lines.push_back("  }");
-  return lines;
+  w.line(out + "[" + out_idx + "] = (" + a + "[" + a_idx + "] " + cop + " " + b + "[" + b_idx + "]) ? 1 : 0;");
+  for (int i = 0; i < r; ++i) {
+    w.dedent();
+    w.line("}");
+  }
 }
 
-std::vector<std::string> emit_ne(const std::string& out, const std::string& a, const std::string& b,
-                                 const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape,
-                                 const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings) {
+void emit_ne(CodeWriter& w, const std::string& out, const std::string& a, const std::string& b,
+             const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape,
+             const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings) {
   const int r = static_cast<int>(out_shape.size());
   if (r > 4) fail("ne broadcast supports rank<=4");
   std::vector<int64_t> pa = pad_for_broadcast(intent, bindings, a, a_shape, b, b_shape, r);
@@ -506,10 +527,12 @@ std::vector<std::string> emit_ne(const std::string& out, const std::string& a, c
     if (pa[i] != 1 && pa[i] != out_shape[i]) fail("ne broadcast mismatch (a)");
     if (pb[i] != 1 && pb[i] != out_shape[i]) fail("ne broadcast mismatch (b)");
   }
-  std::vector<std::string> idx = {"i0","i1","i2","i3"};
+  std::vector<std::string> idx = {"i0", "i1", "i2", "i3"};
   idx.resize(r);
-  std::vector<std::string> lines;
-  for (int i = 0; i < r; ++i) lines.push_back("  for (int " + idx[i] + " = 0; " + idx[i] + " < " + std::to_string(out_shape[i]) + "; ++" + idx[i] + ") {");
+  for (int i = 0; i < r; ++i) {
+    w.line("for (int " + idx[i] + " = 0; " + idx[i] + " < " + std::to_string(out_shape[i]) + "; ++" + idx[i] + ") {");
+    w.indent();
+  }
   std::string out_idx = flat_idx_expr(idx, out_shape);
   auto idx_expr = [&](const std::vector<int64_t>& padded) -> std::string {
     std::vector<std::string> in_vars;
@@ -519,13 +542,15 @@ std::vector<std::string> emit_ne(const std::string& out, const std::string& a, c
   };
   std::string a_idx = idx_expr(pa);
   std::string b_idx = idx_expr(pb);
-  lines.push_back("    " + out + "[" + out_idx + "] = (" + a + "[" + a_idx + "] != " + b + "[" + b_idx + "]) ? 1 : 0;");
-  for (int i = 0; i < r; ++i) lines.push_back("  }");
-  return lines;
+  w.line(out + "[" + out_idx + "] = (" + a + "[" + a_idx + "] != " + b + "[" + b_idx + "]) ? 1 : 0;");
+  for (int i = 0; i < r; ++i) {
+    w.dedent();
+    w.line("}");
+  }
 }
 
-std::vector<std::string> emit_bool_bin(const std::string& op, const std::string& out, const std::string& a, const std::string& b,
-                                       const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape) {
+void emit_bool_bin(CodeWriter& w, const std::string& op, const std::string& out, const std::string& a, const std::string& b,
+                   const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape) {
   const int r = static_cast<int>(out_shape.size());
   if (r > 4) fail("bool broadcast supports rank<=4");
   std::vector<int64_t> pa(r, 1), pb(r, 1);
@@ -535,10 +560,12 @@ std::vector<std::string> emit_bool_bin(const std::string& op, const std::string&
     if (pa[i] != 1 && pa[i] != out_shape[i]) fail("bool broadcast mismatch (a)");
     if (pb[i] != 1 && pb[i] != out_shape[i]) fail("bool broadcast mismatch (b)");
   }
-  std::vector<std::string> idx = {"i0","i1","i2","i3"};
+  std::vector<std::string> idx = {"i0", "i1", "i2", "i3"};
   idx.resize(r);
-  std::vector<std::string> lines;
-  for (int i = 0; i < r; ++i) lines.push_back("  for (int " + idx[i] + " = 0; " + idx[i] + " < " + std::to_string(out_shape[i]) + "; ++" + idx[i] + ") {");
+  for (int i = 0; i < r; ++i) {
+    w.line("for (int " + idx[i] + " = 0; " + idx[i] + " < " + std::to_string(out_shape[i]) + "; ++" + idx[i] + ") {");
+    w.indent();
+  }
   std::string out_idx = flat_idx_expr(idx, out_shape);
   auto idx_expr = [&](const std::vector<int64_t>& padded) -> std::string {
     std::vector<std::string> in_vars;
@@ -550,103 +577,111 @@ std::vector<std::string> emit_bool_bin(const std::string& op, const std::string&
   std::string b_idx = idx_expr(pb);
   std::string cop = (op == "and") ? "&&" : (op == "or") ? "||" : "";
   if (cop.empty()) fail("unsupported bool op");
-  lines.push_back("    " + out + "[" + out_idx + "] = ((" + a + "[" + a_idx + "] != 0) " + cop + " (" + b + "[" + b_idx + "] != 0)) ? 1 : 0;");
-  for (int i = 0; i < r; ++i) lines.push_back("  }");
-  return lines;
+  w.line(out + "[" + out_idx + "] = ((" + a + "[" + a_idx + "] != 0) " + cop + " (" + b + "[" + b_idx + "] != 0)) ? 1 : 0;");
+  for (int i = 0; i < r; ++i) {
+    w.dedent();
+    w.line("}");
+  }
 }
 
-std::vector<std::string> emit_bool_not(const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
+void emit_bool_not(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
   const int r = static_cast<int>(out_shape.size());
   if (r > 4) fail("not supports rank<=4");
-  std::vector<std::string> idx = {"i0","i1","i2","i3"};
+  std::vector<std::string> idx = {"i0", "i1", "i2", "i3"};
   idx.resize(r);
-  std::vector<std::string> lines;
-  for (int i = 0; i < r; ++i) lines.push_back("  for (int " + idx[i] + " = 0; " + idx[i] + " < " + std::to_string(out_shape[i]) + "; ++" + idx[i] + ") {");
+  for (int i = 0; i < r; ++i) {
+    w.line("for (int " + idx[i] + " = 0; " + idx[i] + " < " + std::to_string(out_shape[i]) + "; ++" + idx[i] + ") {");
+    w.indent();
+  }
   std::string out_idx = flat_idx_expr(idx, out_shape);
-  lines.push_back("    " + out + "[" + out_idx + "] = (" + a + "[" + out_idx + "] == 0) ? 1 : 0;");
-  for (int i = 0; i < r; ++i) lines.push_back("  }");
-  return lines;
+  w.line(out + "[" + out_idx + "] = (" + a + "[" + out_idx + "] == 0) ? 1 : 0;");
+  for (int i = 0; i < r; ++i) {
+    w.dedent();
+    w.line("}");
+  }
 }
 
-std::vector<std::string> emit_unary_abs(const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape, const std::string& in_dt, const std::string& out_dt) {
+void emit_unary_abs(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape, const std::string& in_dt, const std::string& out_dt) {
   const int64_t n = numel(out_shape);
   const std::string in_ct = ctype_for_dtype(in_dt);
   const std::string out_ct = ctype_for_dtype(out_dt);
-  std::vector<std::string> lines;
   if (in_ct == "float" && out_ct == "float") {
-    lines.push_back("#if defined(__riscv_vector) || defined(__riscv_v)");
-    lines.push_back("  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ) {");
-    lines.push_back("    size_t vl = intentir_vsetvl_e32m1((size_t)" + std::to_string(n) + " - i);");
-    lines.push_back("    vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + a + "[i], vl);");
-    lines.push_back("    vfloat32m1_t vy = __riscv_vfabs_v_f32m1(vx, vl);");
-    lines.push_back("    __riscv_vse32_v_f32m1(&" + out + "[i], vy, vl);");
-    lines.push_back("    i += vl;");
-    lines.push_back("  }");
-    lines.push_back("#else");
-    lines.push_back("  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) { " + out + "[i] = fabsf(" + a + "[i]); }");
-    lines.push_back("#endif");
-    return lines;
+    w.pp_line("#if defined(__riscv_vector) || defined(__riscv_v)");
+    w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ) {");
+    w.indent();
+    w.line("size_t vl = intentir_vsetvl_e32m1((size_t)" + std::to_string(n) + " - i);");
+    w.line("vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + a + "[i], vl);");
+    w.line("vfloat32m1_t vy = __riscv_vfabs_v_f32m1(vx, vl);");
+    w.line("__riscv_vse32_v_f32m1(&" + out + "[i], vy, vl);");
+    w.line("i += vl;");
+    w.dedent();
+    w.line("}");
+    w.pp_line("#else");
+    w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) { " + out + "[i] = fabsf(" + a + "[i]); }");
+    w.pp_line("#endif");
+    return;
   }
-  lines.push_back("  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) {");
+  w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) {");
+  w.indent();
   if (in_ct == "double" && out_ct == "double") {
-    lines.push_back("    " + out + "[i] = fabs(" + a + "[i]);");
+    w.line(out + "[i] = fabs(" + a + "[i]);");
   } else {
-    lines.push_back("    " + in_ct + " x = " + a + "[i];");
-    lines.push_back("    " + out + "[i] = (x < 0) ? (" + out_ct + ")(-x) : (" + out_ct + ")x;");
+    w.line(in_ct + " x = " + a + "[i];");
+    w.line(out + "[i] = (x < 0) ? (" + out_ct + ")(-x) : (" + out_ct + ")x;");
   }
-  lines.push_back("  }");
-  return lines;
+  w.dedent();
+  w.line("}");
 }
 
-std::vector<std::string> emit_floor(const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
+void emit_floor(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
   const int64_t n = numel(out_shape);
-  return {
-      "  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) {",
-      "    " + out + "[i] = floorf(" + a + "[i]);",
-      "  }",
-  };
+  w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) {");
+  w.indent();
+  w.line(out + "[i] = floorf(" + a + "[i]);");
+  w.dedent();
+  w.line("}");
 }
 
-std::vector<std::string> emit_rsqrt(const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
+void emit_rsqrt(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
   const int64_t n = numel(out_shape);
-  return {
-      "#if defined(__riscv_vector) || defined(__riscv_v)",
-      "  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ) {",
-      "    size_t vl = intentir_vsetvl_e32m1((size_t)" + std::to_string(n) + " - i);",
-      "    vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + a + "[i], vl);",
-      "    vfloat32m1_t vs = __riscv_vfsqrt_v_f32m1(vx, vl);",
-      "    vfloat32m1_t vy = __riscv_vfrdiv_vf_f32m1(vs, 1.0f, vl);",
-      "    __riscv_vse32_v_f32m1(&" + out + "[i], vy, vl);",
-      "    i += vl;",
-      "  }",
-      "#else",
-      "  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) { " + out + "[i] = 1.0f / sqrtf(" + a + "[i]); }",
-      "#endif",
-  };
+  w.pp_line("#if defined(__riscv_vector) || defined(__riscv_v)");
+  w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ) {");
+  w.indent();
+  w.line("size_t vl = intentir_vsetvl_e32m1((size_t)" + std::to_string(n) + " - i);");
+  w.line("vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + a + "[i], vl);");
+  w.line("vfloat32m1_t vs = __riscv_vfsqrt_v_f32m1(vx, vl);");
+  w.line("vfloat32m1_t vy = __riscv_vfrdiv_vf_f32m1(vs, 1.0f, vl);");
+  w.line("__riscv_vse32_v_f32m1(&" + out + "[i], vy, vl);");
+  w.line("i += vl;");
+  w.dedent();
+  w.line("}");
+  w.pp_line("#else");
+  w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) { " + out + "[i] = 1.0f / sqrtf(" + a + "[i]); }");
+  w.pp_line("#endif");
 }
 
-std::vector<std::string> emit_cast(const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape, const std::string& from_dt, const std::string& to_dt) {
+void emit_cast(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape, const std::string& from_dt, const std::string& to_dt) {
   const int64_t n = numel(out_shape);
   const std::string from_ct = ctype_for_dtype(from_dt);
   const std::string to_ct = ctype_for_dtype(to_dt);
-  std::vector<std::string> lines;
-  lines.push_back("  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) {");
+  w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) {");
+  w.indent();
   if (to_ct == "uint8_t") {
-    lines.push_back("    " + out + "[i] = (" + a + "[i] != 0) ? 1 : 0;");
+    w.line(out + "[i] = (" + a + "[i] != 0) ? 1 : 0;");
   } else if (from_ct == "uint8_t" && (to_ct == "float" || to_ct == "double")) {
     const std::string one = (to_ct == "float") ? "1.0f" : "1.0";
     const std::string zero = (to_ct == "float") ? "0.0f" : "0.0";
-    lines.push_back("    " + out + "[i] = (" + a + "[i] != 0) ? " + one + " : " + zero + ";");
+    w.line(out + "[i] = (" + a + "[i] != 0) ? " + one + " : " + zero + ";");
   } else {
-    lines.push_back("    " + out + "[i] = (" + to_ct + ")(" + a + "[i]);");
+    w.line(out + "[i] = (" + to_ct + ")(" + a + "[i]);");
   }
-  lines.push_back("  }");
-  return lines;
+  w.dedent();
+  w.line("}");
 }
 
-std::vector<std::string> emit_where(const std::string& out, const std::string& cond, const std::string& x, const std::string& y,
-                                    const std::vector<int64_t>& cond_shape, const std::vector<int64_t>& x_shape, const std::vector<int64_t>& y_shape,
-                                    const std::vector<int64_t>& out_shape, const std::string& out_dtype) {
+void emit_where(CodeWriter& w, const std::string& out, const std::string& cond, const std::string& x, const std::string& y,
+                const std::vector<int64_t>& cond_shape, const std::vector<int64_t>& x_shape, const std::vector<int64_t>& y_shape,
+                const std::vector<int64_t>& out_shape, const std::string& out_dtype) {
   const int r = static_cast<int>(out_shape.size());
   if (r > 4) fail("where supports rank<=4");
   std::vector<int64_t> pc(r, 1), px(r, 1), py(r, 1);
@@ -658,10 +693,12 @@ std::vector<std::string> emit_where(const std::string& out, const std::string& c
     if (px[i] != 1 && px[i] != out_shape[i]) fail("where broadcast mismatch (x)");
     if (py[i] != 1 && py[i] != out_shape[i]) fail("where broadcast mismatch (y)");
   }
-  std::vector<std::string> idx = {"i0","i1","i2","i3"};
+  std::vector<std::string> idx = {"i0", "i1", "i2", "i3"};
   idx.resize(r);
-  std::vector<std::string> lines;
-  for (int i = 0; i < r; ++i) lines.push_back("  for (int " + idx[i] + " = 0; " + idx[i] + " < " + std::to_string(out_shape[i]) + "; ++" + idx[i] + ") {");
+  for (int i = 0; i < r; ++i) {
+    w.line("for (int " + idx[i] + " = 0; " + idx[i] + " < " + std::to_string(out_shape[i]) + "; ++" + idx[i] + ") {");
+    w.indent();
+  }
   std::string out_idx = flat_idx_expr(idx, out_shape);
   auto idx_expr = [&](const std::vector<int64_t>& padded) -> std::string {
     std::vector<std::string> in_vars;
@@ -673,30 +710,36 @@ std::vector<std::string> emit_where(const std::string& out, const std::string& c
   std::string x_idx = idx_expr(px);
   std::string y_idx = idx_expr(py);
   const std::string out_ct = ctype_for_dtype(out_dtype);
-  lines.push_back("    " + out + "[" + out_idx + "] = (" + cond + "[" + c_idx + "] != 0) ? (" + out_ct + ")" + x + "[" + x_idx + "] : (" + out_ct + ")" + y + "[" + y_idx + "];");
-  for (int i = 0; i < r; ++i) lines.push_back("  }");
-  return lines;
+  w.line(out + "[" + out_idx + "] = (" + cond + "[" + c_idx + "] != 0) ? (" + out_ct + ")" + x + "[" + x_idx + "] : (" + out_ct + ")" + y + "[" + y_idx + "];");
+  for (int i = 0; i < r; ++i) {
+    w.dedent();
+    w.line("}");
+  }
 }
 
-std::vector<std::string> emit_iota(const std::string& out, const std::vector<int64_t>& out_shape, int axis, const std::string& out_dtype) {
+void emit_iota(CodeWriter& w, const std::string& out, const std::vector<int64_t>& out_shape, int axis, const std::string& out_dtype) {
   const int r = static_cast<int>(out_shape.size());
   if (r == 0) fail("iota requires rank>=1");
   if (r > 4) fail("iota supports rank<=4");
   if (axis < 0 || axis >= r) fail("iota axis out of range");
-  std::vector<std::string> idx = {"i0","i1","i2","i3"};
+  std::vector<std::string> idx = {"i0", "i1", "i2", "i3"};
   idx.resize(r);
-  std::vector<std::string> lines;
-  for (int i = 0; i < r; ++i) lines.push_back("  for (int " + idx[i] + " = 0; " + idx[i] + " < " + std::to_string(out_shape[i]) + "; ++" + idx[i] + ") {");
+  for (int i = 0; i < r; ++i) {
+    w.line("for (int " + idx[i] + " = 0; " + idx[i] + " < " + std::to_string(out_shape[i]) + "; ++" + idx[i] + ") {");
+    w.indent();
+  }
   std::string out_idx = flat_idx_expr(idx, out_shape);
   const std::string out_ct = ctype_for_dtype(out_dtype);
-  lines.push_back("    " + out + "[" + out_idx + "] = (" + out_ct + ")" + idx[axis] + ";");
-  for (int i = 0; i < r; ++i) lines.push_back("  }");
-  return lines;
+  w.line(out + "[" + out_idx + "] = (" + out_ct + ")" + idx[axis] + ";");
+  for (int i = 0; i < r; ++i) {
+    w.dedent();
+    w.line("}");
+  }
 }
 
-std::vector<std::string> emit_gather(const std::string& out, const std::string& data, const std::vector<std::string>& idxs,
-                                     const std::vector<int64_t>& data_shape, const std::vector<std::vector<int64_t>>& idx_shapes,
-                                     const std::vector<int64_t>& out_shape, const std::string& out_dtype) {
+void emit_gather(CodeWriter& w, const std::string& out, const std::string& data, const std::vector<std::string>& idxs,
+                 const std::vector<int64_t>& data_shape, const std::vector<std::vector<int64_t>>& idx_shapes,
+                 const std::vector<int64_t>& out_shape, const std::string& out_dtype) {
   const int r_data = static_cast<int>(data_shape.size());
   if (r_data < 1 || r_data > 4) fail("gather supports data rank 1..4");
   if ((int)idxs.size() != r_data) fail("gather expects indices == data rank");
@@ -712,10 +755,12 @@ std::vector<std::string> emit_gather(const std::string& out, const std::string& 
     padded.push_back(std::move(p));
   }
 
-  std::vector<std::string> iv = {"i0","i1","i2","i3"};
+  std::vector<std::string> iv = {"i0", "i1", "i2", "i3"};
   iv.resize(r);
-  std::vector<std::string> lines;
-  for (int i = 0; i < r; ++i) lines.push_back("  for (int " + iv[i] + " = 0; " + iv[i] + " < " + std::to_string(out_shape[i]) + "; ++" + iv[i] + ") {");
+  for (int i = 0; i < r; ++i) {
+    w.line("for (int " + iv[i] + " = 0; " + iv[i] + " < " + std::to_string(out_shape[i]) + "; ++" + iv[i] + ") {");
+    w.indent();
+  }
   std::string out_idx = flat_idx_expr(iv, out_shape);
   auto idx_expr = [&](const std::vector<int64_t>& ps) -> std::string {
     std::vector<std::string> vars;
@@ -724,20 +769,22 @@ std::vector<std::string> emit_gather(const std::string& out, const std::string& 
     return flat_idx_expr(vars, ps);
   };
   for (int ax = 0; ax < r_data; ++ax) {
-    lines.push_back("    int d" + std::to_string(ax) + " = (int)" + idxs[ax] + "[" + idx_expr(padded[ax]) + "];");
+    w.line("int d" + std::to_string(ax) + " = (int)" + idxs[ax] + "[" + idx_expr(padded[ax]) + "];");
   }
-  if (r_data == 1) lines.push_back("    size_t di = (size_t)d0;");
-  else if (r_data == 2) lines.push_back("    size_t di = idx2(d0,d1," + std::to_string(data_shape[1]) + ");");
-  else if (r_data == 3) lines.push_back("    size_t di = idx3(d0,d1,d2," + std::to_string(data_shape[1]) + "," + std::to_string(data_shape[2]) + ");");
-  else lines.push_back("    size_t di = idx4(d0,d1,d2,d3," + std::to_string(data_shape[1]) + "," + std::to_string(data_shape[2]) + "," + std::to_string(data_shape[3]) + ");");
+  if (r_data == 1) w.line("size_t di = (size_t)d0;");
+  else if (r_data == 2) w.line("size_t di = idx2(d0,d1," + std::to_string(data_shape[1]) + ");");
+  else if (r_data == 3) w.line("size_t di = idx3(d0,d1,d2," + std::to_string(data_shape[1]) + "," + std::to_string(data_shape[2]) + ");");
+  else w.line("size_t di = idx4(d0,d1,d2,d3," + std::to_string(data_shape[1]) + "," + std::to_string(data_shape[2]) + "," + std::to_string(data_shape[3]) + ");");
   const std::string out_ct = ctype_for_dtype(out_dtype);
-  lines.push_back("    " + out + "[" + out_idx + "] = (" + out_ct + ")" + data + "[di];");
-  for (int i = 0; i < r; ++i) lines.push_back("  }");
-  return lines;
+  w.line(out + "[" + out_idx + "] = (" + out_ct + ")" + data + "[di];");
+  for (int i = 0; i < r; ++i) {
+    w.dedent();
+    w.line("}");
+  }
 }
 
-std::vector<std::string> emit_reduce_sum(const std::string& out, const std::string& a, const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape,
-                                         const std::vector<int>& dims, bool keepdims, std::optional<double> scale) {
+void emit_reduce_sum(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape,
+                     const std::vector<int>& dims, bool keepdims, std::optional<double> scale) {
   const int r = static_cast<int>(in_shape.size());
   if (r > 4) fail("reduce_sum supports rank<=4");
   std::vector<int> dims_set = dims;
@@ -753,34 +800,39 @@ std::vector<std::string> emit_reduce_sum(const std::string& out, const std::stri
   // Fast path: 2D row-reduction over the last axis.
   if (r == 2 && dims_set.size() == 1 && dims_set[0] == 1) {
     int64_t M = D[0], K = D[1];
-    std::vector<std::string> lines;
-    lines.push_back("#if defined(__riscv_vector) || defined(__riscv_v)");
-    lines.push_back("  for (int m = 0; m < " + std::to_string(M) + "; ++m) {");
-    lines.push_back("    size_t vlmax = intentir_vsetvl_e32m1((size_t)" + std::to_string(K) + ");");
-    lines.push_back("    vfloat32m1_t vsum = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);");
-    lines.push_back("    for (int k = 0; k < " + std::to_string(K) + "; ) {");
-    lines.push_back("      size_t vl = intentir_vsetvl_e32m1((size_t)(" + std::to_string(K) + " - k));");
-    lines.push_back("      vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + a + "[idx2(m,k," + std::to_string(K) + ")], vl);");
-    lines.push_back("      vsum = __riscv_vfadd_vv_f32m1(vsum, vx, vl);");
-    lines.push_back("      k += (int)vl;");
-    lines.push_back("    }");
-    lines.push_back("    vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);");
-    lines.push_back("    vfloat32m1_t vres = __riscv_vfredusum_vs_f32m1_f32m1(vsum, v0, vlmax);");
-    lines.push_back("    float intentir_sum_scalar = __riscv_vfmv_f_s_f32m1_f32(vres);");
-    if (scale.has_value()) lines.push_back("    intentir_sum_scalar *= " + c_float(scale.value()) + ";");
-    if (keepdims) lines.push_back("    " + out + "[idx2(m,0,1)] = intentir_sum_scalar;");
-    else lines.push_back("    " + out + "[(size_t)m] = intentir_sum_scalar;");
-    lines.push_back("  }");
-    lines.push_back("#else");
-    lines.push_back("  for (int m = 0; m < " + std::to_string(M) + "; ++m) {");
-    lines.push_back("    double intentir_sum_scalar = 0.0;");
-    lines.push_back("    for (int k = 0; k < " + std::to_string(K) + "; ++k) { intentir_sum_scalar += (double)" + a + "[idx2(m,k," + std::to_string(K) + ")]; }");
-    if (scale.has_value()) lines.push_back("    intentir_sum_scalar *= (double)" + c_float(scale.value()) + ";");
-    if (keepdims) lines.push_back("    " + out + "[idx2(m,0,1)] = (float)intentir_sum_scalar;");
-    else lines.push_back("    " + out + "[(size_t)m] = (float)intentir_sum_scalar;");
-    lines.push_back("  }");
-    lines.push_back("#endif");
-    return lines;
+    w.pp_line("#if defined(__riscv_vector) || defined(__riscv_v)");
+    w.line("for (int m = 0; m < " + std::to_string(M) + "; ++m) {");
+    w.indent();
+    w.line("size_t vlmax = intentir_vsetvl_e32m1((size_t)" + std::to_string(K) + ");");
+    w.line("vfloat32m1_t vsum = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);");
+    w.line("for (int k = 0; k < " + std::to_string(K) + "; ) {");
+    w.indent();
+    w.line("size_t vl = intentir_vsetvl_e32m1((size_t)(" + std::to_string(K) + " - k));");
+    w.line("vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + a + "[idx2(m,k," + std::to_string(K) + ")], vl);");
+    w.line("vsum = __riscv_vfadd_vv_f32m1(vsum, vx, vl);");
+    w.line("k += (int)vl;");
+    w.dedent();
+    w.line("}");
+    w.line("vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);");
+    w.line("vfloat32m1_t vres = __riscv_vfredusum_vs_f32m1_f32m1(vsum, v0, vlmax);");
+    w.line("float intentir_sum_scalar = __riscv_vfmv_f_s_f32m1_f32(vres);");
+    if (scale.has_value()) w.line("intentir_sum_scalar *= " + c_float(scale.value()) + ";");
+    if (keepdims) w.line(out + "[idx2(m,0,1)] = intentir_sum_scalar;");
+    else w.line(out + "[(size_t)m] = intentir_sum_scalar;");
+    w.dedent();
+    w.line("}");
+    w.pp_line("#else");
+    w.line("for (int m = 0; m < " + std::to_string(M) + "; ++m) {");
+    w.indent();
+    w.line("double intentir_sum_scalar = 0.0;");
+    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { intentir_sum_scalar += (double)" + a + "[idx2(m,k," + std::to_string(K) + ")]; }");
+    if (scale.has_value()) w.line("intentir_sum_scalar *= (double)" + c_float(scale.value()) + ";");
+    if (keepdims) w.line(out + "[idx2(m,0,1)] = (float)intentir_sum_scalar;");
+    else w.line(out + "[(size_t)m] = (float)intentir_sum_scalar;");
+    w.dedent();
+    w.line("}");
+    w.pp_line("#endif");
+    return;
   }
 
   // Fast path: 4D reduce over the innermost 2 dims (e.g., [N,G,group_size,HW] -> [N,G,1,1]).
@@ -790,50 +842,65 @@ std::vector<std::string> emit_reduce_sum(const std::string& out, const std::stri
     if (ds[0] == 2 && ds[1] == 3 && OD.size() == 4 && OD[0] == D[0] && OD[1] == D[1] && OD[2] == 1 && OD[3] == 1) {
       int64_t N = D[0], G = D[1], GS = D[2], HW = D[3];
       const int64_t len = GS * HW;
-      std::vector<std::string> lines;
-      lines.push_back("#if defined(__riscv_vector) || defined(__riscv_v)");
-      lines.push_back("  for (int n0 = 0; n0 < " + std::to_string(N) + "; ++n0) {");
-      lines.push_back("    for (int g0 = 0; g0 < " + std::to_string(G) + "; ++g0) {");
-      lines.push_back("      const size_t base = ((size_t)n0 * (size_t)" + std::to_string(G) + " + (size_t)g0) * (size_t)" + std::to_string(len) + ";");
-      lines.push_back("      size_t vlmax = intentir_vsetvl_e32m1((size_t)" + std::to_string(len) + ");");
-      lines.push_back("      vfloat32m1_t vsum = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);");
-      lines.push_back("      for (size_t i = 0; i < (size_t)" + std::to_string(len) + "; ) {");
-      lines.push_back("        size_t vl = intentir_vsetvl_e32m1((size_t)" + std::to_string(len) + " - i);");
-      lines.push_back("        vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + a + "[base + i], vl);");
-      lines.push_back("        vsum = __riscv_vfadd_vv_f32m1(vsum, vx, vl);");
-      lines.push_back("        i += vl;");
-      lines.push_back("      }");
-      lines.push_back("      vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);");
-      lines.push_back("      vfloat32m1_t vres = __riscv_vfredusum_vs_f32m1_f32m1(vsum, v0, vlmax);");
-      lines.push_back("      float intentir_sum_scalar = __riscv_vfmv_f_s_f32m1_f32(vres);");
-      if (scale.has_value()) lines.push_back("      intentir_sum_scalar *= " + c_float(scale.value()) + ";");
-      lines.push_back("      " + out + "[(size_t)n0 * (size_t)" + std::to_string(G) + " + (size_t)g0] = intentir_sum_scalar;");
-      lines.push_back("    }");
-      lines.push_back("  }");
-      lines.push_back("#else");
-      lines.push_back("  for (int n0 = 0; n0 < " + std::to_string(N) + "; ++n0) {");
-      lines.push_back("    for (int g0 = 0; g0 < " + std::to_string(G) + "; ++g0) {");
-      lines.push_back("      double intentir_sum_scalar = 0.0;");
-      lines.push_back("      for (int gs = 0; gs < " + std::to_string(GS) + "; ++gs) {");
-      lines.push_back("        for (int hw = 0; hw < " + std::to_string(HW) + "; ++hw) {");
-      lines.push_back("          intentir_sum_scalar += (double)" + a + "[idx4(n0,g0,gs,hw," + std::to_string(G) + "," + std::to_string(GS) + "," + std::to_string(HW) + ")];");
-      lines.push_back("        }");
-      lines.push_back("      }");
-      if (scale.has_value()) lines.push_back("      intentir_sum_scalar *= (double)" + c_float(scale.value()) + ";");
-      lines.push_back("      " + out + "[(size_t)n0 * (size_t)" + std::to_string(G) + " + (size_t)g0] = (float)intentir_sum_scalar;");
-      lines.push_back("    }");
-      lines.push_back("  }");
-      lines.push_back("#endif");
-      return lines;
+      w.pp_line("#if defined(__riscv_vector) || defined(__riscv_v)");
+      w.line("for (int n0 = 0; n0 < " + std::to_string(N) + "; ++n0) {");
+      w.indent();
+      w.line("for (int g0 = 0; g0 < " + std::to_string(G) + "; ++g0) {");
+      w.indent();
+      w.line("const size_t base = ((size_t)n0 * (size_t)" + std::to_string(G) + " + (size_t)g0) * (size_t)" + std::to_string(len) + ";");
+      w.line("size_t vlmax = intentir_vsetvl_e32m1((size_t)" + std::to_string(len) + ");");
+      w.line("vfloat32m1_t vsum = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);");
+      w.line("for (size_t i = 0; i < (size_t)" + std::to_string(len) + "; ) {");
+      w.indent();
+      w.line("size_t vl = intentir_vsetvl_e32m1((size_t)" + std::to_string(len) + " - i);");
+      w.line("vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + a + "[base + i], vl);");
+      w.line("vsum = __riscv_vfadd_vv_f32m1(vsum, vx, vl);");
+      w.line("i += vl;");
+      w.dedent();
+      w.line("}");
+      w.line("vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);");
+      w.line("vfloat32m1_t vres = __riscv_vfredusum_vs_f32m1_f32m1(vsum, v0, vlmax);");
+      w.line("float intentir_sum_scalar = __riscv_vfmv_f_s_f32m1_f32(vres);");
+      if (scale.has_value()) w.line("intentir_sum_scalar *= " + c_float(scale.value()) + ";");
+      w.line(out + "[(size_t)n0 * (size_t)" + std::to_string(G) + " + (size_t)g0] = intentir_sum_scalar;");
+      w.dedent();
+      w.line("}");
+      w.dedent();
+      w.line("}");
+      w.pp_line("#else");
+      w.line("for (int n0 = 0; n0 < " + std::to_string(N) + "; ++n0) {");
+      w.indent();
+      w.line("for (int g0 = 0; g0 < " + std::to_string(G) + "; ++g0) {");
+      w.indent();
+      w.line("double intentir_sum_scalar = 0.0;");
+      w.line("for (int gs = 0; gs < " + std::to_string(GS) + "; ++gs) {");
+      w.indent();
+      w.line("for (int hw = 0; hw < " + std::to_string(HW) + "; ++hw) {");
+      w.indent();
+      w.line("intentir_sum_scalar += (double)" + a + "[idx4(n0,g0,gs,hw," + std::to_string(G) + "," + std::to_string(GS) + "," + std::to_string(HW) + ")];");
+      w.dedent();
+      w.line("}");
+      w.dedent();
+      w.line("}");
+      if (scale.has_value()) w.line("intentir_sum_scalar *= (double)" + c_float(scale.value()) + ";");
+      w.line(out + "[(size_t)n0 * (size_t)" + std::to_string(G) + " + (size_t)g0] = (float)intentir_sum_scalar;");
+      w.dedent();
+      w.line("}");
+      w.dedent();
+      w.line("}");
+      w.pp_line("#endif");
+      return;
     }
   }
 
   std::vector<std::string> out_vars;
   for (int i = 0; i < out_rank; ++i) out_vars.push_back("o" + std::to_string(i));
-  std::vector<std::string> lines;
-  for (int i = 0; i < out_rank; ++i) lines.push_back("  for (int " + out_vars[i] + " = 0; " + out_vars[i] + " < " + std::to_string(OD[i]) + "; ++" + out_vars[i] + ") {");
+  for (int i = 0; i < out_rank; ++i) {
+    w.line("for (int " + out_vars[i] + " = 0; " + out_vars[i] + " < " + std::to_string(OD[i]) + "; ++" + out_vars[i] + ") {");
+    w.indent();
+  }
   std::string out_idx = flat_idx_expr(out_vars, out_shape);
-  lines.push_back("    double acc = 0.0;");
+  w.line("double acc = 0.0;");
 
   // build in_vars mapping
   std::vector<std::string> in_vars(r);
@@ -844,18 +911,26 @@ std::vector<std::string> emit_reduce_sum(const std::string& out, const std::stri
     if (reduced) in_vars[di] = "r" + std::to_string(di);
     else in_vars[di] = out_vars[out_it++];
   }
-  for (int d : dims_set) lines.push_back("    for (int r" + std::to_string(d) + " = 0; r" + std::to_string(d) + " < " + std::to_string(D[d]) + "; ++r" + std::to_string(d) + ") {");
+  for (int d : dims_set) {
+    w.line("for (int r" + std::to_string(d) + " = 0; r" + std::to_string(d) + " < " + std::to_string(D[d]) + "; ++r" + std::to_string(d) + ") {");
+    w.indent();
+  }
   std::string in_idx = flat_idx_expr(in_vars, in_shape);
-  lines.push_back("      acc += (double)" + a + "[" + in_idx + "];");
-  for (size_t i = 0; i < dims_set.size(); ++i) lines.push_back("    }");
-  if (scale.has_value()) lines.push_back("    acc *= (double)" + c_float(scale.value()) + ";");
-  lines.push_back("    " + out + "[" + out_idx + "] = (float)acc;");
-  for (int i = 0; i < out_rank; ++i) lines.push_back("  }");
-  return lines;
+  w.line("acc += (double)" + a + "[" + in_idx + "];");
+  for (size_t i = 0; i < dims_set.size(); ++i) {
+    w.dedent();
+    w.line("}");
+  }
+  if (scale.has_value()) w.line("acc *= (double)" + c_float(scale.value()) + ";");
+  w.line(out + "[" + out_idx + "] = (float)acc;");
+  for (int i = 0; i < out_rank; ++i) {
+    w.dedent();
+    w.line("}");
+  }
 }
 
-std::vector<std::string> emit_reduce_any(const std::string& out, const std::string& a, const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape,
-                                         const std::vector<int>& dims, bool keepdims) {
+void emit_reduce_any(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape,
+                     const std::vector<int>& dims, bool keepdims) {
   const int r = static_cast<int>(in_shape.size());
   if (r > 4) fail("reduce_any supports rank<=4");
   std::vector<int> dims_set = dims;
@@ -869,10 +944,12 @@ std::vector<std::string> emit_reduce_any(const std::string& out, const std::stri
   }
   std::vector<std::string> out_vars;
   for (int i = 0; i < out_rank; ++i) out_vars.push_back("o" + std::to_string(i));
-  std::vector<std::string> lines;
-  for (int i = 0; i < out_rank; ++i) lines.push_back("  for (int " + out_vars[i] + " = 0; " + out_vars[i] + " < " + std::to_string(OD[i]) + "; ++" + out_vars[i] + ") {");
+  for (int i = 0; i < out_rank; ++i) {
+    w.line("for (int " + out_vars[i] + " = 0; " + out_vars[i] + " < " + std::to_string(OD[i]) + "; ++" + out_vars[i] + ") {");
+    w.indent();
+  }
   std::string out_idx = flat_idx_expr(out_vars, out_shape);
-  lines.push_back("    uint8_t acc = 0;");
+  w.line("uint8_t acc = 0;");
   std::vector<std::string> in_vars(r);
   int out_it = 0;
   for (int di = 0; di < r; ++di) {
@@ -881,17 +958,25 @@ std::vector<std::string> emit_reduce_any(const std::string& out, const std::stri
     if (reduced) in_vars[di] = "r" + std::to_string(di);
     else in_vars[di] = out_vars[out_it++];
   }
-  for (int d : dims_set) lines.push_back("    for (int r" + std::to_string(d) + " = 0; r" + std::to_string(d) + " < " + std::to_string(D[d]) + "; ++r" + std::to_string(d) + ") {");
+  for (int d : dims_set) {
+    w.line("for (int r" + std::to_string(d) + " = 0; r" + std::to_string(d) + " < " + std::to_string(D[d]) + "; ++r" + std::to_string(d) + ") {");
+    w.indent();
+  }
   std::string in_idx = flat_idx_expr(in_vars, in_shape);
-  lines.push_back("      acc = acc || (" + a + "[" + in_idx + "] != 0);");
-  for (size_t i = 0; i < dims_set.size(); ++i) lines.push_back("    }");
-  lines.push_back("    " + out + "[" + out_idx + "] = acc;");
-  for (int i = 0; i < out_rank; ++i) lines.push_back("  }");
-  return lines;
+  w.line("acc = acc || (" + a + "[" + in_idx + "] != 0);");
+  for (size_t i = 0; i < dims_set.size(); ++i) {
+    w.dedent();
+    w.line("}");
+  }
+  w.line(out + "[" + out_idx + "] = acc;");
+  for (int i = 0; i < out_rank; ++i) {
+    w.dedent();
+    w.line("}");
+  }
 }
 
-std::vector<std::string> emit_reduce_max(const std::string& out, const std::string& a, const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape,
-                                         const std::vector<int>& dims, bool keepdims) {
+void emit_reduce_max(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape,
+                     const std::vector<int>& dims, bool keepdims) {
   const int r = static_cast<int>(in_shape.size());
   if (r > 4) fail("reduce_max supports rank<=4");
   std::vector<int> dims_set = dims;
@@ -907,40 +992,47 @@ std::vector<std::string> emit_reduce_max(const std::string& out, const std::stri
   // Fast path: 2D row-reduction over the last axis.
   if (r == 2 && dims_set.size() == 1 && dims_set[0] == 1) {
     int64_t M = D[0], K = D[1];
-    std::vector<std::string> lines;
-    lines.push_back("#if defined(__riscv_vector) || defined(__riscv_v)");
-    lines.push_back("  for (int m = 0; m < " + std::to_string(M) + "; ++m) {");
-    lines.push_back("    size_t vlmax = intentir_vsetvl_e32m1((size_t)" + std::to_string(K) + ");");
-    lines.push_back("    vfloat32m1_t vmax = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);");
-    lines.push_back("    for (int k = 0; k < " + std::to_string(K) + "; ) {");
-    lines.push_back("      size_t vl = intentir_vsetvl_e32m1((size_t)(" + std::to_string(K) + " - k));");
-    lines.push_back("      vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + a + "[idx2(m,k," + std::to_string(K) + ")], vl);");
-    lines.push_back("      vmax = __riscv_vfmax_vv_f32m1(vmax, vx, vl);");
-    lines.push_back("      k += (int)vl;");
-    lines.push_back("    }");
-    lines.push_back("    vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);");
-    lines.push_back("    vfloat32m1_t vres = __riscv_vfredmax_vs_f32m1_f32m1(vmax, v0, vlmax);");
-    lines.push_back("    float intentir_max_scalar = __riscv_vfmv_f_s_f32m1_f32(vres);");
-    if (keepdims) lines.push_back("    " + out + "[idx2(m,0,1)] = intentir_max_scalar;");
-    else lines.push_back("    " + out + "[(size_t)m] = intentir_max_scalar;");
-    lines.push_back("  }");
-    lines.push_back("#else");
-    lines.push_back("  for (int m = 0; m < " + std::to_string(M) + "; ++m) {");
-    lines.push_back("    float intentir_max_scalar = -INFINITY;");
-    lines.push_back("    for (int k = 0; k < " + std::to_string(K) + "; ++k) { intentir_max_scalar = fmaxf(intentir_max_scalar, " + a + "[idx2(m,k," + std::to_string(K) + ")]); }");
-    if (keepdims) lines.push_back("    " + out + "[idx2(m,0,1)] = intentir_max_scalar;");
-    else lines.push_back("    " + out + "[(size_t)m] = intentir_max_scalar;");
-    lines.push_back("  }");
-    lines.push_back("#endif");
-    return lines;
+    w.pp_line("#if defined(__riscv_vector) || defined(__riscv_v)");
+    w.line("for (int m = 0; m < " + std::to_string(M) + "; ++m) {");
+    w.indent();
+    w.line("size_t vlmax = intentir_vsetvl_e32m1((size_t)" + std::to_string(K) + ");");
+    w.line("vfloat32m1_t vmax = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);");
+    w.line("for (int k = 0; k < " + std::to_string(K) + "; ) {");
+    w.indent();
+    w.line("size_t vl = intentir_vsetvl_e32m1((size_t)(" + std::to_string(K) + " - k));");
+    w.line("vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + a + "[idx2(m,k," + std::to_string(K) + ")], vl);");
+    w.line("vmax = __riscv_vfmax_vv_f32m1(vmax, vx, vl);");
+    w.line("k += (int)vl;");
+    w.dedent();
+    w.line("}");
+    w.line("vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);");
+    w.line("vfloat32m1_t vres = __riscv_vfredmax_vs_f32m1_f32m1(vmax, v0, vlmax);");
+    w.line("float intentir_max_scalar = __riscv_vfmv_f_s_f32m1_f32(vres);");
+    if (keepdims) w.line(out + "[idx2(m,0,1)] = intentir_max_scalar;");
+    else w.line(out + "[(size_t)m] = intentir_max_scalar;");
+    w.dedent();
+    w.line("}");
+    w.pp_line("#else");
+    w.line("for (int m = 0; m < " + std::to_string(M) + "; ++m) {");
+    w.indent();
+    w.line("float intentir_max_scalar = -INFINITY;");
+    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { intentir_max_scalar = fmaxf(intentir_max_scalar, " + a + "[idx2(m,k," + std::to_string(K) + ")]); }");
+    if (keepdims) w.line(out + "[idx2(m,0,1)] = intentir_max_scalar;");
+    else w.line(out + "[(size_t)m] = intentir_max_scalar;");
+    w.dedent();
+    w.line("}");
+    w.pp_line("#endif");
+    return;
   }
 
   std::vector<std::string> out_vars;
   for (int i = 0; i < out_rank; ++i) out_vars.push_back("o" + std::to_string(i));
-  std::vector<std::string> lines;
-  for (int i = 0; i < out_rank; ++i) lines.push_back("  for (int " + out_vars[i] + " = 0; " + out_vars[i] + " < " + std::to_string(OD[i]) + "; ++" + out_vars[i] + ") {");
+  for (int i = 0; i < out_rank; ++i) {
+    w.line("for (int " + out_vars[i] + " = 0; " + out_vars[i] + " < " + std::to_string(OD[i]) + "; ++" + out_vars[i] + ") {");
+    w.indent();
+  }
   std::string out_idx = flat_idx_expr(out_vars, out_shape);
-  lines.push_back("    float m = -INFINITY;");
+  w.line("float m = -INFINITY;");
   std::vector<std::string> in_vars(r);
   int out_it = 0;
   for (int di = 0; di < r; ++di) {
@@ -949,101 +1041,126 @@ std::vector<std::string> emit_reduce_max(const std::string& out, const std::stri
     if (reduced) in_vars[di] = "r" + std::to_string(di);
     else in_vars[di] = out_vars[out_it++];
   }
-  for (int d : dims_set) lines.push_back("    for (int r" + std::to_string(d) + " = 0; r" + std::to_string(d) + " < " + std::to_string(D[d]) + "; ++r" + std::to_string(d) + ") {");
+  for (int d : dims_set) {
+    w.line("for (int r" + std::to_string(d) + " = 0; r" + std::to_string(d) + " < " + std::to_string(D[d]) + "; ++r" + std::to_string(d) + ") {");
+    w.indent();
+  }
   std::string in_idx = flat_idx_expr(in_vars, in_shape);
-  lines.push_back("      float v = " + a + "[" + in_idx + "];");
-  lines.push_back("      m = fmaxf(m, v);");
-  for (size_t i = 0; i < dims_set.size(); ++i) lines.push_back("    }");
-  lines.push_back("    " + out + "[" + out_idx + "] = m;");
-  for (int i = 0; i < out_rank; ++i) lines.push_back("  }");
-  return lines;
+  w.line("float v = " + a + "[" + in_idx + "];");
+  w.line("m = fmaxf(m, v);");
+  for (size_t i = 0; i < dims_set.size(); ++i) {
+    w.dedent();
+    w.line("}");
+  }
+  w.line(out + "[" + out_idx + "] = m;");
+  for (int i = 0; i < out_rank; ++i) {
+    w.dedent();
+    w.line("}");
+  }
 }
 
-std::vector<std::string> emit_softmax(const std::string& out, const std::string& a, const std::vector<int64_t>& in_shape, int axis) {
+void emit_softmax(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& in_shape, int axis) {
   const int r = static_cast<int>(in_shape.size());
   if (r == 0) fail("softmax on scalar unsupported");
   int ax = axis;
   if (ax < 0) ax += r;
   if (ax != r - 1) fail("softmax supports axis == last only");
-  std::vector<std::string> lines;
   if (r == 1) {
     int64_t K = in_shape[0];
-    lines = {
-        "  {",
-        "    double mx = -1e30;",
-        "    for (int k = 0; k < " + std::to_string(K) + "; ++k) { double v = (double)" + a + "[(size_t)k]; if (v > mx) mx = v; }",
-        "    double sum = 0.0;",
-        "    for (int k = 0; k < " + std::to_string(K) + "; ++k) { double e = exp((double)" + a + "[(size_t)k] - mx); " + out + "[(size_t)k] = (float)e; sum += e; }",
-        "    double inv = 1.0 / sum;",
-        "    for (int k = 0; k < " + std::to_string(K) + "; ++k) { " + out + "[(size_t)k] = (float)((double)" + out + "[(size_t)k] * inv); }",
-        "  }",
-    };
-    return lines;
+    w.line("{");
+    w.indent();
+    w.line("double mx = -1e30;");
+    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { double v = (double)" + a + "[(size_t)k]; if (v > mx) mx = v; }");
+    w.line("double sum = 0.0;");
+    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { double e = exp((double)" + a + "[(size_t)k] - mx); " + out + "[(size_t)k] = (float)e; sum += e; }");
+    w.line("double inv = 1.0 / sum;");
+    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { " + out + "[(size_t)k] = (float)((double)" + out + "[(size_t)k] * inv); }");
+    w.dedent();
+    w.line("}");
+    return;
   }
   if (r == 2) {
     int64_t M = in_shape[0], K = in_shape[1];
-    lines.push_back("  for (int m = 0; m < " + std::to_string(M) + "; ++m) {");
-    lines.push_back("    double mx = -1e30;");
-    lines.push_back("    for (int k = 0; k < " + std::to_string(K) + "; ++k) { double v = (double)" + a + "[idx2(m,k," + std::to_string(K) + ")]; if (v > mx) mx = v; }");
-    lines.push_back("    double sum = 0.0;");
-    lines.push_back("    for (int k = 0; k < " + std::to_string(K) + "; ++k) { double e = exp((double)" + a + "[idx2(m,k," + std::to_string(K) + ")] - mx); " + out + "[idx2(m,k," + std::to_string(K) + ")] = (float)e; sum += e; }");
-    lines.push_back("    double inv = 1.0 / sum;");
-    lines.push_back("    for (int k = 0; k < " + std::to_string(K) + "; ++k) { " + out + "[idx2(m,k," + std::to_string(K) + ")] = (float)((double)" + out + "[idx2(m,k," + std::to_string(K) + ")] * inv); }");
-    lines.push_back("  }");
-    return lines;
+    w.line("for (int m = 0; m < " + std::to_string(M) + "; ++m) {");
+    w.indent();
+    w.line("double mx = -1e30;");
+    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { double v = (double)" + a + "[idx2(m,k," + std::to_string(K) + ")]; if (v > mx) mx = v; }");
+    w.line("double sum = 0.0;");
+    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { double e = exp((double)" + a + "[idx2(m,k," + std::to_string(K) + ")] - mx); " + out + "[idx2(m,k," + std::to_string(K) + ")] = (float)e; sum += e; }");
+    w.line("double inv = 1.0 / sum;");
+    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { " + out + "[idx2(m,k," + std::to_string(K) + ")] = (float)((double)" + out + "[idx2(m,k," + std::to_string(K) + ")] * inv); }");
+    w.dedent();
+    w.line("}");
+    return;
   }
   if (r == 3) {
     int64_t A0 = in_shape[0], A1 = in_shape[1], K = in_shape[2];
-    lines.push_back("  for (int i0 = 0; i0 < " + std::to_string(A0) + "; ++i0) {");
-    lines.push_back("    for (int i1 = 0; i1 < " + std::to_string(A1) + "; ++i1) {");
-    lines.push_back("      double mx = -1e30;");
-    lines.push_back("      for (int k = 0; k < " + std::to_string(K) + "; ++k) { double v = (double)" + a + "[idx3(i0,i1,k," + std::to_string(A1) + "," + std::to_string(K) + ")]; if (v > mx) mx = v; }");
-    lines.push_back("      double sum = 0.0;");
-    lines.push_back("      for (int k = 0; k < " + std::to_string(K) + "; ++k) { double e = exp((double)" + a + "[idx3(i0,i1,k," + std::to_string(A1) + "," + std::to_string(K) + ")] - mx); " + out + "[idx3(i0,i1,k," + std::to_string(A1) + "," + std::to_string(K) + ")] = (float)e; sum += e; }");
-    lines.push_back("      double inv = 1.0 / sum;");
-    lines.push_back("      for (int k = 0; k < " + std::to_string(K) + "; ++k) { " + out + "[idx3(i0,i1,k," + std::to_string(A1) + "," + std::to_string(K) + ")] = (float)((double)" + out + "[idx3(i0,i1,k," + std::to_string(A1) + "," + std::to_string(K) + ")] * inv); }");
-    lines.push_back("    }");
-    lines.push_back("  }");
-    return lines;
+    w.line("for (int i0 = 0; i0 < " + std::to_string(A0) + "; ++i0) {");
+    w.indent();
+    w.line("for (int i1 = 0; i1 < " + std::to_string(A1) + "; ++i1) {");
+    w.indent();
+    w.line("double mx = -1e30;");
+    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { double v = (double)" + a + "[idx3(i0,i1,k," + std::to_string(A1) + "," + std::to_string(K) + ")]; if (v > mx) mx = v; }");
+    w.line("double sum = 0.0;");
+    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { double e = exp((double)" + a + "[idx3(i0,i1,k," + std::to_string(A1) + "," + std::to_string(K) + ")] - mx); " + out + "[idx3(i0,i1,k," + std::to_string(A1) + "," + std::to_string(K) + ")] = (float)e; sum += e; }");
+    w.line("double inv = 1.0 / sum;");
+    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { " + out + "[idx3(i0,i1,k," + std::to_string(A1) + "," + std::to_string(K) + ")] = (float)((double)" + out + "[idx3(i0,i1,k," + std::to_string(A1) + "," + std::to_string(K) + ")] * inv); }");
+    w.dedent();
+    w.line("}");
+    w.dedent();
+    w.line("}");
+    return;
   }
   if (r == 4) {
     int64_t B = in_shape[0], H = in_shape[1], Q = in_shape[2], K = in_shape[3];
-    lines.push_back("  for (int b = 0; b < " + std::to_string(B) + "; ++b) {");
-    lines.push_back("    for (int h = 0; h < " + std::to_string(H) + "; ++h) {");
-    lines.push_back("      for (int q = 0; q < " + std::to_string(Q) + "; ++q) {");
-    lines.push_back("        double mx = -1e30;");
-    lines.push_back("        for (int k = 0; k < " + std::to_string(K) + "; ++k) { double v = (double)" + a + "[idx4(b,h,q,k," + std::to_string(H) + "," + std::to_string(Q) + "," + std::to_string(K) + ")]; if (v > mx) mx = v; }");
-    lines.push_back("        double sum = 0.0;");
-    lines.push_back("        for (int k = 0; k < " + std::to_string(K) + "; ++k) { double e = exp((double)" + a + "[idx4(b,h,q,k," + std::to_string(H) + "," + std::to_string(Q) + "," + std::to_string(K) + ")] - mx); " + out + "[idx4(b,h,q,k," + std::to_string(H) + "," + std::to_string(Q) + "," + std::to_string(K) + ")] = (float)e; sum += e; }");
-    lines.push_back("        double inv = 1.0 / sum;");
-    lines.push_back("        for (int k = 0; k < " + std::to_string(K) + "; ++k) { " + out + "[idx4(b,h,q,k," + std::to_string(H) + "," + std::to_string(Q) + "," + std::to_string(K) + ")] = (float)((double)" + out + "[idx4(b,h,q,k," + std::to_string(H) + "," + std::to_string(Q) + "," + std::to_string(K) + ")] * inv); }");
-    lines.push_back("      }");
-    lines.push_back("    }");
-    lines.push_back("  }");
-    return lines;
+    w.line("for (int b = 0; b < " + std::to_string(B) + "; ++b) {");
+    w.indent();
+    w.line("for (int h = 0; h < " + std::to_string(H) + "; ++h) {");
+    w.indent();
+    w.line("for (int q = 0; q < " + std::to_string(Q) + "; ++q) {");
+    w.indent();
+    w.line("double mx = -1e30;");
+    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { double v = (double)" + a + "[idx4(b,h,q,k," + std::to_string(H) + "," + std::to_string(Q) + "," + std::to_string(K) + ")]; if (v > mx) mx = v; }");
+    w.line("double sum = 0.0;");
+    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { double e = exp((double)" + a + "[idx4(b,h,q,k," + std::to_string(H) + "," + std::to_string(Q) + "," + std::to_string(K) + ")] - mx); " + out + "[idx4(b,h,q,k," + std::to_string(H) + "," + std::to_string(Q) + "," + std::to_string(K) + ")] = (float)e; sum += e; }");
+    w.line("double inv = 1.0 / sum;");
+    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { " + out + "[idx4(b,h,q,k," + std::to_string(H) + "," + std::to_string(Q) + "," + std::to_string(K) + ")] = (float)((double)" + out + "[idx4(b,h,q,k," + std::to_string(H) + "," + std::to_string(Q) + "," + std::to_string(K) + ")] * inv); }");
+    w.dedent();
+    w.line("}");
+    w.dedent();
+    w.line("}");
+    w.dedent();
+    w.line("}");
+    return;
   }
   fail("softmax supports rank<=4");
 }
 
-std::vector<std::string> emit_transpose_4d_0132(const std::string& out, const std::string& inp, const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape) {
+void emit_transpose_4d_0132(CodeWriter& w, const std::string& out, const std::string& inp, const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape) {
   if (in_shape.size() != 4 || out_shape.size() != 4) fail("transpose expects rank-4");
   int64_t B = in_shape[0], H = in_shape[1], K = in_shape[2], D = in_shape[3];
-  return {
-      "  for (int b = 0; b < " + std::to_string(B) + "; ++b) {",
-      "    for (int h = 0; h < " + std::to_string(H) + "; ++h) {",
-      "      for (int k = 0; k < " + std::to_string(K) + "; ++k) {",
-      "        for (int d = 0; d < " + std::to_string(D) + "; ++d) {",
-      "          " + out + "[idx4(b,h,d,k," + std::to_string(H) + "," + std::to_string(out_shape[2]) + "," + std::to_string(out_shape[3]) + ")] = " + inp + "[idx4(b,h,k,d," + std::to_string(H) + "," + std::to_string(K) + "," + std::to_string(D) + ")];",
-      "        }",
-      "      }",
-      "    }",
-      "  }",
-  };
+  w.line("for (int b = 0; b < " + std::to_string(B) + "; ++b) {");
+  w.indent();
+  w.line("for (int h = 0; h < " + std::to_string(H) + "; ++h) {");
+  w.indent();
+  w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) {");
+  w.indent();
+  w.line("for (int d = 0; d < " + std::to_string(D) + "; ++d) {");
+  w.indent();
+  w.line(out + "[idx4(b,h,d,k," + std::to_string(H) + "," + std::to_string(out_shape[2]) + "," + std::to_string(out_shape[3]) + ")] = " + inp + "[idx4(b,h,k,d," + std::to_string(H) + "," + std::to_string(K) + "," + std::to_string(D) + ")];");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
 }
 
-std::vector<std::string> emit_transpose_generic(const std::string& out, const std::string& inp,
-                                               const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape,
-                                               const std::vector<int>& perm) {
+void emit_transpose_generic(CodeWriter& w, const std::string& out, const std::string& inp,
+                            const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape,
+                            const std::vector<int>& perm) {
   const int r = static_cast<int>(in_shape.size());
   if (static_cast<int>(out_shape.size()) != r) fail("transpose expects same-rank shapes");
   if (static_cast<int>(perm.size()) != r) fail("transpose perm rank mismatch");
@@ -1055,11 +1172,11 @@ std::vector<std::string> emit_transpose_generic(const std::string& out, const st
   }
   for (int i = 0; i < r; ++i) if (seen[i] != 1) fail("transpose perm must be a permutation");
 
-  std::vector<std::string> lines;
   std::vector<std::string> iv = {"i0", "i1", "i2", "i3"};
   iv.resize(r);
   for (int i = 0; i < r; ++i) {
-    lines.push_back("  for (int " + iv[i] + " = 0; " + iv[i] + " < " + std::to_string(out_shape[i]) + "; ++" + iv[i] + ") {");
+    w.line("for (int " + iv[i] + " = 0; " + iv[i] + " < " + std::to_string(out_shape[i]) + "; ++" + iv[i] + ") {");
+    w.indent();
   }
   std::string out_idx = flat_idx_expr(iv, out_shape);
   std::vector<std::string> in_iv(r, "0");
@@ -1067,18 +1184,19 @@ std::vector<std::string> emit_transpose_generic(const std::string& out, const st
     in_iv[perm[od]] = iv[od];
   }
   std::string in_idx = flat_idx_expr(in_iv, in_shape);
-  lines.push_back("    " + out + "[" + out_idx + "] = " + inp + "[" + in_idx + "];");
-  for (int i = 0; i < r; ++i) lines.push_back("  }");
-  return lines;
+  w.line(out + "[" + out_idx + "] = " + inp + "[" + in_idx + "];");
+  for (int i = 0; i < r; ++i) {
+    w.dedent();
+    w.line("}");
+  }
 }
 
-std::vector<std::string> emit_matmul(const std::string& out, const std::string& a, const std::string& b,
-                                     const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape,
-                                     bool transpose_a, bool transpose_b,
-                                     std::optional<int64_t> tile_m, std::optional<int64_t> tile_n, std::optional<int64_t> tile_k,
-                                     std::optional<int64_t> vec_width) {
+void emit_matmul(CodeWriter& w, const std::string& out, const std::string& a, const std::string& b,
+                 const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape,
+                 bool transpose_a, bool transpose_b,
+                 std::optional<int64_t> tile_m, std::optional<int64_t> tile_n, std::optional<int64_t> tile_k,
+                 std::optional<int64_t> vec_width) {
   // Scalar matmul (rank-2 or rank-4).
-  std::vector<std::string> lines;
   if (a_shape.size() == 2 && b_shape.size() == 2) {
     int64_t M = transpose_a ? a_shape[1] : a_shape[0];
     int64_t K = transpose_a ? a_shape[0] : a_shape[1];
@@ -1091,59 +1209,83 @@ std::vector<std::string> emit_matmul(const std::string& out, const std::string& 
     const int64_t tn = (tile_n && *tile_n > 0) ? std::min<int64_t>(*tile_n, N) : N;
     const int64_t tk = (tile_k && *tile_k > 0) ? std::min<int64_t>(*tile_k, K) : K;
     if (!transpose_a) {
-      lines.push_back("#if defined(__riscv_vector) || defined(__riscv_v)");
-      lines.push_back("  for (int m_base = 0; m_base < " + std::to_string(M) + "; m_base += " + std::to_string(tm) + ") {");
-      lines.push_back("    int m_end = m_base + " + std::to_string(tm) + "; if (m_end > " + std::to_string(M) + ") m_end = " + std::to_string(M) + ";");
-      lines.push_back("    for (int n_base = 0; n_base < " + std::to_string(N) + "; n_base += " + std::to_string(tn) + ") {");
-      lines.push_back("      int n_end = n_base + " + std::to_string(tn) + "; if (n_end > " + std::to_string(N) + ") n_end = " + std::to_string(N) + ";");
-      lines.push_back("      for (int m = m_base; m < m_end; ++m) {");
-      lines.push_back("        for (int n0 = n_base; n0 < n_end; ) {");
-      lines.push_back("          size_t rem = (size_t)(n_end - n0);");
-      lines.push_back("          size_t vl = intentir_vsetvl_e32m1(rem);");
-      lines.push_back("          vfloat32m1_t vacc = __riscv_vfmv_v_f_f32m1(0.0f, vl);");
-      lines.push_back("          for (int k_base = 0; k_base < " + std::to_string(K) + "; k_base += " + std::to_string(tk) + ") {");
-      lines.push_back("            int k_end = k_base + " + std::to_string(tk) + "; if (k_end > " + std::to_string(K) + ") k_end = " + std::to_string(K) + ";");
-      lines.push_back("            for (int k = k_base; k < k_end; ++k) {");
-      lines.push_back("              float av = " + a + "[idx2(m,k," + std::to_string(K) + ")];");
+      w.pp_line("#if defined(__riscv_vector) || defined(__riscv_v)");
+      w.line("for (int m_base = 0; m_base < " + std::to_string(M) + "; m_base += " + std::to_string(tm) + ") {");
+      w.indent();
+      w.line("int m_end = m_base + " + std::to_string(tm) + "; if (m_end > " + std::to_string(M) + ") m_end = " + std::to_string(M) + ";");
+      w.line("for (int n_base = 0; n_base < " + std::to_string(N) + "; n_base += " + std::to_string(tn) + ") {");
+      w.indent();
+      w.line("int n_end = n_base + " + std::to_string(tn) + "; if (n_end > " + std::to_string(N) + ") n_end = " + std::to_string(N) + ";");
+      w.line("for (int m = m_base; m < m_end; ++m) {");
+      w.indent();
+      w.line("for (int n0 = n_base; n0 < n_end; ) {");
+      w.indent();
+      w.line("size_t rem = (size_t)(n_end - n0);");
+      w.line("size_t vl = intentir_vsetvl_e32m1(rem);");
+      w.line("vfloat32m1_t vacc = __riscv_vfmv_v_f_f32m1(0.0f, vl);");
+      w.line("for (int k_base = 0; k_base < " + std::to_string(K) + "; k_base += " + std::to_string(tk) + ") {");
+      w.indent();
+      w.line("int k_end = k_base + " + std::to_string(tk) + "; if (k_end > " + std::to_string(K) + ") k_end = " + std::to_string(K) + ";");
+      w.line("for (int k = k_base; k < k_end; ++k) {");
+      w.indent();
+      w.line("float av = " + a + "[idx2(m,k," + std::to_string(K) + ")];");
       if (!transpose_b) {
-        lines.push_back("              vfloat32m1_t vb = __riscv_vle32_v_f32m1(&" + b + "[idx2(k,n0," + std::to_string(N) + ")], vl);");
+        w.line("vfloat32m1_t vb = __riscv_vle32_v_f32m1(&" + b + "[idx2(k,n0," + std::to_string(N) + ")], vl);");
       } else {
-        lines.push_back("              vfloat32m1_t vb = __riscv_vlse32_v_f32m1(&" + b + "[idx2(n0,k," + std::to_string(K) + ")], (ptrdiff_t)((size_t)" + std::to_string(K) + " * sizeof(float)), vl);");
+        w.line("vfloat32m1_t vb = __riscv_vlse32_v_f32m1(&" + b + "[idx2(n0,k," + std::to_string(K) + ")], (ptrdiff_t)((size_t)" + std::to_string(K) + " * sizeof(float)), vl);");
       }
-      lines.push_back("              vacc = __riscv_vfmacc_vf_f32m1(vacc, av, vb, vl);");
-      lines.push_back("            }");
-      lines.push_back("          }");
-      lines.push_back("          __riscv_vse32_v_f32m1(&" + out + "[idx2(m,n0," + std::to_string(N) + ")], vacc, vl);");
-      lines.push_back("          n0 += (int)vl;");
-      lines.push_back("        }");
-      lines.push_back("      }");
-      lines.push_back("    }");
-      lines.push_back("  }");
-      lines.push_back("#else");
-    }
-    lines.push_back("  for (int m_base = 0; m_base < " + std::to_string(M) + "; m_base += " + std::to_string(tm) + ") {");
-    lines.push_back("    int m_end = m_base + " + std::to_string(tm) + "; if (m_end > " + std::to_string(M) + ") m_end = " + std::to_string(M) + ";");
-    lines.push_back("    for (int n_base = 0; n_base < " + std::to_string(N) + "; n_base += " + std::to_string(tn) + ") {");
-    lines.push_back("      int n_end = n_base + " + std::to_string(tn) + "; if (n_end > " + std::to_string(N) + ") n_end = " + std::to_string(N) + ";");
-    lines.push_back("      for (int m = m_base; m < m_end; ++m) {");
-    lines.push_back("        for (int n = n_base; n < n_end; ++n) {");
-    lines.push_back("          double acc = 0.0;");
-    lines.push_back("          for (int k_base = 0; k_base < " + std::to_string(K) + "; k_base += " + std::to_string(tk) + ") {");
-    lines.push_back("            int k_end = k_base + " + std::to_string(tk) + "; if (k_end > " + std::to_string(K) + ") k_end = " + std::to_string(K) + ";");
-    lines.push_back("            for (int k = k_base; k < k_end; ++k) {");
+      w.line("vacc = __riscv_vfmacc_vf_f32m1(vacc, av, vb, vl);");
+      w.dedent();
+      w.line("}");
+      w.dedent();
+      w.line("}");
+      w.line("__riscv_vse32_v_f32m1(&" + out + "[idx2(m,n0," + std::to_string(N) + ")], vacc, vl);");
+      w.line("n0 += (int)vl;");
+      w.dedent();
+      w.line("}");
+	      w.dedent();
+	      w.line("}");
+	      w.dedent();
+	      w.line("}");
+	      w.dedent();
+	      w.line("}");
+	      w.pp_line("#else");
+	    }
+    w.line("for (int m_base = 0; m_base < " + std::to_string(M) + "; m_base += " + std::to_string(tm) + ") {");
+    w.indent();
+    w.line("int m_end = m_base + " + std::to_string(tm) + "; if (m_end > " + std::to_string(M) + ") m_end = " + std::to_string(M) + ";");
+    w.line("for (int n_base = 0; n_base < " + std::to_string(N) + "; n_base += " + std::to_string(tn) + ") {");
+    w.indent();
+    w.line("int n_end = n_base + " + std::to_string(tn) + "; if (n_end > " + std::to_string(N) + ") n_end = " + std::to_string(N) + ";");
+    w.line("for (int m = m_base; m < m_end; ++m) {");
+    w.indent();
+    w.line("for (int n = n_base; n < n_end; ++n) {");
+    w.indent();
+    w.line("double acc = 0.0;");
+    w.line("for (int k_base = 0; k_base < " + std::to_string(K) + "; k_base += " + std::to_string(tk) + ") {");
+    w.indent();
+    w.line("int k_end = k_base + " + std::to_string(tk) + "; if (k_end > " + std::to_string(K) + ") k_end = " + std::to_string(K) + ";");
+    w.line("for (int k = k_base; k < k_end; ++k) {");
+    w.indent();
     std::string a_idx = transpose_a ? ("idx2(k,m," + std::to_string(M) + ")") : ("idx2(m,k," + std::to_string(K) + ")");
     std::string b_idx = transpose_b ? ("idx2(n,k," + std::to_string(K) + ")") : ("idx2(k,n," + std::to_string(N) + ")");
-    lines.push_back("              acc += (double)" + a + "[" + a_idx + "] * (double)" + b + "[" + b_idx + "];");
-    lines.push_back("            }");
-    lines.push_back("          }");
-    lines.push_back("          " + out + "[idx2(m,n," + std::to_string(N) + ")] = (float)acc;");
-    lines.push_back("        }");
-    lines.push_back("      }");
-    lines.push_back("    }");
-    lines.push_back("  }");
-    if (!transpose_a) lines.push_back("#endif");
-    return lines;
-  }
+    w.line("acc += (double)" + a + "[" + a_idx + "] * (double)" + b + "[" + b_idx + "];");
+    w.dedent();
+    w.line("}");
+    w.dedent();
+    w.line("}");
+    w.line(out + "[idx2(m,n," + std::to_string(N) + ")] = (float)acc;");
+    w.dedent();
+    w.line("}");
+    w.dedent();
+    w.line("}");
+	    w.dedent();
+	    w.line("}");
+	    w.dedent();
+	    w.line("}");
+	    if (!transpose_a) w.pp_line("#endif");
+	    return;
+	  }
   if (a_shape.size() == 4 && b_shape.size() == 4 && out_shape.size() == 4) {
     int64_t B0 = a_shape[0], H0 = a_shape[1];
     int64_t M = transpose_a ? a_shape[3] : a_shape[2];
@@ -1158,73 +1300,519 @@ std::vector<std::string> emit_matmul(const std::string& out, const std::string& 
     const int64_t tn = (tile_n && *tile_n > 0) ? std::min<int64_t>(*tile_n, N) : N;
     const int64_t tk = (tile_k && *tile_k > 0) ? std::min<int64_t>(*tile_k, K) : K;
     if (!transpose_a) {
-      lines.push_back("#if defined(__riscv_vector) || defined(__riscv_v)");
-      lines.push_back("  for (int b0 = 0; b0 < " + std::to_string(B0) + "; ++b0) {");
-      lines.push_back("    for (int h0 = 0; h0 < " + std::to_string(H0) + "; ++h0) {");
-      lines.push_back("      for (int m_base = 0; m_base < " + std::to_string(M) + "; m_base += " + std::to_string(tm) + ") {");
-      lines.push_back("        int m_end = m_base + " + std::to_string(tm) + "; if (m_end > " + std::to_string(M) + ") m_end = " + std::to_string(M) + ";");
-      lines.push_back("        for (int n_base = 0; n_base < " + std::to_string(N) + "; n_base += " + std::to_string(tn) + ") {");
-      lines.push_back("          int n_end = n_base + " + std::to_string(tn) + "; if (n_end > " + std::to_string(N) + ") n_end = " + std::to_string(N) + ";");
-      lines.push_back("          for (int m0 = m_base; m0 < m_end; ++m0) {");
-      lines.push_back("            for (int n0 = n_base; n0 < n_end; ) {");
-      lines.push_back("              size_t rem = (size_t)(n_end - n0);");
-      lines.push_back("              size_t vl = intentir_vsetvl_e32m1(rem);");
-      lines.push_back("              vfloat32m1_t vacc = __riscv_vfmv_v_f_f32m1(0.0f, vl);");
-      lines.push_back("              for (int k_base = 0; k_base < " + std::to_string(K) + "; k_base += " + std::to_string(tk) + ") {");
-      lines.push_back("                int k_end = k_base + " + std::to_string(tk) + "; if (k_end > " + std::to_string(K) + ") k_end = " + std::to_string(K) + ";");
-      lines.push_back("                for (int k0 = k_base; k0 < k_end; ++k0) {");
-      lines.push_back("                  float av = " + a + "[idx4(b0,h0,m0,k0," + std::to_string(H0) + "," + std::to_string(M) + "," + std::to_string(K) + ")];");
+      w.pp_line("#if defined(__riscv_vector) || defined(__riscv_v)");
+      w.line("for (int b0 = 0; b0 < " + std::to_string(B0) + "; ++b0) {");
+      w.indent();
+      w.line("for (int h0 = 0; h0 < " + std::to_string(H0) + "; ++h0) {");
+      w.indent();
+      w.line("for (int m_base = 0; m_base < " + std::to_string(M) + "; m_base += " + std::to_string(tm) + ") {");
+      w.indent();
+      w.line("int m_end = m_base + " + std::to_string(tm) + "; if (m_end > " + std::to_string(M) + ") m_end = " + std::to_string(M) + ";");
+      w.line("for (int n_base = 0; n_base < " + std::to_string(N) + "; n_base += " + std::to_string(tn) + ") {");
+      w.indent();
+      w.line("int n_end = n_base + " + std::to_string(tn) + "; if (n_end > " + std::to_string(N) + ") n_end = " + std::to_string(N) + ";");
+      w.line("for (int m0 = m_base; m0 < m_end; ++m0) {");
+      w.indent();
+      w.line("for (int n0 = n_base; n0 < n_end; ) {");
+      w.indent();
+      w.line("size_t rem = (size_t)(n_end - n0);");
+      w.line("size_t vl = intentir_vsetvl_e32m1(rem);");
+      w.line("vfloat32m1_t vacc = __riscv_vfmv_v_f_f32m1(0.0f, vl);");
+      w.line("for (int k_base = 0; k_base < " + std::to_string(K) + "; k_base += " + std::to_string(tk) + ") {");
+      w.indent();
+      w.line("int k_end = k_base + " + std::to_string(tk) + "; if (k_end > " + std::to_string(K) + ") k_end = " + std::to_string(K) + ";");
+      w.line("for (int k0 = k_base; k0 < k_end; ++k0) {");
+      w.indent();
+      w.line("float av = " + a + "[idx4(b0,h0,m0,k0," + std::to_string(H0) + "," + std::to_string(M) + "," + std::to_string(K) + ")];");
       if (!transpose_b) {
-        lines.push_back("                  vfloat32m1_t vb = __riscv_vle32_v_f32m1(&" + b + "[idx4(b0,h0,k0,n0," + std::to_string(H0) + "," + std::to_string(K) + "," + std::to_string(N) + ")], vl);");
+        w.line("vfloat32m1_t vb = __riscv_vle32_v_f32m1(&" + b + "[idx4(b0,h0,k0,n0," + std::to_string(H0) + "," + std::to_string(K) + "," + std::to_string(N) + ")], vl);");
       } else {
-        lines.push_back("                  vfloat32m1_t vb = __riscv_vlse32_v_f32m1(&" + b + "[idx4(b0,h0,n0,k0," + std::to_string(H0) + "," + std::to_string(N) + "," + std::to_string(K) + ")], (ptrdiff_t)((size_t)" + std::to_string(K) + " * sizeof(float)), vl);");
+        w.line("vfloat32m1_t vb = __riscv_vlse32_v_f32m1(&" + b + "[idx4(b0,h0,n0,k0," + std::to_string(H0) + "," + std::to_string(N) + "," + std::to_string(K) + ")], (ptrdiff_t)((size_t)" + std::to_string(K) + " * sizeof(float)), vl);");
       }
-      lines.push_back("                  vacc = __riscv_vfmacc_vf_f32m1(vacc, av, vb, vl);");
-      lines.push_back("                }");
-      lines.push_back("              }");
-      lines.push_back("              __riscv_vse32_v_f32m1(&" + out + "[idx4(b0,h0,m0,n0," + std::to_string(H0) + "," + std::to_string(M) + "," + std::to_string(N) + ")], vacc, vl);");
-      lines.push_back("              n0 += (int)vl;");
-      lines.push_back("            }");
-      lines.push_back("          }");
-      lines.push_back("        }");
-      lines.push_back("      }");
-      lines.push_back("    }");
-      lines.push_back("  }");
-      lines.push_back("#else");
+      w.line("vacc = __riscv_vfmacc_vf_f32m1(vacc, av, vb, vl);");
+      w.dedent();
+      w.line("}");
+      w.dedent();
+      w.line("}");
+      w.line("__riscv_vse32_v_f32m1(&" + out + "[idx4(b0,h0,m0,n0," + std::to_string(H0) + "," + std::to_string(M) + "," + std::to_string(N) + ")], vacc, vl);");
+      w.line("n0 += (int)vl;");
+      w.dedent();
+      w.line("}");
+      w.dedent();
+      w.line("}");
+      w.dedent();
+      w.line("}");
+      w.dedent();
+      w.line("}");
+      w.dedent();
+      w.line("}");
+      w.dedent();
+      w.line("}");
+      w.pp_line("#else");
     }
-    lines.push_back("  for (int b0 = 0; b0 < " + std::to_string(B0) + "; ++b0) {");
-    lines.push_back("    for (int h0 = 0; h0 < " + std::to_string(H0) + "; ++h0) {");
-    lines.push_back("      for (int m_base = 0; m_base < " + std::to_string(M) + "; m_base += " + std::to_string(tm) + ") {");
-    lines.push_back("        int m_end = m_base + " + std::to_string(tm) + "; if (m_end > " + std::to_string(M) + ") m_end = " + std::to_string(M) + ";");
-    lines.push_back("        for (int n_base = 0; n_base < " + std::to_string(N) + "; n_base += " + std::to_string(tn) + ") {");
-    lines.push_back("          int n_end = n_base + " + std::to_string(tn) + "; if (n_end > " + std::to_string(N) + ") n_end = " + std::to_string(N) + ";");
-    lines.push_back("          for (int m0 = m_base; m0 < m_end; ++m0) {");
-    lines.push_back("            for (int n0 = n_base; n0 < n_end; ++n0) {");
-    lines.push_back("              double acc = 0.0;");
-    lines.push_back("              for (int k_base = 0; k_base < " + std::to_string(K) + "; k_base += " + std::to_string(tk) + ") {");
-    lines.push_back("                int k_end = k_base + " + std::to_string(tk) + "; if (k_end > " + std::to_string(K) + ") k_end = " + std::to_string(K) + ";");
-    lines.push_back("                for (int k0 = k_base; k0 < k_end; ++k0) {");
+    w.line("for (int b0 = 0; b0 < " + std::to_string(B0) + "; ++b0) {");
+    w.indent();
+    w.line("for (int h0 = 0; h0 < " + std::to_string(H0) + "; ++h0) {");
+    w.indent();
+    w.line("for (int m_base = 0; m_base < " + std::to_string(M) + "; m_base += " + std::to_string(tm) + ") {");
+    w.indent();
+    w.line("int m_end = m_base + " + std::to_string(tm) + "; if (m_end > " + std::to_string(M) + ") m_end = " + std::to_string(M) + ";");
+    w.line("for (int n_base = 0; n_base < " + std::to_string(N) + "; n_base += " + std::to_string(tn) + ") {");
+    w.indent();
+    w.line("int n_end = n_base + " + std::to_string(tn) + "; if (n_end > " + std::to_string(N) + ") n_end = " + std::to_string(N) + ";");
+    w.line("for (int m0 = m_base; m0 < m_end; ++m0) {");
+    w.indent();
+    w.line("for (int n0 = n_base; n0 < n_end; ++n0) {");
+    w.indent();
+    w.line("double acc = 0.0;");
+    w.line("for (int k_base = 0; k_base < " + std::to_string(K) + "; k_base += " + std::to_string(tk) + ") {");
+    w.indent();
+    w.line("int k_end = k_base + " + std::to_string(tk) + "; if (k_end > " + std::to_string(K) + ") k_end = " + std::to_string(K) + ";");
+    w.line("for (int k0 = k_base; k0 < k_end; ++k0) {");
+    w.indent();
     std::string a_idx = transpose_a
                             ? ("idx4(b0,h0,k0,m0," + std::to_string(H0) + "," + std::to_string(K) + "," + std::to_string(M) + ")")
                             : ("idx4(b0,h0,m0,k0," + std::to_string(H0) + "," + std::to_string(M) + "," + std::to_string(K) + ")");
     std::string b_idx = transpose_b
                             ? ("idx4(b0,h0,n0,k0," + std::to_string(H0) + "," + std::to_string(N) + "," + std::to_string(K) + ")")
                             : ("idx4(b0,h0,k0,n0," + std::to_string(H0) + "," + std::to_string(K) + "," + std::to_string(N) + ")");
-    lines.push_back("                  acc += (double)" + a + "[" + a_idx + "] * (double)" + b + "[" + b_idx + "];");
-    lines.push_back("                }");
-    lines.push_back("              }");
-    lines.push_back("              " + out + "[idx4(b0,h0,m0,n0," + std::to_string(H0) + "," + std::to_string(M) + "," + std::to_string(N) + ")] = (float)acc;");
-    lines.push_back("            }");
-    lines.push_back("          }");
-    lines.push_back("        }");
-    lines.push_back("      }");
-    lines.push_back("    }");
-    lines.push_back("  }");
-    if (!transpose_a) lines.push_back("#endif");
-    return lines;
+    w.line("acc += (double)" + a + "[" + a_idx + "] * (double)" + b + "[" + b_idx + "];");
+    w.dedent();
+    w.line("}");
+    w.dedent();
+    w.line("}");
+    w.line(out + "[idx4(b0,h0,m0,n0," + std::to_string(H0) + "," + std::to_string(M) + "," + std::to_string(N) + ")] = (float)acc;");
+    w.dedent();
+    w.line("}");
+    w.dedent();
+    w.line("}");
+    w.dedent();
+    w.line("}");
+    w.dedent();
+    w.line("}");
+    w.dedent();
+    w.line("}");
+    w.dedent();
+    w.line("}");
+    if (!transpose_a) w.pp_line("#endif");
+    return;
   }
   fail("matmul supports rank-2 or rank-4");
 }
+
+struct CProgramEmitter {
+  CodeWriter& w;
+  const Intent& intent;
+  const std::unordered_map<std::string, int64_t>& bindings;
+  const std::vector<std::string>& external_inputs;
+  const std::unordered_map<std::string, std::vector<int64_t>>& shape_env;
+  const std::unordered_map<std::string, std::string>& dtype_env;
+  const std::unordered_map<std::string, ConstVal>& const_vals;
+  std::optional<int64_t> sched_tile_m;
+  std::optional<int64_t> sched_tile_n;
+  std::optional<int64_t> sched_tile_k;
+  std::optional<int64_t> sched_vec_width;
+  double atol = 1e-3;
+  double rtol = 1e-3;
+  double matmul_flops_total = 0.0;
+
+  void emit_program() {
+    emit_prelude();
+    emit_globals();
+    emit_now_ns();
+    w.line("static void intentir_compute(void);");
+    w.blank();
+    emit_main();
+    w.blank();
+    emit_compute_fn();
+  }
+
+  void emit_prelude() {
+    w.pp_line("#include <math.h>");
+    w.pp_line("#include <stdint.h>");
+    w.pp_line("#include <stddef.h>");
+    w.pp_line("#include <stdio.h>");
+    w.pp_line("#include <stdlib.h>");
+    w.pp_line("#include <time.h>");
+    w.pp_line("#if defined(__riscv_vector) || defined(__riscv_v)");
+    w.pp_line("#include <riscv_vector.h>");
+    w.pp_line("#endif");
+    w.blank();
+
+    int64_t vw = 0;
+    if (sched_vec_width && *sched_vec_width > 0) vw = *sched_vec_width;
+    w.pp_line("#ifndef INTENTIR_VEC_WIDTH");
+    w.pp_line("#define INTENTIR_VEC_WIDTH " + std::to_string(vw));
+    w.pp_line("#endif");
+    w.pp_line("#if defined(__riscv_vector) || defined(__riscv_v)");
+    w.line("static inline size_t intentir_vsetvl_e32m1(size_t rem) {");
+    w.indent();
+    w.line("if (INTENTIR_VEC_WIDTH > 0 && rem > (size_t)INTENTIR_VEC_WIDTH) rem = (size_t)INTENTIR_VEC_WIDTH;");
+    w.line("return __riscv_vsetvl_e32m1(rem);");
+    w.dedent();
+    w.line("}");
+    w.pp_line("#endif");
+    w.blank();
+
+    w.line("static int read_bytes(const char* path, void* dst, size_t bytes) {");
+    w.indent();
+    w.line("FILE* f = fopen(path, \"rb\");");
+    w.line("if (!f) { perror(path); return 0; }");
+    w.line("size_t got = fread(dst, 1, bytes, f);");
+    w.line("fclose(f);");
+    w.line("return got == bytes;");
+    w.dedent();
+    w.line("}");
+    w.blank();
+
+    w.line("static int compare_f32(const char* name, const float* got, const float* ref, size_t n, float atol, float rtol) {");
+    w.indent();
+    w.line("double max_abs = 0.0, max_rel = 0.0; size_t worst = 0;");
+    w.line("for (size_t i = 0; i < n; ++i) {");
+    w.indent();
+    w.line("double a = (double)got[i];");
+    w.line("double b = (double)ref[i];");
+    w.line("double abs_e = fabs(a - b);");
+    w.line("double rel_e = abs_e / (fabs(b) + 1e-8);");
+    w.line("if (abs_e > max_abs) { max_abs = abs_e; max_rel = rel_e; worst = i; }");
+    w.dedent();
+    w.line("}");
+    w.line("int ok = (max_abs <= (double)atol) || (max_rel <= (double)rtol);");
+    w.line("printf(\"%s: ok=%d max_abs=%g max_rel=%g worst_i=%zu got=%g ref=%g\\n\",");
+    w.line("       name, ok, max_abs, max_rel, worst, (double)got[worst], (double)ref[worst]);");
+    w.line("return ok;");
+    w.dedent();
+    w.line("}");
+    w.blank();
+
+    w.line("static int compare_u8(const char* name, const uint8_t* got, const uint8_t* ref, size_t n) {");
+    w.indent();
+    w.line("for (size_t i = 0; i < n; ++i) {");
+    w.indent();
+    w.line("if (got[i] != ref[i]) {");
+    w.indent();
+    w.line("fprintf(stderr, \"%s mismatch at %zu: got=%u ref=%u\\n\", name, i, (unsigned)got[i], (unsigned)ref[i]);");
+    w.line("return 0;");
+    w.dedent();
+    w.line("}");
+    w.dedent();
+    w.line("}");
+    w.line("printf(\"%s: ok=1 (exact)\\n\", name);");
+    w.line("return 1;");
+    w.dedent();
+    w.line("}");
+    w.blank();
+
+    w.line("static inline size_t idx2(int i, int j, int D1) { return (size_t)i * (size_t)D1 + (size_t)j; }");
+    w.line("static inline size_t idx3(int i, int j, int k, int D1, int D2) { return ((size_t)i * (size_t)D1 + (size_t)j) * (size_t)D2 + (size_t)k; }");
+    w.line("static inline size_t idx4(int i, int j, int k, int l, int D1, int D2, int D3) { return (((size_t)i * (size_t)D1 + (size_t)j) * (size_t)D2 + (size_t)k) * (size_t)D3 + (size_t)l; }");
+    w.blank();
+  }
+
+  void emit_globals() {
+    std::vector<std::string> names;
+    names.reserve(shape_env.size());
+    for (const auto& kv : shape_env) names.push_back(kv.first);
+    std::sort(names.begin(), names.end());
+    w.line("// intent tensors (globals)");
+    for (const auto& name : names) {
+      std::string ct = ctype_for_dtype(dtype_env.at(name));
+      w.line("static " + ct + "* " + name + " = NULL;");
+    }
+    w.blank();
+  }
+
+  void emit_now_ns() {
+    w.line("static inline uint64_t intentir_now_ns(void) {");
+    w.indent();
+    w.line("struct timespec ts;");
+    w.line("timespec_get(&ts, TIME_UTC);");
+    w.line("return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;");
+    w.dedent();
+    w.line("}");
+    w.blank();
+  }
+
+  void emit_alloc_tensor(const std::string& name) {
+    const auto& shp = shape_env.at(name);
+    int64_t n = numel(shp);
+    std::string ct = ctype_for_dtype(dtype_env.at(name));
+    w.line(name + " = (" + ct + "*)malloc(sizeof(" + ct + ") * (size_t)" + std::to_string(n) + ");");
+    w.line("if (!" + name + ") { fprintf(stderr, \"alloc failed: " + name + "\\n\"); return 2; }");
+  }
+
+  void emit_main() {
+    w.line("int main() {");
+    w.indent();
+
+    w.line("setvbuf(stdout, NULL, _IONBF, 0);");
+    w.line("setvbuf(stderr, NULL, _IONBF, 0);");
+    w.line("const float ATOL = " + c_float(atol) + ";");
+    w.line("const float RTOL = " + c_float(rtol) + ";");
+    {
+      std::ostringstream oss;
+      oss.setf(std::ios::fixed);
+      oss.precision(1);
+      oss << matmul_flops_total;
+      w.line("const double MATMUL_FLOPS = (double)" + oss.str() + ";");
+    }
+    w.line("int BENCH_ITERS = 0;");
+    w.line("int BENCH_WARMUP = 1;");
+    w.line("const char* _bench = getenv(\"INTENTIR_BENCH_ITERS\");");
+    w.line("if (_bench) BENCH_ITERS = atoi(_bench);");
+    w.line("const char* _warm = getenv(\"INTENTIR_BENCH_WARMUP\");");
+    w.line("if (_warm) BENCH_WARMUP = atoi(_warm);");
+    w.line("if (BENCH_ITERS < 0) BENCH_ITERS = 0;");
+    w.line("if (BENCH_WARMUP < 0) BENCH_WARMUP = 0;");
+    w.blank();
+
+    // inputs
+    for (const auto& name : external_inputs) {
+      const auto& shp = shape_env.at(name);
+      int64_t n = numel(shp);
+      std::string ct = ctype_for_dtype(dtype_env.at(name));
+      w.line("// input " + name + ": shape=" + std::to_string((int)shp.size()) + "D");
+      w.line(name + " = (" + ct + "*)malloc(sizeof(" + ct + ") * (size_t)" + std::to_string(n) + ");");
+      w.line("if (!" + name + ") { fprintf(stderr, \"alloc failed: " + name + "\\n\"); return 2; }");
+      w.line("if (!read_bytes(\"" + name + ".bin\", " + name + ", sizeof(" + ct + ") * (size_t)" + std::to_string(n) + ")) return 2;");
+      w.blank();
+    }
+
+    // consts as 1-element arrays (deterministic order for reproducible C).
+    {
+      std::vector<std::string> cnames;
+      cnames.reserve(const_vals.size());
+      for (const auto& kv : const_vals) cnames.push_back(kv.first);
+      std::sort(cnames.begin(), cnames.end());
+      for (const auto& name : cnames) {
+        const ConstVal& cv = const_vals.at(name);
+        const std::string ct = ctype_for_dtype(cv.dtype);
+        w.line(name + " = (" + ct + "*)malloc(sizeof(" + ct + "));");
+        w.line("if (!" + name + ") { fprintf(stderr, \"alloc failed: " + name + "\\n\"); return 2; }");
+        if (ct == "float") {
+          w.line(name + "[0] = " + c_float(cv.value) + ";");
+        } else if (ct == "double") {
+          std::ostringstream oss;
+          oss.precision(17);
+          oss << cv.value;
+          w.line(name + "[0] = (double)" + oss.str() + ";");
+        } else {
+          w.line(name + "[0] = (" + ct + ")" + std::to_string((int64_t)cv.value) + ";");
+        }
+        w.blank();
+      }
+    }
+
+    // allocate outputs / set alias views
+    for (const auto& op : intent.ops) {
+      if (op.op == "const") continue;
+      const std::string& out = op.output;
+      if (op.op == "reshape" || op.op == "identity" || op.op == "layout_cast") {
+        std::string ct = ctype_for_dtype(dtype_env.at(out));
+        w.line("// " + op.op + " alias");
+        w.line(out + " = (" + ct + "*)" + op.inputs[0] + ";");
+        w.blank();
+        continue;
+      }
+      w.line("// op " + op.op + " -> " + out);
+      emit_alloc_tensor(out);
+      w.blank();
+    }
+
+    // compute once
+    w.line("intentir_compute();");
+    w.blank();
+
+    // Optional compute microbenchmark.
+    w.line("if (BENCH_ITERS > 0) {");
+    w.indent();
+    w.line("for (int w = 0; w < BENCH_WARMUP; ++w) intentir_compute();");
+    w.line("uint64_t t0 = intentir_now_ns();");
+    w.line("for (int it = 0; it < BENCH_ITERS; ++it) intentir_compute();");
+    w.line("uint64_t t1 = intentir_now_ns();");
+    w.line("double ns_total = (double)(t1 - t0);");
+    w.line("double ns_per_iter = ns_total / (double)BENCH_ITERS;");
+    w.line("double gflops = (ns_per_iter > 0.0) ? (MATMUL_FLOPS / ns_per_iter) : 0.0;");
+    w.line("printf(\"INTENTIR_BENCH {\\\"iters\\\":%d,\\\"warmup\\\":%d,\\\"ns_total\\\":%llu,\\\"ns_per_iter\\\":%.1f,\\\"matmul_flops\\\":%.0f,\\\"matmul_gflops\\\":%.6f}\\n\",");
+    w.line("       BENCH_ITERS, BENCH_WARMUP, (unsigned long long)(t1 - t0), ns_per_iter, MATMUL_FLOPS, gflops);");
+    w.dedent();
+    w.line("}");
+    w.blank();
+
+    // compare outputs
+    std::vector<std::string> ok_exprs;
+    for (const auto& name : intent.outputs) {
+      const auto& shp = shape_env.at(name);
+      int64_t n = numel(shp);
+      std::string dt = dtype_env.at(name);
+      if (dt == "bool" || dt == "i1") {
+        w.line("uint8_t* " + name + "_ref = (uint8_t*)malloc(sizeof(uint8_t) * (size_t)" + std::to_string(n) + ");");
+        w.line("if (!" + name + "_ref) { fprintf(stderr, \"alloc failed: " + name + "_ref\\n\"); return 2; }");
+        w.line("if (!read_bytes(\"" + name + "_ref.bin\", " + name + "_ref, sizeof(uint8_t) * (size_t)" + std::to_string(n) + ")) return 2;");
+        w.line("int ok_" + name + " = compare_u8(\"" + name + "\", (const uint8_t*)" + name + ", (const uint8_t*)" + name + "_ref, (size_t)" + std::to_string(n) + ");");
+      } else {
+        w.line("float* " + name + "_ref = (float*)malloc(sizeof(float) * (size_t)" + std::to_string(n) + ");");
+        w.line("if (!" + name + "_ref) { fprintf(stderr, \"alloc failed: " + name + "_ref\\n\"); return 2; }");
+        w.line("if (!read_bytes(\"" + name + "_ref.bin\", " + name + "_ref, sizeof(float) * (size_t)" + std::to_string(n) + ")) return 2;");
+        w.line("int ok_" + name + " = compare_f32(\"" + name + "\", (const float*)" + name + ", (const float*)" + name + "_ref, (size_t)" + std::to_string(n) + ", ATOL, RTOL);");
+      }
+      ok_exprs.push_back("ok_" + name);
+      w.blank();
+    }
+    if (ok_exprs.empty()) {
+      w.line("int ok = 1;");
+    } else {
+      std::string expr = ok_exprs[0];
+      for (size_t i = 1; i < ok_exprs.size(); ++i) expr += " && " + ok_exprs[i];
+      w.line("int ok = " + expr + ";");
+    }
+    w.line("printf(ok ? \"PASS lowered\\n\" : \"FAIL lowered\\n\");");
+    w.line("return ok ? 0 : 1;");
+
+    w.dedent();
+    w.line("}");
+  }
+
+  void emit_broadcast_in_dim(const Op& op, const std::vector<int64_t>& out_shape) {
+    const std::string& out = op.output;
+    const std::string& inp = op.inputs[0];
+    const auto& in_shape = shape_env.at(inp);
+    std::vector<int> bcast_dims;
+    for (const auto& d : op.attrs["broadcast_dims"]) bcast_dims.push_back(d.get<int>());
+
+    std::vector<int64_t> strides(in_shape.size(), 1);
+    int64_t s = 1;
+    for (int i = (int)in_shape.size() - 1; i >= 0; --i) {
+      strides[i] = s;
+      s *= in_shape[i];
+    }
+    const int r_out = (int)out_shape.size();
+    if (r_out > 4) fail("broadcast_in_dim supports rank<=4");
+    std::vector<std::string> iv = {"i0", "i1", "i2", "i3"};
+    iv.resize(r_out);
+    for (int i = 0; i < r_out; ++i) {
+      w.line("for (int " + iv[i] + " = 0; " + iv[i] + " < " + std::to_string(out_shape[i]) + "; ++" + iv[i] + ") {");
+      w.indent();
+    }
+    std::string out_idx = flat_idx_expr(iv, out_shape);
+    std::vector<std::string> terms;
+    for (int in_dim = 0; in_dim < (int)in_shape.size(); ++in_dim) {
+      int od = bcast_dims[in_dim];
+      if (in_shape[in_dim] == 1) terms.push_back("0");
+      else terms.push_back("((size_t)" + iv[od] + " * (size_t)" + std::to_string(strides[in_dim]) + ")");
+    }
+    std::string in_idx = terms.empty() ? "0" : terms[0];
+    for (size_t t = 1; t < terms.size(); ++t) in_idx += " + " + terms[t];
+    w.line(out + "[" + out_idx + "] = " + inp + "[" + in_idx + "];");
+    for (int i = 0; i < r_out; ++i) {
+      w.dedent();
+      w.line("}");
+    }
+  }
+
+  void emit_compute_fn() {
+    w.line("static void intentir_compute(void) {");
+    w.indent();
+    for (const auto& op : intent.ops) {
+      if (op.op == "const") continue;
+      if (op.op == "reshape" || op.op == "identity" || op.op == "layout_cast") continue;
+      const std::string& out = op.output;
+      const std::vector<int64_t>& out_shape = shape_env.at(out);
+      w.line("// op " + op.op + " -> " + out);
+
+      if (op.op == "transpose") {
+        const auto& in_shape = shape_env.at(op.inputs[0]);
+        std::vector<int> perm;
+        for (const auto& p : op.attrs["perm"]) perm.push_back(p.get<int>());
+        if (perm.size() == 4 && perm[0] == 0 && perm[1] == 1 && perm[2] == 3 && perm[3] == 2) {
+          emit_transpose_4d_0132(w, out, op.inputs[0], in_shape, out_shape);
+        } else {
+          emit_transpose_generic(w, out, op.inputs[0], in_shape, out_shape, perm);
+        }
+      } else if (op.op == "broadcast_in_dim") {
+        emit_broadcast_in_dim(op, out_shape);
+      } else if (op.op == "add" || op.op == "sub" || op.op == "mul" || op.op == "div" || op.op == "max" || op.op == "min") {
+        emit_elemwise_bin(w, intent, bindings, op.op, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, dtype_env.at(out));
+      } else if (op.op == "ne") {
+        emit_ne(w, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, intent, bindings);
+      } else if (op.op == "lt" || op.op == "le" || op.op == "gt" || op.op == "ge") {
+        emit_cmp(w, op.op, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, intent, bindings);
+      } else if (op.op == "and" || op.op == "or") {
+        emit_bool_bin(w, op.op, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape);
+      } else if (op.op == "not") {
+        emit_bool_not(w, out, op.inputs[0], out_shape);
+      } else if (op.op == "rsqrt") {
+        emit_rsqrt(w, out, op.inputs[0], out_shape);
+      } else if (op.op == "abs") {
+        emit_unary_abs(w, out, op.inputs[0], out_shape, dtype_env.at(op.inputs[0]), dtype_env.at(out));
+      } else if (op.op == "floor") {
+        emit_floor(w, out, op.inputs[0], out_shape);
+      } else if (op.op == "cast") {
+        emit_cast(w, out, op.inputs[0], out_shape, dtype_env.at(op.inputs[0]), dtype_env.at(out));
+      } else if (op.op == "where") {
+        emit_where(w, out, op.inputs[0], op.inputs[1], op.inputs[2], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), shape_env.at(op.inputs[2]), out_shape, dtype_env.at(out));
+      } else if (op.op == "iota") {
+        int axis = op.attrs.value("axis", 0);
+        emit_iota(w, out, out_shape, axis, dtype_env.at(out));
+      } else if (op.op == "gather") {
+        std::vector<std::string> idxs(op.inputs.begin() + 1, op.inputs.end());
+        std::vector<std::vector<int64_t>> idx_shapes;
+        for (const auto& nm : idxs) idx_shapes.push_back(shape_env.at(nm));
+        emit_gather(w, out, op.inputs[0], idxs, shape_env.at(op.inputs[0]), idx_shapes, out_shape, dtype_env.at(out));
+      } else if (op.op == "reduce_sum") {
+        std::vector<int> dims;
+        for (const auto& d : op.attrs["dims"]) dims.push_back(d.get<int>());
+        bool keepdims = op.attrs.value("keepdims", false);
+        std::optional<double> scale;
+        if (op.attrs.contains("scale")) scale = resolve_const_value(op.attrs["scale"], bindings);
+        emit_reduce_sum(w, out, op.inputs[0], shape_env.at(op.inputs[0]), out_shape, dims, keepdims, scale);
+      } else if (op.op == "reduce_max") {
+        std::vector<int> dims;
+        for (const auto& d : op.attrs["dims"]) dims.push_back(d.get<int>());
+        bool keepdims = op.attrs.value("keepdims", false);
+        emit_reduce_max(w, out, op.inputs[0], shape_env.at(op.inputs[0]), out_shape, dims, keepdims);
+      } else if (op.op == "reduce_any") {
+        std::vector<int> dims;
+        for (const auto& d : op.attrs["dims"]) dims.push_back(d.get<int>());
+        bool keepdims = op.attrs.value("keepdims", false);
+        emit_reduce_any(w, out, op.inputs[0], shape_env.at(op.inputs[0]), out_shape, dims, keepdims);
+      } else if (op.op == "exp") {
+        int64_t n = numel(out_shape);
+        w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) { " + out + "[i] = expf(" + op.inputs[0] + "[i]); }");
+      } else if (op.op == "relu") {
+        int64_t n = numel(out_shape);
+        w.pp_line("#if defined(__riscv_vector) || defined(__riscv_v)");
+        w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ) {");
+        w.indent();
+        w.line("size_t vl = intentir_vsetvl_e32m1((size_t)" + std::to_string(n) + " - i);");
+        w.line("vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + op.inputs[0] + "[i], vl);");
+        w.line("vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(0.0f, vl);");
+        w.line("vfloat32m1_t vy = __riscv_vfmax_vv_f32m1(vx, v0, vl);");
+        w.line("__riscv_vse32_v_f32m1(&" + out + "[i], vy, vl);");
+        w.line("i += vl;");
+        w.dedent();
+        w.line("}");
+        w.pp_line("#else");
+        w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) { float v = " + op.inputs[0] + "[i]; " + out + "[i] = v > 0.0f ? v : 0.0f; }");
+        w.pp_line("#endif");
+      } else if (op.op == "softmax") {
+        int axis = op.attrs.value("axis", -1);
+        emit_softmax(w, out, op.inputs[0], shape_env.at(op.inputs[0]), axis);
+      } else if (op.op == "matmul") {
+        bool ta = op.attrs.value("transpose_a", false);
+        bool tb = op.attrs.value("transpose_b", false);
+        emit_matmul(w, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, ta, tb,
+                    sched_tile_m, sched_tile_n, sched_tile_k, sched_vec_width);
+      } else {
+        fail("unsupported op lowering: " + op.op);
+      }
+      w.blank();
+    }
+    w.dedent();
+    w.line("}");
+    w.blank();
+  }
+};
 
 }  // namespace
 
@@ -1503,7 +2091,6 @@ int main(int argc, char** argv) {
     }
 
     // Collect consts.
-    struct ConstVal { std::string dtype; double value; };
     std::unordered_map<std::string, ConstVal> const_vals;
     for (const auto& op : intent.ops) {
       if (op.op == "const") {
@@ -1546,488 +2133,13 @@ int main(int argc, char** argv) {
     }
 
     // ---- emit C program ----
-    std::vector<std::string> lines;
-    lines.push_back("#include <math.h>");
-    lines.push_back("#include <stdint.h>");
-    lines.push_back("#include <stddef.h>");
-    lines.push_back("#include <stdio.h>");
-    lines.push_back("#include <stdlib.h>");
-    lines.push_back("#include <time.h>");
-    lines.push_back("#if defined(__riscv_vector) || defined(__riscv_v)\n#include <riscv_vector.h>\n#endif");
-    lines.push_back("");
-    {
-      int64_t vw = 0;
-      if (sched_vec_width && *sched_vec_width > 0) vw = *sched_vec_width;
-      lines.push_back("#ifndef INTENTIR_VEC_WIDTH");
-      lines.push_back("#define INTENTIR_VEC_WIDTH " + std::to_string(vw));
-      lines.push_back("#endif");
-      lines.push_back("#if defined(__riscv_vector) || defined(__riscv_v)");
-      lines.push_back("static inline size_t intentir_vsetvl_e32m1(size_t rem) {");
-      lines.push_back("  if (INTENTIR_VEC_WIDTH > 0 && rem > (size_t)INTENTIR_VEC_WIDTH) rem = (size_t)INTENTIR_VEC_WIDTH;");
-      lines.push_back("  return __riscv_vsetvl_e32m1(rem);");
-      lines.push_back("}");
-      lines.push_back("#endif");
-      lines.push_back("");
-    }
-    lines.push_back("static int read_bytes(const char* path, void* dst, size_t bytes) {");
-    lines.push_back("  FILE* f = fopen(path, \"rb\");");
-    lines.push_back("  if (!f) { perror(path); return 0; }");
-    lines.push_back("  size_t got = fread(dst, 1, bytes, f);");
-    lines.push_back("  fclose(f);");
-    lines.push_back("  return got == bytes;");
-    lines.push_back("}");
-    lines.push_back("");
-    lines.push_back("static int compare_f32(const char* name, const float* got, const float* ref, size_t n, float atol, float rtol) {");
-    lines.push_back("  double max_abs = 0.0, max_rel = 0.0; size_t worst = 0;");
-    lines.push_back("  for (size_t i = 0; i < n; ++i) {");
-    lines.push_back("    double a = (double)got[i];");
-    lines.push_back("    double b = (double)ref[i];");
-    lines.push_back("    double abs_e = fabs(a - b);");
-    lines.push_back("    double rel_e = abs_e / (fabs(b) + 1e-8);");
-    lines.push_back("    if (abs_e > max_abs) { max_abs = abs_e; max_rel = rel_e; worst = i; }");
-    lines.push_back("  }");
-    lines.push_back("  int ok = (max_abs <= (double)atol) || (max_rel <= (double)rtol);");
-    lines.push_back("  printf(\"%s: ok=%d max_abs=%g max_rel=%g worst_i=%zu got=%g ref=%g\\n\",");
-    lines.push_back("         name, ok, max_abs, max_rel, worst, (double)got[worst], (double)ref[worst]);");
-    lines.push_back("  return ok;");
-    lines.push_back("}");
-    lines.push_back("");
-    lines.push_back("static int compare_u8(const char* name, const uint8_t* got, const uint8_t* ref, size_t n) {");
-    lines.push_back("  for (size_t i = 0; i < n; ++i) {");
-    lines.push_back("    if (got[i] != ref[i]) {");
-    lines.push_back("      fprintf(stderr, \"%s mismatch at %zu: got=%u ref=%u\\n\", name, i, (unsigned)got[i], (unsigned)ref[i]);");
-    lines.push_back("      return 0;");
-    lines.push_back("    }");
-    lines.push_back("  }");
-    lines.push_back("  printf(\"%s: ok=1 (exact)\\n\", name);");
-    lines.push_back("  return 1;");
-    lines.push_back("}");
-    lines.push_back("");
-    lines.push_back("static inline size_t idx2(int i, int j, int D1) { return (size_t)i * (size_t)D1 + (size_t)j; }");
-    lines.push_back("static inline size_t idx3(int i, int j, int k, int D1, int D2) { return ((size_t)i * (size_t)D1 + (size_t)j) * (size_t)D2 + (size_t)k; }");
-    lines.push_back("static inline size_t idx4(int i, int j, int k, int l, int D1, int D2, int D3) { return (((size_t)i * (size_t)D1 + (size_t)j) * (size_t)D2 + (size_t)k) * (size_t)D3 + (size_t)l; }");
-    lines.push_back("");
-
-    // Global tensor pointers so we can optionally benchmark by calling `intentir_compute()` repeatedly.
-    {
-      std::vector<std::string> names;
-      names.reserve(shape_env.size());
-      for (const auto& kv : shape_env) names.push_back(kv.first);
-      std::sort(names.begin(), names.end());
-      lines.push_back("// intent tensors (globals)");
-      for (const auto& name : names) {
-        std::string ct = ctype_for_dtype(dtype_env[name]);
-        lines.push_back("static " + ct + "* " + name + " = NULL;");
-      }
-      lines.push_back("");
-    }
-
-    lines.push_back("static inline uint64_t intentir_now_ns(void) {");
-    lines.push_back("  struct timespec ts;");
-    lines.push_back("  timespec_get(&ts, TIME_UTC);");
-    lines.push_back("  return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;");
-    lines.push_back("}");
-    lines.push_back("");
-
-    lines.push_back("static void intentir_compute(void);");
-    lines.push_back("");
-
-    lines.push_back("int main() {");
-    lines.push_back("  setvbuf(stdout, NULL, _IONBF, 0);");
-    lines.push_back("  setvbuf(stderr, NULL, _IONBF, 0);");
-    lines.push_back("  const float ATOL = " + c_float(atol) + ";");
-    lines.push_back("  const float RTOL = " + c_float(rtol) + ";");
-    {
-      std::ostringstream oss;
-      oss.setf(std::ios::fixed);
-      oss.precision(1);
-      oss << matmul_flops_total;
-      lines.push_back("  const double MATMUL_FLOPS = (double)" + oss.str() + ";");
-    }
-    lines.push_back("  int BENCH_ITERS = 0;");
-    lines.push_back("  int BENCH_WARMUP = 1;");
-    lines.push_back("  const char* _bench = getenv(\"INTENTIR_BENCH_ITERS\");");
-    lines.push_back("  if (_bench) BENCH_ITERS = atoi(_bench);");
-    lines.push_back("  const char* _warm = getenv(\"INTENTIR_BENCH_WARMUP\");");
-    lines.push_back("  if (_warm) BENCH_WARMUP = atoi(_warm);");
-    lines.push_back("  if (BENCH_ITERS < 0) BENCH_ITERS = 0;");
-    lines.push_back("  if (BENCH_WARMUP < 0) BENCH_WARMUP = 0;");
-    lines.push_back("");
-
-    // inputs
-    for (const auto& name : external_inputs) {
-      const auto& shp = shape_env[name];
-      int64_t n = numel(shp);
-      std::string ct = ctype_for_dtype(dtype_env[name]);
-      lines.push_back("  // input " + name + ": shape=" + std::to_string((int)shp.size()) + "D");
-      lines.push_back("  " + name + " = (" + ct + "*)malloc(sizeof(" + ct + ") * (size_t)" + std::to_string(n) + ");");
-      lines.push_back("  if (!" + name + ") { fprintf(stderr, \"alloc failed: " + name + "\\n\"); return 2; }");
-      lines.push_back("  if (!read_bytes(\"" + name + ".bin\", " + name + ", sizeof(" + ct + ") * (size_t)" + std::to_string(n) + ")) return 2;");
-      lines.push_back("");
-    }
-
-    // consts as 1-element arrays
-    for (const auto& kv : const_vals) {
-      const std::string& name = kv.first;
-      const ConstVal& cv = kv.second;
-      const std::string ct = ctype_for_dtype(cv.dtype);
-      lines.push_back("  " + name + " = (" + ct + "*)malloc(sizeof(" + ct + "));");
-      lines.push_back("  if (!" + name + ") { fprintf(stderr, \"alloc failed: " + name + "\\n\"); return 2; }");
-      if (ct == "float") lines.push_back("  " + name + "[0] = " + c_float(cv.value) + ";");
-      else if (ct == "double") {
-        std::ostringstream oss; oss.precision(17); oss << cv.value;
-        lines.push_back("  " + name + "[0] = (double)" + oss.str() + ";");
-      } else lines.push_back("  " + name + "[0] = (" + ct + ")" + std::to_string((int64_t)cv.value) + ";");
-      lines.push_back("");
-    }
-
-    auto alloc_out = [&](const std::string& name) {
-      const auto& shp = shape_env[name];
-      int64_t n = numel(shp);
-      std::string ct = ctype_for_dtype(dtype_env[name]);
-      lines.push_back("  " + name + " = (" + ct + "*)malloc(sizeof(" + ct + ") * (size_t)" + std::to_string(n) + ");");
-      lines.push_back("  if (!" + name + ") { fprintf(stderr, \"alloc failed: " + name + "\\n\"); return 2; }");
-    };
-
-    // Emit compute body as a separate function for benchmarking. This recomputes the op list using
-    // already-allocated global buffers, without re-allocating.
-    std::vector<std::string> compute_fn;
-    compute_fn.push_back("static void intentir_compute(void) {");
-    for (const auto& op : intent.ops) {
-      if (op.op == "const") continue;
-      const std::string& out = op.output;
-      if (op.op == "reshape" || op.op == "identity" || op.op == "layout_cast") {
-        continue;
-      }
-      const std::vector<int64_t>& out_shape = shape_env[out];
-      compute_fn.push_back("  // op " + op.op + " -> " + out);
-      if (op.op == "transpose") {
-        const auto& in_shape = shape_env[op.inputs[0]];
-        std::vector<int> perm;
-        for (const auto& p : op.attrs["perm"]) perm.push_back(p.get<int>());
-        std::vector<std::string> bl;
-        if (perm.size() == 4 && perm[0] == 0 && perm[1] == 1 && perm[2] == 3 && perm[3] == 2) {
-          bl = emit_transpose_4d_0132(out, op.inputs[0], in_shape, out_shape);
-        } else {
-          bl = emit_transpose_generic(out, op.inputs[0], in_shape, out_shape, perm);
-        }
-        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
-      } else if (op.op == "broadcast_in_dim") {
-        const std::string& inp = op.inputs[0];
-        const auto& in_shape = shape_env[inp];
-        std::vector<int> bcast_dims;
-        for (const auto& d : op.attrs["broadcast_dims"]) bcast_dims.push_back(d.get<int>());
-        std::vector<int64_t> strides(in_shape.size(), 1);
-        int64_t s = 1;
-        for (int i = (int)in_shape.size() - 1; i >= 0; --i) { strides[i] = s; s *= in_shape[i]; }
-        const int r_out = (int)out_shape.size();
-        if (r_out > 4) fail("broadcast_in_dim supports rank<=4");
-        std::vector<std::string> iv = {"i0","i1","i2","i3"};
-        iv.resize(r_out);
-        for (int i = 0; i < r_out; ++i) compute_fn.push_back("  for (int " + iv[i] + " = 0; " + iv[i] + " < " + std::to_string(out_shape[i]) + "; ++" + iv[i] + ") {");
-        std::string out_idx = flat_idx_expr(iv, out_shape);
-        std::vector<std::string> terms;
-        for (int in_dim = 0; in_dim < (int)in_shape.size(); ++in_dim) {
-          int od = bcast_dims[in_dim];
-          if (in_shape[in_dim] == 1) terms.push_back("0");
-          else terms.push_back("((size_t)" + iv[od] + " * (size_t)" + std::to_string(strides[in_dim]) + ")");
-        }
-        std::string in_idx = terms.empty() ? "0" : terms[0];
-        for (size_t t = 1; t < terms.size(); ++t) in_idx += " + " + terms[t];
-        compute_fn.push_back("    " + out + "[" + out_idx + "] = " + inp + "[" + in_idx + "];");
-        for (int i = 0; i < r_out; ++i) compute_fn.push_back("  }");
-      } else if (op.op == "add" || op.op == "sub" || op.op == "mul" || op.op == "div" || op.op == "max" || op.op == "min") {
-        auto bl = emit_elemwise_bin(intent, bindings, op.op, out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape, dtype_env[out]);
-        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
-      } else if (op.op == "ne") {
-        auto bl = emit_ne(out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape, intent, bindings);
-        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
-      } else if (op.op == "lt" || op.op == "le" || op.op == "gt" || op.op == "ge") {
-        auto bl = emit_cmp(op.op, out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape, intent, bindings);
-        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
-      } else if (op.op == "and" || op.op == "or") {
-        auto bl = emit_bool_bin(op.op, out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape);
-        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
-      } else if (op.op == "not") {
-        auto bl = emit_bool_not(out, op.inputs[0], out_shape);
-        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
-      } else if (op.op == "rsqrt") {
-        auto bl = emit_rsqrt(out, op.inputs[0], out_shape);
-        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
-      } else if (op.op == "abs") {
-        auto bl = emit_unary_abs(out, op.inputs[0], out_shape, dtype_env[op.inputs[0]], dtype_env[out]);
-        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
-      } else if (op.op == "floor") {
-        auto bl = emit_floor(out, op.inputs[0], out_shape);
-        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
-      } else if (op.op == "cast") {
-        auto bl = emit_cast(out, op.inputs[0], out_shape, dtype_env[op.inputs[0]], dtype_env[out]);
-        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
-      } else if (op.op == "where") {
-        auto bl = emit_where(out, op.inputs[0], op.inputs[1], op.inputs[2], shape_env[op.inputs[0]], shape_env[op.inputs[1]], shape_env[op.inputs[2]], out_shape, dtype_env[out]);
-        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
-      } else if (op.op == "iota") {
-        int axis = op.attrs.value("axis", 0);
-        auto bl = emit_iota(out, out_shape, axis, dtype_env[out]);
-        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
-      } else if (op.op == "gather") {
-        std::vector<std::string> idxs(op.inputs.begin() + 1, op.inputs.end());
-        std::vector<std::vector<int64_t>> idx_shapes;
-        for (const auto& nm : idxs) idx_shapes.push_back(shape_env[nm]);
-        auto bl = emit_gather(out, op.inputs[0], idxs, shape_env[op.inputs[0]], idx_shapes, out_shape, dtype_env[out]);
-        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
-      } else if (op.op == "reduce_sum") {
-        std::vector<int> dims;
-        for (const auto& d : op.attrs["dims"]) dims.push_back(d.get<int>());
-        bool keepdims = op.attrs.value("keepdims", false);
-        std::optional<double> scale;
-        if (op.attrs.contains("scale")) scale = resolve_const_value(op.attrs["scale"], bindings);
-        auto bl = emit_reduce_sum(out, op.inputs[0], shape_env[op.inputs[0]], out_shape, dims, keepdims, scale);
-        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
-      } else if (op.op == "reduce_max") {
-        std::vector<int> dims;
-        for (const auto& d : op.attrs["dims"]) dims.push_back(d.get<int>());
-        bool keepdims = op.attrs.value("keepdims", false);
-        auto bl = emit_reduce_max(out, op.inputs[0], shape_env[op.inputs[0]], out_shape, dims, keepdims);
-        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
-      } else if (op.op == "reduce_any") {
-        std::vector<int> dims;
-        for (const auto& d : op.attrs["dims"]) dims.push_back(d.get<int>());
-        bool keepdims = op.attrs.value("keepdims", false);
-        auto bl = emit_reduce_any(out, op.inputs[0], shape_env[op.inputs[0]], out_shape, dims, keepdims);
-        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
-      } else if (op.op == "exp") {
-        int64_t n = numel(out_shape);
-        compute_fn.push_back("  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) { " + out + "[i] = expf(" + op.inputs[0] + "[i]); }");
-      } else if (op.op == "relu") {
-        int64_t n = numel(out_shape);
-        compute_fn.push_back("#if defined(__riscv_vector) || defined(__riscv_v)");
-        compute_fn.push_back("  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ) {");
-        compute_fn.push_back("    size_t vl = intentir_vsetvl_e32m1((size_t)" + std::to_string(n) + " - i);");
-        compute_fn.push_back("    vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + op.inputs[0] + "[i], vl);");
-        compute_fn.push_back("    vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(0.0f, vl);");
-        compute_fn.push_back("    vfloat32m1_t vy = __riscv_vfmax_vv_f32m1(vx, v0, vl);");
-        compute_fn.push_back("    __riscv_vse32_v_f32m1(&" + out + "[i], vy, vl);");
-        compute_fn.push_back("    i += vl;");
-        compute_fn.push_back("  }");
-        compute_fn.push_back("#else");
-        compute_fn.push_back("  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) { float v = " + op.inputs[0] + "[i]; " + out + "[i] = v > 0.0f ? v : 0.0f; }");
-        compute_fn.push_back("#endif");
-      } else if (op.op == "softmax") {
-        int axis = op.attrs.value("axis", -1);
-        auto bl = emit_softmax(out, op.inputs[0], shape_env[op.inputs[0]], axis);
-        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
-      } else if (op.op == "matmul") {
-        bool ta = op.attrs.value("transpose_a", false);
-        bool tb = op.attrs.value("transpose_b", false);
-        auto bl = emit_matmul(out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape, ta, tb,
-                              sched_tile_m, sched_tile_n, sched_tile_k, sched_vec_width);
-        compute_fn.insert(compute_fn.end(), bl.begin(), bl.end());
-      } else {
-        fail("unsupported op lowering: " + op.op);
-      }
-      compute_fn.push_back("");
-    }
-    compute_fn.push_back("}");
-    compute_fn.push_back("");
-
-    // ops
-    for (const auto& op : intent.ops) {
-      if (op.op == "const") continue;
-      const std::string& out = op.output;
-      if (op.op == "reshape" || op.op == "identity" || op.op == "layout_cast") {
-        std::string ct = ctype_for_dtype(dtype_env[out]);
-        lines.push_back("  // " + op.op + " alias");
-        lines.push_back("  " + out + " = (" + ct + "*)" + op.inputs[0] + ";");
-        lines.push_back("");
-        continue;
-      }
-      // allocate output
-      lines.push_back("  // op " + op.op + " -> " + out);
-      alloc_out(out);
-
-      const std::vector<int64_t>& out_shape = shape_env[out];
-      if (op.op == "transpose") {
-        const auto& in_shape = shape_env[op.inputs[0]];
-        std::vector<int> perm;
-        for (const auto& p : op.attrs["perm"]) perm.push_back(p.get<int>());
-        std::vector<std::string> bl;
-        if (perm.size() == 4 && perm[0] == 0 && perm[1] == 1 && perm[2] == 3 && perm[3] == 2) {
-          bl = emit_transpose_4d_0132(out, op.inputs[0], in_shape, out_shape);
-        } else {
-          bl = emit_transpose_generic(out, op.inputs[0], in_shape, out_shape, perm);
-        }
-        lines.insert(lines.end(), bl.begin(), bl.end());
-      } else if (op.op == "broadcast_in_dim") {
-        // Use the scalar broadcast emitter logic by lowering it via per-index mapping (rank<=4).
-        // For simplicity in this tool, we reuse the elementwise broadcast helper by emitting explicit loops here.
-        // (This keeps behavior aligned with Python backend.)
-        const std::string& inp = op.inputs[0];
-        const auto& in_shape = shape_env[inp];
-        std::vector<int> bcast_dims;
-        for (const auto& d : op.attrs["broadcast_dims"]) bcast_dims.push_back(d.get<int>());
-        // Build strides
-        std::vector<int64_t> strides(in_shape.size(), 1);
-        int64_t s = 1;
-        for (int i = (int)in_shape.size() - 1; i >= 0; --i) { strides[i] = s; s *= in_shape[i]; }
-        const int r_out = (int)out_shape.size();
-        if (r_out > 4) fail("broadcast_in_dim supports rank<=4");
-        std::vector<std::string> iv = {"i0","i1","i2","i3"};
-        iv.resize(r_out);
-        for (int i = 0; i < r_out; ++i) lines.push_back("  for (int " + iv[i] + " = 0; " + iv[i] + " < " + std::to_string(out_shape[i]) + "; ++" + iv[i] + ") {");
-        std::string out_idx = flat_idx_expr(iv, out_shape);
-        // input idx expression
-        std::vector<std::string> terms;
-        for (int in_dim = 0; in_dim < (int)in_shape.size(); ++in_dim) {
-          int od = bcast_dims[in_dim];
-          if (in_shape[in_dim] == 1) terms.push_back("0");
-          else terms.push_back("((size_t)" + iv[od] + " * (size_t)" + std::to_string(strides[in_dim]) + ")");
-        }
-        std::string in_idx = terms.empty() ? "0" : terms[0];
-        for (size_t t = 1; t < terms.size(); ++t) in_idx += " + " + terms[t];
-        lines.push_back("    " + out + "[" + out_idx + "] = " + inp + "[" + in_idx + "];");
-        for (int i = 0; i < r_out; ++i) lines.push_back("  }");
-      } else if (op.op == "add" || op.op == "sub" || op.op == "mul" || op.op == "div" || op.op == "max" || op.op == "min") {
-        auto bl = emit_elemwise_bin(intent, bindings, op.op, out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape, dtype_env[out]);
-        lines.insert(lines.end(), bl.begin(), bl.end());
-      } else if (op.op == "ne") {
-        auto bl = emit_ne(out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape, intent, bindings);
-        lines.insert(lines.end(), bl.begin(), bl.end());
-      } else if (op.op == "lt" || op.op == "le" || op.op == "gt" || op.op == "ge") {
-        auto bl = emit_cmp(op.op, out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape, intent, bindings);
-        lines.insert(lines.end(), bl.begin(), bl.end());
-      } else if (op.op == "and" || op.op == "or") {
-        auto bl = emit_bool_bin(op.op, out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape);
-        lines.insert(lines.end(), bl.begin(), bl.end());
-      } else if (op.op == "not") {
-        auto bl = emit_bool_not(out, op.inputs[0], out_shape);
-        lines.insert(lines.end(), bl.begin(), bl.end());
-      } else if (op.op == "rsqrt") {
-        auto bl = emit_rsqrt(out, op.inputs[0], out_shape);
-        lines.insert(lines.end(), bl.begin(), bl.end());
-      } else if (op.op == "abs") {
-        auto bl = emit_unary_abs(out, op.inputs[0], out_shape, dtype_env[op.inputs[0]], dtype_env[out]);
-        lines.insert(lines.end(), bl.begin(), bl.end());
-      } else if (op.op == "floor") {
-        auto bl = emit_floor(out, op.inputs[0], out_shape);
-        lines.insert(lines.end(), bl.begin(), bl.end());
-      } else if (op.op == "cast") {
-        auto bl = emit_cast(out, op.inputs[0], out_shape, dtype_env[op.inputs[0]], dtype_env[out]);
-        lines.insert(lines.end(), bl.begin(), bl.end());
-      } else if (op.op == "where") {
-        auto bl = emit_where(out, op.inputs[0], op.inputs[1], op.inputs[2], shape_env[op.inputs[0]], shape_env[op.inputs[1]], shape_env[op.inputs[2]], out_shape, dtype_env[out]);
-        lines.insert(lines.end(), bl.begin(), bl.end());
-      } else if (op.op == "iota") {
-        int axis = op.attrs.value("axis", 0);
-        auto bl = emit_iota(out, out_shape, axis, dtype_env[out]);
-        lines.insert(lines.end(), bl.begin(), bl.end());
-      } else if (op.op == "gather") {
-        std::vector<std::string> idxs(op.inputs.begin() + 1, op.inputs.end());
-        std::vector<std::vector<int64_t>> idx_shapes;
-        for (const auto& nm : idxs) idx_shapes.push_back(shape_env[nm]);
-        auto bl = emit_gather(out, op.inputs[0], idxs, shape_env[op.inputs[0]], idx_shapes, out_shape, dtype_env[out]);
-        lines.insert(lines.end(), bl.begin(), bl.end());
-      } else if (op.op == "reduce_sum") {
-        std::vector<int> dims;
-        for (const auto& d : op.attrs["dims"]) dims.push_back(d.get<int>());
-        bool keepdims = op.attrs.value("keepdims", false);
-        std::optional<double> scale;
-        if (op.attrs.contains("scale")) scale = resolve_const_value(op.attrs["scale"], bindings);
-        auto bl = emit_reduce_sum(out, op.inputs[0], shape_env[op.inputs[0]], out_shape, dims, keepdims, scale);
-        lines.insert(lines.end(), bl.begin(), bl.end());
-      } else if (op.op == "reduce_max") {
-        std::vector<int> dims;
-        for (const auto& d : op.attrs["dims"]) dims.push_back(d.get<int>());
-        bool keepdims = op.attrs.value("keepdims", false);
-        auto bl = emit_reduce_max(out, op.inputs[0], shape_env[op.inputs[0]], out_shape, dims, keepdims);
-        lines.insert(lines.end(), bl.begin(), bl.end());
-      } else if (op.op == "reduce_any") {
-        std::vector<int> dims;
-        for (const auto& d : op.attrs["dims"]) dims.push_back(d.get<int>());
-        bool keepdims = op.attrs.value("keepdims", false);
-        auto bl = emit_reduce_any(out, op.inputs[0], shape_env[op.inputs[0]], out_shape, dims, keepdims);
-        lines.insert(lines.end(), bl.begin(), bl.end());
-      } else if (op.op == "exp") {
-        int64_t n = numel(out_shape);
-        lines.push_back("  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) { " + out + "[i] = expf(" + op.inputs[0] + "[i]); }");
-      } else if (op.op == "relu") {
-        int64_t n = numel(out_shape);
-        lines.push_back("#if defined(__riscv_vector) || defined(__riscv_v)");
-        lines.push_back("  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ) {");
-        lines.push_back("    size_t vl = intentir_vsetvl_e32m1((size_t)" + std::to_string(n) + " - i);");
-        lines.push_back("    vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + op.inputs[0] + "[i], vl);");
-        lines.push_back("    vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(0.0f, vl);");
-        lines.push_back("    vfloat32m1_t vy = __riscv_vfmax_vv_f32m1(vx, v0, vl);");
-        lines.push_back("    __riscv_vse32_v_f32m1(&" + out + "[i], vy, vl);");
-        lines.push_back("    i += vl;");
-        lines.push_back("  }");
-        lines.push_back("#else");
-        lines.push_back("  for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) { float v = " + op.inputs[0] + "[i]; " + out + "[i] = v > 0.0f ? v : 0.0f; }");
-        lines.push_back("#endif");
-      } else if (op.op == "softmax") {
-        int axis = op.attrs.value("axis", -1);
-        auto bl = emit_softmax(out, op.inputs[0], shape_env[op.inputs[0]], axis);
-        lines.insert(lines.end(), bl.begin(), bl.end());
-      } else if (op.op == "matmul") {
-        bool ta = op.attrs.value("transpose_a", false);
-        bool tb = op.attrs.value("transpose_b", false);
-        auto bl = emit_matmul(out, op.inputs[0], op.inputs[1], shape_env[op.inputs[0]], shape_env[op.inputs[1]], out_shape, ta, tb,
-                              sched_tile_m, sched_tile_n, sched_tile_k, sched_vec_width);
-        lines.insert(lines.end(), bl.begin(), bl.end());
-      } else {
-        fail("unsupported op lowering: " + op.op);
-      }
-      lines.push_back("");
-    }
-
-    // Optional compute microbenchmark (runs AFTER one warmup execution above).
-    lines.push_back("  if (BENCH_ITERS > 0) {");
-    lines.push_back("    for (int w = 0; w < BENCH_WARMUP; ++w) intentir_compute();");
-    lines.push_back("    uint64_t t0 = intentir_now_ns();");
-    lines.push_back("    for (int it = 0; it < BENCH_ITERS; ++it) intentir_compute();");
-    lines.push_back("    uint64_t t1 = intentir_now_ns();");
-    lines.push_back("    double ns_total = (double)(t1 - t0);");
-    lines.push_back("    double ns_per_iter = ns_total / (double)BENCH_ITERS;");
-    lines.push_back("    double gflops = (ns_per_iter > 0.0) ? (MATMUL_FLOPS / ns_per_iter) : 0.0;");
-    lines.push_back("    printf(\"INTENTIR_BENCH {\\\"iters\\\":%d,\\\"warmup\\\":%d,\\\"ns_total\\\":%llu,\\\"ns_per_iter\\\":%.1f,\\\"matmul_flops\\\":%.0f,\\\"matmul_gflops\\\":%.6f}\\n\",");
-    lines.push_back("           BENCH_ITERS, BENCH_WARMUP, (unsigned long long)(t1 - t0), ns_per_iter, MATMUL_FLOPS, gflops);");
-    lines.push_back("  }");
-    lines.push_back("");
-
-    // compare outputs
-    std::vector<std::string> ok_exprs;
-    for (const auto& name : intent.outputs) {
-      const auto& shp = shape_env[name];
-      int64_t n = numel(shp);
-      std::string dt = dtype_env[name];
-      if (dt == "bool" || dt == "i1") {
-        lines.push_back("  uint8_t* " + name + "_ref = (uint8_t*)malloc(sizeof(uint8_t) * (size_t)" + std::to_string(n) + ");");
-        lines.push_back("  if (!" + name + "_ref) { fprintf(stderr, \"alloc failed: " + name + "_ref\\n\"); return 2; }");
-        lines.push_back("  if (!read_bytes(\"" + name + "_ref.bin\", " + name + "_ref, sizeof(uint8_t) * (size_t)" + std::to_string(n) + ")) return 2;");
-        lines.push_back("  int ok_" + name + " = compare_u8(\"" + name + "\", (const uint8_t*)" + name + ", (const uint8_t*)" + name + "_ref, (size_t)" + std::to_string(n) + ");");
-      } else {
-        lines.push_back("  float* " + name + "_ref = (float*)malloc(sizeof(float) * (size_t)" + std::to_string(n) + ");");
-        lines.push_back("  if (!" + name + "_ref) { fprintf(stderr, \"alloc failed: " + name + "_ref\\n\"); return 2; }");
-        lines.push_back("  if (!read_bytes(\"" + name + "_ref.bin\", " + name + "_ref, sizeof(float) * (size_t)" + std::to_string(n) + ")) return 2;");
-        lines.push_back("  int ok_" + name + " = compare_f32(\"" + name + "\", (const float*)" + name + ", (const float*)" + name + "_ref, (size_t)" + std::to_string(n) + ", ATOL, RTOL);");
-      }
-      ok_exprs.push_back("ok_" + name);
-      lines.push_back("");
-    }
-    if (ok_exprs.empty()) lines.push_back("  int ok = 1;");
-    else {
-      std::string expr = ok_exprs[0];
-      for (size_t i = 1; i < ok_exprs.size(); ++i) expr += " && " + ok_exprs[i];
-      lines.push_back("  int ok = " + expr + ";");
-    }
-    lines.push_back("  printf(ok ? \"PASS lowered\\n\" : \"FAIL lowered\\n\");");
-    lines.push_back("  return ok ? 0 : 1;");
-    lines.push_back("}");
-
-    // Append the benchmark compute function after `main` (declared above).
-    lines.insert(lines.end(), compute_fn.begin(), compute_fn.end());
-
-    for (const auto& l : lines) std::cout << l << "\n";
+    std::ostringstream c_src;
+    CodeWriter cw(c_src);
+    CProgramEmitter emitter{cw, intent, bindings, external_inputs, shape_env, dtype_env, const_vals,
+                            sched_tile_m, sched_tile_n, sched_tile_k, sched_vec_width,
+                            atol, rtol, matmul_flops_total};
+    emitter.emit_program();
+    std::cout << c_src.str();
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "intentir_codegen error: " << e.what() << "\n";
