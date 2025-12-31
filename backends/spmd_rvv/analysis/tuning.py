@@ -57,6 +57,46 @@ class ScheduleCandidate:
     notes: List[str] = field(default_factory=list)
 
 
+def _normalize_int_hints(hints: Iterable[int] | None) -> List[int]:
+    out: set[int] = set()
+    for x in hints or []:
+        try:
+            v = int(x)
+        except Exception:
+            continue
+        if v > 0:
+            out.add(v)
+    return sorted(out)
+
+
+def _expand_hint_values(hints: Iterable[int], *, max_val: int, align: int = 1) -> List[int]:
+    """
+    Expand a hint list into a small set of candidate values:
+      - include h, h/2, h*2
+      - snap to multiples of `align` (vector lanes) when requested
+      - clamp to [1, max_val]
+    """
+    max_v = int(max_val)
+    if max_v <= 0:
+        return []
+    a = max(1, int(align))
+    cand: set[int] = set()
+    for h0 in _normalize_int_hints(hints):
+        for v0 in (h0, h0 // 2, h0 * 2):
+            if v0 <= 0:
+                continue
+            if a > 1:
+                down = (v0 // a) * a
+                up = ((v0 + a - 1) // a) * a
+                for v in (v0, down, up):
+                    if 1 <= v <= max_v:
+                        cand.add(int(v))
+            else:
+                if 1 <= v0 <= max_v:
+                    cand.add(int(v0))
+    return sorted(cand)
+
+
 def _parse_kv_int(s: str) -> Tuple[str, int]:
     m = _EQ_RE.match(str(s).strip())
     if not m:
@@ -232,6 +272,7 @@ def propose_schedule_candidates(
     shape_bindings: Dict[str, int],
     profile: RVVHardwareProfile,
     request: TuningRequest | None = None,
+    tile_hints: Iterable[int] | None = None,
     limit: int | None = None,
 ) -> List[ScheduleCandidate]:
     """
@@ -243,6 +284,7 @@ def propose_schedule_candidates(
     - optionally benchmark top-K candidates on real hardware
     """
     req = request or TuningRequest()
+    hints = _normalize_int_hints(tile_hints)
 
     # vec_width: default to vector lanes; can be constrained/locked.
     vec_lanes = max(1, int(profile.rvv_vlen_bits) // 32)
@@ -268,6 +310,19 @@ def propose_schedule_candidates(
             "tile_k": _allowed_set(req, "tile_k"),
         }
         tiles = _candidate_tiles(profile, allowed=allowed, M=M, N=N, K=K)
+        if req.mode == "guided" and hints:
+            vec_lanes = max(1, int(profile.rvv_vlen_bits) // 32)
+            hm = _expand_hint_values(hints, max_val=int(M), align=1)
+            hn = _expand_hint_values(hints, max_val=int(N), align=vec_lanes)
+            hk = _expand_hint_values(hints, max_val=int(K), align=1)
+            guided_tiles: set[Tuple[int, int, int]] = set()
+            for tm in hm or []:
+                for tn in hn or []:
+                    for tk in hk or []:
+                        guided_tiles.add((int(tm), int(tn), int(tk)))
+            if guided_tiles:
+                tiles = list(dict.fromkeys(list(tiles) + sorted(guided_tiles)))
+                vec_notes.append(f"guided tile_hints={hints[:8]}{'...' if len(hints) > 8 else ''}")
         model = GEMMCostModel(profile, M=M, N=N, K=K)
 
         base = intent.schedule or ScheduleSketch()
@@ -292,7 +347,7 @@ def propose_schedule_candidates(
             out = out[: max(0, int(limit))]
         return out
 
-    # No matmul (or unbound): return the existing schedule as the only candidate.
+    # No matmul (or unbound): Stage-0 heuristics for generic tile/vec knobs.
     base = intent.schedule or ScheduleSketch()
     tile_m = base.tile_m if isinstance(base.tile_m, int) else None
     tile_n = base.tile_n if isinstance(base.tile_n, int) else None
@@ -303,18 +358,71 @@ def propose_schedule_candidates(
         tile_n = int(req.locks["tile_n"])
     if "tile_k" in req.locks:
         tile_k = int(req.locks["tile_k"])
-    sched = ScheduleSketch(
-        tile_m=tile_m,
-        tile_n=tile_n,
-        tile_k=tile_k,
-        vec_width=int(vec_width),
-        pipeline_depth=pipeline_depth,
-        axis_bindings=dict(base.axis_bindings) if base else {},
-        vec_axis=(base.vec_axis if base else None),
-        parallel_axes=list(base.parallel_axes) if base else [],
-        memory_hint=dict(base.memory_hint) if base else {},
-    )
-    return [ScheduleCandidate(schedule=sched, score=0.0, tile_mnk=None, notes=list(vec_notes) + ["no bound matmul"])]
+
+    # If the schedule uses symbolic tile knobs (strings), try to pick concrete ints
+    # from shape bindings + tile hints. This does not attempt to interpret axis roles.
+    shape_M = shape_bindings.get("M")
+    shape_N = shape_bindings.get("N")
+    shape_K = shape_bindings.get("K")
+    vec_lanes = max(1, int(profile.rvv_vlen_bits) // 32)
+
+    def _pick_tile(existing: int | None, dim: int | None, key: str, *, align: int = 1) -> List[int | None]:
+        aset = _allowed_set(req, key)
+        if existing is not None:
+            return [existing]
+        if key in req.locks:
+            return [int(req.locks[key])]
+        if aset:
+            vals = sorted(int(v) for v in aset if int(v) > 0)
+            if dim is not None:
+                vals = [v for v in vals if v <= int(dim)]
+            return vals or [None]
+        if dim is None or int(dim) <= 0:
+            return [None]
+        # Heuristic grid + guided hints.
+        grid = [16, 32, 64, 128]
+        grid = [v for v in grid if v <= int(dim)]
+        if req.mode == "guided" and hints:
+            grid = sorted(set(grid) | set(_expand_hint_values(hints, max_val=int(dim), align=align)))
+        if align > 1:
+            grid = [v for v in grid if v % align == 0]
+            if not grid:
+                # If the dimension is smaller than the alignment unit, keep the dim itself.
+                if int(dim) < int(align):
+                    grid = [int(dim)]
+                else:
+                    grid = [int(align)]
+        return grid[:8] or [None]
+
+    tm_vals = _pick_tile(tile_m, int(shape_M) if isinstance(shape_M, int) else None, "tile_m", align=1)
+    tn_vals = _pick_tile(tile_n, int(shape_N) if isinstance(shape_N, int) else None, "tile_n", align=vec_lanes)
+    tk_vals = _pick_tile(tile_k, int(shape_K) if isinstance(shape_K, int) else None, "tile_k", align=1)
+
+    # Keep candidate set small: vary only the most-relevant axis if possible.
+    candidates: List[ScheduleCandidate] = []
+    for tm in tm_vals[:1]:
+        for tk in tk_vals[:1]:
+            for tn in tn_vals[:8]:
+                sched = ScheduleSketch(
+                    tile_m=tm,
+                    tile_n=tn,
+                    tile_k=tk,
+                    vec_width=int(vec_width),
+                    pipeline_depth=pipeline_depth,
+                    axis_bindings=dict(base.axis_bindings) if base else {},
+                    vec_axis=(base.vec_axis if base else None),
+                    parallel_axes=list(base.parallel_axes) if base else [],
+                    memory_hint=dict(base.memory_hint) if base else {},
+                )
+                score = float((tm or 1) * (tn or 1))
+                notes = list(vec_notes) + ["no bound matmul"]
+                if req.mode == "guided" and hints:
+                    notes.append(f"guided tile_hints={hints[:8]}{'...' if len(hints) > 8 else ''}")
+                candidates.append(ScheduleCandidate(schedule=sched, score=score, tile_mnk=None, notes=notes))
+    candidates.sort(key=lambda c: c.score, reverse=True)
+    if limit is not None:
+        candidates = candidates[: max(0, int(limit))]
+    return candidates or [ScheduleCandidate(schedule=(intent.schedule or ScheduleSketch()), score=0.0, tile_mnk=None, notes=list(vec_notes) + ["no candidates"])]
 
 
 def select_schedule(
@@ -323,6 +431,7 @@ def select_schedule(
     shape_bindings: Dict[str, int],
     profile: RVVHardwareProfile,
     request: TuningRequest | None = None,
+    tile_hints: Iterable[int] | None = None,
 ) -> TuningResult:
     """
     Select a ScheduleSketch for the backend.
@@ -337,7 +446,13 @@ def select_schedule(
     req = request or TuningRequest()
     notes: List[str] = [f"mode={req.mode}"]
 
-    candidates = propose_schedule_candidates(intent, shape_bindings=shape_bindings, profile=profile, request=req)
+    candidates = propose_schedule_candidates(
+        intent,
+        shape_bindings=shape_bindings,
+        profile=profile,
+        request=req,
+        tile_hints=tile_hints,
+    )
     best = candidates[0] if candidates else None
     if best is None:
         return TuningResult(schedule=(intent.schedule or ScheduleSketch()), notes=notes + ["no candidates"], model_op=None, model_mnk=None)

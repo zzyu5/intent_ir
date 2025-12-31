@@ -156,6 +156,34 @@ def run_remote(
         intent = IntentFunction.from_json_dict(intent_expanded_json)
     else:
         intent = expand_macros(intent_macro)
+
+    # Frontend-derived "tile-ish" constants (schedule hints). Triton CertificateV2
+    # extracts these from TTIR; TileLang may leave empty (OK).
+    tile_hints: list[int] = []
+    try:
+        cert_v2 = report.get("certificate_v2") or {}
+        sh = cert_v2.get("schedule_hints") or {}
+        th = sh.get("tile_hints")
+        if isinstance(th, list):
+            for x in th:
+                try:
+                    v = int(x)
+                except Exception:
+                    continue
+                if v > 0:
+                    tile_hints.append(v)
+    except Exception:
+        tile_hints = []
+    if not tile_hints:
+        try:
+            # Legacy v1 certificate format (fallback).
+            cert1 = report.get("certificate") or {}
+            th = cert1.get("tile_hints")
+            if isinstance(th, list):
+                tile_hints = [int(x) for x in th if isinstance(x, (int, float, str)) and int(x) > 0]
+        except Exception:
+            tile_hints = []
+    tile_hints = sorted(set(tile_hints))
     # Select shapes from cases (for binding).
     cases_raw = report.get("cases") or []
     cases: list[dict] = []
@@ -297,10 +325,18 @@ def run_remote(
                 shape_bindings=shape_bindings_int,
                 profile=prof,
                 request=tune_request,
+                tile_hints=tile_hints,
                 limit=budget,
             )
             if not tune_candidates:
-                tune_candidates = propose_schedule_candidates(intent, shape_bindings=shape_bindings_int, profile=prof, request=tune_request, limit=1)
+                tune_candidates = propose_schedule_candidates(
+                    intent,
+                    shape_bindings=shape_bindings_int,
+                    profile=prof,
+                    request=tune_request,
+                    tile_hints=tile_hints,
+                    limit=1,
+                )
             # Keep a deterministic default schedule in case benchmarking fails.
             if tune_candidates:
                 intent.schedule = tune_candidates[0].schedule
@@ -309,6 +345,7 @@ def run_remote(
                 "profile": prof.__dict__,
                 "mode": str(tune_request.mode),
                 "budget": int(budget),
+                "tile_hints": list(tile_hints),
                 "candidates_pred": [
                     {
                         "score": float(c.score),
@@ -330,13 +367,20 @@ def run_remote(
                 ],
             }
         else:
-            tuned = select_schedule(intent, shape_bindings=shape_bindings_int, profile=prof, request=tune_request)
+            tuned = select_schedule(
+                intent,
+                shape_bindings=shape_bindings_int,
+                profile=prof,
+                request=tune_request,
+                tile_hints=tile_hints,
+            )
             intent.schedule = tuned.schedule
             tuning_info = {
                 "profile_source": prof_src,
                 "profile": prof.__dict__,
                 "mode": str(tune_request.mode),
                 "budget": int(budget),
+                "tile_hints": list(tile_hints),
                 "notes": list(tuned.notes),
                 "schedule": (intent.to_json_dict().get("schedule") or {}),
             }
