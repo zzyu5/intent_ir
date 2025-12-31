@@ -25,6 +25,11 @@ class TileLangFacts:
     schema_version: str
     anchors: Dict[str, Any]
     accesses: List[AccessSummary] = field(default_factory=list)
+    # schedule-level hints (not part of semantic_facts golden lock):
+    # - symbol_ranges: domains for canonical loop/thread symbols (r0/r1/..., pid0/1/2)
+    # - tile_hints: "tile-ish" constants for guided tuning (e.g., loop extents, block sizes)
+    symbol_ranges: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    tile_hints: List[int] = field(default_factory=list)
     raw: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -83,6 +88,7 @@ def extract_facts(source_text: str, *, tvm_ir_json_path: str | None = None, tvm_
     }
 
     accesses: List[AccessSummary] = []
+    loop_ranges: Dict[str, Dict[str, int]] = {}
 
     def affine(expr: Any, *, max_depth: int = 64) -> tuple[Dict[str, int], int, bool]:
         if max_depth <= 0:
@@ -225,10 +231,138 @@ def extract_facts(source_text: str, *, tvm_ir_json_path: str | None = None, tvm_
 
     tir.stmt_functor.post_order_visit(prim_func.body, visit)
 
+    # Collect constant loop/thread ranges (used for bounded reasoning / guided tuning).
+    def visit_stmt(node: Any) -> None:
+        if isinstance(node, tir.For):
+            try:
+                v = str(getattr(node.loop_var, "name", ""))
+            except Exception:
+                v = ""
+            if not v:
+                return
+            mn = getattr(node, "min", None)
+            ex = getattr(node, "extent", None)
+            if isinstance(mn, tir.IntImm) and isinstance(ex, tir.IntImm):
+                s = int(mn.value)
+                e = s + int(ex.value)
+                if e > s:
+                    loop_ranges[v] = {"start": s, "end": e}
+
+    tir.stmt_functor.post_order_visit(prim_func.body, visit_stmt)
+
+    # Canonicalize indexing symbols to keep evidence stable across versions and avoid
+    # treating loop/thread indices as data-dependent symbols downstream.
+    reserved: set[str] = {"pid0", "pid1", "pid2"}
+    try:
+        # Preserve param-like symbols (buffers + scalar args).
+        for p in list(getattr(prim_func, "params", []) or []):
+            if isinstance(p, tir.Var):
+                reserved.add(str(p.name))
+        # Preserve shape-like symbols from buffer shapes (e.g., M/N/K).
+        for _buf in getattr(prim_func, "buffer_map", {}).values():
+            for d in list(getattr(_buf, "shape", []) or []):
+                if isinstance(d, tir.Var):
+                    reserved.add(str(d.name))
+    except Exception:
+        pass
+
+    def collect_terms(ix: IndexExpr) -> set[str]:
+        out: set[str] = set()
+        for k in (ix.terms or {}).keys():
+            if isinstance(k, str) and k:
+                out.add(str(k))
+        return out
+
+    used_syms: set[str] = set()
+    for a in accesses:
+        for ix in a.index_exprs:
+            used_syms |= collect_terms(ix)
+
+    sym_map: Dict[str, str] = {}
+    # Common program-id style symbols in TileLang TIR.
+    pid_alias = {"bx": "pid0", "by": "pid1", "bz": "pid2"}
+    for k, v in pid_alias.items():
+        if k in used_syms:
+            sym_map[k] = v
+
+    def _fresh_r_name(i0: int) -> str:
+        i = int(i0)
+        while True:
+            cand = f"r{i}"
+            if cand not in reserved and cand not in sym_map.values():
+                return cand
+            i += 1
+
+    r_i = 0
+    for v in sorted(used_syms):
+        if v in sym_map:
+            continue
+        if v in reserved:
+            continue
+        sym_map[v] = _fresh_r_name(r_i)
+        r_i += 1
+
+    def remap_ix(ix: IndexExpr) -> IndexExpr:
+        terms = {}
+        for k, c in (ix.terms or {}).items():
+            kk = sym_map.get(str(k), str(k))
+            terms[kk] = terms.get(kk, 0) + int(c)
+            if terms[kk] == 0:
+                terms.pop(kk, None)
+        return IndexExpr(terms=terms, const=int(ix.const))
+
+    remapped: List[AccessSummary] = []
+    for a in accesses:
+        remapped.append(
+            AccessSummary(
+                kind=a.kind,
+                tensor=a.tensor,
+                dtype=a.dtype,
+                rank=int(a.rank),
+                index_exprs=[remap_ix(ix) for ix in (a.index_exprs or [])],
+                predicate=a.predicate,
+                address_space=a.address_space,
+                meta=dict(a.meta or {}),
+            )
+        )
+    accesses = sort_accesses(remapped)
+
+    symbol_ranges: Dict[str, Dict[str, int]] = {}
+    for orig, rr in loop_ranges.items():
+        if orig not in sym_map:
+            continue
+        canon = sym_map[orig]
+        if canon not in symbol_ranges:
+            symbol_ranges[canon] = {"start": int(rr.get("start", 0)), "end": int(rr.get("end", 0))}
+
+    # Tile-ish integer hints (for Guided schedule search).
+    tile_hints: set[int] = set()
+    for rr in symbol_ranges.values():
+        try:
+            v = int(rr.get("end", 0)) - int(rr.get("start", 0))
+        except Exception:
+            continue
+        if 2 <= v <= 2048:
+            tile_hints.add(int(v))
+    try:
+        for _buf in getattr(prim_func, "buffer_map", {}).values():
+            for d in list(getattr(_buf, "shape", []) or []):
+                if isinstance(d, tir.IntImm):
+                    v = int(d.value)
+                    if 2 <= v <= 2048:
+                        tile_hints.add(v)
+    except Exception:
+        pass
+    filtered = [v for v in tile_hints if 2 <= int(v) <= 2048]
+    preferred = [v for v in filtered if (int(v) & (int(v) - 1) == 0)]
+    tile_hints_list = sorted(set(preferred if preferred else filtered))
+
     return TileLangFacts(
         schema_version="tilelang_tir_v0.1",
         anchors=dict(anchors),
-        accesses=sort_accesses(accesses),
+        accesses=accesses,
+        symbol_ranges=symbol_ranges,
+        tile_hints=tile_hints_list,
         raw={"source_kind": "tvm_script", "tilelang_version": raw_version},
     )
 

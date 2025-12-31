@@ -31,7 +31,10 @@ def build_certificate_v2(facts: TileLangFacts, *, desc: KernelDescriptor | None 
             "io_spec": (dict(desc.io_spec) if desc is not None else {}),
             "canonical_evidence": evidence,
         },
-        schedule_hints={},
+        schedule_hints={
+            "tile_hints": list(getattr(facts, "tile_hints", []) or []),
+            "symbol_ranges": dict(getattr(facts, "symbol_ranges", {}) or {}),
+        },
         meta={"tilelang_schema": facts.schema_version},
     )
     return cert.canonicalize()
@@ -48,4 +51,3 @@ def _range_symbols_from_accesses(accesses) -> list[str]:
 
 
 __all__ = ["build_certificate_v2"]
-

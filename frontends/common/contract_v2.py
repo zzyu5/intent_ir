@@ -97,12 +97,28 @@ def evaluate_contract_v2(
         th = (cert_v2.schedule_hints or {}).get("tile_hints")
         if isinstance(th, list):
             tile_hints = [int(x) for x in th if isinstance(x, (int, float)) and int(x) > 1]
-        tile = max(tile_hints) if tile_hints else 16
         axes: list[str] = []
         if isinstance(desc.launch, dict) and isinstance(desc.launch.get("vary_axes"), list):
             axes = [str(a) for a in desc.launch.get("vary_axes") if isinstance(a, str)]
+        base_shapes = {}
+        if isinstance(desc.launch, dict) and isinstance(desc.launch.get("canonical_shapes"), dict):
+            base_shapes = dict(desc.launch.get("canonical_shapes") or {})
         for ax in axes:
-            assumptions.append(f"{ax} % {tile} == 0")
+            # Choose an axis-specific divisibility assumption that is consistent with the
+            # frontend-provided base shape (avoids empty in-contract case sets).
+            base_v = base_shapes.get(ax)
+            tile = None
+            if isinstance(base_v, (int, float)) and int(base_v) > 0:
+                base_i = int(base_v)
+                divisors = [h for h in tile_hints if h > 1 and base_i % int(h) == 0]
+                if divisors:
+                    tile = int(max(divisors))
+                elif base_i > 1:
+                    tile = int(base_i)
+            if tile is None:
+                tile = int(max(tile_hints) if tile_hints else 16)
+            if int(tile) > 1:
+                assumptions.append(f"{ax} % {int(tile)} == 0")
         if axes:
             reasons.append("no mask/predicate extracted; assume divisible sizes for inbounds")
         else:
