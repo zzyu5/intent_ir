@@ -23,6 +23,24 @@ void intentir_softmax_2d_last_f32(const float* a, float* out, int64_t M, int64_t
 void intentir_softmax_3d_last_f32(const float* a, float* out, int64_t A0, int64_t A1, int64_t K);
 void intentir_softmax_4d_last_f32(const float* a, float* out, int64_t B, int64_t H, int64_t Q, int64_t K);
 
+// Elementwise (f32) with numpy-style broadcasting (rank<=4).
+// Shapes are length `rank` and follow the codegen's padded broadcasting convention.
+#define INTENTIR_F32_BIN_ADD 0
+#define INTENTIR_F32_BIN_SUB 1
+#define INTENTIR_F32_BIN_MUL 2
+#define INTENTIR_F32_BIN_DIV 3
+#define INTENTIR_F32_BIN_MAX 4
+#define INTENTIR_F32_BIN_MIN 5
+void intentir_f32_bin_broadcast(
+    const float* a, const float* b, float* out, const int64_t* out_shape, const int64_t* a_shape, const int64_t* b_shape, int rank, int op);
+
+// Unary elementwise (f32).
+void intentir_abs_f32(const float* a, float* out, size_t n);
+void intentir_floor_f32(const float* a, float* out, size_t n);
+void intentir_rsqrt_f32(const float* a, float* out, size_t n);
+void intentir_exp_f32(const float* a, float* out, size_t n);
+void intentir_relu_f32(const float* a, float* out, size_t n);
+
 // Matmul (GEMM) in row-major layouts, with optional transpose flags:
 // - 2D: [M,K] x [K,N] -> [M,N]
 // - 4D: [B,H,M,K] x [B,H,K,N] -> [B,H,M,N]

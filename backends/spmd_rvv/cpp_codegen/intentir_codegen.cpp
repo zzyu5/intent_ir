@@ -393,7 +393,7 @@ double resolve_const_value(const json& v, const std::unordered_map<std::string, 
 void emit_elemwise_bin(CodeWriter& w, const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings,
                        const std::string& op, const std::string& out, const std::string& a, const std::string& b,
                        const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape,
-                       const std::string& out_dtype) {
+                       const std::string& a_dtype, const std::string& b_dtype, const std::string& out_dtype) {
   const int r = static_cast<int>(out_shape.size());
   if (r > 4) fail("elemwise broadcast supports rank<=4");
   std::vector<int64_t> pa = pad_for_broadcast(intent, bindings, a, a_shape, b, b_shape, r);
@@ -403,8 +403,34 @@ void emit_elemwise_bin(CodeWriter& w, const Intent& intent, const std::unordered
     if (pb[i] != 1 && pb[i] != out_shape[i]) fail("elemwise broadcast mismatch (b)");
   }
   const std::string out_ct = ctype_for_dtype(out_dtype);
-  const int64_t n_total = numel(out_shape);
-  const bool is_contig_elemwise = (pa == out_shape) && (pb == out_shape);
+  const std::string a_ct = ctype_for_dtype(a_dtype);
+  const std::string b_ct = ctype_for_dtype(b_dtype);
+  const bool can_runtime = (out_ct == "float") && (a_ct == "float") && (b_ct == "float") && (r >= 1);
+
+  if (can_runtime) {
+    std::string op_code;
+    if (op == "add") op_code = "INTENTIR_F32_BIN_ADD";
+    else if (op == "sub") op_code = "INTENTIR_F32_BIN_SUB";
+    else if (op == "mul") op_code = "INTENTIR_F32_BIN_MUL";
+    else if (op == "div") op_code = "INTENTIR_F32_BIN_DIV";
+    else if (op == "max") op_code = "INTENTIR_F32_BIN_MAX";
+    else if (op == "min") op_code = "INTENTIR_F32_BIN_MIN";
+    else fail("unsupported elemwise op: " + op);
+
+    auto arr = [&](const std::vector<int64_t>& v) -> std::string {
+      std::string s = "(int64_t[]){";
+      for (size_t i = 0; i < v.size(); ++i) {
+        if (i) s += ",";
+        s += std::to_string(v[i]);
+      }
+      s += "}";
+      return s;
+    };
+
+    w.line("intentir_f32_bin_broadcast(" + a + ", " + b + ", " + out + ", " + arr(out_shape) + ", " + arr(pa) + ", " + arr(pb) +
+           ", " + std::to_string(r) + ", " + op_code + ");");
+    return;
+  }
 
   auto emit_scalar = [&]() {
     std::vector<std::string> idx = {"i0", "i1", "i2", "i3"};
@@ -448,33 +474,7 @@ void emit_elemwise_bin(CodeWriter& w, const Intent& intent, const std::unordered
       w.line("}");
     }
   };
-
-  const bool can_vector = (out_ct == "float") && is_contig_elemwise && (n_total > 0) &&
-                          (op == "add" || op == "sub" || op == "mul" || op == "div" || op == "max" || op == "min");
-  if (!can_vector) {
-    emit_scalar();
-    return;
-  }
-
-  w.pp_line("#if defined(__riscv_vector) || defined(__riscv_v)");
-  w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n_total) + "; ) {");
-  w.indent();
-  w.line("size_t vl = intentir_vsetvl_e32m1((size_t)" + std::to_string(n_total) + " - i);");
-  w.line("vfloat32m1_t va = __riscv_vle32_v_f32m1(&" + a + "[i], vl);");
-  w.line("vfloat32m1_t vb = __riscv_vle32_v_f32m1(&" + b + "[i], vl);");
-  if (op == "add") w.line("vfloat32m1_t vc = __riscv_vfadd_vv_f32m1(va, vb, vl);");
-  else if (op == "sub") w.line("vfloat32m1_t vc = __riscv_vfsub_vv_f32m1(va, vb, vl);");
-  else if (op == "mul") w.line("vfloat32m1_t vc = __riscv_vfmul_vv_f32m1(va, vb, vl);");
-  else if (op == "div") w.line("vfloat32m1_t vc = __riscv_vfdiv_vv_f32m1(va, vb, vl);");
-  else if (op == "max") w.line("vfloat32m1_t vc = __riscv_vfmax_vv_f32m1(va, vb, vl);");
-  else if (op == "min") w.line("vfloat32m1_t vc = __riscv_vfmin_vv_f32m1(va, vb, vl);");
-  w.line("__riscv_vse32_v_f32m1(&" + out + "[i], vc, vl);");
-  w.line("i += vl;");
-  w.dedent();
-  w.line("}");
-  w.pp_line("#else");
   emit_scalar();
-  w.pp_line("#endif");
 }
 
 void emit_cmp(CodeWriter& w, const std::string& cmp_op, const std::string& out, const std::string& a, const std::string& b,
@@ -606,19 +606,7 @@ void emit_unary_abs(CodeWriter& w, const std::string& out, const std::string& a,
   const std::string in_ct = ctype_for_dtype(in_dt);
   const std::string out_ct = ctype_for_dtype(out_dt);
   if (in_ct == "float" && out_ct == "float") {
-    w.pp_line("#if defined(__riscv_vector) || defined(__riscv_v)");
-    w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ) {");
-    w.indent();
-    w.line("size_t vl = intentir_vsetvl_e32m1((size_t)" + std::to_string(n) + " - i);");
-    w.line("vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + a + "[i], vl);");
-    w.line("vfloat32m1_t vy = __riscv_vfabs_v_f32m1(vx, vl);");
-    w.line("__riscv_vse32_v_f32m1(&" + out + "[i], vy, vl);");
-    w.line("i += vl;");
-    w.dedent();
-    w.line("}");
-    w.pp_line("#else");
-    w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) { " + out + "[i] = fabsf(" + a + "[i]); }");
-    w.pp_line("#endif");
+    w.line("intentir_abs_f32(" + a + ", " + out + ", (size_t)" + std::to_string(n) + ");");
     return;
   }
   w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) {");
@@ -635,29 +623,12 @@ void emit_unary_abs(CodeWriter& w, const std::string& out, const std::string& a,
 
 void emit_floor(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
   const int64_t n = numel(out_shape);
-  w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) {");
-  w.indent();
-  w.line(out + "[i] = floorf(" + a + "[i]);");
-  w.dedent();
-  w.line("}");
+  w.line("intentir_floor_f32(" + a + ", " + out + ", (size_t)" + std::to_string(n) + ");");
 }
 
 void emit_rsqrt(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
   const int64_t n = numel(out_shape);
-  w.pp_line("#if defined(__riscv_vector) || defined(__riscv_v)");
-  w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ) {");
-  w.indent();
-  w.line("size_t vl = intentir_vsetvl_e32m1((size_t)" + std::to_string(n) + " - i);");
-  w.line("vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + a + "[i], vl);");
-  w.line("vfloat32m1_t vs = __riscv_vfsqrt_v_f32m1(vx, vl);");
-  w.line("vfloat32m1_t vy = __riscv_vfrdiv_vf_f32m1(vs, 1.0f, vl);");
-  w.line("__riscv_vse32_v_f32m1(&" + out + "[i], vy, vl);");
-  w.line("i += vl;");
-  w.dedent();
-  w.line("}");
-  w.pp_line("#else");
-  w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) { " + out + "[i] = 1.0f / sqrtf(" + a + "[i]); }");
-  w.pp_line("#endif");
+  w.line("intentir_rsqrt_f32(" + a + ", " + out + ", (size_t)" + std::to_string(n) + ");");
 }
 
 void emit_cast(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape, const std::string& from_dt, const std::string& to_dt) {
@@ -1311,7 +1282,8 @@ struct CProgramEmitter {
       } else if (op.op == "broadcast_in_dim") {
         emit_broadcast_in_dim(op, out_shape);
       } else if (op.op == "add" || op.op == "sub" || op.op == "mul" || op.op == "div" || op.op == "max" || op.op == "min") {
-        emit_elemwise_bin(w, intent, bindings, op.op, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, dtype_env.at(out));
+        emit_elemwise_bin(w, intent, bindings, op.op, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape,
+                          dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(out));
       } else if (op.op == "ne") {
         emit_ne(w, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, intent, bindings);
       } else if (op.op == "lt" || op.op == "le" || op.op == "gt" || op.op == "ge") {
@@ -1357,23 +1329,10 @@ struct CProgramEmitter {
         emit_reduce_any(w, out, op.inputs[0], shape_env.at(op.inputs[0]), out_shape, dims, keepdims);
       } else if (op.op == "exp") {
         int64_t n = numel(out_shape);
-        w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) { " + out + "[i] = expf(" + op.inputs[0] + "[i]); }");
+        w.line("intentir_exp_f32(" + op.inputs[0] + ", " + out + ", (size_t)" + std::to_string(n) + ");");
       } else if (op.op == "relu") {
         int64_t n = numel(out_shape);
-        w.pp_line("#if defined(__riscv_vector) || defined(__riscv_v)");
-        w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ) {");
-        w.indent();
-        w.line("size_t vl = intentir_vsetvl_e32m1((size_t)" + std::to_string(n) + " - i);");
-        w.line("vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + op.inputs[0] + "[i], vl);");
-        w.line("vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(0.0f, vl);");
-        w.line("vfloat32m1_t vy = __riscv_vfmax_vv_f32m1(vx, v0, vl);");
-        w.line("__riscv_vse32_v_f32m1(&" + out + "[i], vy, vl);");
-        w.line("i += vl;");
-        w.dedent();
-        w.line("}");
-        w.pp_line("#else");
-        w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) { float v = " + op.inputs[0] + "[i]; " + out + "[i] = v > 0.0f ? v : 0.0f; }");
-        w.pp_line("#endif");
+        w.line("intentir_relu_f32(" + op.inputs[0] + ", " + out + ", (size_t)" + std::to_string(n) + ");");
       } else if (op.op == "softmax") {
         int axis = op.attrs.value("axis", -1);
         emit_softmax(w, out, op.inputs[0], shape_env.at(op.inputs[0]), axis);

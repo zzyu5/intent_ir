@@ -185,6 +185,205 @@ void intentir_softmax_4d_last_f32(const float* a, float* out, int64_t B, int64_t
 
 static inline int64_t intentir_min_i64(int64_t a, int64_t b) { return (a < b) ? a : b; }
 
+static inline size_t intentir_numel_rank(const int64_t* shape, int rank) {
+  size_t n = 1;
+  for (int i = 0; i < rank; ++i) n *= (size_t)shape[i];
+  return n;
+}
+
+static inline int intentir_shapes_equal(const int64_t* a, const int64_t* b, int rank) {
+  for (int i = 0; i < rank; ++i) {
+    if (a[i] != b[i]) return 0;
+  }
+  return 1;
+}
+
+static inline float intentir_apply_f32_bin(float x, float y, int op) {
+  switch (op) {
+    case INTENTIR_F32_BIN_ADD:
+      return x + y;
+    case INTENTIR_F32_BIN_SUB:
+      return x - y;
+    case INTENTIR_F32_BIN_MUL:
+      return x * y;
+    case INTENTIR_F32_BIN_DIV:
+      return x / y;
+    case INTENTIR_F32_BIN_MAX:
+      return fmaxf(x, y);
+    case INTENTIR_F32_BIN_MIN:
+      return fminf(x, y);
+    default:
+      return x;
+  }
+}
+
+static void intentir_f32_bin_contig(const float* a, const float* b, float* out, size_t n, int op) {
+  if (!a || !b || !out || n == 0) return;
+#if defined(__riscv_vector) || defined(__riscv_v)
+  for (size_t i = 0; i < n;) {
+    size_t vl = intentir_vsetvl_e32m1(n - i);
+    vfloat32m1_t va = __riscv_vle32_v_f32m1(&a[i], vl);
+    vfloat32m1_t vb = __riscv_vle32_v_f32m1(&b[i], vl);
+    vfloat32m1_t vc;
+    if (op == INTENTIR_F32_BIN_ADD) vc = __riscv_vfadd_vv_f32m1(va, vb, vl);
+    else if (op == INTENTIR_F32_BIN_SUB) vc = __riscv_vfsub_vv_f32m1(va, vb, vl);
+    else if (op == INTENTIR_F32_BIN_MUL) vc = __riscv_vfmul_vv_f32m1(va, vb, vl);
+    else if (op == INTENTIR_F32_BIN_DIV) vc = __riscv_vfdiv_vv_f32m1(va, vb, vl);
+    else if (op == INTENTIR_F32_BIN_MAX) vc = __riscv_vfmax_vv_f32m1(va, vb, vl);
+    else if (op == INTENTIR_F32_BIN_MIN) vc = __riscv_vfmin_vv_f32m1(va, vb, vl);
+    else vc = va;
+    __riscv_vse32_v_f32m1(&out[i], vc, vl);
+    i += vl;
+  }
+#else
+  for (size_t i = 0; i < n; ++i) out[i] = intentir_apply_f32_bin(a[i], b[i], op);
+#endif
+}
+
+void intentir_f32_bin_broadcast(
+    const float* a, const float* b, float* out, const int64_t* out_shape, const int64_t* a_shape, const int64_t* b_shape, int rank, int op) {
+  if (!a || !b || !out || !out_shape || !a_shape || !b_shape) return;
+  if (rank < 1 || rank > 4) return;
+
+  const size_t n = intentir_numel_rank(out_shape, rank);
+  if (intentir_shapes_equal(a_shape, out_shape, rank) && intentir_shapes_equal(b_shape, out_shape, rank)) {
+    intentir_f32_bin_contig(a, b, out, n, op);
+    return;
+  }
+
+  if (rank == 1) {
+    const int64_t D0 = out_shape[0];
+    for (int64_t i0 = 0; i0 < D0; ++i0) {
+      int64_t a0 = (a_shape[0] == 1) ? 0 : i0;
+      int64_t b0 = (b_shape[0] == 1) ? 0 : i0;
+      out[(size_t)i0] = intentir_apply_f32_bin(a[(size_t)a0], b[(size_t)b0], op);
+    }
+    return;
+  }
+  if (rank == 2) {
+    const int64_t D0 = out_shape[0], D1 = out_shape[1];
+    for (int64_t i0 = 0; i0 < D0; ++i0) {
+      for (int64_t i1 = 0; i1 < D1; ++i1) {
+        int64_t a0 = (a_shape[0] == 1) ? 0 : i0;
+        int64_t a1 = (a_shape[1] == 1) ? 0 : i1;
+        int64_t b0 = (b_shape[0] == 1) ? 0 : i0;
+        int64_t b1 = (b_shape[1] == 1) ? 0 : i1;
+        size_t oi = (size_t)i0 * (size_t)D1 + (size_t)i1;
+        size_t ai = (size_t)a0 * (size_t)a_shape[1] + (size_t)a1;
+        size_t bi = (size_t)b0 * (size_t)b_shape[1] + (size_t)b1;
+        out[oi] = intentir_apply_f32_bin(a[ai], b[bi], op);
+      }
+    }
+    return;
+  }
+  if (rank == 3) {
+    const int64_t D0 = out_shape[0], D1 = out_shape[1], D2 = out_shape[2];
+    for (int64_t i0 = 0; i0 < D0; ++i0) {
+      for (int64_t i1 = 0; i1 < D1; ++i1) {
+        for (int64_t i2 = 0; i2 < D2; ++i2) {
+          int64_t a0 = (a_shape[0] == 1) ? 0 : i0;
+          int64_t a1 = (a_shape[1] == 1) ? 0 : i1;
+          int64_t a2 = (a_shape[2] == 1) ? 0 : i2;
+          int64_t b0 = (b_shape[0] == 1) ? 0 : i0;
+          int64_t b1 = (b_shape[1] == 1) ? 0 : i1;
+          int64_t b2 = (b_shape[2] == 1) ? 0 : i2;
+          size_t oi = ((size_t)i0 * (size_t)D1 + (size_t)i1) * (size_t)D2 + (size_t)i2;
+          size_t ai = ((size_t)a0 * (size_t)a_shape[1] + (size_t)a1) * (size_t)a_shape[2] + (size_t)a2;
+          size_t bi = ((size_t)b0 * (size_t)b_shape[1] + (size_t)b1) * (size_t)b_shape[2] + (size_t)b2;
+          out[oi] = intentir_apply_f32_bin(a[ai], b[bi], op);
+        }
+      }
+    }
+    return;
+  }
+  if (rank == 4) {
+    const int64_t D0 = out_shape[0], D1 = out_shape[1], D2 = out_shape[2], D3 = out_shape[3];
+    for (int64_t i0 = 0; i0 < D0; ++i0) {
+      for (int64_t i1 = 0; i1 < D1; ++i1) {
+        for (int64_t i2 = 0; i2 < D2; ++i2) {
+          for (int64_t i3 = 0; i3 < D3; ++i3) {
+            int64_t a0 = (a_shape[0] == 1) ? 0 : i0;
+            int64_t a1 = (a_shape[1] == 1) ? 0 : i1;
+            int64_t a2 = (a_shape[2] == 1) ? 0 : i2;
+            int64_t a3 = (a_shape[3] == 1) ? 0 : i3;
+            int64_t b0 = (b_shape[0] == 1) ? 0 : i0;
+            int64_t b1 = (b_shape[1] == 1) ? 0 : i1;
+            int64_t b2 = (b_shape[2] == 1) ? 0 : i2;
+            int64_t b3 = (b_shape[3] == 1) ? 0 : i3;
+            size_t oi = (((size_t)i0 * (size_t)D1 + (size_t)i1) * (size_t)D2 + (size_t)i2) * (size_t)D3 + (size_t)i3;
+            size_t ai = (((size_t)a0 * (size_t)a_shape[1] + (size_t)a1) * (size_t)a_shape[2] + (size_t)a2) * (size_t)a_shape[3] +
+                         (size_t)a3;
+            size_t bi = (((size_t)b0 * (size_t)b_shape[1] + (size_t)b1) * (size_t)b_shape[2] + (size_t)b2) * (size_t)b_shape[3] +
+                         (size_t)b3;
+            out[oi] = intentir_apply_f32_bin(a[ai], b[bi], op);
+          }
+        }
+      }
+    }
+    return;
+  }
+}
+
+void intentir_abs_f32(const float* a, float* out, size_t n) {
+  if (!a || !out || n == 0) return;
+#if defined(__riscv_vector) || defined(__riscv_v)
+  for (size_t i = 0; i < n;) {
+    size_t vl = intentir_vsetvl_e32m1(n - i);
+    vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[i], vl);
+    vfloat32m1_t vy = __riscv_vfabs_v_f32m1(vx, vl);
+    __riscv_vse32_v_f32m1(&out[i], vy, vl);
+    i += vl;
+  }
+#else
+  for (size_t i = 0; i < n; ++i) out[i] = fabsf(a[i]);
+#endif
+}
+
+void intentir_floor_f32(const float* a, float* out, size_t n) {
+  if (!a || !out || n == 0) return;
+  for (size_t i = 0; i < n; ++i) out[i] = floorf(a[i]);
+}
+
+void intentir_rsqrt_f32(const float* a, float* out, size_t n) {
+  if (!a || !out || n == 0) return;
+#if defined(__riscv_vector) || defined(__riscv_v)
+  for (size_t i = 0; i < n;) {
+    size_t vl = intentir_vsetvl_e32m1(n - i);
+    vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[i], vl);
+    vfloat32m1_t vs = __riscv_vfsqrt_v_f32m1(vx, vl);
+    vfloat32m1_t vy = __riscv_vfrdiv_vf_f32m1(vs, 1.0f, vl);
+    __riscv_vse32_v_f32m1(&out[i], vy, vl);
+    i += vl;
+  }
+#else
+  for (size_t i = 0; i < n; ++i) out[i] = 1.0f / sqrtf(a[i]);
+#endif
+}
+
+void intentir_exp_f32(const float* a, float* out, size_t n) {
+  if (!a || !out || n == 0) return;
+  for (size_t i = 0; i < n; ++i) out[i] = expf(a[i]);
+}
+
+void intentir_relu_f32(const float* a, float* out, size_t n) {
+  if (!a || !out || n == 0) return;
+#if defined(__riscv_vector) || defined(__riscv_v)
+  for (size_t i = 0; i < n;) {
+    size_t vl = intentir_vsetvl_e32m1(n - i);
+    vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[i], vl);
+    vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(0.0f, vl);
+    vfloat32m1_t vy = __riscv_vfmax_vv_f32m1(vx, v0, vl);
+    __riscv_vse32_v_f32m1(&out[i], vy, vl);
+    i += vl;
+  }
+#else
+  for (size_t i = 0; i < n; ++i) {
+    float v = a[i];
+    out[i] = v > 0.0f ? v : 0.0f;
+  }
+#endif
+}
+
 void intentir_matmul_2d_f32(
     const float* a, const float* b, float* out, int64_t M, int64_t N, int64_t K, int transpose_a, int transpose_b,
     int64_t tile_m, int64_t tile_n, int64_t tile_k) {
