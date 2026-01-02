@@ -71,6 +71,15 @@ std::string ctype_for_dtype(const std::string& dt) {
   return "float";
 }
 
+std::string typecode_for_dtype(const std::string& dt) {
+  if (dt == "bool" || dt == "i1" || dt == "u8") return "INTENTIR_TYPE_U8";
+  if (dt == "i8") return "INTENTIR_TYPE_I8";
+  if (dt == "i32") return "INTENTIR_TYPE_I32";
+  if (dt == "i64") return "INTENTIR_TYPE_I64";
+  if (dt == "f64") return "INTENTIR_TYPE_F64";
+  return "INTENTIR_TYPE_F32";
+}
+
 std::string flat_idx_expr(const std::vector<std::string>& vars, const std::vector<int64_t>& shape) {
   const int r = static_cast<int>(shape.size());
   if (r == 0) return "0";
@@ -479,7 +488,8 @@ void emit_elemwise_bin(CodeWriter& w, const Intent& intent, const std::unordered
 
 void emit_cmp(CodeWriter& w, const std::string& cmp_op, const std::string& out, const std::string& a, const std::string& b,
               const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape,
-              const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings) {
+              const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings,
+              const std::string& a_dtype, const std::string& b_dtype, const std::string& out_dtype) {
   const int r = static_cast<int>(out_shape.size());
   if (r > 4) fail("cmp broadcast supports rank<=4");
   std::vector<int64_t> pa = pad_for_broadcast(intent, bindings, a, a_shape, b, b_shape, r);
@@ -488,6 +498,41 @@ void emit_cmp(CodeWriter& w, const std::string& cmp_op, const std::string& out, 
     if (pa[i] != 1 && pa[i] != out_shape[i]) fail("cmp broadcast mismatch (a)");
     if (pb[i] != 1 && pb[i] != out_shape[i]) fail("cmp broadcast mismatch (b)");
   }
+
+  const std::string a_ct = ctype_for_dtype(a_dtype);
+  const std::string b_ct = ctype_for_dtype(b_dtype);
+  const std::string out_ct = ctype_for_dtype(out_dtype);
+  const bool can_runtime = (r >= 1) && (out_ct == "uint8_t") && (a_ct == b_ct) && (a_ct == "float" || a_ct == "int32_t");
+  if (can_runtime) {
+    std::string op_code;
+    if (cmp_op == "lt") op_code = "INTENTIR_CMP_LT";
+    else if (cmp_op == "le") op_code = "INTENTIR_CMP_LE";
+    else if (cmp_op == "gt") op_code = "INTENTIR_CMP_GT";
+    else if (cmp_op == "ge") op_code = "INTENTIR_CMP_GE";
+    else fail("unsupported cmp op");
+
+    auto arr = [&](const std::vector<int64_t>& v) -> std::string {
+      std::string s = "(int64_t[]){";
+      for (size_t i = 0; i < v.size(); ++i) {
+        if (i) s += ",";
+        s += std::to_string(v[i]);
+      }
+      s += "}";
+      return s;
+    };
+
+    if (a_ct == "float") {
+      w.line("intentir_cmp_f32_broadcast_u8(" + a + ", " + b + ", " + out + ", " + arr(out_shape) + ", " + arr(pa) + ", " + arr(pb) + ", " +
+             std::to_string(r) + ", " + op_code + ");");
+      return;
+    }
+    if (a_ct == "int32_t") {
+      w.line("intentir_cmp_i32_broadcast_u8(" + a + ", " + b + ", " + out + ", " + arr(out_shape) + ", " + arr(pa) + ", " + arr(pb) + ", " +
+             std::to_string(r) + ", " + op_code + ");");
+      return;
+    }
+  }
+
   std::vector<std::string> idx = {"i0", "i1", "i2", "i3"};
   idx.resize(r);
   for (int i = 0; i < r; ++i) {
@@ -518,7 +563,8 @@ void emit_cmp(CodeWriter& w, const std::string& cmp_op, const std::string& out, 
 
 void emit_ne(CodeWriter& w, const std::string& out, const std::string& a, const std::string& b,
              const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape,
-             const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings) {
+             const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings,
+             const std::string& a_dtype, const std::string& b_dtype, const std::string& out_dtype) {
   const int r = static_cast<int>(out_shape.size());
   if (r > 4) fail("ne broadcast supports rank<=4");
   std::vector<int64_t> pa = pad_for_broadcast(intent, bindings, a, a_shape, b, b_shape, r);
@@ -527,6 +573,34 @@ void emit_ne(CodeWriter& w, const std::string& out, const std::string& a, const 
     if (pa[i] != 1 && pa[i] != out_shape[i]) fail("ne broadcast mismatch (a)");
     if (pb[i] != 1 && pb[i] != out_shape[i]) fail("ne broadcast mismatch (b)");
   }
+
+  const std::string a_ct = ctype_for_dtype(a_dtype);
+  const std::string b_ct = ctype_for_dtype(b_dtype);
+  const std::string out_ct = ctype_for_dtype(out_dtype);
+  const bool can_runtime = (r >= 1) && (out_ct == "uint8_t") && (a_ct == b_ct) && (a_ct == "float" || a_ct == "int32_t");
+  if (can_runtime) {
+    auto arr = [&](const std::vector<int64_t>& v) -> std::string {
+      std::string s = "(int64_t[]){";
+      for (size_t i = 0; i < v.size(); ++i) {
+        if (i) s += ",";
+        s += std::to_string(v[i]);
+      }
+      s += "}";
+      return s;
+    };
+
+    if (a_ct == "float") {
+      w.line("intentir_cmp_f32_broadcast_u8(" + a + ", " + b + ", " + out + ", " + arr(out_shape) + ", " + arr(pa) + ", " + arr(pb) + ", " +
+             std::to_string(r) + ", INTENTIR_CMP_NE);");
+      return;
+    }
+    if (a_ct == "int32_t") {
+      w.line("intentir_cmp_i32_broadcast_u8(" + a + ", " + b + ", " + out + ", " + arr(out_shape) + ", " + arr(pa) + ", " + arr(pb) + ", " +
+             std::to_string(r) + ", INTENTIR_CMP_NE);");
+      return;
+    }
+  }
+
   std::vector<std::string> idx = {"i0", "i1", "i2", "i3"};
   idx.resize(r);
   for (int i = 0; i < r; ++i) {
@@ -550,16 +624,41 @@ void emit_ne(CodeWriter& w, const std::string& out, const std::string& a, const 
 }
 
 void emit_bool_bin(CodeWriter& w, const std::string& op, const std::string& out, const std::string& a, const std::string& b,
-                   const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape) {
+                   const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape,
+                   const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings,
+                   const std::string& a_dtype, const std::string& b_dtype, const std::string& out_dtype) {
   const int r = static_cast<int>(out_shape.size());
   if (r > 4) fail("bool broadcast supports rank<=4");
-  std::vector<int64_t> pa(r, 1), pb(r, 1);
-  for (int i = 0; i < (int)a_shape.size(); ++i) pa[r - (int)a_shape.size() + i] = a_shape[i];
-  for (int i = 0; i < (int)b_shape.size(); ++i) pb[r - (int)b_shape.size() + i] = b_shape[i];
+  std::vector<int64_t> pa = pad_for_broadcast(intent, bindings, a, a_shape, b, b_shape, r);
+  std::vector<int64_t> pb = pad_for_broadcast(intent, bindings, b, b_shape, a, a_shape, r);
   for (int i = 0; i < r; ++i) {
     if (pa[i] != 1 && pa[i] != out_shape[i]) fail("bool broadcast mismatch (a)");
     if (pb[i] != 1 && pb[i] != out_shape[i]) fail("bool broadcast mismatch (b)");
   }
+
+  const std::string a_ct = ctype_for_dtype(a_dtype);
+  const std::string b_ct = ctype_for_dtype(b_dtype);
+  const std::string out_ct = ctype_for_dtype(out_dtype);
+  const bool can_runtime = (r >= 1) && (a_ct == "uint8_t") && (b_ct == "uint8_t") && (out_ct == "uint8_t");
+  if (can_runtime) {
+    std::string op_code = (op == "and") ? "INTENTIR_BOOL_BIN_AND" : (op == "or") ? "INTENTIR_BOOL_BIN_OR" : "";
+    if (op_code.empty()) fail("unsupported bool op");
+
+    auto arr = [&](const std::vector<int64_t>& v) -> std::string {
+      std::string s = "(int64_t[]){";
+      for (size_t i = 0; i < v.size(); ++i) {
+        if (i) s += ",";
+        s += std::to_string(v[i]);
+      }
+      s += "}";
+      return s;
+    };
+
+    w.line("intentir_bool_bin_broadcast_u8(" + a + ", " + b + ", " + out + ", " + arr(out_shape) + ", " + arr(pa) + ", " + arr(pb) + ", " +
+           std::to_string(r) + ", " + op_code + ");");
+    return;
+  }
+
   std::vector<std::string> idx = {"i0", "i1", "i2", "i3"};
   idx.resize(r);
   for (int i = 0; i < r; ++i) {
@@ -633,21 +732,8 @@ void emit_rsqrt(CodeWriter& w, const std::string& out, const std::string& a, con
 
 void emit_cast(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape, const std::string& from_dt, const std::string& to_dt) {
   const int64_t n = numel(out_shape);
-  const std::string from_ct = ctype_for_dtype(from_dt);
-  const std::string to_ct = ctype_for_dtype(to_dt);
-  w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) {");
-  w.indent();
-  if (to_ct == "uint8_t") {
-    w.line(out + "[i] = (" + a + "[i] != 0) ? 1 : 0;");
-  } else if (from_ct == "uint8_t" && (to_ct == "float" || to_ct == "double")) {
-    const std::string one = (to_ct == "float") ? "1.0f" : "1.0";
-    const std::string zero = (to_ct == "float") ? "0.0f" : "0.0";
-    w.line(out + "[i] = (" + a + "[i] != 0) ? " + one + " : " + zero + ";");
-  } else {
-    w.line(out + "[i] = (" + to_ct + ")(" + a + "[i]);");
-  }
-  w.dedent();
-  w.line("}");
+  w.line("intentir_cast_1d(" + a + ", " + out + ", (size_t)" + std::to_string(n) + ", " + typecode_for_dtype(from_dt) + ", " + typecode_for_dtype(to_dt) +
+         ");");
 }
 
 void emit_where(CodeWriter& w, const std::string& out, const std::string& cond, const std::string& x, const std::string& y,
@@ -714,6 +800,17 @@ void emit_iota(CodeWriter& w, const std::string& out, const std::vector<int64_t>
   if (r == 0) fail("iota requires rank>=1");
   if (r > 4) fail("iota supports rank<=4");
   if (axis < 0 || axis >= r) fail("iota axis out of range");
+  const std::string out_ct = ctype_for_dtype(out_dtype);
+  if (out_ct == "int32_t") {
+    std::string s = "(int64_t[]){";
+    for (size_t i = 0; i < out_shape.size(); ++i) {
+      if (i) s += ",";
+      s += std::to_string(out_shape[i]);
+    }
+    s += "}";
+    w.line("intentir_iota_i32(" + out + ", " + s + ", " + std::to_string(r) + ", " + std::to_string(axis) + ");");
+    return;
+  }
   std::vector<std::string> idx = {"i0", "i1", "i2", "i3"};
   idx.resize(r);
   for (int i = 0; i < r; ++i) {
@@ -721,7 +818,6 @@ void emit_iota(CodeWriter& w, const std::string& out, const std::vector<int64_t>
     w.indent();
   }
   std::string out_idx = flat_idx_expr(idx, out_shape);
-  const std::string out_ct = ctype_for_dtype(out_dtype);
   w.line(out + "[" + out_idx + "] = (" + out_ct + ")" + idx[axis] + ";");
   for (int i = 0; i < r; ++i) {
     w.dedent();
@@ -731,10 +827,12 @@ void emit_iota(CodeWriter& w, const std::string& out, const std::vector<int64_t>
 
 void emit_gather(CodeWriter& w, const std::string& out, const std::string& data, const std::vector<std::string>& idxs,
                  const std::vector<int64_t>& data_shape, const std::vector<std::vector<int64_t>>& idx_shapes,
-                 const std::vector<int64_t>& out_shape, const std::string& out_dtype) {
+                 const std::vector<int64_t>& out_shape, const std::string& data_dtype, const std::vector<std::string>& idx_dtypes,
+                 const std::string& out_dtype) {
   const int r_data = static_cast<int>(data_shape.size());
   if (r_data < 1 || r_data > 4) fail("gather supports data rank 1..4");
   if ((int)idxs.size() != r_data) fail("gather expects indices == data rank");
+  if ((int)idx_dtypes.size() != r_data) fail("gather expects idx dtypes == data rank");
   const int r = static_cast<int>(out_shape.size());
   if (r > 4) fail("gather out rank<=4");
   // pad idx shapes to out rank
@@ -745,6 +843,44 @@ void emit_gather(CodeWriter& w, const std::string& out, const std::string& data,
     for (int i = 0; i < (int)s.size(); ++i) p[r - (int)s.size() + i] = s[i];
     for (int i = 0; i < r; ++i) if (p[i] != 1 && p[i] != out_shape[i]) fail("gather idx broadcast mismatch");
     padded.push_back(std::move(p));
+  }
+
+  const std::string data_ct = ctype_for_dtype(data_dtype);
+  const std::string out_ct = ctype_for_dtype(out_dtype);
+  bool idx_i32 = true;
+  for (const auto& dt : idx_dtypes) idx_i32 = idx_i32 && (ctype_for_dtype(dt) == "int32_t");
+  const bool can_runtime = (r >= 1) && (data_ct == "float") && (out_ct == "float") && idx_i32;
+  if (can_runtime) {
+    auto arr64 = [&](const std::vector<int64_t>& v) -> std::string {
+      std::string s = "(int64_t[]){";
+      for (size_t i = 0; i < v.size(); ++i) {
+        if (i) s += ",";
+        s += std::to_string(v[i]);
+      }
+      s += "}";
+      return s;
+    };
+    std::string idx_ptrs = "(const int32_t* const[]){";
+    for (size_t i = 0; i < idxs.size(); ++i) {
+      if (i) idx_ptrs += ",";
+      idx_ptrs += idxs[i];
+    }
+    idx_ptrs += "}";
+
+    std::string flat = "(int64_t[]){";
+    bool first = true;
+    for (const auto& ps : padded) {
+      for (auto d : ps) {
+        if (!first) flat += ",";
+        first = false;
+        flat += std::to_string(d);
+      }
+    }
+    flat += "}";
+
+    w.line("intentir_gather_f32_i32(" + data + ", " + out + ", " + idx_ptrs + ", " + std::to_string(r_data) + ", " + arr64(data_shape) + ", " +
+           std::to_string(r_data) + ", " + arr64(out_shape) + ", " + std::to_string(r) + ", " + flat + ");");
+    return;
   }
 
   std::vector<std::string> iv = {"i0", "i1", "i2", "i3"};
@@ -767,7 +903,6 @@ void emit_gather(CodeWriter& w, const std::string& out, const std::string& data,
   else if (r_data == 2) w.line("size_t di = idx2(d0,d1," + std::to_string(data_shape[1]) + ");");
   else if (r_data == 3) w.line("size_t di = idx3(d0,d1,d2," + std::to_string(data_shape[1]) + "," + std::to_string(data_shape[2]) + ");");
   else w.line("size_t di = idx4(d0,d1,d2,d3," + std::to_string(data_shape[1]) + "," + std::to_string(data_shape[2]) + "," + std::to_string(data_shape[3]) + ");");
-  const std::string out_ct = ctype_for_dtype(out_dtype);
   w.line(out + "[" + out_idx + "] = (" + out_ct + ")" + data + "[di];");
   for (int i = 0; i < r; ++i) {
     w.dedent();
@@ -848,7 +983,7 @@ void emit_reduce_sum(CodeWriter& w, const std::string& out, const std::string& a
 }
 
 void emit_reduce_any(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape,
-                     const std::vector<int>& dims, bool keepdims) {
+                     const std::vector<int>& dims, bool keepdims, const std::string& in_dtype, const std::string& out_dtype) {
   const int r = static_cast<int>(in_shape.size());
   if (r > 4) fail("reduce_any supports rank<=4");
   std::vector<int> dims_set = dims;
@@ -860,6 +995,18 @@ void emit_reduce_any(CodeWriter& w, const std::string& out, const std::string& a
   } else {
     if (out_rank != r - (int)dims_set.size()) fail("reduce_any out rank mismatch");
   }
+
+  // Fast path: 2D row-reduction over the last axis (u8) without keepdims.
+  if (!keepdims && r == 2 && dims_set.size() == 1 && dims_set[0] == 1 && out_shape.size() == 1 && out_shape[0] == in_shape[0]) {
+    const std::string in_ct = ctype_for_dtype(in_dtype);
+    const std::string out_ct = ctype_for_dtype(out_dtype);
+    if (in_ct == "uint8_t" && out_ct == "uint8_t") {
+      int64_t M = in_shape[0], K = in_shape[1];
+      w.line("intentir_reduce_any_2d_axis1_u8(" + a + ", " + out + ", " + std::to_string(M) + ", " + std::to_string(K) + ");");
+      return;
+    }
+  }
+
   std::vector<std::string> out_vars;
   for (int i = 0; i < out_rank; ++i) out_vars.push_back("o" + std::to_string(i));
   for (int i = 0; i < out_rank; ++i) {
@@ -1360,15 +1507,18 @@ struct CProgramEmitter {
 	        }
 	      } else if (op.op == "broadcast_in_dim") {
 	        emit_broadcast_in_dim(op, out_shape);
-	      } else if (op.op == "add" || op.op == "sub" || op.op == "mul" || op.op == "div" || op.op == "max" || op.op == "min") {
-	        emit_elemwise_bin(w, intent, bindings, op.op, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape,
-	                          dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(out));
+      } else if (op.op == "add" || op.op == "sub" || op.op == "mul" || op.op == "div" || op.op == "max" || op.op == "min") {
+        emit_elemwise_bin(w, intent, bindings, op.op, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape,
+                          dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(out));
       } else if (op.op == "ne") {
-        emit_ne(w, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, intent, bindings);
+        emit_ne(w, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, intent, bindings,
+                dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(out));
       } else if (op.op == "lt" || op.op == "le" || op.op == "gt" || op.op == "ge") {
-        emit_cmp(w, op.op, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, intent, bindings);
+        emit_cmp(w, op.op, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, intent, bindings,
+                 dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(out));
       } else if (op.op == "and" || op.op == "or") {
-        emit_bool_bin(w, op.op, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape);
+        emit_bool_bin(w, op.op, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, intent, bindings,
+                      dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(out));
       } else if (op.op == "not") {
         emit_bool_not(w, out, op.inputs[0], out_shape);
       } else if (op.op == "rsqrt") {
@@ -1389,7 +1539,9 @@ struct CProgramEmitter {
         std::vector<std::string> idxs(op.inputs.begin() + 1, op.inputs.end());
         std::vector<std::vector<int64_t>> idx_shapes;
         for (const auto& nm : idxs) idx_shapes.push_back(shape_env.at(nm));
-        emit_gather(w, out, op.inputs[0], idxs, shape_env.at(op.inputs[0]), idx_shapes, out_shape, dtype_env.at(out));
+        std::vector<std::string> idx_dtypes;
+        for (const auto& nm : idxs) idx_dtypes.push_back(dtype_env.at(nm));
+        emit_gather(w, out, op.inputs[0], idxs, shape_env.at(op.inputs[0]), idx_shapes, out_shape, dtype_env.at(op.inputs[0]), idx_dtypes, dtype_env.at(out));
       } else if (op.op == "reduce_sum") {
         std::vector<int> dims;
         for (const auto& d : op.attrs["dims"]) dims.push_back(d.get<int>());
@@ -1406,7 +1558,7 @@ struct CProgramEmitter {
         std::vector<int> dims;
         for (const auto& d : op.attrs["dims"]) dims.push_back(d.get<int>());
         bool keepdims = op.attrs.value("keepdims", false);
-        emit_reduce_any(w, out, op.inputs[0], shape_env.at(op.inputs[0]), out_shape, dims, keepdims);
+        emit_reduce_any(w, out, op.inputs[0], shape_env.at(op.inputs[0]), out_shape, dims, keepdims, dtype_env.at(op.inputs[0]), dtype_env.at(out));
       } else if (op.op == "exp") {
         int64_t n = numel(out_shape);
         w.line("intentir_exp_f32(" + op.inputs[0] + ", " + out + ", (size_t)" + std::to_string(n) + ");");

@@ -198,6 +198,24 @@ static inline int intentir_shapes_equal(const int64_t* a, const int64_t* b, int 
   return 1;
 }
 
+static inline void intentir_unravel_index(size_t linear, const int64_t* shape, int rank, int64_t* coords) {
+  for (int d = rank - 1; d >= 0; --d) {
+    size_t dim = (size_t)shape[d];
+    coords[d] = (int64_t)(linear % dim);
+    linear /= dim;
+  }
+}
+
+static inline size_t intentir_ravel_broadcast(const int64_t* coords, const int64_t* shape, int rank) {
+  size_t idx = 0;
+  for (int d = 0; d < rank; ++d) {
+    size_t dim = (size_t)shape[d];
+    size_t c = (dim == 1) ? 0 : (size_t)coords[d];
+    idx = idx * dim + c;
+  }
+  return idx;
+}
+
 static inline float intentir_apply_f32_bin(float x, float y, int op) {
   switch (op) {
     case INTENTIR_F32_BIN_ADD:
@@ -321,6 +339,217 @@ void intentir_f32_bin_broadcast(
       }
     }
     return;
+  }
+}
+
+static inline int intentir_apply_cmp_f32(float x, float y, int op) {
+  switch (op) {
+    case INTENTIR_CMP_LT:
+      return x < y;
+    case INTENTIR_CMP_LE:
+      return x <= y;
+    case INTENTIR_CMP_GT:
+      return x > y;
+    case INTENTIR_CMP_GE:
+      return x >= y;
+    case INTENTIR_CMP_NE:
+      return x != y;
+    default:
+      return 0;
+  }
+}
+
+static inline int intentir_apply_cmp_i32(int32_t x, int32_t y, int op) {
+  switch (op) {
+    case INTENTIR_CMP_LT:
+      return x < y;
+    case INTENTIR_CMP_LE:
+      return x <= y;
+    case INTENTIR_CMP_GT:
+      return x > y;
+    case INTENTIR_CMP_GE:
+      return x >= y;
+    case INTENTIR_CMP_NE:
+      return x != y;
+    default:
+      return 0;
+  }
+}
+
+void intentir_cmp_f32_broadcast_u8(
+    const float* a, const float* b, uint8_t* out, const int64_t* out_shape, const int64_t* a_shape, const int64_t* b_shape, int rank, int op) {
+  if (!a || !b || !out || !out_shape || !a_shape || !b_shape) return;
+  if (rank < 1 || rank > 4) return;
+  const size_t n = intentir_numel_rank(out_shape, rank);
+  int64_t coords[4] = {0, 0, 0, 0};
+  for (size_t i = 0; i < n; ++i) {
+    intentir_unravel_index(i, out_shape, rank, coords);
+    size_t ai = intentir_ravel_broadcast(coords, a_shape, rank);
+    size_t bi = intentir_ravel_broadcast(coords, b_shape, rank);
+    out[i] = intentir_apply_cmp_f32(a[ai], b[bi], op) ? 1 : 0;
+  }
+}
+
+void intentir_cmp_i32_broadcast_u8(
+    const int32_t* a, const int32_t* b, uint8_t* out, const int64_t* out_shape, const int64_t* a_shape, const int64_t* b_shape, int rank, int op) {
+  if (!a || !b || !out || !out_shape || !a_shape || !b_shape) return;
+  if (rank < 1 || rank > 4) return;
+  const size_t n = intentir_numel_rank(out_shape, rank);
+  int64_t coords[4] = {0, 0, 0, 0};
+  for (size_t i = 0; i < n; ++i) {
+    intentir_unravel_index(i, out_shape, rank, coords);
+    size_t ai = intentir_ravel_broadcast(coords, a_shape, rank);
+    size_t bi = intentir_ravel_broadcast(coords, b_shape, rank);
+    out[i] = intentir_apply_cmp_i32(a[ai], b[bi], op) ? 1 : 0;
+  }
+}
+
+void intentir_bool_bin_broadcast_u8(
+    const uint8_t* a, const uint8_t* b, uint8_t* out, const int64_t* out_shape, const int64_t* a_shape, const int64_t* b_shape, int rank, int op) {
+  if (!a || !b || !out || !out_shape || !a_shape || !b_shape) return;
+  if (rank < 1 || rank > 4) return;
+  const size_t n = intentir_numel_rank(out_shape, rank);
+  int64_t coords[4] = {0, 0, 0, 0};
+  for (size_t i = 0; i < n; ++i) {
+    intentir_unravel_index(i, out_shape, rank, coords);
+    size_t ai = intentir_ravel_broadcast(coords, a_shape, rank);
+    size_t bi = intentir_ravel_broadcast(coords, b_shape, rank);
+    int av = (a[ai] != 0);
+    int bv = (b[bi] != 0);
+    int r = 0;
+    if (op == INTENTIR_BOOL_BIN_AND) r = av && bv;
+    else if (op == INTENTIR_BOOL_BIN_OR) r = av || bv;
+    out[i] = r ? 1 : 0;
+  }
+}
+
+static inline double intentir_read_as_f64(const void* p, size_t i, int from_type) {
+  switch (from_type) {
+    case INTENTIR_TYPE_U8:
+      return (double)((const uint8_t*)p)[i];
+    case INTENTIR_TYPE_I8:
+      return (double)((const int8_t*)p)[i];
+    case INTENTIR_TYPE_I32:
+      return (double)((const int32_t*)p)[i];
+    case INTENTIR_TYPE_I64:
+      return (double)((const int64_t*)p)[i];
+    case INTENTIR_TYPE_F32:
+      return (double)((const float*)p)[i];
+    case INTENTIR_TYPE_F64:
+      return ((const double*)p)[i];
+    default:
+      return 0.0;
+  }
+}
+
+void intentir_cast_1d(const void* inp, void* out, size_t n, int from_type, int to_type) {
+  if (!inp || !out || n == 0) return;
+
+  if (to_type == INTENTIR_TYPE_U8) {
+    uint8_t* o = (uint8_t*)out;
+    for (size_t i = 0; i < n; ++i) {
+      double v = intentir_read_as_f64(inp, i, from_type);
+      o[i] = (v != 0.0) ? 1 : 0;
+    }
+    return;
+  }
+
+  if (from_type == INTENTIR_TYPE_U8 && (to_type == INTENTIR_TYPE_F32 || to_type == INTENTIR_TYPE_F64)) {
+    const uint8_t* a = (const uint8_t*)inp;
+    if (to_type == INTENTIR_TYPE_F32) {
+      float* o = (float*)out;
+      for (size_t i = 0; i < n; ++i) o[i] = (a[i] != 0) ? 1.0f : 0.0f;
+    } else {
+      double* o = (double*)out;
+      for (size_t i = 0; i < n; ++i) o[i] = (a[i] != 0) ? 1.0 : 0.0;
+    }
+    return;
+  }
+
+  switch (to_type) {
+    case INTENTIR_TYPE_I8: {
+      int8_t* o = (int8_t*)out;
+      for (size_t i = 0; i < n; ++i) o[i] = (int8_t)intentir_read_as_f64(inp, i, from_type);
+      return;
+    }
+    case INTENTIR_TYPE_I32: {
+      int32_t* o = (int32_t*)out;
+      for (size_t i = 0; i < n; ++i) o[i] = (int32_t)intentir_read_as_f64(inp, i, from_type);
+      return;
+    }
+    case INTENTIR_TYPE_I64: {
+      int64_t* o = (int64_t*)out;
+      for (size_t i = 0; i < n; ++i) o[i] = (int64_t)intentir_read_as_f64(inp, i, from_type);
+      return;
+    }
+    case INTENTIR_TYPE_F32: {
+      float* o = (float*)out;
+      for (size_t i = 0; i < n; ++i) o[i] = (float)intentir_read_as_f64(inp, i, from_type);
+      return;
+    }
+    case INTENTIR_TYPE_F64: {
+      double* o = (double*)out;
+      for (size_t i = 0; i < n; ++i) o[i] = (double)intentir_read_as_f64(inp, i, from_type);
+      return;
+    }
+    default:
+      return;
+  }
+}
+
+void intentir_iota_i32(int32_t* out, const int64_t* out_shape, int rank, int axis) {
+  if (!out || !out_shape) return;
+  if (rank < 1 || rank > 4) return;
+  if (axis < 0 || axis >= rank) return;
+  const size_t n = intentir_numel_rank(out_shape, rank);
+  int64_t coords[4] = {0, 0, 0, 0};
+  for (size_t i = 0; i < n; ++i) {
+    intentir_unravel_index(i, out_shape, rank, coords);
+    out[i] = (int32_t)coords[axis];
+  }
+}
+
+void intentir_gather_f32_i32(
+    const float* data, float* out, const int32_t* const* idxs, int data_rank, const int64_t* data_shape, int data_shape_rank,
+    const int64_t* out_shape, int out_rank, const int64_t* idx_shapes_flat) {
+  if (!data || !out || !idxs || !data_shape || !out_shape || !idx_shapes_flat) return;
+  if (data_rank < 1 || data_rank > 4) return;
+  if (data_shape_rank != data_rank) return;
+  if (out_rank < 1 || out_rank > 4) return;
+
+  const size_t n = intentir_numel_rank(out_shape, out_rank);
+  int64_t coords[4] = {0, 0, 0, 0};
+  for (size_t i = 0; i < n; ++i) {
+    intentir_unravel_index(i, out_shape, out_rank, coords);
+
+    int32_t di32[4] = {0, 0, 0, 0};
+    for (int ax = 0; ax < data_rank; ++ax) {
+      const int64_t* ish = &idx_shapes_flat[ax * out_rank];
+      size_t ii = intentir_ravel_broadcast(coords, ish, out_rank);
+      di32[ax] = idxs[ax][ii];
+    }
+
+    size_t di = 0;
+    for (int ax = 0; ax < data_rank; ++ax) {
+      size_t dim = (size_t)data_shape[ax];
+      size_t c = (size_t)di32[ax];
+      di = di * dim + c;
+    }
+    out[i] = data[di];
+  }
+}
+
+void intentir_reduce_any_2d_axis1_u8(const uint8_t* a, uint8_t* out, int64_t M, int64_t K) {
+  if (!a || !out || M <= 0 || K <= 0) return;
+  for (int64_t m = 0; m < M; ++m) {
+    uint8_t acc = 0;
+    for (int64_t k = 0; k < K; ++k) {
+      if (a[idx2((int)m, (int)k, (int)K)] != 0) {
+        acc = 1;
+        break;
+      }
+    }
+    out[(size_t)m] = acc;
   }
 }
 
