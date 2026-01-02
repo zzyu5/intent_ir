@@ -1432,7 +1432,7 @@ struct CProgramEmitter {
 	    w.pp_line("#ifndef INTENTIR_VEC_WIDTH");
 	    w.pp_line("#define INTENTIR_VEC_WIDTH " + std::to_string(vw));
 	    w.pp_line("#endif");
-	    w.pp_line("#include \"intentir_runtime.h\"");
+	    w.pp_line("#include \"intentir_driver.h\"");
 	    w.blank();
 	  }
 
@@ -1457,46 +1457,46 @@ struct CProgramEmitter {
     w.line("if (!" + name + ") { fprintf(stderr, \"alloc failed: " + name + "\\n\"); return 2; }");
   }
 
-  void emit_main() {
-    w.line("int main() {");
-    w.indent();
+	  void emit_main() {
+	    w.line("int main() {");
+	    w.indent();
 
-    w.line("setvbuf(stdout, NULL, _IONBF, 0);");
-    w.line("setvbuf(stderr, NULL, _IONBF, 0);");
-    w.line("const float ATOL = " + c_float(atol) + ";");
-    w.line("const float RTOL = " + c_float(rtol) + ";");
-    {
-      std::ostringstream oss;
-      oss.setf(std::ios::fixed);
-      oss.precision(1);
-      oss << matmul_flops_total;
-      w.line("const double MATMUL_FLOPS = (double)" + oss.str() + ";");
-    }
-    w.line("int BENCH_ITERS = 0;");
-    w.line("int BENCH_WARMUP = 1;");
-    w.line("const char* _bench = getenv(\"INTENTIR_BENCH_ITERS\");");
-    w.line("if (_bench) BENCH_ITERS = atoi(_bench);");
-    w.line("const char* _warm = getenv(\"INTENTIR_BENCH_WARMUP\");");
-    w.line("if (_warm) BENCH_WARMUP = atoi(_warm);");
-    w.line("if (BENCH_ITERS < 0) BENCH_ITERS = 0;");
-    w.line("if (BENCH_WARMUP < 0) BENCH_WARMUP = 0;");
-    w.blank();
+	    w.line("setvbuf(stdout, NULL, _IONBF, 0);");
+	    w.line("setvbuf(stderr, NULL, _IONBF, 0);");
+	    w.line("const float ATOL = " + c_float(atol) + ";");
+	    w.line("const float RTOL = " + c_float(rtol) + ";");
+	    {
+	      std::ostringstream oss;
+	      oss.setf(std::ios::fixed);
+	      oss.precision(1);
+	      oss << matmul_flops_total;
+	      w.line("const double MATMUL_FLOPS = (double)" + oss.str() + ";");
+	    }
+	    w.blank();
 
-    // inputs
-    for (const auto& name : external_inputs) {
-      const auto& shp = shape_env.at(name);
-      int64_t n = numel(shp);
-      std::string ct = ctype_for_dtype(dtype_env.at(name));
-      w.line("// input " + name + ": shape=" + std::to_string((int)shp.size()) + "D");
-      w.line(name + " = (" + ct + "*)malloc(sizeof(" + ct + ") * (size_t)" + std::to_string(n) + ");");
-      w.line("if (!" + name + ") { fprintf(stderr, \"alloc failed: " + name + "\\n\"); return 2; }");
-	      w.line("if (!intentir_read_bytes(\"" + name + ".bin\", " + name + ", sizeof(" + ct + ") * (size_t)" + std::to_string(n) + ")) return 2;");
-      w.blank();
-    }
+	    // inputs
+	    if (!external_inputs.empty()) {
+	      w.line("IntentirBufferDesc inputs[] = {");
+	      w.indent();
+	      for (const auto& name : external_inputs) {
+	        const auto& shp = shape_env.at(name);
+	        int64_t n = numel(shp);
+	        std::string ct = ctype_for_dtype(dtype_env.at(name));
+	        std::string dt = dtype_env.at(name);
+	        std::string bytes_expr = "sizeof(" + ct + ") * (size_t)" + std::to_string(n);
+	        if (dt == "bool" || dt == "i1") bytes_expr = "sizeof(uint8_t) * (size_t)" + std::to_string(n);
+	        w.line("{\"" + name + "\", (void**)&" + name + ", (size_t)(" + bytes_expr + "), " +
+	               ((dt == "bool" || dt == "i1") ? "INTENTIR_DTYPE_U8" : "INTENTIR_DTYPE_F32") + "},");
+	      }
+	      w.dedent();
+	      w.line("};");
+	      w.line("if (!intentir_alloc_and_load_inputs(inputs, (size_t)(sizeof(inputs) / sizeof(inputs[0])))) return 2;");
+	      w.blank();
+	    }
 
-    // consts as 1-element arrays (deterministic order for reproducible C).
-    {
-      std::vector<std::string> cnames;
+	    // consts as 1-element arrays (deterministic order for reproducible C).
+	    {
+	      std::vector<std::string> cnames;
       cnames.reserve(const_vals.size());
       for (const auto& kv : const_vals) cnames.push_back(kv.first);
       std::sort(cnames.begin(), cnames.end());
@@ -1517,11 +1517,11 @@ struct CProgramEmitter {
         }
         w.blank();
       }
-    }
+	    }
 
-    // allocate outputs / set alias views
-    for (const auto& op : intent.ops) {
-      if (op.op == "const") continue;
+	    // allocate outputs / set alias views
+	    for (const auto& op : intent.ops) {
+	      if (op.op == "const") continue;
       const std::string& out = op.output;
       if (op.op == "reshape" || op.op == "identity" || op.op == "layout_cast") {
         std::string ct = ctype_for_dtype(dtype_env.at(out));
@@ -1533,61 +1533,39 @@ struct CProgramEmitter {
       w.line("// op " + op.op + " -> " + out);
       emit_alloc_tensor(out);
       w.blank();
-    }
+	    }
 
-    // compute once
-    w.line("intentir_compute();");
-    w.blank();
+	    // compute once
+	    w.line("intentir_compute();");
+	    w.line("intentir_maybe_bench(intentir_compute, MATMUL_FLOPS);");
+	    w.blank();
 
-    // Optional compute microbenchmark.
-    w.line("if (BENCH_ITERS > 0) {");
-    w.indent();
-    w.line("for (int w = 0; w < BENCH_WARMUP; ++w) intentir_compute();");
-    w.line("uint64_t t0 = intentir_now_ns();");
-    w.line("for (int it = 0; it < BENCH_ITERS; ++it) intentir_compute();");
-    w.line("uint64_t t1 = intentir_now_ns();");
-    w.line("double ns_total = (double)(t1 - t0);");
-    w.line("double ns_per_iter = ns_total / (double)BENCH_ITERS;");
-    w.line("double gflops = (ns_per_iter > 0.0) ? (MATMUL_FLOPS / ns_per_iter) : 0.0;");
-    w.line("printf(\"INTENTIR_BENCH {\\\"iters\\\":%d,\\\"warmup\\\":%d,\\\"ns_total\\\":%llu,\\\"ns_per_iter\\\":%.1f,\\\"matmul_flops\\\":%.0f,\\\"matmul_gflops\\\":%.6f}\\n\",");
-    w.line("       BENCH_ITERS, BENCH_WARMUP, (unsigned long long)(t1 - t0), ns_per_iter, MATMUL_FLOPS, gflops);");
-    w.dedent();
-    w.line("}");
-    w.blank();
+	    // compare outputs
+	    if (intent.outputs.empty()) {
+	      w.line("int ok = 1;");
+	    } else {
+	      w.line("IntentirBufferDesc outputs[] = {");
+	      w.indent();
+	      for (const auto& name : intent.outputs) {
+	        const auto& shp = shape_env.at(name);
+	        int64_t n = numel(shp);
+	        std::string ct = ctype_for_dtype(dtype_env.at(name));
+	        std::string dt = dtype_env.at(name);
+	        std::string bytes_expr = "sizeof(" + ct + ") * (size_t)" + std::to_string(n);
+	        if (dt == "bool" || dt == "i1") bytes_expr = "sizeof(uint8_t) * (size_t)" + std::to_string(n);
+	        w.line("{\"" + name + "\", (void**)&" + name + ", (size_t)(" + bytes_expr + "), " +
+	               ((dt == "bool" || dt == "i1") ? "INTENTIR_DTYPE_U8" : "INTENTIR_DTYPE_F32") + "},");
+	      }
+	      w.dedent();
+	      w.line("};");
+	      w.line("int ok = intentir_compare_outputs_with_refs(outputs, (size_t)(sizeof(outputs) / sizeof(outputs[0])), ATOL, RTOL);");
+	    }
+	    w.line("printf(ok ? \"PASS lowered\\n\" : \"FAIL lowered\\n\");");
+	    w.line("return ok ? 0 : 1;");
 
-    // compare outputs
-    std::vector<std::string> ok_exprs;
-    for (const auto& name : intent.outputs) {
-      const auto& shp = shape_env.at(name);
-      int64_t n = numel(shp);
-      std::string dt = dtype_env.at(name);
-      if (dt == "bool" || dt == "i1") {
-        w.line("uint8_t* " + name + "_ref = (uint8_t*)malloc(sizeof(uint8_t) * (size_t)" + std::to_string(n) + ");");
-        w.line("if (!" + name + "_ref) { fprintf(stderr, \"alloc failed: " + name + "_ref\\n\"); return 2; }");
-	        w.line("if (!intentir_read_bytes(\"" + name + "_ref.bin\", " + name + "_ref, sizeof(uint8_t) * (size_t)" + std::to_string(n) + ")) return 2;");
-	        w.line("int ok_" + name + " = intentir_compare_u8(\"" + name + "\", (const uint8_t*)" + name + ", (const uint8_t*)" + name + "_ref, (size_t)" + std::to_string(n) + ");");
-      } else {
-        w.line("float* " + name + "_ref = (float*)malloc(sizeof(float) * (size_t)" + std::to_string(n) + ");");
-        w.line("if (!" + name + "_ref) { fprintf(stderr, \"alloc failed: " + name + "_ref\\n\"); return 2; }");
-	        w.line("if (!intentir_read_bytes(\"" + name + "_ref.bin\", " + name + "_ref, sizeof(float) * (size_t)" + std::to_string(n) + ")) return 2;");
-	        w.line("int ok_" + name + " = intentir_compare_f32(\"" + name + "\", (const float*)" + name + ", (const float*)" + name + "_ref, (size_t)" + std::to_string(n) + ", ATOL, RTOL);");
-      }
-      ok_exprs.push_back("ok_" + name);
-      w.blank();
-    }
-    if (ok_exprs.empty()) {
-      w.line("int ok = 1;");
-    } else {
-      std::string expr = ok_exprs[0];
-      for (size_t i = 1; i < ok_exprs.size(); ++i) expr += " && " + ok_exprs[i];
-      w.line("int ok = " + expr + ";");
-    }
-    w.line("printf(ok ? \"PASS lowered\\n\" : \"FAIL lowered\\n\");");
-    w.line("return ok ? 0 : 1;");
-
-    w.dedent();
-    w.line("}");
-  }
+	    w.dedent();
+	    w.line("}");
+	  }
 
   void emit_broadcast_in_dim(const Op& op, const std::vector<int64_t>& out_shape) {
     const std::string& out = op.output;

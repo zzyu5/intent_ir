@@ -402,13 +402,21 @@ def run_remote(
     runtime_dir = ROOT / "backends" / "spmd_rvv" / "runtime"
     runtime_h = runtime_dir / "intentir_runtime.h"
     runtime_c_local = runtime_dir / "intentir_runtime.c"
-    if not runtime_h.exists() or not runtime_c_local.exists():
-        raise FileNotFoundError(f"missing RVV runtime: {runtime_h} / {runtime_c_local}")
+    driver_h = runtime_dir / "intentir_driver.h"
+    driver_c_local = runtime_dir / "intentir_driver.c"
+    if not runtime_h.exists() or not runtime_c_local.exists() or not driver_h.exists() or not driver_c_local.exists():
+        raise FileNotFoundError(
+            f"missing RVV runtime: {runtime_h} / {runtime_c_local} / {driver_h} / {driver_c_local}"
+        )
     _log(f"[{frontend}:{kernel}] upload runtime")
     with sftp.file(f"{remote_dir}/intentir_runtime.h", "w") as f:
         f.write(runtime_h.read_text(encoding="utf-8"))
     with sftp.file(f"{remote_dir}/intentir_runtime.c", "w") as f:
         f.write(runtime_c_local.read_text(encoding="utf-8"))
+    with sftp.file(f"{remote_dir}/intentir_driver.h", "w") as f:
+        f.write(driver_h.read_text(encoding="utf-8"))
+    with sftp.file(f"{remote_dir}/intentir_driver.c", "w") as f:
+        f.write(driver_c_local.read_text(encoding="utf-8"))
 
     # Generic lowering path: upload all external inputs and reference outputs, then lower ops list.
     produced = {op.output for op in intent.ops if op.output}
@@ -467,7 +475,7 @@ def run_remote(
         _log(f"[{frontend}:{kernel}] remote compile")
         compile_cmd = (
             f"gcc -O2 -std=c11 -march=rv64gcv -I{remote_dir} -o {remote_bin} {remote_c} "
-            f"{remote_dir}/intentir_runtime.c -lm -lrt"
+            f"{remote_dir}/intentir_runtime.c {remote_dir}/intentir_driver.c -lm -lrt"
         )
         stdin, stdout, stderr = client.exec_command(compile_cmd, timeout=60)
         comp_out = stdout.read().decode()
