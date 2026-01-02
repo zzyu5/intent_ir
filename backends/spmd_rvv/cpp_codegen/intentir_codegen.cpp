@@ -652,7 +652,8 @@ void emit_cast(CodeWriter& w, const std::string& out, const std::string& a, cons
 
 void emit_where(CodeWriter& w, const std::string& out, const std::string& cond, const std::string& x, const std::string& y,
                 const std::vector<int64_t>& cond_shape, const std::vector<int64_t>& x_shape, const std::vector<int64_t>& y_shape,
-                const std::vector<int64_t>& out_shape, const std::string& out_dtype) {
+                const std::vector<int64_t>& out_shape, const std::string& cond_dtype, const std::string& x_dtype, const std::string& y_dtype,
+                const std::string& out_dtype) {
   const int r = static_cast<int>(out_shape.size());
   if (r > 4) fail("where supports rank<=4");
   std::vector<int64_t> pc(r, 1), px(r, 1), py(r, 1);
@@ -664,8 +665,29 @@ void emit_where(CodeWriter& w, const std::string& out, const std::string& cond, 
     if (px[i] != 1 && px[i] != out_shape[i]) fail("where broadcast mismatch (x)");
     if (py[i] != 1 && py[i] != out_shape[i]) fail("where broadcast mismatch (y)");
   }
+  const std::string cond_ct = ctype_for_dtype(cond_dtype);
+  const std::string x_ct = ctype_for_dtype(x_dtype);
+  const std::string y_ct = ctype_for_dtype(y_dtype);
   std::vector<std::string> idx = {"i0", "i1", "i2", "i3"};
   idx.resize(r);
+  const std::string out_ct = ctype_for_dtype(out_dtype);
+
+  const bool can_runtime = (r >= 1) && (cond_ct == "uint8_t") && (x_ct == "float") && (y_ct == "float") && (out_ct == "float");
+  if (can_runtime) {
+    auto arr = [&](const std::vector<int64_t>& v) -> std::string {
+      std::string s = "(int64_t[]){";
+      for (size_t i = 0; i < v.size(); ++i) {
+        if (i) s += ",";
+        s += std::to_string(v[i]);
+      }
+      s += "}";
+      return s;
+    };
+    w.line("intentir_where_broadcast_f32(" + cond + ", " + x + ", " + y + ", " + out + ", " + arr(out_shape) + ", " + arr(pc) + ", " + arr(px) +
+           ", " + arr(py) + ", " + std::to_string(r) + ");");
+    return;
+  }
+
   for (int i = 0; i < r; ++i) {
     w.line("for (int " + idx[i] + " = 0; " + idx[i] + " < " + std::to_string(out_shape[i]) + "; ++" + idx[i] + ") {");
     w.indent();
@@ -680,7 +702,6 @@ void emit_where(CodeWriter& w, const std::string& out, const std::string& cond, 
   std::string c_idx = idx_expr(pc);
   std::string x_idx = idx_expr(px);
   std::string y_idx = idx_expr(py);
-  const std::string out_ct = ctype_for_dtype(out_dtype);
   w.line(out + "[" + out_idx + "] = (" + cond + "[" + c_idx + "] != 0) ? (" + out_ct + ")" + x + "[" + x_idx + "] : (" + out_ct + ")" + y + "[" + y_idx + "];");
   for (int i = 0; i < r; ++i) {
     w.dedent();
@@ -1223,16 +1244,44 @@ struct CProgramEmitter {
 	    w.line("}");
 	  }
 
-  void emit_broadcast_in_dim(const Op& op, const std::vector<int64_t>& out_shape) {
-    const std::string& out = op.output;
-    const std::string& inp = op.inputs[0];
-    const auto& in_shape = shape_env.at(inp);
-    std::vector<int> bcast_dims;
-    for (const auto& d : op.attrs["broadcast_dims"]) bcast_dims.push_back(d.get<int>());
+	  void emit_broadcast_in_dim(const Op& op, const std::vector<int64_t>& out_shape) {
+	    const std::string& out = op.output;
+	    const std::string& inp = op.inputs[0];
+	    const auto& in_shape = shape_env.at(inp);
+	    std::vector<int> bcast_dims;
+	    for (const auto& d : op.attrs["broadcast_dims"]) bcast_dims.push_back(d.get<int>());
 
-    std::vector<int64_t> strides(in_shape.size(), 1);
-    int64_t s = 1;
-    for (int i = (int)in_shape.size() - 1; i >= 0; --i) {
+	    const std::string in_ct = ctype_for_dtype(dtype_env.at(inp));
+	    const std::string out_ct = ctype_for_dtype(dtype_env.at(out));
+	    const int in_rank = (int)in_shape.size();
+	    const int out_rank = (int)out_shape.size();
+	    if (in_ct == "float" && out_ct == "float" && in_rank <= 4 && out_rank <= 4) {
+	      auto arr64 = [&](const std::vector<int64_t>& v) -> std::string {
+	        std::string s = "(int64_t[]){";
+	        for (size_t i = 0; i < v.size(); ++i) {
+	          if (i) s += ",";
+	          s += std::to_string(v[i]);
+	        }
+	        s += "}";
+	        return s;
+	      };
+	      auto arri = [&](const std::vector<int>& v) -> std::string {
+	        std::string s = "(int[]){";
+	        for (size_t i = 0; i < v.size(); ++i) {
+	          if (i) s += ",";
+	          s += std::to_string(v[i]);
+	        }
+	        s += "}";
+	        return s;
+	      };
+	      w.line("intentir_broadcast_in_dim_f32(" + inp + ", " + out + ", " + arr64(in_shape) + ", " + std::to_string(in_rank) + ", " + arr64(out_shape) + ", " +
+	             std::to_string(out_rank) + ", " + arri(bcast_dims) + ");");
+	      return;
+	    }
+
+	    std::vector<int64_t> strides(in_shape.size(), 1);
+	    int64_t s = 1;
+	    for (int i = (int)in_shape.size() - 1; i >= 0; --i) {
       strides[i] = s;
       s *= in_shape[i];
     }
@@ -1270,20 +1319,50 @@ struct CProgramEmitter {
       const std::vector<int64_t>& out_shape = shape_env.at(out);
       w.line("// op " + op.op + " -> " + out);
 
-      if (op.op == "transpose") {
-        const auto& in_shape = shape_env.at(op.inputs[0]);
-        std::vector<int> perm;
-        for (const auto& p : op.attrs["perm"]) perm.push_back(p.get<int>());
-        if (perm.size() == 4 && perm[0] == 0 && perm[1] == 1 && perm[2] == 3 && perm[3] == 2) {
-          emit_transpose_4d_0132(w, out, op.inputs[0], in_shape, out_shape);
-        } else {
-          emit_transpose_generic(w, out, op.inputs[0], in_shape, out_shape, perm);
-        }
-      } else if (op.op == "broadcast_in_dim") {
-        emit_broadcast_in_dim(op, out_shape);
-      } else if (op.op == "add" || op.op == "sub" || op.op == "mul" || op.op == "div" || op.op == "max" || op.op == "min") {
-        emit_elemwise_bin(w, intent, bindings, op.op, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape,
-                          dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(out));
+	      if (op.op == "transpose") {
+	        const auto& in_shape = shape_env.at(op.inputs[0]);
+	        std::vector<int> perm;
+	        for (const auto& p : op.attrs["perm"]) perm.push_back(p.get<int>());
+	        const std::string in_ct = ctype_for_dtype(dtype_env.at(op.inputs[0]));
+	        const std::string out_ct = ctype_for_dtype(dtype_env.at(out));
+	        if (in_ct == "float" && out_ct == "float") {
+	          auto arr64 = [&](const std::vector<int64_t>& v) -> std::string {
+	            std::string s = "(int64_t[]){";
+	            for (size_t i = 0; i < v.size(); ++i) {
+	              if (i) s += ",";
+	              s += std::to_string(v[i]);
+	            }
+	            s += "}";
+	            return s;
+	          };
+	          auto arri = [&](const std::vector<int>& v) -> std::string {
+	            std::string s = "(int[]){";
+	            for (size_t i = 0; i < v.size(); ++i) {
+	              if (i) s += ",";
+	              s += std::to_string(v[i]);
+	            }
+	            s += "}";
+	            return s;
+	          };
+	          if (perm.size() == 4 && perm[0] == 0 && perm[1] == 1 && perm[2] == 3 && perm[3] == 2 && in_shape.size() == 4) {
+	            w.line("intentir_transpose_4d_0132_f32(" + op.inputs[0] + ", " + out + ", " + std::to_string(in_shape[0]) + ", " +
+	                   std::to_string(in_shape[1]) + ", " + std::to_string(in_shape[2]) + ", " + std::to_string(in_shape[3]) + ");");
+	          } else {
+	            w.line("intentir_transpose_f32(" + op.inputs[0] + ", " + out + ", " + arr64(in_shape) + ", " + arr64(out_shape) + ", " + arri(perm) +
+	                   ", " + std::to_string((int)in_shape.size()) + ");");
+	          }
+	        } else {
+	          if (perm.size() == 4 && perm[0] == 0 && perm[1] == 1 && perm[2] == 3 && perm[3] == 2) {
+	            emit_transpose_4d_0132(w, out, op.inputs[0], in_shape, out_shape);
+	          } else {
+	            emit_transpose_generic(w, out, op.inputs[0], in_shape, out_shape, perm);
+	          }
+	        }
+	      } else if (op.op == "broadcast_in_dim") {
+	        emit_broadcast_in_dim(op, out_shape);
+	      } else if (op.op == "add" || op.op == "sub" || op.op == "mul" || op.op == "div" || op.op == "max" || op.op == "min") {
+	        emit_elemwise_bin(w, intent, bindings, op.op, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape,
+	                          dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(out));
       } else if (op.op == "ne") {
         emit_ne(w, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, intent, bindings);
       } else if (op.op == "lt" || op.op == "le" || op.op == "gt" || op.op == "ge") {
@@ -1301,7 +1380,8 @@ struct CProgramEmitter {
       } else if (op.op == "cast") {
         emit_cast(w, out, op.inputs[0], out_shape, dtype_env.at(op.inputs[0]), dtype_env.at(out));
       } else if (op.op == "where") {
-        emit_where(w, out, op.inputs[0], op.inputs[1], op.inputs[2], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), shape_env.at(op.inputs[2]), out_shape, dtype_env.at(out));
+        emit_where(w, out, op.inputs[0], op.inputs[1], op.inputs[2], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), shape_env.at(op.inputs[2]), out_shape,
+                   dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(op.inputs[2]), dtype_env.at(out));
       } else if (op.op == "iota") {
         int axis = op.attrs.value("axis", 0);
         emit_iota(w, out, out_shape, axis, dtype_env.at(out));

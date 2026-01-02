@@ -384,6 +384,272 @@ void intentir_relu_f32(const float* a, float* out, size_t n) {
 #endif
 }
 
+void intentir_transpose_4d_0132_f32(const float* inp, float* out, int64_t B, int64_t H, int64_t K, int64_t D) {
+  if (!inp || !out || B <= 0 || H <= 0 || K <= 0 || D <= 0) return;
+  for (int64_t b = 0; b < B; ++b) {
+    for (int64_t h = 0; h < H; ++h) {
+      for (int64_t k = 0; k < K; ++k) {
+        for (int64_t d = 0; d < D; ++d) {
+          size_t oi = (((size_t)b * (size_t)H + (size_t)h) * (size_t)D + (size_t)d) * (size_t)K + (size_t)k;
+          size_t ii = (((size_t)b * (size_t)H + (size_t)h) * (size_t)K + (size_t)k) * (size_t)D + (size_t)d;
+          out[oi] = inp[ii];
+        }
+      }
+    }
+  }
+}
+
+void intentir_transpose_f32(const float* inp, float* out, const int64_t* in_shape, const int64_t* out_shape, const int* perm, int rank) {
+  if (!inp || !out || !in_shape || !out_shape || !perm) return;
+  if (rank < 1 || rank > 4) return;
+
+  if (rank == 1) {
+    const int64_t D0 = out_shape[0];
+    for (int64_t i0 = 0; i0 < D0; ++i0) out[(size_t)i0] = inp[(size_t)i0];
+    return;
+  }
+  if (rank == 2) {
+    const int64_t D0 = out_shape[0], D1 = out_shape[1];
+    for (int64_t o0 = 0; o0 < D0; ++o0) {
+      for (int64_t o1 = 0; o1 < D1; ++o1) {
+        int64_t o[2] = {o0, o1};
+        int64_t in[2] = {0, 0};
+        for (int od = 0; od < 2; ++od) in[perm[od]] = o[od];
+        size_t oi = (size_t)o0 * (size_t)D1 + (size_t)o1;
+        size_t ii = (size_t)in[0] * (size_t)in_shape[1] + (size_t)in[1];
+        out[oi] = inp[ii];
+      }
+    }
+    return;
+  }
+  if (rank == 3) {
+    const int64_t D0 = out_shape[0], D1 = out_shape[1], D2 = out_shape[2];
+    for (int64_t o0 = 0; o0 < D0; ++o0) {
+      for (int64_t o1 = 0; o1 < D1; ++o1) {
+        for (int64_t o2 = 0; o2 < D2; ++o2) {
+          int64_t o[3] = {o0, o1, o2};
+          int64_t in[3] = {0, 0, 0};
+          for (int od = 0; od < 3; ++od) in[perm[od]] = o[od];
+          size_t oi = ((size_t)o0 * (size_t)D1 + (size_t)o1) * (size_t)D2 + (size_t)o2;
+          size_t ii = ((size_t)in[0] * (size_t)in_shape[1] + (size_t)in[1]) * (size_t)in_shape[2] + (size_t)in[2];
+          out[oi] = inp[ii];
+        }
+      }
+    }
+    return;
+  }
+  if (rank == 4) {
+    const int64_t D0 = out_shape[0], D1 = out_shape[1], D2 = out_shape[2], D3 = out_shape[3];
+    for (int64_t o0 = 0; o0 < D0; ++o0) {
+      for (int64_t o1 = 0; o1 < D1; ++o1) {
+        for (int64_t o2 = 0; o2 < D2; ++o2) {
+          for (int64_t o3 = 0; o3 < D3; ++o3) {
+            int64_t o[4] = {o0, o1, o2, o3};
+            int64_t in[4] = {0, 0, 0, 0};
+            for (int od = 0; od < 4; ++od) in[perm[od]] = o[od];
+            size_t oi = (((size_t)o0 * (size_t)D1 + (size_t)o1) * (size_t)D2 + (size_t)o2) * (size_t)D3 + (size_t)o3;
+            size_t ii = (((size_t)in[0] * (size_t)in_shape[1] + (size_t)in[1]) * (size_t)in_shape[2] + (size_t)in[2]) *
+                             (size_t)in_shape[3] +
+                         (size_t)in[3];
+            out[oi] = inp[ii];
+          }
+        }
+      }
+    }
+    return;
+  }
+}
+
+void intentir_where_broadcast_f32(
+    const uint8_t* cond, const float* x, const float* y, float* out, const int64_t* out_shape, const int64_t* cond_shape,
+    const int64_t* x_shape, const int64_t* y_shape, int rank) {
+  if (!cond || !x || !y || !out || !out_shape || !cond_shape || !x_shape || !y_shape) return;
+  if (rank < 1 || rank > 4) return;
+
+  const size_t n = intentir_numel_rank(out_shape, rank);
+  if (intentir_shapes_equal(cond_shape, out_shape, rank) && intentir_shapes_equal(x_shape, out_shape, rank) &&
+      intentir_shapes_equal(y_shape, out_shape, rank)) {
+    for (size_t i = 0; i < n; ++i) out[i] = (cond[i] != 0) ? x[i] : y[i];
+    return;
+  }
+
+  if (rank == 1) {
+    const int64_t D0 = out_shape[0];
+    for (int64_t i0 = 0; i0 < D0; ++i0) {
+      int64_t c0 = (cond_shape[0] == 1) ? 0 : i0;
+      int64_t x0 = (x_shape[0] == 1) ? 0 : i0;
+      int64_t y0 = (y_shape[0] == 1) ? 0 : i0;
+      out[(size_t)i0] = (cond[(size_t)c0] != 0) ? x[(size_t)x0] : y[(size_t)y0];
+    }
+    return;
+  }
+  if (rank == 2) {
+    const int64_t D0 = out_shape[0], D1 = out_shape[1];
+    for (int64_t i0 = 0; i0 < D0; ++i0) {
+      for (int64_t i1 = 0; i1 < D1; ++i1) {
+        int64_t c0 = (cond_shape[0] == 1) ? 0 : i0;
+        int64_t c1 = (cond_shape[1] == 1) ? 0 : i1;
+        int64_t x0 = (x_shape[0] == 1) ? 0 : i0;
+        int64_t x1 = (x_shape[1] == 1) ? 0 : i1;
+        int64_t y0 = (y_shape[0] == 1) ? 0 : i0;
+        int64_t y1 = (y_shape[1] == 1) ? 0 : i1;
+        size_t oi = (size_t)i0 * (size_t)D1 + (size_t)i1;
+        size_t ci = (size_t)c0 * (size_t)cond_shape[1] + (size_t)c1;
+        size_t xi = (size_t)x0 * (size_t)x_shape[1] + (size_t)x1;
+        size_t yi = (size_t)y0 * (size_t)y_shape[1] + (size_t)y1;
+        out[oi] = (cond[ci] != 0) ? x[xi] : y[yi];
+      }
+    }
+    return;
+  }
+  if (rank == 3) {
+    const int64_t D0 = out_shape[0], D1 = out_shape[1], D2 = out_shape[2];
+    for (int64_t i0 = 0; i0 < D0; ++i0) {
+      for (int64_t i1 = 0; i1 < D1; ++i1) {
+        for (int64_t i2 = 0; i2 < D2; ++i2) {
+          int64_t c0 = (cond_shape[0] == 1) ? 0 : i0;
+          int64_t c1 = (cond_shape[1] == 1) ? 0 : i1;
+          int64_t c2 = (cond_shape[2] == 1) ? 0 : i2;
+          int64_t x0 = (x_shape[0] == 1) ? 0 : i0;
+          int64_t x1 = (x_shape[1] == 1) ? 0 : i1;
+          int64_t x2 = (x_shape[2] == 1) ? 0 : i2;
+          int64_t y0 = (y_shape[0] == 1) ? 0 : i0;
+          int64_t y1 = (y_shape[1] == 1) ? 0 : i1;
+          int64_t y2 = (y_shape[2] == 1) ? 0 : i2;
+          size_t oi = ((size_t)i0 * (size_t)D1 + (size_t)i1) * (size_t)D2 + (size_t)i2;
+          size_t ci = ((size_t)c0 * (size_t)cond_shape[1] + (size_t)c1) * (size_t)cond_shape[2] + (size_t)c2;
+          size_t xi = ((size_t)x0 * (size_t)x_shape[1] + (size_t)x1) * (size_t)x_shape[2] + (size_t)x2;
+          size_t yi = ((size_t)y0 * (size_t)y_shape[1] + (size_t)y1) * (size_t)y_shape[2] + (size_t)y2;
+          out[oi] = (cond[ci] != 0) ? x[xi] : y[yi];
+        }
+      }
+    }
+    return;
+  }
+  if (rank == 4) {
+    const int64_t D0 = out_shape[0], D1 = out_shape[1], D2 = out_shape[2], D3 = out_shape[3];
+    for (int64_t i0 = 0; i0 < D0; ++i0) {
+      for (int64_t i1 = 0; i1 < D1; ++i1) {
+        for (int64_t i2 = 0; i2 < D2; ++i2) {
+          for (int64_t i3 = 0; i3 < D3; ++i3) {
+            int64_t c0 = (cond_shape[0] == 1) ? 0 : i0;
+            int64_t c1 = (cond_shape[1] == 1) ? 0 : i1;
+            int64_t c2 = (cond_shape[2] == 1) ? 0 : i2;
+            int64_t c3 = (cond_shape[3] == 1) ? 0 : i3;
+            int64_t x0 = (x_shape[0] == 1) ? 0 : i0;
+            int64_t x1 = (x_shape[1] == 1) ? 0 : i1;
+            int64_t x2 = (x_shape[2] == 1) ? 0 : i2;
+            int64_t x3 = (x_shape[3] == 1) ? 0 : i3;
+            int64_t y0 = (y_shape[0] == 1) ? 0 : i0;
+            int64_t y1 = (y_shape[1] == 1) ? 0 : i1;
+            int64_t y2 = (y_shape[2] == 1) ? 0 : i2;
+            int64_t y3 = (y_shape[3] == 1) ? 0 : i3;
+            size_t oi = (((size_t)i0 * (size_t)D1 + (size_t)i1) * (size_t)D2 + (size_t)i2) * (size_t)D3 + (size_t)i3;
+            size_t ci =
+                (((size_t)c0 * (size_t)cond_shape[1] + (size_t)c1) * (size_t)cond_shape[2] + (size_t)c2) * (size_t)cond_shape[3] +
+                (size_t)c3;
+            size_t xi = (((size_t)x0 * (size_t)x_shape[1] + (size_t)x1) * (size_t)x_shape[2] + (size_t)x2) * (size_t)x_shape[3] +
+                        (size_t)x3;
+            size_t yi = (((size_t)y0 * (size_t)y_shape[1] + (size_t)y1) * (size_t)y_shape[2] + (size_t)y2) * (size_t)y_shape[3] +
+                        (size_t)y3;
+            out[oi] = (cond[ci] != 0) ? x[xi] : y[yi];
+          }
+        }
+      }
+    }
+    return;
+  }
+}
+
+void intentir_broadcast_in_dim_f32(
+    const float* inp, float* out, const int64_t* in_shape, int in_rank, const int64_t* out_shape, int out_rank, const int* bcast_dims) {
+  if (!inp || !out || !in_shape || !out_shape || !bcast_dims) return;
+  if (in_rank < 0 || out_rank < 0) return;
+  if (in_rank > 4 || out_rank > 4) return;
+  if (out_rank < in_rank) return;
+
+  int64_t strides[4] = {1, 1, 1, 1};
+  int64_t s = 1;
+  for (int i = in_rank - 1; i >= 0; --i) {
+    strides[i] = s;
+    s *= in_shape[i];
+  }
+
+  if (out_rank == 0) {
+    out[0] = inp[0];
+    return;
+  }
+  if (out_rank == 1) {
+    const int64_t D0 = out_shape[0];
+    for (int64_t o0 = 0; o0 < D0; ++o0) {
+      size_t in_i = 0;
+      for (int in_d = 0; in_d < in_rank; ++in_d) {
+        int od = bcast_dims[in_d];
+        int64_t v = (in_shape[in_d] == 1) ? 0 : (od == 0 ? o0 : 0);
+        in_i += (size_t)v * (size_t)strides[in_d];
+      }
+      out[(size_t)o0] = inp[in_i];
+    }
+    return;
+  }
+  if (out_rank == 2) {
+    const int64_t D0 = out_shape[0], D1 = out_shape[1];
+    for (int64_t o0 = 0; o0 < D0; ++o0) {
+      for (int64_t o1 = 0; o1 < D1; ++o1) {
+        size_t in_i = 0;
+        for (int in_d = 0; in_d < in_rank; ++in_d) {
+          int od = bcast_dims[in_d];
+          int64_t v = 0;
+          if (in_shape[in_d] != 1) v = (od == 0) ? o0 : (od == 1) ? o1 : 0;
+          in_i += (size_t)v * (size_t)strides[in_d];
+        }
+        out[(size_t)o0 * (size_t)D1 + (size_t)o1] = inp[in_i];
+      }
+    }
+    return;
+  }
+  if (out_rank == 3) {
+    const int64_t D0 = out_shape[0], D1 = out_shape[1], D2 = out_shape[2];
+    for (int64_t o0 = 0; o0 < D0; ++o0) {
+      for (int64_t o1 = 0; o1 < D1; ++o1) {
+        for (int64_t o2 = 0; o2 < D2; ++o2) {
+          size_t in_i = 0;
+          for (int in_d = 0; in_d < in_rank; ++in_d) {
+            int od = bcast_dims[in_d];
+            int64_t v = 0;
+            if (in_shape[in_d] != 1) v = (od == 0) ? o0 : (od == 1) ? o1 : (od == 2) ? o2 : 0;
+            in_i += (size_t)v * (size_t)strides[in_d];
+          }
+          out[((size_t)o0 * (size_t)D1 + (size_t)o1) * (size_t)D2 + (size_t)o2] = inp[in_i];
+        }
+      }
+    }
+    return;
+  }
+  if (out_rank == 4) {
+    const int64_t D0 = out_shape[0], D1 = out_shape[1], D2 = out_shape[2], D3 = out_shape[3];
+    for (int64_t o0 = 0; o0 < D0; ++o0) {
+      for (int64_t o1 = 0; o1 < D1; ++o1) {
+        for (int64_t o2 = 0; o2 < D2; ++o2) {
+          for (int64_t o3 = 0; o3 < D3; ++o3) {
+            size_t in_i = 0;
+            for (int in_d = 0; in_d < in_rank; ++in_d) {
+              int od = bcast_dims[in_d];
+              int64_t v = 0;
+              if (in_shape[in_d] != 1) v = (od == 0) ? o0 : (od == 1) ? o1 : (od == 2) ? o2 : (od == 3) ? o3 : 0;
+              in_i += (size_t)v * (size_t)strides[in_d];
+            }
+            size_t oi =
+                (((size_t)o0 * (size_t)D1 + (size_t)o1) * (size_t)D2 + (size_t)o2) * (size_t)D3 + (size_t)o3;
+            out[oi] = inp[in_i];
+          }
+        }
+      }
+    }
+    return;
+  }
+}
+
 void intentir_matmul_2d_f32(
     const float* a, const float* b, float* out, int64_t M, int64_t N, int64_t K, int transpose_a, int transpose_b,
     int64_t tile_m, int64_t tile_n, int64_t tile_k) {

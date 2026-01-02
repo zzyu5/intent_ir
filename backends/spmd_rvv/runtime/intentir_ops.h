@@ -41,6 +41,21 @@ void intentir_rsqrt_f32(const float* a, float* out, size_t n);
 void intentir_exp_f32(const float* a, float* out, size_t n);
 void intentir_relu_f32(const float* a, float* out, size_t n);
 
+// Transpose (f32), rank<=4.
+void intentir_transpose_4d_0132_f32(const float* inp, float* out, int64_t B, int64_t H, int64_t K, int64_t D);
+void intentir_transpose_f32(const float* inp, float* out, const int64_t* in_shape, const int64_t* out_shape, const int* perm, int rank);
+
+// Where (f32), with numpy-style broadcasting (rank<=4).
+// Shapes are length `rank` and follow the codegen's padded broadcasting convention.
+void intentir_where_broadcast_f32(
+    const uint8_t* cond, const float* x, const float* y, float* out, const int64_t* out_shape, const int64_t* cond_shape,
+    const int64_t* x_shape, const int64_t* y_shape, int rank);
+
+// broadcast_in_dim (f32), rank<=4.
+// bcast_dims maps each input dim -> output dim (length in_rank).
+void intentir_broadcast_in_dim_f32(
+    const float* inp, float* out, const int64_t* in_shape, int in_rank, const int64_t* out_shape, int out_rank, const int* bcast_dims);
+
 // Matmul (GEMM) in row-major layouts, with optional transpose flags:
 // - 2D: [M,K] x [K,N] -> [M,N]
 // - 4D: [B,H,M,K] x [B,H,K,N] -> [B,H,M,N]
