@@ -12,6 +12,10 @@ cmake -S backends/spmd_rvv/cpp_codegen -B backends/spmd_rvv/cpp_codegen/build -D
 cmake --build backends/spmd_rvv/cpp_codegen/build -j
 ```
 
+Note: the Python entrypoint (`backends.spmd_rvv.codegen`) auto-builds this tool
+into a per-checkout cache dir under `~/.cache/intentir/cpp_codegen/` by default.
+You can override with `INTENTIR_CPP_CODEGEN_BUILD_DIR=/path/to/build`.
+
 Run:
 
 ```bash

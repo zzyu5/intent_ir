@@ -2,9 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from backends.spmd_rvv import SPMDProfile, choose_tiles, generate_c  # noqa: E402
+from backends.spmd_rvv import SPMDProfile, choose_tiles  # noqa: E402
 from backends.spmd_rvv.analysis.hardware_profile import RVVHardwareProfile  # noqa: E402
 from backends.spmd_rvv.analysis.cost_model import GEMMCostModel  # noqa: E402
+from backends.spmd_rvv.experiments.matmul_c import generate_c  # noqa: E402
 from intent_ir.ir import IntentFunction  # noqa: E402
 
 

@@ -16,3 +16,8 @@ This package contains the Task6 backend components.
 
 The remote runner (`scripts/rvv_remote_run.py`) uses this API and compiles the
 generated C on the RVV host.
+
+**Experiments**
+
+- `backends.spmd_rvv.experiments.matmul_c.generate_c()` is a matmul-only C/OpenMP
+  emitter kept for tiling-search experiments (not used in the end-to-end RVV pipeline).

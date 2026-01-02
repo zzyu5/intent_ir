@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -15,11 +17,19 @@ def _cpp_codegen_dir() -> Path:
 
 
 def _cpp_codegen_build_dir() -> Path:
-    return _cpp_codegen_dir() / "build"
+    override = os.getenv("INTENTIR_CPP_CODEGEN_BUILD_DIR")
+    if override:
+        return Path(override).expanduser().resolve()
+
+    # Keep build artifacts out of the repo tree by default.
+    cache_root = Path(os.getenv("XDG_CACHE_HOME", str(Path.home() / ".cache"))).expanduser()
+    src_dir = _cpp_codegen_dir()
+    src_tag = hashlib.sha1(str(src_dir).encode("utf-8")).hexdigest()[:10]
+    return (cache_root / "intentir" / "cpp_codegen" / src_tag).resolve()
 
 
-def _cpp_codegen_bin() -> Path:
-    return _cpp_codegen_build_dir() / "intentir_codegen"
+def _cpp_codegen_bin(*, build_type: str) -> Path:
+    return _cpp_codegen_build_dir() / str(build_type).lower() / "intentir_codegen"
 
 
 def ensure_cpp_codegen_built(*, build_type: str = "Release") -> Path:
@@ -29,9 +39,10 @@ def ensure_cpp_codegen_built(*, build_type: str = "Release") -> Path:
     The backend tool lives in `backends/spmd_rvv/cpp_codegen/` and parses IntentIR
     JSON directly (no extra backend IR). Python remains orchestration only.
     """
-    bin_path = _cpp_codegen_bin()
+    bin_path = _cpp_codegen_bin(build_type=build_type)
     src_dir = _cpp_codegen_dir()
     build_dir = _cpp_codegen_build_dir()
+    build_dir = build_dir / str(build_type).lower()
     build_dir.mkdir(parents=True, exist_ok=True)
 
     def sources_newer_than_bin() -> bool:
