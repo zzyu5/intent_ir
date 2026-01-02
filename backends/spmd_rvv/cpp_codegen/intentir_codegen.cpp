@@ -800,38 +800,9 @@ void emit_reduce_sum(CodeWriter& w, const std::string& out, const std::string& a
   // Fast path: 2D row-reduction over the last axis.
   if (r == 2 && dims_set.size() == 1 && dims_set[0] == 1) {
     int64_t M = D[0], K = D[1];
-    w.pp_line("#if defined(__riscv_vector) || defined(__riscv_v)");
-    w.line("for (int m = 0; m < " + std::to_string(M) + "; ++m) {");
-    w.indent();
-    w.line("size_t vlmax = intentir_vsetvl_e32m1((size_t)" + std::to_string(K) + ");");
-    w.line("vfloat32m1_t vsum = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);");
-    w.line("for (int k = 0; k < " + std::to_string(K) + "; ) {");
-    w.indent();
-    w.line("size_t vl = intentir_vsetvl_e32m1((size_t)(" + std::to_string(K) + " - k));");
-    w.line("vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + a + "[idx2(m,k," + std::to_string(K) + ")], vl);");
-    w.line("vsum = __riscv_vfadd_vv_f32m1(vsum, vx, vl);");
-    w.line("k += (int)vl;");
-    w.dedent();
-    w.line("}");
-    w.line("vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);");
-    w.line("vfloat32m1_t vres = __riscv_vfredusum_vs_f32m1_f32m1(vsum, v0, vlmax);");
-    w.line("float intentir_sum_scalar = __riscv_vfmv_f_s_f32m1_f32(vres);");
-    if (scale.has_value()) w.line("intentir_sum_scalar *= " + c_float(scale.value()) + ";");
-    if (keepdims) w.line(out + "[idx2(m,0,1)] = intentir_sum_scalar;");
-    else w.line(out + "[(size_t)m] = intentir_sum_scalar;");
-    w.dedent();
-    w.line("}");
-    w.pp_line("#else");
-    w.line("for (int m = 0; m < " + std::to_string(M) + "; ++m) {");
-    w.indent();
-    w.line("double intentir_sum_scalar = 0.0;");
-    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { intentir_sum_scalar += (double)" + a + "[idx2(m,k," + std::to_string(K) + ")]; }");
-    if (scale.has_value()) w.line("intentir_sum_scalar *= (double)" + c_float(scale.value()) + ";");
-    if (keepdims) w.line(out + "[idx2(m,0,1)] = (float)intentir_sum_scalar;");
-    else w.line(out + "[(size_t)m] = (float)intentir_sum_scalar;");
-    w.dedent();
-    w.line("}");
-    w.pp_line("#endif");
+    std::string scale_val = scale.has_value() ? c_float(scale.value()) : c_float(1.0);
+    w.line("intentir_reduce_sum_2d_axis1_f32(" + a + ", " + out + ", " + std::to_string(M) + ", " + std::to_string(K) + ", " + scale_val +
+           ", " + std::string(scale.has_value() ? "1" : "0") + ");");
     return;
   }
 
@@ -841,54 +812,9 @@ void emit_reduce_sum(CodeWriter& w, const std::string& out, const std::string& a
     std::sort(ds.begin(), ds.end());
     if (ds[0] == 2 && ds[1] == 3 && OD.size() == 4 && OD[0] == D[0] && OD[1] == D[1] && OD[2] == 1 && OD[3] == 1) {
       int64_t N = D[0], G = D[1], GS = D[2], HW = D[3];
-      const int64_t len = GS * HW;
-      w.pp_line("#if defined(__riscv_vector) || defined(__riscv_v)");
-      w.line("for (int n0 = 0; n0 < " + std::to_string(N) + "; ++n0) {");
-      w.indent();
-      w.line("for (int g0 = 0; g0 < " + std::to_string(G) + "; ++g0) {");
-      w.indent();
-      w.line("const size_t base = ((size_t)n0 * (size_t)" + std::to_string(G) + " + (size_t)g0) * (size_t)" + std::to_string(len) + ";");
-      w.line("size_t vlmax = intentir_vsetvl_e32m1((size_t)" + std::to_string(len) + ");");
-      w.line("vfloat32m1_t vsum = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);");
-      w.line("for (size_t i = 0; i < (size_t)" + std::to_string(len) + "; ) {");
-      w.indent();
-      w.line("size_t vl = intentir_vsetvl_e32m1((size_t)" + std::to_string(len) + " - i);");
-      w.line("vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + a + "[base + i], vl);");
-      w.line("vsum = __riscv_vfadd_vv_f32m1(vsum, vx, vl);");
-      w.line("i += vl;");
-      w.dedent();
-      w.line("}");
-      w.line("vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);");
-      w.line("vfloat32m1_t vres = __riscv_vfredusum_vs_f32m1_f32m1(vsum, v0, vlmax);");
-      w.line("float intentir_sum_scalar = __riscv_vfmv_f_s_f32m1_f32(vres);");
-      if (scale.has_value()) w.line("intentir_sum_scalar *= " + c_float(scale.value()) + ";");
-      w.line(out + "[(size_t)n0 * (size_t)" + std::to_string(G) + " + (size_t)g0] = intentir_sum_scalar;");
-      w.dedent();
-      w.line("}");
-      w.dedent();
-      w.line("}");
-      w.pp_line("#else");
-      w.line("for (int n0 = 0; n0 < " + std::to_string(N) + "; ++n0) {");
-      w.indent();
-      w.line("for (int g0 = 0; g0 < " + std::to_string(G) + "; ++g0) {");
-      w.indent();
-      w.line("double intentir_sum_scalar = 0.0;");
-      w.line("for (int gs = 0; gs < " + std::to_string(GS) + "; ++gs) {");
-      w.indent();
-      w.line("for (int hw = 0; hw < " + std::to_string(HW) + "; ++hw) {");
-      w.indent();
-      w.line("intentir_sum_scalar += (double)" + a + "[idx4(n0,g0,gs,hw," + std::to_string(G) + "," + std::to_string(GS) + "," + std::to_string(HW) + ")];");
-      w.dedent();
-      w.line("}");
-      w.dedent();
-      w.line("}");
-      if (scale.has_value()) w.line("intentir_sum_scalar *= (double)" + c_float(scale.value()) + ";");
-      w.line(out + "[(size_t)n0 * (size_t)" + std::to_string(G) + " + (size_t)g0] = (float)intentir_sum_scalar;");
-      w.dedent();
-      w.line("}");
-      w.dedent();
-      w.line("}");
-      w.pp_line("#endif");
+      std::string scale_val = scale.has_value() ? c_float(scale.value()) : c_float(1.0);
+      w.line("intentir_reduce_sum_4d_axis23_f32(" + a + ", " + out + ", " + std::to_string(N) + ", " + std::to_string(G) + ", " +
+             std::to_string(GS) + ", " + std::to_string(HW) + ", " + scale_val + ", " + std::string(scale.has_value() ? "1" : "0") + ");");
       return;
     }
   }
@@ -992,36 +918,7 @@ void emit_reduce_max(CodeWriter& w, const std::string& out, const std::string& a
   // Fast path: 2D row-reduction over the last axis.
   if (r == 2 && dims_set.size() == 1 && dims_set[0] == 1) {
     int64_t M = D[0], K = D[1];
-    w.pp_line("#if defined(__riscv_vector) || defined(__riscv_v)");
-    w.line("for (int m = 0; m < " + std::to_string(M) + "; ++m) {");
-    w.indent();
-    w.line("size_t vlmax = intentir_vsetvl_e32m1((size_t)" + std::to_string(K) + ");");
-    w.line("vfloat32m1_t vmax = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);");
-    w.line("for (int k = 0; k < " + std::to_string(K) + "; ) {");
-    w.indent();
-    w.line("size_t vl = intentir_vsetvl_e32m1((size_t)(" + std::to_string(K) + " - k));");
-    w.line("vfloat32m1_t vx = __riscv_vle32_v_f32m1(&" + a + "[idx2(m,k," + std::to_string(K) + ")], vl);");
-    w.line("vmax = __riscv_vfmax_vv_f32m1(vmax, vx, vl);");
-    w.line("k += (int)vl;");
-    w.dedent();
-    w.line("}");
-    w.line("vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);");
-    w.line("vfloat32m1_t vres = __riscv_vfredmax_vs_f32m1_f32m1(vmax, v0, vlmax);");
-    w.line("float intentir_max_scalar = __riscv_vfmv_f_s_f32m1_f32(vres);");
-    if (keepdims) w.line(out + "[idx2(m,0,1)] = intentir_max_scalar;");
-    else w.line(out + "[(size_t)m] = intentir_max_scalar;");
-    w.dedent();
-    w.line("}");
-    w.pp_line("#else");
-    w.line("for (int m = 0; m < " + std::to_string(M) + "; ++m) {");
-    w.indent();
-    w.line("float intentir_max_scalar = -INFINITY;");
-    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { intentir_max_scalar = fmaxf(intentir_max_scalar, " + a + "[idx2(m,k," + std::to_string(K) + ")]); }");
-    if (keepdims) w.line(out + "[idx2(m,0,1)] = intentir_max_scalar;");
-    else w.line(out + "[(size_t)m] = intentir_max_scalar;");
-    w.dedent();
-    w.line("}");
-    w.pp_line("#endif");
+    w.line("intentir_reduce_max_2d_axis1_f32(" + a + ", " + out + ", " + std::to_string(M) + ", " + std::to_string(K) + ");");
     return;
   }
 
@@ -1433,6 +1330,7 @@ struct CProgramEmitter {
 	    w.pp_line("#define INTENTIR_VEC_WIDTH " + std::to_string(vw));
 	    w.pp_line("#endif");
 	    w.pp_line("#include \"intentir_driver.h\"");
+	    w.pp_line("#include \"intentir_ops.h\"");
 	    w.blank();
 	  }
 

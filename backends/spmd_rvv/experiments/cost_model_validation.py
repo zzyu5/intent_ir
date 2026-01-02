@@ -217,8 +217,19 @@ def validate_gemm_cost_model_remote(
             runtime_c = runtime_dir / "intentir_runtime.c"
             driver_h = runtime_dir / "intentir_driver.h"
             driver_c = runtime_dir / "intentir_driver.c"
-            if not runtime_h.exists() or not runtime_c.exists() or not driver_h.exists() or not driver_c.exists():
-                raise FileNotFoundError(f"missing RVV runtime: {runtime_h} / {runtime_c} / {driver_h} / {driver_c}")
+            ops_h = runtime_dir / "intentir_ops.h"
+            ops_c = runtime_dir / "intentir_ops.c"
+            if (
+                not runtime_h.exists()
+                or not runtime_c.exists()
+                or not driver_h.exists()
+                or not driver_c.exists()
+                or not ops_h.exists()
+                or not ops_c.exists()
+            ):
+                raise FileNotFoundError(
+                    f"missing RVV runtime: {runtime_h} / {runtime_c} / {driver_h} / {driver_c} / {ops_h} / {ops_c}"
+                )
             with sftp.file(f"{remote_dir}/intentir_runtime.h", "w") as f:
                 f.write(runtime_h.read_text(encoding="utf-8"))
             with sftp.file(f"{remote_dir}/intentir_runtime.c", "w") as f:
@@ -227,12 +238,16 @@ def validate_gemm_cost_model_remote(
                 f.write(driver_h.read_text(encoding="utf-8"))
             with sftp.file(f"{remote_dir}/intentir_driver.c", "w") as f:
                 f.write(driver_c.read_text(encoding="utf-8"))
+            with sftp.file(f"{remote_dir}/intentir_ops.h", "w") as f:
+                f.write(ops_h.read_text(encoding="utf-8"))
+            with sftp.file(f"{remote_dir}/intentir_ops.c", "w") as f:
+                f.write(ops_c.read_text(encoding="utf-8"))
             _upload_gemm_io(sftp, remote_dir, A=A, B=B, C_ref=C_ref)
 
             remote_bin = f"{remote_dir}/run"
             compile_cmd = (
                 f"gcc -O3 -std=c11 -march=rv64gcv -I{remote_dir} -o {remote_bin} "
-                f"{remote_dir}/main.c {remote_dir}/intentir_runtime.c {remote_dir}/intentir_driver.c -lm -lrt"
+                f"{remote_dir}/main.c {remote_dir}/intentir_runtime.c {remote_dir}/intentir_driver.c {remote_dir}/intentir_ops.c -lm -lrt"
             )
             stdin, stdout, stderr = client.exec_command(compile_cmd, timeout=120)
             _ = stdout.read()

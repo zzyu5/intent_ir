@@ -154,7 +154,14 @@ def run_one(
         (td / "main.c").write_text(c_src, encoding="utf-8")
 
         runtime_dir = ROOT / "backends" / "spmd_rvv" / "runtime"
-        for fn in ["intentir_runtime.h", "intentir_runtime.c", "intentir_driver.h", "intentir_driver.c"]:
+        for fn in [
+            "intentir_runtime.h",
+            "intentir_runtime.c",
+            "intentir_driver.h",
+            "intentir_driver.c",
+            "intentir_ops.h",
+            "intentir_ops.c",
+        ]:
             src_p = runtime_dir / fn
             if not src_p.exists():
                 raise FileNotFoundError(f"missing RVV runtime file: {src_p}")
@@ -170,6 +177,7 @@ def run_one(
             str(td / "main.c"),
             str(td / "intentir_runtime.c"),
             str(td / "intentir_driver.c"),
+            str(td / "intentir_ops.c"),
             "-lm",
             "-lrt",
         ]
