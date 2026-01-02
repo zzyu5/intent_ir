@@ -182,3 +182,161 @@ void intentir_softmax_4d_last_f32(const float* a, float* out, int64_t B, int64_t
     }
   }
 }
+
+static inline int64_t intentir_min_i64(int64_t a, int64_t b) { return (a < b) ? a : b; }
+
+void intentir_matmul_2d_f32(
+    const float* a, const float* b, float* out, int64_t M, int64_t N, int64_t K, int transpose_a, int transpose_b,
+    int64_t tile_m, int64_t tile_n, int64_t tile_k) {
+  if (!a || !b || !out || M <= 0 || N <= 0 || K <= 0) return;
+  const int64_t tm = (tile_m > 0) ? intentir_min_i64(tile_m, M) : M;
+  const int64_t tn = (tile_n > 0) ? intentir_min_i64(tile_n, N) : N;
+  const int64_t tk = (tile_k > 0) ? intentir_min_i64(tile_k, K) : K;
+
+#if defined(__riscv_vector) || defined(__riscv_v)
+  if (!transpose_a) {
+    for (int64_t m_base = 0; m_base < M; m_base += tm) {
+      int64_t m_end = m_base + tm;
+      if (m_end > M) m_end = M;
+      for (int64_t n_base = 0; n_base < N; n_base += tn) {
+        int64_t n_end = n_base + tn;
+        if (n_end > N) n_end = N;
+        for (int64_t m = m_base; m < m_end; ++m) {
+          for (int64_t n0 = n_base; n0 < n_end;) {
+            size_t rem = (size_t)(n_end - n0);
+            size_t vl = intentir_vsetvl_e32m1(rem);
+            vfloat32m1_t vacc = __riscv_vfmv_v_f_f32m1(0.0f, vl);
+            for (int64_t k_base = 0; k_base < K; k_base += tk) {
+              int64_t k_end = k_base + tk;
+              if (k_end > K) k_end = K;
+              for (int64_t k0 = k_base; k0 < k_end; ++k0) {
+                float av = a[idx2((int)m, (int)k0, (int)K)];
+                vfloat32m1_t vb;
+                if (!transpose_b) {
+                  vb = __riscv_vle32_v_f32m1(&b[idx2((int)k0, (int)n0, (int)N)], vl);
+                } else {
+                  vb = __riscv_vlse32_v_f32m1(
+                      &b[idx2((int)n0, (int)k0, (int)K)], (ptrdiff_t)((size_t)K * sizeof(float)), vl);
+                }
+                vacc = __riscv_vfmacc_vf_f32m1(vacc, av, vb, vl);
+              }
+            }
+            __riscv_vse32_v_f32m1(&out[idx2((int)m, (int)n0, (int)N)], vacc, vl);
+            n0 += (int64_t)vl;
+          }
+        }
+      }
+    }
+    return;
+  }
+#endif
+
+  for (int64_t m_base = 0; m_base < M; m_base += tm) {
+    int64_t m_end = m_base + tm;
+    if (m_end > M) m_end = M;
+    for (int64_t n_base = 0; n_base < N; n_base += tn) {
+      int64_t n_end = n_base + tn;
+      if (n_end > N) n_end = N;
+      for (int64_t m = m_base; m < m_end; ++m) {
+        for (int64_t n0 = n_base; n0 < n_end; ++n0) {
+          double acc = 0.0;
+          for (int64_t k_base = 0; k_base < K; k_base += tk) {
+            int64_t k_end = k_base + tk;
+            if (k_end > K) k_end = K;
+            for (int64_t k0 = k_base; k0 < k_end; ++k0) {
+              size_t ai = (size_t)(transpose_a ? idx2((int)k0, (int)m, (int)M) : idx2((int)m, (int)k0, (int)K));
+              size_t bi = (size_t)(transpose_b ? idx2((int)n0, (int)k0, (int)K) : idx2((int)k0, (int)n0, (int)N));
+              acc += (double)a[ai] * (double)b[bi];
+            }
+          }
+          out[idx2((int)m, (int)n0, (int)N)] = (float)acc;
+        }
+      }
+    }
+  }
+}
+
+void intentir_matmul_4d_f32(
+    const float* a, const float* b, float* out, int64_t B, int64_t H, int64_t M, int64_t N, int64_t K, int transpose_a,
+    int transpose_b, int64_t tile_m, int64_t tile_n, int64_t tile_k) {
+  if (!a || !b || !out || B <= 0 || H <= 0 || M <= 0 || N <= 0 || K <= 0) return;
+  const int64_t tm = (tile_m > 0) ? intentir_min_i64(tile_m, M) : M;
+  const int64_t tn = (tile_n > 0) ? intentir_min_i64(tile_n, N) : N;
+  const int64_t tk = (tile_k > 0) ? intentir_min_i64(tile_k, K) : K;
+
+#if defined(__riscv_vector) || defined(__riscv_v)
+  if (!transpose_a) {
+    for (int64_t b0 = 0; b0 < B; ++b0) {
+      for (int64_t h0 = 0; h0 < H; ++h0) {
+        for (int64_t m_base = 0; m_base < M; m_base += tm) {
+          int64_t m_end = m_base + tm;
+          if (m_end > M) m_end = M;
+          for (int64_t n_base = 0; n_base < N; n_base += tn) {
+            int64_t n_end = n_base + tn;
+            if (n_end > N) n_end = N;
+            for (int64_t m0 = m_base; m0 < m_end; ++m0) {
+              for (int64_t n0 = n_base; n0 < n_end;) {
+                size_t rem = (size_t)(n_end - n0);
+                size_t vl = intentir_vsetvl_e32m1(rem);
+                vfloat32m1_t vacc = __riscv_vfmv_v_f_f32m1(0.0f, vl);
+                for (int64_t k_base = 0; k_base < K; k_base += tk) {
+                  int64_t k_end = k_base + tk;
+                  if (k_end > K) k_end = K;
+                  for (int64_t k0 = k_base; k0 < k_end; ++k0) {
+                    float av = a[idx4((int)b0, (int)h0, (int)m0, (int)k0, (int)H, (int)M, (int)K)];
+                    vfloat32m1_t vb;
+                    if (!transpose_b) {
+                      vb = __riscv_vle32_v_f32m1(
+                          &b[idx4((int)b0, (int)h0, (int)k0, (int)n0, (int)H, (int)K, (int)N)], vl);
+                    } else {
+                      vb = __riscv_vlse32_v_f32m1(
+                          &b[idx4((int)b0, (int)h0, (int)n0, (int)k0, (int)H, (int)N, (int)K)],
+                          (ptrdiff_t)((size_t)K * sizeof(float)), vl);
+                    }
+                    vacc = __riscv_vfmacc_vf_f32m1(vacc, av, vb, vl);
+                  }
+                }
+                __riscv_vse32_v_f32m1(&out[idx4((int)b0, (int)h0, (int)m0, (int)n0, (int)H, (int)M, (int)N)], vacc, vl);
+                n0 += (int64_t)vl;
+              }
+            }
+          }
+        }
+      }
+    }
+    return;
+  }
+#endif
+
+  for (int64_t b0 = 0; b0 < B; ++b0) {
+    for (int64_t h0 = 0; h0 < H; ++h0) {
+      for (int64_t m_base = 0; m_base < M; m_base += tm) {
+        int64_t m_end = m_base + tm;
+        if (m_end > M) m_end = M;
+        for (int64_t n_base = 0; n_base < N; n_base += tn) {
+          int64_t n_end = n_base + tn;
+          if (n_end > N) n_end = N;
+          for (int64_t m0 = m_base; m0 < m_end; ++m0) {
+            for (int64_t n0 = n_base; n0 < n_end; ++n0) {
+              double acc = 0.0;
+              for (int64_t k_base = 0; k_base < K; k_base += tk) {
+                int64_t k_end = k_base + tk;
+                if (k_end > K) k_end = K;
+                for (int64_t k0 = k_base; k0 < k_end; ++k0) {
+                  size_t ai =
+                      (size_t)(transpose_a ? idx4((int)b0, (int)h0, (int)k0, (int)m0, (int)H, (int)K, (int)M)
+                                           : idx4((int)b0, (int)h0, (int)m0, (int)k0, (int)H, (int)M, (int)K));
+                  size_t bi =
+                      (size_t)(transpose_b ? idx4((int)b0, (int)h0, (int)n0, (int)k0, (int)H, (int)N, (int)K)
+                                           : idx4((int)b0, (int)h0, (int)k0, (int)n0, (int)H, (int)K, (int)N));
+                  acc += (double)a[ai] * (double)b[bi];
+                }
+              }
+              out[idx4((int)b0, (int)h0, (int)m0, (int)n0, (int)H, (int)M, (int)N)] = (float)acc;
+            }
+          }
+        }
+      }
+    }
+  }
+}

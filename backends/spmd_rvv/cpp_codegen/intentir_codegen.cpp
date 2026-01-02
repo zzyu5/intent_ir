@@ -1045,9 +1045,9 @@ void emit_transpose_generic(CodeWriter& w, const std::string& out, const std::st
 void emit_matmul(CodeWriter& w, const std::string& out, const std::string& a, const std::string& b,
                  const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape,
                  bool transpose_a, bool transpose_b,
-                 std::optional<int64_t> tile_m, std::optional<int64_t> tile_n, std::optional<int64_t> tile_k,
-                 std::optional<int64_t> vec_width) {
-  // Scalar matmul (rank-2 or rank-4).
+                 std::optional<int64_t> tile_m, std::optional<int64_t> tile_n, std::optional<int64_t> tile_k) {
+  // Matmul is implemented as a target-side runtime primitive (RVV/scalar), to keep
+  // the host codegen "compiler-like" (lowering + calls), not a giant template.
   if (a_shape.size() == 2 && b_shape.size() == 2) {
     int64_t M = transpose_a ? a_shape[1] : a_shape[0];
     int64_t K = transpose_a ? a_shape[0] : a_shape[1];
@@ -1055,88 +1055,14 @@ void emit_matmul(CodeWriter& w, const std::string& out, const std::string& a, co
     int64_t N = transpose_b ? b_shape[0] : b_shape[1];
     if (K2 != K) fail("matmul shape mismatch (2D)");
     if (out_shape.size() != 2 || out_shape[0] != M || out_shape[1] != N) fail("matmul output shape mismatch (2D)");
-
-    const int64_t tm = (tile_m && *tile_m > 0) ? std::min<int64_t>(*tile_m, M) : M;
-    const int64_t tn = (tile_n && *tile_n > 0) ? std::min<int64_t>(*tile_n, N) : N;
-    const int64_t tk = (tile_k && *tile_k > 0) ? std::min<int64_t>(*tile_k, K) : K;
-    if (!transpose_a) {
-      w.pp_line("#if defined(__riscv_vector) || defined(__riscv_v)");
-      w.line("for (int m_base = 0; m_base < " + std::to_string(M) + "; m_base += " + std::to_string(tm) + ") {");
-      w.indent();
-      w.line("int m_end = m_base + " + std::to_string(tm) + "; if (m_end > " + std::to_string(M) + ") m_end = " + std::to_string(M) + ";");
-      w.line("for (int n_base = 0; n_base < " + std::to_string(N) + "; n_base += " + std::to_string(tn) + ") {");
-      w.indent();
-      w.line("int n_end = n_base + " + std::to_string(tn) + "; if (n_end > " + std::to_string(N) + ") n_end = " + std::to_string(N) + ";");
-      w.line("for (int m = m_base; m < m_end; ++m) {");
-      w.indent();
-      w.line("for (int n0 = n_base; n0 < n_end; ) {");
-      w.indent();
-      w.line("size_t rem = (size_t)(n_end - n0);");
-      w.line("size_t vl = intentir_vsetvl_e32m1(rem);");
-      w.line("vfloat32m1_t vacc = __riscv_vfmv_v_f_f32m1(0.0f, vl);");
-      w.line("for (int k_base = 0; k_base < " + std::to_string(K) + "; k_base += " + std::to_string(tk) + ") {");
-      w.indent();
-      w.line("int k_end = k_base + " + std::to_string(tk) + "; if (k_end > " + std::to_string(K) + ") k_end = " + std::to_string(K) + ";");
-      w.line("for (int k = k_base; k < k_end; ++k) {");
-      w.indent();
-      w.line("float av = " + a + "[idx2(m,k," + std::to_string(K) + ")];");
-      if (!transpose_b) {
-        w.line("vfloat32m1_t vb = __riscv_vle32_v_f32m1(&" + b + "[idx2(k,n0," + std::to_string(N) + ")], vl);");
-      } else {
-        w.line("vfloat32m1_t vb = __riscv_vlse32_v_f32m1(&" + b + "[idx2(n0,k," + std::to_string(K) + ")], (ptrdiff_t)((size_t)" + std::to_string(K) + " * sizeof(float)), vl);");
-      }
-      w.line("vacc = __riscv_vfmacc_vf_f32m1(vacc, av, vb, vl);");
-      w.dedent();
-      w.line("}");
-      w.dedent();
-      w.line("}");
-      w.line("__riscv_vse32_v_f32m1(&" + out + "[idx2(m,n0," + std::to_string(N) + ")], vacc, vl);");
-      w.line("n0 += (int)vl;");
-      w.dedent();
-      w.line("}");
-	      w.dedent();
-	      w.line("}");
-	      w.dedent();
-	      w.line("}");
-	      w.dedent();
-	      w.line("}");
-	      w.pp_line("#else");
-	    }
-    w.line("for (int m_base = 0; m_base < " + std::to_string(M) + "; m_base += " + std::to_string(tm) + ") {");
-    w.indent();
-    w.line("int m_end = m_base + " + std::to_string(tm) + "; if (m_end > " + std::to_string(M) + ") m_end = " + std::to_string(M) + ";");
-    w.line("for (int n_base = 0; n_base < " + std::to_string(N) + "; n_base += " + std::to_string(tn) + ") {");
-    w.indent();
-    w.line("int n_end = n_base + " + std::to_string(tn) + "; if (n_end > " + std::to_string(N) + ") n_end = " + std::to_string(N) + ";");
-    w.line("for (int m = m_base; m < m_end; ++m) {");
-    w.indent();
-    w.line("for (int n = n_base; n < n_end; ++n) {");
-    w.indent();
-    w.line("double acc = 0.0;");
-    w.line("for (int k_base = 0; k_base < " + std::to_string(K) + "; k_base += " + std::to_string(tk) + ") {");
-    w.indent();
-    w.line("int k_end = k_base + " + std::to_string(tk) + "; if (k_end > " + std::to_string(K) + ") k_end = " + std::to_string(K) + ";");
-    w.line("for (int k = k_base; k < k_end; ++k) {");
-    w.indent();
-    std::string a_idx = transpose_a ? ("idx2(k,m," + std::to_string(M) + ")") : ("idx2(m,k," + std::to_string(K) + ")");
-    std::string b_idx = transpose_b ? ("idx2(n,k," + std::to_string(K) + ")") : ("idx2(k,n," + std::to_string(N) + ")");
-    w.line("acc += (double)" + a + "[" + a_idx + "] * (double)" + b + "[" + b_idx + "];");
-    w.dedent();
-    w.line("}");
-    w.dedent();
-    w.line("}");
-    w.line(out + "[idx2(m,n," + std::to_string(N) + ")] = (float)acc;");
-    w.dedent();
-    w.line("}");
-    w.dedent();
-    w.line("}");
-	    w.dedent();
-	    w.line("}");
-	    w.dedent();
-	    w.line("}");
-	    if (!transpose_a) w.pp_line("#endif");
-	    return;
-	  }
+    const int64_t tm = (tile_m && *tile_m > 0) ? *tile_m : 0;
+    const int64_t tn = (tile_n && *tile_n > 0) ? *tile_n : 0;
+    const int64_t tk = (tile_k && *tile_k > 0) ? *tile_k : 0;
+    w.line("intentir_matmul_2d_f32(" + a + ", " + b + ", " + out + ", " + std::to_string(M) + ", " + std::to_string(N) +
+           ", " + std::to_string(K) + ", " + (transpose_a ? "1" : "0") + ", " + (transpose_b ? "1" : "0") + ", " +
+           std::to_string(tm) + ", " + std::to_string(tn) + ", " + std::to_string(tk) + ");");
+    return;
+  }
   if (a_shape.size() == 4 && b_shape.size() == 4 && out_shape.size() == 4) {
     int64_t B0 = a_shape[0], H0 = a_shape[1];
     int64_t M = transpose_a ? a_shape[3] : a_shape[2];
@@ -1146,106 +1072,13 @@ void emit_matmul(CodeWriter& w, const std::string& out, const std::string& a, co
     int64_t N = transpose_b ? b_shape[2] : b_shape[3];
     if (B2 != B0 || H2 != H0 || K2 != K) fail("matmul shape mismatch (4D)");
     if (out_shape[0] != B0 || out_shape[1] != H0 || out_shape[2] != M || out_shape[3] != N) fail("matmul output shape mismatch (4D)");
-
-    const int64_t tm = (tile_m && *tile_m > 0) ? std::min<int64_t>(*tile_m, M) : M;
-    const int64_t tn = (tile_n && *tile_n > 0) ? std::min<int64_t>(*tile_n, N) : N;
-    const int64_t tk = (tile_k && *tile_k > 0) ? std::min<int64_t>(*tile_k, K) : K;
-    if (!transpose_a) {
-      w.pp_line("#if defined(__riscv_vector) || defined(__riscv_v)");
-      w.line("for (int b0 = 0; b0 < " + std::to_string(B0) + "; ++b0) {");
-      w.indent();
-      w.line("for (int h0 = 0; h0 < " + std::to_string(H0) + "; ++h0) {");
-      w.indent();
-      w.line("for (int m_base = 0; m_base < " + std::to_string(M) + "; m_base += " + std::to_string(tm) + ") {");
-      w.indent();
-      w.line("int m_end = m_base + " + std::to_string(tm) + "; if (m_end > " + std::to_string(M) + ") m_end = " + std::to_string(M) + ";");
-      w.line("for (int n_base = 0; n_base < " + std::to_string(N) + "; n_base += " + std::to_string(tn) + ") {");
-      w.indent();
-      w.line("int n_end = n_base + " + std::to_string(tn) + "; if (n_end > " + std::to_string(N) + ") n_end = " + std::to_string(N) + ";");
-      w.line("for (int m0 = m_base; m0 < m_end; ++m0) {");
-      w.indent();
-      w.line("for (int n0 = n_base; n0 < n_end; ) {");
-      w.indent();
-      w.line("size_t rem = (size_t)(n_end - n0);");
-      w.line("size_t vl = intentir_vsetvl_e32m1(rem);");
-      w.line("vfloat32m1_t vacc = __riscv_vfmv_v_f_f32m1(0.0f, vl);");
-      w.line("for (int k_base = 0; k_base < " + std::to_string(K) + "; k_base += " + std::to_string(tk) + ") {");
-      w.indent();
-      w.line("int k_end = k_base + " + std::to_string(tk) + "; if (k_end > " + std::to_string(K) + ") k_end = " + std::to_string(K) + ";");
-      w.line("for (int k0 = k_base; k0 < k_end; ++k0) {");
-      w.indent();
-      w.line("float av = " + a + "[idx4(b0,h0,m0,k0," + std::to_string(H0) + "," + std::to_string(M) + "," + std::to_string(K) + ")];");
-      if (!transpose_b) {
-        w.line("vfloat32m1_t vb = __riscv_vle32_v_f32m1(&" + b + "[idx4(b0,h0,k0,n0," + std::to_string(H0) + "," + std::to_string(K) + "," + std::to_string(N) + ")], vl);");
-      } else {
-        w.line("vfloat32m1_t vb = __riscv_vlse32_v_f32m1(&" + b + "[idx4(b0,h0,n0,k0," + std::to_string(H0) + "," + std::to_string(N) + "," + std::to_string(K) + ")], (ptrdiff_t)((size_t)" + std::to_string(K) + " * sizeof(float)), vl);");
-      }
-      w.line("vacc = __riscv_vfmacc_vf_f32m1(vacc, av, vb, vl);");
-      w.dedent();
-      w.line("}");
-      w.dedent();
-      w.line("}");
-      w.line("__riscv_vse32_v_f32m1(&" + out + "[idx4(b0,h0,m0,n0," + std::to_string(H0) + "," + std::to_string(M) + "," + std::to_string(N) + ")], vacc, vl);");
-      w.line("n0 += (int)vl;");
-      w.dedent();
-      w.line("}");
-      w.dedent();
-      w.line("}");
-      w.dedent();
-      w.line("}");
-      w.dedent();
-      w.line("}");
-      w.dedent();
-      w.line("}");
-      w.dedent();
-      w.line("}");
-      w.pp_line("#else");
-    }
-    w.line("for (int b0 = 0; b0 < " + std::to_string(B0) + "; ++b0) {");
-    w.indent();
-    w.line("for (int h0 = 0; h0 < " + std::to_string(H0) + "; ++h0) {");
-    w.indent();
-    w.line("for (int m_base = 0; m_base < " + std::to_string(M) + "; m_base += " + std::to_string(tm) + ") {");
-    w.indent();
-    w.line("int m_end = m_base + " + std::to_string(tm) + "; if (m_end > " + std::to_string(M) + ") m_end = " + std::to_string(M) + ";");
-    w.line("for (int n_base = 0; n_base < " + std::to_string(N) + "; n_base += " + std::to_string(tn) + ") {");
-    w.indent();
-    w.line("int n_end = n_base + " + std::to_string(tn) + "; if (n_end > " + std::to_string(N) + ") n_end = " + std::to_string(N) + ";");
-    w.line("for (int m0 = m_base; m0 < m_end; ++m0) {");
-    w.indent();
-    w.line("for (int n0 = n_base; n0 < n_end; ++n0) {");
-    w.indent();
-    w.line("double acc = 0.0;");
-    w.line("for (int k_base = 0; k_base < " + std::to_string(K) + "; k_base += " + std::to_string(tk) + ") {");
-    w.indent();
-    w.line("int k_end = k_base + " + std::to_string(tk) + "; if (k_end > " + std::to_string(K) + ") k_end = " + std::to_string(K) + ";");
-    w.line("for (int k0 = k_base; k0 < k_end; ++k0) {");
-    w.indent();
-    std::string a_idx = transpose_a
-                            ? ("idx4(b0,h0,k0,m0," + std::to_string(H0) + "," + std::to_string(K) + "," + std::to_string(M) + ")")
-                            : ("idx4(b0,h0,m0,k0," + std::to_string(H0) + "," + std::to_string(M) + "," + std::to_string(K) + ")");
-    std::string b_idx = transpose_b
-                            ? ("idx4(b0,h0,n0,k0," + std::to_string(H0) + "," + std::to_string(N) + "," + std::to_string(K) + ")")
-                            : ("idx4(b0,h0,k0,n0," + std::to_string(H0) + "," + std::to_string(K) + "," + std::to_string(N) + ")");
-    w.line("acc += (double)" + a + "[" + a_idx + "] * (double)" + b + "[" + b_idx + "];");
-    w.dedent();
-    w.line("}");
-    w.dedent();
-    w.line("}");
-    w.line(out + "[idx4(b0,h0,m0,n0," + std::to_string(H0) + "," + std::to_string(M) + "," + std::to_string(N) + ")] = (float)acc;");
-    w.dedent();
-    w.line("}");
-    w.dedent();
-    w.line("}");
-    w.dedent();
-    w.line("}");
-    w.dedent();
-    w.line("}");
-    w.dedent();
-    w.line("}");
-    w.dedent();
-    w.line("}");
-    if (!transpose_a) w.pp_line("#endif");
+    const int64_t tm = (tile_m && *tile_m > 0) ? *tile_m : 0;
+    const int64_t tn = (tile_n && *tile_n > 0) ? *tile_n : 0;
+    const int64_t tk = (tile_k && *tile_k > 0) ? *tile_k : 0;
+    w.line("intentir_matmul_4d_f32(" + a + ", " + b + ", " + out + ", " + std::to_string(B0) + ", " + std::to_string(H0) +
+           ", " + std::to_string(M) + ", " + std::to_string(N) + ", " + std::to_string(K) + ", " + (transpose_a ? "1" : "0") +
+           ", " + (transpose_b ? "1" : "0") + ", " + std::to_string(tm) + ", " + std::to_string(tn) + ", " + std::to_string(tk) +
+           ");");
     return;
   }
   fail("matmul supports rank-2 or rank-4");
@@ -1548,7 +1381,7 @@ struct CProgramEmitter {
         bool ta = op.attrs.value("transpose_a", false);
         bool tb = op.attrs.value("transpose_b", false);
         emit_matmul(w, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, ta, tb,
-                    sched_tile_m, sched_tile_n, sched_tile_k, sched_vec_width);
+                    sched_tile_m, sched_tile_n, sched_tile_k);
       } else {
         fail("unsupported op lowering: " + op.op);
       }

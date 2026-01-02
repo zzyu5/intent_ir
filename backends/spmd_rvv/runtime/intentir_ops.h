@@ -23,6 +23,17 @@ void intentir_softmax_2d_last_f32(const float* a, float* out, int64_t M, int64_t
 void intentir_softmax_3d_last_f32(const float* a, float* out, int64_t A0, int64_t A1, int64_t K);
 void intentir_softmax_4d_last_f32(const float* a, float* out, int64_t B, int64_t H, int64_t Q, int64_t K);
 
+// Matmul (GEMM) in row-major layouts, with optional transpose flags:
+// - 2D: [M,K] x [K,N] -> [M,N]
+// - 4D: [B,H,M,K] x [B,H,K,N] -> [B,H,M,N]
+// Transpose flags follow the IntentIR `matmul` op: transpose_a / transpose_b.
+void intentir_matmul_2d_f32(
+    const float* a, const float* b, float* out, int64_t M, int64_t N, int64_t K, int transpose_a, int transpose_b,
+    int64_t tile_m, int64_t tile_n, int64_t tile_k);
+void intentir_matmul_4d_f32(
+    const float* a, const float* b, float* out, int64_t B, int64_t H, int64_t M, int64_t N, int64_t K, int transpose_a,
+    int transpose_b, int64_t tile_m, int64_t tile_n, int64_t tile_k);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif
