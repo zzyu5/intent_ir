@@ -1416,98 +1416,25 @@ struct CProgramEmitter {
   double rtol = 1e-3;
   double matmul_flops_total = 0.0;
 
-  void emit_program() {
-    emit_prelude();
-    emit_globals();
-    emit_now_ns();
-    w.line("static void intentir_compute(void);");
-    w.blank();
-    emit_main();
-    w.blank();
-    emit_compute_fn();
-  }
+	  void emit_program() {
+	    emit_prelude();
+	    emit_globals();
+	    w.line("static void intentir_compute(void);");
+	    w.blank();
+	    emit_main();
+	    w.blank();
+	    emit_compute_fn();
+	  }
 
-  void emit_prelude() {
-    w.pp_line("#include <math.h>");
-    w.pp_line("#include <stdint.h>");
-    w.pp_line("#include <stddef.h>");
-    w.pp_line("#include <stdio.h>");
-    w.pp_line("#include <stdlib.h>");
-    w.pp_line("#include <time.h>");
-    w.pp_line("#if defined(__riscv_vector) || defined(__riscv_v)");
-    w.pp_line("#include <riscv_vector.h>");
-    w.pp_line("#endif");
-    w.blank();
-
-    int64_t vw = 0;
-    if (sched_vec_width && *sched_vec_width > 0) vw = *sched_vec_width;
-    w.pp_line("#ifndef INTENTIR_VEC_WIDTH");
-    w.pp_line("#define INTENTIR_VEC_WIDTH " + std::to_string(vw));
-    w.pp_line("#endif");
-    w.pp_line("#if defined(__riscv_vector) || defined(__riscv_v)");
-    w.line("static inline size_t intentir_vsetvl_e32m1(size_t rem) {");
-    w.indent();
-    w.line("if (INTENTIR_VEC_WIDTH > 0 && rem > (size_t)INTENTIR_VEC_WIDTH) rem = (size_t)INTENTIR_VEC_WIDTH;");
-    w.line("return __riscv_vsetvl_e32m1(rem);");
-    w.dedent();
-    w.line("}");
-    w.pp_line("#endif");
-    w.blank();
-
-    w.line("static int read_bytes(const char* path, void* dst, size_t bytes) {");
-    w.indent();
-    w.line("FILE* f = fopen(path, \"rb\");");
-    w.line("if (!f) { perror(path); return 0; }");
-    w.line("size_t got = fread(dst, 1, bytes, f);");
-    w.line("fclose(f);");
-    w.line("return got == bytes;");
-    w.dedent();
-    w.line("}");
-    w.blank();
-
-    w.line("static int compare_f32(const char* name, const float* got, const float* ref, size_t n, float atol, float rtol) {");
-    w.indent();
-    w.line("double max_abs = 0.0, max_rel = 0.0; size_t worst = 0;");
-    w.line("for (size_t i = 0; i < n; ++i) {");
-    w.indent();
-    w.line("double a = (double)got[i];");
-    w.line("double b = (double)ref[i];");
-    w.line("double abs_e = fabs(a - b);");
-    w.line("double rel_e = abs_e / (fabs(b) + 1e-8);");
-    w.line("if (abs_e > max_abs) { max_abs = abs_e; max_rel = rel_e; worst = i; }");
-    w.dedent();
-    w.line("}");
-    w.line("int ok = (max_abs <= (double)atol) || (max_rel <= (double)rtol);");
-    w.line("printf(\"%s: ok=%d max_abs=%g max_rel=%g worst_i=%zu got=%g ref=%g\\n\",");
-    w.line("       name, ok, max_abs, max_rel, worst, (double)got[worst], (double)ref[worst]);");
-    w.line("return ok;");
-    w.dedent();
-    w.line("}");
-    w.blank();
-
-    w.line("static int compare_u8(const char* name, const uint8_t* got, const uint8_t* ref, size_t n) {");
-    w.indent();
-    w.line("for (size_t i = 0; i < n; ++i) {");
-    w.indent();
-    w.line("if (got[i] != ref[i]) {");
-    w.indent();
-    w.line("fprintf(stderr, \"%s mismatch at %zu: got=%u ref=%u\\n\", name, i, (unsigned)got[i], (unsigned)ref[i]);");
-    w.line("return 0;");
-    w.dedent();
-    w.line("}");
-    w.dedent();
-    w.line("}");
-    w.line("printf(\"%s: ok=1 (exact)\\n\", name);");
-    w.line("return 1;");
-    w.dedent();
-    w.line("}");
-    w.blank();
-
-    w.line("static inline size_t idx2(int i, int j, int D1) { return (size_t)i * (size_t)D1 + (size_t)j; }");
-    w.line("static inline size_t idx3(int i, int j, int k, int D1, int D2) { return ((size_t)i * (size_t)D1 + (size_t)j) * (size_t)D2 + (size_t)k; }");
-    w.line("static inline size_t idx4(int i, int j, int k, int l, int D1, int D2, int D3) { return (((size_t)i * (size_t)D1 + (size_t)j) * (size_t)D2 + (size_t)k) * (size_t)D3 + (size_t)l; }");
-    w.blank();
-  }
+	  void emit_prelude() {
+	    int64_t vw = 0;
+	    if (sched_vec_width && *sched_vec_width > 0) vw = *sched_vec_width;
+	    w.pp_line("#ifndef INTENTIR_VEC_WIDTH");
+	    w.pp_line("#define INTENTIR_VEC_WIDTH " + std::to_string(vw));
+	    w.pp_line("#endif");
+	    w.pp_line("#include \"intentir_runtime.h\"");
+	    w.blank();
+	  }
 
   void emit_globals() {
     std::vector<std::string> names;
@@ -1522,22 +1449,11 @@ struct CProgramEmitter {
     w.blank();
   }
 
-  void emit_now_ns() {
-    w.line("static inline uint64_t intentir_now_ns(void) {");
-    w.indent();
-    w.line("struct timespec ts;");
-    w.line("timespec_get(&ts, TIME_UTC);");
-    w.line("return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;");
-    w.dedent();
-    w.line("}");
-    w.blank();
-  }
-
-  void emit_alloc_tensor(const std::string& name) {
-    const auto& shp = shape_env.at(name);
-    int64_t n = numel(shp);
-    std::string ct = ctype_for_dtype(dtype_env.at(name));
-    w.line(name + " = (" + ct + "*)malloc(sizeof(" + ct + ") * (size_t)" + std::to_string(n) + ");");
+	  void emit_alloc_tensor(const std::string& name) {
+	    const auto& shp = shape_env.at(name);
+	    int64_t n = numel(shp);
+	    std::string ct = ctype_for_dtype(dtype_env.at(name));
+	    w.line(name + " = (" + ct + "*)malloc(sizeof(" + ct + ") * (size_t)" + std::to_string(n) + ");");
     w.line("if (!" + name + ") { fprintf(stderr, \"alloc failed: " + name + "\\n\"); return 2; }");
   }
 
@@ -1574,7 +1490,7 @@ struct CProgramEmitter {
       w.line("// input " + name + ": shape=" + std::to_string((int)shp.size()) + "D");
       w.line(name + " = (" + ct + "*)malloc(sizeof(" + ct + ") * (size_t)" + std::to_string(n) + ");");
       w.line("if (!" + name + ") { fprintf(stderr, \"alloc failed: " + name + "\\n\"); return 2; }");
-      w.line("if (!read_bytes(\"" + name + ".bin\", " + name + ", sizeof(" + ct + ") * (size_t)" + std::to_string(n) + ")) return 2;");
+	      w.line("if (!intentir_read_bytes(\"" + name + ".bin\", " + name + ", sizeof(" + ct + ") * (size_t)" + std::to_string(n) + ")) return 2;");
       w.blank();
     }
 
@@ -1648,13 +1564,13 @@ struct CProgramEmitter {
       if (dt == "bool" || dt == "i1") {
         w.line("uint8_t* " + name + "_ref = (uint8_t*)malloc(sizeof(uint8_t) * (size_t)" + std::to_string(n) + ");");
         w.line("if (!" + name + "_ref) { fprintf(stderr, \"alloc failed: " + name + "_ref\\n\"); return 2; }");
-        w.line("if (!read_bytes(\"" + name + "_ref.bin\", " + name + "_ref, sizeof(uint8_t) * (size_t)" + std::to_string(n) + ")) return 2;");
-        w.line("int ok_" + name + " = compare_u8(\"" + name + "\", (const uint8_t*)" + name + ", (const uint8_t*)" + name + "_ref, (size_t)" + std::to_string(n) + ");");
+	        w.line("if (!intentir_read_bytes(\"" + name + "_ref.bin\", " + name + "_ref, sizeof(uint8_t) * (size_t)" + std::to_string(n) + ")) return 2;");
+	        w.line("int ok_" + name + " = intentir_compare_u8(\"" + name + "\", (const uint8_t*)" + name + ", (const uint8_t*)" + name + "_ref, (size_t)" + std::to_string(n) + ");");
       } else {
         w.line("float* " + name + "_ref = (float*)malloc(sizeof(float) * (size_t)" + std::to_string(n) + ");");
         w.line("if (!" + name + "_ref) { fprintf(stderr, \"alloc failed: " + name + "_ref\\n\"); return 2; }");
-        w.line("if (!read_bytes(\"" + name + "_ref.bin\", " + name + "_ref, sizeof(float) * (size_t)" + std::to_string(n) + ")) return 2;");
-        w.line("int ok_" + name + " = compare_f32(\"" + name + "\", (const float*)" + name + ", (const float*)" + name + "_ref, (size_t)" + std::to_string(n) + ", ATOL, RTOL);");
+	        w.line("if (!intentir_read_bytes(\"" + name + "_ref.bin\", " + name + "_ref, sizeof(float) * (size_t)" + std::to_string(n) + ")) return 2;");
+	        w.line("int ok_" + name + " = intentir_compare_f32(\"" + name + "\", (const float*)" + name + ", (const float*)" + name + "_ref, (size_t)" + std::to_string(n) + ", ATOL, RTOL);");
       }
       ok_exprs.push_back("ok_" + name);
       w.blank();

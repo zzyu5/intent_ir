@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -211,10 +212,22 @@ def validate_gemm_cost_model_remote(
             _sftp_mkdir_p(sftp, remote_dir)
             with sftp.file(f"{remote_dir}/main.c", "w") as f:
                 f.write(c_src)
+            runtime_dir = Path(__file__).resolve().parents[1] / "runtime"
+            runtime_h = runtime_dir / "intentir_runtime.h"
+            runtime_c = runtime_dir / "intentir_runtime.c"
+            if not runtime_h.exists() or not runtime_c.exists():
+                raise FileNotFoundError(f"missing RVV runtime: {runtime_h} / {runtime_c}")
+            with sftp.file(f"{remote_dir}/intentir_runtime.h", "w") as f:
+                f.write(runtime_h.read_text(encoding="utf-8"))
+            with sftp.file(f"{remote_dir}/intentir_runtime.c", "w") as f:
+                f.write(runtime_c.read_text(encoding="utf-8"))
             _upload_gemm_io(sftp, remote_dir, A=A, B=B, C_ref=C_ref)
 
             remote_bin = f"{remote_dir}/run"
-            compile_cmd = f"gcc -O3 -std=c11 -march=rv64gcv -o {remote_bin} {remote_dir}/main.c -lm"
+            compile_cmd = (
+                f"gcc -O3 -std=c11 -march=rv64gcv -I{remote_dir} -o {remote_bin} "
+                f"{remote_dir}/main.c {remote_dir}/intentir_runtime.c -lm -lrt"
+            )
             stdin, stdout, stderr = client.exec_command(compile_cmd, timeout=120)
             _ = stdout.read()
             comp_err = stderr.read().decode("utf-8", errors="replace")

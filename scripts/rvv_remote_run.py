@@ -398,6 +398,18 @@ def run_remote(
     remote_c = f"{remote_dir}/main.c"
     remote_bin = f"{remote_dir}/run"
 
+    # Upload the target-side runtime (shared helpers) once per kernel.
+    runtime_dir = ROOT / "backends" / "spmd_rvv" / "runtime"
+    runtime_h = runtime_dir / "intentir_runtime.h"
+    runtime_c_local = runtime_dir / "intentir_runtime.c"
+    if not runtime_h.exists() or not runtime_c_local.exists():
+        raise FileNotFoundError(f"missing RVV runtime: {runtime_h} / {runtime_c_local}")
+    _log(f"[{frontend}:{kernel}] upload runtime")
+    with sftp.file(f"{remote_dir}/intentir_runtime.h", "w") as f:
+        f.write(runtime_h.read_text(encoding="utf-8"))
+    with sftp.file(f"{remote_dir}/intentir_runtime.c", "w") as f:
+        f.write(runtime_c_local.read_text(encoding="utf-8"))
+
     # Generic lowering path: upload all external inputs and reference outputs, then lower ops list.
     produced = {op.output for op in intent.ops if op.output}
     used = set()
@@ -453,7 +465,10 @@ def run_remote(
             f.write(src)
 
         _log(f"[{frontend}:{kernel}] remote compile")
-        compile_cmd = f"gcc -O2 -std=c11 -march=rv64gcv -o {remote_bin} {remote_c} -lm -lrt"
+        compile_cmd = (
+            f"gcc -O2 -std=c11 -march=rv64gcv -I{remote_dir} -o {remote_bin} {remote_c} "
+            f"{remote_dir}/intentir_runtime.c -lm -lrt"
+        )
         stdin, stdout, stderr = client.exec_command(compile_cmd, timeout=60)
         comp_out = stdout.read().decode()
         comp_err = stderr.read().decode()

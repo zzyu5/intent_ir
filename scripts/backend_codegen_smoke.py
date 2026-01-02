@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -152,7 +153,25 @@ def run_one(
         c_src = lower_intent_to_c_with_files(intent, shape_bindings=bindings, atol=float(atol), rtol=float(rtol))
         (td / "main.c").write_text(c_src, encoding="utf-8")
 
-        compile_cmd = ["gcc", "-O2", "-std=c11", "-o", str(td / "run"), str(td / "main.c"), "-lm", "-lrt"]
+        runtime_dir = ROOT / "backends" / "spmd_rvv" / "runtime"
+        for fn in ["intentir_runtime.h", "intentir_runtime.c"]:
+            src_p = runtime_dir / fn
+            if not src_p.exists():
+                raise FileNotFoundError(f"missing RVV runtime file: {src_p}")
+            shutil.copy(src_p, td / fn)
+
+        compile_cmd = [
+            "gcc",
+            "-O2",
+            "-std=c11",
+            "-I.",
+            "-o",
+            str(td / "run"),
+            str(td / "main.c"),
+            str(td / "intentir_runtime.c"),
+            "-lm",
+            "-lrt",
+        ]
         cp = subprocess.run(compile_cmd, cwd=td, capture_output=True, text=True)
         if cp.returncode != 0:
             raise RuntimeError(f"compile failed:\n{cp.stderr or cp.stdout}")
