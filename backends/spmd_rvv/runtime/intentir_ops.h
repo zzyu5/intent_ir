@@ -17,9 +17,14 @@ void intentir_reduce_sum_4d_axis23_f32(
 // Reduce-max over the last axis of a 2D f32 tensor [M,K]. Output is length M.
 void intentir_reduce_max_2d_axis1_f32(const float* a, float* out, int64_t M, int64_t K);
 
+// Softmax over the last axis for rank-1..4 f32 tensors.
+void intentir_softmax_1d_last_f32(const float* a, float* out, int64_t K);
+void intentir_softmax_2d_last_f32(const float* a, float* out, int64_t M, int64_t K);
+void intentir_softmax_3d_last_f32(const float* a, float* out, int64_t A0, int64_t A1, int64_t K);
+void intentir_softmax_4d_last_f32(const float* a, float* out, int64_t B, int64_t H, int64_t Q, int64_t K);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif
 
 #endif  // INTENTIR_OPS_H
-

@@ -964,70 +964,24 @@ void emit_softmax(CodeWriter& w, const std::string& out, const std::string& a, c
   if (ax != r - 1) fail("softmax supports axis == last only");
   if (r == 1) {
     int64_t K = in_shape[0];
-    w.line("{");
-    w.indent();
-    w.line("double mx = -1e30;");
-    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { double v = (double)" + a + "[(size_t)k]; if (v > mx) mx = v; }");
-    w.line("double sum = 0.0;");
-    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { double e = exp((double)" + a + "[(size_t)k] - mx); " + out + "[(size_t)k] = (float)e; sum += e; }");
-    w.line("double inv = 1.0 / sum;");
-    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { " + out + "[(size_t)k] = (float)((double)" + out + "[(size_t)k] * inv); }");
-    w.dedent();
-    w.line("}");
+    w.line("intentir_softmax_1d_last_f32(" + a + ", " + out + ", " + std::to_string(K) + ");");
     return;
   }
   if (r == 2) {
     int64_t M = in_shape[0], K = in_shape[1];
-    w.line("for (int m = 0; m < " + std::to_string(M) + "; ++m) {");
-    w.indent();
-    w.line("double mx = -1e30;");
-    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { double v = (double)" + a + "[idx2(m,k," + std::to_string(K) + ")]; if (v > mx) mx = v; }");
-    w.line("double sum = 0.0;");
-    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { double e = exp((double)" + a + "[idx2(m,k," + std::to_string(K) + ")] - mx); " + out + "[idx2(m,k," + std::to_string(K) + ")] = (float)e; sum += e; }");
-    w.line("double inv = 1.0 / sum;");
-    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { " + out + "[idx2(m,k," + std::to_string(K) + ")] = (float)((double)" + out + "[idx2(m,k," + std::to_string(K) + ")] * inv); }");
-    w.dedent();
-    w.line("}");
+    w.line("intentir_softmax_2d_last_f32(" + a + ", " + out + ", " + std::to_string(M) + ", " + std::to_string(K) + ");");
     return;
   }
   if (r == 3) {
     int64_t A0 = in_shape[0], A1 = in_shape[1], K = in_shape[2];
-    w.line("for (int i0 = 0; i0 < " + std::to_string(A0) + "; ++i0) {");
-    w.indent();
-    w.line("for (int i1 = 0; i1 < " + std::to_string(A1) + "; ++i1) {");
-    w.indent();
-    w.line("double mx = -1e30;");
-    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { double v = (double)" + a + "[idx3(i0,i1,k," + std::to_string(A1) + "," + std::to_string(K) + ")]; if (v > mx) mx = v; }");
-    w.line("double sum = 0.0;");
-    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { double e = exp((double)" + a + "[idx3(i0,i1,k," + std::to_string(A1) + "," + std::to_string(K) + ")] - mx); " + out + "[idx3(i0,i1,k," + std::to_string(A1) + "," + std::to_string(K) + ")] = (float)e; sum += e; }");
-    w.line("double inv = 1.0 / sum;");
-    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { " + out + "[idx3(i0,i1,k," + std::to_string(A1) + "," + std::to_string(K) + ")] = (float)((double)" + out + "[idx3(i0,i1,k," + std::to_string(A1) + "," + std::to_string(K) + ")] * inv); }");
-    w.dedent();
-    w.line("}");
-    w.dedent();
-    w.line("}");
+    w.line("intentir_softmax_3d_last_f32(" + a + ", " + out + ", " + std::to_string(A0) + ", " + std::to_string(A1) + ", " + std::to_string(K) +
+           ");");
     return;
   }
   if (r == 4) {
     int64_t B = in_shape[0], H = in_shape[1], Q = in_shape[2], K = in_shape[3];
-    w.line("for (int b = 0; b < " + std::to_string(B) + "; ++b) {");
-    w.indent();
-    w.line("for (int h = 0; h < " + std::to_string(H) + "; ++h) {");
-    w.indent();
-    w.line("for (int q = 0; q < " + std::to_string(Q) + "; ++q) {");
-    w.indent();
-    w.line("double mx = -1e30;");
-    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { double v = (double)" + a + "[idx4(b,h,q,k," + std::to_string(H) + "," + std::to_string(Q) + "," + std::to_string(K) + ")]; if (v > mx) mx = v; }");
-    w.line("double sum = 0.0;");
-    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { double e = exp((double)" + a + "[idx4(b,h,q,k," + std::to_string(H) + "," + std::to_string(Q) + "," + std::to_string(K) + ")] - mx); " + out + "[idx4(b,h,q,k," + std::to_string(H) + "," + std::to_string(Q) + "," + std::to_string(K) + ")] = (float)e; sum += e; }");
-    w.line("double inv = 1.0 / sum;");
-    w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) { " + out + "[idx4(b,h,q,k," + std::to_string(H) + "," + std::to_string(Q) + "," + std::to_string(K) + ")] = (float)((double)" + out + "[idx4(b,h,q,k," + std::to_string(H) + "," + std::to_string(Q) + "," + std::to_string(K) + ")] * inv); }");
-    w.dedent();
-    w.line("}");
-    w.dedent();
-    w.line("}");
-    w.dedent();
-    w.line("}");
+    w.line("intentir_softmax_4d_last_f32(" + a + ", " + out + ", " + std::to_string(B) + ", " + std::to_string(H) + ", " + std::to_string(Q) + ", " +
+           std::to_string(K) + ");");
     return;
   }
   fail("softmax supports rank<=4");

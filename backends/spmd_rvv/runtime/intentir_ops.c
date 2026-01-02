@@ -92,3 +92,93 @@ void intentir_reduce_max_2d_axis1_f32(const float* a, float* out, int64_t M, int
 #endif
 }
 
+void intentir_softmax_1d_last_f32(const float* a, float* out, int64_t K) {
+  if (!a || !out || K <= 0) return;
+  double mx = -1e30;
+  for (int64_t k = 0; k < K; ++k) {
+    double v = (double)a[(size_t)k];
+    if (v > mx) mx = v;
+  }
+  double sum = 0.0;
+  for (int64_t k = 0; k < K; ++k) {
+    double e = exp((double)a[(size_t)k] - mx);
+    out[(size_t)k] = (float)e;
+    sum += e;
+  }
+  double inv = 1.0 / sum;
+  for (int64_t k = 0; k < K; ++k) out[(size_t)k] = (float)((double)out[(size_t)k] * inv);
+}
+
+void intentir_softmax_2d_last_f32(const float* a, float* out, int64_t M, int64_t K) {
+  if (!a || !out || M <= 0 || K <= 0) return;
+  for (int64_t m = 0; m < M; ++m) {
+    double mx = -1e30;
+    for (int64_t k = 0; k < K; ++k) {
+      double v = (double)a[idx2((int)m, (int)k, (int)K)];
+      if (v > mx) mx = v;
+    }
+    double sum = 0.0;
+    for (int64_t k = 0; k < K; ++k) {
+      double e = exp((double)a[idx2((int)m, (int)k, (int)K)] - mx);
+      out[idx2((int)m, (int)k, (int)K)] = (float)e;
+      sum += e;
+    }
+    double inv = 1.0 / sum;
+    for (int64_t k = 0; k < K; ++k) {
+      size_t i = idx2((int)m, (int)k, (int)K);
+      out[i] = (float)((double)out[i] * inv);
+    }
+  }
+}
+
+void intentir_softmax_3d_last_f32(const float* a, float* out, int64_t A0, int64_t A1, int64_t K) {
+  if (!a || !out || A0 <= 0 || A1 <= 0 || K <= 0) return;
+  for (int64_t i0 = 0; i0 < A0; ++i0) {
+    for (int64_t i1 = 0; i1 < A1; ++i1) {
+      double mx = -1e30;
+      for (int64_t k = 0; k < K; ++k) {
+        double v = (double)a[idx3((int)i0, (int)i1, (int)k, (int)A1, (int)K)];
+        if (v > mx) mx = v;
+      }
+      double sum = 0.0;
+      for (int64_t k = 0; k < K; ++k) {
+        size_t i = idx3((int)i0, (int)i1, (int)k, (int)A1, (int)K);
+        double e = exp((double)a[i] - mx);
+        out[i] = (float)e;
+        sum += e;
+      }
+      double inv = 1.0 / sum;
+      for (int64_t k = 0; k < K; ++k) {
+        size_t i = idx3((int)i0, (int)i1, (int)k, (int)A1, (int)K);
+        out[i] = (float)((double)out[i] * inv);
+      }
+    }
+  }
+}
+
+void intentir_softmax_4d_last_f32(const float* a, float* out, int64_t B, int64_t H, int64_t Q, int64_t K) {
+  if (!a || !out || B <= 0 || H <= 0 || Q <= 0 || K <= 0) return;
+  for (int64_t b = 0; b < B; ++b) {
+    for (int64_t h = 0; h < H; ++h) {
+      for (int64_t q = 0; q < Q; ++q) {
+        double mx = -1e30;
+        for (int64_t k = 0; k < K; ++k) {
+          double v = (double)a[idx4((int)b, (int)h, (int)q, (int)k, (int)H, (int)Q, (int)K)];
+          if (v > mx) mx = v;
+        }
+        double sum = 0.0;
+        for (int64_t k = 0; k < K; ++k) {
+          size_t i = idx4((int)b, (int)h, (int)q, (int)k, (int)H, (int)Q, (int)K);
+          double e = exp((double)a[i] - mx);
+          out[i] = (float)e;
+          sum += e;
+        }
+        double inv = 1.0 / sum;
+        for (int64_t k = 0; k < K; ++k) {
+          size_t i = idx4((int)b, (int)h, (int)q, (int)k, (int)H, (int)Q, (int)K);
+          out[i] = (float)((double)out[i] * inv);
+        }
+      }
+    }
+  }
+}
