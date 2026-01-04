@@ -88,9 +88,9 @@ def run_one(
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
     intent = _load_intent(report)
+    cert_v2 = report.get("certificate_v2") or {}
     tile_hints: list[int] = []
     try:
-        cert_v2 = report.get("certificate_v2") or {}
         sh = cert_v2.get("schedule_hints") or {}
         th = sh.get("tile_hints")
         if isinstance(th, list):
@@ -125,7 +125,7 @@ def run_one(
             pass
     if tune_request is not None:
         prof = load_profile(tune_profile or "generic_rvv_256")
-        tuned = select_schedule(intent, shape_bindings=bindings, profile=prof, request=tune_request, tile_hints=tile_hints)
+        tuned = select_schedule(intent, shape_bindings=bindings, profile=prof, request=tune_request, tile_hints=tile_hints, evidence=cert_v2)
         intent.schedule = tuned.schedule
     tol = {
         "any_kernel_dim": (0.0, 0.0),

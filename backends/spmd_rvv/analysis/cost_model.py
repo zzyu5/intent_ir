@@ -8,12 +8,14 @@ gives a ranking signal for tile search.
 
 from __future__ import annotations
 
+import re
 import math
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 from .hardware_profile import RVVHardwareProfile
 from intent_ir.ir import IntentFunction
+from frontends.common.evidence import CanonicalEvidence
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,157 @@ def _dtype_bytes(dt: str) -> int:
     return 4
 
 
+_RANGE_SYM_RE = re.compile(r"^r\d+$")
+
+
+def _split_top_level_commas(text: str) -> List[str]:
+    parts: List[str] = []
+    depth = 0
+    start = 0
+    for i, ch in enumerate(text):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            parts.append(text[start:i].strip())
+            start = i + 1
+    tail = text[start:].strip()
+    if tail:
+        parts.append(tail)
+    return [p for p in parts if p]
+
+
+def _parse_mul_factors(term: str) -> Optional[List[str]]:
+    term = str(term).strip()
+    if not (term.startswith("mul(") and term.endswith(")")):
+        return None
+    inner = term[len("mul(") : -1].strip()
+    args = _split_top_level_commas(inner)
+    return args if len(args) >= 2 else None
+
+
+def _extract_accesses_from_evidence(evidence: object | None) -> List[dict]:
+    if evidence is None:
+        return []
+    if isinstance(evidence, CanonicalEvidence):
+        return [a.to_json_dict() for a in evidence.accesses]
+    if isinstance(evidence, dict):
+        if "accesses" in evidence:
+            ce = evidence
+        elif "canonical_evidence" in evidence:
+            ce = evidence.get("canonical_evidence") or {}
+        elif "semantic_facts" in evidence:
+            sf = evidence.get("semantic_facts") or {}
+            ce = sf.get("canonical_evidence") or {}
+        else:
+            ce = {}
+        acc = (ce.get("accesses") or []) if isinstance(ce, dict) else []
+        return [a for a in acc if isinstance(a, dict)]
+    return []
+
+
+def _access_penalty_from_index_expr(
+    ix: dict,
+    *,
+    dtype_bytes: int,
+    cache_line: int,
+    bindings: Dict[str, int],
+) -> float:
+    terms = ix.get("terms") if isinstance(ix, dict) else None
+    if not isinstance(terms, dict) or dtype_bytes <= 0:
+        return 1.0
+
+    stride_bytes: List[int] = []
+    for raw_var, raw_c in terms.items():
+        var = str(raw_var)
+        try:
+            c = int(raw_c)
+        except Exception:
+            continue
+        if c == 0:
+            continue
+        if _RANGE_SYM_RE.match(var):
+            stride_bytes.append(abs(c) * int(dtype_bytes))
+            continue
+        factors = _parse_mul_factors(var)
+        if not factors:
+            continue
+        # Detect mul(..., rK, ...) stride on a range variable.
+        r_factors = [f for f in factors if _RANGE_SYM_RE.match(str(f))]
+        if not r_factors:
+            continue
+        # If multiple rK appear, treat as unknown/irregular.
+        if len(r_factors) != 1:
+            stride_bytes.append(int(cache_line))
+            continue
+        # Multiply known symbolic factors (e.g., N, K) if bindings provide them.
+        prod = abs(c)
+        unknown = False
+        for f in factors:
+            fs = str(f).strip()
+            if fs == r_factors[0]:
+                continue
+            if fs.isdigit() or (fs.startswith("-") and fs[1:].isdigit()):
+                prod *= abs(int(fs))
+                continue
+            v = bindings.get(fs)
+            if isinstance(v, int):
+                prod *= abs(int(v))
+                continue
+            unknown = True
+            break
+        if unknown:
+            stride_bytes.append(int(cache_line))
+        else:
+            stride_bytes.append(int(prod) * int(dtype_bytes))
+
+    if not stride_bytes:
+        return 1.0
+    stride = max(int(dtype_bytes), min(int(cache_line), min(stride_bytes)))
+    return float(stride) / float(dtype_bytes)
+
+
+def _tensor_penalties_from_evidence(
+    evidence: object | None,
+    *,
+    shape_bindings: Dict[str, int],
+    cache_line: int,
+) -> Dict[str, float]:
+    penalties: Dict[str, float] = {}
+    for a in _extract_accesses_from_evidence(evidence):
+        tensor = a.get("tensor")
+        dtype = a.get("dtype")
+        if not isinstance(tensor, str) or not tensor:
+            continue
+        if not isinstance(dtype, str) or not dtype:
+            dtype = "f32"
+        dt_bytes = _dtype_bytes(dtype)
+        meta = a.get("meta") if isinstance(a.get("meta"), dict) else {}
+        unresolved = bool(meta.get("unresolved")) if isinstance(meta, dict) else False
+        if unresolved:
+            p = float(max(1, cache_line) / max(1, dt_bytes))
+        else:
+            idxs = a.get("index_exprs") if isinstance(a.get("index_exprs"), list) else []
+            if not idxs:
+                p = 1.0
+            else:
+                p = 1.0
+                for ix in idxs:
+                    if isinstance(ix, dict):
+                        p = max(
+                            p,
+                            _access_penalty_from_index_expr(
+                                ix,
+                                dtype_bytes=dt_bytes,
+                                cache_line=cache_line,
+                                bindings=shape_bindings,
+                            ),
+                        )
+        penalties[tensor] = max(float(penalties.get(tensor, 1.0)), float(p))
+    return penalties
+
+
 def _resolve_dim_token(tok, bindings: Dict[str, int]) -> Optional[int]:
     if isinstance(tok, int):
         return int(tok)
@@ -91,6 +244,7 @@ def estimate_program_cost(
     shape_bindings: Dict[str, int],
     profile: RVVHardwareProfile,
     vec_width: Optional[int] = None,
+    evidence: object | None = None,
 ) -> ProgramCostEstimate:
     """
     Estimate cost for reduce/elementwise-heavy kernels (matmul is treated as "unknown" here).
@@ -180,6 +334,14 @@ def estimate_program_cost(
     scalar_hit: Dict[str, int] = {}
     hot: List[Tuple[float, str]] = []
 
+    cache_line = int(getattr(profile, "cache_line_bytes", 64) or 64)
+    tensor_penalty = _tensor_penalties_from_evidence(evidence, shape_bindings=shape_bindings, cache_line=cache_line)
+    if tensor_penalty:
+        top = sorted(tensor_penalty.items(), key=lambda kv: kv[1], reverse=True)[:4]
+        show = ", ".join(f"{k}x{v:.1f}" for k, v in top if v > 1.01)
+        if show:
+            notes.append(f"evidence_penalty={show}")
+
     for op in intent.ops:
         if op.op in {"const", "reshape", "identity", "layout_cast"}:
             continue
@@ -193,7 +355,7 @@ def estimate_program_cost(
             continue
 
         out_dt = intent.tensors[out].dtype
-        bytes_out = float(out_n * _dtype_bytes(out_dt))
+        bytes_out = float(out_n * _dtype_bytes(out_dt)) * float(tensor_penalty.get(out, 1.0))
         bytes_in = 0.0
 
         # Determine input volume (broadcast-aware because tensors have their own shapes).
@@ -201,58 +363,47 @@ def estimate_program_cost(
         if op.op == "gather" and op.inputs:
             data_nm = op.inputs[0]
             data_dt = intent.tensors[data_nm].dtype
-            bytes_in += float(out_n * _dtype_bytes(data_dt))
+            p = float(tensor_penalty.get(data_nm, 1.0))
+            # Gather is scattered: conservatively assume cache-line dominated reads for data.
+            p = max(p, float(cache_line) / max(1.0, float(_dtype_bytes(data_dt))))
+            bytes_in += float(out_n * _dtype_bytes(data_dt)) * p
             for nm in op.inputs[1:]:
                 in_n = _resolve_numel(intent, nm, shape_bindings)
                 if in_n is None or in_n <= 0:
                     continue
-                bytes_in += float(in_n * _dtype_bytes(intent.tensors[nm].dtype))
+                bytes_in += float(in_n * _dtype_bytes(intent.tensors[nm].dtype)) * float(tensor_penalty.get(nm, 1.0))
         else:
             for nm in op.inputs:
                 in_n = _resolve_numel(intent, nm, shape_bindings)
                 if in_n is None or in_n <= 0:
                     continue
-                bytes_in += float(in_n * _dtype_bytes(intent.tensors[nm].dtype))
+                p = float(tensor_penalty.get(nm, 1.0))
+                # For explicit transpose ops, inflate reads if the innermost output dim maps to a strided input dim.
+                if op.op == "transpose":
+                    try:
+                        perm = list(op.attrs.get("perm") or [])
+                        inp_t = intent.tensors.get(nm)
+                        if inp_t and perm and len(perm) == len(inp_t.shape):
+                            in_shape_vals: List[int] = []
+                            for d in inp_t.shape:
+                                v = _resolve_dim_token(getattr(d, "value", d), shape_bindings)
+                                if v is None or v <= 0:
+                                    in_shape_vals = []
+                                    break
+                                in_shape_vals.append(int(v))
+                            if in_shape_vals:
+                                in_dim = int(perm[-1])
+                                stride_elems = 1
+                                for s in in_shape_vals[in_dim + 1 :]:
+                                    stride_elems *= int(s)
+                                stride_bytes = int(stride_elems) * _dtype_bytes(inp_t.dtype)
+                                bytes_per_el = max(_dtype_bytes(inp_t.dtype), min(cache_line, stride_bytes))
+                                p = max(p, float(bytes_per_el) / max(1.0, float(_dtype_bytes(inp_t.dtype))))
+                    except Exception:
+                        pass
+                bytes_in += float(in_n * _dtype_bytes(intent.tensors[nm].dtype)) * p
 
         bytes_ = bytes_in + bytes_out
-
-        # Account for non-contiguous/irregular memory access:
-        # - gather: scattered reads can be cache-line dominated (worst-case).
-        # - transpose: input reads may be strided depending on perm.
-        cache_line = int(getattr(profile, "cache_line_bytes", 64) or 64)
-        if op.op == "gather":
-            # We already approximated "touched" data bytes as out_n*dtype above; inflate to
-            # cache-line granularity to reflect irregular access in a simple, stable way.
-            data_dt = intent.tensors[op.inputs[0]].dtype if op.inputs else out_dt
-            bytes_data_min = float(out_n * _dtype_bytes(data_dt))
-            bytes_data_eff = float(out_n * max(_dtype_bytes(data_dt), cache_line))
-            bytes_ += max(0.0, bytes_data_eff - bytes_data_min)
-        elif op.op == "transpose":
-            # Estimate average input bytes per element along the innermost output dim.
-            try:
-                perm = list(op.attrs.get("perm") or [])
-                inp_nm = op.inputs[0] if op.inputs else None
-                inp_t = intent.tensors.get(inp_nm) if inp_nm else None
-                if inp_t and perm and len(perm) == len(inp_t.shape):
-                    in_shape_vals: List[int] = []
-                    for d in inp_t.shape:
-                        v = _resolve_dim_token(getattr(d, "value", d), shape_bindings)
-                        if v is None or v <= 0:
-                            in_shape_vals = []
-                            break
-                        in_shape_vals.append(int(v))
-                    if in_shape_vals:
-                        in_dim = int(perm[-1])
-                        stride_elems = 1
-                        for s in in_shape_vals[in_dim + 1 :]:
-                            stride_elems *= int(s)
-                        stride_bytes = int(stride_elems) * _dtype_bytes(inp_t.dtype)
-                        bytes_per_el = max(_dtype_bytes(inp_t.dtype), min(cache_line, stride_bytes))
-                        bytes_in_min = float(out_n * _dtype_bytes(inp_t.dtype))
-                        bytes_in_eff = float(out_n * bytes_per_el)
-                        bytes_ += max(0.0, bytes_in_eff - bytes_in_min)
-            except Exception:
-                pass
 
         # Softmax is multi-pass even in the RVV runtime: max pass (read input), exp pass (read input + write out),
         # normalize pass (read+write out). Treat this as ~2x input reads and ~3x output traffic.
@@ -261,8 +412,8 @@ def estimate_program_cost(
             in_dt = intent.tensors[in_nm].dtype
             in_n = _resolve_numel(intent, in_nm, shape_bindings)
             if in_n is not None and in_n > 0:
-                in_bytes = float(in_n * _dtype_bytes(in_dt))
-                out_bytes = float(out_n * _dtype_bytes(out_dt))
+                in_bytes = float(in_n * _dtype_bytes(in_dt)) * float(tensor_penalty.get(in_nm, 1.0))
+                out_bytes = float(out_n * _dtype_bytes(out_dt)) * float(tensor_penalty.get(out, 1.0))
                 bytes_ = 2.0 * in_bytes + 3.0 * out_bytes
 
         # Flops-like count.

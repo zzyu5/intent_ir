@@ -36,13 +36,14 @@
         "index_exprs": [
           {
             "const": 0,
-            "terms": {}
+            "terms": {
+              "mul(N,pid0)": 1,
+              "r0": 1
+            }
           }
         ],
         "kind": "load",
-        "meta": {
-          "unresolved": true
-        },
+        "meta": {},
         "predicate": {
           "clauses": [
             "r0 < N"
@@ -95,13 +96,14 @@
         "index_exprs": [
           {
             "const": 0,
-            "terms": {}
+            "terms": {
+              "mul(N,pid0)": 1,
+              "r0": 1
+            }
           }
         ],
         "kind": "store",
-        "meta": {
-          "unresolved": true
-        },
+        "meta": {},
         "predicate": {
           "clauses": [
             "r0 < N"

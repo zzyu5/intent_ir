@@ -159,7 +159,31 @@ def affine_from_ssa(
         elif not b.non_affine and not b.coeff:
             out = a.mul_const(b.const)
         else:
-            out = AffineExpr(non_affine=True)
+            # Common TTIR pattern for flat indexing: pid * N + r, where N is a runtime arg.
+            # This is not affine in the strict sense, but we can preserve it as a stable symbolic
+            # product term to avoid dropping the entire index map.
+            def _monomial(e: AffineExpr) -> Optional[Tuple[int, str]]:
+                if e.non_affine or e.const != 0:
+                    return None
+                if len(e.coeff) != 1:
+                    return None
+                (v, c), = e.coeff.items()
+                if not isinstance(c, int) or c == 0:
+                    return None
+                return int(c), str(v)
+
+            def _stable_symbol(v: str) -> bool:
+                # Allow %argN (function args) but reject transient SSA temps like %17.
+                return (not v.startswith("%")) or v.startswith("%arg")
+
+            am = _monomial(a)
+            bm = _monomial(b)
+            if am is not None and bm is not None and _stable_symbol(am[1]) and _stable_symbol(bm[1]):
+                ca, va = am
+                cb, vb = bm
+                out = AffineExpr(const=0, coeff={f"mul({va},{vb})": ca * cb})
+            else:
+                out = AffineExpr(non_affine=True)
         memo[name] = out
         return out
 

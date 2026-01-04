@@ -159,9 +159,9 @@ def run_remote(
 
     # Frontend-derived "tile-ish" constants (schedule hints). Triton CertificateV2
     # extracts these from TTIR; TileLang may leave empty (OK).
+    cert_v2 = report.get("certificate_v2") or {}
     tile_hints: list[int] = []
     try:
-        cert_v2 = report.get("certificate_v2") or {}
         sh = cert_v2.get("schedule_hints") or {}
         th = sh.get("tile_hints")
         if isinstance(th, list):
@@ -327,6 +327,7 @@ def run_remote(
                 request=tune_request,
                 tile_hints=tile_hints,
                 limit=budget,
+                evidence=cert_v2,
             )
             if not tune_candidates:
                 tune_candidates = propose_schedule_candidates(
@@ -336,6 +337,7 @@ def run_remote(
                     request=tune_request,
                     tile_hints=tile_hints,
                     limit=1,
+                    evidence=cert_v2,
                 )
             # Keep a deterministic default schedule in case benchmarking fails.
             if tune_candidates:
@@ -373,6 +375,7 @@ def run_remote(
                 profile=prof,
                 request=tune_request,
                 tile_hints=tile_hints,
+                evidence=cert_v2,
             )
             intent.schedule = tuned.schedule
             tuning_info = {

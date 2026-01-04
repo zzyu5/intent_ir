@@ -226,7 +226,44 @@ def _format_index_expr(ix: IndexExpr) -> str:
     return " + ".join(parts).replace("+ -", "- ")
 
 
+def _split_top_level_commas(text: str) -> List[str]:
+    parts: List[str] = []
+    depth = 0
+    start = 0
+    for i, ch in enumerate(text):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            parts.append(text[start:i].strip())
+            start = i + 1
+    tail = text[start:].strip()
+    if tail:
+        parts.append(tail)
+    return [p for p in parts if p]
+
+
 def _canonicalize_term_var(var: str, symbols: Dict[str, Any]) -> str:
+    # Product term canonicalization: mul(a,b,...) where args may contain nested (...) like range().
+    if var.startswith("mul(") and var.endswith(")"):
+        inner = var[len("mul(") : -1].strip()
+        args = _split_top_level_commas(inner)
+        factors: List[str] = []
+        for a in args:
+            a_c = _canonicalize_term_var(a.strip(), symbols)
+            if a_c.startswith("mul(") and a_c.endswith(")"):
+                inner2 = a_c[len("mul(") : -1].strip()
+                factors.extend(_split_top_level_commas(inner2))
+            else:
+                factors.append(a_c)
+        factors = [f for f in factors if f]
+        if len(factors) >= 2:
+            factors = sorted(factors)
+            return f"mul({','.join(factors)})"
+        # Degenerate: keep as-is.
+        return var
+
     # pid canonicalization
     pid_map = symbols.setdefault("pids", {"pid_x": "pid0", "pid_y": "pid1", "pid_z": "pid2"})
     if var in pid_map:

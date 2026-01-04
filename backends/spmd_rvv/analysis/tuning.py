@@ -274,6 +274,7 @@ def propose_schedule_candidates(
     request: TuningRequest | None = None,
     tile_hints: Iterable[int] | None = None,
     limit: int | None = None,
+    evidence: object | None = None,
 ) -> List[ScheduleCandidate]:
     """
     Propose ranked schedule candidates (MVP: matmul tiling).
@@ -399,7 +400,13 @@ def propose_schedule_candidates(
     tk_vals = _pick_tile(tile_k, int(shape_K) if isinstance(shape_K, int) else None, "tile_k", align=1)
 
     # Keep candidate set small: vary only the most-relevant axis if possible.
-    program_est = estimate_program_cost(intent, shape_bindings=shape_bindings, profile=profile, vec_width=vec_width)
+    program_est = estimate_program_cost(
+        intent,
+        shape_bindings=shape_bindings,
+        profile=profile,
+        vec_width=vec_width,
+        evidence=evidence,
+    )
     candidates: List[ScheduleCandidate] = []
     for tm in tm_vals[:1]:
         for tk in tk_vals[:1]:
@@ -439,6 +446,7 @@ def select_schedule(
     profile: RVVHardwareProfile,
     request: TuningRequest | None = None,
     tile_hints: Iterable[int] | None = None,
+    evidence: object | None = None,
 ) -> TuningResult:
     """
     Select a ScheduleSketch for the backend.
@@ -459,6 +467,7 @@ def select_schedule(
         profile=profile,
         request=req,
         tile_hints=tile_hints,
+        evidence=evidence,
     )
     best = candidates[0] if candidates else None
     if best is None:
