@@ -22,7 +22,7 @@ from typing import Dict, Iterable, List, Literal, Optional, Set, Tuple
 
 from intent_ir.ir import IntentFunction, ScheduleSketch
 
-from .cost_model import GEMMCostModel
+from .cost_model import GEMMCostModel, estimate_program_cost
 from .hardware_profile import RVVHardwareProfile
 
 
@@ -399,6 +399,7 @@ def propose_schedule_candidates(
     tk_vals = _pick_tile(tile_k, int(shape_K) if isinstance(shape_K, int) else None, "tile_k", align=1)
 
     # Keep candidate set small: vary only the most-relevant axis if possible.
+    program_est = estimate_program_cost(intent, shape_bindings=shape_bindings, profile=profile, vec_width=vec_width)
     candidates: List[ScheduleCandidate] = []
     for tm in tm_vals[:1]:
         for tk in tk_vals[:1]:
@@ -414,8 +415,14 @@ def propose_schedule_candidates(
                     parallel_axes=list(base.parallel_axes) if base else [],
                     memory_hint=dict(base.memory_hint) if base else {},
                 )
-                score = float((tm or 1) * (tn or 1))
-                notes = list(vec_notes) + ["no bound matmul"]
+                # Use coarse roofline estimate as the primary ranking signal.
+                score = -float(program_est.ms)
+                notes = (
+                    list(vec_notes)
+                    + ["no bound matmul"]
+                    + [f"pred_ms={program_est.ms:.3f}", f"pred_gflops={program_est.gflops:.3f}"]
+                    + list(program_est.notes)
+                )
                 if req.mode == "guided" and hints:
                     notes.append(f"guided tile_hints={hints[:8]}{'...' if len(hints) > 8 else ''}")
                 candidates.append(ScheduleCandidate(schedule=sched, score=score, tile_mnk=None, notes=notes))

@@ -381,6 +381,28 @@ void intentir_cmp_f32_broadcast_u8(
   if (!a || !b || !out || !out_shape || !a_shape || !b_shape) return;
   if (rank < 1 || rank > 4) return;
   const size_t n = intentir_numel_rank(out_shape, rank);
+#if defined(__riscv_vector) || defined(__riscv_v)
+  if (intentir_shapes_equal(a_shape, out_shape, rank) && intentir_shapes_equal(b_shape, out_shape, rank)) {
+    for (size_t i = 0; i < n;) {
+      size_t vl = intentir_vsetvl_e32m1(n - i);
+      vfloat32m1_t va = __riscv_vle32_v_f32m1(&a[i], vl);
+      vfloat32m1_t vb = __riscv_vle32_v_f32m1(&b[i], vl);
+      vbool32_t m;
+      if (op == INTENTIR_CMP_LT) m = __riscv_vmflt_vv_f32m1_b32(va, vb, vl);
+      else if (op == INTENTIR_CMP_LE) m = __riscv_vmfle_vv_f32m1_b32(va, vb, vl);
+      else if (op == INTENTIR_CMP_GT) m = __riscv_vmfgt_vv_f32m1_b32(va, vb, vl);
+      else if (op == INTENTIR_CMP_GE) m = __riscv_vmfge_vv_f32m1_b32(va, vb, vl);
+      else if (op == INTENTIR_CMP_NE) m = __riscv_vmfne_vv_f32m1_b32(va, vb, vl);
+      else m = __riscv_vmfne_vv_f32m1_b32(va, vb, vl);
+      vuint8mf4_t ones = __riscv_vmv_v_x_u8mf4(1, vl);
+      vuint8mf4_t zeros = __riscv_vmv_v_x_u8mf4(0, vl);
+      vuint8mf4_t vo = __riscv_vmerge_vvm_u8mf4(zeros, ones, m, vl);
+      __riscv_vse8_v_u8mf4(&out[i], vo, vl);
+      i += vl;
+    }
+    return;
+  }
+#endif
   int64_t coords[4] = {0, 0, 0, 0};
   for (size_t i = 0; i < n; ++i) {
     intentir_unravel_index(i, out_shape, rank, coords);
@@ -395,6 +417,39 @@ void intentir_cmp_i32_broadcast_u8(
   if (!a || !b || !out || !out_shape || !a_shape || !b_shape) return;
   if (rank < 1 || rank > 4) return;
   const size_t n = intentir_numel_rank(out_shape, rank);
+#if defined(__riscv_vector) || defined(__riscv_v)
+  if (intentir_shapes_equal(a_shape, out_shape, rank) && intentir_shapes_equal(b_shape, out_shape, rank)) {
+    for (size_t i = 0; i < n;) {
+      size_t vl = intentir_vsetvl_e32m1(n - i);
+      vint32m1_t va = __riscv_vle32_v_i32m1(&a[i], vl);
+      vint32m1_t vb = __riscv_vle32_v_i32m1(&b[i], vl);
+      vbool32_t m;
+      if (op == INTENTIR_CMP_LT) {
+        m = __riscv_vmslt_vv_i32m1_b32(va, vb, vl);
+      } else if (op == INTENTIR_CMP_LE) {
+        vbool32_t lt = __riscv_vmslt_vv_i32m1_b32(va, vb, vl);
+        vbool32_t eq = __riscv_vmseq_vv_i32m1_b32(va, vb, vl);
+        m = __riscv_vmor_mm_b32(lt, eq, vl);
+      } else if (op == INTENTIR_CMP_GT) {
+        m = __riscv_vmslt_vv_i32m1_b32(vb, va, vl);
+      } else if (op == INTENTIR_CMP_GE) {
+        vbool32_t gt = __riscv_vmslt_vv_i32m1_b32(vb, va, vl);
+        vbool32_t eq = __riscv_vmseq_vv_i32m1_b32(va, vb, vl);
+        m = __riscv_vmor_mm_b32(gt, eq, vl);
+      } else if (op == INTENTIR_CMP_NE) {
+        m = __riscv_vmsne_vv_i32m1_b32(va, vb, vl);
+      } else {
+        m = __riscv_vmsne_vv_i32m1_b32(va, vb, vl);
+      }
+      vuint8mf4_t ones = __riscv_vmv_v_x_u8mf4(1, vl);
+      vuint8mf4_t zeros = __riscv_vmv_v_x_u8mf4(0, vl);
+      vuint8mf4_t vo = __riscv_vmerge_vvm_u8mf4(zeros, ones, m, vl);
+      __riscv_vse8_v_u8mf4(&out[i], vo, vl);
+      i += vl;
+    }
+    return;
+  }
+#endif
   int64_t coords[4] = {0, 0, 0, 0};
   for (size_t i = 0; i < n; ++i) {
     intentir_unravel_index(i, out_shape, rank, coords);
@@ -409,6 +464,24 @@ void intentir_bool_bin_broadcast_u8(
   if (!a || !b || !out || !out_shape || !a_shape || !b_shape) return;
   if (rank < 1 || rank > 4) return;
   const size_t n = intentir_numel_rank(out_shape, rank);
+#if defined(__riscv_vector) || defined(__riscv_v)
+  if (intentir_shapes_equal(a_shape, out_shape, rank) && intentir_shapes_equal(b_shape, out_shape, rank)) {
+    for (size_t i = 0; i < n;) {
+      size_t vl = intentir_vsetvl_e8m1(n - i);
+      vuint8m1_t va = __riscv_vle8_v_u8m1(&a[i], vl);
+      vuint8m1_t vb = __riscv_vle8_v_u8m1(&b[i], vl);
+      vbool8_t ma = __riscv_vmsne_vx_u8m1_b8(va, 0, vl);
+      vbool8_t mb = __riscv_vmsne_vx_u8m1_b8(vb, 0, vl);
+      vbool8_t m = (op == INTENTIR_BOOL_BIN_OR) ? __riscv_vmor_mm_b8(ma, mb, vl) : __riscv_vmand_mm_b8(ma, mb, vl);
+      vuint8m1_t ones = __riscv_vmv_v_x_u8m1(1, vl);
+      vuint8m1_t zeros = __riscv_vmv_v_x_u8m1(0, vl);
+      vuint8m1_t vo = __riscv_vmerge_vvm_u8m1(zeros, ones, m, vl);
+      __riscv_vse8_v_u8m1(&out[i], vo, vl);
+      i += vl;
+    }
+    return;
+  }
+#endif
   int64_t coords[4] = {0, 0, 0, 0};
   for (size_t i = 0; i < n; ++i) {
     intentir_unravel_index(i, out_shape, rank, coords);
@@ -541,6 +614,25 @@ void intentir_gather_f32_i32(
 
 void intentir_reduce_any_2d_axis1_u8(const uint8_t* a, uint8_t* out, int64_t M, int64_t K) {
   if (!a || !out || M <= 0 || K <= 0) return;
+#if defined(__riscv_vector) || defined(__riscv_v)
+  for (int64_t m = 0; m < M; ++m) {
+    const uint8_t* row = &a[(size_t)m * (size_t)K];
+    uint8_t acc = 0;
+    for (int64_t k = 0; k < K;) {
+      size_t vl = intentir_vsetvl_e8m1((size_t)(K - k));
+      vuint8m1_t vx = __riscv_vle8_v_u8m1(&row[(size_t)k], vl);
+      vbool8_t msk = __riscv_vmsne_vx_u8m1_b8(vx, 0, vl);
+      size_t cnt = __riscv_vcpop_m_b8(msk, vl);
+      if (cnt != 0) {
+        acc = 1;
+        break;
+      }
+      k += (int64_t)vl;
+    }
+    out[(size_t)m] = acc;
+  }
+  return;
+#endif
   for (int64_t m = 0; m < M; ++m) {
     uint8_t acc = 0;
     for (int64_t k = 0; k < K; ++k) {
@@ -698,8 +790,23 @@ void intentir_where_broadcast_f32(
   const size_t n = intentir_numel_rank(out_shape, rank);
   if (intentir_shapes_equal(cond_shape, out_shape, rank) && intentir_shapes_equal(x_shape, out_shape, rank) &&
       intentir_shapes_equal(y_shape, out_shape, rank)) {
+#if defined(__riscv_vector) || defined(__riscv_v)
+    for (size_t i = 0; i < n;) {
+      size_t vl = intentir_vsetvl_e32m1(n - i);
+      // Use u8mf4 so its mask type is vbool32_t (matches f32m1).
+      vuint8mf4_t vc = __riscv_vle8_v_u8mf4(&cond[i], vl);
+      vbool32_t m = __riscv_vmsne_vx_u8mf4_b32(vc, 0, vl);
+      vfloat32m1_t vx = __riscv_vle32_v_f32m1(&x[i], vl);
+      vfloat32m1_t vy = __riscv_vle32_v_f32m1(&y[i], vl);
+      vfloat32m1_t vo = __riscv_vmerge_vvm_f32m1(vy, vx, m, vl);
+      __riscv_vse32_v_f32m1(&out[i], vo, vl);
+      i += vl;
+    }
+    return;
+#else
     for (size_t i = 0; i < n; ++i) out[i] = (cond[i] != 0) ? x[i] : y[i];
     return;
+#endif
   }
 
   if (rank == 1) {
@@ -796,6 +903,30 @@ void intentir_broadcast_in_dim_f32(
   if (in_rank < 0 || out_rank < 0) return;
   if (in_rank > 4 || out_rank > 4) return;
   if (out_rank < in_rank) return;
+
+  // Scalar broadcast (common for consts/eps): fill output with inp[0].
+  int is_scalar = (in_rank == 0);
+  for (int i = 0; i < in_rank; ++i) {
+    if (in_shape[i] != 1) {
+      is_scalar = 0;
+      break;
+    }
+  }
+  if (is_scalar) {
+    const float v = inp[0];
+    const size_t n = intentir_numel_rank(out_shape, out_rank);
+#if defined(__riscv_vector) || defined(__riscv_v)
+    for (size_t i = 0; i < n;) {
+      size_t vl = intentir_vsetvl_e32m1(n - i);
+      vfloat32m1_t vv = __riscv_vfmv_v_f_f32m1(v, vl);
+      __riscv_vse32_v_f32m1(&out[i], vv, vl);
+      i += vl;
+    }
+#else
+    for (size_t i = 0; i < n; ++i) out[i] = v;
+#endif
+    return;
+  }
 
   int64_t strides[4] = {1, 1, 1, 1};
   int64_t s = 1;

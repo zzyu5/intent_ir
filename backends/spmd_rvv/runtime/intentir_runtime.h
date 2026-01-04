@@ -35,6 +35,15 @@ static inline size_t intentir_vsetvl_e32m1(size_t rem) {
   if (INTENTIR_VEC_WIDTH > 0 && rem > (size_t)INTENTIR_VEC_WIDTH) rem = (size_t)INTENTIR_VEC_WIDTH;
   return __riscv_vsetvl_e32m1(rem);
 }
+
+static inline size_t intentir_vsetvl_e8m1(size_t rem) {
+  if (INTENTIR_VEC_WIDTH > 0) {
+    // INTENTIR_VEC_WIDTH is expressed in f32 lanes; e8 has 4x lanes.
+    size_t cap = (size_t)INTENTIR_VEC_WIDTH * 4;
+    if (rem > cap) rem = cap;
+  }
+  return __riscv_vsetvl_e8m1(rem);
+}
 #endif
 
 static inline size_t idx2(int i, int j, int D1) { return (size_t)i * (size_t)D1 + (size_t)j; }
@@ -44,4 +53,3 @@ static inline size_t idx4(int i, int j, int k, int l, int D1, int D2, int D3) {
 }
 
 #endif  // INTENTIR_RUNTIME_H
-

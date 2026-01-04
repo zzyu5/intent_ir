@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .hardware_profile import RVVHardwareProfile
+from intent_ir.ir import IntentFunction
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,188 @@ class CostEstimate:
 
 def _working_set_bytes(tm: int, tn: int, tk: int, dtype_size: int = 4) -> int:
     return (tm * tk + tk * tn + tm * tn) * dtype_size
+
+
+@dataclass(frozen=True)
+class ProgramCostEstimate:
+    """
+    Coarse roofline-style estimate for non-matmul-heavy programs.
+
+    This is used to reason about reduce/elementwise kernels and to drive
+    schedule selection when no matmul is available for the GEMM model.
+    """
+
+    gflops: float
+    ms: float
+    intensity: float
+    flops: float
+    bytes: float
+    notes: Tuple[str, ...] = ()
+
+
+def _dtype_bytes(dt: str) -> int:
+    if dt in {"bool", "i1", "u8"}:
+        return 1
+    if dt in {"i8"}:
+        return 1
+    if dt in {"i32", "f32"}:
+        return 4
+    if dt in {"i64", "f64"}:
+        return 8
+    # Conservative default (treat unknown as f32).
+    return 4
+
+
+def _resolve_dim_token(tok, bindings: Dict[str, int]) -> Optional[int]:
+    if isinstance(tok, int):
+        return int(tok)
+    if isinstance(tok, float):
+        return int(tok)
+    if isinstance(tok, str):
+        if tok.isdigit() or (tok.startswith("-") and tok[1:].isdigit()):
+            return int(tok)
+        v = bindings.get(tok)
+        return int(v) if isinstance(v, int) else None
+    return None
+
+
+def _resolve_numel(intent: IntentFunction, name: str, bindings: Dict[str, int]) -> Optional[int]:
+    t = intent.tensors.get(name)
+    if t is None:
+        return None
+    n = 1
+    for d in t.shape:
+        v = _resolve_dim_token(getattr(d, "value", d), bindings)
+        if v is None:
+            return None
+        if v <= 0:
+            return None
+        n *= int(v)
+    return int(n)
+
+
+def estimate_program_cost(
+    intent: IntentFunction,
+    *,
+    shape_bindings: Dict[str, int],
+    profile: RVVHardwareProfile,
+    vec_width: Optional[int] = None,
+) -> ProgramCostEstimate:
+    """
+    Estimate cost for reduce/elementwise-heavy kernels (matmul is treated as "unknown" here).
+
+    The model is intentionally coarse but stable:
+    - bytes: sum of input/output tensor volumes per op (very rough upper bound)
+    - flops: approximate scalar op-count (1 flop per elementwise element; reduce counts input elements)
+    - time: roofline max(compute, memory) scaled by a vector-efficiency factor
+    """
+
+    lanes = max(1, int(profile.rvv_vlen_bits) // 32)
+    vw = int(vec_width) if isinstance(vec_width, int) and vec_width > 0 else lanes
+    vw = max(1, min(vw, lanes))
+    vec_eff = vw / float(lanes)
+
+    # Per-core peaks (the generated C is single-threaded today).
+    compute_peak = float(profile.fma_units_per_core) * float(lanes) * float(profile.frequency_ghz) * 2.0  # GFLOPs/core
+    bw_core = float(profile.mem_bandwidth_gbps) / max(1, int(profile.num_cores))  # GB/s per core (rough)
+
+    total_flops = 0.0
+    total_bytes = 0.0
+    notes: List[str] = []
+
+    for op in intent.ops:
+        if op.op in {"const", "reshape", "identity", "layout_cast"}:
+            continue
+        if op.op == "matmul":
+            notes.append("matmul ignored by generic cost model")
+            continue
+
+        out = op.output
+        out_n = _resolve_numel(intent, out, shape_bindings)
+        if out_n is None:
+            continue
+        out_dt = intent.tensors[out].dtype
+        out_b = out_n * _dtype_bytes(out_dt)
+
+        # Default: elementwise-like, count 1 flop/element and charge IO bytes.
+        flops = float(out_n)
+        bytes_ = float(out_b)
+
+        if op.op in {"add", "sub", "mul", "div", "max", "min", "ne", "lt", "le", "gt", "ge", "and", "or"}:
+            if op.inputs:
+                for nm in op.inputs[:2]:
+                    in_n = _resolve_numel(intent, nm, shape_bindings)
+                    if in_n is None:
+                        continue
+                    bytes_ += float(in_n * _dtype_bytes(intent.tensors[nm].dtype))
+        elif op.op == "where":
+            # cond + x + y + out
+            for nm in op.inputs:
+                in_n = _resolve_numel(intent, nm, shape_bindings)
+                if in_n is None:
+                    continue
+                bytes_ += float(in_n * _dtype_bytes(intent.tensors[nm].dtype))
+        elif op.op in {"abs", "rsqrt", "exp", "floor", "relu", "cast"}:
+            if op.inputs:
+                in_n = _resolve_numel(intent, op.inputs[0], shape_bindings)
+                if in_n is not None:
+                    bytes_ += float(in_n * _dtype_bytes(intent.tensors[op.inputs[0]].dtype))
+        elif op.op in {"reduce_sum", "reduce_max", "reduce_any"}:
+            # Reduction flops scale with input size.
+            if op.inputs:
+                in_n = _resolve_numel(intent, op.inputs[0], shape_bindings)
+                if in_n is not None:
+                    flops = float(in_n)
+                    bytes_ += float(in_n * _dtype_bytes(intent.tensors[op.inputs[0]].dtype))
+        elif op.op == "broadcast_in_dim":
+            if op.inputs:
+                in_n = _resolve_numel(intent, op.inputs[0], shape_bindings)
+                if in_n is not None:
+                    bytes_ += float(in_n * _dtype_bytes(intent.tensors[op.inputs[0]].dtype))
+                    flops = 0.0
+        elif op.op == "transpose":
+            if op.inputs:
+                in_n = _resolve_numel(intent, op.inputs[0], shape_bindings)
+                if in_n is not None:
+                    bytes_ += float(in_n * _dtype_bytes(intent.tensors[op.inputs[0]].dtype))
+                    flops = 0.0
+        elif op.op == "gather":
+            # Very rough: charge reading all indices + output writes.
+            for nm in op.inputs:
+                in_n = _resolve_numel(intent, nm, shape_bindings)
+                if in_n is None:
+                    continue
+                bytes_ += float(in_n * _dtype_bytes(intent.tensors[nm].dtype))
+        else:
+            # Unknown op: ignore to keep stable.
+            continue
+
+        total_flops += flops
+        total_bytes += bytes_
+
+    intensity = (total_flops / total_bytes) if total_bytes > 0 else 0.0
+    mem_gflops = bw_core * intensity
+    achievable = min(compute_peak, mem_gflops) * max(1e-3, vec_eff)
+
+    # Convert to time.
+    compute_s = (total_flops / (achievable * 1e9)) if achievable > 0 else 0.0
+    mem_s = (total_bytes / (bw_core * 1e9)) if bw_core > 0 else 0.0
+    time_s = max(compute_s, mem_s)
+    ms = time_s * 1e3
+
+    if total_bytes > 0:
+        notes.append(f"bw_core={bw_core:.3f}GB/s")
+    notes.append(f"vec_width={vw} lanes={lanes}")
+    notes.append(f"intensity={intensity:.3f} flop/byte")
+
+    return ProgramCostEstimate(
+        gflops=float(achievable),
+        ms=float(ms),
+        intensity=float(intensity),
+        flops=float(total_flops),
+        bytes=float(total_bytes),
+        notes=tuple(notes),
+    )
 
 
 class GEMMCostModel:
@@ -91,4 +274,4 @@ class GEMMCostModel:
         return TileChoice(tile_m=tm, tile_n=tn, tile_k=tk, vec_width=None, notes=notes)
 
 
-__all__ = ["GEMMCostModel", "CostEstimate"]
+__all__ = ["GEMMCostModel", "CostEstimate", "ProgramCostEstimate", "estimate_program_cost"]
