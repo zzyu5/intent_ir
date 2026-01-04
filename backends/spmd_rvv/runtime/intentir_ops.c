@@ -94,11 +94,29 @@ void intentir_reduce_max_2d_axis1_f32(const float* a, float* out, int64_t M, int
 
 void intentir_softmax_1d_last_f32(const float* a, float* out, int64_t K) {
   if (!a || !out || K <= 0) return;
+#if defined(__riscv_vector) || defined(__riscv_v)
+  float mx_f = -INFINITY;
+  {
+    size_t vlmax = intentir_vsetvl_e32m1((size_t)K);
+    vfloat32m1_t vmax = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
+    for (int64_t k = 0; k < K;) {
+      size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
+      vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[(size_t)k], vl);
+      vmax = __riscv_vfmax_vv_f32m1(vmax, vx, vl);
+      k += (int64_t)vl;
+    }
+    vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
+    vfloat32m1_t vres = __riscv_vfredmax_vs_f32m1_f32m1(vmax, v0, vlmax);
+    mx_f = __riscv_vfmv_f_s_f32m1_f32(vres);
+  }
+  double mx = (double)mx_f;
+#else
   double mx = -1e30;
   for (int64_t k = 0; k < K; ++k) {
     double v = (double)a[(size_t)k];
     if (v > mx) mx = v;
   }
+#endif
   double sum = 0.0;
   for (int64_t k = 0; k < K; ++k) {
     double e = exp((double)a[(size_t)k] - mx);
@@ -106,17 +124,48 @@ void intentir_softmax_1d_last_f32(const float* a, float* out, int64_t K) {
     sum += e;
   }
   double inv = 1.0 / sum;
+#if defined(__riscv_vector) || defined(__riscv_v)
+  {
+    const float inv_f = (float)inv;
+    for (int64_t k = 0; k < K;) {
+      size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
+      vfloat32m1_t vx = __riscv_vle32_v_f32m1(&out[(size_t)k], vl);
+      vfloat32m1_t vy = __riscv_vfmul_vf_f32m1(vx, inv_f, vl);
+      __riscv_vse32_v_f32m1(&out[(size_t)k], vy, vl);
+      k += (int64_t)vl;
+    }
+  }
+#else
   for (int64_t k = 0; k < K; ++k) out[(size_t)k] = (float)((double)out[(size_t)k] * inv);
+#endif
 }
 
 void intentir_softmax_2d_last_f32(const float* a, float* out, int64_t M, int64_t K) {
   if (!a || !out || M <= 0 || K <= 0) return;
   for (int64_t m = 0; m < M; ++m) {
+#if defined(__riscv_vector) || defined(__riscv_v)
+    float mx_f = -INFINITY;
+    {
+      size_t vlmax = intentir_vsetvl_e32m1((size_t)K);
+      vfloat32m1_t vmax = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
+      for (int64_t k = 0; k < K;) {
+        size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
+        vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[idx2((int)m, (int)k, (int)K)], vl);
+        vmax = __riscv_vfmax_vv_f32m1(vmax, vx, vl);
+        k += (int64_t)vl;
+      }
+      vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
+      vfloat32m1_t vres = __riscv_vfredmax_vs_f32m1_f32m1(vmax, v0, vlmax);
+      mx_f = __riscv_vfmv_f_s_f32m1_f32(vres);
+    }
+    double mx = (double)mx_f;
+#else
     double mx = -1e30;
     for (int64_t k = 0; k < K; ++k) {
       double v = (double)a[idx2((int)m, (int)k, (int)K)];
       if (v > mx) mx = v;
     }
+#endif
     double sum = 0.0;
     for (int64_t k = 0; k < K; ++k) {
       double e = exp((double)a[idx2((int)m, (int)k, (int)K)] - mx);
@@ -124,10 +173,24 @@ void intentir_softmax_2d_last_f32(const float* a, float* out, int64_t M, int64_t
       sum += e;
     }
     double inv = 1.0 / sum;
+#if defined(__riscv_vector) || defined(__riscv_v)
+    {
+      const float inv_f = (float)inv;
+      for (int64_t k = 0; k < K;) {
+        size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
+        size_t i = idx2((int)m, (int)k, (int)K);
+        vfloat32m1_t vx = __riscv_vle32_v_f32m1(&out[i], vl);
+        vfloat32m1_t vy = __riscv_vfmul_vf_f32m1(vx, inv_f, vl);
+        __riscv_vse32_v_f32m1(&out[i], vy, vl);
+        k += (int64_t)vl;
+      }
+    }
+#else
     for (int64_t k = 0; k < K; ++k) {
       size_t i = idx2((int)m, (int)k, (int)K);
       out[i] = (float)((double)out[i] * inv);
     }
+#endif
   }
 }
 
@@ -135,11 +198,29 @@ void intentir_softmax_3d_last_f32(const float* a, float* out, int64_t A0, int64_
   if (!a || !out || A0 <= 0 || A1 <= 0 || K <= 0) return;
   for (int64_t i0 = 0; i0 < A0; ++i0) {
     for (int64_t i1 = 0; i1 < A1; ++i1) {
+#if defined(__riscv_vector) || defined(__riscv_v)
+      float mx_f = -INFINITY;
+      {
+        size_t vlmax = intentir_vsetvl_e32m1((size_t)K);
+        vfloat32m1_t vmax = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
+        for (int64_t k = 0; k < K;) {
+          size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
+          vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[idx3((int)i0, (int)i1, (int)k, (int)A1, (int)K)], vl);
+          vmax = __riscv_vfmax_vv_f32m1(vmax, vx, vl);
+          k += (int64_t)vl;
+        }
+        vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
+        vfloat32m1_t vres = __riscv_vfredmax_vs_f32m1_f32m1(vmax, v0, vlmax);
+        mx_f = __riscv_vfmv_f_s_f32m1_f32(vres);
+      }
+      double mx = (double)mx_f;
+#else
       double mx = -1e30;
       for (int64_t k = 0; k < K; ++k) {
         double v = (double)a[idx3((int)i0, (int)i1, (int)k, (int)A1, (int)K)];
         if (v > mx) mx = v;
       }
+#endif
       double sum = 0.0;
       for (int64_t k = 0; k < K; ++k) {
         size_t i = idx3((int)i0, (int)i1, (int)k, (int)A1, (int)K);
@@ -148,10 +229,24 @@ void intentir_softmax_3d_last_f32(const float* a, float* out, int64_t A0, int64_
         sum += e;
       }
       double inv = 1.0 / sum;
+#if defined(__riscv_vector) || defined(__riscv_v)
+      {
+        const float inv_f = (float)inv;
+        size_t base = idx3((int)i0, (int)i1, 0, (int)A1, (int)K);
+        for (int64_t k = 0; k < K;) {
+          size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
+          vfloat32m1_t vx = __riscv_vle32_v_f32m1(&out[base + (size_t)k], vl);
+          vfloat32m1_t vy = __riscv_vfmul_vf_f32m1(vx, inv_f, vl);
+          __riscv_vse32_v_f32m1(&out[base + (size_t)k], vy, vl);
+          k += (int64_t)vl;
+        }
+      }
+#else
       for (int64_t k = 0; k < K; ++k) {
         size_t i = idx3((int)i0, (int)i1, (int)k, (int)A1, (int)K);
         out[i] = (float)((double)out[i] * inv);
       }
+#endif
     }
   }
 }
@@ -161,11 +256,29 @@ void intentir_softmax_4d_last_f32(const float* a, float* out, int64_t B, int64_t
   for (int64_t b = 0; b < B; ++b) {
     for (int64_t h = 0; h < H; ++h) {
       for (int64_t q = 0; q < Q; ++q) {
+#if defined(__riscv_vector) || defined(__riscv_v)
+        float mx_f = -INFINITY;
+        {
+          size_t vlmax = intentir_vsetvl_e32m1((size_t)K);
+          vfloat32m1_t vmax = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
+          for (int64_t k = 0; k < K;) {
+            size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
+            vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[idx4((int)b, (int)h, (int)q, (int)k, (int)H, (int)Q, (int)K)], vl);
+            vmax = __riscv_vfmax_vv_f32m1(vmax, vx, vl);
+            k += (int64_t)vl;
+          }
+          vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
+          vfloat32m1_t vres = __riscv_vfredmax_vs_f32m1_f32m1(vmax, v0, vlmax);
+          mx_f = __riscv_vfmv_f_s_f32m1_f32(vres);
+        }
+        double mx = (double)mx_f;
+#else
         double mx = -1e30;
         for (int64_t k = 0; k < K; ++k) {
           double v = (double)a[idx4((int)b, (int)h, (int)q, (int)k, (int)H, (int)Q, (int)K)];
           if (v > mx) mx = v;
         }
+#endif
         double sum = 0.0;
         for (int64_t k = 0; k < K; ++k) {
           size_t i = idx4((int)b, (int)h, (int)q, (int)k, (int)H, (int)Q, (int)K);
@@ -174,10 +287,24 @@ void intentir_softmax_4d_last_f32(const float* a, float* out, int64_t B, int64_t
           sum += e;
         }
         double inv = 1.0 / sum;
+#if defined(__riscv_vector) || defined(__riscv_v)
+        {
+          const float inv_f = (float)inv;
+          size_t base = idx4((int)b, (int)h, (int)q, 0, (int)H, (int)Q, (int)K);
+          for (int64_t k = 0; k < K;) {
+            size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
+            vfloat32m1_t vx = __riscv_vle32_v_f32m1(&out[base + (size_t)k], vl);
+            vfloat32m1_t vy = __riscv_vfmul_vf_f32m1(vx, inv_f, vl);
+            __riscv_vse32_v_f32m1(&out[base + (size_t)k], vy, vl);
+            k += (int64_t)vl;
+          }
+        }
+#else
         for (int64_t k = 0; k < K; ++k) {
           size_t i = idx4((int)b, (int)h, (int)q, (int)k, (int)H, (int)Q, (int)K);
           out[i] = (float)((double)out[i] * inv);
         }
+#endif
       }
     }
   }
@@ -1170,6 +1297,217 @@ void intentir_gather_f32_i32(
   if (data_shape_rank != data_rank) return;
   if (out_rank < 1 || out_rank > 4) return;
 
+#if defined(__riscv_vector) || defined(__riscv_v)
+  // Fast path: vectorize along the innermost output dimension using indexed loads.
+  // This assumes indices are in-bounds (frontends clamp/mask where needed).
+  {
+    int64_t data_numel = 1;
+    for (int ax = 0; ax < data_rank; ++ax) {
+      if (data_shape[ax] <= 0) return;
+      if (data_numel > (INT64_MAX / data_shape[ax])) {
+        data_numel = 0;
+        break;
+      }
+      data_numel *= data_shape[ax];
+    }
+    if (data_numel > 0 && (uint64_t)data_numel * (uint64_t)sizeof(float) < (uint64_t)UINT32_MAX) {
+      const int last_od = out_rank - 1;
+      const int64_t last_dim = out_shape[last_od];
+      if (last_dim > 0) {
+        int64_t idx_strides[4][4] = {{0}};
+        int idx_last_var[4] = {0, 0, 0, 0};
+        for (int ax = 0; ax < data_rank; ++ax) {
+          const int64_t* ish = &idx_shapes_flat[ax * out_rank];
+          int64_t s = 1;
+          for (int k = out_rank - 1; k >= 0; --k) {
+            idx_strides[ax][k] = s;
+            s *= ish[k];
+          }
+          idx_last_var[ax] = (ish[last_od] != 1);
+        }
+
+        const uint32_t dim1 = (data_rank >= 2) ? (uint32_t)data_shape[1] : 1u;
+        const uint32_t dim2 = (data_rank >= 3) ? (uint32_t)data_shape[2] : 1u;
+        const uint32_t dim3 = (data_rank >= 4) ? (uint32_t)data_shape[3] : 1u;
+
+        if (out_rank == 1) {
+          size_t base[4] = {0, 0, 0, 0};
+          for (int ax = 0; ax < data_rank; ++ax) base[ax] = 0;
+          for (int64_t o = 0; o < last_dim;) {
+            size_t vl = intentir_vsetvl_e32m1((size_t)(last_dim - o));
+            vuint32m1_t i0;
+            if (data_rank >= 1) {
+              if (idx_last_var[0]) i0 = __riscv_vle32_v_u32m1((const uint32_t*)&idxs[0][base[0] + (size_t)o], vl);
+              else i0 = __riscv_vmv_v_x_u32m1((uint32_t)idxs[0][base[0]], vl);
+            } else {
+              i0 = __riscv_vmv_v_x_u32m1(0, vl);
+            }
+            vuint32m1_t di = i0;
+            vuint32m1_t off = __riscv_vsll_vx_u32m1(di, 2, vl);
+            vfloat32m1_t vx = __riscv_vluxei32_v_f32m1(data, off, vl);
+            __riscv_vse32_v_f32m1(&out[(size_t)o], vx, vl);
+            o += (int64_t)vl;
+          }
+          return;
+        }
+
+        if (out_rank == 2) {
+          const int64_t D0 = out_shape[0];
+          for (int64_t o0 = 0; o0 < D0; ++o0) {
+            const size_t ob = (size_t)o0 * (size_t)last_dim;
+            size_t base[4] = {0, 0, 0, 0};
+            for (int ax = 0; ax < data_rank; ++ax) {
+              const int64_t* ish = &idx_shapes_flat[ax * out_rank];
+              size_t b = 0;
+              if (ish[0] != 1) b += (size_t)o0 * (size_t)idx_strides[ax][0];
+              base[ax] = b;
+            }
+            for (int64_t o1 = 0; o1 < last_dim;) {
+              size_t vl = intentir_vsetvl_e32m1((size_t)(last_dim - o1));
+              vuint32m1_t i0 = __riscv_vmv_v_x_u32m1(0, vl);
+              vuint32m1_t i1 = __riscv_vmv_v_x_u32m1(0, vl);
+              vuint32m1_t i2 = __riscv_vmv_v_x_u32m1(0, vl);
+              vuint32m1_t i3 = __riscv_vmv_v_x_u32m1(0, vl);
+              if (data_rank >= 1) {
+                i0 = idx_last_var[0] ? __riscv_vle32_v_u32m1((const uint32_t*)&idxs[0][base[0] + (size_t)o1], vl)
+                                     : __riscv_vmv_v_x_u32m1((uint32_t)idxs[0][base[0]], vl);
+              }
+              if (data_rank >= 2) {
+                i1 = idx_last_var[1] ? __riscv_vle32_v_u32m1((const uint32_t*)&idxs[1][base[1] + (size_t)o1], vl)
+                                     : __riscv_vmv_v_x_u32m1((uint32_t)idxs[1][base[1]], vl);
+              }
+              if (data_rank >= 3) {
+                i2 = idx_last_var[2] ? __riscv_vle32_v_u32m1((const uint32_t*)&idxs[2][base[2] + (size_t)o1], vl)
+                                     : __riscv_vmv_v_x_u32m1((uint32_t)idxs[2][base[2]], vl);
+              }
+              if (data_rank >= 4) {
+                i3 = idx_last_var[3] ? __riscv_vle32_v_u32m1((const uint32_t*)&idxs[3][base[3] + (size_t)o1], vl)
+                                     : __riscv_vmv_v_x_u32m1((uint32_t)idxs[3][base[3]], vl);
+              }
+
+              vuint32m1_t di = i0;
+              if (data_rank >= 2) di = __riscv_vadd_vv_u32m1(__riscv_vmul_vx_u32m1(di, dim1, vl), i1, vl);
+              if (data_rank >= 3) di = __riscv_vadd_vv_u32m1(__riscv_vmul_vx_u32m1(di, dim2, vl), i2, vl);
+              if (data_rank >= 4) di = __riscv_vadd_vv_u32m1(__riscv_vmul_vx_u32m1(di, dim3, vl), i3, vl);
+
+              vuint32m1_t off = __riscv_vsll_vx_u32m1(di, 2, vl);
+              vfloat32m1_t vx = __riscv_vluxei32_v_f32m1(data, off, vl);
+              __riscv_vse32_v_f32m1(&out[ob + (size_t)o1], vx, vl);
+              o1 += (int64_t)vl;
+            }
+          }
+          return;
+        }
+
+        if (out_rank == 3) {
+          const int64_t D0 = out_shape[0], D1 = out_shape[1];
+          for (int64_t o0 = 0; o0 < D0; ++o0) {
+            for (int64_t o1 = 0; o1 < D1; ++o1) {
+              const size_t ob = ((size_t)o0 * (size_t)D1 + (size_t)o1) * (size_t)last_dim;
+              size_t base[4] = {0, 0, 0, 0};
+              for (int ax = 0; ax < data_rank; ++ax) {
+                const int64_t* ish = &idx_shapes_flat[ax * out_rank];
+                size_t b = 0;
+                if (ish[0] != 1) b += (size_t)o0 * (size_t)idx_strides[ax][0];
+                if (ish[1] != 1) b += (size_t)o1 * (size_t)idx_strides[ax][1];
+                base[ax] = b;
+              }
+              for (int64_t o2 = 0; o2 < last_dim;) {
+                size_t vl = intentir_vsetvl_e32m1((size_t)(last_dim - o2));
+                vuint32m1_t i0 = __riscv_vmv_v_x_u32m1(0, vl);
+                vuint32m1_t i1 = __riscv_vmv_v_x_u32m1(0, vl);
+                vuint32m1_t i2 = __riscv_vmv_v_x_u32m1(0, vl);
+                vuint32m1_t i3 = __riscv_vmv_v_x_u32m1(0, vl);
+                if (data_rank >= 1) {
+                  i0 = idx_last_var[0] ? __riscv_vle32_v_u32m1((const uint32_t*)&idxs[0][base[0] + (size_t)o2], vl)
+                                       : __riscv_vmv_v_x_u32m1((uint32_t)idxs[0][base[0]], vl);
+                }
+                if (data_rank >= 2) {
+                  i1 = idx_last_var[1] ? __riscv_vle32_v_u32m1((const uint32_t*)&idxs[1][base[1] + (size_t)o2], vl)
+                                       : __riscv_vmv_v_x_u32m1((uint32_t)idxs[1][base[1]], vl);
+                }
+                if (data_rank >= 3) {
+                  i2 = idx_last_var[2] ? __riscv_vle32_v_u32m1((const uint32_t*)&idxs[2][base[2] + (size_t)o2], vl)
+                                       : __riscv_vmv_v_x_u32m1((uint32_t)idxs[2][base[2]], vl);
+                }
+                if (data_rank >= 4) {
+                  i3 = idx_last_var[3] ? __riscv_vle32_v_u32m1((const uint32_t*)&idxs[3][base[3] + (size_t)o2], vl)
+                                       : __riscv_vmv_v_x_u32m1((uint32_t)idxs[3][base[3]], vl);
+                }
+
+                vuint32m1_t di = i0;
+                if (data_rank >= 2) di = __riscv_vadd_vv_u32m1(__riscv_vmul_vx_u32m1(di, dim1, vl), i1, vl);
+                if (data_rank >= 3) di = __riscv_vadd_vv_u32m1(__riscv_vmul_vx_u32m1(di, dim2, vl), i2, vl);
+                if (data_rank >= 4) di = __riscv_vadd_vv_u32m1(__riscv_vmul_vx_u32m1(di, dim3, vl), i3, vl);
+
+                vuint32m1_t off = __riscv_vsll_vx_u32m1(di, 2, vl);
+                vfloat32m1_t vx = __riscv_vluxei32_v_f32m1(data, off, vl);
+                __riscv_vse32_v_f32m1(&out[ob + (size_t)o2], vx, vl);
+                o2 += (int64_t)vl;
+              }
+            }
+          }
+          return;
+        }
+
+        if (out_rank == 4) {
+          const int64_t D0 = out_shape[0], D1 = out_shape[1], D2 = out_shape[2];
+          for (int64_t o0 = 0; o0 < D0; ++o0) {
+            for (int64_t o1 = 0; o1 < D1; ++o1) {
+              for (int64_t o2 = 0; o2 < D2; ++o2) {
+                const size_t ob = (((size_t)o0 * (size_t)D1 + (size_t)o1) * (size_t)D2 + (size_t)o2) * (size_t)last_dim;
+                size_t base[4] = {0, 0, 0, 0};
+                for (int ax = 0; ax < data_rank; ++ax) {
+                  const int64_t* ish = &idx_shapes_flat[ax * out_rank];
+                  size_t b = 0;
+                  if (ish[0] != 1) b += (size_t)o0 * (size_t)idx_strides[ax][0];
+                  if (ish[1] != 1) b += (size_t)o1 * (size_t)idx_strides[ax][1];
+                  if (ish[2] != 1) b += (size_t)o2 * (size_t)idx_strides[ax][2];
+                  base[ax] = b;
+                }
+                for (int64_t o3 = 0; o3 < last_dim;) {
+                  size_t vl = intentir_vsetvl_e32m1((size_t)(last_dim - o3));
+                  vuint32m1_t i0 = __riscv_vmv_v_x_u32m1(0, vl);
+                  vuint32m1_t i1 = __riscv_vmv_v_x_u32m1(0, vl);
+                  vuint32m1_t i2 = __riscv_vmv_v_x_u32m1(0, vl);
+                  vuint32m1_t i3 = __riscv_vmv_v_x_u32m1(0, vl);
+                  if (data_rank >= 1) {
+                    i0 = idx_last_var[0] ? __riscv_vle32_v_u32m1((const uint32_t*)&idxs[0][base[0] + (size_t)o3], vl)
+                                         : __riscv_vmv_v_x_u32m1((uint32_t)idxs[0][base[0]], vl);
+                  }
+                  if (data_rank >= 2) {
+                    i1 = idx_last_var[1] ? __riscv_vle32_v_u32m1((const uint32_t*)&idxs[1][base[1] + (size_t)o3], vl)
+                                         : __riscv_vmv_v_x_u32m1((uint32_t)idxs[1][base[1]], vl);
+                  }
+                  if (data_rank >= 3) {
+                    i2 = idx_last_var[2] ? __riscv_vle32_v_u32m1((const uint32_t*)&idxs[2][base[2] + (size_t)o3], vl)
+                                         : __riscv_vmv_v_x_u32m1((uint32_t)idxs[2][base[2]], vl);
+                  }
+                  if (data_rank >= 4) {
+                    i3 = idx_last_var[3] ? __riscv_vle32_v_u32m1((const uint32_t*)&idxs[3][base[3] + (size_t)o3], vl)
+                                         : __riscv_vmv_v_x_u32m1((uint32_t)idxs[3][base[3]], vl);
+                  }
+
+                  vuint32m1_t di = i0;
+                  if (data_rank >= 2) di = __riscv_vadd_vv_u32m1(__riscv_vmul_vx_u32m1(di, dim1, vl), i1, vl);
+                  if (data_rank >= 3) di = __riscv_vadd_vv_u32m1(__riscv_vmul_vx_u32m1(di, dim2, vl), i2, vl);
+                  if (data_rank >= 4) di = __riscv_vadd_vv_u32m1(__riscv_vmul_vx_u32m1(di, dim3, vl), i3, vl);
+
+                  vuint32m1_t off = __riscv_vsll_vx_u32m1(di, 2, vl);
+                  vfloat32m1_t vx = __riscv_vluxei32_v_f32m1(data, off, vl);
+                  __riscv_vse32_v_f32m1(&out[ob + (size_t)o3], vx, vl);
+                  o3 += (int64_t)vl;
+                }
+              }
+            }
+          }
+          return;
+        }
+      }
+    }
+  }
+#endif
+
   const size_t n = intentir_numel_rank(out_shape, out_rank);
   int64_t coords[4] = {0, 0, 0, 0};
   for (size_t i = 0; i < n; ++i) {
@@ -1302,6 +1640,26 @@ void intentir_relu_f32(const float* a, float* out, size_t n) {
 
 void intentir_transpose_4d_0132_f32(const float* inp, float* out, int64_t B, int64_t H, int64_t K, int64_t D) {
   if (!inp || !out || B <= 0 || H <= 0 || K <= 0 || D <= 0) return;
+#if defined(__riscv_vector) || defined(__riscv_v)
+  // [B,H,K,D] -> [B,H,D,K] (perm 0,1,3,2)
+  // Vectorize over K: strided load from inp (stride=D) and contiguous store to out.
+  for (int64_t b = 0; b < B; ++b) {
+    for (int64_t h = 0; h < H; ++h) {
+      for (int64_t d = 0; d < D; ++d) {
+        const size_t in_base = (((size_t)b * (size_t)H + (size_t)h) * (size_t)K) * (size_t)D + (size_t)d;
+        const size_t out_base = (((size_t)b * (size_t)H + (size_t)h) * (size_t)D + (size_t)d) * (size_t)K;
+        for (int64_t k = 0; k < K;) {
+          size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
+          const float* p = &inp[in_base + (size_t)k * (size_t)D];
+          vfloat32m1_t vx = __riscv_vlse32_v_f32m1(p, (ptrdiff_t)((size_t)D * sizeof(float)), vl);
+          __riscv_vse32_v_f32m1(&out[out_base + (size_t)k], vx, vl);
+          k += (int64_t)vl;
+        }
+      }
+    }
+  }
+  return;
+#endif
   for (int64_t b = 0; b < B; ++b) {
     for (int64_t h = 0; h < H; ++h) {
       for (int64_t k = 0; k < K; ++k) {
