@@ -178,6 +178,7 @@ def estimate_program_cost(
     total_time_s = 0.0
     notes: List[str] = []
     scalar_hit: Dict[str, int] = {}
+    hot: List[Tuple[float, str]] = []
 
     for op in intent.ops:
         if op.op in {"const", "reshape", "identity", "layout_cast"}:
@@ -215,6 +216,55 @@ def estimate_program_cost(
 
         bytes_ = bytes_in + bytes_out
 
+        # Account for non-contiguous/irregular memory access:
+        # - gather: scattered reads can be cache-line dominated (worst-case).
+        # - transpose: input reads may be strided depending on perm.
+        cache_line = int(getattr(profile, "cache_line_bytes", 64) or 64)
+        if op.op == "gather":
+            # We already approximated "touched" data bytes as out_n*dtype above; inflate to
+            # cache-line granularity to reflect irregular access in a simple, stable way.
+            data_dt = intent.tensors[op.inputs[0]].dtype if op.inputs else out_dt
+            bytes_data_min = float(out_n * _dtype_bytes(data_dt))
+            bytes_data_eff = float(out_n * max(_dtype_bytes(data_dt), cache_line))
+            bytes_ += max(0.0, bytes_data_eff - bytes_data_min)
+        elif op.op == "transpose":
+            # Estimate average input bytes per element along the innermost output dim.
+            try:
+                perm = list(op.attrs.get("perm") or [])
+                inp_nm = op.inputs[0] if op.inputs else None
+                inp_t = intent.tensors.get(inp_nm) if inp_nm else None
+                if inp_t and perm and len(perm) == len(inp_t.shape):
+                    in_shape_vals: List[int] = []
+                    for d in inp_t.shape:
+                        v = _resolve_dim_token(getattr(d, "value", d), shape_bindings)
+                        if v is None or v <= 0:
+                            in_shape_vals = []
+                            break
+                        in_shape_vals.append(int(v))
+                    if in_shape_vals:
+                        in_dim = int(perm[-1])
+                        stride_elems = 1
+                        for s in in_shape_vals[in_dim + 1 :]:
+                            stride_elems *= int(s)
+                        stride_bytes = int(stride_elems) * _dtype_bytes(inp_t.dtype)
+                        bytes_per_el = max(_dtype_bytes(inp_t.dtype), min(cache_line, stride_bytes))
+                        bytes_in_min = float(out_n * _dtype_bytes(inp_t.dtype))
+                        bytes_in_eff = float(out_n * bytes_per_el)
+                        bytes_ += max(0.0, bytes_in_eff - bytes_in_min)
+            except Exception:
+                pass
+
+        # Softmax is multi-pass even in the RVV runtime: max pass (read input), exp pass (read input + write out),
+        # normalize pass (read+write out). Treat this as ~2x input reads and ~3x output traffic.
+        if op.op == "softmax" and op.inputs:
+            in_nm = op.inputs[0]
+            in_dt = intent.tensors[in_nm].dtype
+            in_n = _resolve_numel(intent, in_nm, shape_bindings)
+            if in_n is not None and in_n > 0:
+                in_bytes = float(in_n * _dtype_bytes(in_dt))
+                out_bytes = float(out_n * _dtype_bytes(out_dt))
+                bytes_ = 2.0 * in_bytes + 3.0 * out_bytes
+
         # Flops-like count.
         if op.op in {"reduce_sum", "reduce_max", "reduce_any"} and op.inputs:
             in_n = _resolve_numel(intent, op.inputs[0], shape_bindings)
@@ -248,6 +298,7 @@ def estimate_program_cost(
         total_flops += flops
         total_bytes += bytes_
         total_time_s += op_s
+        hot.append((float(op_s), f"{op.op}:{out}"))
 
     intensity = (total_flops / total_bytes) if total_bytes > 0 else 0.0
     achieved = (total_flops / (total_time_s * 1e9)) if total_time_s > 0 else 0.0
@@ -259,6 +310,10 @@ def estimate_program_cost(
     if scalar_hit:
         short = ", ".join(f"{k}={v}" for k, v in sorted(scalar_hit.items()))
         notes.append(f"scalar_ops={short}")
+    hot.sort(key=lambda x: x[0], reverse=True)
+    if hot:
+        top = ", ".join(f"{name}@{t*1e3:.3f}ms" for t, name in hot[:5])
+        notes.append(f"hot_ops={top}")
 
     return ProgramCostEstimate(
         gflops=float(achieved),
