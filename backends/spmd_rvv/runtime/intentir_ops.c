@@ -1242,7 +1242,22 @@ void intentir_abs_f32(const float* a, float* out, size_t n) {
 
 void intentir_floor_f32(const float* a, float* out, size_t n) {
   if (!a || !out || n == 0) return;
+#if defined(__riscv_vector) || defined(__riscv_v)
+  for (size_t i = 0; i < n;) {
+    size_t vl = intentir_vsetvl_e32m1(n - i);
+    vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[i], vl);
+    // rtz trunc -> floor correction for negative, non-integer values.
+    vint32m1_t vi = __riscv_vfcvt_x_f_v_i32m1(vx, vl);
+    vfloat32m1_t vt = __riscv_vfcvt_f_x_v_f32m1(vi, vl);
+    vbool32_t m = __riscv_vmflt_vv_f32m1_b32(vx, vt, vl);  // true when vx is negative with fractional part
+    vfloat32m1_t vt1 = __riscv_vfadd_vf_f32m1(vt, -1.0f, vl);
+    vfloat32m1_t vy = __riscv_vmerge_vvm_f32m1(vt, vt1, m, vl);
+    __riscv_vse32_v_f32m1(&out[i], vy, vl);
+    i += vl;
+  }
+#else
   for (size_t i = 0; i < n; ++i) out[i] = floorf(a[i]);
+#endif
 }
 
 void intentir_rsqrt_f32(const float* a, float* out, size_t n) {
@@ -1519,6 +1534,144 @@ void intentir_broadcast_in_dim_f32(
     strides[i] = s;
     s *= in_shape[i];
   }
+
+#if defined(__riscv_vector) || defined(__riscv_v)
+  // Vectorized broadcast over the innermost output dimension.
+  if (out_rank >= 1) {
+    const int last_od = out_rank - 1;
+    const int64_t last_dim = out_shape[last_od];
+    if (last_dim > 0) {
+      int in_last = -1;
+      for (int d = 0; d < in_rank; ++d) {
+        if (bcast_dims[d] == last_od) {
+          in_last = d;
+          break;
+        }
+      }
+      const int64_t stride_last = (in_last >= 0 && in_shape[in_last] != 1) ? strides[in_last] : 0;
+
+      if (out_rank == 1) {
+        const size_t ob = 0;
+        const size_t base0 = 0;
+        for (int64_t o = 0; o < last_dim;) {
+          size_t vl = intentir_vsetvl_e32m1((size_t)(last_dim - o));
+          if (stride_last == 0) {
+            vfloat32m1_t vv = __riscv_vfmv_v_f_f32m1(inp[base0], vl);
+            __riscv_vse32_v_f32m1(&out[ob + (size_t)o], vv, vl);
+          } else if (stride_last == 1) {
+            vfloat32m1_t vx = __riscv_vle32_v_f32m1(&inp[base0 + (size_t)o], vl);
+            __riscv_vse32_v_f32m1(&out[ob + (size_t)o], vx, vl);
+          } else {
+            const size_t ib = base0 + (size_t)o * (size_t)stride_last;
+            vfloat32m1_t vx = __riscv_vlse32_v_f32m1(&inp[ib], (ptrdiff_t)((size_t)stride_last * sizeof(float)), vl);
+            __riscv_vse32_v_f32m1(&out[ob + (size_t)o], vx, vl);
+          }
+          o += (int64_t)vl;
+        }
+        return;
+      }
+
+      if (out_rank == 2) {
+        const int64_t D0 = out_shape[0];
+        for (int64_t o0 = 0; o0 < D0; ++o0) {
+          const size_t ob = (size_t)o0 * (size_t)last_dim;
+          size_t base0 = 0;
+          for (int d = 0; d < in_rank; ++d) {
+            if (in_shape[d] == 1) continue;
+            int od = bcast_dims[d];
+            if (od == last_od) continue;
+            base0 += (size_t)o0 * (size_t)strides[d];
+          }
+          for (int64_t o1 = 0; o1 < last_dim;) {
+            size_t vl = intentir_vsetvl_e32m1((size_t)(last_dim - o1));
+            if (stride_last == 0) {
+              vfloat32m1_t vv = __riscv_vfmv_v_f_f32m1(inp[base0], vl);
+              __riscv_vse32_v_f32m1(&out[ob + (size_t)o1], vv, vl);
+            } else if (stride_last == 1) {
+              vfloat32m1_t vx = __riscv_vle32_v_f32m1(&inp[base0 + (size_t)o1], vl);
+              __riscv_vse32_v_f32m1(&out[ob + (size_t)o1], vx, vl);
+            } else {
+              const size_t ib = base0 + (size_t)o1 * (size_t)stride_last;
+              vfloat32m1_t vx = __riscv_vlse32_v_f32m1(&inp[ib], (ptrdiff_t)((size_t)stride_last * sizeof(float)), vl);
+              __riscv_vse32_v_f32m1(&out[ob + (size_t)o1], vx, vl);
+            }
+            o1 += (int64_t)vl;
+          }
+        }
+        return;
+      }
+
+      if (out_rank == 3) {
+        const int64_t D0 = out_shape[0], D1 = out_shape[1];
+        for (int64_t o0 = 0; o0 < D0; ++o0) {
+          for (int64_t o1 = 0; o1 < D1; ++o1) {
+            const size_t ob = ((size_t)o0 * (size_t)D1 + (size_t)o1) * (size_t)last_dim;
+            size_t base0 = 0;
+            for (int d = 0; d < in_rank; ++d) {
+              if (in_shape[d] == 1) continue;
+              int od = bcast_dims[d];
+              if (od == last_od) continue;
+              if (od == 0) base0 += (size_t)o0 * (size_t)strides[d];
+              else if (od == 1) base0 += (size_t)o1 * (size_t)strides[d];
+            }
+            for (int64_t o2 = 0; o2 < last_dim;) {
+              size_t vl = intentir_vsetvl_e32m1((size_t)(last_dim - o2));
+              if (stride_last == 0) {
+                vfloat32m1_t vv = __riscv_vfmv_v_f_f32m1(inp[base0], vl);
+                __riscv_vse32_v_f32m1(&out[ob + (size_t)o2], vv, vl);
+              } else if (stride_last == 1) {
+                vfloat32m1_t vx = __riscv_vle32_v_f32m1(&inp[base0 + (size_t)o2], vl);
+                __riscv_vse32_v_f32m1(&out[ob + (size_t)o2], vx, vl);
+              } else {
+                const size_t ib = base0 + (size_t)o2 * (size_t)stride_last;
+                vfloat32m1_t vx = __riscv_vlse32_v_f32m1(&inp[ib], (ptrdiff_t)((size_t)stride_last * sizeof(float)), vl);
+                __riscv_vse32_v_f32m1(&out[ob + (size_t)o2], vx, vl);
+              }
+              o2 += (int64_t)vl;
+            }
+          }
+        }
+        return;
+      }
+
+      if (out_rank == 4) {
+        const int64_t D0 = out_shape[0], D1 = out_shape[1], D2 = out_shape[2];
+        for (int64_t o0 = 0; o0 < D0; ++o0) {
+          for (int64_t o1 = 0; o1 < D1; ++o1) {
+            for (int64_t o2 = 0; o2 < D2; ++o2) {
+              const size_t ob = (((size_t)o0 * (size_t)D1 + (size_t)o1) * (size_t)D2 + (size_t)o2) * (size_t)last_dim;
+              size_t base0 = 0;
+              for (int d = 0; d < in_rank; ++d) {
+                if (in_shape[d] == 1) continue;
+                int od = bcast_dims[d];
+                if (od == last_od) continue;
+                if (od == 0) base0 += (size_t)o0 * (size_t)strides[d];
+                else if (od == 1) base0 += (size_t)o1 * (size_t)strides[d];
+                else if (od == 2) base0 += (size_t)o2 * (size_t)strides[d];
+              }
+              for (int64_t o3 = 0; o3 < last_dim;) {
+                size_t vl = intentir_vsetvl_e32m1((size_t)(last_dim - o3));
+                if (stride_last == 0) {
+                  vfloat32m1_t vv = __riscv_vfmv_v_f_f32m1(inp[base0], vl);
+                  __riscv_vse32_v_f32m1(&out[ob + (size_t)o3], vv, vl);
+                } else if (stride_last == 1) {
+                  vfloat32m1_t vx = __riscv_vle32_v_f32m1(&inp[base0 + (size_t)o3], vl);
+                  __riscv_vse32_v_f32m1(&out[ob + (size_t)o3], vx, vl);
+                } else {
+                  const size_t ib = base0 + (size_t)o3 * (size_t)stride_last;
+                  vfloat32m1_t vx = __riscv_vlse32_v_f32m1(&inp[ib], (ptrdiff_t)((size_t)stride_last * sizeof(float)), vl);
+                  __riscv_vse32_v_f32m1(&out[ob + (size_t)o3], vx, vl);
+                }
+                o3 += (int64_t)vl;
+              }
+            }
+          }
+        }
+        return;
+      }
+    }
+  }
+#endif
 
   if (out_rank == 0) {
     out[0] = inp[0];

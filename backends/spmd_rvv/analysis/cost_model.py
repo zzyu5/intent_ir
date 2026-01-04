@@ -148,10 +148,11 @@ def estimate_program_cost(
         "reduce_sum",
         "reduce_max",
         "reduce_any",
-        "broadcast_in_dim",  # scalar-fill path is vectorized; other patterns are not guaranteed
+        "broadcast_in_dim",
         "cast",  # common u8<->f32 paths are vectorized
+        "floor",
     }
-    scalar_ops = {"exp", "floor"}
+    scalar_ops = {"exp"}
 
     total_flops = 0.0
     total_bytes = 0.0
