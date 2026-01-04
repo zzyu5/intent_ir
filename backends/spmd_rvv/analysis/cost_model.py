@@ -110,7 +110,7 @@ def estimate_program_cost(
     bw_core = float(profile.mem_bandwidth_gbps) / max(1, int(profile.num_cores))  # GB/s per core (rough)
 
     # "Equivalent flops" weights per element. This is a pragmatic knob, not physics.
-    # - exp/floor currently lower to scalar libm on RVV -> treat as expensive + scalar-lane.
+    # - exp/softmax are approximated in RVV runtime (polynomial), so still "heavy" but vectorizable.
     weights = {
         "add": 1.0,
         "sub": 1.0,
@@ -121,16 +121,25 @@ def estimate_program_cost(
         "abs": 1.0,
         "relu": 1.0,
         "rsqrt": 8.0,
-        "exp": 25.0,
+        "exp": 12.0,
         "floor": 3.0,
         "cast": 1.0,
         "where": 1.0,
+        "lt": 1.0,
+        "le": 1.0,
+        "gt": 1.0,
+        "ge": 1.0,
+        "ne": 1.0,
+        "and": 0.5,
+        "or": 0.5,
+        "not": 0.5,
         "reduce_sum": 1.0,
         "reduce_max": 1.0,
         "reduce_any": 0.5,
         "broadcast_in_dim": 0.1,
         "transpose": 0.0,
         "gather": 0.0,
+        "softmax": 0.0,  # handled specially below (depends on exp weight)
     }
 
     vec_ops = {
@@ -144,15 +153,25 @@ def estimate_program_cost(
         "abs",
         "relu",
         "rsqrt",
+        "exp",
         "where",
+        "lt",
+        "le",
+        "gt",
+        "ge",
+        "ne",
+        "and",
+        "or",
+        "not",
         "reduce_sum",
         "reduce_max",
         "reduce_any",
         "broadcast_in_dim",
         "cast",  # common u8<->f32 paths are vectorized
         "floor",
+        "softmax",
     }
-    scalar_ops = {"exp"}
+    scalar_ops: set[str] = set()
 
     total_flops = 0.0
     total_bytes = 0.0
@@ -177,11 +196,22 @@ def estimate_program_cost(
         bytes_in = 0.0
 
         # Determine input volume (broadcast-aware because tensors have their own shapes).
-        for nm in op.inputs:
-            in_n = _resolve_numel(intent, nm, shape_bindings)
-            if in_n is None or in_n <= 0:
-                continue
-            bytes_in += float(in_n * _dtype_bytes(intent.tensors[nm].dtype))
+        # Special-case gather: the data tensor can be much larger than the bytes actually touched.
+        if op.op == "gather" and op.inputs:
+            data_nm = op.inputs[0]
+            data_dt = intent.tensors[data_nm].dtype
+            bytes_in += float(out_n * _dtype_bytes(data_dt))
+            for nm in op.inputs[1:]:
+                in_n = _resolve_numel(intent, nm, shape_bindings)
+                if in_n is None or in_n <= 0:
+                    continue
+                bytes_in += float(in_n * _dtype_bytes(intent.tensors[nm].dtype))
+        else:
+            for nm in op.inputs:
+                in_n = _resolve_numel(intent, nm, shape_bindings)
+                if in_n is None or in_n <= 0:
+                    continue
+                bytes_in += float(in_n * _dtype_bytes(intent.tensors[nm].dtype))
 
         bytes_ = bytes_in + bytes_out
 
@@ -192,8 +222,12 @@ def estimate_program_cost(
         else:
             elems = float(out_n)
 
-        w = float(weights.get(op.op, 0.0))
-        flops = elems * w
+        if op.op == "softmax":
+            # Stable softmax ~ max-reduce + exp + sum-reduce + normalize.
+            flops = elems * float(weights["exp"] + 4.0)
+        else:
+            w = float(weights.get(op.op, 0.0))
+            flops = elems * w
 
         # Vectorization factor: scalar ops effectively use 1 lane.
         if op.op in scalar_ops:

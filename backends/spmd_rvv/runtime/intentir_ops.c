@@ -1,5 +1,46 @@
 #include "intentir_ops.h"
 
+#if defined(__riscv_vector) || defined(__riscv_v)
+static inline vfloat32m1_t intentir_vexp_approx_f32m1(vfloat32m1_t x, size_t vl) {
+  const float LOG2E = 1.4426950408889634f;
+  const float LN2 = 0.6931471805599453f;
+
+  vfloat32m1_t y = __riscv_vfmul_vf_f32m1(x, LOG2E, vl);
+
+  // n = floor(y) using rtz trunc + correction for negative fractional part.
+  vint32m1_t n = __riscv_vfcvt_x_f_v_i32m1(y, vl);
+  vfloat32m1_t nt = __riscv_vfcvt_f_x_v_f32m1(n, vl);
+  vbool32_t m = __riscv_vmflt_vv_f32m1_b32(y, nt, vl);
+  vint32m1_t n1 = __riscv_vsub_vx_i32m1(n, 1, vl);
+  n = __riscv_vmerge_vvm_i32m1(n, n1, m, vl);
+  nt = __riscv_vfcvt_f_x_v_f32m1(n, vl);
+
+  vfloat32m1_t f = __riscv_vfsub_vv_f32m1(y, nt, vl);
+  vfloat32m1_t z = __riscv_vfmul_vf_f32m1(f, LN2, vl);
+
+  // p = exp(z) on z in [0, ln(2)) using 5th-order Taylor.
+  vfloat32m1_t p = __riscv_vfmv_v_f_f32m1(1.0f, vl);
+  p = __riscv_vfadd_vv_f32m1(p, z, vl);
+  vfloat32m1_t z2 = __riscv_vfmul_vv_f32m1(z, z, vl);
+  p = __riscv_vfadd_vv_f32m1(p, __riscv_vfmul_vf_f32m1(z2, 0.5f, vl), vl);
+  vfloat32m1_t z3 = __riscv_vfmul_vv_f32m1(z2, z, vl);
+  p = __riscv_vfadd_vv_f32m1(p, __riscv_vfmul_vf_f32m1(z3, 0.1666666716f, vl), vl);
+  vfloat32m1_t z4 = __riscv_vfmul_vv_f32m1(z2, z2, vl);
+  p = __riscv_vfadd_vv_f32m1(p, __riscv_vfmul_vf_f32m1(z4, 0.0416666679f, vl), vl);
+  vfloat32m1_t z5 = __riscv_vfmul_vv_f32m1(z4, z, vl);
+  p = __riscv_vfadd_vv_f32m1(p, __riscv_vfmul_vf_f32m1(z5, 0.0083333338f, vl), vl);
+
+  // scale = 2^n via exponent bits.
+  vint32m1_t ncl = __riscv_vmax_vx_i32m1(n, -126, vl);
+  ncl = __riscv_vmin_vx_i32m1(ncl, 127, vl);
+  vint32m1_t e = __riscv_vadd_vx_i32m1(ncl, 127, vl);  // [1,254]
+  vuint32m1_t eb = __riscv_vreinterpret_v_i32m1_u32m1(e);
+  eb = __riscv_vsll_vx_u32m1(eb, 23, vl);
+  vfloat32m1_t scale = __riscv_vreinterpret_v_u32m1_f32m1(eb);
+  return __riscv_vfmul_vv_f32m1(p, scale, vl);
+}
+#endif
+
 void intentir_reduce_sum_2d_axis1_f32(const float* a, float* out, int64_t M, int64_t K, float scale, int has_scale) {
   if (!a || !out || M <= 0 || K <= 0) return;
 #if defined(__riscv_vector) || defined(__riscv_v)
@@ -95,28 +136,49 @@ void intentir_reduce_max_2d_axis1_f32(const float* a, float* out, int64_t M, int
 void intentir_softmax_1d_last_f32(const float* a, float* out, int64_t K) {
   if (!a || !out || K <= 0) return;
 #if defined(__riscv_vector) || defined(__riscv_v)
-  float mx_f = -INFINITY;
-  {
-    size_t vlmax = intentir_vsetvl_e32m1((size_t)K);
-    vfloat32m1_t vmax = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
-    for (int64_t k = 0; k < K;) {
-      size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
-      vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[(size_t)k], vl);
-      vmax = __riscv_vfmax_vv_f32m1(vmax, vx, vl);
-      k += (int64_t)vl;
-    }
-    vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
-    vfloat32m1_t vres = __riscv_vfredmax_vs_f32m1_f32m1(vmax, v0, vlmax);
-    mx_f = __riscv_vfmv_f_s_f32m1_f32(vres);
+  size_t vlmax = intentir_vsetvl_e32m1((size_t)K);
+
+  vfloat32m1_t vmax = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
+  for (int64_t k = 0; k < K;) {
+    size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
+    vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[(size_t)k], vl);
+    vmax = __riscv_vfmax_vv_f32m1(vmax, vx, vl);
+    k += (int64_t)vl;
   }
-  double mx = (double)mx_f;
+  vfloat32m1_t v0m = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
+  vfloat32m1_t vresm = __riscv_vfredmax_vs_f32m1_f32m1(vmax, v0m, vlmax);
+  float mx = __riscv_vfmv_f_s_f32m1_f32(vresm);
+
+  vfloat32m1_t vsum = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+  for (int64_t k = 0; k < K;) {
+    size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
+    vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[(size_t)k], vl);
+    vx = __riscv_vfsub_vf_f32m1(vx, mx, vl);
+    vfloat32m1_t ve = intentir_vexp_approx_f32m1(vx, vl);
+    __riscv_vse32_v_f32m1(&out[(size_t)k], ve, vl);
+    vsum = __riscv_vfadd_vv_f32m1(vsum, ve, vl);
+    k += (int64_t)vl;
+  }
+
+  vfloat32m1_t v0s = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+  vfloat32m1_t vress = __riscv_vfredusum_vs_f32m1_f32m1(vsum, v0s, vlmax);
+  float sum = __riscv_vfmv_f_s_f32m1_f32(vress);
+  float inv = 1.0f / sum;
+
+  for (int64_t k = 0; k < K;) {
+    size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
+    vfloat32m1_t vx = __riscv_vle32_v_f32m1(&out[(size_t)k], vl);
+    vfloat32m1_t vy = __riscv_vfmul_vf_f32m1(vx, inv, vl);
+    __riscv_vse32_v_f32m1(&out[(size_t)k], vy, vl);
+    k += (int64_t)vl;
+  }
+  return;
 #else
   double mx = -1e30;
   for (int64_t k = 0; k < K; ++k) {
     double v = (double)a[(size_t)k];
     if (v > mx) mx = v;
   }
-#endif
   double sum = 0.0;
   for (int64_t k = 0; k < K; ++k) {
     double e = exp((double)a[(size_t)k] - mx);
@@ -124,48 +186,61 @@ void intentir_softmax_1d_last_f32(const float* a, float* out, int64_t K) {
     sum += e;
   }
   double inv = 1.0 / sum;
-#if defined(__riscv_vector) || defined(__riscv_v)
-  {
-    const float inv_f = (float)inv;
-    for (int64_t k = 0; k < K;) {
-      size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
-      vfloat32m1_t vx = __riscv_vle32_v_f32m1(&out[(size_t)k], vl);
-      vfloat32m1_t vy = __riscv_vfmul_vf_f32m1(vx, inv_f, vl);
-      __riscv_vse32_v_f32m1(&out[(size_t)k], vy, vl);
-      k += (int64_t)vl;
-    }
-  }
-#else
   for (int64_t k = 0; k < K; ++k) out[(size_t)k] = (float)((double)out[(size_t)k] * inv);
 #endif
 }
 
 void intentir_softmax_2d_last_f32(const float* a, float* out, int64_t M, int64_t K) {
   if (!a || !out || M <= 0 || K <= 0) return;
-  for (int64_t m = 0; m < M; ++m) {
 #if defined(__riscv_vector) || defined(__riscv_v)
-    float mx_f = -INFINITY;
-    {
-      size_t vlmax = intentir_vsetvl_e32m1((size_t)K);
-      vfloat32m1_t vmax = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
-      for (int64_t k = 0; k < K;) {
-        size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
-        vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[idx2((int)m, (int)k, (int)K)], vl);
-        vmax = __riscv_vfmax_vv_f32m1(vmax, vx, vl);
-        k += (int64_t)vl;
-      }
-      vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
-      vfloat32m1_t vres = __riscv_vfredmax_vs_f32m1_f32m1(vmax, v0, vlmax);
-      mx_f = __riscv_vfmv_f_s_f32m1_f32(vres);
+  for (int64_t m = 0; m < M; ++m) {
+    size_t vlmax = intentir_vsetvl_e32m1((size_t)K);
+    size_t base = idx2((int)m, 0, (int)K);
+
+    vfloat32m1_t vmax = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
+    for (int64_t k = 0; k < K;) {
+      size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
+      vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[base + (size_t)k], vl);
+      vmax = __riscv_vfmax_vv_f32m1(vmax, vx, vl);
+      k += (int64_t)vl;
     }
-    double mx = (double)mx_f;
-#else
+    vfloat32m1_t v0m = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
+    vfloat32m1_t vresm = __riscv_vfredmax_vs_f32m1_f32m1(vmax, v0m, vlmax);
+    float mx = __riscv_vfmv_f_s_f32m1_f32(vresm);
+
+    vfloat32m1_t vsum = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+    for (int64_t k = 0; k < K;) {
+      size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
+      vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[base + (size_t)k], vl);
+      vx = __riscv_vfsub_vf_f32m1(vx, mx, vl);
+      vfloat32m1_t ve = intentir_vexp_approx_f32m1(vx, vl);
+      __riscv_vse32_v_f32m1(&out[base + (size_t)k], ve, vl);
+      vsum = __riscv_vfadd_vv_f32m1(vsum, ve, vl);
+      k += (int64_t)vl;
+    }
+
+    vfloat32m1_t v0s = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+    vfloat32m1_t vress = __riscv_vfredusum_vs_f32m1_f32m1(vsum, v0s, vlmax);
+    float sum = __riscv_vfmv_f_s_f32m1_f32(vress);
+    float inv = 1.0f / sum;
+
+    for (int64_t k = 0; k < K;) {
+      size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
+      vfloat32m1_t vx = __riscv_vle32_v_f32m1(&out[base + (size_t)k], vl);
+      vfloat32m1_t vy = __riscv_vfmul_vf_f32m1(vx, inv, vl);
+      __riscv_vse32_v_f32m1(&out[base + (size_t)k], vy, vl);
+      k += (int64_t)vl;
+    }
+  }
+  return;
+#endif
+
+  for (int64_t m = 0; m < M; ++m) {
     double mx = -1e30;
     for (int64_t k = 0; k < K; ++k) {
       double v = (double)a[idx2((int)m, (int)k, (int)K)];
       if (v > mx) mx = v;
     }
-#endif
     double sum = 0.0;
     for (int64_t k = 0; k < K; ++k) {
       double e = exp((double)a[idx2((int)m, (int)k, (int)K)] - mx);
@@ -173,54 +248,67 @@ void intentir_softmax_2d_last_f32(const float* a, float* out, int64_t M, int64_t
       sum += e;
     }
     double inv = 1.0 / sum;
-#if defined(__riscv_vector) || defined(__riscv_v)
-    {
-      const float inv_f = (float)inv;
-      for (int64_t k = 0; k < K;) {
-        size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
-        size_t i = idx2((int)m, (int)k, (int)K);
-        vfloat32m1_t vx = __riscv_vle32_v_f32m1(&out[i], vl);
-        vfloat32m1_t vy = __riscv_vfmul_vf_f32m1(vx, inv_f, vl);
-        __riscv_vse32_v_f32m1(&out[i], vy, vl);
-        k += (int64_t)vl;
-      }
-    }
-#else
     for (int64_t k = 0; k < K; ++k) {
       size_t i = idx2((int)m, (int)k, (int)K);
       out[i] = (float)((double)out[i] * inv);
     }
-#endif
   }
 }
 
 void intentir_softmax_3d_last_f32(const float* a, float* out, int64_t A0, int64_t A1, int64_t K) {
   if (!a || !out || A0 <= 0 || A1 <= 0 || K <= 0) return;
+#if defined(__riscv_vector) || defined(__riscv_v)
   for (int64_t i0 = 0; i0 < A0; ++i0) {
     for (int64_t i1 = 0; i1 < A1; ++i1) {
-#if defined(__riscv_vector) || defined(__riscv_v)
-      float mx_f = -INFINITY;
-      {
-        size_t vlmax = intentir_vsetvl_e32m1((size_t)K);
-        vfloat32m1_t vmax = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
-        for (int64_t k = 0; k < K;) {
-          size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
-          vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[idx3((int)i0, (int)i1, (int)k, (int)A1, (int)K)], vl);
-          vmax = __riscv_vfmax_vv_f32m1(vmax, vx, vl);
-          k += (int64_t)vl;
-        }
-        vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
-        vfloat32m1_t vres = __riscv_vfredmax_vs_f32m1_f32m1(vmax, v0, vlmax);
-        mx_f = __riscv_vfmv_f_s_f32m1_f32(vres);
+      size_t vlmax = intentir_vsetvl_e32m1((size_t)K);
+      size_t base = idx3((int)i0, (int)i1, 0, (int)A1, (int)K);
+
+      vfloat32m1_t vmax = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
+      for (int64_t k = 0; k < K;) {
+        size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
+        vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[base + (size_t)k], vl);
+        vmax = __riscv_vfmax_vv_f32m1(vmax, vx, vl);
+        k += (int64_t)vl;
       }
-      double mx = (double)mx_f;
-#else
+      vfloat32m1_t v0m = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
+      vfloat32m1_t vresm = __riscv_vfredmax_vs_f32m1_f32m1(vmax, v0m, vlmax);
+      float mx = __riscv_vfmv_f_s_f32m1_f32(vresm);
+
+      vfloat32m1_t vsum = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+      for (int64_t k = 0; k < K;) {
+        size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
+        vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[base + (size_t)k], vl);
+        vx = __riscv_vfsub_vf_f32m1(vx, mx, vl);
+        vfloat32m1_t ve = intentir_vexp_approx_f32m1(vx, vl);
+        __riscv_vse32_v_f32m1(&out[base + (size_t)k], ve, vl);
+        vsum = __riscv_vfadd_vv_f32m1(vsum, ve, vl);
+        k += (int64_t)vl;
+      }
+
+      vfloat32m1_t v0s = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+      vfloat32m1_t vress = __riscv_vfredusum_vs_f32m1_f32m1(vsum, v0s, vlmax);
+      float sum = __riscv_vfmv_f_s_f32m1_f32(vress);
+      float inv = 1.0f / sum;
+
+      for (int64_t k = 0; k < K;) {
+        size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
+        vfloat32m1_t vx = __riscv_vle32_v_f32m1(&out[base + (size_t)k], vl);
+        vfloat32m1_t vy = __riscv_vfmul_vf_f32m1(vx, inv, vl);
+        __riscv_vse32_v_f32m1(&out[base + (size_t)k], vy, vl);
+        k += (int64_t)vl;
+      }
+    }
+  }
+  return;
+#endif
+
+  for (int64_t i0 = 0; i0 < A0; ++i0) {
+    for (int64_t i1 = 0; i1 < A1; ++i1) {
       double mx = -1e30;
       for (int64_t k = 0; k < K; ++k) {
         double v = (double)a[idx3((int)i0, (int)i1, (int)k, (int)A1, (int)K)];
         if (v > mx) mx = v;
       }
-#endif
       double sum = 0.0;
       for (int64_t k = 0; k < K; ++k) {
         size_t i = idx3((int)i0, (int)i1, (int)k, (int)A1, (int)K);
@@ -229,56 +317,71 @@ void intentir_softmax_3d_last_f32(const float* a, float* out, int64_t A0, int64_
         sum += e;
       }
       double inv = 1.0 / sum;
-#if defined(__riscv_vector) || defined(__riscv_v)
-      {
-        const float inv_f = (float)inv;
-        size_t base = idx3((int)i0, (int)i1, 0, (int)A1, (int)K);
-        for (int64_t k = 0; k < K;) {
-          size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
-          vfloat32m1_t vx = __riscv_vle32_v_f32m1(&out[base + (size_t)k], vl);
-          vfloat32m1_t vy = __riscv_vfmul_vf_f32m1(vx, inv_f, vl);
-          __riscv_vse32_v_f32m1(&out[base + (size_t)k], vy, vl);
-          k += (int64_t)vl;
-        }
-      }
-#else
       for (int64_t k = 0; k < K; ++k) {
         size_t i = idx3((int)i0, (int)i1, (int)k, (int)A1, (int)K);
         out[i] = (float)((double)out[i] * inv);
       }
-#endif
     }
   }
 }
 
 void intentir_softmax_4d_last_f32(const float* a, float* out, int64_t B, int64_t H, int64_t Q, int64_t K) {
   if (!a || !out || B <= 0 || H <= 0 || Q <= 0 || K <= 0) return;
+#if defined(__riscv_vector) || defined(__riscv_v)
   for (int64_t b = 0; b < B; ++b) {
     for (int64_t h = 0; h < H; ++h) {
       for (int64_t q = 0; q < Q; ++q) {
-#if defined(__riscv_vector) || defined(__riscv_v)
-        float mx_f = -INFINITY;
-        {
-          size_t vlmax = intentir_vsetvl_e32m1((size_t)K);
-          vfloat32m1_t vmax = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
-          for (int64_t k = 0; k < K;) {
-            size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
-            vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[idx4((int)b, (int)h, (int)q, (int)k, (int)H, (int)Q, (int)K)], vl);
-            vmax = __riscv_vfmax_vv_f32m1(vmax, vx, vl);
-            k += (int64_t)vl;
-          }
-          vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
-          vfloat32m1_t vres = __riscv_vfredmax_vs_f32m1_f32m1(vmax, v0, vlmax);
-          mx_f = __riscv_vfmv_f_s_f32m1_f32(vres);
+        size_t vlmax = intentir_vsetvl_e32m1((size_t)K);
+        size_t base = idx4((int)b, (int)h, (int)q, 0, (int)H, (int)Q, (int)K);
+
+        vfloat32m1_t vmax = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
+        for (int64_t k = 0; k < K;) {
+          size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
+          vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[base + (size_t)k], vl);
+          vmax = __riscv_vfmax_vv_f32m1(vmax, vx, vl);
+          k += (int64_t)vl;
         }
-        double mx = (double)mx_f;
-#else
+        vfloat32m1_t v0m = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
+        vfloat32m1_t vresm = __riscv_vfredmax_vs_f32m1_f32m1(vmax, v0m, vlmax);
+        float mx = __riscv_vfmv_f_s_f32m1_f32(vresm);
+
+        vfloat32m1_t vsum = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+        for (int64_t k = 0; k < K;) {
+          size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
+          vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[base + (size_t)k], vl);
+          vx = __riscv_vfsub_vf_f32m1(vx, mx, vl);
+          vfloat32m1_t ve = intentir_vexp_approx_f32m1(vx, vl);
+          __riscv_vse32_v_f32m1(&out[base + (size_t)k], ve, vl);
+          vsum = __riscv_vfadd_vv_f32m1(vsum, ve, vl);
+          k += (int64_t)vl;
+        }
+
+        vfloat32m1_t v0s = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+        vfloat32m1_t vress = __riscv_vfredusum_vs_f32m1_f32m1(vsum, v0s, vlmax);
+        float sum = __riscv_vfmv_f_s_f32m1_f32(vress);
+        float inv = 1.0f / sum;
+
+        for (int64_t k = 0; k < K;) {
+          size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
+          vfloat32m1_t vx = __riscv_vle32_v_f32m1(&out[base + (size_t)k], vl);
+          vfloat32m1_t vy = __riscv_vfmul_vf_f32m1(vx, inv, vl);
+          __riscv_vse32_v_f32m1(&out[base + (size_t)k], vy, vl);
+          k += (int64_t)vl;
+        }
+      }
+    }
+  }
+  return;
+#endif
+
+  for (int64_t b = 0; b < B; ++b) {
+    for (int64_t h = 0; h < H; ++h) {
+      for (int64_t q = 0; q < Q; ++q) {
         double mx = -1e30;
         for (int64_t k = 0; k < K; ++k) {
           double v = (double)a[idx4((int)b, (int)h, (int)q, (int)k, (int)H, (int)Q, (int)K)];
           if (v > mx) mx = v;
         }
-#endif
         double sum = 0.0;
         for (int64_t k = 0; k < K; ++k) {
           size_t i = idx4((int)b, (int)h, (int)q, (int)k, (int)H, (int)Q, (int)K);
@@ -287,24 +390,10 @@ void intentir_softmax_4d_last_f32(const float* a, float* out, int64_t B, int64_t
           sum += e;
         }
         double inv = 1.0 / sum;
-#if defined(__riscv_vector) || defined(__riscv_v)
-        {
-          const float inv_f = (float)inv;
-          size_t base = idx4((int)b, (int)h, (int)q, 0, (int)H, (int)Q, (int)K);
-          for (int64_t k = 0; k < K;) {
-            size_t vl = intentir_vsetvl_e32m1((size_t)(K - k));
-            vfloat32m1_t vx = __riscv_vle32_v_f32m1(&out[base + (size_t)k], vl);
-            vfloat32m1_t vy = __riscv_vfmul_vf_f32m1(vx, inv_f, vl);
-            __riscv_vse32_v_f32m1(&out[base + (size_t)k], vy, vl);
-            k += (int64_t)vl;
-          }
-        }
-#else
         for (int64_t k = 0; k < K; ++k) {
           size_t i = idx4((int)b, (int)h, (int)q, (int)k, (int)H, (int)Q, (int)K);
           out[i] = (float)((double)out[i] * inv);
         }
-#endif
       }
     }
   }
@@ -1616,6 +1705,16 @@ void intentir_rsqrt_f32(const float* a, float* out, size_t n) {
 
 void intentir_exp_f32(const float* a, float* out, size_t n) {
   if (!a || !out || n == 0) return;
+#if defined(__riscv_vector) || defined(__riscv_v)
+  for (size_t i = 0; i < n;) {
+    size_t vl = intentir_vsetvl_e32m1(n - i);
+    vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[i], vl);
+    vfloat32m1_t vy = intentir_vexp_approx_f32m1(vx, vl);
+    __riscv_vse32_v_f32m1(&out[i], vy, vl);
+    i += vl;
+  }
+  return;
+#endif
   for (size_t i = 0; i < n; ++i) out[i] = expf(a[i]);
 }
 
