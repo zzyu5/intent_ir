@@ -24,6 +24,7 @@ from intent_ir.ir import IntentFunction, ScheduleSketch
 
 from .cost_model import GEMMCostModel, estimate_program_cost
 from .hardware_profile import RVVHardwareProfile
+from frontends.common.access_witness import build_stride_summary
 
 
 TuningMode = Literal["auto", "guided", "locked"]
@@ -287,15 +288,50 @@ def propose_schedule_candidates(
     req = request or TuningRequest()
     hints = _normalize_int_hints(tile_hints)
 
+    # Evidence-derived access witness (optional): used to pick vec_width and to add guided priors.
+    summary = None
+    try:
+        summary = build_stride_summary(
+            evidence,
+            shape_bindings=shape_bindings,
+            cache_line_bytes=int(getattr(profile, "cache_line_bytes", 64) or 64),
+        )
+    except Exception:
+        summary = None
+    if summary is not None and summary.dominant_range_len:
+        hints = sorted(set(hints + [int(summary.dominant_range_len)]))
+
     # vec_width: default to vector lanes; can be constrained/locked.
     vec_lanes = max(1, int(profile.rvv_vlen_bits) // 32)
     vec_allowed = _allowed_set(req, "vec_width")
-    if vec_allowed:
-        vec_width = sorted(vec_allowed)[0]
+
+    # Derive candidate vec_width values:
+    # - user lock/constraint wins
+    # - else, if evidence suggests a contiguous range axis, try min(lanes, range_len)
+    # - else fall back to scalar (1 lane) to be conservative on irregular accesses
+    vec_candidates: List[int] = []
+    if "vec_width" in req.locks:
+        vec_candidates = [int(req.locks["vec_width"])]
+        vec_notes = [f"lock vec_width={vec_candidates[0]}"]
+    elif vec_allowed:
+        vec_candidates = sorted((int(v) for v in vec_allowed if int(v) > 0), reverse=True)
         vec_notes = [f"vec_width constrained={sorted(vec_allowed)}"]
     else:
-        vec_width = vec_lanes
-        vec_notes = [f"vec_width default=lanes({vec_lanes})"]
+        if summary is not None and summary.has_contiguous_range:
+            vw = vec_lanes
+            if summary.dominant_range_len and int(summary.dominant_range_len) > 0:
+                vw = min(vec_lanes, int(summary.dominant_range_len))
+            vec_candidates = [vw]
+            if vw >= 2:
+                vec_candidates.append(max(1, vw // 2))
+            # Preserve preference order (larger first) while de-duplicating.
+            vec_candidates = list(dict.fromkeys(int(x) for x in vec_candidates if int(x) > 0))
+            vec_notes = [f"vec_width from evidence={vec_candidates} lanes={vec_lanes}"]
+            if summary.dominant_axis:
+                vec_notes.append(f"vec_axis_hint={summary.dominant_axis}")
+        else:
+            vec_candidates = [1]
+            vec_notes = [f"vec_width conservative=1 lanes={vec_lanes}"]
 
     pipeline_depth = (intent.schedule.pipeline_depth if intent.schedule else None)
     if "pipeline_depth" in req.locks:
@@ -314,7 +350,7 @@ def propose_schedule_candidates(
         if req.mode == "guided" and hints:
             vec_lanes = max(1, int(profile.rvv_vlen_bits) // 32)
             hm = _expand_hint_values(hints, max_val=int(M), align=1)
-            hn = _expand_hint_values(hints, max_val=int(N), align=vec_lanes)
+            hn = _expand_hint_values(hints, max_val=int(N), align=max(1, min(vec_lanes, max(vec_candidates) if vec_candidates else vec_lanes)))
             hk = _expand_hint_values(hints, max_val=int(K), align=1)
             guided_tiles: set[Tuple[int, int, int]] = set()
             for tm in hm or []:
@@ -328,21 +364,27 @@ def propose_schedule_candidates(
 
         base = intent.schedule or ScheduleSketch()
         out: List[ScheduleCandidate] = []
-        for tm, tn, tk in tiles:
-            est = model.evaluate_tile(int(tm), int(tn), int(tk))
-            sched = ScheduleSketch(
-                tile_m=int(tm),
-                tile_n=int(tn),
-                tile_k=int(tk),
-                vec_width=int(vec_width),
-                pipeline_depth=pipeline_depth,
-                axis_bindings=dict(base.axis_bindings) if base else {},
-                vec_axis=(base.vec_axis if base else None),
-                parallel_axes=list(base.parallel_axes) if base else [],
-                memory_hint=dict(base.memory_hint) if base else {},
-            )
-            notes = list(vec_notes) + [f"cache={est.cache_level}", f"ai={est.intensity:.2f}", f"pred_gflops={est.gflops:.2f}"]
-            out.append(ScheduleCandidate(schedule=sched, score=float(est.gflops), tile_mnk=(int(tm), int(tn), int(tk)), notes=notes))
+        for vw in vec_candidates or [vec_lanes]:
+            vw_i = max(1, min(int(vw), vec_lanes))
+            for tm, tn, tk in tiles:
+                est = model.evaluate_tile(int(tm), int(tn), int(tk))
+                sched = ScheduleSketch(
+                    tile_m=int(tm),
+                    tile_n=int(tn),
+                    tile_k=int(tk),
+                    vec_width=int(vw_i),
+                    pipeline_depth=pipeline_depth,
+                    axis_bindings=dict(base.axis_bindings) if base else {},
+                    vec_axis=(base.vec_axis if base else (summary.dominant_axis if summary is not None else None)),
+                    parallel_axes=list(base.parallel_axes) if base else [],
+                    memory_hint=dict(base.memory_hint) if base else {},
+                )
+                notes = (
+                    list(vec_notes)
+                    + [f"vec_width={vw_i}"]
+                    + [f"cache={est.cache_level}", f"ai={est.intensity:.2f}", f"pred_gflops={est.gflops:.2f}"]
+                )
+                out.append(ScheduleCandidate(schedule=sched, score=float(est.gflops), tile_mnk=(int(tm), int(tn), int(tk)), notes=notes))
         out.sort(key=lambda c: c.score, reverse=True)
         if limit is not None:
             out = out[: max(0, int(limit))]
@@ -396,43 +438,48 @@ def propose_schedule_candidates(
         return grid[:8] or [None]
 
     tm_vals = _pick_tile(tile_m, int(shape_M) if isinstance(shape_M, int) else None, "tile_m", align=1)
-    tn_vals = _pick_tile(tile_n, int(shape_N) if isinstance(shape_N, int) else None, "tile_n", align=vec_lanes)
+    # Align the innermost tile to the candidate vector width (or lanes if unspecified).
+    tn_align = max(1, min(vec_lanes, max(vec_candidates) if vec_candidates else vec_lanes))
+    tn_vals = _pick_tile(tile_n, int(shape_N) if isinstance(shape_N, int) else None, "tile_n", align=tn_align)
     tk_vals = _pick_tile(tile_k, int(shape_K) if isinstance(shape_K, int) else None, "tile_k", align=1)
 
     # Keep candidate set small: vary only the most-relevant axis if possible.
-    program_est = estimate_program_cost(
-        intent,
-        shape_bindings=shape_bindings,
-        profile=profile,
-        vec_width=vec_width,
-        evidence=evidence,
-    )
     candidates: List[ScheduleCandidate] = []
-    for tm in tm_vals[:1]:
-        for tk in tk_vals[:1]:
-            for tn in tn_vals[:8]:
-                sched = ScheduleSketch(
-                    tile_m=tm,
-                    tile_n=tn,
-                    tile_k=tk,
-                    vec_width=int(vec_width),
-                    pipeline_depth=pipeline_depth,
-                    axis_bindings=dict(base.axis_bindings) if base else {},
-                    vec_axis=(base.vec_axis if base else None),
-                    parallel_axes=list(base.parallel_axes) if base else [],
-                    memory_hint=dict(base.memory_hint) if base else {},
-                )
-                # Use coarse roofline estimate as the primary ranking signal.
-                score = -float(program_est.ms)
-                notes = (
-                    list(vec_notes)
-                    + ["no bound matmul"]
-                    + [f"pred_ms={program_est.ms:.3f}", f"pred_gflops={program_est.gflops:.3f}"]
-                    + list(program_est.notes)
-                )
-                if req.mode == "guided" and hints:
-                    notes.append(f"guided tile_hints={hints[:8]}{'...' if len(hints) > 8 else ''}")
-                candidates.append(ScheduleCandidate(schedule=sched, score=score, tile_mnk=None, notes=notes))
+    for vw in vec_candidates or [1]:
+        vw_i = max(1, min(int(vw), vec_lanes))
+        program_est = estimate_program_cost(
+            intent,
+            shape_bindings=shape_bindings,
+            profile=profile,
+            vec_width=vw_i,
+            evidence=evidence,
+        )
+        for tm in tm_vals[:1]:
+            for tk in tk_vals[:1]:
+                for tn in tn_vals[:8]:
+                    sched = ScheduleSketch(
+                        tile_m=tm,
+                        tile_n=tn,
+                        tile_k=tk,
+                        vec_width=int(vw_i),
+                        pipeline_depth=pipeline_depth,
+                        axis_bindings=dict(base.axis_bindings) if base else {},
+                        vec_axis=(base.vec_axis if base else (summary.dominant_axis if summary is not None else None)),
+                        parallel_axes=list(base.parallel_axes) if base else [],
+                        memory_hint=dict(base.memory_hint) if base else {},
+                    )
+                    # Use coarse roofline estimate as the primary ranking signal.
+                    score = -float(program_est.ms)
+                    notes = (
+                        list(vec_notes)
+                        + [f"vec_width={vw_i}"]
+                        + ["no bound matmul"]
+                        + [f"pred_ms={program_est.ms:.3f}", f"pred_gflops={program_est.gflops:.3f}"]
+                        + list(program_est.notes)
+                    )
+                    if req.mode == "guided" and hints:
+                        notes.append(f"guided tile_hints={hints[:8]}{'...' if len(hints) > 8 else ''}")
+                    candidates.append(ScheduleCandidate(schedule=sched, score=score, tile_mnk=None, notes=notes))
     candidates.sort(key=lambda c: c.score, reverse=True)
     if limit is not None:
         candidates = candidates[: max(0, int(limit))]
