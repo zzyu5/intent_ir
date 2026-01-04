@@ -104,15 +104,60 @@ def estimate_program_cost(
     lanes = max(1, int(profile.rvv_vlen_bits) // 32)
     vw = int(vec_width) if isinstance(vec_width, int) and vec_width > 0 else lanes
     vw = max(1, min(vw, lanes))
-    vec_eff = vw / float(lanes)
 
     # Per-core peaks (the generated C is single-threaded today).
-    compute_peak = float(profile.fma_units_per_core) * float(lanes) * float(profile.frequency_ghz) * 2.0  # GFLOPs/core
+    compute_peak_vec = float(profile.fma_units_per_core) * float(lanes) * float(profile.frequency_ghz) * 2.0  # GFLOPs/core @ full lanes
     bw_core = float(profile.mem_bandwidth_gbps) / max(1, int(profile.num_cores))  # GB/s per core (rough)
+
+    # "Equivalent flops" weights per element. This is a pragmatic knob, not physics.
+    # - exp/floor currently lower to scalar libm on RVV -> treat as expensive + scalar-lane.
+    weights = {
+        "add": 1.0,
+        "sub": 1.0,
+        "mul": 1.0,
+        "div": 4.0,
+        "max": 1.0,
+        "min": 1.0,
+        "abs": 1.0,
+        "relu": 1.0,
+        "rsqrt": 8.0,
+        "exp": 25.0,
+        "floor": 3.0,
+        "cast": 1.0,
+        "where": 1.0,
+        "reduce_sum": 1.0,
+        "reduce_max": 1.0,
+        "reduce_any": 0.5,
+        "broadcast_in_dim": 0.1,
+        "transpose": 0.0,
+        "gather": 0.0,
+    }
+
+    vec_ops = {
+        # Vectorized runtime paths today.
+        "add",
+        "sub",
+        "mul",
+        "div",
+        "max",
+        "min",
+        "abs",
+        "relu",
+        "rsqrt",
+        "where",
+        "reduce_sum",
+        "reduce_max",
+        "reduce_any",
+        "broadcast_in_dim",  # scalar-fill path is vectorized; other patterns are not guaranteed
+        "cast",  # common u8<->f32 paths are vectorized
+    }
+    scalar_ops = {"exp", "floor"}
 
     total_flops = 0.0
     total_bytes = 0.0
+    total_time_s = 0.0
     notes: List[str] = []
+    scalar_hit: Dict[str, int] = {}
 
     for op in intent.ops:
         if op.op in {"const", "reshape", "identity", "layout_cast"}:
@@ -123,84 +168,65 @@ def estimate_program_cost(
 
         out = op.output
         out_n = _resolve_numel(intent, out, shape_bindings)
-        if out_n is None:
+        if out_n is None or out_n <= 0:
             continue
+
         out_dt = intent.tensors[out].dtype
-        out_b = out_n * _dtype_bytes(out_dt)
+        bytes_out = float(out_n * _dtype_bytes(out_dt))
+        bytes_in = 0.0
 
-        # Default: elementwise-like, count 1 flop/element and charge IO bytes.
-        flops = float(out_n)
-        bytes_ = float(out_b)
+        # Determine input volume (broadcast-aware because tensors have their own shapes).
+        for nm in op.inputs:
+            in_n = _resolve_numel(intent, nm, shape_bindings)
+            if in_n is None or in_n <= 0:
+                continue
+            bytes_in += float(in_n * _dtype_bytes(intent.tensors[nm].dtype))
 
-        if op.op in {"add", "sub", "mul", "div", "max", "min", "ne", "lt", "le", "gt", "ge", "and", "or"}:
-            if op.inputs:
-                for nm in op.inputs[:2]:
-                    in_n = _resolve_numel(intent, nm, shape_bindings)
-                    if in_n is None:
-                        continue
-                    bytes_ += float(in_n * _dtype_bytes(intent.tensors[nm].dtype))
-        elif op.op == "where":
-            # cond + x + y + out
-            for nm in op.inputs:
-                in_n = _resolve_numel(intent, nm, shape_bindings)
-                if in_n is None:
-                    continue
-                bytes_ += float(in_n * _dtype_bytes(intent.tensors[nm].dtype))
-        elif op.op in {"abs", "rsqrt", "exp", "floor", "relu", "cast"}:
-            if op.inputs:
-                in_n = _resolve_numel(intent, op.inputs[0], shape_bindings)
-                if in_n is not None:
-                    bytes_ += float(in_n * _dtype_bytes(intent.tensors[op.inputs[0]].dtype))
-        elif op.op in {"reduce_sum", "reduce_max", "reduce_any"}:
-            # Reduction flops scale with input size.
-            if op.inputs:
-                in_n = _resolve_numel(intent, op.inputs[0], shape_bindings)
-                if in_n is not None:
-                    flops = float(in_n)
-                    bytes_ += float(in_n * _dtype_bytes(intent.tensors[op.inputs[0]].dtype))
-        elif op.op == "broadcast_in_dim":
-            if op.inputs:
-                in_n = _resolve_numel(intent, op.inputs[0], shape_bindings)
-                if in_n is not None:
-                    bytes_ += float(in_n * _dtype_bytes(intent.tensors[op.inputs[0]].dtype))
-                    flops = 0.0
-        elif op.op == "transpose":
-            if op.inputs:
-                in_n = _resolve_numel(intent, op.inputs[0], shape_bindings)
-                if in_n is not None:
-                    bytes_ += float(in_n * _dtype_bytes(intent.tensors[op.inputs[0]].dtype))
-                    flops = 0.0
-        elif op.op == "gather":
-            # Very rough: charge reading all indices + output writes.
-            for nm in op.inputs:
-                in_n = _resolve_numel(intent, nm, shape_bindings)
-                if in_n is None:
-                    continue
-                bytes_ += float(in_n * _dtype_bytes(intent.tensors[nm].dtype))
+        bytes_ = bytes_in + bytes_out
+
+        # Flops-like count.
+        if op.op in {"reduce_sum", "reduce_max", "reduce_any"} and op.inputs:
+            in_n = _resolve_numel(intent, op.inputs[0], shape_bindings)
+            elems = float(in_n) if in_n is not None and in_n > 0 else float(out_n)
         else:
-            # Unknown op: ignore to keep stable.
-            continue
+            elems = float(out_n)
+
+        w = float(weights.get(op.op, 0.0))
+        flops = elems * w
+
+        # Vectorization factor: scalar ops effectively use 1 lane.
+        if op.op in scalar_ops:
+            eff_lanes = 1
+            scalar_hit[op.op] = scalar_hit.get(op.op, 0) + 1
+        elif op.op in vec_ops:
+            eff_lanes = vw
+        else:
+            # Unknown ops: assume scalar to be conservative.
+            eff_lanes = 1
+            scalar_hit[op.op] = scalar_hit.get(op.op, 0) + 1
+
+        compute_peak = compute_peak_vec * (float(eff_lanes) / float(lanes))
+        compute_s = (flops / (compute_peak * 1e9)) if compute_peak > 0 else 0.0
+        mem_s = (bytes_ / (bw_core * 1e9)) if bw_core > 0 else 0.0
+        op_s = max(compute_s, mem_s)
 
         total_flops += flops
         total_bytes += bytes_
+        total_time_s += op_s
 
     intensity = (total_flops / total_bytes) if total_bytes > 0 else 0.0
-    mem_gflops = bw_core * intensity
-    achievable = min(compute_peak, mem_gflops) * max(1e-3, vec_eff)
+    achieved = (total_flops / (total_time_s * 1e9)) if total_time_s > 0 else 0.0
+    ms = total_time_s * 1e3
 
-    # Convert to time.
-    compute_s = (total_flops / (achievable * 1e9)) if achievable > 0 else 0.0
-    mem_s = (total_bytes / (bw_core * 1e9)) if bw_core > 0 else 0.0
-    time_s = max(compute_s, mem_s)
-    ms = time_s * 1e3
-
-    if total_bytes > 0:
-        notes.append(f"bw_core={bw_core:.3f}GB/s")
+    notes.append(f"bw_core={bw_core:.3f}GB/s")
     notes.append(f"vec_width={vw} lanes={lanes}")
     notes.append(f"intensity={intensity:.3f} flop/byte")
+    if scalar_hit:
+        short = ", ".join(f"{k}={v}" for k, v in sorted(scalar_hit.items()))
+        notes.append(f"scalar_ops={short}")
 
     return ProgramCostEstimate(
-        gflops=float(achievable),
+        gflops=float(achieved),
         ms=float(ms),
         intensity=float(intensity),
         flops=float(total_flops),
