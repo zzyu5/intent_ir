@@ -21,6 +21,7 @@ from intent_ir.macros import expand_macros
 from verify.gen_cases import TestCase
 from verify.interpreter import execute_intent_with_trace, InterpreterTrace
 from verify.diff_runner import DiffResult, _with_io_aliases  # type: ignore
+from verify.tolerances import infer_tolerances
 
 
 def _compare_arrays(name: str, pred: np.ndarray, ref: np.ndarray, tol: Dict[str, float]) -> DiffResult:
@@ -73,7 +74,7 @@ def debug_mismatch(
     """
     Return a JSON-serializable debug report.
     """
-    tol = tolerances or {"atol": 1e-3, "rtol": 1e-3}
+    tol = dict(tolerances) if tolerances is not None else None
 
     try:
         intent_exec = expand_macros(intent)
@@ -86,6 +87,8 @@ def debug_mismatch(
 
     ref_out = run_ref_fn(case)
     ref_out = _with_io_aliases(intent_exec, ref_out)
+    if tol is None:
+        tol = infer_tolerances(intent_exec, ref_out=ref_out).to_dict()
 
     bindings = dict(case.shapes)
     pred_out, trace, env = execute_intent_with_trace(intent_exec, ref_out, shape_bindings=bindings, sample_elems=sample_elems)
@@ -156,4 +159,3 @@ def debug_mismatch(
 
 
 __all__ = ["debug_mismatch"]
-

@@ -764,7 +764,6 @@ def run_pipeline_for_spec(
                 cand.intent,
                 run_ref_fn,
                 debug_case,
-                tolerances={"atol": 1e-3, "rtol": 1e-3},
                 sample_elems=16,
             )
         except Exception as e:

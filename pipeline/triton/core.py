@@ -1023,7 +1023,6 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
                 cand_for_run.intent,
                 spec.runner,
                 debug_case,
-                tolerances={"atol": 1e-3, "rtol": 1e-3},
                 sample_elems=16,
             )
         except Exception as e:

@@ -13,6 +13,7 @@ from intent_ir.ir import IntentFunction
 from intent_ir.macros import expand_macros
 from verify.gen_cases import TestCase
 from verify.interpreter import execute_intent
+from verify.tolerances import infer_tolerances
 
 
 @dataclass
@@ -40,8 +41,7 @@ def run_diff(
     constraints=None,
     tolerances=None,
 ) -> Tuple[List[DiffResult], List[Counterexample]]:
-    if tolerances is None:
-        tolerances = {"atol": 1e-3, "rtol": 1e-3}
+    inferred_tol = None if tolerances is None else dict(tolerances)
     cases_list = list(cases)
     try:
         intent_exec = expand_macros(intent)
@@ -69,6 +69,8 @@ def run_diff(
         # Make IO naming robust: LLM may emit Input/Output while runner returns input/output
         # (or *_ptr variants). Add non-destructive aliases so interpreter can resolve names.
         ref_out = _with_io_aliases(intent_exec, ref_out)
+        if inferred_tol is None:
+            inferred_tol = infer_tolerances(intent_exec, ref_out=ref_out).to_dict()
         # derive bindings and align input shapes
         bindings = dict(case.shapes)
         # Common axis aliases (align kernel-signature symbols with user-friendly names).
@@ -150,7 +152,7 @@ def run_diff(
             try:
                 with np.errstate(all="ignore"):
                     pred = execute_intent(intent_exec, inputs, shape_bindings=bindings)
-                diff = _compare_outputs(pred, ref_out, intent_exec.outputs, tolerances)
+                diff = _compare_outputs(pred, ref_out, intent_exec.outputs, inferred_tol)
             except Exception as e:
                 diff = DiffResult(
                     ok=False,
