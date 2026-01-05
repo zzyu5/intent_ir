@@ -287,13 +287,14 @@ def _default_domains(
     *,
     symbol_ranges: Dict[str, Dict[str, int]] | None,
     shape_hints: Dict[str, int] | None,
-    max_pid: int = 2,
-) -> Tuple[Dict[str, List[int]], Dict[str, int]]:
+    max_pid: int = 4,
+) -> Tuple[Dict[str, List[int]], Dict[str, int], Dict[str, Dict[str, Any]]]:
     """
     Build deterministic finite domains for bounded search and minimal lower bounds.
     """
     domains: Dict[str, List[int]] = {}
     lower_bounds: Dict[str, int] = {}
+    domain_info: Dict[str, Dict[str, Any]] = {}
     symbol_ranges = symbol_ranges or {}
     shape_hints = shape_hints or {}
 
@@ -301,39 +302,78 @@ def _default_domains(
         if v in {"pid0", "pid1", "pid2"}:
             domains[v] = list(range(0, max_pid + 1))
             lower_bounds[v] = 0
+            domain_info[v] = {"source": "pid_default", "start": 0, "end": int(max_pid) + 1}
             continue
         if v in symbol_ranges:
             s = int(symbol_ranges[v].get("start", 0))
             e = int(symbol_ranges[v].get("end", s + 1))
-            # Sample endpoints + midpoint deterministically.
-            mid = (s + e) // 2
-            cand = [s, s + 1, mid, e - 1]
-            cand = [x for x in cand if s <= x < e]
-            domains[v] = sorted(set(cand)) or [s]
+            size = max(0, e - s)
+            if size <= 32:
+                domains[v] = list(range(s, e))
+                domain_info[v] = {"source": "symbol_ranges_full", "start": s, "end": e}
+            else:
+                # Sample endpoints + midpoints deterministically (keeps search space bounded).
+                mid = (s + e) // 2
+                q1 = (s + mid) // 2
+                q3 = (mid + e) // 2
+                cand = [s, s + 1, q1, mid, q3, e - 2, e - 1]
+                cand = [x for x in cand if s <= x < e]
+                domains[v] = sorted(set(cand)) or [s]
+                domain_info[v] = {"source": "symbol_ranges_sampled", "start": s, "end": e}
             lower_bounds[v] = s
             continue
         if v in shape_hints:
             base = max(1, int(shape_hints[v]))
-            # Prioritize small + boundary values (deterministic).
-            cand = [1, 2, 3, 4, base - 1, base, base + 1]
-            cand = [x for x in cand if x >= 1]
-            domains[v] = sorted(set(cand))[:6]
+            cap = min(base, 128)
+            # Adaptive: enumerate fully for small caps, else sample to keep product bounded.
+            if cap <= 32:
+                domains[v] = list(range(1, cap + 1))
+                domain_info[v] = {"source": "shape_hints_full", "start": 1, "end": cap + 1}
+            else:
+                # Prioritize small + boundary values deterministically.
+                head = list(range(1, 9))  # 1..8
+                mid = [cap // 4, cap // 2, (3 * cap) // 4]
+                tail = [cap - 3, cap - 2, cap - 1, cap]
+                cand = [*head, *mid, *tail]
+                cand = [x for x in cand if 1 <= x <= cap]
+                domains[v] = sorted(set(cand))
+                domain_info[v] = {"source": "shape_hints_sampled", "start": 1, "end": cap + 1}
             lower_bounds[v] = 1
             continue
         if _ARG_INDEX_RE.match(v):
             domains[v] = [0, 1, 2, 4, 8, 16]
             lower_bounds[v] = 0
+            domain_info[v] = {"source": "arg_default"}
             continue
         if _R_INDEX_RE.match(v):
             # Loop/reduction indices are non-negative in TTIR/TIR semantics.
             domains[v] = [0, 1, 2, 3, 4, 7, 8, 15, 16, 31]
             lower_bounds[v] = 0
+            domain_info[v] = {"source": "r_default", "assumption": "non_negative"}
             continue
         # Unknown symbol: keep a tiny domain (may include negative offsets).
         domains[v] = [-1, 0, 1, 2, 3, 4]
         lower_bounds[v] = -1
+        domain_info[v] = {"source": "unknown_default", "assumption": "may_be_negative"}
 
-    return domains, lower_bounds
+    return domains, lower_bounds, domain_info
+
+
+def _summarize_domains(domains: Dict[str, List[int]], domain_info: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for v in sorted(domains.keys()):
+        vals = list(domains[v])
+        info = dict(domain_info.get(v, {}))
+        if len(vals) <= 16:
+            info["values"] = vals
+        else:
+            info["values_head"] = vals[:8]
+            info["values_tail"] = vals[-4:]
+            info["min"] = int(min(vals))
+            info["max"] = int(max(vals))
+            info["count"] = int(len(vals))
+        out[str(v)] = info
+    return out
 
 
 def _min_lower_bound(ix: IndexExpr, lower_bounds: Dict[str, int]) -> Optional[int]:
@@ -349,6 +389,20 @@ def _min_lower_bound(ix: IndexExpr, lower_bounds: Dict[str, int]) -> Optional[in
             return None
         lb += c * int(lower_bounds[str(v)])
     return lb
+
+
+def _lower_bound_assumptions(ix: IndexExpr, lower_bounds: Dict[str, int]) -> Dict[str, int]:
+    """
+    Return the per-variable lower bounds that a successful `_min_lower_bound` proof relies on.
+    """
+    out: Dict[str, int] = {}
+    for v, c in ix.terms.items():
+        if int(c) < 0:
+            continue
+        name = str(v)
+        if name in lower_bounds:
+            out[name] = int(lower_bounds[name])
+    return out
 
 
 def _find_upper_bound_clause(
@@ -390,17 +444,32 @@ def _bounded_model_search(
     domains: Dict[str, List[int]],
     extra_cond: Optional[Tuple[IndexExpr, str, IndexExpr]] = None,
     max_models: int = 5000,
-) -> Optional[CounterexampleModel]:
+) -> Tuple[Optional[CounterexampleModel], Dict[str, Any]]:
     """
-    Deterministic bounded search. Returns the first satisfying assignment.
+    Deterministic bounded search. Returns the first satisfying assignment plus search stats.
     """
+    def _prod(ns: Iterable[int]) -> int:
+        p = 1
+        for n in ns:
+            p *= int(n)
+        return int(p)
+
     vars_ = sorted(domains.keys())
     value_lists = [domains[v] for v in vars_]
+    space = _prod(len(vs) for vs in value_lists)
     checked = 0
     for values in itertools.product(*value_lists):
         checked += 1
         if checked > max_models:
-            break
+            stats = {
+                "vars": list(vars_),
+                "checked": int(checked - 1),
+                "max_models": int(max_models),
+                "domain_space": int(space),
+                "stop_reason": "hit_max_models",
+                "exhausted": False,
+            }
+            return None, stats
         env = {vars_[i]: int(values[i]) for i in range(len(vars_))}
         ok = True
         for c in constraints:
@@ -414,8 +483,25 @@ def _bounded_model_search(
             cc = _Constraint(lhs=lhs, op=op, rhs=rhs, raw="(extra)")
             if not _eval_constraint(cc, env):
                 continue
-        return CounterexampleModel(assignments=env)
-    return None
+        stats = {
+            "vars": list(vars_),
+            "checked": int(checked),
+            "max_models": int(max_models),
+            "domain_space": int(space),
+            "stop_reason": "found_model",
+            "exhausted": False,
+        }
+        return CounterexampleModel(assignments=env), stats
+
+    stats = {
+        "vars": list(vars_),
+        "checked": int(checked),
+        "max_models": int(max_models),
+        "domain_space": int(space),
+        "stop_reason": "exhausted_domain",
+        "exhausted": True,
+    }
+    return None, stats
 
 
 def check_mask_implies_inbounds(
@@ -465,7 +551,9 @@ def check_mask_implies_inbounds(
         subst = _build_subst(parsed)
         norm_constraints = [_Constraint(lhs=_substitute(c.lhs, subst), op=c.op, rhs=_substitute(c.rhs, subst), raw=c.raw) for c in parsed]
 
-        domains, lower_bounds = _default_domains(_variables_in_constraints(norm_constraints), symbol_ranges=symbol_ranges, shape_hints=shape_hints)
+        domains, lower_bounds, domain_info = _default_domains(
+            _variables_in_constraints(norm_constraints), symbol_ranges=symbol_ranges, shape_hints=shape_hints
+        )
 
         dim_checks: List[O3DimCheck] = []
         access_status: Status = "PASS"
@@ -515,7 +603,11 @@ def check_mask_implies_inbounds(
                         index=idx,
                         upper_bound=ub,
                         status="PASS",
-                        witness={"upper_bound_clause": ub_clause.raw, "lower_bound_proof": f"min_bound={lb}"},
+                        witness={
+                            "upper_bound_clause": ub_clause.raw,
+                            "lower_bound_proof": f"min_bound={lb}",
+                            "assumptions": {"lower_bounds": _lower_bound_assumptions(idx, lower_bounds)},
+                        },
                     )
                 )
                 passed += 1
@@ -523,7 +615,7 @@ def check_mask_implies_inbounds(
                 continue
 
             # Try to find a concrete counterexample: predicate holds but idx < 0.
-            cex = _bounded_model_search(
+            cex, stats = _bounded_model_search(
                 norm_constraints,
                 domains=domains,
                 extra_cond=(idx, "<", IndexExpr(terms={}, const=0)),
@@ -537,7 +629,16 @@ def check_mask_implies_inbounds(
                         upper_bound=ub,
                         status="FAIL",
                         reason="found model where predicate holds but index is negative",
-                        witness={"upper_bound_clause": ub_clause.raw},
+                        witness={
+                            "upper_bound_clause": ub_clause.raw,
+                            "bounded_search": {
+                                "goal": "find model: predicate && (idx < 0)",
+                                "domains": _summarize_domains(domains, domain_info),
+                                "stats": stats,
+                                "bounded": True,
+                                "incomplete_note": "FAIL is sound for the found model; the search itself is bounded/incomplete for non-found cases",
+                            },
+                        },
                         counterexample=cex,
                     )
                 )
@@ -554,7 +655,20 @@ def check_mask_implies_inbounds(
                     upper_bound=ub,
                     status="UNKNOWN",
                     reason="cannot prove index non-negative under current domain assumptions",
-                    witness={"upper_bound_clause": ub_clause.raw, "hint": "install z3-solver for stronger proofs (optional)"},
+                    witness={
+                        "upper_bound_clause": ub_clause.raw,
+                        "bounded_search": {
+                            "goal": "try refute: predicate && (idx < 0)",
+                            "domains": _summarize_domains(domains, domain_info),
+                            "stats": stats,
+                            "bounded": True,
+                            "incomplete_note": (
+                                "No counterexample found in this bounded search; this does NOT prove safety. "
+                                "Counterexamples may exist outside enumerated domains or beyond max_models."
+                            ),
+                        },
+                        "hint": "optional: install z3-solver for stronger proofs; or increase max_counterexample_search / domain coverage",
+                    },
                 )
             )
             unknown += 1

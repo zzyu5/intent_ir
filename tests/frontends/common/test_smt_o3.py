@@ -60,5 +60,28 @@ def test_o3_fail_emits_counterexample_model():
             if d.status == "FAIL" and d.counterexample is not None:
                 found = True
                 assert "pid0" in d.counterexample.assignments
+                assert "bounded_search" in d.witness
+                assert "stats" in d.witness["bounded_search"]
     assert found
 
+
+def test_o3_unknown_reports_bounded_search_stats_when_no_refutation_found():
+    # idx = pid0 - r0 is non-negative when pid0 >= r0, but the MVP prover cannot derive that.
+    accesses = [
+        AccessSummary(
+            kind="load",
+            tensor="X",
+            dtype="fp32",
+            rank=1,
+            index_exprs=[IndexExpr(terms={"pid0": 1, "r0": -1}, const=0)],
+            predicate=Predicate(clauses=["pid0 - r0 < M", "pid0 >= r0"]),
+            address_space="global",
+        )
+    ]
+    rep = check_mask_implies_inbounds(accesses, shape_hints={"M": 8}, symbol_ranges={"r0": {"start": 0, "end": 4}})
+    assert rep.status == "UNKNOWN"
+    # Ensure witness includes bounded-search domains/stats (explicitly marked incomplete).
+    dim0 = rep.access_checks[0].dims[0]
+    assert dim0.status == "UNKNOWN"
+    assert "bounded_search" in dim0.witness
+    assert dim0.witness["bounded_search"]["stats"]["stop_reason"] in {"exhausted_domain", "hit_max_models"}
