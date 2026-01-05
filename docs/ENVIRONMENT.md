@@ -6,6 +6,7 @@ This repo mixes three kinds of dependencies:
 
 - Python 3.10+ recommended
 - Install: `pip install -r requirements/dev.txt`
+- Fully pinned install: `pip install -r requirements/lock/dev.lock.txt`
 - Quick check: `python scripts/check_env.py`
 
 ## Triton pipeline (GPU)
@@ -39,3 +40,7 @@ Secrets are not committed:
 
 - LLM provider keys live in `intent_ir/llm_providers.local.json` (gitignored)
 - SSH password can be provided via `INTENTIR_SSH_PASSWORD` (or typed when prompted), or use `--use-key` if you configured SSH keys
+
+## Docker (optional)
+
+- CPU-only dev image: see `docker/README.md`

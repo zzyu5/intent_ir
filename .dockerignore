@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.git/
+artifacts/
+.pkl_memoize_py3/
