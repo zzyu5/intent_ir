@@ -12,7 +12,7 @@ These tests cover IntentIR types/parser/printer and the TTIR facts/contract help
 
 Run:
 
-- `PYTHONPATH=. python scripts/triton/full_pipeline_verify.py`
+- `python scripts/triton/full_pipeline_verify.py`
 
 Outputs are written under:
 
@@ -30,7 +30,7 @@ This validates “IntentIR ops → generated C → local gcc → compare with ba
 
 Run:
 
-- `PYTHONPATH=. python scripts/rvv_remote_run.py --kernel <name> --host <host> --user <user>`
+- `python scripts/rvv_remote_run.py --kernel <name> --host <host> --user <user> --use-key`
 
 The remote executable prints PASS/FAIL and per-output diff stats.
 
@@ -38,11 +38,11 @@ The remote executable prints PASS/FAIL and per-output diff stats.
 
 Run:
 
-- `PYTHONPATH=. python scripts/rvv_remote_suite.py --frontend both --host <host> --user <user> --use-key --case-index 0`
+- `python scripts/rvv_remote_suite.py --frontend both --host <host> --user <user> --use-key --case-index 0`
 
 ## Remote RVV perf suite (optional)
 
 Run:
 
-- `PYTHONPATH=. python scripts/benchmark_suite.py --frontend both --host <host> --user <user> --use-key --bench-iters 50 --bench-warmup 5 --out artifacts/perf_latest.json`
+- `python scripts/benchmark_suite.py --frontend both --host <host> --user <user> --use-key --bench-iters 50 --bench-warmup 5 --out artifacts/perf_latest.json`
 - `python scripts/compare_perf.py --baseline <baseline.json> --current artifacts/perf_latest.json --threshold 0.05`

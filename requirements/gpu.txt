@@ -1,0 +1,6 @@
+# NOTE: these packages are tightly coupled to CUDA / driver versions.
+# Install a CUDA-compatible Torch build first (e.g., via official instructions),
+# then install the rest.
+
+triton
+tilelang

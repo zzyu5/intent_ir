@@ -5,8 +5,8 @@ This repo mixes three kinds of dependencies:
 ## Python (core)
 
 - Python 3.10+ recommended
-- `numpy`, `requests`
-- `pytest` for unit tests
+- Install: `pip install -r requirements/dev.txt`
+- Quick check: `python scripts/check_env.py`
 
 ## Triton pipeline (GPU)
 
@@ -31,7 +31,11 @@ To run `scripts/rvv_remote_run.py` you need:
 - An SSH-accessible RVV host with `gcc` that supports `-march=rv64gcv`
 - Python package `paramiko` on the local machine
 
+You can validate the remote toolchain with:
+
+- `python scripts/check_env.py --remote-host <host> --remote-user <user> --use-key`
+
 Secrets are not committed:
 
 - LLM provider keys live in `intent_ir/llm_providers.local.json` (gitignored)
-- SSH password should be provided via `INTENTIR_SSH_PASSWORD` or typed when prompted
+- SSH password can be provided via `INTENTIR_SSH_PASSWORD` (or typed when prompted), or use `--use-key` if you configured SSH keys
