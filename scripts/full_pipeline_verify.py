@@ -28,6 +28,7 @@ def main() -> None:
     args = ap.parse_args()
 
     wanted = set(args.kernel or [])
+    from pipeline.run import process_batch
 
     if args.frontend == "triton":
         from pipeline.triton.core import default_kernel_specs, run_pipeline_for_spec
@@ -38,16 +39,30 @@ def main() -> None:
             for s in default_kernel_specs():
                 print(s.name)
             return
-        for spec in default_kernel_specs():
-            if wanted and spec.name not in wanted:
-                continue
+        specs = [s for s in default_kernel_specs() if (not wanted or s.name in wanted)]
+
+        def _write(name: str, payload: object) -> Path:
+            out_path = out_dir / f"{name}.json"
+            out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            return out_path
+
+        def run_one(spec) -> dict:
             print(f"\n=== {spec.name} ===")
             report = run_pipeline_for_spec(spec, out_dir=out_dir, cases_limit=int(args.cases_limit))
-            out_path = out_dir / f"{spec.name}.json"
-            out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+            out_path = _write(spec.name, report)
             diff_ok = bool((report.get("diff") or {}).get("ok"))
             contract_level = (report.get("contract") or {}).get("level")
             print(f"Report: {out_path} | contract={contract_level} diff={'OK' if diff_ok else 'FAIL'}")
+            return report
+
+        def on_error(spec, err: dict) -> None:
+            out_path = _write(spec.name, err)
+            et = ((err.get("error") or {}).get("type") or "Exception")
+            em = ((err.get("error") or {}).get("message") or "")
+            print(f"Pipeline failed: {et}: {em}")
+            print(f"Report: {out_path} | contract=N/A diff=FAIL")
+
+        process_batch(specs, run_one, name_fn=lambda s: s.name, on_error=on_error)
         return
 
     # tilelang
@@ -60,16 +75,30 @@ def main() -> None:
         for s in specs:
             print(s.name)
         return
-    for spec in specs:
-        if wanted and spec.name not in wanted:
-            continue
+    specs = [s for s in specs if (not wanted or s.name in wanted)]
+
+    def _write(name: str, payload: object) -> Path:
+        out_path = out_dir / f"{name}.json"
+        out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return out_path
+
+    def run_one(spec) -> dict:
         print(f"\n=== {spec.name} ===")
         report = run_pipeline_for_spec(spec, out_dir=out_dir, cases_limit=int(args.cases_limit))
-        out_path = out_dir / f"{spec.name}.json"
-        out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        out_path = _write(spec.name, report)
         diff_ok = bool((report.get("diff") or {}).get("ok"))
         contract_level = (report.get("contract") or {}).get("level")
         print(f"Report: {out_path} | contract={contract_level} diff={'OK' if diff_ok else 'FAIL'}")
+        return report
+
+    def on_error(spec, err: dict) -> None:
+        out_path = _write(spec.name, err)
+        et = ((err.get("error") or {}).get("type") or "Exception")
+        em = ((err.get("error") or {}).get("message") or "")
+        print(f"Pipeline failed: {et}: {em}")
+        print(f"Report: {out_path} | contract=N/A diff=FAIL")
+
+    process_batch(specs, run_one, name_fn=lambda s: s.name, on_error=on_error)
 
 
 if __name__ == "__main__":
