@@ -22,6 +22,7 @@ from verify.diff_runner import run_diff
 from verify.gen_cases import GeneratedCases, TestCase, generate_cases_split
 from verify.metamorphic import run_bounded_exhaustive, run_metamorphic_suite
 from verify.mutation import run_mutation_kill
+from verify.tolerances import infer_tolerances
 
 from intent_ir.llm import LLMIntentHub
 from intent_ir.macros import enrich_intent_macros
@@ -736,7 +737,9 @@ def run_pipeline_for_spec(
     cases_out = list(cases_pack.out_of_contract)
     report["cases"] = {"in_contract": [dict(c.shapes) for c in cases_in], "out_of_contract": [dict(c.shapes) for c in cases_out]}
 
-    diffs_in, cex_in = run_diff(cand.intent, run_ref_fn, cases_in)
+    tol = infer_tolerances(cand.intent).to_dict()
+    report["tolerances"] = dict(tol)
+    diffs_in, cex_in = run_diff(cand.intent, run_ref_fn, cases_in, tolerances=tol)
     diff_ok = bool(diffs_in and all(d.ok for d in diffs_in))
     report["diff"] = {
         "ok": bool(diff_ok),
@@ -773,8 +776,8 @@ def run_pipeline_for_spec(
     if stage_c and diff_ok and cases_in:
         print(f"[{spec.name}] stage7: Task5 stage C (metamorphic + bounded)", flush=True)
         base_case = TestCase(shapes=dict(spec.canonical_shapes), dtypes={}, seed=0)
-        meta = run_metamorphic_suite(spec.name, cand.intent, stage_c_ref_fn, base_case=base_case)
-        bounded = run_bounded_exhaustive(spec.name, cand.intent, stage_c_ref_fn, max_cases=64)
+        meta = run_metamorphic_suite(spec.name, cand.intent, stage_c_ref_fn, base_case=base_case, atol=tol["atol"], rtol=tol["rtol"])
+        bounded = run_bounded_exhaustive(spec.name, cand.intent, stage_c_ref_fn, atol=tol["atol"], rtol=tol["rtol"], max_cases=64)
         report["stage_c"] = {
             "metamorphic": {
                 "ok": bool(meta.ok),
@@ -789,6 +792,14 @@ def run_pipeline_for_spec(
                 "first_failure_summary": bounded.first_failure_summary,
             },
         }
+        try:
+            from verify.numerical_stability import run_numerical_stability_suite
+
+            report["stage_c"]["numerical_stability"] = run_numerical_stability_suite(
+                spec.name, cand.intent, stage_c_ref_fn, base_case=base_case, tolerances=tol
+            ).to_json_dict()
+        except Exception as e:
+            report["stage_c"]["numerical_stability"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
     else:
         report["stage_c"] = {"skipped": True, "reason": ("diff_failed" if stage_c and not diff_ok else "disabled_or_no_cases")}
 
@@ -806,6 +817,8 @@ def run_pipeline_for_spec(
             static_validate_fn=None,
             n_mutants=8,
             seed=0,
+            atol=float(tol["atol"]),
+            rtol=float(tol["rtol"]),
         )
         report["mutation_kill"] = {
             "kill_rate": float(mut.kill_rate),

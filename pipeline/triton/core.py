@@ -34,6 +34,7 @@ from frontends.common.obligations import evaluate_obligations
 from frontends.triton.contract import evaluate_contract_v2
 from verify.metamorphic import run_bounded_exhaustive, run_metamorphic_suite
 from verify.mutation import run_mutation_kill
+from verify.tolerances import infer_tolerances
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -883,7 +884,9 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
     cases_out = list(cases_pack.out_of_contract)
     report["cases"] = {"in_contract": [dict(c.shapes) for c in cases_in], "out_of_contract": [dict(c.shapes) for c in cases_out]}
 
-    diffs_in, cex_in = run_diff(cand_for_run.intent, spec.runner, cases_in)
+    tol = infer_tolerances(cand_for_run.intent).to_dict()
+    report["tolerances"] = dict(tol)
+    diffs_in, cex_in = run_diff(cand_for_run.intent, spec.runner, cases_in, tolerances=tol)
     if diffs_in:
         worst = max(diffs_in, key=lambda d: (not d.ok, d.max_abs_err))
         report["diff"] = {
@@ -909,7 +912,7 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
 
     # Out-of-contract probing (does NOT affect correctness gate).
     if cases_out:
-        diffs_out, cex_out = run_diff(cand_for_run.intent, spec.runner, cases_out)
+        diffs_out, cex_out = run_diff(cand_for_run.intent, spec.runner, cases_out, tolerances=tol)
         if diffs_out:
             worst = max(diffs_out, key=lambda d: (not d.ok, d.max_abs_err))
             report["diff_out_of_contract"] = {
@@ -990,6 +993,8 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
                 report["cases"] = {"in_contract": [dict(c.shapes) for c in cases_fix], "out_of_contract": []}
                 diffs_fix, cex_fix = run_diff(cand_for_run.intent, spec.runner, cases_fix)
                 diffs_in, cex_in = diffs_fix, cex_fix
+                tol = infer_tolerances(cand_for_run.intent).to_dict()
+                report["tolerances"] = dict(tol)
                 if diffs_in:
                     worst = max(diffs_in, key=lambda d: (not d.ok, d.max_abs_err))
                     report["diff"] = {
@@ -1030,8 +1035,8 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
 
     # 5) Stage C + mutation-kill if Stage B passed
     if diffs_in and all(d.ok for d in diffs_in):
-        meta = run_metamorphic_suite(spec.name, cand_for_run.intent, spec.runner, base_case=cases_in[0])
-        bounded = run_bounded_exhaustive(spec.name, cand_for_run.intent, spec.runner)
+        meta = run_metamorphic_suite(spec.name, cand_for_run.intent, spec.runner, base_case=cases_in[0], atol=tol["atol"], rtol=tol["rtol"])
+        bounded = run_bounded_exhaustive(spec.name, cand_for_run.intent, spec.runner, atol=tol["atol"], rtol=tol["rtol"])
         report["stage_c"] = {
             "metamorphic": {
                 "ok": bool(meta.ok),
@@ -1046,6 +1051,14 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
                 "first_failure_summary": bounded.first_failure_summary,
             },
         }
+        try:
+            from verify.numerical_stability import run_numerical_stability_suite
+
+            report["stage_c"]["numerical_stability"] = run_numerical_stability_suite(
+                spec.name, cand_for_run.intent, spec.runner, base_case=cases_in[0], tolerances=tol
+            ).to_json_dict()
+        except Exception as e:
+            report["stage_c"]["numerical_stability"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
         if cert is not None:
             mut = run_mutation_kill(
                 spec.name,
@@ -1056,6 +1069,8 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
                 static_validate_fn=(lambda m, _cert=cert: static_validate(m, _cert)),
                 n_mutants=16,
                 seed=0,
+                atol=float(tol["atol"]),
+                rtol=float(tol["rtol"]),
             )
             report["mutation_kill"] = {
                 "kill_rate": float(mut.kill_rate),

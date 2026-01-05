@@ -82,17 +82,18 @@ def infer_tolerances(
             continue
         tol = Tolerances(atol=max(tol.atol, op_tol.atol), rtol=max(tol.rtol, op_tol.rtol))
 
-    # 2) Output dtype adjustment.
+    # 2) Dtype adjustment (outputs AND external inputs).
+    # If any external dtype is f16/bf16, keep legacy tolerances (avoid false positives).
     out_dtypes: Set[str] = set()
     if ref_out is not None:
-        for name in intent.outputs:
+        for name in (set(intent.outputs) | set(intent.tensors.keys())):
             if name in ref_out:
                 try:
                     out_dtypes.add(_dtype_kind(np.asarray(ref_out[name]).dtype))
                 except Exception:
                     pass
     else:
-        for name in intent.outputs:
+        for name in intent.tensors.keys():
             t = intent.tensors.get(name)
             if t is not None:
                 out_dtypes.add(str(t.dtype))
@@ -110,4 +111,3 @@ def infer_tolerances(
 
 
 __all__ = ["Tolerances", "infer_tolerances"]
-
