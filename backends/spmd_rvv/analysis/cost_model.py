@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .hardware_profile import RVVHardwareProfile
 from intent_ir.ir import IntentFunction
@@ -94,6 +94,24 @@ def estimate_program_cost(
     vec_width: Optional[int] = None,
     evidence: object | None = None,
 ) -> ProgramCostEstimate:
+    est, _ = estimate_program_cost_verbose(
+        intent,
+        shape_bindings=shape_bindings,
+        profile=profile,
+        vec_width=vec_width,
+        evidence=evidence,
+    )
+    return est
+
+
+def estimate_program_cost_verbose(
+    intent: IntentFunction,
+    *,
+    shape_bindings: Dict[str, int],
+    profile: RVVHardwareProfile,
+    vec_width: Optional[int] = None,
+    evidence: object | None = None,
+) -> tuple[ProgramCostEstimate, Dict[str, Any]]:
     """
     Estimate cost for reduce/elementwise-heavy kernels (matmul is treated as "unknown" here).
 
@@ -181,6 +199,7 @@ def estimate_program_cost(
     notes: List[str] = []
     scalar_hit: Dict[str, int] = {}
     hot: List[Tuple[float, str]] = []
+    op_breakdown: List[Dict[str, Any]] = []
 
     cache_line = int(getattr(profile, "cache_line_bytes", 64) or 64)
     summary = build_stride_summary(
@@ -198,7 +217,7 @@ def estimate_program_cost(
         if show:
             notes.append(f"evidence_penalty={show}")
 
-    for op in intent.ops:
+    for op_idx, op in enumerate(intent.ops):
         if op.op in {"const", "reshape", "identity", "layout_cast"}:
             continue
         if op.op == "matmul":
@@ -306,6 +325,27 @@ def estimate_program_cost(
         total_bytes += bytes_
         total_time_s += op_s
         hot.append((float(op_s), f"{op.op}:{out}"))
+        op_breakdown.append(
+            {
+                "op_index": int(op_idx),
+                "op": str(op.op),
+                "output": str(out),
+                "output_dtype": str(out_dt),
+                "output_numel": int(out_n),
+                "bytes_in": float(bytes_in),
+                "bytes_out": float(bytes_out),
+                "bytes_total": float(bytes_),
+                "flops_equiv": float(flops),
+                "eff_lanes": int(eff_lanes),
+                "vectorized": bool(op.op in vec_ops and op.op not in scalar_ops),
+                "compute_peak_gflops": float(compute_peak),
+                "bw_core_gbps": float(bw_core),
+                "compute_ms": float(compute_s * 1e3),
+                "mem_ms": float(mem_s * 1e3),
+                "op_ms": float(op_s * 1e3),
+                "bottleneck": ("compute" if compute_s >= mem_s else "memory"),
+            }
+        )
 
     intensity = (total_flops / total_bytes) if total_bytes > 0 else 0.0
     achieved = (total_flops / (total_time_s * 1e9)) if total_time_s > 0 else 0.0
@@ -322,7 +362,7 @@ def estimate_program_cost(
         top = ", ".join(f"{name}@{t*1e3:.3f}ms" for t, name in hot[:5])
         notes.append(f"hot_ops={top}")
 
-    return ProgramCostEstimate(
+    est = ProgramCostEstimate(
         gflops=float(achieved),
         ms=float(ms),
         intensity=float(intensity),
@@ -330,6 +370,36 @@ def estimate_program_cost(
         bytes=float(total_bytes),
         notes=tuple(notes),
     )
+    debug: Dict[str, Any] = {
+        "model": "program_roofline_v0",
+        "lanes": int(lanes),
+        "vec_width": int(vw),
+        "compute_peak_vec_gflops": float(compute_peak_vec),
+        "bw_core_gbps": float(bw_core),
+        "intensity": float(intensity),
+        "total": {
+            "ms": float(ms),
+            "gflops": float(achieved),
+            "flops_equiv": float(total_flops),
+            "bytes": float(total_bytes),
+        },
+        "tensor_penalty": {str(k): float(v) for k, v in tensor_penalty.items()},
+        "stride_summary": (
+            {
+                "dominant_range": summary.dominant_range,
+                "dominant_axis": summary.dominant_axis,
+                "dominant_range_len": summary.dominant_range_len,
+                "has_contiguous_range": bool(summary.has_contiguous_range),
+                "notes": list(summary.notes),
+                "accesses_head": [a.to_json_dict() for a in (summary.accesses[:6] if summary.accesses else [])],
+            }
+            if summary is not None
+            else None
+        ),
+        "op_breakdown": op_breakdown,
+    }
+
+    return est, debug
 
 
 class GEMMCostModel:
@@ -357,27 +427,64 @@ class GEMMCostModel:
         return flops / bytes_moved if bytes_moved > 0 else 0.0
 
     def evaluate_tile(self, tm: int, tn: int, tk: int) -> CostEstimate:
-        ai = self._compute_intensity(tm, tn, tk)
-        cache_level, _ = self._cache_level(tm, tn, tk)
+        est, _ = self.evaluate_tile_verbose(tm, tn, tk)
+        return est
 
-        vector_lanes = max(1, self.profile.rvv_vlen_bits // 32)
+    def evaluate_tile_verbose(self, tm: int, tn: int, tk: int) -> tuple[CostEstimate, Dict[str, Any]]:
+        ai = self._compute_intensity(tm, tn, tk)
+        cache_level, cache_lat = self._cache_level(tm, tn, tk)
+        ws = _working_set_bytes(tm, tn, tk, self.dtype_size)
+
+        vector_lanes = max(1, int(self.profile.rvv_vlen_bits) // 32)
         compute_peak = (
-            self.profile.num_cores
-            * self.profile.fma_units_per_core
-            * vector_lanes
-            * self.profile.frequency_ghz
+            float(self.profile.num_cores)
+            * float(self.profile.fma_units_per_core)
+            * float(vector_lanes)
+            * float(self.profile.frequency_ghz)
             * 2.0
-        )  # approximate GFLOPs peak
-        # mem_bandwidth_gbps is treated as GB/s; AI is FLOPs/byte -> memory roofline in GFLOPs is GB/s * FLOPs/byte.
-        memory_peak = self.profile.mem_bandwidth_gbps * ai
-        achievable = min(compute_peak, memory_peak)
+        )  # GFLOPs peak (very rough)
+        memory_peak = float(self.profile.mem_bandwidth_gbps) * float(ai)
+        roofline = min(compute_peak, memory_peak)
+        bottleneck = "compute" if compute_peak <= memory_peak else "memory"
+
+        cache_factor = 1.0
         if cache_level == "DRAM":
-            achievable *= 0.5
+            cache_factor = 0.5
         elif cache_level == "L2":
-            achievable *= 0.8
-        # vector alignment efficiency
-        achievable *= min(1.0, tn / vector_lanes)
-        return CostEstimate(gflops=achievable, cache_level=cache_level, intensity=ai)
+            cache_factor = 0.8
+        elif cache_level == "L3":
+            cache_factor = 0.65
+
+        after_cache = roofline * cache_factor
+        vec_eff = min(1.0, float(tn) / float(vector_lanes))
+        achievable = after_cache * vec_eff
+
+        est = CostEstimate(gflops=float(achievable), cache_level=str(cache_level), intensity=float(ai))
+        dbg: Dict[str, Any] = {
+            "model": "gemm_roofline_v0",
+            "tile": {"tile_m": int(tm), "tile_n": int(tn), "tile_k": int(tk)},
+            "dtype_bytes": int(self.dtype_size),
+            "working_set_bytes": int(ws),
+            "cache_level": str(cache_level),
+            "cache_latency_cycles": int(cache_lat),
+            "vector_lanes": int(vector_lanes),
+            "compute_peak_gflops": float(compute_peak),
+            "memory_peak_gflops": float(memory_peak),
+            "roofline_gflops": float(roofline),
+            "bottleneck": str(bottleneck),
+            "cache_factor": float(cache_factor),
+            "after_cache_gflops": float(after_cache),
+            "vec_efficiency": float(vec_eff),
+            "achievable_gflops": float(achievable),
+            "intensity": float(ai),
+            "notes": [
+                "roofline=min(compute_peak,memory_peak)",
+                "memory_peak=mem_bandwidth_gbps*AI (AI=FLOPs/byte)",
+                "cache_factor is a heuristic penalty",
+                "vec_efficiency=min(1, tile_n/vector_lanes)",
+            ],
+        }
+        return est, dbg
 
     def search_best_tile(self, candidates: List[Tuple[int, int, int]]) -> TileChoice:
         # Local import to avoid circular dep at module load time.
@@ -397,4 +504,10 @@ class GEMMCostModel:
         return TileChoice(tile_m=tm, tile_n=tn, tile_k=tk, vec_width=None, notes=notes)
 
 
-__all__ = ["GEMMCostModel", "CostEstimate", "ProgramCostEstimate", "estimate_program_cost"]
+__all__ = [
+    "GEMMCostModel",
+    "CostEstimate",
+    "ProgramCostEstimate",
+    "estimate_program_cost",
+    "estimate_program_cost_verbose",
+]

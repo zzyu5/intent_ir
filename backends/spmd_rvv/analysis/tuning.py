@@ -18,11 +18,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Literal, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Literal, Optional, Set, Tuple
 
 from intent_ir.ir import IntentFunction, ScheduleSketch
 
-from .cost_model import GEMMCostModel, estimate_program_cost
+from .cost_model import GEMMCostModel, estimate_program_cost, estimate_program_cost_verbose
 from .hardware_profile import RVVHardwareProfile
 from frontends.common.access_witness import build_stride_summary
 
@@ -40,6 +40,7 @@ class TuningRequest:
     budget: int = 0
     locks: Dict[str, int] = field(default_factory=dict)
     constraints: Dict[str, Set[int]] = field(default_factory=dict)
+    debug: bool = False
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,7 @@ class TuningResult:
     notes: List[str] = field(default_factory=list)
     model_op: Optional[str] = None
     model_mnk: Optional[Tuple[int, int, int]] = None
+    debug: Dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -96,6 +98,24 @@ def _expand_hint_values(hints: Iterable[int], *, max_val: int, align: int = 1) -
                 if 1 <= v0 <= max_v:
                     cand.add(int(v0))
     return sorted(cand)
+
+
+def _stride_summary_brief(summary) -> Dict[str, Any] | None:
+    if summary is None:
+        return None
+    try:
+        tensor_penalty = dict(getattr(summary, "tensor_penalty", {}) or {})
+        top = sorted(tensor_penalty.items(), key=lambda kv: float(kv[1]), reverse=True)[:6]
+        return {
+            "dominant_range": getattr(summary, "dominant_range", None),
+            "dominant_axis": getattr(summary, "dominant_axis", None),
+            "dominant_range_len": getattr(summary, "dominant_range_len", None),
+            "has_contiguous_range": bool(getattr(summary, "has_contiguous_range", False)),
+            "tensor_penalty_top": [{str(k): float(v)} for k, v in top],
+            "notes": list(getattr(summary, "notes", []) or []),
+        }
+    except Exception:
+        return None
 
 
 def _parse_kv_int(s: str) -> Tuple[str, int]:
@@ -518,7 +538,13 @@ def select_schedule(
     )
     best = candidates[0] if candidates else None
     if best is None:
-        return TuningResult(schedule=(intent.schedule or ScheduleSketch()), notes=notes + ["no candidates"], model_op=None, model_mnk=None)
+        return TuningResult(
+            schedule=(intent.schedule or ScheduleSketch()),
+            notes=notes + ["no candidates"],
+            model_op=None,
+            model_mnk=None,
+            debug=({"error": "no candidates"} if getattr(req, "debug", False) else None),
+        )
 
     schedule = best.schedule
     notes.extend(list(best.notes))
@@ -527,11 +553,61 @@ def select_schedule(
         notes.append(f"picked_tile=({tm},{tn},{tk})")
 
     model_op_idx, mnk = _pick_model_matmul(intent, shape_bindings)
+    debug: Dict[str, Any] | None = None
+    if getattr(req, "debug", False):
+        debug = {
+            "mode": str(req.mode),
+            "score": float(best.score),
+            "picked_tile_mnk": (list(best.tile_mnk) if best.tile_mnk is not None else None),
+            "schedule": {
+                "tile_m": schedule.tile_m,
+                "tile_n": schedule.tile_n,
+                "tile_k": schedule.tile_k,
+                "vec_width": schedule.vec_width,
+                "pipeline_depth": schedule.pipeline_depth,
+                "vec_axis": schedule.vec_axis,
+                "parallel_axes": list(schedule.parallel_axes or []),
+                "axis_bindings": dict(schedule.axis_bindings or {}),
+                "memory_hint": dict(schedule.memory_hint or {}),
+            },
+        }
+        # Attach a brief evidence summary (if available) to explain why vec_width choices were made.
+        try:
+            ss = build_stride_summary(
+                evidence,
+                shape_bindings=shape_bindings,
+                cache_line_bytes=int(getattr(profile, "cache_line_bytes", 64) or 64),
+            )
+        except Exception:
+            ss = None
+        debug["stride_summary"] = _stride_summary_brief(ss)
+        if mnk and model_op_idx is not None and best.tile_mnk is not None:
+            M, N, K = mnk
+            tm, tn, tk = best.tile_mnk
+            model = GEMMCostModel(profile, M=M, N=N, K=K)
+            _, cm_dbg = model.evaluate_tile_verbose(int(tm), int(tn), int(tk))
+            debug["cost_model"] = cm_dbg
+            debug["kind"] = "gemm"
+            debug["model_mnk"] = [int(M), int(N), int(K)]
+            debug["model_op"] = f"ops[{model_op_idx}].matmul"
+        else:
+            # Program-level roofline for non-matmul-heavy kernels (depends mostly on vec_width + access penalties).
+            vw = schedule.vec_width if isinstance(schedule.vec_width, int) else None
+            _, cm_dbg = estimate_program_cost_verbose(
+                intent,
+                shape_bindings=shape_bindings,
+                profile=profile,
+                vec_width=(int(vw) if isinstance(vw, int) and int(vw) > 0 else None),
+                evidence=evidence,
+            )
+            debug["cost_model"] = cm_dbg
+            debug["kind"] = "program"
     return TuningResult(
         schedule=schedule,
         notes=notes,
         model_op=(f"ops[{model_op_idx}].matmul" if model_op_idx is not None else None),
         model_mnk=mnk,
+        debug=debug,
     )
 
 
