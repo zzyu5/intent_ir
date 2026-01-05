@@ -11,6 +11,7 @@ importable modules (e.g., `pipeline/triton/core.py`, or backend/verify packages)
 - `pipeline/triton/core.py`: reusable Triton pipeline helper library used by `scripts/triton/full_pipeline_verify.py`.
 - `backend_codegen_smoke.py`: validate Task6 backend codegen locally (no LLM, no remote).
 - `rvv_remote_run.py`: run Task6 on a remote RVV host and compare with saved baseline.
+  - `--profile-ops` emits `INTENTIR_PROFILE {..}` per-op timing JSON (from the RVV program stdout).
 - `rvv_remote_suite.py`: run remote RVV tests across the 6-kernel suite (user-facing).
 - `benchmark_suite.py`: run remote RVV perf microbenchmarks (ns/iter) for the 6-kernel suite.
 - `compare_perf.py`: compare two perf JSONs and fail on regressions.

@@ -1271,6 +1271,54 @@ struct CProgramEmitter {
       w.line("static " + ct + "* " + name + " = NULL;");
     }
     w.blank();
+
+    // Optional per-op profiling (Task6 perf tooling). Enabled by env:
+    //   INTENTIR_PROFILE_OPS=1
+    // Output:
+    //   INTENTIR_PROFILE {"total_ns":...,"ops":[{"name":"...","ns":...},...]}
+    std::vector<std::string> prof_names;
+    prof_names.reserve(intent.ops.size());
+    for (size_t i = 0; i < intent.ops.size(); ++i) {
+      const auto& op = intent.ops[i];
+      if (op.op == "const") continue;
+      if (op.op == "reshape" || op.op == "identity" || op.op == "layout_cast") continue;
+      prof_names.push_back("op[" + std::to_string(i) + "] " + op.op + " -> " + op.output);
+    }
+    w.line("// profiler state (optional)");
+    w.line("static int intentir_profile_enabled = 0;");
+    if (!prof_names.empty()) {
+      w.line("static const char* intentir_profile_names[] = {");
+      w.indent();
+      for (const auto& n : prof_names) {
+        w.line("\"" + n + "\",");
+      }
+      w.dedent();
+      w.line("};");
+      w.line("static uint64_t intentir_profile_ns[sizeof(intentir_profile_names) / sizeof(intentir_profile_names[0])];");
+    }
+    w.line("static void intentir_print_profile(void) {");
+    w.indent();
+    w.line("if (!intentir_profile_enabled) return;");
+    if (prof_names.empty()) {
+      w.line("printf(\"INTENTIR_PROFILE {\\\"total_ns\\\":0,\\\"ops\\\":[]}\\n\");");
+      w.line("return;");
+    } else {
+      w.line("const size_t n = (size_t)(sizeof(intentir_profile_names) / sizeof(intentir_profile_names[0]));");
+      w.line("uint64_t total = 0;");
+      w.line("for (size_t i = 0; i < n; ++i) total += intentir_profile_ns[i];");
+      w.line("printf(\"INTENTIR_PROFILE {\\\"total_ns\\\":%llu,\\\"ops\\\":[\", (unsigned long long)total);");
+      w.line("for (size_t i = 0; i < n; ++i) {");
+      w.indent();
+      w.line("if (i) printf(\",\");");
+      w.line("printf(\"{\\\"name\\\":\\\"%s\\\",\\\"ns\\\":%llu}\", intentir_profile_names[i], (unsigned long long)intentir_profile_ns[i]);");
+      w.dedent();
+      w.line("}");
+      w.line("printf(\"]}\\n\");");
+      w.line("return;");
+    }
+    w.dedent();
+    w.line("}");
+    w.blank();
   }
 
 	  void emit_alloc_tensor(const std::string& name) {
@@ -1287,6 +1335,8 @@ struct CProgramEmitter {
 
 	    w.line("setvbuf(stdout, NULL, _IONBF, 0);");
 	    w.line("setvbuf(stderr, NULL, _IONBF, 0);");
+	    w.line("const char* __intentir_prof = getenv(\"INTENTIR_PROFILE_OPS\");");
+	    w.line("if (__intentir_prof && atoi(__intentir_prof) > 0) intentir_profile_enabled = 1;");
 	    w.line("const float ATOL = " + c_float(atol) + ";");
 	    w.line("const float RTOL = " + c_float(rtol) + ";");
 	    {
@@ -1361,7 +1411,8 @@ struct CProgramEmitter {
 
 	    // compute once
 	    w.line("intentir_compute();");
-	    w.line("intentir_maybe_bench(intentir_compute, MATMUL_FLOPS);");
+	    w.line("intentir_print_profile();");
+	    w.line("if (!intentir_profile_enabled) intentir_maybe_bench(intentir_compute, MATMUL_FLOPS);");
 	    w.blank();
 
 	    // compare outputs
@@ -1459,11 +1510,16 @@ struct CProgramEmitter {
   void emit_compute_fn() {
     w.line("static void intentir_compute(void) {");
     w.indent();
+    size_t prof_i = 0;
     for (const auto& op : intent.ops) {
       if (op.op == "const") continue;
       if (op.op == "reshape" || op.op == "identity" || op.op == "layout_cast") continue;
       const std::string& out = op.output;
       const std::vector<int64_t>& out_shape = shape_env.at(out);
+      w.line("{");
+      w.indent();
+      w.line("uint64_t __intentir_t0 = 0;");
+      w.line("if (intentir_profile_enabled) __intentir_t0 = intentir_now_ns();");
       w.line("// op " + op.op + " -> " + out);
 
 	      if (op.op == "transpose") {
@@ -1576,7 +1632,12 @@ struct CProgramEmitter {
       } else {
         fail("unsupported op lowering: " + op.op);
       }
+      w.line("if (intentir_profile_enabled) intentir_profile_ns[" + std::to_string(prof_i) +
+             "] += intentir_now_ns() - __intentir_t0;");
+      w.dedent();
+      w.line("}");
       w.blank();
+      prof_i++;
     }
     w.dedent();
     w.line("}");

@@ -132,6 +132,7 @@ def run_remote(
     tune_profile: str | None = None,
     bench_iters: int = 0,
     bench_warmup: int = 1,
+    profile_ops: bool = False,
     log: Callable[[str], None] | None = None,
 ):
     def _log(msg: str) -> None:
@@ -498,16 +499,28 @@ def run_remote(
         comp_err = stderr.read().decode()
         compile_rc = stdout.channel.recv_exit_status()
         if compile_rc != 0:
-            return {"compile_rc": compile_rc, "compile_stdout": comp_out, "compile_stderr": comp_err, "run_rc": None, "stdout": "", "stderr": "", "bench": None}
+            return {
+                "compile_rc": compile_rc,
+                "compile_stdout": comp_out,
+                "compile_stderr": comp_err,
+                "run_rc": None,
+                "stdout": "",
+                "stderr": "",
+                "bench": None,
+                "profile_ops": None,
+            }
 
         _log(f"[{frontend}:{kernel}] remote run")
-        run_cmd = f"cd {remote_dir} && {remote_bin}"
+        env_prefix = ""
+        if bool(profile_ops):
+            env_prefix += "INTENTIR_PROFILE_OPS=1 "
+        run_cmd = f"cd {remote_dir} && {env_prefix}{remote_bin}"
         if int(bench_iters) > 0:
             bi = int(bench_iters)
             bw = int(bench_warmup)
             if bw < 0:
                 bw = 0
-            run_cmd = f"cd {remote_dir} && INTENTIR_BENCH_ITERS={bi} INTENTIR_BENCH_WARMUP={bw} {remote_bin}"
+            run_cmd = f"cd {remote_dir} && {env_prefix}INTENTIR_BENCH_ITERS={bi} INTENTIR_BENCH_WARMUP={bw} {remote_bin}"
         stdin, stdout, stderr = client.exec_command(run_cmd, timeout=60)
         run_out = stdout.read().decode()
         run_err = stderr.read().decode()
@@ -522,6 +535,15 @@ def run_remote(
         except Exception:
             bench = None
 
+        prof = None
+        try:
+            for ln in str(run_out).splitlines():
+                if ln.startswith("INTENTIR_PROFILE "):
+                    prof = json.loads(ln[len("INTENTIR_PROFILE ") :].strip())
+                    break
+        except Exception:
+            prof = None
+
         return {
             "compile_rc": compile_rc,
             "compile_stdout": comp_out,
@@ -530,6 +552,7 @@ def run_remote(
             "stdout": run_out,
             "stderr": run_err,
             "bench": bench,
+            "profile_ops": prof,
         }
 
     chosen_schedule = intent.schedule
@@ -596,6 +619,7 @@ def run_remote(
     run_out = str(chosen.get("stdout") or "")
     run_err = str(chosen.get("stderr") or "")
     bench = chosen.get("bench")
+    prof = chosen.get("profile_ops")
     # Include a compact baseline summary for quick inspection (avoid huge blobs).
     baseline_summary = {}
     try:
@@ -629,6 +653,7 @@ def run_remote(
         "baseline_summary": baseline_summary,
         "tuning": tuning_info,
         "bench": bench,
+        "profile_ops": prof,
     }
 
 
@@ -652,6 +677,7 @@ def main():
     ap.add_argument("--profile", default=None, help="RVV profile name or JSON path (default: query remote host)")
     ap.add_argument("--bench-iters", type=int, default=0, help="if >0, run microbenchmark loop and print INTENTIR_BENCH JSON line")
     ap.add_argument("--bench-warmup", type=int, default=1, help="warmup iterations for benchmark loop")
+    ap.add_argument("--profile-ops", action="store_true", help="emit per-op timing JSON line (INTENTIR_PROFILE) from the RVV program")
     ap.add_argument("--json", action="store_true", help="print result as JSON (stable for tooling)")
     ap.add_argument("--quiet", action="store_true", help="disable progress logs")
     args = ap.parse_args()
@@ -687,6 +713,7 @@ def main():
         tune_profile=str(args.profile) if args.profile else None,
         bench_iters=int(args.bench_iters),
         bench_warmup=int(args.bench_warmup),
+        profile_ops=bool(args.profile_ops),
         log=_log,
     )
     if args.json:
