@@ -986,6 +986,7 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
                     assumptions=assumptions,
                 )
                 cases_fix = list(cases_fix_pack.in_contract)
+                cases_in = cases_fix
                 report["cases"] = {"in_contract": [dict(c.shapes) for c in cases_fix], "out_of_contract": []}
                 diffs_fix, cex_fix = run_diff(cand_for_run.intent, spec.runner, cases_fix)
                 diffs_in, cex_in = diffs_fix, cex_fix
@@ -1011,6 +1012,22 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
                     ]
             except Exception:
                 pass
+
+    # If diff still fails, attach a compact debug report (P0 gap fix).
+    if diffs_in and not all(d.ok for d in diffs_in):
+        try:
+            from verify.diff_debugger import debug_mismatch
+
+            debug_case = (cex_in[0].case if cex_in else (cases_in[0] if cases_in else baseline_case))
+            report["diff_debug"] = debug_mismatch(
+                cand_for_run.intent,
+                spec.runner,
+                debug_case,
+                tolerances={"atol": 1e-3, "rtol": 1e-3},
+                sample_elems=16,
+            )
+        except Exception as e:
+            report["diff_debug"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
     # 5) Stage C + mutation-kill if Stage B passed
     if diffs_in and all(d.ok for d in diffs_in):

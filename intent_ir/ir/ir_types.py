@@ -10,7 +10,10 @@ and extended schedule fields.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Any, Dict, List, Literal, Optional
+
+from intent_ir.diagnostics import closest_match, format_op_snippet
 
 
 __all__ = [
@@ -411,14 +414,54 @@ def _validate_ops(ops: List[Op], tensors: Dict[str, TensorType]) -> None:
         raise IntentIRValidationError("ops must not be empty")
     available_names = set(tensors.keys())
     produced = set()
+    # Heuristics for common IR mistakes (LLM outputs).
+    _suffix_2d = re.compile(r"^(?P<base>.+?)(?:2d|_2d)$", re.IGNORECASE)
     for idx, op in enumerate(ops):
         if op.op not in SUPPORTED_OPS:
             raise IntentIRValidationError(f"op[{idx}].op unsupported: {op.op}")
         for i, inp in enumerate(op.inputs):
             if inp not in available_names:
-                raise IntentIRValidationError(
-                    f"op[{idx}].inputs[{i}] references undefined tensor/output: {inp}"
-                )
+                # Rich, user-friendly diagnostic text (Clang-like).
+                snippet = format_op_snippet(op, idx=idx)
+                caret = None
+                try:
+                    # place a caret roughly under the undefined input token (best-effort)
+                    s = f"{op.op}({', '.join(op.inputs)}) -> {op.output}"
+                    needle = str(inp)
+                    pos = s.find(needle)
+                    if pos >= 0:
+                        caret = " " * pos + "^" * max(1, len(needle))
+                except Exception:
+                    caret = None
+
+                avail = sorted(list(available_names))
+                sugg = closest_match(str(inp), avail, n=1)
+                notes: List[str] = []
+                if sugg:
+                    notes.append(f"Did you mean '{sugg[0]}'?")
+                notes.append(f"Available tensors at this point: {avail}")
+
+                hints: List[str] = []
+                m = _suffix_2d.match(str(inp))
+                if m:
+                    base = m.group("base")
+                    if base in available_names:
+                        hints.append(
+                            f"If you intended to broadcast '{base}' to match a 2D tensor, insert a broadcast op, e.g.: "
+                            f"broadcast_in_dim({base}, out_shape=[M,N], broadcast_dims=[1]) -> {inp}"
+                        )
+
+                msg_lines = [
+                    f"Error: op[{idx}] '{op.op}' references undefined tensor '{inp}'",
+                    f"  -> {snippet}",
+                ]
+                if caret:
+                    msg_lines.append(f"     {caret}")
+                for n in notes:
+                    msg_lines.append(f"Note: {n}")
+                for h in hints:
+                    msg_lines.append(f"Hint: {h}")
+                raise IntentIRValidationError("\n".join(msg_lines))
         _validate_op_attrs(op, idx)
         if op.output in produced:
             raise IntentIRValidationError(f"op[{idx}].output duplicates previous op output: {op.output}")

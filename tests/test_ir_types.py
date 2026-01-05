@@ -63,9 +63,15 @@ def test_invalid_dtype_rejected():
 
 def test_op_input_undefined_rejected():
     bad = _minimal_intent_json()
-    bad["ops"][0]["inputs"] = ["X", "B"]
-    with pytest.raises(IntentIRValidationError):
+    # Undefined input with a close match and a common broadcast-intent suffix.
+    bad["ops"][2]["inputs"] = ["Y", "bias_2d"]
+    with pytest.raises(IntentIRValidationError) as exc:
         IntentFunction.from_json_dict(bad)
+    msg = str(exc.value)
+    assert "references undefined tensor" in msg
+    assert "Did you mean" in msg
+    assert "Available tensors at this point" in msg
+    assert "broadcast_in_dim" in msg
 
 
 def test_output_not_in_tensors_rejected():

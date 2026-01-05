@@ -6,8 +6,9 @@ reduce_sum, softmax, and basic elemwise ops.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import numpy as np
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional, Tuple
 
 from intent_ir.ir import IntentFunction, Op
 
@@ -81,6 +82,99 @@ def execute_intent(intent: IntentFunction, inputs: Dict[str, np.ndarray], shape_
     for op in intent.ops:
         env[op.output] = _execute_op(intent, op, env, bindings)
     return {name: env[name] for name in intent.outputs}
+
+
+@dataclass(frozen=True)
+class TensorSummary:
+    name: str
+    shape: Tuple[int, ...]
+    dtype: str
+    size: int
+    nan: int
+    inf: int
+    min: float | None
+    max: float | None
+    mean: float | None
+    std: float | None
+    sample: List[float] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class OpTrace:
+    op_index: int
+    op: Dict[str, Any]
+    inputs: Dict[str, TensorSummary]
+    output: TensorSummary
+
+
+@dataclass
+class InterpreterTrace:
+    op_traces: List[OpTrace] = field(default_factory=list)
+
+
+def _summarize_tensor(name: str, arr: np.ndarray, *, sample_elems: int = 16) -> TensorSummary:
+    a = np.asarray(arr)
+    flat = a.reshape(-1)
+    # Handle bool/integers separately (still cast to float for summaries).
+    a_float = flat.astype(np.float64, copy=False) if flat.size else flat.astype(np.float64, copy=False)
+    nan = int(np.isnan(a_float).sum()) if a_float.size else 0
+    inf = int(np.isinf(a_float).sum()) if a_float.size else 0
+    if a_float.size:
+        try:
+            amin = float(np.nanmin(a_float))
+            amax = float(np.nanmax(a_float))
+            mean = float(np.nanmean(a_float))
+            std = float(np.nanstd(a_float))
+        except Exception:
+            amin = amax = mean = std = None
+    else:
+        amin = amax = mean = std = None
+    sample = [float(x) for x in a_float[: max(0, int(sample_elems))].tolist()] if a_float.size else []
+    return TensorSummary(
+        name=str(name),
+        shape=tuple(int(x) for x in a.shape),
+        dtype=str(a.dtype),
+        size=int(a.size),
+        nan=nan,
+        inf=inf,
+        min=amin,
+        max=amax,
+        mean=mean,
+        std=std,
+        sample=sample,
+    )
+
+
+def execute_intent_with_trace(
+    intent: IntentFunction,
+    inputs: Dict[str, np.ndarray],
+    shape_bindings: Dict[str, int] | None = None,
+    *,
+    sample_elems: int = 16,
+) -> Tuple[Dict[str, np.ndarray], InterpreterTrace, Dict[str, np.ndarray]]:
+    """
+    Execute IntentIR and record per-op input/output summaries.
+
+    Returns (outputs, trace, full_env).
+    """
+    env: Dict[str, np.ndarray] = {}
+    env.update(inputs)
+    bindings = shape_bindings or _infer_shape_bindings(intent, inputs)
+    trace = InterpreterTrace()
+    for idx, op in enumerate(intent.ops):
+        op_inputs = {k: env[k] for k in op.inputs if k in env}
+        out = _execute_op(intent, op, env, bindings)
+        env[op.output] = out
+        trace.op_traces.append(
+            OpTrace(
+                op_index=int(idx),
+                op={"op": op.op, "inputs": list(op.inputs), "output": op.output, "attrs": dict(op.attrs or {})},
+                inputs={k: _summarize_tensor(k, v, sample_elems=sample_elems) for k, v in op_inputs.items()},
+                output=_summarize_tensor(op.output, out, sample_elems=sample_elems),
+            )
+        )
+    outputs = {name: env[name] for name in intent.outputs}
+    return outputs, trace, env
 
 
 def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shape_bindings: Dict[str, int]) -> np.ndarray:

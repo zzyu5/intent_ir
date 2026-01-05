@@ -736,7 +736,7 @@ def run_pipeline_for_spec(
     cases_out = list(cases_pack.out_of_contract)
     report["cases"] = {"in_contract": [dict(c.shapes) for c in cases_in], "out_of_contract": [dict(c.shapes) for c in cases_out]}
 
-    diffs_in, _ = run_diff(cand.intent, run_ref_fn, cases_in)
+    diffs_in, cex_in = run_diff(cand.intent, run_ref_fn, cases_in)
     diff_ok = bool(diffs_in and all(d.ok for d in diffs_in))
     report["diff"] = {
         "ok": bool(diff_ok),
@@ -751,6 +751,24 @@ def run_pipeline_for_spec(
             for d in diffs_in
         ],
     }
+    if cex_in:
+        report["counterexamples"] = [
+            {"shapes": dict(cx.case.shapes), "summary": cx.diff.summary, "hints": list(cx.hints)} for cx in cex_in[:3]
+        ]
+    if diffs_in and not diff_ok:
+        try:
+            from verify.diff_debugger import debug_mismatch
+
+            debug_case = (cex_in[0].case if cex_in else (cases_in[0] if cases_in else TestCase(shapes={}, dtypes={}, seed=0)))
+            report["diff_debug"] = debug_mismatch(
+                cand.intent,
+                run_ref_fn,
+                debug_case,
+                tolerances={"atol": 1e-3, "rtol": 1e-3},
+                sample_elems=16,
+            )
+        except Exception as e:
+            report["diff_debug"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
     stage_c_ref_fn = spec.runner
     if stage_c and diff_ok and cases_in:
