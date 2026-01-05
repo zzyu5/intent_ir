@@ -23,6 +23,8 @@ from typing import Any, Dict, List, Optional
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 DEFAULT_KERNELS = [
     "any_kernel_dim",
@@ -94,6 +96,8 @@ def main() -> None:
     ap.add_argument("--profile", default=None, help="RVV profile name/JSON path; default probes once and reuses")
     ap.add_argument("--bench-iters", type=int, default=0)
     ap.add_argument("--bench-warmup", type=int, default=1)
+    ap.add_argument("--profile-ops", action="store_true", help="enable per-op timing JSON from the RVV program")
+    ap.add_argument("--tune-debug", action="store_true", help="include structured tuning/cost-model debug in JSON output")
     ap.add_argument("--out", default=None, help="write JSON report to this path (default: stdout)")
     args = ap.parse_args()
 
@@ -170,6 +174,10 @@ def main() -> None:
                 str(int(args.bench_warmup)),
                 "--json",
             ]
+            if args.profile_ops:
+                cmd.append("--profile-ops")
+            if args.tune_debug:
+                cmd.append("--tune-debug")
             if args.use_key:
                 cmd.append("--use-key")
             if args.no_tune:

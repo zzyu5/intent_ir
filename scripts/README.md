@@ -14,6 +14,8 @@ importable modules (e.g., `pipeline/triton/core.py`, or backend/verify packages)
   - `--profile-ops` emits `INTENTIR_PROFILE {..}` per-op timing JSON (from the RVV program stdout).
 - `rvv_remote_suite.py`: run remote RVV tests across the 6-kernel suite (user-facing).
 - `benchmark_suite.py`: run remote RVV perf microbenchmarks (ns/iter) for the 6-kernel suite.
+  - For richer reports: pass `--profile-ops` (per-op timing) + `--tune-debug` (predicted cost-model debug).
+- `analyze_perf.py`: summarize benchmark JSON (predicted vs measured, correlations).
 - `compare_perf.py`: compare two perf JSONs and fail on regressions.
 - `triton/pipeline_report.py`: generate a compact per-kernel report (LLM + TTIR).
 - `triton/verify_ops.py`: per-op verification runner (debugging).

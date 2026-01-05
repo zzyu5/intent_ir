@@ -33,3 +33,16 @@ Run:
 - `PYTHONPATH=. python scripts/rvv_remote_run.py --kernel <name> --host <host> --user <user>`
 
 The remote executable prints PASS/FAIL and per-output diff stats.
+
+## Remote RVV suite (6 kernels × frontends)
+
+Run:
+
+- `PYTHONPATH=. python scripts/rvv_remote_suite.py --frontend both --host <host> --user <user> --use-key --case-index 0`
+
+## Remote RVV perf suite (optional)
+
+Run:
+
+- `PYTHONPATH=. python scripts/benchmark_suite.py --frontend both --host <host> --user <user> --use-key --bench-iters 50 --bench-warmup 5 --out artifacts/perf_latest.json`
+- `python scripts/compare_perf.py --baseline <baseline.json> --current artifacts/perf_latest.json --threshold 0.05`

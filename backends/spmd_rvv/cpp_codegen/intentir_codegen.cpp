@@ -1412,7 +1412,8 @@ struct CProgramEmitter {
 	    // compute once
 	    w.line("intentir_compute();");
 	    w.line("intentir_print_profile();");
-	    w.line("if (!intentir_profile_enabled) intentir_maybe_bench(intentir_compute, MATMUL_FLOPS);");
+	    w.line("if (intentir_profile_enabled) intentir_profile_enabled = 0;");
+	    w.line("intentir_maybe_bench(intentir_compute, MATMUL_FLOPS);");
 	    w.blank();
 
 	    // compare outputs

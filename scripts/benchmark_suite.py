@@ -22,6 +22,10 @@ from typing import Any, Dict, List, Tuple
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from backends.spmd_rvv.analysis.perf_analysis import extract_remote_suite_rows, summarize_rows  # noqa: E402
 
 
 def _git_head() -> str | None:
@@ -37,37 +41,6 @@ def _run_remote_suite(raw_out: Path, argv: List[str]) -> None:
     rc = subprocess.call(cmd, cwd=str(ROOT))
     if rc != 0:
         raise RuntimeError(f"rvv_remote_suite failed (rc={rc})")
-
-
-def _extract_bench(raw: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[str]]:
-    rows: List[Dict[str, Any]] = []
-    errors: List[str] = []
-    for r in raw.get("results") or []:
-        fe = str(r.get("frontend") or "")
-        k = str(r.get("kernel") or "")
-        ok = bool(r.get("ok"))
-        bench = r.get("bench")
-        if not ok:
-            errors.append(f"{fe}:{k} failed (compile/run)")
-            rows.append({"frontend": fe, "kernel": k, "ok": False, "bench": bench})
-            continue
-        if not isinstance(bench, dict):
-            errors.append(f"{fe}:{k} missing bench (run with --bench-iters > 0)")
-            rows.append({"frontend": fe, "kernel": k, "ok": False, "bench": bench})
-            continue
-        ns = bench.get("ns_per_iter")
-        rows.append(
-            {
-                "frontend": fe,
-                "kernel": k,
-                "ok": True,
-                "ns_per_iter": float(ns) if isinstance(ns, (int, float)) else None,
-                "bench": bench,
-                "tuning": r.get("tuning"),
-            }
-        )
-    return rows, errors
-
 
 def main() -> None:
     ap = argparse.ArgumentParser()
@@ -85,6 +58,8 @@ def main() -> None:
     ap.add_argument("--profile", default=None)
     ap.add_argument("--bench-iters", type=int, default=50)
     ap.add_argument("--bench-warmup", type=int, default=5)
+    ap.add_argument("--profile-ops", action="store_true", help="also collect per-op timing (INTENTIR_PROFILE)")
+    ap.add_argument("--tune-debug", action="store_true", help="include structured tuning debug in raw output (enables pred-vs-measured analysis)")
     ap.add_argument("--out", required=True, help="write compact perf JSON to this path")
     ap.add_argument("--raw-out", default=None, help="optional: save raw rvv_remote_suite JSON too")
     args = ap.parse_args()
@@ -124,11 +99,15 @@ def main() -> None:
         argv += ["--profile", str(args.profile)]
     if (not args.use_key) and args.password:
         argv += ["--password", str(args.password)]
+    if args.profile_ops:
+        argv.append("--profile-ops")
+    if args.tune_debug:
+        argv.append("--tune-debug")
 
     t0 = time.time()
     _run_remote_suite(raw_out, argv)
     raw = json.loads(raw_out.read_text(encoding="utf-8"))
-    rows, errors = _extract_bench(raw)
+    rows, errors = extract_remote_suite_rows(raw)
     dt = time.time() - t0
 
     out: Dict[str, Any] = {
@@ -143,6 +122,8 @@ def main() -> None:
             "tune_mode": str(args.tune_mode),
             "tune_budget": int(args.tune_budget),
             "no_tune": bool(args.no_tune),
+            "profile_ops": bool(args.profile_ops),
+            "tune_debug": bool(args.tune_debug),
             "case_index": int(args.case_index),
         },
         "remote": {
@@ -152,6 +133,7 @@ def main() -> None:
             "profile": raw.get("profile") or raw.get("tuning", {}).get("profile"),
         },
         "results": rows,
+        "summary": summarize_rows(rows),
         "ok": bool(not errors),
         "errors": errors,
         "raw_path": str(raw_out),
@@ -164,4 +146,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

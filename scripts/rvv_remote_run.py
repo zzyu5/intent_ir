@@ -388,6 +388,8 @@ def run_remote(
                 "notes": list(tuned.notes),
                 "schedule": (intent.to_json_dict().get("schedule") or {}),
             }
+            if getattr(tuned, "debug", None) is not None:
+                tuning_info["debug"] = tuned.debug
 
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -672,6 +674,7 @@ def main():
     ap.add_argument("--no-tune", action="store_true", help="disable backend schedule selection (use IntentIR schedule as-is)")
     ap.add_argument("--tune-mode", choices=["auto", "guided", "locked"], default="auto")
     ap.add_argument("--tune-budget", type=int, default=1, help="if >1, benchmark top-K predicted schedules (requires --bench-iters>0)")
+    ap.add_argument("--tune-debug", action="store_true", help="include structured tuning/cost-model debug in JSON output")
     ap.add_argument("--lock", action="append", default=[], help="repeatable; e.g. --lock tile_n=128")
     ap.add_argument("--constraint", action="append", default=[], help="repeatable; e.g. --constraint 'tile_n in (64,128)'")
     ap.add_argument("--profile", default=None, help="RVV profile name or JSON path (default: query remote host)")
@@ -693,6 +696,7 @@ def main():
             budget=int(args.tune_budget),
             locks=parse_locks(args.lock or []),
             constraints=parse_constraints(args.constraint or []),
+            debug=bool(args.tune_debug),
         )
     def _log(msg: str) -> None:
         if bool(args.quiet):
