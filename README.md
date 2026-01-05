@@ -16,15 +16,16 @@ IntentIR is a research prototype that extracts **high-level kernel intent** from
 
 ## Quickstart (Local)
 
+- Environment check: `python scripts/check_env.py`
 - Unit tests: `pytest -q`
 - Backend codegen (no LLM, no remote): `python scripts/backend_codegen_smoke.py`
-- Full pipeline (LLM + Triton launch + TTIR + verify): `PYTHONPATH=. python scripts/triton/full_pipeline_verify.py`
+- Full pipeline (LLM + Triton launch + TTIR + verify): `python scripts/triton/full_pipeline_verify.py`
 
 ## Remote RVV (Task6)
 
 Run a kernel end-to-end and compare remote outputs against the saved Triton baseline:
 
-`PYTHONPATH=. python scripts/rvv_remote_run.py --kernel any_kernel_dim --host <host> --user <user>`
+`python scripts/rvv_remote_run.py --kernel any_kernel_dim --host <host> --user <user> --use-key`
 
 Set the SSH password via `INTENTIR_SSH_PASSWORD` or let it prompt.
 
@@ -37,3 +38,4 @@ This repo is structured around a frontend/backend split:
 - **Backends** lower IntentIR to target code (e.g., RVV C) and can be tested by comparing against the frontend baseline runner.
 
 See `docs/ARCHITECTURE.md` for a concrete, step-by-step view of the pipeline.
+For a precise definition of IntentIR op meaning + verification guarantees, see `docs/FORMAL_SEMANTICS.md`.

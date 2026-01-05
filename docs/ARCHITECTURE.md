@@ -2,6 +2,9 @@
 
 IntentIR is organized as a pipeline with stable intermediate artifacts:
 
+For the formal (paper-facing) meaning of IntentIR ops and what the verifier
+does/does not guarantee, see `docs/FORMAL_SEMANTICS.md`.
+
 ## Pipeline (Triton today)
 
 1. **Source acquisition** (frontend)
