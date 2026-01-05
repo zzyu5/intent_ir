@@ -813,8 +813,15 @@ def run_pipeline_for_spec(
             "killed": int(mut.killed),
             "survived": int(mut.survived),
             "killed_by_stage": dict(mut.killed_by_stage),
+            "mutation_breakdown": dict(mut.mutation_breakdown),
             "outcomes": [
-                {"mutant_id": o.mutant_id, "killed_by": o.killed_by, "detail": o.detail, "diff_summary": o.diff_summary}
+                {
+                    "mutant_id": o.mutant_id,
+                    "mutation_type": o.mutation_type,
+                    "killed_by": o.killed_by,
+                    "detail": o.detail,
+                    "diff_summary": o.diff_summary,
+                }
                 for o in mut.outcomes
             ],
         }

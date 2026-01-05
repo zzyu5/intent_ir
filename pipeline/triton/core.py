@@ -1063,7 +1063,17 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
                 "killed": int(mut.killed),
                 "survived": int(mut.survived),
                 "killed_by_stage": dict(mut.killed_by_stage),
-                "outcomes": [{"mutant_id": o.mutant_id, "killed_by": o.killed_by, "detail": o.detail, "diff_summary": o.diff_summary} for o in mut.outcomes],
+                "mutation_breakdown": dict(mut.mutation_breakdown),
+                "outcomes": [
+                    {
+                        "mutant_id": o.mutant_id,
+                        "mutation_type": o.mutation_type,
+                        "killed_by": o.killed_by,
+                        "detail": o.detail,
+                        "diff_summary": o.diff_summary,
+                    }
+                    for o in mut.outcomes
+                ],
             }
 
     # Persist baseline IO aligned to the final macro intent, so Task6 tools can

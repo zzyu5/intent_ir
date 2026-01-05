@@ -30,6 +30,7 @@ from verify.metamorphic import MetamorphicSuiteReport, run_bounded_exhaustive, r
 @dataclass
 class MutationOutcome:
     mutant_id: int
+    mutation_type: str
     killed_by: str  # "A_static" | "B_diff" | "C_metamorphic" | "C_bounded" | "survived" | "invalid"
     detail: str
     diff_summary: Optional[str] = None
@@ -42,6 +43,7 @@ class MutationReport:
     survived: int
     killed_by_stage: Dict[str, int] = field(default_factory=dict)
     outcomes: List[MutationOutcome] = field(default_factory=list)
+    mutation_breakdown: Dict[str, Dict[str, object]] = field(default_factory=dict)
 
     @property
     def kill_rate(self) -> float:
@@ -59,7 +61,12 @@ def generate_mutants(intent: IntentFunction, *, n: int, seed: int = 0) -> List[I
     while len(mutants) < n and attempts < n * 20:
         attempts += 1
         m = copy.deepcopy(intent)
-        if _apply_one_mutation(m, rng):
+        mut_type = _apply_one_mutation(m, rng)
+        if mut_type:
+            try:
+                m.meta.setdefault("_mutation", {})["type"] = str(mut_type)
+            except Exception:
+                pass
             try:
                 m.validate()
             except Exception:
@@ -89,8 +96,17 @@ def run_mutation_kill(
     mutants = generate_mutants(intent, n=n_mutants, seed=seed)
     killed_by: Dict[str, int] = {"A_static": 0, "B_diff": 0, "C_metamorphic": 0, "C_bounded": 0, "invalid": 0}
     outcomes: List[MutationOutcome] = []
+    by_mut: Dict[str, Dict[str, int]] = {}
 
     for mid, m in enumerate(mutants):
+        mut_type = "unknown"
+        try:
+            mut_type = str((m.meta.get("_mutation") or {}).get("type") or "unknown")
+        except Exception:
+            mut_type = "unknown"
+        by_mut.setdefault(mut_type, {"total": 0})
+        by_mut[mut_type]["total"] += 1
+
         # Stage A: optional frontend static validation (certificate/obligations).
         if static_validate_fn is not None:
             try:
@@ -100,15 +116,23 @@ def run_mutation_kill(
                 reasons_list = reasons if isinstance(reasons, list) else []
             except Exception as e:
                 killed_by["invalid"] += 1
+                by_mut[mut_type]["invalid"] = by_mut[mut_type].get("invalid", 0) + 1
                 outcomes.append(
-                    MutationOutcome(mutant_id=mid, killed_by="invalid", detail=f"static_validate error: {type(e).__name__}: {e}")
+                    MutationOutcome(
+                        mutant_id=mid,
+                        mutation_type=mut_type,
+                        killed_by="invalid",
+                        detail=f"static_validate error: {type(e).__name__}: {e}",
+                    )
                 )
                 continue
             if not ok:
                 killed_by["A_static"] += 1
+                by_mut[mut_type]["A_static"] = by_mut[mut_type].get("A_static", 0) + 1
                 outcomes.append(
                     MutationOutcome(
                         mutant_id=mid,
+                        mutation_type=mut_type,
                         killed_by="A_static",
                         detail="; ".join(str(x) for x in reasons_list) or "static obligations failed",
                     )
@@ -121,11 +145,25 @@ def run_mutation_kill(
             if not all(d.ok for d in diffs):
                 worst = max(diffs, key=lambda d: (not d.ok, d.max_abs_err))
                 killed_by["B_diff"] += 1
-                outcomes.append(MutationOutcome(mutant_id=mid, killed_by="B_diff", detail="dynamic diff mismatch", diff_summary=worst.summary))
+                by_mut[mut_type]["B_diff"] = by_mut[mut_type].get("B_diff", 0) + 1
+                outcomes.append(
+                    MutationOutcome(
+                        mutant_id=mid,
+                        mutation_type=mut_type,
+                        killed_by="B_diff",
+                        detail="dynamic diff mismatch",
+                        diff_summary=worst.summary,
+                    )
+                )
                 continue
         except Exception as e:
             killed_by["B_diff"] += 1
-            outcomes.append(MutationOutcome(mutant_id=mid, killed_by="B_diff", detail=f"diff error: {type(e).__name__}: {e}"))
+            by_mut[mut_type]["B_diff"] = by_mut[mut_type].get("B_diff", 0) + 1
+            outcomes.append(
+                MutationOutcome(
+                    mutant_id=mid, mutation_type=mut_type, killed_by="B_diff", detail=f"diff error: {type(e).__name__}: {e}"
+                )
+            )
             continue
 
         # Stage C: metamorphic invariants (only for survivors so far)
@@ -140,37 +178,68 @@ def run_mutation_kill(
         )
         if not meta.ok:
             killed_by["C_metamorphic"] += 1
+            by_mut[mut_type]["C_metamorphic"] = by_mut[mut_type].get("C_metamorphic", 0) + 1
             bad = next((r for r in meta.results if not r.ok), None)
-            outcomes.append(MutationOutcome(mutant_id=mid, killed_by="C_metamorphic", detail=(bad.detail if bad else "metamorphic failed")))
+            outcomes.append(
+                MutationOutcome(
+                    mutant_id=mid,
+                    mutation_type=mut_type,
+                    killed_by="C_metamorphic",
+                    detail=(bad.detail if bad else "metamorphic failed"),
+                )
+            )
             continue
 
         if include_bounded:
             bounded = run_bounded_exhaustive(kernel_name, m, run_ref_fn, atol=atol, rtol=rtol, max_cases=None, rng_seed=seed + mid + 101)
             if bounded.total > 0 and not bounded.ok:
                 killed_by["C_bounded"] += 1
+                by_mut[mut_type]["C_bounded"] = by_mut[mut_type].get("C_bounded", 0) + 1
                 outcomes.append(
                     MutationOutcome(
                         mutant_id=mid,
+                        mutation_type=mut_type,
                         killed_by="C_bounded",
                         detail=f"bounded exhaustive failed at {bounded.checked}/{bounded.total}: {bounded.first_failure_summary}",
                     )
                 )
                 continue
 
-        outcomes.append(MutationOutcome(mutant_id=mid, killed_by="survived", detail="passed A+B+C"))
+        by_mut[mut_type]["survived"] = by_mut[mut_type].get("survived", 0) + 1
+        outcomes.append(MutationOutcome(mutant_id=mid, mutation_type=mut_type, killed_by="survived", detail="passed A+B+C"))
 
     total = len(mutants)
     survived = sum(1 for o in outcomes if o.killed_by == "survived")
     killed = total - survived
     # drop zero entries for nicer printing
     killed_by_stage = {k: v for k, v in killed_by.items() if v}
-    return MutationReport(total=total, killed=killed, survived=survived, killed_by_stage=killed_by_stage, outcomes=outcomes)
+    mutation_breakdown: Dict[str, Dict[str, object]] = {}
+    for mt, stat in sorted(by_mut.items(), key=lambda kv: kv[0]):
+        t = int(stat.get("total", 0))
+        s = int(stat.get("survived", 0))
+        k = t - s
+        by_stage = {k2: int(v2) for k2, v2 in stat.items() if k2 not in {"total"} and int(v2) > 0}
+        mutation_breakdown[str(mt)] = {
+            "total": t,
+            "killed": k,
+            "survived": s,
+            "kill_rate": (0.0 if t == 0 else float(k) / float(t)),
+            "killed_by_stage": by_stage,
+        }
+    return MutationReport(
+        total=total,
+        killed=killed,
+        survived=survived,
+        killed_by_stage=killed_by_stage,
+        outcomes=outcomes,
+        mutation_breakdown=mutation_breakdown,
+    )
 
 
-def _apply_one_mutation(intent: IntentFunction, rng: random.Random) -> bool:
+def _apply_one_mutation(intent: IntentFunction, rng: random.Random) -> str | None:
     # Pick a mutation operator that can apply.
     ops = intent.ops
-    candidates: List[Callable[[], bool]] = []
+    candidates: List[tuple[str, Callable[[], bool]]] = []
 
     def pick_indices(pred):
         return [i for i, op in enumerate(ops) if pred(op)]
@@ -204,7 +273,26 @@ def _apply_one_mutation(intent: IntentFunction, rng: random.Random) -> bool:
             _set_axes_list(op, old)
             return True
 
-        candidates.append(mut_reduce_axes)
+        candidates.append(("reduce_axis", mut_reduce_axes))
+
+        def mut_reduce_scale() -> bool:
+            idx = rng.choice(reduce_ids)
+            op = ops[idx]
+            if "scale" not in op.attrs:
+                return False
+            v = op.attrs.get("scale")
+            # Prefer subtle perturbations.
+            if isinstance(v, (int, float, np.number)):
+                fv = float(v)
+                op.attrs["scale"] = fv * (1.0 + rng.choice([-0.01, 0.01]))
+                return True
+            if isinstance(v, str) and v.strip():
+                # Wrap expression with a small multiplier.
+                op.attrs["scale"] = f"({v})*{(1.0 + rng.choice([-0.01, 0.01]))}"
+                return True
+            return False
+
+        candidates.append(("reduce_scale", mut_reduce_scale))
 
     if softmax_ids:
         def mut_softmax_axis() -> bool:
@@ -219,7 +307,7 @@ def _apply_one_mutation(intent: IntentFunction, rng: random.Random) -> bool:
             op.attrs["axis"] = int(new_axis)
             return True
 
-        candidates.append(mut_softmax_axis)
+        candidates.append(("softmax_axis", mut_softmax_axis))
 
     if transpose_ids:
         def mut_transpose_perm() -> bool:
@@ -233,7 +321,7 @@ def _apply_one_mutation(intent: IntentFunction, rng: random.Random) -> bool:
             op.attrs["perm"] = perm
             return True
 
-        candidates.append(mut_transpose_perm)
+        candidates.append(("transpose_perm", mut_transpose_perm))
 
     if bcast_ids:
         def mut_broadcast_dims() -> bool:
@@ -250,7 +338,7 @@ def _apply_one_mutation(intent: IntentFunction, rng: random.Random) -> bool:
             op.attrs["broadcast_dims"] = bcast_dims
             return True
 
-        candidates.append(mut_broadcast_dims)
+        candidates.append(("broadcast_dims", mut_broadcast_dims))
 
     if elemwise_ids:
         def mut_elemwise_op() -> bool:
@@ -263,7 +351,7 @@ def _apply_one_mutation(intent: IntentFunction, rng: random.Random) -> bool:
             op.op = new
             return True
 
-        candidates.append(mut_elemwise_op)
+        candidates.append(("elemwise_op", mut_elemwise_op))
 
     if const_ids:
         def mut_const_value() -> bool:
@@ -273,34 +361,44 @@ def _apply_one_mutation(intent: IntentFunction, rng: random.Random) -> bool:
             # Keep placeholders untouched (we want semantic mutants, not format-only).
             if isinstance(v, str) and v.startswith("placeholder:"):
                 return False
+            # Prefer small semantic perturbations (eps/scale-like values).
             if isinstance(v, (int, float, np.number)):
-                op.attrs["value"] = float(v) + 1.0
+                fv = float(v)
+                if abs(fv) <= 1e-2:
+                    op.attrs["value"] = fv * (10.0 if rng.random() < 0.5 else 0.1)
+                else:
+                    op.attrs["value"] = fv + (0.1 if rng.random() < 0.5 else -0.1)
                 return True
             if isinstance(v, str):
                 if v == "eps":
-                    op.attrs["value"] = 1e-3
+                    # Subtle eps drift.
+                    op.attrs["value"] = 1e-6 if rng.random() < 0.5 else 1e-4
                     return True
                 # try simple numeric strings
                 try:
-                    op.attrs["value"] = float(v) + 1.0
+                    fv = float(v)
+                    if abs(fv) <= 1e-2:
+                        op.attrs["value"] = fv * (10.0 if rng.random() < 0.5 else 0.1)
+                    else:
+                        op.attrs["value"] = fv + (0.1 if rng.random() < 0.5 else -0.1)
                     return True
                 except Exception:
                     return False
             return False
 
-        candidates.append(mut_const_value)
+        candidates.append(("const_value", mut_const_value))
 
     if not candidates:
-        return False
+        return None
 
     rng.shuffle(candidates)
-    for f in candidates:
+    for name, f in candidates:
         try:
             if f():
-                return True
+                return name
         except Exception:
             continue
-    return False
+    return None
 
 
 def _get_axes_list(op: Op) -> Optional[List[int]]:
