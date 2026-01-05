@@ -31,7 +31,7 @@ from verify.diff_runner import run_diff
 from frontends.triton.facts import extract_facts, extract_constraints
 from frontends.triton.contract import evaluate_contract
 from frontends.triton.certificate import build_certificate
-from frontends.triton.static_validate import static_validate
+from frontends.common.static_validate import static_validate
 from verify.interpreter import execute_intent
 
 

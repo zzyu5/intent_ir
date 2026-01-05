@@ -25,11 +25,12 @@ from verify.mutation import run_mutation_kill
 from verify.tolerances import infer_tolerances
 
 from intent_ir.llm import LLMIntentHub
-from intent_ir.macros import enrich_intent_macros
+from intent_ir.macros import expand_macros, enrich_intent_macros
 from intent_ir.parser import CandidateIntent
 from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, TensorType
 from intent_ir.ir.printer_mlir_like import print_mlir_like
 
+from frontends.common.static_validate import static_validate
 from frontends.tilelang.runtime import infer_written_global_buffers, run_tilelang_kernel_io
 
 from kernels.tilelang.ops.any_kernel_dim import make_any_kernel_dim_prim_func
@@ -685,18 +686,28 @@ def run_pipeline_for_spec(
 
     print(f"[{spec.name}] stage2: ensure tilelang artifacts", flush=True)
     desc = adapter.ensure_artifacts(desc, spec)
-    print(f"[{spec.name}] stage3: Task4 facts/constraints/certificate", flush=True)
+    print(f"[{spec.name}] stage3: launch tilelang once (baseline)", flush=True)
+    baseline_case = TestCase(shapes=dict(spec.canonical_shapes), dtypes={}, seed=0)
+    baseline_io_raw = (_run_tilelang_ref(spec, baseline_case) if use_tilelang_runtime else spec.runner(baseline_case))
+    report["baseline"] = {
+        "shapes": dict(baseline_case.shapes),
+        "seed": int(baseline_case.seed),
+        "npz_path": None,
+        "keys": sorted(list(baseline_io_raw.keys())),
+        "source": ("tilelang_runtime" if use_tilelang_runtime else "numpy_reference"),
+    }
+
+    print(f"[{spec.name}] stage4: Task4 facts/constraints/certificate", flush=True)
     facts = adapter.extract_facts(desc)
     constraints: FrontendConstraints = adapter.extract_constraints(desc, facts)
     cert_v2 = adapter.build_certificate(desc, facts, constraints)
-
-    print(f"[{spec.name}] stage4: Task4 obligations/contract", flush=True)
     obligations = evaluate_obligations(desc, cert_v2)
     cert_v2.semantic_facts["obligations"] = [o.to_json_dict() for o in obligations]
     contract = evaluate_contract_v2(desc, cert_v2, obligations, constraints=constraints)
 
     report["certificate_v2"] = cert_v2.to_json_dict()
     (out_dir / f"{spec.name}.certificate_v2.json").write_text(json.dumps(report["certificate_v2"], indent=2), encoding="utf-8")
+    report["obligations"] = [o.to_json_dict() for o in obligations]
     report["contract"] = {
         "level": contract.level,
         "reasons": list(contract.reasons),
@@ -719,12 +730,66 @@ def run_pipeline_for_spec(
     (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
     report["intent"] = cand.intent.to_json_dict()
 
+    cand_expanded: CandidateIntent | None = None
+    try:
+        expanded_intent = expand_macros(cand.intent)
+        cand_expanded = CandidateIntent(
+            intent=expanded_intent,
+            problem_params=dict(cand.problem_params),
+            schedule_params=dict(cand.schedule_params),
+            raw_json=dict(cand.raw_json),
+            llm_trace=dict(cand.llm_trace),
+        )
+        _ensure_schedule_tilelang(cand_expanded.intent, spec)
+        (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_intent), encoding="utf-8")
+        report["intent_expanded"] = expanded_intent.to_json_dict()
+    except Exception as e:
+        report["intent_expanded"] = None
+        report["intent_expand_error"] = f"{type(e).__name__}: {e}"
+
+    print(f"[{spec.name}] stage6: Task4 static validation", flush=True)
+    sv = static_validate((cand_expanded.intent if cand_expanded is not None else cand.intent), cert_v2)
+    report["static_validation"] = {
+        "ok": bool(sv.ok),
+        "reasons": list(sv.reasons),
+        "obligations": [{"id": o.id, "status": o.status, "detail": o.detail} for o in sv.obligations],
+    }
+    if use_llm and not sv.ok:
+        # One conservative repair round using certificate-derived feedback.
+        try:
+            cand_fix = _LLM_HUB.lift(desc, feedback=list(sv.reasons), model=llm_model)
+            enrich_intent_macros(cand_fix.intent)
+            _ensure_schedule_tilelang(cand_fix.intent, spec)
+            report["llm_trace"] = dict(cand_fix.llm_trace or {})
+            cand = cand_fix
+            (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
+            report["intent"] = cand.intent.to_json_dict()
+            expanded_fix = expand_macros(cand.intent)
+            cand_expanded = CandidateIntent(
+                intent=expanded_fix,
+                problem_params=dict(cand.problem_params),
+                schedule_params=dict(cand.schedule_params),
+                raw_json=dict(cand.raw_json),
+                llm_trace=dict(cand.llm_trace),
+            )
+            _ensure_schedule_tilelang(cand_expanded.intent, spec)
+            (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_fix), encoding="utf-8")
+            report["intent_expanded"] = expanded_fix.to_json_dict()
+            sv = static_validate((cand_expanded.intent if cand_expanded is not None else cand.intent), cert_v2)
+            report["static_validation"] = {
+                "ok": bool(sv.ok),
+                "reasons": list(sv.reasons),
+                "obligations": [{"id": o.id, "status": o.status, "detail": o.detail} for o in sv.obligations],
+            }
+        except Exception:
+            pass
+
     # 3) Stage B: cases + diff
-    print(f"[{spec.name}] stage6: Task5 cases + diff", flush=True)
-    use_rt_ref = bool(use_tilelang_runtime) and (contract.level != "OUT_OF_SCOPE")
-    run_ref_fn = (lambda c: _run_tilelang_ref(spec, c)) if use_rt_ref else spec.runner
+    print(f"[{spec.name}] stage7: Task5 cases + diff", flush=True)
+    cand_for_run = cand_expanded or cand
+    run_ref_fn = (lambda c: _run_tilelang_ref(spec, c)) if bool(use_tilelang_runtime) else spec.runner
     cases_pack: GeneratedCases = generate_cases_split(
-        cand.intent,
+        cand_for_run.intent,
         constraints=constraints,
         limit=int(cases_limit),
         seed=0,
@@ -737,34 +802,126 @@ def run_pipeline_for_spec(
     cases_out = list(cases_pack.out_of_contract)
     report["cases"] = {"in_contract": [dict(c.shapes) for c in cases_in], "out_of_contract": [dict(c.shapes) for c in cases_out]}
 
-    tol = infer_tolerances(cand.intent).to_dict()
+    tol = infer_tolerances(cand_for_run.intent).to_dict()
     report["tolerances"] = dict(tol)
-    diffs_in, cex_in = run_diff(cand.intent, run_ref_fn, cases_in, tolerances=tol)
+    diffs_in, cex_in = run_diff(cand_for_run.intent, run_ref_fn, cases_in, tolerances=tol)
     diff_ok = bool(diffs_in and all(d.ok for d in diffs_in))
-    report["diff"] = {
-        "ok": bool(diff_ok),
-        "results": [
-            {
-                "ok": bool(d.ok),
-                "max_abs_err": float(d.max_abs_err),
-                "max_rel_err": float(d.max_rel_err),
-                "first_bad_index": ([int(x) for x in d.first_bad_index] if d.first_bad_index is not None else None),
-                "summary": str(d.summary),
-            }
-            for d in diffs_in
-        ],
-    }
+    if diffs_in:
+        worst = max(diffs_in, key=lambda d: (not d.ok, d.max_abs_err))
+        report["diff"] = {
+            "ok": bool(diff_ok),
+            "worst": {"summary": worst.summary, "max_abs": float(worst.max_abs_err), "max_rel": float(worst.max_rel_err)},
+            "results": [
+                {
+                    "case_shapes": dict(cases_in[i].shapes),
+                    "ok": bool(diffs_in[i].ok),
+                    "summary": str(diffs_in[i].summary),
+                    "max_abs": float(diffs_in[i].max_abs_err),
+                    "max_rel": float(diffs_in[i].max_rel_err),
+                }
+                for i in range(min(len(cases_in), len(diffs_in)))
+            ],
+        }
+    else:
+        report["diff"] = {"ok": False, "error": "no diff results"}
     if cex_in:
         report["counterexamples"] = [
             {"shapes": dict(cx.case.shapes), "summary": cx.diff.summary, "hints": list(cx.hints)} for cx in cex_in[:3]
         ]
+
+    # If dynamic diff fails, do one bounded LLM repair round using concrete feedback.
+    # This is deliberately conservative (1 retry) to respect LLM rate limits.
+    if use_llm and diffs_in and not diff_ok:
+        worst_summary = (report.get("diff") or {}).get("worst", {}).get("summary")
+        ce0 = (report.get("counterexamples") or [{}])[0]
+        feedback3: List[str] = []
+        if spec.name == "group_norm_kernel":
+            feedback3 += [
+                "Your groupnorm math is wrong: reduce_sum returns SUM. You must divide by num_elements=group_size*HW for mean and var.",
+                "Implement mean = reduce_sum(X, dims=[2,3], keepdims=true, scale='1.0/(group_size*HW)').",
+                "Implement var = reduce_sum((X-mean)^2, dims=[2,3], keepdims=true, scale='1.0/(group_size*HW)').",
+                "Then rstd = rsqrt(var + eps).",
+            ]
+        if spec.name == "layer_norm_persistent":
+            feedback3 += ["Your layernorm math is wrong: reduce_sum returns SUM. You must divide by N for mean/var."]
+        if worst_summary:
+            feedback3.append(f"Observed diff failure: {worst_summary}")
+        if ce0.get("shapes"):
+            feedback3.append(f"Counterexample shapes: {ce0.get('shapes')}")
+
+        if feedback3:
+            try:
+                cand_fix = _LLM_HUB.lift(desc, feedback=feedback3, model=llm_model)
+                enrich_intent_macros(cand_fix.intent)
+                _ensure_schedule_tilelang(cand_fix.intent, spec)
+                report["llm_trace"] = dict(cand_fix.llm_trace or {})
+                cand = cand_fix
+                (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
+                report["intent"] = cand.intent.to_json_dict()
+
+                expanded_fix = expand_macros(cand.intent)
+                cand_expanded = CandidateIntent(
+                    intent=expanded_fix,
+                    problem_params=dict(cand.problem_params),
+                    schedule_params=dict(cand.schedule_params),
+                    raw_json=dict(cand.raw_json),
+                    llm_trace=dict(cand.llm_trace),
+                )
+                _ensure_schedule_tilelang(cand_expanded.intent, spec)
+                (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_fix), encoding="utf-8")
+                report["intent_expanded"] = expanded_fix.to_json_dict()
+                cand_for_run = cand_expanded
+
+                # Re-run diff with a small case set to confirm the repair.
+                tol = infer_tolerances(cand_for_run.intent).to_dict()
+                report["tolerances"] = dict(tol)
+                cases_fix_pack: GeneratedCases = generate_cases_split(
+                    cand_for_run.intent,
+                    constraints=constraints,
+                    limit=min(4, int(cases_limit)),
+                    seed=0,
+                    axes=list(spec.vary_axes),
+                    exclude_axes=list(spec.exclude_axes or []),
+                    assumptions=list(contract.assumptions),
+                    base_shapes=dict(spec.canonical_shapes),
+                )
+                cases_in = list(cases_fix_pack.in_contract)
+                report["cases"] = {"in_contract": [dict(c.shapes) for c in cases_in], "out_of_contract": []}
+                diffs_in, cex_in = run_diff(cand_for_run.intent, run_ref_fn, cases_in, tolerances=tol)
+                diff_ok = bool(diffs_in and all(d.ok for d in diffs_in))
+                if diffs_in:
+                    worst = max(diffs_in, key=lambda d: (not d.ok, d.max_abs_err))
+                    report["diff"] = {
+                        "ok": bool(diff_ok),
+                        "worst": {"summary": worst.summary, "max_abs": float(worst.max_abs_err), "max_rel": float(worst.max_rel_err)},
+                        "results": [
+                            {
+                                "case_shapes": dict(cases_in[i].shapes),
+                                "ok": bool(diffs_in[i].ok),
+                                "summary": str(diffs_in[i].summary),
+                                "max_abs": float(diffs_in[i].max_abs_err),
+                                "max_rel": float(diffs_in[i].max_rel_err),
+                            }
+                            for i in range(min(len(cases_in), len(diffs_in)))
+                        ],
+                    }
+                else:
+                    report["diff"] = {"ok": False, "error": "no diff results"}
+                if cex_in:
+                    report["counterexamples"] = [
+                        {"shapes": dict(cx.case.shapes), "summary": cx.diff.summary, "hints": list(cx.hints)}
+                        for cx in cex_in[:3]
+                    ]
+            except Exception:
+                pass
+
     if diffs_in and not diff_ok:
         try:
             from verify.diff_debugger import debug_mismatch
 
             debug_case = (cex_in[0].case if cex_in else (cases_in[0] if cases_in else TestCase(shapes={}, dtypes={}, seed=0)))
             report["diff_debug"] = debug_mismatch(
-                cand.intent,
+                cand_for_run.intent,
                 run_ref_fn,
                 debug_case,
                 sample_elems=16,
@@ -772,12 +929,15 @@ def run_pipeline_for_spec(
         except Exception as e:
             report["diff_debug"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    stage_c_ref_fn = spec.runner
+    stage_c_ref_fn = run_ref_fn
     if stage_c and diff_ok and cases_in:
-        print(f"[{spec.name}] stage7: Task5 stage C (metamorphic + bounded)", flush=True)
-        base_case = TestCase(shapes=dict(spec.canonical_shapes), dtypes={}, seed=0)
-        meta = run_metamorphic_suite(spec.name, cand.intent, stage_c_ref_fn, base_case=base_case, atol=tol["atol"], rtol=tol["rtol"])
-        bounded = run_bounded_exhaustive(spec.name, cand.intent, stage_c_ref_fn, atol=tol["atol"], rtol=tol["rtol"], max_cases=64)
+        base_case = cases_in[0] if cases_in else TestCase(shapes=dict(spec.canonical_shapes), dtypes={}, seed=0)
+        meta = run_metamorphic_suite(
+            spec.name, cand_for_run.intent, stage_c_ref_fn, base_case=base_case, atol=tol["atol"], rtol=tol["rtol"]
+        )
+        bounded = run_bounded_exhaustive(
+            spec.name, cand_for_run.intent, stage_c_ref_fn, atol=tol["atol"], rtol=tol["rtol"], max_cases=64
+        )
         report["stage_c"] = {
             "metamorphic": {
                 "ok": bool(meta.ok),
@@ -796,7 +956,7 @@ def run_pipeline_for_spec(
             from verify.numerical_stability import run_numerical_stability_suite
 
             report["stage_c"]["numerical_stability"] = run_numerical_stability_suite(
-                spec.name, cand.intent, stage_c_ref_fn, base_case=base_case, tolerances=tol
+                spec.name, cand_for_run.intent, stage_c_ref_fn, base_case=base_case, tolerances=tol
             ).to_json_dict()
         except Exception as e:
             report["stage_c"]["numerical_stability"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
@@ -804,17 +964,16 @@ def run_pipeline_for_spec(
         report["stage_c"] = {"skipped": True, "reason": ("diff_failed" if stage_c and not diff_ok else "disabled_or_no_cases")}
 
     if mutation_kill and diff_ok and cases_in:
-        print(f"[{spec.name}] stage7: Task5 mutation-kill", flush=True)
         base_case = TestCase(shapes=dict(spec.canonical_shapes), dtypes={}, seed=0)
         diff_cases = cases_in[:2] if cases_in else [base_case]
         metamorphic_base = cases_in[0] if cases_in else base_case
         mut = run_mutation_kill(
             spec.name,
-            intent=cand.intent,
+            intent=cand_for_run.intent,
             run_ref_fn=stage_c_ref_fn,
             diff_cases=diff_cases,
             metamorphic_base_case=metamorphic_base,
-            static_validate_fn=None,
+            static_validate_fn=(lambda m, _cert=cert_v2: static_validate(m, _cert)),
             n_mutants=8,
             seed=0,
             atol=float(tol["atol"]),
@@ -843,8 +1002,7 @@ def run_pipeline_for_spec(
 
     # Persist baseline IO for Task6 tools (remote RVV / backend codegen smoke).
     try:
-        baseline_case = TestCase(shapes=dict(spec.canonical_shapes), dtypes={}, seed=0)
-        baseline_io = run_ref_fn(baseline_case)
+        baseline_io = dict(baseline_io_raw)
         try:
             from verify.diff_runner import _with_io_aliases as _with_io_aliases_for_diff
 
@@ -864,6 +1022,7 @@ def run_pipeline_for_spec(
                 "npz_path": str(npz_path),
                 "keys": sorted(list(baseline_io.keys())),
                 "bytes": int(total_bytes),
+                "source": ("tilelang_runtime" if use_tilelang_runtime else "numpy_reference"),
             }
         else:
             report["baseline"] = {
@@ -873,6 +1032,7 @@ def run_pipeline_for_spec(
                 "keys": sorted(list(baseline_io.keys())),
                 "bytes": int(total_bytes),
                 "skipped": "baseline too large to cache (over 16MB)",
+                "source": ("tilelang_runtime" if use_tilelang_runtime else "numpy_reference"),
             }
     except Exception as e:
         report["baseline"] = {"error": f"{type(e).__name__}: {e}"}

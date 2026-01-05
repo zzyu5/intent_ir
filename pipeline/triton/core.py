@@ -22,7 +22,7 @@ from intent_ir.llm import LLMIntentHub
 from intent_ir.macros import expand_macros, enrich_intent_macros
 from intent_ir.parser import CandidateIntent
 from intent_ir.ir.printer_mlir_like import print_mlir_like
-from frontends.triton.static_validate import static_validate
+from frontends.common.static_validate import static_validate
 from pipeline import registry as pipeline_registry
 from pipeline.interfaces import FrontendConstraints
 from verify.diff_runner import run_diff
