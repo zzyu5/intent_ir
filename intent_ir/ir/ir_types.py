@@ -14,6 +14,7 @@ import re
 from typing import Any, Dict, List, Literal, Optional
 
 from intent_ir.diagnostics import closest_match, format_op_snippet
+from intent_ir.ops import SUPPORTED_OPS
 
 
 __all__ = [
@@ -60,46 +61,6 @@ SUPPORTED_DTYPES: set[str] = {
 }
 
 AXIS_ROLE_VALUES = {"spatial", "reduction", "batch", "channel"}
-
-SUPPORTED_OPS = {
-    "matmul",
-    "add",
-    "sub",
-    "mul",
-    "div",
-    "max",
-    "min",
-    "ne",
-    "lt",
-    "le",
-    "gt",
-    "ge",
-    "and",
-    "or",
-    "not",
-    "exp",
-    "relu",
-    "rsqrt",
-    "abs",
-    "floor",
-    "cast",
-    "where",
-    "iota",
-    "gather",
-    "identity",
-    "const",
-    "reduce_sum",
-    "reduce_any",
-    "reduce_max",
-    "softmax",
-    "broadcast_in_dim",
-    "transpose",
-    "reshape",
-    "layout_cast",
-    "conv2d",
-    # Macro ops (semantic ops expanded/lowered later)
-    "upsample_bicubic2d_aa",
-}
 
 EPILOGUE_ELEMWISE_OPS = {
     "add",

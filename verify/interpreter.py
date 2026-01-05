@@ -48,6 +48,30 @@ BOOL_UNARY_OPS = {
     "not": np.logical_not,
 }
 
+INTERPRETER_SUPPORTED_OPS: set[str] = set().union(
+    set(NUM_BIN_OPS.keys()),
+    set(NUM_UNARY_OPS.keys()),
+    set(CMP_BIN_OPS.keys()),
+    set(BOOL_BIN_OPS.keys()),
+    set(BOOL_UNARY_OPS.keys()),
+    {
+        "broadcast_in_dim",
+        "transpose",
+        "reshape",
+        "layout_cast",
+        "cast",
+        "iota",
+        "gather",
+        "where",
+        "reduce_sum",
+        "reduce_any",
+        "reduce_max",
+        "softmax",
+        "matmul",
+        "const",
+    },
+)
+
 
 def _np_dtype(dtype: str | None) -> Any:
     if dtype is None:
@@ -590,4 +614,4 @@ def _infer_shape_bindings(intent: IntentFunction, inputs: Dict[str, np.ndarray])
     return bindings
 
 
-__all__ = ["execute_intent"]
+__all__ = ["execute_intent", "execute_intent_with_trace", "InterpreterTrace", "INTERPRETER_SUPPORTED_OPS"]
