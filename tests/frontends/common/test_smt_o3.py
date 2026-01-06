@@ -78,10 +78,43 @@ def test_o3_unknown_reports_bounded_search_stats_when_no_refutation_found():
             address_space="global",
         )
     ]
-    rep = check_mask_implies_inbounds(accesses, shape_hints={"M": 8}, symbol_ranges={"r0": {"start": 0, "end": 4}})
+    rep = check_mask_implies_inbounds(accesses, shape_hints={"M": 8}, symbol_ranges={"r0": {"start": 0, "end": 4}}, solver="mvp")
     assert rep.status == "UNKNOWN"
     # Ensure witness includes bounded-search domains/stats (explicitly marked incomplete).
     dim0 = rep.access_checks[0].dims[0]
     assert dim0.status == "UNKNOWN"
     assert "bounded_search" in dim0.witness
     assert dim0.witness["bounded_search"]["stats"]["stop_reason"] in {"exhausted_domain", "hit_max_models"}
+
+
+def test_o3_parses_mod_clause_and_keeps_result_pass():
+    # Non-affine predicate clauses (e.g., mod/div) should not force UNKNOWN.
+    accesses = [
+        AccessSummary(
+            kind="load",
+            tensor="X",
+            dtype="fp32",
+            rank=1,
+            index_exprs=[IndexExpr(terms={"pid0": 1, "r0": 1}, const=0)],
+            predicate=Predicate(clauses=["pid0 + r0 < M", "M % 16 == 0"]),
+            address_space="global",
+        )
+    ]
+    rep = check_mask_implies_inbounds(accesses, shape_hints={"M": 32}, symbol_ranges={"r0": {"start": 0, "end": 4}})
+    assert rep.status == "PASS"
+
+
+def test_o3_parses_div_upper_bound_clause():
+    accesses = [
+        AccessSummary(
+            kind="load",
+            tensor="X",
+            dtype="fp32",
+            rank=1,
+            index_exprs=[IndexExpr(terms={"pid0": 1, "r0": 1}, const=0)],
+            predicate=Predicate(clauses=["pid0 + r0 < (M / 2)", "M / 2 > pid0 + r0"]),
+            address_space="global",
+        )
+    ]
+    rep = check_mask_implies_inbounds(accesses, shape_hints={"M": 32}, symbol_ranges={"r0": {"start": 0, "end": 4}})
+    assert rep.status == "PASS"

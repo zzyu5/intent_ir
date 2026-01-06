@@ -111,6 +111,94 @@ _ARG_INDEX_RE = re.compile(r"^arg\d+$")
 _R_INDEX_RE = re.compile(r"^r\d+$")
 
 
+# -----------------------------
+# Tiny integer expression parser
+# -----------------------------
+
+
+_TOKEN_RE = re.compile(r"\s*(==|!=|<=|>=|[()+\-*/%]|[A-Za-z_%][A-Za-z0-9_%]*|\d+)\s*")
+
+
+class _TokStream:
+    def __init__(self, tokens: List[str]):
+        self.toks = tokens
+        self.i = 0
+
+    def peek(self) -> Optional[str]:
+        return self.toks[self.i] if self.i < len(self.toks) else None
+
+    def pop(self) -> str:
+        if self.i >= len(self.toks):
+            raise ValueError("unexpected end of tokens")
+        t = self.toks[self.i]
+        self.i += 1
+        return t
+
+
+def _tokenize(expr: str) -> List[str]:
+    out = _TOKEN_RE.findall(str(expr))
+    if not out:
+        raise ValueError(f"failed to tokenize expression: {expr!r}")
+    return out
+
+
+_Node = Tuple[str, Any]  # ("num", int) | ("var", str) | ("neg", node) | ("bin", op, lhs, rhs)
+
+
+def _parse_expr(ts: _TokStream) -> _Node:
+    return _parse_add(ts)
+
+
+def _parse_add(ts: _TokStream) -> _Node:
+    node = _parse_mul(ts)
+    while ts.peek() in {"+", "-"}:
+        op = ts.pop()
+        rhs = _parse_mul(ts)
+        node = ("bin", op, node, rhs)
+    return node
+
+
+def _parse_mul(ts: _TokStream) -> _Node:
+    node = _parse_unary(ts)
+    while ts.peek() in {"*", "/", "%"}:
+        op = ts.pop()
+        rhs = _parse_unary(ts)
+        node = ("bin", op, node, rhs)
+    return node
+
+
+def _parse_unary(ts: _TokStream) -> _Node:
+    if ts.peek() in {"+", "-"}:
+        op = ts.pop()
+        inner = _parse_unary(ts)
+        return inner if op == "+" else ("neg", inner)
+    return _parse_atom(ts)
+
+
+def _parse_atom(ts: _TokStream) -> _Node:
+    t = ts.pop()
+    if t == "(":
+        node = _parse_expr(ts)
+        if ts.pop() != ")":
+            raise ValueError("expected ')'")
+        return node
+    if t.isdigit() or (t.startswith("-") and t[1:].isdigit()):
+        return ("num", int(t))
+    return ("var", str(t))
+
+
+def _parse_int_expr(expr: str) -> _Node:
+    s = str(expr).strip()
+    if not s or s == "<unresolved>":
+        raise ValueError("empty/unresolved expression")
+    toks = _tokenize(s)
+    ts = _TokStream(toks)
+    node = _parse_expr(ts)
+    if ts.peek() is not None:
+        raise ValueError(f"unexpected trailing token: {ts.peek()!r}")
+    return node
+
+
 def _parse_cmp(clause: str) -> Optional[Tuple[str, str, str]]:
     m = _CMP_RE.match(str(clause).strip())
     if not m:
@@ -118,62 +206,17 @@ def _parse_cmp(clause: str) -> Optional[Tuple[str, str, str]]:
     return (m.group("lhs").strip(), m.group("op").strip(), m.group("rhs").strip())
 
 
-def _parse_affine(expr: str) -> Optional[IndexExpr]:
-    """
-    Parse a simple affine expression:
-      - constants: "0", "-1"
-      - vars: "pid0", "r0", "M", "arg4"
-      - sums: "8*pid0 + r0 - 1"
-    """
-    s = str(expr).strip()
-    if not s or s == "<unresolved>":
-        return None
-    # Normalize subtraction into "+ -term"
-    s = s.replace("-", "+-")
-    parts = [p.strip() for p in s.split("+") if p.strip()]
-    terms: Dict[str, int] = {}
-    const = 0
-    for p in parts:
-        if "*" in p:
-            a, b = p.split("*", 1)
-            try:
-                c = int(a.strip())
-            except Exception:
-                return None
-            v = b.strip()
-            if not v:
-                return None
-            terms[v] = terms.get(v, 0) + c
-            continue
-        # integer literal (with or without whitespace after unary '-')
-        if p.lstrip("-").isdigit():
-            const += int(p)
-            continue
-        if p.startswith("-"):
-            rest = p[1:].strip()
-            if rest.isdigit():
-                const -= int(rest)
-                continue
-        # bare var, maybe with unary '-'
-        if p.startswith("-") and len(p) > 1:
-            v = p[1:].strip()
-            if not v:
-                return None
-            terms[v] = terms.get(v, 0) - 1
-        else:
-            v = p.strip()
-            if not v:
-                return None
-            terms[v] = terms.get(v, 0) + 1
-    terms = {k: v for k, v in terms.items() if v != 0}
-    return IndexExpr(terms=terms, const=int(const))
+@dataclass(frozen=True)
+class _Expr:
+    node: _Node
+    affine: Optional[IndexExpr]
 
 
 @dataclass(frozen=True)
 class _Constraint:
-    lhs: IndexExpr
+    lhs: _Expr
     op: str
-    rhs: IndexExpr
+    rhs: _Expr
     raw: str
 
 
@@ -201,6 +244,80 @@ def _mul_ix(ix: IndexExpr, c: int) -> IndexExpr:
     return IndexExpr(terms={k: int(v) * int(c) for k, v in ix.terms.items() if int(v) * int(c) != 0}, const=int(ix.const) * int(c))
 
 
+def _node_to_affine(node: _Node) -> Optional[IndexExpr]:
+    kind = node[0]
+    if kind == "num":
+        return IndexExpr(terms={}, const=int(node[1]))
+    if kind == "var":
+        return IndexExpr(terms={str(node[1]): 1}, const=0)
+    if kind == "neg":
+        inner = _node_to_affine(node[1])
+        return _mul_ix(inner, -1) if inner is not None else None
+    if kind == "bin":
+        op, a, b = str(node[1]), node[2], node[3]
+        aa = _node_to_affine(a)
+        bb = _node_to_affine(b)
+        if aa is None or bb is None:
+            return None
+        if op == "+":
+            return _add_ix(aa, bb)
+        if op == "-":
+            return _add_ix(aa, _mul_ix(bb, -1))
+        if op == "*":
+            # Only support const * affine (either side).
+            if not aa.terms:
+                return _mul_ix(bb, int(aa.const))
+            if not bb.terms:
+                return _mul_ix(aa, int(bb.const))
+            return None
+        # Non-affine ops
+        if op in {"/", "%"}:
+            return None
+    return None
+
+
+def _ix_to_node(ix: IndexExpr) -> _Node:
+    """
+    Convert an affine IndexExpr into a node tree. This is used to apply affine
+    substitutions inside non-affine predicate clauses.
+    """
+    parts: List[_Node] = []
+    for k in sorted((ix.terms or {}).keys()):
+        c = int(ix.terms[k])
+        if c == 0:
+            continue
+        v: _Node = ("var", str(k))
+        term = v if c == 1 else ("neg", v) if c == -1 else ("bin", "*", ("num", int(c)), v)
+        parts.append(term)
+    if int(ix.const) != 0 or not parts:
+        parts.append(("num", int(ix.const)))
+    node = parts[0]
+    for p in parts[1:]:
+        node = ("bin", "+", node, p)
+    return node
+
+
+def _substitute_node(node: _Node, subst: Dict[str, _Node], *, max_depth: int = 64) -> _Node:
+    if max_depth <= 0:
+        return node
+    kind = node[0]
+    if kind == "var":
+        name = str(node[1])
+        return subst.get(name, node)
+    if kind == "num":
+        return node
+    if kind == "neg":
+        return ("neg", _substitute_node(node[1], subst, max_depth=max_depth - 1))
+    if kind == "bin":
+        return (
+            "bin",
+            str(node[1]),
+            _substitute_node(node[2], subst, max_depth=max_depth - 1),
+            _substitute_node(node[3], subst, max_depth=max_depth - 1),
+        )
+    return node
+
+
 def _substitute(ix: IndexExpr, subst: Dict[str, IndexExpr], *, max_steps: int = 64) -> IndexExpr:
     out = ix
     for _ in range(max_steps):
@@ -226,12 +343,14 @@ def _build_subst(constraints: List[_Constraint]) -> Dict[str, IndexExpr]:
     for c in constraints:
         if c.op != "==":
             continue
-        lv = _is_single_var(c.lhs)
-        rv = _is_single_var(c.rhs)
+        if c.lhs.affine is None or c.rhs.affine is None:
+            continue
+        lv = _is_single_var(c.lhs.affine)
+        rv = _is_single_var(c.rhs.affine)
         if lv is not None and rv is None:
-            subst[lv] = c.rhs
+            subst[lv] = c.rhs.affine
         elif rv is not None and lv is None:
-            subst[rv] = c.lhs
+            subst[rv] = c.lhs.affine
         elif lv is not None and rv is not None and lv != rv:
             # Canonicalize by mapping the lexicographically larger to the smaller.
             a, b = sorted([lv, rv])
@@ -256,29 +375,84 @@ def _eval_ix(ix: IndexExpr, env: Dict[str, int]) -> int:
     return v
 
 
-def _eval_constraint(c: _Constraint, env: Dict[str, int]) -> bool:
-    a = _eval_ix(c.lhs, env)
-    b = _eval_ix(c.rhs, env)
-    if c.op == "<":
+def _eval_node(node: _Node, env: Dict[str, int]) -> Optional[int]:
+    kind = node[0]
+    if kind == "num":
+        return int(node[1])
+    if kind == "var":
+        return int(env.get(str(node[1]), 0))
+    if kind == "neg":
+        inner = _eval_node(node[1], env)
+        return None if inner is None else -int(inner)
+    if kind == "bin":
+        op, a, b = str(node[1]), node[2], node[3]
+        aa = _eval_node(a, env)
+        bb = _eval_node(b, env)
+        if aa is None or bb is None:
+            return None
+        if op == "+":
+            return int(aa) + int(bb)
+        if op == "-":
+            return int(aa) - int(bb)
+        if op == "*":
+            return int(aa) * int(bb)
+        if op == "/":
+            if int(bb) == 0:
+                return None
+            return int(aa) // int(bb)
+        if op == "%":
+            if int(bb) == 0:
+                return None
+            return int(aa) % int(bb)
+        return None
+    return None
+
+
+def _eval_expr(expr: _Expr, env: Dict[str, int]) -> Optional[int]:
+    if expr.affine is not None:
+        return _eval_ix(expr.affine, env)
+    return _eval_node(expr.node, env)
+
+
+def _eval_cmp(a: int, op: str, b: int) -> bool:
+    if op == "<":
         return a < b
-    if c.op == "<=":
+    if op == "<=":
         return a <= b
-    if c.op == ">":
+    if op == ">":
         return a > b
-    if c.op == ">=":
+    if op == ">=":
         return a >= b
-    if c.op == "==":
+    if op == "==":
         return a == b
-    if c.op == "!=":
+    if op == "!=":
         return a != b
     return False
 
 
+def _eval_constraint(c: _Constraint, env: Dict[str, int]) -> bool:
+    a = _eval_expr(c.lhs, env)
+    b = _eval_expr(c.rhs, env)
+    if a is None or b is None:
+        return False
+    return _eval_cmp(int(a), str(c.op), int(b))
+
+
 def _variables_in_constraints(constraints: List[_Constraint]) -> Set[str]:
+    def visit(node: _Node, acc: Set[str]) -> None:
+        kind = node[0]
+        if kind == "var":
+            acc.add(str(node[1]))
+        elif kind == "neg":
+            visit(node[1], acc)
+        elif kind == "bin":
+            visit(node[2], acc)
+            visit(node[3], acc)
+
     out: Set[str] = set()
     for c in constraints:
-        out.update(str(k) for k in c.lhs.terms.keys())
-        out.update(str(k) for k in c.rhs.terms.keys())
+        visit(c.lhs.node, out)
+        visit(c.rhs.node, out)
     return out
 
 
@@ -417,9 +591,9 @@ def _find_upper_bound_clause(
       - UB >= idx
     """
     for c in constraints:
-        if c.op in {"<", "<="} and c.lhs == idx:
+        if c.lhs.affine is not None and c.op in {"<", "<="} and c.lhs.affine == idx:
             return c
-        if c.op in {">", ">="} and c.rhs == idx:
+        if c.rhs.affine is not None and c.op in {">", ">="} and c.rhs.affine == idx:
             return c
     return None
 
@@ -427,13 +601,15 @@ def _find_upper_bound_clause(
 def _has_explicit_nonneg(idx: IndexExpr, constraints: List[_Constraint]) -> Optional[str]:
     zero = IndexExpr(terms={}, const=0)
     for c in constraints:
-        if c.op == ">=" and c.lhs == idx and c.rhs == zero:
+        if c.lhs.affine is None or c.rhs.affine is None:
+            continue
+        if c.op == ">=" and c.lhs.affine == idx and c.rhs.affine == zero:
             return c.raw
-        if c.op == "<=" and c.rhs == idx and c.lhs == zero:
+        if c.op == "<=" and c.rhs.affine == idx and c.lhs.affine == zero:
             return c.raw
-        if c.op == ">" and c.lhs == idx and c.rhs == IndexExpr(terms={}, const=-1):
+        if c.op == ">" and c.lhs.affine == idx and c.rhs.affine == IndexExpr(terms={}, const=-1):
             return c.raw
-        if c.op == "<" and c.rhs == idx and c.lhs == IndexExpr(terms={}, const=-1):
+        if c.op == "<" and c.rhs.affine == idx and c.lhs.affine == IndexExpr(terms={}, const=-1):
             return c.raw
     return None
 
@@ -480,8 +656,7 @@ def _bounded_model_search(
             continue
         if extra_cond is not None:
             lhs, op, rhs = extra_cond
-            cc = _Constraint(lhs=lhs, op=op, rhs=rhs, raw="(extra)")
-            if not _eval_constraint(cc, env):
+            if not _eval_cmp(_eval_ix(lhs, env), str(op), _eval_ix(rhs, env)):
                 continue
         stats = {
             "vars": list(vars_),
@@ -504,18 +679,88 @@ def _bounded_model_search(
     return None, stats
 
 
+def _try_import_z3():
+    try:
+        import z3  # type: ignore
+
+        return z3
+    except Exception:
+        return None
+
+
+def _node_to_z3(node: _Node, z3, var_env: Dict[str, Any]):
+    kind = node[0]
+    if kind == "num":
+        return z3.IntVal(int(node[1]))
+    if kind == "var":
+        name = str(node[1])
+        if name not in var_env:
+            var_env[name] = z3.Int(name)
+        return var_env[name]
+    if kind == "neg":
+        return -_node_to_z3(node[1], z3, var_env)
+    if kind == "bin":
+        op, a, b = str(node[1]), node[2], node[3]
+        za = _node_to_z3(a, z3, var_env)
+        zb = _node_to_z3(b, z3, var_env)
+        if op == "+":
+            return za + zb
+        if op == "-":
+            return za - zb
+        if op == "*":
+            return za * zb
+        if op == "/":
+            return z3.IntDiv(za, zb)
+        if op == "%":
+            return z3.Mod(za, zb)
+    return z3.IntVal(0)
+
+
+def _ix_to_z3(ix: IndexExpr, z3, var_env: Dict[str, Any]):
+    out = z3.IntVal(int(ix.const))
+    for name, c in sorted((ix.terms or {}).items()):
+        v = str(name)
+        if v not in var_env:
+            var_env[v] = z3.Int(v)
+        out = out + z3.IntVal(int(c)) * var_env[v]
+    return out
+
+
+def _constraint_to_z3(c: _Constraint, z3, var_env: Dict[str, Any]):
+    lhs = _ix_to_z3(c.lhs.affine, z3, var_env) if c.lhs.affine is not None else _node_to_z3(c.lhs.node, z3, var_env)
+    rhs = _ix_to_z3(c.rhs.affine, z3, var_env) if c.rhs.affine is not None else _node_to_z3(c.rhs.node, z3, var_env)
+    op = str(c.op)
+    if op == "<":
+        return lhs < rhs
+    if op == "<=":
+        return lhs <= rhs
+    if op == ">":
+        return lhs > rhs
+    if op == ">=":
+        return lhs >= rhs
+    if op == "==":
+        return lhs == rhs
+    if op == "!=":
+        return lhs != rhs
+    return z3.BoolVal(True)
+
+
 def check_mask_implies_inbounds(
     accesses: Sequence[AccessSummary],
     *,
     shape_hints: Dict[str, int] | None = None,
     symbol_ranges: Dict[str, Dict[str, int]] | None = None,
     max_counterexample_search: int = 5000,
+    solver: Literal["auto", "mvp", "z3"] = "auto",
+    z3_timeout_ms: int = 2000,
 ) -> O3Report:
     """
     Main entry: check O3 for all masked accesses.
     """
     access_checks: List[O3AccessCheck] = []
     total = passed = failed = unknown = 0
+    z3 = _try_import_z3() if solver in {"auto", "z3"} else None
+    use_z3 = z3 is not None and solver in {"auto", "z3"}
 
     for a in accesses:
         pred = a.predicate
@@ -532,12 +777,20 @@ def check_mask_implies_inbounds(
                 parse_error = f"unsupported clause syntax: {s!r}"
                 break
             lhs_s, op, rhs_s = cmp_
-            lhs = _parse_affine(lhs_s)
-            rhs = _parse_affine(rhs_s)
-            if lhs is None or rhs is None:
-                parse_error = f"non-affine clause side: {s!r}"
+            try:
+                lhs_node = _parse_int_expr(lhs_s)
+                rhs_node = _parse_int_expr(rhs_s)
+            except Exception as e:
+                parse_error = f"clause parse failed: {type(e).__name__}: {e} | clause={s!r}"
                 break
-            parsed.append(_Constraint(lhs=lhs, op=op, rhs=rhs, raw=s))
+            parsed.append(
+                _Constraint(
+                    lhs=_Expr(node=lhs_node, affine=_node_to_affine(lhs_node)),
+                    op=op,
+                    rhs=_Expr(node=rhs_node, affine=_node_to_affine(rhs_node)),
+                    raw=s,
+                )
+            )
         if parse_error:
             dims = [
                 O3DimCheck(dim=i, index=ix, upper_bound=None, status="UNKNOWN", reason=parse_error)
@@ -549,7 +802,19 @@ def check_mask_implies_inbounds(
             continue
 
         subst = _build_subst(parsed)
-        norm_constraints = [_Constraint(lhs=_substitute(c.lhs, subst), op=c.op, rhs=_substitute(c.rhs, subst), raw=c.raw) for c in parsed]
+        subst_nodes = {k: _ix_to_node(v) for k, v in subst.items()}
+        norm_constraints: List[_Constraint] = []
+        for c in parsed:
+            lhs_node = _substitute_node(c.lhs.node, subst_nodes)
+            rhs_node = _substitute_node(c.rhs.node, subst_nodes)
+            norm_constraints.append(
+                _Constraint(
+                    lhs=_Expr(node=lhs_node, affine=_node_to_affine(lhs_node)),
+                    op=c.op,
+                    rhs=_Expr(node=rhs_node, affine=_node_to_affine(rhs_node)),
+                    raw=c.raw,
+                )
+            )
 
         domains, lower_bounds, domain_info = _default_domains(
             _variables_in_constraints(norm_constraints), symbol_ranges=symbol_ranges, shape_hints=shape_hints
@@ -577,7 +842,11 @@ def check_mask_implies_inbounds(
                 unknown += 1
                 continue
 
-            ub = ub_clause.rhs if (ub_clause.op in {"<", "<="} and ub_clause.lhs == idx) else ub_clause.lhs
+            ub_aff: Optional[IndexExpr] = None
+            if ub_clause.op in {"<", "<="} and ub_clause.lhs.affine == idx:
+                ub_aff = ub_clause.rhs.affine
+            elif ub_clause.op in {">", ">="} and ub_clause.rhs.affine == idx:
+                ub_aff = ub_clause.lhs.affine
 
             # Lower-bound proof:
             explicit = _has_explicit_nonneg(idx, norm_constraints)
@@ -586,7 +855,7 @@ def check_mask_implies_inbounds(
                     O3DimCheck(
                         dim=dim_i,
                         index=idx,
-                        upper_bound=ub,
+                        upper_bound=ub_aff,
                         status="PASS",
                         witness={"upper_bound_clause": ub_clause.raw, "lower_bound_clause": explicit},
                     )
@@ -601,7 +870,7 @@ def check_mask_implies_inbounds(
                     O3DimCheck(
                         dim=dim_i,
                         index=idx,
-                        upper_bound=ub,
+                        upper_bound=ub_aff,
                         status="PASS",
                         witness={
                             "upper_bound_clause": ub_clause.raw,
@@ -626,7 +895,7 @@ def check_mask_implies_inbounds(
                     O3DimCheck(
                         dim=dim_i,
                         index=idx,
-                        upper_bound=ub,
+                        upper_bound=ub_aff,
                         status="FAIL",
                         reason="found model where predicate holds but index is negative",
                         witness={
@@ -648,11 +917,107 @@ def check_mask_implies_inbounds(
                 access_reason = "O3 violated by counterexample"
                 continue
 
+            # Optional stronger proof/model via Z3 (if available and enabled).
+            z3_witness: Dict[str, Any] | None = None
+            z3_cex: CounterexampleModel | None = None
+            if use_z3:
+                try:
+                    var_env: Dict[str, Any] = {}
+                    s_z3 = z3.Solver()
+                    s_z3.set("timeout", int(z3_timeout_ms))
+                    for c in norm_constraints:
+                        s_z3.add(_constraint_to_z3(c, z3, var_env))
+                    # Domain assumptions (sound only under these assumptions).
+                    for name, v in var_env.items():
+                        if name in lower_bounds:
+                            s_z3.add(v >= int(lower_bounds[name]))
+                        if symbol_ranges and name in symbol_ranges:
+                            rr = symbol_ranges.get(name) or {}
+                            try:
+                                start = int(rr.get("start", 0))
+                                end = int(rr.get("end", start))
+                                s_z3.add(v >= start)
+                                s_z3.add(v < end)
+                            except Exception:
+                                pass
+                        if name not in lower_bounds and re.match(r"^[A-Z][A-Z0-9_]*$", name):
+                            s_z3.add(v >= 1)
+                    s_z3.add(_ix_to_z3(idx, z3, var_env) < 0)
+                    res = s_z3.check()
+                    if res == z3.unsat:
+                        z3_witness = {
+                            "result": "unsat",
+                            "goal": "predicate && (idx < 0)",
+                            "timeout_ms": int(z3_timeout_ms),
+                            "domain_assumptions": {"lower_bounds": dict(lower_bounds)},
+                        }
+                    elif res == z3.sat:
+                        m = s_z3.model()
+                        assigns: Dict[str, int] = {}
+                        for nm, v in var_env.items():
+                            try:
+                                vv = m.eval(v, model_completion=True)
+                                if vv is None:
+                                    continue
+                                if hasattr(vv, "as_long"):
+                                    assigns[str(nm)] = int(vv.as_long())
+                            except Exception:
+                                continue
+                        z3_cex = CounterexampleModel(assignments=assigns)
+                        z3_witness = {
+                            "result": "sat",
+                            "goal": "predicate && (idx < 0)",
+                            "timeout_ms": int(z3_timeout_ms),
+                            "model": {"assignments": dict(assigns)},
+                            "domain_assumptions": {"lower_bounds": dict(lower_bounds)},
+                        }
+                    else:
+                        z3_witness = {
+                            "result": "unknown",
+                            "goal": "predicate && (idx < 0)",
+                            "timeout_ms": int(z3_timeout_ms),
+                            "reason": str(getattr(s_z3, "reason_unknown", lambda: "")()),
+                            "domain_assumptions": {"lower_bounds": dict(lower_bounds)},
+                        }
+                except Exception as e:
+                    z3_witness = {"result": "error", "error": f"{type(e).__name__}: {e}", "timeout_ms": int(z3_timeout_ms)}
+
+            if z3_witness is not None and z3_witness.get("result") == "unsat":
+                dim_checks.append(
+                    O3DimCheck(
+                        dim=dim_i,
+                        index=idx,
+                        upper_bound=ub_aff,
+                        status="PASS",
+                        witness={"upper_bound_clause": ub_clause.raw, "z3": z3_witness},
+                    )
+                )
+                passed += 1
+                total += 1
+                continue
+            if z3_cex is not None:
+                dim_checks.append(
+                    O3DimCheck(
+                        dim=dim_i,
+                        index=idx,
+                        upper_bound=ub_aff,
+                        status="FAIL",
+                        reason="z3 found model where predicate holds but index is negative",
+                        witness={"upper_bound_clause": ub_clause.raw, "bounded_search": {"stats": stats}, "z3": z3_witness},
+                        counterexample=z3_cex,
+                    )
+                )
+                failed += 1
+                total += 1
+                access_status = "FAIL"
+                access_reason = "O3 violated by counterexample"
+                continue
+
             dim_checks.append(
                 O3DimCheck(
                     dim=dim_i,
                     index=idx,
-                    upper_bound=ub,
+                    upper_bound=ub_aff,
                     status="UNKNOWN",
                     reason="cannot prove index non-negative under current domain assumptions",
                     witness={
@@ -667,7 +1032,11 @@ def check_mask_implies_inbounds(
                                 "Counterexamples may exist outside enumerated domains or beyond max_models."
                             ),
                         },
-                        "hint": "optional: install z3-solver for stronger proofs; or increase max_counterexample_search / domain coverage",
+                        **({"z3": z3_witness} if z3_witness is not None else {}),
+                        "hint": (
+                            "optional: enable z3 backend for stronger proofs; "
+                            "or increase max_counterexample_search / domain coverage"
+                        ),
                     },
                 )
             )

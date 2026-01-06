@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, List, Optional
 import numpy as np
 
 from frontends.common.contract_v2 import evaluate_contract_v2
-from frontends.common.obligations import evaluate_obligations
+from frontends.common.obligations import O3_MASK_IMPLIES_INBOUNDS, evaluate_obligations
 from pipeline import registry as pipeline_registry
 from pipeline.interfaces import FrontendConstraints
 from verify.diff_runner import run_diff
@@ -842,6 +842,36 @@ def run_pipeline_for_spec(
         extra_sizes = sorted(set(int(v) for v in extra_sizes if int(v) > 0))
     except Exception:
         extra_sizes = []
+    counterexample_models: List[Dict[str, int]] = []
+    try:
+        obs = (cert_v2.semantic_facts or {}).get("obligations")
+        if isinstance(obs, list):
+            for o in obs:
+                if not isinstance(o, dict):
+                    continue
+                if o.get("id") != O3_MASK_IMPLIES_INBOUNDS:
+                    continue
+                wit = o.get("witness") if isinstance(o.get("witness"), dict) else {}
+                for ac in (wit.get("access_checks") or []):
+                    if not isinstance(ac, dict):
+                        continue
+                    for d in (ac.get("dims") or []):
+                        if not isinstance(d, dict):
+                            continue
+                        cx = d.get("counterexample")
+                        if not isinstance(cx, dict):
+                            continue
+                        assigns = cx.get("assignments")
+                        if not isinstance(assigns, dict) or not assigns:
+                            continue
+                        model: Dict[str, int] = {}
+                        for k, v in assigns.items():
+                            if isinstance(k, str) and isinstance(v, (int, float)):
+                                model[str(k)] = int(v)
+                        if model:
+                            counterexample_models.append(model)
+    except Exception:
+        counterexample_models = []
     cases_pack: GeneratedCases = generate_cases_split(
         cand_for_run.intent,
         constraints=constraints,
@@ -852,6 +882,7 @@ def run_pipeline_for_spec(
         exclude_axes=list(spec.exclude_axes or []),
         extra_sizes=extra_sizes,
         predicate_clauses=predicate_clauses,
+        counterexample_models=counterexample_models,
         assumptions=list(contract.assumptions),
         base_shapes=dict(spec.canonical_shapes),
     )

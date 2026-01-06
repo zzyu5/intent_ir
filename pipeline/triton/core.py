@@ -30,7 +30,7 @@ from verify.gen_cases import GeneratedCases, TestCase, generate_cases_split
 from frontends.common.certificate_v2 import SemanticCertificateV2
 from frontends.common.evidence import CanonicalEvidence
 from frontends.triton.certificate import SemanticCertificate, build_certificate_v2
-from frontends.common.obligations import evaluate_obligations
+from frontends.common.obligations import O3_MASK_IMPLIES_INBOUNDS, evaluate_obligations
 from frontends.triton.contract import evaluate_contract_v2
 from verify.metamorphic import run_bounded_exhaustive, run_metamorphic_suite
 from verify.mutation import run_mutation_kill
@@ -235,6 +235,38 @@ def make_cases(
         except Exception:
             pass
 
+    counterexample_models: List[Dict[str, int]] = []
+    if cert_v2 is not None:
+        try:
+            obs = (cert_v2.semantic_facts or {}).get("obligations")
+            if isinstance(obs, list):
+                for o in obs:
+                    if not isinstance(o, dict):
+                        continue
+                    if o.get("id") != O3_MASK_IMPLIES_INBOUNDS:
+                        continue
+                    wit = o.get("witness") if isinstance(o.get("witness"), dict) else {}
+                    for ac in (wit.get("access_checks") or []):
+                        if not isinstance(ac, dict):
+                            continue
+                        for d in (ac.get("dims") or []):
+                            if not isinstance(d, dict):
+                                continue
+                            cx = d.get("counterexample")
+                            if not isinstance(cx, dict):
+                                continue
+                            assigns = cx.get("assignments")
+                            if not isinstance(assigns, dict) or not assigns:
+                                continue
+                            model: Dict[str, int] = {}
+                            for k, v in assigns.items():
+                                if isinstance(k, str) and isinstance(v, (int, float)):
+                                    model[str(k)] = int(v)
+                            if model:
+                                counterexample_models.append(model)
+        except Exception:
+            pass
+
     generated = generate_cases_split(
         intent.intent,
         constraints=constraints,
@@ -245,6 +277,7 @@ def make_cases(
         exclude_axes=spec.exclude_axes,
         extra_sizes=extra_sizes,
         predicate_clauses=predicate_clauses,
+        counterexample_models=counterexample_models,
         assumptions=list(assumptions or []),
         base_shapes=dict(base),
     )

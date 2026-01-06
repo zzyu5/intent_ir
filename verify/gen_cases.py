@@ -85,6 +85,7 @@ def generate_cases_split(
     exclude_axes: Sequence[str] | None = None,
     extra_sizes: Sequence[int] | None = None,
     predicate_clauses: Sequence[str] | None = None,
+    counterexample_models: Sequence[Dict[str, int]] | None = None,
     assumptions: Sequence[str] | None = None,
     base_shapes: Dict[str, int] | None = None,
 ) -> GeneratedCases:
@@ -107,6 +108,7 @@ def generate_cases_split(
         exclude_axes=exclude_axes,
         extra_sizes=extra_sizes,
         predicate_clauses=predicate_clauses,
+        counterexample_models=counterexample_models,
     )
 
     in_contract: List[TestCase] = []
@@ -183,6 +185,7 @@ def generate_cases(
     exclude_axes: Sequence[str] | None = None,
     extra_sizes: Sequence[int] | None = None,
     predicate_clauses: Sequence[str] | None = None,
+    counterexample_models: Sequence[Dict[str, int]] | None = None,
 ) -> List[TestCase]:
     """
     Deterministic, constraint-aware case generation.
@@ -206,6 +209,21 @@ def generate_cases(
     tile_list.extend(_collect_tile_hints(intent))
     if not tile_list:
         tile_list = [16]
+
+    # Stage-C feedback hook: prioritize sizes implied by counterexample models (e.g. SMT witnesses).
+    priority_vals: Dict[str, set[int]] = {}
+    for m in counterexample_models or []:
+        if not isinstance(m, dict):
+            continue
+        for ax in axes_list:
+            if ax not in m:
+                continue
+            try:
+                v = int(m[ax])
+            except Exception:
+                continue
+            if 0 < v <= 2048:
+                priority_vals.setdefault(ax, set()).update({v, max(1, v - 1), v + 1})
 
     per_axis_vals = []
     extra_set = set(int(x) for x in (extra_sizes or []) if isinstance(x, (int, float)) and int(x) > 0)
@@ -231,9 +249,10 @@ def generate_cases(
             vals.update([max(1, t - 1), t, t + 1, 2 * t + 1])
         vals.update(extra_set)
         # needs_mask: prefer non-divisible option first
-        ordered = sorted(vals)
+        prio = priority_vals.get(ax, set())
+        ordered = sorted(vals, key=lambda v: (0 if v in prio else 1, int(v)))
         if needs_mask:
-            ordered = sorted(ordered, key=lambda v: all(v % t == 0 for t in tile_list if t > 1))
+            ordered = sorted(ordered, key=lambda v: (all(v % t == 0 for t in tile_list if t > 1), 0 if v in prio else 1, int(v)))
         per_axis_vals.append(ordered)
 
     cases: List[TestCase] = []
