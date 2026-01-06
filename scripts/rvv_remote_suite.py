@@ -1,5 +1,5 @@
 """
-Run RVV remote tests across the 6-kernel suite (user-facing).
+Run RVV remote tests across kernel suites (smoke/coverage/all).
 
 This is the "remote equivalent" of `scripts/backend_codegen_smoke.py`:
 - backend_codegen_smoke: local compile+run (no SSH)
@@ -35,11 +35,15 @@ DEFAULT_KERNELS = [
     "upsample_bicubic2d_aa",
 ]
 
+P3_COVERAGE_KERNELS = [
+    "add2d",
+    "transpose2d",
+]
+
 KERNEL_SUITES = {
     "smoke": list(DEFAULT_KERNELS),
-    # P3: expanded suite (kept equal to smoke until we add more kernels).
-    "coverage": list(DEFAULT_KERNELS),
-    "all": list(DEFAULT_KERNELS),
+    "coverage": list(DEFAULT_KERNELS) + list(P3_COVERAGE_KERNELS),
+    "all": list(DEFAULT_KERNELS) + list(P3_COVERAGE_KERNELS),
 }
 
 

@@ -34,9 +34,11 @@ from frontends.common.static_validate import static_validate
 from frontends.tilelang.runtime import infer_written_global_buffers, run_tilelang_kernel_io
 
 from kernels.tilelang.ops.any_kernel_dim import make_any_kernel_dim_prim_func
+from kernels.tilelang.ops.add2d import make_add2d_prim_func
 from kernels.tilelang.ops.groupnorm import make_group_norm_kernel_prim_func
 from kernels.tilelang.ops.softmax_inner import make_softmax_inner_prim_func
 from kernels.tilelang.ops.layernorm import make_layer_norm_persistent_prim_func
+from kernels.tilelang.ops.transpose2d import make_transpose2d_prim_func
 from kernels.tilelang.ops.upsample_bicubic2d_aa import make_upsample_bicubic2d_aa_prim_func
 from kernels.tilelang.ops._attn_fwd import make_attn_fwd_prim_func
 from kernels.tilelang.ops.gemm import make_gemm_relu_prim_func
@@ -243,6 +245,70 @@ def _softmax_inner_intent() -> IntentFunction:
         outputs=["output_ptr"],
         schedule=schedule,
         axis_roles={"M": "spatial", "N": "channel"},
+    )
+
+
+def _add2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    if case.inputs and "A" in case.inputs:
+        a = np.asarray(case.inputs["A"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        a = rng.standard_normal((m, n), dtype=np.float32)
+    if case.inputs and "B" in case.inputs:
+        b = np.asarray(case.inputs["B"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        b = rng.standard_normal((m, n), dtype=np.float32)
+    return {"A": a, "B": b}
+
+
+def _add2d_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors = {
+        "A": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "B": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "C": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+    }
+    ops = [Op(op="add", inputs=["A", "B"], output="C", attrs={})]
+    schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="add2d",
+        tensors=tensors,
+        ops=ops,
+        outputs=["C"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "spatial"},
+    )
+
+
+def _transpose2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    if case.inputs and "inp" in case.inputs:
+        inp = np.asarray(case.inputs["inp"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        inp = rng.standard_normal((m, n), dtype=np.float32)
+    return {"inp": inp}
+
+
+def _transpose2d_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors = {
+        "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "out": TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "M")], layout=rm),
+    }
+    ops = [Op(op="transpose", inputs=["inp"], output="out", attrs={"perm": [1, 0]})]
+    schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="transpose2d",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "spatial"},
     )
 
 
@@ -670,7 +736,34 @@ def coverage_kernel_specs() -> List[KernelSpec]:
     Keep `default_kernel_specs()` as the fast 6-kernel regression set; grow this
     list gradually as we add more representative kernels.
     """
-    return list(default_kernel_specs())
+    specs = list(default_kernel_specs())
+    specs.extend(
+        [
+            KernelSpec(
+                name="add2d",
+                prim_func=make_add2d_prim_func(n=16, threads=128),
+                arg_names=["A", "B", "C", "M", "N"],
+                canonical_shapes={"M": 16, "N": 16},
+                vary_axes=["M"],
+                runner=_add2d_reference,
+                intent_builder=_add2d_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="transpose2d",
+                prim_func=make_transpose2d_prim_func(n=16, threads=128),
+                arg_names=["inp", "out", "M", "N"],
+                canonical_shapes={"M": 16, "N": 16},
+                vary_axes=["M"],
+                runner=_transpose2d_reference,
+                intent_builder=_transpose2d_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+        ]
+    )
+    return specs
 
 
 def run_pipeline_for_spec(

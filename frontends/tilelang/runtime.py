@@ -174,8 +174,7 @@ def compile_tilelang_kernel(
     """
     import tilelang  # noqa: PLC0415
 
-    shim = _fp8_shim_path()
-    flags: List[str] = ["-include", str(shim)]
+    flags: List[str] = []
     if extra_compile_flags:
         flags.extend([str(x) for x in extra_compile_flags])
 
@@ -184,7 +183,19 @@ def compile_tilelang_kernel(
     fid = id(prim_func)
     _PRIMFUNC_REGISTRY[fid] = prim_func
     key = tuple(flags)
-    return _compile_cached(fid, key, str(target), str(execution_backend))
+    try:
+        return _compile_cached(fid, key, str(target), str(execution_backend))
+    except Exception as e:
+        # CUDA 12.8+ defines __nv_fp8_e8m0 in <cuda_fp8.h>. Older toolchains (and
+        # some TileLang template bundles) may reference it without having the type.
+        # Retry with a small shim header only when compilation errors mention it.
+        msg = str(e)
+        if ("__nv_fp8_e8m0" not in msg) and ("fp8_e8m0" not in msg):
+            raise
+        shim = _fp8_shim_path()
+        flags2 = ["-include", str(shim)] + list(flags)
+        key2 = tuple(flags2)
+        return _compile_cached(fid, key2, str(target), str(execution_backend))
 
 
 def run_tilelang_kernel_io(

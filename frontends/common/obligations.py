@@ -107,13 +107,16 @@ def evaluate_obligations(desc: "KernelDescriptor", cert_v2: "SemanticCertificate
     results: List[ObligationResult] = []
 
     # O1: anchor present
-    has_anchor = bool(anchors.get("has_dot") or anchors.get("has_reduce"))
+    # "Semantic anchor" is a staged notion:
+    # - dot/reduce anchors enable stronger semantic recovery (index maps, fusion, etc.)
+    # - copy-only kernels are still meaningful for our pipeline (C_copy tier in P3)
+    has_anchor = bool(anchors.get("has_dot") or anchors.get("has_reduce") or anchors.get("has_copy"))
     results.append(
         ObligationResult(
             id=O1_HAS_SEMANTIC_ANCHOR,
             status="PASS" if has_anchor else "FAIL",
             witness={"anchors": dict(anchors)},
-            reason="" if has_anchor else "no semantic anchor (dot/reduce) found",
+            reason="" if has_anchor else "no semantic anchor (dot/reduce/copy) found",
         )
     )
 

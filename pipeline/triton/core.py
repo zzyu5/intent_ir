@@ -535,6 +535,50 @@ def _run_softmax_reference(case: TestCase) -> Dict[str, np.ndarray]:
     return {"input": x.cpu().numpy(), "output": out.cpu().numpy()}
 
 
+def _run_add2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.add2d import add2d_kernel
+
+    M = int(case.shapes.get("M", 4))
+    N = int(case.shapes.get("N", 64))
+    device = "cuda"
+    if case.inputs and "A" in case.inputs:
+        a = torch.as_tensor(case.inputs["A"], device=device).to(torch.float32)
+        if tuple(a.shape) != (M, N):
+            raise ValueError(f"A shape mismatch: got {tuple(a.shape)} expected {(M, N)}")
+    else:
+        a = torch.randn((M, N), device=device, dtype=torch.float32)
+    if case.inputs and "B" in case.inputs:
+        b = torch.as_tensor(case.inputs["B"], device=device).to(torch.float32)
+        if tuple(b.shape) != (M, N):
+            raise ValueError(f"B shape mismatch: got {tuple(b.shape)} expected {(M, N)}")
+    else:
+        b = torch.randn((M, N), device=device, dtype=torch.float32)
+    c = torch.empty((M, N), device=device, dtype=torch.float32)
+    grid = lambda meta: (M, triton.cdiv(N, meta["BLOCK_N"]))
+    add2d_kernel[grid](a, b, c, M, N, BLOCK_N=256)
+    torch.cuda.synchronize()
+    return {"A": a.cpu().numpy(), "B": b.cpu().numpy(), "C": c.cpu().numpy()}
+
+
+def _run_transpose2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.transpose2d import transpose2d_kernel
+
+    M = int(case.shapes.get("M", 16))
+    N = int(case.shapes.get("N", 16))
+    device = "cuda"
+    if case.inputs and "inp" in case.inputs:
+        inp = torch.as_tensor(case.inputs["inp"], device=device).to(torch.float32)
+        if tuple(inp.shape) != (M, N):
+            raise ValueError(f"inp shape mismatch: got {tuple(inp.shape)} expected {(M, N)}")
+    else:
+        inp = torch.randn((M, N), device=device, dtype=torch.float32)
+    out = torch.empty((N, M), device=device, dtype=torch.float32)
+    grid = lambda meta: (triton.cdiv(M, meta["BLOCK_M"]), triton.cdiv(N, meta["BLOCK_N"]))
+    transpose2d_kernel[grid](inp, out, M, N, BLOCK_M=32, BLOCK_N=32)
+    torch.cuda.synchronize()
+    return {"inp": inp.cpu().numpy(), "out": out.cpu().numpy()}
+
+
 def _run_layernorm_reference(case: TestCase) -> Dict[str, np.ndarray]:
     """
     LayerNorm forward over last dim (shape [M, N]).
@@ -718,7 +762,28 @@ def coverage_kernel_specs() -> List[KernelSpec]:
     Keep `default_kernel_specs()` as the fast 6-kernel smoke set; grow this list
     gradually as we add more representative kernels.
     """
-    return list(default_kernel_specs())
+    specs = list(default_kernel_specs())
+    specs.extend(
+        [
+            KernelSpec(
+                name="add2d",
+                module="kernels.triton.ops.add2d",
+                attr="add2d_kernel.src",
+                runner=_run_add2d_reference,
+                canonical_shapes={"M": 4, "N": 64},
+                vary_axes=["M", "N"],
+            ),
+            KernelSpec(
+                name="transpose2d",
+                module="kernels.triton.ops.transpose2d",
+                attr="transpose2d_kernel.src",
+                runner=_run_transpose2d_reference,
+                canonical_shapes={"M": 16, "N": 16},
+                vary_axes=["M", "N"],
+            ),
+        ]
+    )
+    return specs
 
 
 def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int = 8) -> Dict[str, object]:
