@@ -787,7 +787,8 @@ def run_pipeline_for_spec(
     # 3) Stage B: cases + diff
     print(f"[{spec.name}] stage7: Task5 cases + diff", flush=True)
     cand_for_run = cand_expanded or cand
-    run_ref_fn = (lambda c: _run_tilelang_ref(spec, c)) if bool(use_tilelang_runtime) else spec.runner
+    use_rt_ref = bool(use_tilelang_runtime) and (contract.level != "OUT_OF_SCOPE")
+    run_ref_fn = (lambda c: _run_tilelang_ref(spec, c)) if use_rt_ref else spec.runner
     cases_pack: GeneratedCases = generate_cases_split(
         cand_for_run.intent,
         constraints=constraints,
@@ -929,7 +930,11 @@ def run_pipeline_for_spec(
         except Exception as e:
             report["diff_debug"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    stage_c_ref_fn = run_ref_fn
+    # Stage C (metamorphic / bounded exhaustive) intentionally uses the pure-numpy
+    # reference runner. TileLang PrimFuncs are often specialized (e.g., fixed inner
+    # dims like N=16), while Stage C enumerates many tiny shapes by design.
+    # Using the numpy runner keeps Stage C frontend-agnostic and robust.
+    stage_c_ref_fn = spec.runner
     if stage_c and diff_ok and cases_in:
         base_case = cases_in[0] if cases_in else TestCase(shapes=dict(spec.canonical_shapes), dtypes={}, seed=0)
         meta = run_metamorphic_suite(
@@ -1002,7 +1007,8 @@ def run_pipeline_for_spec(
 
     # Persist baseline IO for Task6 tools (remote RVV / backend codegen smoke).
     try:
-        baseline_io = dict(baseline_io_raw)
+        baseline_source = "tilelang_runtime" if use_rt_ref else "numpy_reference"
+        baseline_io = dict(baseline_io_raw) if use_rt_ref else dict(spec.runner(baseline_case))
         try:
             from verify.diff_runner import _with_io_aliases as _with_io_aliases_for_diff
 
@@ -1022,7 +1028,7 @@ def run_pipeline_for_spec(
                 "npz_path": str(npz_path),
                 "keys": sorted(list(baseline_io.keys())),
                 "bytes": int(total_bytes),
-                "source": ("tilelang_runtime" if use_tilelang_runtime else "numpy_reference"),
+                "source": baseline_source,
             }
         else:
             report["baseline"] = {
@@ -1032,7 +1038,7 @@ def run_pipeline_for_spec(
                 "keys": sorted(list(baseline_io.keys())),
                 "bytes": int(total_bytes),
                 "skipped": "baseline too large to cache (over 16MB)",
-                "source": ("tilelang_runtime" if use_tilelang_runtime else "numpy_reference"),
+                "source": baseline_source,
             }
     except Exception as e:
         report["baseline"] = {"error": f"{type(e).__name__}: {e}"}
