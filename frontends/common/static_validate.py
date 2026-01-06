@@ -267,6 +267,21 @@ def static_validate(intent: IntentFunction, cert: object) -> StaticValidationRes
             )
     if _needs_mask_from_cert(cert) and not any(op.op.startswith("reduce") for op in intent.ops):
         obligations.append(StaticObligation(id="SV_mask_without_reduce", status="UNKNOWN", detail="needs_mask but no reduce op"))
+    # Make `reasons` actionable for LLM repair loops: include FAIL obligation details
+    # even when they originate from frontend-provided obligations.
+    seen: set[str] = set(reasons)
+    for ob in obligations:
+        if ob.status != "FAIL":
+            continue
+        msg = None
+        if ob.detail:
+            msg = f"{ob.id}: {ob.detail}"
+        else:
+            msg = f"{ob.id}: FAIL"
+        if msg not in seen:
+            reasons.append(msg)
+            seen.add(msg)
+
     ok = all(ob.status != "FAIL" for ob in obligations)
     return StaticValidationResult(ok=ok, obligations=obligations, reasons=reasons)
 
