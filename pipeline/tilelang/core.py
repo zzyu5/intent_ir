@@ -704,6 +704,18 @@ def run_pipeline_for_spec(
     obligations = evaluate_obligations(desc, cert_v2)
     cert_v2.semantic_facts["obligations"] = [o.to_json_dict() for o in obligations]
     contract = evaluate_contract_v2(desc, cert_v2, obligations, constraints=constraints)
+    # Store contract summary in cert_v2.meta (NOT semantic_facts) so static_validate
+    # can provide actionable OUT_OF_SCOPE feedback for repair loops without
+    # perturbing semantic_facts golden locks.
+    try:
+        cert_v2.meta = dict(getattr(cert_v2, "meta", {}) or {})
+        cert_v2.meta["contract"] = {
+            "level": str(contract.level),
+            "reasons": list(contract.reasons),
+            "assumptions": list(contract.assumptions),
+        }
+    except Exception:
+        pass
 
     report["certificate_v2"] = cert_v2.to_json_dict()
     (out_dir / f"{spec.name}.certificate_v2.json").write_text(json.dumps(report["certificate_v2"], indent=2), encoding="utf-8")

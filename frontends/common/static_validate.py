@@ -123,7 +123,37 @@ def _contract_level_from_cert(cert: object) -> str | None:
     if isinstance(c, dict):
         lvl = c.get("level")
         return str(lvl) if isinstance(lvl, str) else None
+    # Pipelines may attach a contract summary to cert.meta (to avoid perturbing
+    # CertificateV2.semantic_facts golden locks). Prefer this as a fallback.
+    meta = getattr(cert, "meta", None)
+    if isinstance(meta, dict):
+        c2 = meta.get("contract")
+        if isinstance(c2, dict):
+            lvl = c2.get("level")
+            return str(lvl) if isinstance(lvl, str) else None
     return None
+
+
+def _contract_reasons_from_cert(cert: object) -> list[str]:
+    if _is_legacy_cert(cert):
+        try:
+            c = getattr(cert, "contract", None)
+            rs = getattr(c, "reasons", None) if c is not None else None
+            if isinstance(rs, list):
+                return [str(x) for x in rs if isinstance(x, str) and x.strip()]
+        except Exception:
+            return []
+        return []
+    # Prefer meta["contract"] (pipeline-attached) but allow semantic_facts["contract"].
+    for container in (getattr(cert, "meta", None), getattr(cert, "semantic_facts", None)):
+        if not isinstance(container, dict):
+            continue
+        c = container.get("contract")
+        if isinstance(c, dict):
+            rs = c.get("reasons")
+            if isinstance(rs, list):
+                return [str(x) for x in rs if isinstance(x, str) and x.strip()]
+    return []
 
 
 def _seed_obligations(cert: object) -> list[StaticObligation]:
@@ -163,6 +193,9 @@ def static_validate(intent: IntentFunction, cert: object) -> StaticValidationRes
     if contract_level == "OUT_OF_SCOPE":
         obligations.append(StaticObligation(id="SV_contract_out_of_scope", status="FAIL", detail="contract OUT_OF_SCOPE"))
         reasons.append("contract OUT_OF_SCOPE")
+        for r in _contract_reasons_from_cert(cert):
+            if r not in reasons:
+                reasons.append(r)
     # Outputs must be produced by ops (not just declared in tensors).
     produced = {op.output: op for op in intent.ops}
     for out in intent.outputs:
