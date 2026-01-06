@@ -22,6 +22,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--frontend", choices=["triton", "tilelang"], default="triton")
     ap.add_argument("--kernel", action="append", default=None, help="Run a single kernel by name (repeatable)")
+    ap.add_argument("--suite", choices=["smoke", "coverage", "all"], default="smoke", help="Kernel suite (default: smoke)")
     ap.add_argument("--list", action="store_true", help="List available kernels and exit")
     ap.add_argument("--cases-limit", type=int, default=8)
     ap.add_argument("--out-dir", type=str, default=None)
@@ -31,15 +32,22 @@ def main() -> None:
     from pipeline.run import process_batch
 
     if args.frontend == "triton":
-        from pipeline.triton.core import default_kernel_specs, run_pipeline_for_spec
+        from pipeline.triton.core import coverage_kernel_specs, default_kernel_specs, run_pipeline_for_spec
 
         out_dir = Path(args.out_dir) if args.out_dir else (ROOT / "artifacts" / "full_pipeline_verify")
         out_dir.mkdir(parents=True, exist_ok=True)
         if args.list:
-            for s in default_kernel_specs():
+            suites = {"smoke": default_kernel_specs, "coverage": coverage_kernel_specs, "all": coverage_kernel_specs}
+            for s in suites[str(args.suite)]():
                 print(s.name)
             return
-        specs = [s for s in default_kernel_specs() if (not wanted or s.name in wanted)]
+        suites = {
+            "smoke": default_kernel_specs,
+            # Coverage currently includes smoke + extra kernels (see pipeline/*/core.py).
+            "coverage": coverage_kernel_specs,
+            "all": coverage_kernel_specs,
+        }
+        specs = [s for s in suites[str(args.suite)]() if (not wanted or s.name in wanted)]
 
         def _write(name: str, payload: object) -> Path:
             out_path = out_dir / f"{name}.json"
@@ -66,13 +74,18 @@ def main() -> None:
         return
 
     # tilelang
-    from pipeline.tilelang.core import default_kernel_specs, run_pipeline_for_spec
+    from pipeline.tilelang.core import coverage_kernel_specs, default_kernel_specs, run_pipeline_for_spec
 
     out_dir = Path(args.out_dir) if args.out_dir else (ROOT / "artifacts" / "tilelang_full_pipeline")
     out_dir.mkdir(parents=True, exist_ok=True)
-    specs = list(default_kernel_specs())
+    suites = {
+        "smoke": default_kernel_specs,
+        "coverage": coverage_kernel_specs,
+        "all": coverage_kernel_specs,
+    }
+    specs = list(suites[str(args.suite)]())
     if args.list:
-        for s in specs:
+        for s in suites[str(args.suite)]():
             print(s.name)
         return
     specs = [s for s in specs if (not wanted or s.name in wanted)]

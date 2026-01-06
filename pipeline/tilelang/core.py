@@ -663,6 +663,16 @@ def default_kernel_specs() -> List[KernelSpec]:
     ]
 
 
+def coverage_kernel_specs() -> List[KernelSpec]:
+    """
+    P3: expanded kernel coverage suite.
+
+    Keep `default_kernel_specs()` as the fast 6-kernel regression set; grow this
+    list gradually as we add more representative kernels.
+    """
+    return list(default_kernel_specs())
+
+
 def run_pipeline_for_spec(
     spec: KernelSpec,
     *,

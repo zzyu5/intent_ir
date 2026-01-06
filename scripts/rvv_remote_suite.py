@@ -35,6 +35,13 @@ DEFAULT_KERNELS = [
     "upsample_bicubic2d_aa",
 ]
 
+KERNEL_SUITES = {
+    "smoke": list(DEFAULT_KERNELS),
+    # P3: expanded suite (kept equal to smoke until we add more kernels).
+    "coverage": list(DEFAULT_KERNELS),
+    "all": list(DEFAULT_KERNELS),
+}
+
 
 def _run_one(cmd: List[str], *, env: Dict[str, str]) -> Dict[str, Any]:
     proc = subprocess.Popen(cmd, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
@@ -84,6 +91,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--frontend", choices=["triton", "tilelang", "both"], default="both")
     ap.add_argument("--kernel", action="append", default=[], help="repeatable; default runs 6 kernels")
+    ap.add_argument("--suite", choices=["smoke", "coverage", "all"], default="smoke", help="Kernel suite (default: smoke)")
     ap.add_argument("--host", required=True)
     ap.add_argument("--user", default="ubuntu")
     ap.add_argument("--port", type=int, default=22)
@@ -101,7 +109,7 @@ def main() -> None:
     ap.add_argument("--out", default=None, help="write JSON report to this path (default: stdout)")
     args = ap.parse_args()
 
-    kernels = args.kernel or list(DEFAULT_KERNELS)
+    kernels = args.kernel or list(KERNEL_SUITES[str(args.suite)])
     frontends = ["triton", "tilelang"] if args.frontend == "both" else [str(args.frontend)]
 
     base_env = dict(os.environ)
