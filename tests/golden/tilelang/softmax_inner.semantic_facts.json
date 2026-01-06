@@ -36,6 +36,11 @@
               "terms": {}
             }
           ],
+          "region_extents": [
+            1,
+            16
+          ],
+          "region_kind": 1,
           "shape": [
             "M",
             16
@@ -75,6 +80,11 @@
               "terms": {}
             }
           ],
+          "region_extents": [
+            1,
+            16
+          ],
+          "region_kind": 2,
           "shape": [
             "M",
             16

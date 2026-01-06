@@ -247,6 +247,7 @@ def build_stride_summary(
     range_contig_hits: Dict[str, int] = {}
     range_any_hits: Dict[str, int] = {}
     range_axis: Dict[str, str] = {}
+    contig_hint_lens: Dict[int, int] = {}
 
     for a in raw_accesses:
         tensor = str(a.get("tensor") or "")
@@ -269,6 +270,29 @@ def build_stride_summary(
                 range_axis.setdefault(r, ax)
 
         dt_bytes = int(dtype_bytes_fn(dtype))
+        # TileLang copy regions often expose a contiguous inner extent even when
+        # the recorded access index is a base pointer (no varying range symbols).
+        # Use this as a conservative hint for vectorizability and penalties.
+        contig_hint_len: Optional[int] = None
+        try:
+            if isinstance(meta, dict):
+                ext = meta.get("region_extents")
+                if isinstance(ext, list) and ext:
+                    last = ext[-1]
+                    if isinstance(last, (int, float)):
+                        contig_hint_len = int(last)
+                    elif isinstance(last, str) and last.strip().lstrip("-").isdigit():
+                        contig_hint_len = int(last.strip())
+                # Require a unit-stride innermost dimension when stride info is present.
+                strides = meta.get("strides")
+                if contig_hint_len is not None and isinstance(strides, list) and strides:
+                    last_s = strides[-1]
+                    if isinstance(last_s, (int, float)) and int(last_s) != 1:
+                        contig_hint_len = None
+                    elif isinstance(last_s, str) and last_s.strip().lstrip("-").isdigit() and int(last_s.strip()) != 1:
+                        contig_hint_len = None
+        except Exception:
+            contig_hint_len = None
 
         # Compute per-range strides.
         range_syms: set[str] = set()
@@ -364,7 +388,10 @@ def build_stride_summary(
         )
 
         # Derive a stable penalty signal (cache-line vs contiguous) for backends.
-        if unresolved or not range_strides:
+        if contig_hint_len is not None and int(contig_hint_len) > 1:
+            p = 1.0
+            contig_hint_lens[int(contig_hint_len)] = contig_hint_lens.get(int(contig_hint_len), 0) + 1
+        elif unresolved or not range_strides:
             p = float(max(1, cache_line) / max(1, dt_bytes))
         else:
             # Pick the smallest resolved stride among ranges (best-case contiguous dimension),
@@ -382,7 +409,7 @@ def build_stride_summary(
     dominant_range = None
     dominant_axis = None
     dominant_len = None
-    has_contig = bool(range_contig_hits)
+    has_contig = bool(range_contig_hits) or bool(contig_hint_lens)
     if range_contig_hits:
         dominant_range = max(sorted(range_contig_hits.keys()), key=lambda k: (range_contig_hits[k], -range_any_hits.get(k, 0)))
     elif range_any_hits:
@@ -390,6 +417,10 @@ def build_stride_summary(
     if dominant_range:
         dominant_axis = range_axis.get(dominant_range)
         dominant_len = _range_len(dominant_range, symbol_ranges)
+    elif contig_hint_lens:
+        # Use the most frequent region-contiguous length as a proxy for the
+        # dominant vectorizable extent (common for TileLang tileop.copy).
+        dominant_len = max(sorted(contig_hint_lens.keys()), key=lambda k: (contig_hint_lens[k], k))
 
     notes: List[str] = []
     if dominant_range:
@@ -399,6 +430,8 @@ def build_stride_summary(
         if dominant_len:
             msg += f" len={dominant_len}"
         notes.append(msg)
+    elif dominant_len:
+        notes.append(f"dominant_contig_len={dominant_len}")
 
     return EvidenceStrideSummary(
         accesses=witnesses,

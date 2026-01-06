@@ -232,6 +232,18 @@ def extract_facts(source_text: str, *, tvm_ir_json_path: str | None = None, tvm_
         strides = list(getattr(buf, "strides", []) or [])
         if strides:
             meta["strides"] = [_dim_token(s) for s in strides]
+        # Region signature (best-effort): region(buffer_load, kind, dim0, dim1, ...)
+        # where `kind` differentiates src/dst regions and dims denote the region extents.
+        try:
+            if len(region_call.args) >= 2:
+                kind = region_call.args[1]
+                if isinstance(kind, tir.IntImm):
+                    meta["region_kind"] = int(kind.value)
+                ext = region_call.args[2:]
+                if ext:
+                    meta["region_extents"] = [_dim_token(x) for x in list(ext)]
+        except Exception:
+            pass
 
         # Linearize multi-dimensional indices into a single "flat element offset" when strides are constant.
         flat = IndexExpr(terms={}, const=0)

@@ -255,10 +255,14 @@ def _allowed_set(req: TuningRequest, key: str) -> Optional[Set[int]]:
     return req.constraints.get(key)
 
 
-def _candidate_tiles(profile: RVVHardwareProfile, *, allowed: Dict[str, Optional[Set[int]]], M: int, N: int, K: int) -> List[Tuple[int, int, int]]:
+def _candidate_tiles(
+    profile: RVVHardwareProfile, *, allowed: Dict[str, Optional[Set[int]]], M: int, N: int, K: int, tn_align: int | None = None
+) -> List[Tuple[int, int, int]]:
     vec_lanes = max(1, int(profile.rvv_vlen_bits) // 32)
     tm_list = [16, 32, 64]
-    tn_list = [vec_lanes * x for x in (1, 2, 4)]
+    align = int(tn_align) if isinstance(tn_align, int) and int(tn_align) > 0 else vec_lanes
+    align = max(1, min(int(align), int(max(1, N))))
+    tn_list = [align * x for x in (1, 2, 4)]
     tk_list = [16, 32, 64]
 
     def filt(vals: List[int], key: str) -> List[int]:
@@ -273,7 +277,7 @@ def _candidate_tiles(profile: RVVHardwareProfile, *, allowed: Dict[str, Optional
 
     # Clamp to problem sizes (avoid obviously-wasted oversize tiles).
     tm_list = [v for v in tm_list if v > 0 and v <= int(M)] or [max(1, min(16, int(M)))]
-    tn_list = [v for v in tn_list if v > 0 and v <= int(N)] or [max(1, min(vec_lanes, int(N)))]
+    tn_list = [v for v in tn_list if v > 0 and v <= int(N)] or [max(1, min(align, int(N)))]
     tk_list = [v for v in tk_list if v > 0 and v <= int(K)] or [max(1, min(16, int(K)))]
 
     out: List[Tuple[int, int, int]] = []
@@ -366,28 +370,47 @@ def propose_schedule_candidates(
             "tile_n": _allowed_set(req, "tile_n"),
             "tile_k": _allowed_set(req, "tile_k"),
         }
-        tiles = _candidate_tiles(profile, allowed=allowed, M=M, N=N, K=K)
+        vec_lanes = max(1, int(profile.rvv_vlen_bits) // 32)
+        # Guided tiles: constructed once, then filtered per vec_width alignment.
+        guided_tiles: set[Tuple[int, int, int]] = set()
         if req.mode == "guided" and hints:
-            vec_lanes = max(1, int(profile.rvv_vlen_bits) // 32)
             hm = _expand_hint_values(hints, max_val=int(M), align=1)
-            hn = _expand_hint_values(hints, max_val=int(N), align=max(1, min(vec_lanes, max(vec_candidates) if vec_candidates else vec_lanes)))
             hk = _expand_hint_values(hints, max_val=int(K), align=1)
-            guided_tiles: set[Tuple[int, int, int]] = set()
+            # For N, we will enforce alignment to the chosen vec_width candidate below.
+            hn_raw = _expand_hint_values(hints, max_val=int(N), align=1)
             for tm in hm or []:
-                for tn in hn or []:
+                for tn in hn_raw or []:
                     for tk in hk or []:
                         guided_tiles.add((int(tm), int(tn), int(tk)))
             if guided_tiles:
-                tiles = list(dict.fromkeys(list(tiles) + sorted(guided_tiles)))
                 vec_notes.append(f"guided tile_hints={hints[:8]}{'...' if len(hints) > 8 else ''}")
         model = GEMMCostModel(profile, M=M, N=N, K=K)
 
         base = intent.schedule or ScheduleSketch()
         out: List[ScheduleCandidate] = []
+        # Evidence penalty (stable scalar): if matmul tensors are strided/irregular, lower the score.
+        evidence_penalty = 1.0
+        try:
+            if summary is not None and isinstance(summary.tensor_penalty, dict):
+                op = intent.ops[int(model_op_idx)]
+                names = list(op.inputs) + ([op.output] if op.output else [])
+                for nm in names:
+                    if nm in summary.tensor_penalty:
+                        evidence_penalty = max(evidence_penalty, float(summary.tensor_penalty.get(nm, 1.0)))
+        except Exception:
+            evidence_penalty = 1.0
+
         for vw in vec_candidates or [vec_lanes]:
             vw_i = max(1, min(int(vw), vec_lanes))
+            tiles = _candidate_tiles(profile, allowed=allowed, M=M, N=N, K=K, tn_align=vw_i)
+            if guided_tiles:
+                # Enforce alignment for guided candidates under this vec width.
+                gt = [t for t in guided_tiles if int(t[1]) % int(vw_i) == 0]
+                if gt:
+                    tiles = list(dict.fromkeys(list(tiles) + sorted(gt)))
             for tm, tn, tk in tiles:
                 est = model.evaluate_tile(int(tm), int(tn), int(tk))
+                score = float(est.gflops) / float(evidence_penalty)
                 sched = ScheduleSketch(
                     tile_m=int(tm),
                     tile_n=int(tn),
@@ -402,9 +425,14 @@ def propose_schedule_candidates(
                 notes = (
                     list(vec_notes)
                     + [f"vec_width={vw_i}"]
-                    + [f"cache={est.cache_level}", f"ai={est.intensity:.2f}", f"pred_gflops={est.gflops:.2f}"]
+                    + [
+                        f"cache={est.cache_level}",
+                        f"ai={est.intensity:.2f}",
+                        f"pred_gflops={est.gflops:.2f}",
+                        (f"evidence_penalty={evidence_penalty:.2f}" if evidence_penalty > 1.01 else "evidence_penalty=1.00"),
+                    ]
                 )
-                out.append(ScheduleCandidate(schedule=sched, score=float(est.gflops), tile_mnk=(int(tm), int(tn), int(tk)), notes=notes))
+                out.append(ScheduleCandidate(schedule=sched, score=score, tile_mnk=(int(tm), int(tn), int(tk)), notes=notes))
         out.sort(key=lambda c: c.score, reverse=True)
         if limit is not None:
             out = out[: max(0, int(limit))]
