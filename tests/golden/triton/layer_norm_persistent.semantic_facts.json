@@ -3,6 +3,7 @@
     "has_async": false,
     "has_atomic": false,
     "has_barrier": false,
+    "has_copy": true,
     "has_dot": false,
     "has_reduce": true,
     "kernel_kind_hint": "reduce"
@@ -134,6 +135,7 @@
       "has_async": false,
       "has_atomic": false,
       "has_barrier": false,
+      "has_copy": true,
       "has_dot": false,
       "has_reduce": true,
       "kernel_kind_hint": "reduce"

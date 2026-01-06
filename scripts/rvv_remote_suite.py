@@ -38,6 +38,10 @@ DEFAULT_KERNELS = [
 P3_COVERAGE_KERNELS = [
     "add2d",
     "transpose2d",
+    "relu2d",
+    "add_bias2d",
+    "where2d",
+    "row_sum",
 ]
 
 KERNEL_SUITES = {

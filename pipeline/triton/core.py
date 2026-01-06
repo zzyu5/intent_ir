@@ -579,6 +579,97 @@ def _run_transpose2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     return {"inp": inp.cpu().numpy(), "out": out.cpu().numpy()}
 
 
+def _run_relu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.relu2d import relu2d_kernel
+
+    M = int(case.shapes.get("M", 4))
+    N = int(case.shapes.get("N", 64))
+    device = "cuda"
+    if case.inputs and "input" in case.inputs:
+        inp = torch.as_tensor(case.inputs["input"], device=device).to(torch.float32)
+        if tuple(inp.shape) != (M, N):
+            raise ValueError(f"input shape mismatch: got {tuple(inp.shape)} expected {(M, N)}")
+    else:
+        inp = torch.randn((M, N), device=device, dtype=torch.float32)
+    out = torch.empty((M, N), device=device, dtype=torch.float32)
+    grid = lambda meta: (M, triton.cdiv(N, meta["BLOCK_N"]))
+    relu2d_kernel[grid](inp, out, M, N, BLOCK_N=256)
+    torch.cuda.synchronize()
+    return {"input": inp.cpu().numpy(), "output": out.cpu().numpy()}
+
+
+def _run_add_bias2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.add_bias2d import add_bias2d_kernel
+
+    M = int(case.shapes.get("M", 4))
+    N = int(case.shapes.get("N", 64))
+    device = "cuda"
+    if case.inputs and "input" in case.inputs:
+        inp = torch.as_tensor(case.inputs["input"], device=device).to(torch.float32)
+        if tuple(inp.shape) != (M, N):
+            raise ValueError(f"input shape mismatch: got {tuple(inp.shape)} expected {(M, N)}")
+    else:
+        inp = torch.randn((M, N), device=device, dtype=torch.float32)
+    if case.inputs and "bias" in case.inputs:
+        bias = torch.as_tensor(case.inputs["bias"], device=device).to(torch.float32)
+        if tuple(bias.shape) != (N,):
+            raise ValueError(f"bias shape mismatch: got {tuple(bias.shape)} expected {(N,)}")
+    else:
+        bias = torch.randn((N,), device=device, dtype=torch.float32)
+    out = torch.empty((M, N), device=device, dtype=torch.float32)
+    grid = lambda meta: (M, triton.cdiv(N, meta["BLOCK_N"]))
+    add_bias2d_kernel[grid](inp, bias, out, M, N, BLOCK_N=256)
+    torch.cuda.synchronize()
+    return {"input": inp.cpu().numpy(), "bias": bias.cpu().numpy(), "output": out.cpu().numpy()}
+
+
+def _run_where2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.where2d import where2d_kernel
+
+    M = int(case.shapes.get("M", 4))
+    N = int(case.shapes.get("N", 64))
+    device = "cuda"
+    if case.inputs and "A" in case.inputs:
+        a = torch.as_tensor(case.inputs["A"], device=device).to(torch.float32)
+        if tuple(a.shape) != (M, N):
+            raise ValueError(f"A shape mismatch: got {tuple(a.shape)} expected {(M, N)}")
+    else:
+        a = torch.randn((M, N), device=device, dtype=torch.float32)
+    if case.inputs and "B" in case.inputs:
+        b = torch.as_tensor(case.inputs["B"], device=device).to(torch.float32)
+        if tuple(b.shape) != (M, N):
+            raise ValueError(f"B shape mismatch: got {tuple(b.shape)} expected {(M, N)}")
+    else:
+        b = torch.randn((M, N), device=device, dtype=torch.float32)
+    c = torch.empty((M, N), device=device, dtype=torch.float32)
+    grid = lambda meta: (M, triton.cdiv(N, meta["BLOCK_N"]))
+    where2d_kernel[grid](a, b, c, M, N, BLOCK_N=256)
+    torch.cuda.synchronize()
+    return {"A": a.cpu().numpy(), "B": b.cpu().numpy(), "C": c.cpu().numpy()}
+
+
+def _run_row_sum_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.row_sum import row_sum_kernel
+
+    M = int(case.shapes.get("M", 4))
+    N = int(case.shapes.get("N", 256))
+    device = "cuda"
+    if N > 1024:
+        raise ValueError(f"row_sum requires N<=1024, got N={N}")
+    if case.inputs and "input" in case.inputs:
+        inp = torch.as_tensor(case.inputs["input"], device=device).to(torch.float32)
+        if tuple(inp.shape) != (M, N):
+            raise ValueError(f"input shape mismatch: got {tuple(inp.shape)} expected {(M, N)}")
+    else:
+        inp = torch.randn((M, N), device=device, dtype=torch.float32)
+    out = torch.empty((M,), device=device, dtype=torch.float32)
+    block_n = 1 if N <= 1 else min(1024, 1 << (int(N) - 1).bit_length())
+    grid = (M,)
+    row_sum_kernel[grid](inp, out, M, N, BLOCK_N=block_n)
+    torch.cuda.synchronize()
+    return {"input": inp.cpu().numpy(), "output": out.cpu().numpy()}
+
+
 def _run_layernorm_reference(case: TestCase) -> Dict[str, np.ndarray]:
     """
     LayerNorm forward over last dim (shape [M, N]).
@@ -763,6 +854,14 @@ def coverage_kernel_specs() -> List[KernelSpec]:
     gradually as we add more representative kernels.
     """
     specs = list(default_kernel_specs())
+    def _norm_row_sum(shapes: Dict[str, int]) -> Dict[str, int]:
+        out = dict(shapes)
+        if "N" in out:
+            out["N"] = max(1, min(int(out["N"]), 1024))
+        if "M" in out:
+            out["M"] = max(1, int(out["M"]))
+        return out
+
     specs.extend(
         [
             KernelSpec(
@@ -780,6 +879,39 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 runner=_run_transpose2d_reference,
                 canonical_shapes={"M": 16, "N": 16},
                 vary_axes=["M", "N"],
+            ),
+            KernelSpec(
+                name="relu2d",
+                module="kernels.triton.ops.relu2d",
+                attr="relu2d_kernel.src",
+                runner=_run_relu2d_reference,
+                canonical_shapes={"M": 4, "N": 64},
+                vary_axes=["M", "N"],
+            ),
+            KernelSpec(
+                name="add_bias2d",
+                module="kernels.triton.ops.add_bias2d",
+                attr="add_bias2d_kernel.src",
+                runner=_run_add_bias2d_reference,
+                canonical_shapes={"M": 4, "N": 64},
+                vary_axes=["M", "N"],
+            ),
+            KernelSpec(
+                name="where2d",
+                module="kernels.triton.ops.where2d",
+                attr="where2d_kernel.src",
+                runner=_run_where2d_reference,
+                canonical_shapes={"M": 4, "N": 64},
+                vary_axes=["M", "N"],
+            ),
+            KernelSpec(
+                name="row_sum",
+                module="kernels.triton.ops.row_sum",
+                attr="row_sum_kernel.src",
+                runner=_run_row_sum_reference,
+                canonical_shapes={"M": 4, "N": 256},
+                vary_axes=["M", "N"],
+                normalize_shapes=_norm_row_sum,
             ),
         ]
     )

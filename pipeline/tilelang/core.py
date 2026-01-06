@@ -35,11 +35,15 @@ from frontends.tilelang.runtime import infer_written_global_buffers, run_tilelan
 
 from kernels.tilelang.ops.any_kernel_dim import make_any_kernel_dim_prim_func
 from kernels.tilelang.ops.add2d import make_add2d_prim_func
+from kernels.tilelang.ops.add_bias2d import make_add_bias2d_prim_func
 from kernels.tilelang.ops.groupnorm import make_group_norm_kernel_prim_func
+from kernels.tilelang.ops.relu2d import make_relu2d_prim_func
+from kernels.tilelang.ops.row_sum import make_row_sum_prim_func
 from kernels.tilelang.ops.softmax_inner import make_softmax_inner_prim_func
 from kernels.tilelang.ops.layernorm import make_layer_norm_persistent_prim_func
 from kernels.tilelang.ops.transpose2d import make_transpose2d_prim_func
 from kernels.tilelang.ops.upsample_bicubic2d_aa import make_upsample_bicubic2d_aa_prim_func
+from kernels.tilelang.ops.where2d import make_where2d_prim_func
 from kernels.tilelang.ops._attn_fwd import make_attn_fwd_prim_func
 from kernels.tilelang.ops.gemm import make_gemm_relu_prim_func
 
@@ -309,6 +313,148 @@ def _transpose2d_intent() -> IntentFunction:
         outputs=["out"],
         schedule=schedule,
         axis_roles={"M": "spatial", "N": "spatial"},
+    )
+
+
+def _relu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    if case.inputs and "inp" in case.inputs:
+        inp = np.asarray(case.inputs["inp"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        inp = rng.standard_normal((m, n), dtype=np.float32)
+    return {"inp": inp}
+
+
+def _relu2d_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors = {
+        "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "out": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+    }
+    ops = [Op(op="relu", inputs=["inp"], output="out", attrs={})]
+    schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="relu2d",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "spatial"},
+    )
+
+
+def _add_bias2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    if case.inputs and "inp" in case.inputs:
+        inp = np.asarray(case.inputs["inp"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        inp = rng.standard_normal((m, n), dtype=np.float32)
+    if case.inputs and "bias" in case.inputs:
+        bias = np.asarray(case.inputs["bias"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        bias = rng.standard_normal((n,), dtype=np.float32)
+    return {"inp": inp, "bias": bias}
+
+
+def _add_bias2d_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors = {
+        "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "bias": TensorType(dtype="f32", shape=[Dim("sym", "N")], layout=rm),
+        "out": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+    }
+    ops: list[Op] = []
+    ops.append(
+        Op(
+            op="broadcast_in_dim",
+            inputs=["bias"],
+            output="bias2",
+            attrs={"out_shape": ["M", "N"], "broadcast_dims": [1]},
+        )
+    )
+    tensors["bias2"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="add", inputs=["inp", "bias2"], output="out", attrs={}))
+    schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="add_bias2d",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "spatial"},
+    )
+
+
+def _where2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    if case.inputs and "A" in case.inputs:
+        a = np.asarray(case.inputs["A"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        a = rng.standard_normal((m, n), dtype=np.float32)
+    if case.inputs and "B" in case.inputs:
+        b = np.asarray(case.inputs["B"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        b = rng.standard_normal((m, n), dtype=np.float32)
+    return {"A": a, "B": b}
+
+
+def _where2d_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors = {
+        "A": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "B": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "cond": TensorType(dtype="bool", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "C": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+    }
+    ops = [
+        Op(op="gt", inputs=["A", "B"], output="cond", attrs={}),
+        Op(op="where", inputs=["cond", "A", "B"], output="C", attrs={}),
+    ]
+    schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="where2d",
+        tensors=tensors,
+        ops=ops,
+        outputs=["C"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "spatial"},
+    )
+
+
+def _row_sum_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    if case.inputs and "inp" in case.inputs:
+        inp = np.asarray(case.inputs["inp"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        inp = rng.standard_normal((m, n), dtype=np.float32)
+    return {"inp": inp}
+
+
+def _row_sum_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors = {
+        "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "out": TensorType(dtype="f32", shape=[Dim("sym", "M")], layout=rm),
+    }
+    ops = [Op(op="reduce_sum", inputs=["inp"], output="out", attrs={"axes": [1], "keepdims": False})]
+    schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="row_sum",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "reduction"},
     )
 
 
@@ -758,6 +904,50 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 vary_axes=["M"],
                 runner=_transpose2d_reference,
                 intent_builder=_transpose2d_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="relu2d",
+                prim_func=make_relu2d_prim_func(n=16, threads=128),
+                arg_names=["inp", "out", "M", "N"],
+                canonical_shapes={"M": 16, "N": 16},
+                vary_axes=["M"],
+                runner=_relu2d_reference,
+                intent_builder=_relu2d_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="add_bias2d",
+                prim_func=make_add_bias2d_prim_func(n=16, threads=128),
+                arg_names=["inp", "bias", "out", "M", "N"],
+                canonical_shapes={"M": 16, "N": 16},
+                vary_axes=["M"],
+                runner=_add_bias2d_reference,
+                intent_builder=_add_bias2d_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="where2d",
+                prim_func=make_where2d_prim_func(n=16, threads=128),
+                arg_names=["A", "B", "C", "M", "N"],
+                canonical_shapes={"M": 16, "N": 16},
+                vary_axes=["M"],
+                runner=_where2d_reference,
+                intent_builder=_where2d_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="row_sum",
+                prim_func=make_row_sum_prim_func(n=16, threads=128),
+                arg_names=["inp", "out", "M", "N"],
+                canonical_shapes={"M": 16, "N": 16},
+                vary_axes=["M"],
+                runner=_row_sum_reference,
+                intent_builder=_row_sum_intent,
                 exclude_axes=[],
                 constexpr_names=[],
             ),

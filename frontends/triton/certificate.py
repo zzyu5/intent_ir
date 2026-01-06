@@ -456,6 +456,7 @@ def build_certificate_v2(
         "kernel_kind_hint": kernel_kind,
         "has_dot": bool(facts.has_dot),
         "has_reduce": bool(facts.has_reduce),
+        "has_copy": bool(facts.load_sites or facts.store_sites),
         "has_atomic": bool(facts.has_atomic),
         "has_barrier": bool(facts.has_barrier),
         "has_async": bool(facts.has_async),
