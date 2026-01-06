@@ -789,13 +789,57 @@ def run_pipeline_for_spec(
     cand_for_run = cand_expanded or cand
     use_rt_ref = bool(use_tilelang_runtime) and (contract.level != "OUT_OF_SCOPE")
     run_ref_fn = (lambda c: _run_tilelang_ref(spec, c)) if use_rt_ref else spec.runner
+    tile_hints: List[int] = []
+    try:
+        th = (cert_v2.schedule_hints or {}).get("tile_hints")
+        if isinstance(th, list):
+            tile_hints = [int(x) for x in th if isinstance(x, (int, float)) and int(x) > 0]
+    except Exception:
+        tile_hints = []
+    predicate_clauses: List[str] = []
+    try:
+        if isinstance(getattr(constraints, "meta", None), dict):
+            pc = constraints.meta.get("predicate_clauses")
+            if isinstance(pc, list):
+                predicate_clauses = [str(x) for x in pc if isinstance(x, str) and x.strip()]
+    except Exception:
+        predicate_clauses = []
+    extra_sizes: List[int] = []
+    try:
+        if isinstance(getattr(constraints, "meta", None), dict):
+            si = constraints.meta.get("static_ints")
+            if isinstance(si, list):
+                for x in si:
+                    try:
+                        v = int(x)
+                    except Exception:
+                        continue
+                    if 0 < v <= 2048:
+                        extra_sizes.extend([v, max(1, v - 1), v + 1])
+        sr = (cert_v2.schedule_hints or {}).get("symbol_ranges")
+        if isinstance(sr, dict):
+            for rr in sr.values():
+                if not isinstance(rr, dict):
+                    continue
+                try:
+                    end = int(rr.get("end"))
+                except Exception:
+                    continue
+                if 0 < end <= 2048:
+                    extra_sizes.extend([end, max(1, end - 1), end + 1])
+        extra_sizes = sorted(set(int(v) for v in extra_sizes if int(v) > 0))
+    except Exception:
+        extra_sizes = []
     cases_pack: GeneratedCases = generate_cases_split(
         cand_for_run.intent,
         constraints=constraints,
         limit=int(cases_limit),
         seed=0,
+        tile_hints=tile_hints,
         axes=list(spec.vary_axes),
         exclude_axes=list(spec.exclude_axes or []),
+        extra_sizes=extra_sizes,
+        predicate_clauses=predicate_clauses,
         assumptions=list(contract.assumptions),
         base_shapes=dict(spec.canonical_shapes),
     )

@@ -144,7 +144,77 @@ def extract_facts(source_text: str, *, tvm_ir_json_path: str | None = None, tvm_
             return IndexExpr(terms={}, const=0)
         return IndexExpr(terms=terms, const=int(const))
 
-    def parse_region(region_call: Any) -> tuple[str, str, int, List[IndexExpr], str]:
+    def _add_ix(a: IndexExpr, b: IndexExpr) -> IndexExpr:
+        terms = dict(a.terms)
+        for k, v in (b.terms or {}).items():
+            terms[k] = terms.get(k, 0) + int(v)
+            if terms[k] == 0:
+                terms.pop(k, None)
+        return IndexExpr(terms=terms, const=int(a.const) + int(b.const))
+
+    def _scale_ix(ix: IndexExpr, c: int) -> IndexExpr:
+        if int(c) == 0:
+            return IndexExpr(terms={}, const=0)
+        return IndexExpr(terms={k: int(v) * int(c) for k, v in (ix.terms or {}).items() if int(v) * int(c) != 0}, const=int(ix.const) * int(c))
+
+    def _dim_token(d: Any) -> int | str:
+        if isinstance(d, tir.IntImm):
+            return int(d.value)
+        if isinstance(d, tir.Var):
+            return str(d.name)
+        try:
+            return str(d)
+        except Exception:
+            return "<unresolved>"
+
+    def _render_affine(ix: IndexExpr) -> str:
+        # Keep a stable, SMT-friendly string form: "8*pid0 + r0 - 1"
+        parts: List[str] = []
+        for k in sorted((ix.terms or {}).keys()):
+            c = int(ix.terms[k])
+            if c == 0:
+                continue
+            if c == 1:
+                parts.append(str(k))
+            elif c == -1:
+                parts.append(f"-{k}")
+            else:
+                parts.append(f"{c}*{k}")
+        if int(ix.const) != 0 or not parts:
+            parts.append(str(int(ix.const)))
+        # Normalize "a + -b" into "a - b" for readability.
+        out = " + ".join(parts)
+        out = out.replace("+ -", "- ")
+        return out
+
+    def _predicate_clauses(expr: Any, *, max_nodes: int = 64) -> List[str]:
+        if max_nodes <= 0:
+            return []
+        if isinstance(expr, tir.IntImm):
+            # Constant predicate: ignore (does not constrain inbounds).
+            return []
+        if isinstance(expr, tir.And):
+            return _predicate_clauses(expr.a, max_nodes=max_nodes - 1) + _predicate_clauses(expr.b, max_nodes=max_nodes - 1)
+        if isinstance(expr, (tir.LT, tir.LE, tir.GT, tir.GE, tir.EQ, tir.NE)):
+            lhs = to_index_expr(expr.a)
+            rhs = to_index_expr(expr.b)
+            op = {
+                tir.LT: "<",
+                tir.LE: "<=",
+                tir.GT: ">",
+                tir.GE: ">=",
+                tir.EQ: "==",
+                tir.NE: "!=",
+            }.get(type(expr))
+            if not op:
+                return []
+            return [f"{_render_affine(lhs)} {op} {_render_affine(rhs)}"]
+        # Some predicates are expressed as casts to bool.
+        if isinstance(expr, tir.Cast):
+            return _predicate_clauses(expr.value, max_nodes=max_nodes - 1)
+        return []
+
+    def parse_region(region_call: Any) -> tuple[str, str, int, List[IndexExpr], str, Dict[str, Any]]:
         if not isinstance(region_call, tir.Call) or getattr(region_call.op, "name", "") != "tl.tileop.region":
             raise ValueError("expected tl.tileop.region call")
         if not region_call.args:
@@ -154,8 +224,31 @@ def extract_facts(source_text: str, *, tvm_ir_json_path: str | None = None, tvm_
             raise ValueError("region arg0 must be BufferLoad")
         buf = bl.buffer
         scope = buf.scope() if callable(getattr(buf, "scope", None)) else "global"
-        idx = [to_index_expr(i) for i in list(bl.indices)]
-        return (str(buf.name), str(buf.dtype), int(len(buf.shape)), idx, str(scope))
+        nd_idx = [to_index_expr(i) for i in list(bl.indices)]
+        meta: Dict[str, Any] = {
+            "nd_index_exprs": [ix.to_json_dict() for ix in nd_idx],
+            "shape": [_dim_token(d) for d in list(getattr(buf, "shape", []) or [])],
+        }
+        strides = list(getattr(buf, "strides", []) or [])
+        if strides:
+            meta["strides"] = [_dim_token(s) for s in strides]
+
+        # Linearize multi-dimensional indices into a single "flat element offset" when strides are constant.
+        flat = IndexExpr(terms={}, const=0)
+        unresolved = False
+        if not strides or len(strides) != len(nd_idx):
+            unresolved = True
+        else:
+            for ix, st in zip(nd_idx, strides):
+                if not isinstance(st, tir.IntImm):
+                    unresolved = True
+                    break
+                flat = _add_ix(flat, _scale_ix(ix, int(st.value)))
+        if unresolved:
+            meta["unresolved"] = True
+            # Fallback: keep the first dimension as a best-effort witness.
+            flat = nd_idx[0] if nd_idx else IndexExpr(terms={}, const=0)
+        return (str(buf.name), str(buf.dtype), int(len(buf.shape)), [flat], str(scope), meta)
 
     def parse_copy(call: tir.Call) -> None:
         nonlocal accesses
@@ -164,10 +257,21 @@ def extract_facts(source_text: str, *, tvm_ir_json_path: str | None = None, tvm_
         src_region = call.args[0]
         dst_region = call.args[1]
         try:
-            src_name, src_dtype, src_rank, src_idx, src_scope = parse_region(src_region)
-            dst_name, dst_dtype, dst_rank, dst_idx, dst_scope = parse_region(dst_region)
+            src_name, src_dtype, src_rank, src_idx, src_scope, src_meta = parse_region(src_region)
+            dst_name, dst_dtype, dst_rank, dst_idx, dst_scope, dst_meta = parse_region(dst_region)
         except Exception:
             return
+
+        pred: Predicate | None = None
+        try:
+            # TileLang lowering commonly uses: copy(src_region, dst_region, other, mask, ...)
+            # Keep the predicate clauses in a simple conjunction form when possible.
+            if len(call.args) >= 4:
+                clauses = _predicate_clauses(call.args[3])
+                if clauses:
+                    pred = Predicate(clauses=[str(c) for c in clauses])
+        except Exception:
+            pred = None
 
         # Only record global memory edges for MVP: global->* are loads, *->global are stores.
         if src_scope == "global":
@@ -178,9 +282,9 @@ def extract_facts(source_text: str, *, tvm_ir_json_path: str | None = None, tvm_
                     dtype=src_dtype,
                     rank=src_rank,
                     index_exprs=src_idx,
-                    predicate=None,
+                    predicate=pred,
                     address_space=src_scope,
-                    meta={"tileop": "copy", "dst_scope": dst_scope},
+                    meta={"tileop": "copy", "dst_scope": dst_scope, **(src_meta or {})},
                 )
             )
         if dst_scope == "global":
@@ -191,9 +295,9 @@ def extract_facts(source_text: str, *, tvm_ir_json_path: str | None = None, tvm_
                     dtype=dst_dtype,
                     rank=dst_rank,
                     index_exprs=dst_idx,
-                    predicate=None,
+                    predicate=pred,
                     address_space=dst_scope,
-                    meta={"tileop": "copy", "src_scope": src_scope},
+                    meta={"tileop": "copy", "src_scope": src_scope, **(dst_meta or {})},
                 )
             )
 

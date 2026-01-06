@@ -22,6 +22,18 @@
         "kind": "load",
         "meta": {
           "dst_scope": "local.fragment",
+          "nd_index_exprs": [
+            {
+              "const": 0,
+              "terms": {}
+            }
+          ],
+          "shape": [
+            16
+          ],
+          "strides": [
+            1
+          ],
           "tileop": "copy"
         },
         "predicate": null,
@@ -35,17 +47,33 @@
           {
             "const": 0,
             "terms": {
-              "pid0": 1
+              "pid0": 16
             }
-          },
-          {
-            "const": 0,
-            "terms": {}
           }
         ],
         "kind": "load",
         "meta": {
           "dst_scope": "local.fragment",
+          "nd_index_exprs": [
+            {
+              "const": 0,
+              "terms": {
+                "bx": 1
+              }
+            },
+            {
+              "const": 0,
+              "terms": {}
+            }
+          ],
+          "shape": [
+            "M",
+            16
+          ],
+          "strides": [
+            16,
+            1
+          ],
           "tileop": "copy"
         },
         "predicate": null,
@@ -64,6 +92,18 @@
         "kind": "load",
         "meta": {
           "dst_scope": "local.fragment",
+          "nd_index_exprs": [
+            {
+              "const": 0,
+              "terms": {}
+            }
+          ],
+          "shape": [
+            16
+          ],
+          "strides": [
+            1
+          ],
           "tileop": "copy"
         },
         "predicate": null,
@@ -77,17 +117,33 @@
           {
             "const": 0,
             "terms": {
-              "pid0": 1
+              "pid0": 16
             }
-          },
-          {
-            "const": 0,
-            "terms": {}
           }
         ],
         "kind": "store",
         "meta": {
+          "nd_index_exprs": [
+            {
+              "const": 0,
+              "terms": {
+                "bx": 1
+              }
+            },
+            {
+              "const": 0,
+              "terms": {}
+            }
+          ],
+          "shape": [
+            "M",
+            16
+          ],
           "src_scope": "local.fragment",
+          "strides": [
+            16,
+            1
+          ],
           "tileop": "copy"
         },
         "predicate": null,

@@ -116,7 +116,7 @@ class TileLangAdapter:
         return facts
 
     def extract_constraints(self, desc: KernelDescriptor, facts: TileLangFacts):
-        c = extract_constraints(desc.source_text, facts)
+        c = extract_constraints(desc, facts)
         desc.frontend_constraints = asdict(c)
         return c
 
