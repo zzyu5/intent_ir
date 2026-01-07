@@ -118,6 +118,57 @@ def _stride_summary_brief(summary) -> Dict[str, Any] | None:
         return None
 
 
+def _derive_guidance_from_stride_summary(summary, *, lanes: int) -> tuple[Dict[str, Set[int]], Dict[str, Any], List[str]]:
+    """
+    Turn access witnesses into actionable tuning inputs.
+
+    Returns:
+      - hard_constraints: schedule fields -> allowed set (only apply when user did not lock/override)
+      - priors: explainable "guided priors" (not necessarily hard constraints)
+      - notes: human-readable explanations (stable strings)
+    """
+    hard: Dict[str, Set[int]] = {}
+    priors: Dict[str, Any] = {}
+    notes: List[str] = []
+
+    if summary is None:
+        return hard, priors, notes
+
+    has_contig = bool(getattr(summary, "has_contiguous_range", False))
+    dom_len = getattr(summary, "dominant_range_len", None)
+    dom_axis = getattr(summary, "dominant_axis", None)
+    dom_range = getattr(summary, "dominant_range", None)
+
+    # If no contiguous range is detected, vectorization is likely unsafe/unhelpful; force scalar.
+    if not has_contig:
+        hard["vec_width"] = {1}
+        priors["vec_width_candidates"] = [1]
+        notes.append("hard: vec_width in {1} (no contiguous access range)")
+        return hard, priors, notes
+
+    # Otherwise, propose a small vec_width prior set derived from contiguous extent.
+    if isinstance(dom_len, int) and dom_len > 0:
+        vw = max(1, min(int(lanes), int(dom_len)))
+        cand = [vw]
+        if vw >= 2:
+            cand.append(max(1, vw // 2))
+        cand.append(1)
+        priors["vec_width_candidates"] = list(dict.fromkeys(int(x) for x in cand if int(x) > 0))
+        priors["vec_width_max"] = int(vw)
+        if dom_range:
+            priors["dominant_range"] = str(dom_range)
+        notes.append(f"prior: vec_width<=min(lanes,{int(dom_len)}) -> {priors['vec_width_candidates']}")
+    else:
+        priors["vec_width_candidates"] = [int(max(1, lanes)), int(max(1, lanes // 2)), 1]
+        notes.append(f"prior: vec_width candidates (no dom_len) -> {priors['vec_width_candidates']}")
+
+    if isinstance(dom_axis, str) and dom_axis:
+        priors["vec_axis"] = str(dom_axis)
+        notes.append(f"prior: vec_axis={dom_axis}")
+
+    return hard, priors, notes
+
+
 def _parse_kv_int(s: str) -> Tuple[str, int]:
     m = _EQ_RE.match(str(s).strip())
     if not m:
@@ -256,7 +307,14 @@ def _allowed_set(req: TuningRequest, key: str) -> Optional[Set[int]]:
 
 
 def _candidate_tiles(
-    profile: RVVHardwareProfile, *, allowed: Dict[str, Optional[Set[int]]], M: int, N: int, K: int, tn_align: int | None = None
+    profile: RVVHardwareProfile,
+    *,
+    allowed: Dict[str, Optional[Set[int]]],
+    M: int,
+    N: int,
+    K: int,
+    tn_align: int | None = None,
+    hints: Iterable[int] | None = None,
 ) -> List[Tuple[int, int, int]]:
     vec_lanes = max(1, int(profile.rvv_vlen_bits) // 32)
     tm_list = [16, 32, 64]
@@ -264,6 +322,17 @@ def _candidate_tiles(
     align = max(1, min(int(align), int(max(1, N))))
     tn_list = [align * x for x in (1, 2, 4)]
     tk_list = [16, 32, 64]
+
+    # Evidence-/frontend-provided hints: inject a few candidate values even in auto mode.
+    # Keep bounded to avoid combinatorial explosion.
+    h = _normalize_int_hints(hints)[:8]
+    if h:
+        tm_list = sorted(set(tm_list + _expand_hint_values(h, max_val=int(M), align=1)))
+        tn_list = sorted(set(tn_list + _expand_hint_values(h, max_val=int(N), align=int(align))))
+        tk_list = sorted(set(tk_list + _expand_hint_values(h, max_val=int(K), align=1)))
+        tm_list = tm_list[:12]
+        tn_list = tn_list[:12]
+        tk_list = tk_list[:12]
 
     def filt(vals: List[int], key: str) -> List[int]:
         aset = allowed.get(key)
@@ -322,6 +391,7 @@ def propose_schedule_candidates(
         )
     except Exception:
         summary = None
+    derived_hard, derived_priors, derived_notes = _derive_guidance_from_stride_summary(summary, lanes=max(1, int(profile.rvv_vlen_bits) // 32))
     if summary is not None and summary.dominant_range_len:
         hints = sorted(set(hints + [int(summary.dominant_range_len)]))
 
@@ -356,6 +426,8 @@ def propose_schedule_candidates(
         else:
             vec_candidates = [1]
             vec_notes = [f"vec_width conservative=1 lanes={vec_lanes}"]
+    if derived_notes:
+        vec_notes.extend(list(derived_notes))
 
     pipeline_depth = (intent.schedule.pipeline_depth if intent.schedule else None)
     if "pipeline_depth" in req.locks:
@@ -402,7 +474,7 @@ def propose_schedule_candidates(
 
         for vw in vec_candidates or [vec_lanes]:
             vw_i = max(1, min(int(vw), vec_lanes))
-            tiles = _candidate_tiles(profile, allowed=allowed, M=M, N=N, K=K, tn_align=vw_i)
+            tiles = _candidate_tiles(profile, allowed=allowed, M=M, N=N, K=K, tn_align=vw_i, hints=hints)
             if guided_tiles:
                 # Enforce alignment for guided candidates under this vec width.
                 gt = [t for t in guided_tiles if int(t[1]) % int(vw_i) == 0]
@@ -609,6 +681,10 @@ def select_schedule(
         except Exception:
             ss = None
         debug["stride_summary"] = _stride_summary_brief(ss)
+        hard, priors, notes2 = _derive_guidance_from_stride_summary(ss, lanes=max(1, int(profile.rvv_vlen_bits) // 32))
+        debug["derived_hard_constraints"] = {k: sorted(int(x) for x in v) for k, v in (hard or {}).items()}
+        debug["derived_priors"] = dict(priors or {})
+        debug["derived_notes"] = list(notes2 or [])
         if mnk and model_op_idx is not None and best.tile_mnk is not None:
             M, N, K = mnk
             tm, tn, tk = best.tile_mnk
