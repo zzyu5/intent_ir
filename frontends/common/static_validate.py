@@ -224,7 +224,7 @@ def static_validate(intent: IntentFunction, cert: object) -> StaticValidationRes
         # TTIR uses reduce ops for many patterns (e.g., softmax). In IntentIR, a single
         # `softmax` op is allowed to represent the internal reduce_max/reduce_sum.
         has_reduce = any(op.op.startswith("reduce") for op in intent.ops)
-        if kernel_kind == "attention" and "softmax" in ops:
+        if "softmax" in ops:
             has_reduce = True
         if not has_reduce:
             obligations.append(StaticObligation(id="SV_reduce_missing", status="FAIL", detail="reduce op absent"))
