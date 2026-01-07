@@ -215,6 +215,9 @@ def _normalize_io_name(name: str) -> str:
         s = "input"
     if s == "out":
         s = "output"
+    # Make common style differences alias-friendly (row_mask vs RowMask).
+    # Do this late so *_ptr handling above can still match.
+    s = s.replace("_", "")
     return s
 
 

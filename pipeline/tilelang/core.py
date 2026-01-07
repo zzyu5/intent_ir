@@ -40,9 +40,12 @@ from kernels.tilelang.ops.clamp2d import make_clamp2d_prim_func
 from kernels.tilelang.ops.copy2d_divmod import make_copy2d_divmod_prim_func
 from kernels.tilelang.ops.exp2d import make_exp2d_prim_func
 from kernels.tilelang.ops.floor2d import make_floor2d_prim_func
+from kernels.tilelang.ops.gather2d import make_gather2d_prim_func
 from kernels.tilelang.ops.grouped_row_sum2d import make_grouped_row_sum2d_prim_func
 from kernels.tilelang.ops.groupnorm import make_group_norm_kernel_prim_func
+from kernels.tilelang.ops.masked_attention2d import make_masked_attention2d_prim_func
 from kernels.tilelang.ops.matmul_bias_relu2d import make_matmul_bias_relu2d_prim_func
+from kernels.tilelang.ops.matmul_fused_epilogue2d import make_matmul_fused_epilogue2d_prim_func
 from kernels.tilelang.ops.matmul_relu2d import make_matmul_relu2d_prim_func
 from kernels.tilelang.ops.masked_softmax2d import make_masked_softmax2d_prim_func
 from kernels.tilelang.ops.mlp2d import make_mlp2d_prim_func
@@ -622,6 +625,49 @@ def _copy2d_divmod_intent() -> IntentFunction:
     )
 
 
+def _gather2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 64))
+    n = int(case.shapes.get("N", 64))
+    l = int(case.shapes.get("L", 256))
+    if case.inputs and "inp" in case.inputs:
+        inp = np.asarray(case.inputs["inp"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        inp = rng.standard_normal((m, n), dtype=np.float32)
+    if case.inputs and "row_idx" in case.inputs:
+        row_idx = np.asarray(case.inputs["row_idx"], dtype=np.int32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        row_idx = rng.integers(0, max(1, m), size=(l,), dtype=np.int32)
+    if case.inputs and "col_idx" in case.inputs:
+        col_idx = np.asarray(case.inputs["col_idx"], dtype=np.int32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        col_idx = rng.integers(0, max(1, n), size=(l,), dtype=np.int32)
+    out = inp[row_idx.astype(np.int64), col_idx.astype(np.int64)].astype(np.float32)
+    return {"inp": inp, "row_idx": row_idx, "col_idx": col_idx, "out": out}
+
+
+def _gather2d_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors = {
+        "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "row_idx": TensorType(dtype="i32", shape=[Dim("sym", "L")], layout=rm),
+        "col_idx": TensorType(dtype="i32", shape=[Dim("sym", "L")], layout=rm),
+        "out": TensorType(dtype="f32", shape=[Dim("sym", "L")], layout=rm),
+    }
+    ops = [Op(op="gather", inputs=["inp", "row_idx", "col_idx"], output="out", attrs={})]
+    schedule = ScheduleSketch(tile_m=256, tile_n=1, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="gather2d",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out"],
+        schedule=schedule,
+        axis_roles={"L": "spatial", "M": "spatial", "N": "spatial"},
+    )
+
+
 def _matmul_relu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     m = int(case.shapes["M"])
     n = int(case.shapes["N"])
@@ -763,6 +809,80 @@ def _matmul_bias_relu2d_intent() -> IntentFunction:
     )
 
 
+def _matmul_fused_epilogue2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    k = int(case.shapes["K"])
+    rng = np.random.default_rng(int(case.seed))
+    if case.inputs and "A" in case.inputs:
+        a = np.asarray(case.inputs["A"], dtype=np.float32)
+    else:
+        a = rng.standard_normal((m, k), dtype=np.float32)
+    if case.inputs and "B" in case.inputs:
+        b = np.asarray(case.inputs["B"], dtype=np.float32)
+    else:
+        b = rng.standard_normal((k, n), dtype=np.float32)
+    if case.inputs and "bias" in case.inputs:
+        bias = np.asarray(case.inputs["bias"], dtype=np.float32)
+    else:
+        bias = rng.standard_normal((n,), dtype=np.float32)
+    if case.inputs and "row_mask" in case.inputs:
+        row_mask = np.asarray(case.inputs["row_mask"], dtype=bool)
+    else:
+        row_mask = (np.arange(m) % 2 == 0)
+    if case.inputs and "col_mask" in case.inputs:
+        col_mask = np.asarray(case.inputs["col_mask"], dtype=bool)
+    else:
+        col_mask = (np.arange(n) % 3 != 0)
+        if n >= 1:
+            col_mask[0] = True
+    mm = a @ b
+    tmp = mm + bias[None, :]
+    cond = row_mask[:, None] & col_mask[None, :]
+    c = np.where(cond, tmp, 0.0).astype(np.float32)
+    return {"A": a, "B": b, "bias": bias, "row_mask": row_mask, "col_mask": col_mask, "C": c}
+
+
+def _matmul_fused_epilogue2d_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors: Dict[str, TensorType] = {
+        "A": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "K")], layout=rm),
+        "B": TensorType(dtype="f32", shape=[Dim("sym", "K"), Dim("sym", "N")], layout=rm),
+        "bias": TensorType(dtype="f32", shape=[Dim("sym", "N")], layout=rm),
+        "row_mask": TensorType(dtype="bool", shape=[Dim("sym", "M")], layout=rm),
+        "col_mask": TensorType(dtype="bool", shape=[Dim("sym", "N")], layout=rm),
+        "C": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+    }
+    ops: list[Op] = []
+    ops.append(Op(op="matmul", inputs=["A", "B"], output="mm", attrs={}))
+    tensors["mm"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="broadcast_in_dim", inputs=["bias"], output="b2", attrs={"out_shape": ["M", "N"], "broadcast_dims": [1]}))
+    tensors["b2"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="add", inputs=["mm", "b2"], output="tmp", attrs={}))
+    tensors["tmp"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="broadcast_in_dim", inputs=["row_mask"], output="rm2", attrs={"out_shape": ["M", "N"], "broadcast_dims": [0]}))
+    tensors["rm2"] = TensorType(dtype="bool", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="broadcast_in_dim", inputs=["col_mask"], output="cm2", attrs={"out_shape": ["M", "N"], "broadcast_dims": [1]}))
+    tensors["cm2"] = TensorType(dtype="bool", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="and", inputs=["rm2", "cm2"], output="cond", attrs={}))
+    tensors["cond"] = TensorType(dtype="bool", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="const", inputs=[], output="z", attrs={"value": 0.0, "dtype": "f32"}))
+    tensors["z"] = TensorType(dtype="f32", shape=[], layout=rm)
+    ops.append(Op(op="broadcast_in_dim", inputs=["z"], output="z2", attrs={"out_shape": ["M", "N"], "broadcast_dims": []}))
+    tensors["z2"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="where", inputs=["cond", "tmp", "z2"], output="C", attrs={}))
+
+    schedule = ScheduleSketch(tile_m=32, tile_n=32, tile_k=16, vec_width=1, pipeline_depth=2)
+    return IntentFunction(
+        name="matmul_fused_epilogue2d",
+        tensors=tensors,
+        ops=ops,
+        outputs=["C"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "spatial", "K": "reduction"},
+    )
+
+
 def _rowmask_where2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     m = int(case.shapes["M"])
     n = int(case.shapes["N"])
@@ -851,6 +971,85 @@ def _masked_softmax2d_intent() -> IntentFunction:
         outputs=["out"],
         schedule=schedule,
         axis_roles={"M": "spatial", "N": "channel"},
+    )
+
+
+def _masked_attention2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    q_ctx = int(case.shapes.get("Q_CTX", 16))
+    kv_ctx = int(case.shapes.get("KV_CTX", 16))
+    head_dim = int(case.shapes.get("HEAD_DIM", 16))
+    if case.inputs and "Q" in case.inputs:
+        q = np.asarray(case.inputs["Q"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        q = rng.standard_normal((q_ctx, head_dim), dtype=np.float32)
+    if case.inputs and "K" in case.inputs:
+        k = np.asarray(case.inputs["K"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        k = rng.standard_normal((kv_ctx, head_dim), dtype=np.float32)
+    if case.inputs and "V" in case.inputs:
+        v = np.asarray(case.inputs["V"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        v = rng.standard_normal((kv_ctx, head_dim), dtype=np.float32)
+    sm_scale = np.array(1.0 / np.sqrt(float(head_dim)), dtype=np.float32)
+
+    scores = (q @ k.T) * sm_scale
+    causal = (np.arange(kv_ctx)[None, :] <= np.arange(q_ctx)[:, None])
+    scores = np.where(causal, scores, np.float32(-1.0e9))
+    scores_max = np.max(scores, axis=-1, keepdims=True)
+    probs = np.exp(scores - scores_max)
+    probs = probs / np.sum(probs, axis=-1, keepdims=True)
+    out = probs @ v
+    return {"Q": q, "K": k, "V": v, "sm_scale": sm_scale, "Out": out.astype(np.float32)}
+
+
+def _masked_attention2d_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors: Dict[str, TensorType] = {
+        "Q": TensorType(dtype="f32", shape=[Dim("sym", "Q_CTX"), Dim("sym", "HEAD_DIM")], layout=rm),
+        "K": TensorType(dtype="f32", shape=[Dim("sym", "KV_CTX"), Dim("sym", "HEAD_DIM")], layout=rm),
+        "V": TensorType(dtype="f32", shape=[Dim("sym", "KV_CTX"), Dim("sym", "HEAD_DIM")], layout=rm),
+        "sm_scale": TensorType(dtype="f32", shape=[], layout=rm),
+        "Out": TensorType(dtype="f32", shape=[Dim("sym", "Q_CTX"), Dim("sym", "HEAD_DIM")], layout=rm),
+    }
+    ops: list[Op] = []
+
+    ops.append(Op(op="transpose", inputs=["K"], output="K_t", attrs={"perm": [1, 0]}))
+    tensors["K_t"] = TensorType(dtype="f32", shape=[Dim("sym", "HEAD_DIM"), Dim("sym", "KV_CTX")], layout=rm)
+
+    ops.append(Op(op="matmul", inputs=["Q", "K_t"], output="scores", attrs={}))
+    tensors["scores"] = TensorType(dtype="f32", shape=[Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")], layout=rm)
+
+    ops.append(Op(op="mul", inputs=["scores", "sm_scale"], output="scores_s", attrs={}))
+    tensors["scores_s"] = TensorType(dtype="f32", shape=[Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")], layout=rm)
+
+    ops.append(Op(op="iota", inputs=[], output="q_ids", attrs={"shape": ["Q_CTX", "KV_CTX"], "axis": 0, "dtype": "i32"}))
+    tensors["q_ids"] = TensorType(dtype="i32", shape=[Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")], layout=rm)
+    ops.append(Op(op="iota", inputs=[], output="k_ids", attrs={"shape": ["Q_CTX", "KV_CTX"], "axis": 1, "dtype": "i32"}))
+    tensors["k_ids"] = TensorType(dtype="i32", shape=[Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")], layout=rm)
+    ops.append(Op(op="le", inputs=["k_ids", "q_ids"], output="causal", attrs={}))
+    tensors["causal"] = TensorType(dtype="bool", shape=[Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")], layout=rm)
+
+    ops.append(Op(op="const", inputs=[], output="neg", attrs={"value": -1.0e9, "dtype": "f32"}))
+    tensors["neg"] = TensorType(dtype="f32", shape=[], layout=rm)
+    ops.append(Op(op="where", inputs=["causal", "scores_s", "neg"], output="scores_masked", attrs={}))
+    tensors["scores_masked"] = TensorType(dtype="f32", shape=[Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")], layout=rm)
+
+    ops.append(Op(op="softmax", inputs=["scores_masked"], output="probs", attrs={"axis": -1}))
+    tensors["probs"] = TensorType(dtype="f32", shape=[Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")], layout=rm)
+
+    ops.append(Op(op="matmul", inputs=["probs", "V"], output="Out", attrs={}))
+
+    schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=16, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="masked_attention2d",
+        tensors=tensors,
+        ops=ops,
+        outputs=["Out"],
+        schedule=schedule,
+        axis_roles={"Q_CTX": "spatial", "KV_CTX": "reduction", "HEAD_DIM": "channel"},
     )
 
 
@@ -1585,6 +1784,39 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 vary_axes=["M"],
                 runner=_mlp2d_reference,
                 intent_builder=_mlp2d_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="gather2d",
+                prim_func=make_gather2d_prim_func(n=64, l=256, threads=128),
+                arg_names=["inp", "row_idx", "col_idx", "out", "M", "N", "L"],
+                canonical_shapes={"M": 64, "N": 64, "L": 256},
+                vary_axes=["M"],
+                runner=_gather2d_reference,
+                intent_builder=_gather2d_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="masked_attention2d",
+                prim_func=make_masked_attention2d_prim_func(q_ctx=16, kv_ctx=16, head_dim=16, threads=128),
+                arg_names=["Q", "K", "V", "sm_scale", "Out", "Q_CTX", "KV_CTX", "HEAD_DIM"],
+                canonical_shapes={"Q_CTX": 16, "KV_CTX": 16, "HEAD_DIM": 16},
+                vary_axes=[],
+                runner=_masked_attention2d_reference,
+                intent_builder=_masked_attention2d_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="matmul_fused_epilogue2d",
+                prim_func=make_matmul_fused_epilogue2d_prim_func(block_m=32, block_n=32, block_k=16, num_stages=2, threads=128),
+                arg_names=["A", "B", "bias", "row_mask", "col_mask", "C", "M", "N", "K"],
+                canonical_shapes={"M": 32, "N": 32, "K": 32},
+                vary_axes=["M"],
+                runner=_matmul_fused_epilogue2d_reference,
+                intent_builder=_matmul_fused_epilogue2d_intent,
                 exclude_axes=[],
                 constexpr_names=[],
             ),

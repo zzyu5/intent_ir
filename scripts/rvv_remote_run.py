@@ -465,6 +465,14 @@ def run_remote(
         arr = np.asarray(baseline[name])
         if dt in {"bool", "i1"}:
             raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
+        elif dt == "i8":
+            raw = np.asarray(arr, dtype=np.int8).tobytes(order="C")
+        elif dt == "u8":
+            raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
+        elif dt == "i32":
+            raw = np.asarray(arr, dtype=np.int32).tobytes(order="C")
+        elif dt == "i64":
+            raw = np.asarray(arr, dtype=np.int64).tobytes(order="C")
         else:
             raw = np.asarray(arr, dtype=np.float32).tobytes(order="C")
         _sftp_write_bytes(sftp, f"{remote_dir}/{name}.bin", raw)
@@ -477,6 +485,14 @@ def run_remote(
         arr = np.asarray(baseline[name])
         if dt in {"bool", "i1"}:
             raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
+        elif dt == "i8":
+            raw = np.asarray(arr, dtype=np.int8).tobytes(order="C")
+        elif dt == "u8":
+            raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
+        elif dt == "i32":
+            raw = np.asarray(arr, dtype=np.int32).tobytes(order="C")
+        elif dt == "i64":
+            raw = np.asarray(arr, dtype=np.int64).tobytes(order="C")
         else:
             raw = np.asarray(arr, dtype=np.float32).tobytes(order="C")
         _sftp_write_bytes(sftp, f"{remote_dir}/{name}_ref.bin", raw)

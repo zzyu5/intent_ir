@@ -79,12 +79,26 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
                 raise LLMJsonParseError(str(e), path=f"tensors.{name}.layout")
         # normalize dtype if using long form
         dtype = t.get("dtype")
-        if dtype in {"float16", "fp16"}:
-            t["dtype"] = "f16"
-        elif dtype in {"float32", "fp32", "float"}:
-            t["dtype"] = "f32"
-        elif dtype in {"bfloat16", "bf16"}:
-            t["dtype"] = "bf16"
+        if isinstance(dtype, str):
+            dt = dtype.lower()
+            if dt in {"float16", "fp16"}:
+                t["dtype"] = "f16"
+            elif dt in {"float32", "fp32", "float"}:
+                t["dtype"] = "f32"
+            elif dt in {"bfloat16", "bf16"}:
+                t["dtype"] = "bf16"
+            elif dt in {"int1", "i1"}:
+                t["dtype"] = "i1"
+            elif dt in {"int8", "i8"}:
+                t["dtype"] = "i8"
+            elif dt in {"uint8", "u8"}:
+                t["dtype"] = "u8"
+            elif dt in {"int32", "i32"}:
+                t["dtype"] = "i32"
+            elif dt in {"int64", "i64"}:
+                t["dtype"] = "i64"
+            elif dt in {"bool", "boolean"}:
+                t["dtype"] = "bool"
         if "shape" not in t:
             t["shape"] = []
         # replace tile symbols with axis symbols for downstream bindings
@@ -176,25 +190,74 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
         if op.get("op") == "iota":
             if "axis" not in op["attrs"] and "dimension" in op["attrs"]:
                 op["attrs"]["axis"] = op["attrs"].pop("dimension")
+            dt = op["attrs"].get("dtype")
+            if isinstance(dt, str):
+                dd = dt.lower()
+                if dd in {"float16", "fp16"}:
+                    op["attrs"]["dtype"] = "f16"
+                elif dd in {"float32", "fp32", "float"}:
+                    op["attrs"]["dtype"] = "f32"
+                elif dd in {"bfloat16", "bf16"}:
+                    op["attrs"]["dtype"] = "bf16"
+                elif dd in {"int1", "i1"}:
+                    op["attrs"]["dtype"] = "i1"
+                elif dd in {"int8", "i8"}:
+                    op["attrs"]["dtype"] = "i8"
+                elif dd in {"uint8", "u8"}:
+                    op["attrs"]["dtype"] = "u8"
+                elif dd in {"int32", "i32"}:
+                    op["attrs"]["dtype"] = "i32"
+                elif dd in {"int64", "i64"}:
+                    op["attrs"]["dtype"] = "i64"
+                elif dd in {"bool", "boolean"}:
+                    op["attrs"]["dtype"] = "bool"
         if op.get("op") == "cast":
             if "to" not in op["attrs"] and "dtype" in op["attrs"]:
                 op["attrs"]["to"] = op["attrs"].pop("dtype")
             # Normalize dtype spellings commonly emitted by providers.
             to = op["attrs"].get("to")
-            if to in {"float16", "fp16"}:
-                op["attrs"]["to"] = "f16"
-            elif to in {"float32", "fp32", "float"}:
-                op["attrs"]["to"] = "f32"
-            elif to in {"bfloat16", "bf16"}:
-                op["attrs"]["to"] = "bf16"
+            if isinstance(to, str):
+                dt = to.lower()
+                if dt in {"float16", "fp16"}:
+                    op["attrs"]["to"] = "f16"
+                elif dt in {"float32", "fp32", "float"}:
+                    op["attrs"]["to"] = "f32"
+                elif dt in {"bfloat16", "bf16"}:
+                    op["attrs"]["to"] = "bf16"
+                elif dt in {"int1", "i1"}:
+                    op["attrs"]["to"] = "i1"
+                elif dt in {"int8", "i8"}:
+                    op["attrs"]["to"] = "i8"
+                elif dt in {"uint8", "u8"}:
+                    op["attrs"]["to"] = "u8"
+                elif dt in {"int32", "i32"}:
+                    op["attrs"]["to"] = "i32"
+                elif dt in {"int64", "i64"}:
+                    op["attrs"]["to"] = "i64"
+                elif dt in {"bool", "boolean"}:
+                    op["attrs"]["to"] = "bool"
         if op.get("op") == "const":
             dt = op["attrs"].get("dtype")
-            if dt in {"float16", "fp16"}:
-                op["attrs"]["dtype"] = "f16"
-            elif dt in {"float32", "fp32", "float"}:
-                op["attrs"]["dtype"] = "f32"
-            elif dt in {"bfloat16", "bf16"}:
-                op["attrs"]["dtype"] = "bf16"
+            if isinstance(dt, str):
+                dd = dt.lower()
+                if dd in {"float16", "fp16"}:
+                    op["attrs"]["dtype"] = "f16"
+                elif dd in {"float32", "fp32", "float"}:
+                    op["attrs"]["dtype"] = "f32"
+                elif dd in {"bfloat16", "bf16"}:
+                    op["attrs"]["dtype"] = "bf16"
+                elif dd in {"int1", "i1"}:
+                    op["attrs"]["dtype"] = "i1"
+                elif dd in {"int8", "i8"}:
+                    op["attrs"]["dtype"] = "i8"
+                elif dd in {"uint8", "u8"}:
+                    op["attrs"]["dtype"] = "u8"
+                elif dd in {"int32", "i32"}:
+                    op["attrs"]["dtype"] = "i32"
+                elif dd in {"int64", "i64"}:
+                    op["attrs"]["dtype"] = "i64"
+                elif dd in {"bool", "boolean"}:
+                    op["attrs"]["dtype"] = "bool"
 
         # Canonicalize scalar shorthand for numeric binary ops into explicit const + binary op.
         # This keeps downstream stages simple/strict (interpreter, C lowering, RVV lowering).

@@ -1424,14 +1424,30 @@ void intentir_gather_f32_i32(
           for (int ax = 0; ax < data_rank; ++ax) base[ax] = 0;
           for (int64_t o = 0; o < last_dim;) {
             size_t vl = intentir_vsetvl_e32m1((size_t)(last_dim - o));
-            vuint32m1_t i0;
+            vuint32m1_t i0 = __riscv_vmv_v_x_u32m1(0, vl);
+            vuint32m1_t i1 = __riscv_vmv_v_x_u32m1(0, vl);
+            vuint32m1_t i2 = __riscv_vmv_v_x_u32m1(0, vl);
+            vuint32m1_t i3 = __riscv_vmv_v_x_u32m1(0, vl);
             if (data_rank >= 1) {
-              if (idx_last_var[0]) i0 = __riscv_vle32_v_u32m1((const uint32_t*)&idxs[0][base[0] + (size_t)o], vl);
-              else i0 = __riscv_vmv_v_x_u32m1((uint32_t)idxs[0][base[0]], vl);
-            } else {
-              i0 = __riscv_vmv_v_x_u32m1(0, vl);
+              i0 = idx_last_var[0] ? __riscv_vle32_v_u32m1((const uint32_t*)&idxs[0][base[0] + (size_t)o], vl)
+                                   : __riscv_vmv_v_x_u32m1((uint32_t)idxs[0][base[0]], vl);
+            }
+            if (data_rank >= 2) {
+              i1 = idx_last_var[1] ? __riscv_vle32_v_u32m1((const uint32_t*)&idxs[1][base[1] + (size_t)o], vl)
+                                   : __riscv_vmv_v_x_u32m1((uint32_t)idxs[1][base[1]], vl);
+            }
+            if (data_rank >= 3) {
+              i2 = idx_last_var[2] ? __riscv_vle32_v_u32m1((const uint32_t*)&idxs[2][base[2] + (size_t)o], vl)
+                                   : __riscv_vmv_v_x_u32m1((uint32_t)idxs[2][base[2]], vl);
+            }
+            if (data_rank >= 4) {
+              i3 = idx_last_var[3] ? __riscv_vle32_v_u32m1((const uint32_t*)&idxs[3][base[3] + (size_t)o], vl)
+                                   : __riscv_vmv_v_x_u32m1((uint32_t)idxs[3][base[3]], vl);
             }
             vuint32m1_t di = i0;
+            if (data_rank >= 2) di = __riscv_vadd_vv_u32m1(__riscv_vmul_vx_u32m1(di, dim1, vl), i1, vl);
+            if (data_rank >= 3) di = __riscv_vadd_vv_u32m1(__riscv_vmul_vx_u32m1(di, dim2, vl), i2, vl);
+            if (data_rank >= 4) di = __riscv_vadd_vv_u32m1(__riscv_vmul_vx_u32m1(di, dim3, vl), i3, vl);
             vuint32m1_t off = __riscv_vsll_vx_u32m1(di, 2, vl);
             vfloat32m1_t vx = __riscv_vluxei32_v_f32m1(data, off, vl);
             __riscv_vse32_v_f32m1(&out[(size_t)o], vx, vl);

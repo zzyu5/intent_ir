@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import difflib
+import importlib.util
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 try:
-    import triton  # noqa: F401
+    import torch
 except Exception:
-    triton = None
+    torch = None
 
 from frontends.triton.certificate import build_certificate_v2
 from frontends.triton.facts import extract_facts
@@ -54,7 +57,41 @@ def _diff(a: dict, b: dict) -> str:
     return "".join(difflib.unified_diff(sb, sa, fromfile="golden", tofile="current"))
 
 
-@pytest.mark.skipif(triton is None, reason="triton not available")
+def _triton_import_ok() -> bool:
+    """
+    Importing `triton` can hard-crash the interpreter on machines without a
+    working CUDA/driver stack. Probe in a subprocess so pytest collection stays
+    robust and we can skip cleanly.
+    """
+    if importlib.util.find_spec("triton") is None:
+        return False
+    try:
+        p = subprocess.run(
+            [sys.executable, "-c", "import triton; print('ok')"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=30,
+        )
+        return p.returncode == 0
+    except Exception:
+        return False
+
+
+def _cuda_available() -> bool:
+    if torch is None:
+        return False
+    try:
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
+
+
+_TRITON_OK = _triton_import_ok()
+
+
+@pytest.mark.skipif(not _TRITON_OK, reason="triton import probe failed (no CUDA/driver?)")
+@pytest.mark.skipif(not _cuda_available(), reason="CUDA not available")
 @pytest.mark.parametrize("kernel_name", ["softmax_inner", "layer_norm_persistent"])
 def test_triton_certificate_semantic_facts_golden(kernel_name: str, tmp_path: Path):
     """
@@ -76,4 +113,3 @@ def test_triton_certificate_semantic_facts_golden(kernel_name: str, tmp_path: Pa
 
     expected = json.loads(golden_path.read_text(encoding="utf-8"))
     assert got == expected, _diff(got, expected)
-

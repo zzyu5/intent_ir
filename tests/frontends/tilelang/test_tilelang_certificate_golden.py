@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import difflib
+import importlib.util
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
-tilelang = pytest.importorskip("tilelang", reason="tilelang not available")  # noqa: F401
+try:
+    import torch
+except Exception:
+    torch = None
 
 from pipeline import registry
 from pipeline.tilelang.core import default_kernel_specs
@@ -45,6 +51,41 @@ def _diff(a: dict, b: dict) -> str:
     return "".join(difflib.unified_diff(sb, sa, fromfile="golden", tofile="current"))
 
 
+def _tilelang_import_ok() -> bool:
+    """
+    Importing `tilelang` may compile/load CUDA extensions; in some environments
+    this can hang or crash. Probe in a subprocess so pytest collection stays
+    robust and we can skip cleanly.
+    """
+    if importlib.util.find_spec("tilelang") is None:
+        return False
+    try:
+        p = subprocess.run(
+            [sys.executable, "-c", "import tilelang; print('ok')"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=30,
+        )
+        return p.returncode == 0
+    except Exception:
+        return False
+
+
+def _cuda_available() -> bool:
+    if torch is None:
+        return False
+    try:
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
+
+
+_TILELANG_OK = _tilelang_import_ok()
+
+
+@pytest.mark.skipif(not _TILELANG_OK, reason="tilelang import probe failed")
+@pytest.mark.skipif(not _cuda_available(), reason="CUDA not available")
 @pytest.mark.parametrize("kernel_name", ["softmax_inner", "layer_norm_persistent"])
 def test_tilelang_certificate_semantic_facts_golden(kernel_name: str, tmp_path: Path):
     """
@@ -67,4 +108,3 @@ def test_tilelang_certificate_semantic_facts_golden(kernel_name: str, tmp_path: 
 
     expected = json.loads(golden_path.read_text(encoding="utf-8"))
     assert got == expected, _diff(got, expected)
-

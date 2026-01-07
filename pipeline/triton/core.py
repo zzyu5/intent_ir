@@ -1034,6 +1034,122 @@ def _run_mlp2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     }
 
 
+def _run_gather2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.gather2d import gather2d
+
+    M = int(case.shapes.get("M", 16))
+    N = int(case.shapes.get("N", 64))
+    L = int(case.shapes.get("L", 256))
+    device = "cuda"
+    if case.inputs and "inp" in case.inputs:
+        inp = torch.as_tensor(case.inputs["inp"], device=device).to(torch.float32)
+        if tuple(inp.shape) != (M, N):
+            raise ValueError(f"inp shape mismatch: got {tuple(inp.shape)} expected {(M, N)}")
+    else:
+        inp = torch.randn((M, N), device=device, dtype=torch.float32)
+    # Indices must be in-bounds for both numpy reference and RVV backend.
+    if case.inputs and "row_idx" in case.inputs and "col_idx" in case.inputs:
+        row_idx = torch.as_tensor(case.inputs["row_idx"], device=device).to(torch.int32)
+        col_idx = torch.as_tensor(case.inputs["col_idx"], device=device).to(torch.int32)
+        if tuple(row_idx.shape) != (L,) or tuple(col_idx.shape) != (L,):
+            raise ValueError(f"index shape mismatch: row_idx={tuple(row_idx.shape)} col_idx={tuple(col_idx.shape)} expected {(L,)}")
+    else:
+        # deterministic-ish indices
+        row_idx = (torch.arange(L, device=device, dtype=torch.int32) % max(1, M)).to(torch.int32)
+        col_idx = (torch.arange(L, device=device, dtype=torch.int32) % max(1, N)).to(torch.int32)
+    out = gather2d(inp, row_idx, col_idx)
+    torch.cuda.synchronize()
+    return {"inp": inp.cpu().numpy(), "row_idx": row_idx.cpu().numpy(), "col_idx": col_idx.cpu().numpy(), "out": out.cpu().numpy()}
+
+
+def _run_masked_attention2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.masked_attention2d import masked_attention2d
+
+    Q_CTX = int(case.shapes.get("Q_CTX", 16))
+    KV_CTX = int(case.shapes.get("KV_CTX", 16))
+    HEAD_DIM = int(case.shapes.get("HEAD_DIM", 16))
+    device = "cuda"
+    if case.inputs and "Q" in case.inputs:
+        Q = torch.as_tensor(case.inputs["Q"], device=device).to(torch.float32)
+        if tuple(Q.shape) != (Q_CTX, HEAD_DIM):
+            raise ValueError(f"Q shape mismatch: got {tuple(Q.shape)} expected {(Q_CTX, HEAD_DIM)}")
+    else:
+        Q = torch.randn((Q_CTX, HEAD_DIM), device=device, dtype=torch.float32)
+    if case.inputs and "K" in case.inputs:
+        K = torch.as_tensor(case.inputs["K"], device=device).to(torch.float32)
+        if tuple(K.shape) != (KV_CTX, HEAD_DIM):
+            raise ValueError(f"K shape mismatch: got {tuple(K.shape)} expected {(KV_CTX, HEAD_DIM)}")
+    else:
+        K = torch.randn((KV_CTX, HEAD_DIM), device=device, dtype=torch.float32)
+    if case.inputs and "V" in case.inputs:
+        V = torch.as_tensor(case.inputs["V"], device=device).to(torch.float32)
+        if tuple(V.shape) != (KV_CTX, HEAD_DIM):
+            raise ValueError(f"V shape mismatch: got {tuple(V.shape)} expected {(KV_CTX, HEAD_DIM)}")
+    else:
+        V = torch.randn((KV_CTX, HEAD_DIM), device=device, dtype=torch.float32)
+    Out = masked_attention2d(Q, K, V)
+    torch.cuda.synchronize()
+    sm_scale = float(1.0 / (float(HEAD_DIM) ** 0.5))
+    return {
+        "Q": Q.cpu().numpy(),
+        "K": K.cpu().numpy(),
+        "V": V.cpu().numpy(),
+        "sm_scale": np.array(sm_scale, dtype=np.float32),
+        "Out": Out.cpu().numpy(),
+    }
+
+
+def _run_matmul_fused_epilogue2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.matmul_fused_epilogue2d import matmul_fused_epilogue2d
+
+    M = int(case.shapes.get("M", 32))
+    N = int(case.shapes.get("N", 32))
+    K = int(case.shapes.get("K", 32))
+    device = "cuda"
+    if case.inputs and "A" in case.inputs:
+        A = torch.as_tensor(case.inputs["A"], device=device).to(torch.float32)
+        if tuple(A.shape) != (M, K):
+            raise ValueError(f"A shape mismatch: got {tuple(A.shape)} expected {(M, K)}")
+    else:
+        A = torch.randn((M, K), device=device, dtype=torch.float32)
+    if case.inputs and "B" in case.inputs:
+        B = torch.as_tensor(case.inputs["B"], device=device).to(torch.float32)
+        if tuple(B.shape) != (K, N):
+            raise ValueError(f"B shape mismatch: got {tuple(B.shape)} expected {(K, N)}")
+    else:
+        B = torch.randn((K, N), device=device, dtype=torch.float32)
+    if case.inputs and "bias" in case.inputs:
+        bias = torch.as_tensor(case.inputs["bias"], device=device).to(torch.float32)
+        if tuple(bias.shape) != (N,):
+            raise ValueError(f"bias shape mismatch: got {tuple(bias.shape)} expected {(N,)}")
+    else:
+        bias = torch.randn((N,), device=device, dtype=torch.float32)
+    if case.inputs and "row_mask" in case.inputs:
+        row_mask = torch.as_tensor(case.inputs["row_mask"], device=device).to(torch.bool)
+        if tuple(row_mask.shape) != (M,):
+            raise ValueError(f"row_mask shape mismatch: got {tuple(row_mask.shape)} expected {(M,)}")
+    else:
+        row_mask = (torch.arange(M, device=device) % 2 == 0)
+    if case.inputs and "col_mask" in case.inputs:
+        col_mask = torch.as_tensor(case.inputs["col_mask"], device=device).to(torch.bool)
+        if tuple(col_mask.shape) != (N,):
+            raise ValueError(f"col_mask shape mismatch: got {tuple(col_mask.shape)} expected {(N,)}")
+    else:
+        col_mask = (torch.arange(N, device=device) % 3 != 0)
+        if N >= 1:
+            col_mask[0] = True
+    C = matmul_fused_epilogue2d(A, B, bias, row_mask, col_mask)
+    torch.cuda.synchronize()
+    return {
+        "A": A.cpu().numpy(),
+        "B": B.cpu().numpy(),
+        "bias": bias.cpu().numpy(),
+        "row_mask": row_mask.cpu().numpy(),
+        "col_mask": col_mask.cpu().numpy(),
+        "C": C.cpu().numpy(),
+    }
+
+
 def _run_layernorm_reference(case: TestCase) -> Dict[str, np.ndarray]:
     """
     LayerNorm forward over last dim (shape [M, N]).
@@ -1252,6 +1368,15 @@ def coverage_kernel_specs() -> List[KernelSpec]:
             out["M"] = max(1, int(out["M"]))
         return out
 
+    def _norm_masked_attention2d(shapes: Dict[str, int]) -> Dict[str, int]:
+        out = dict(shapes)
+        out["Q_CTX"] = max(1, int(out.get("Q_CTX", 16)))
+        out["KV_CTX"] = max(1, min(int(out.get("KV_CTX", 16)), 64))
+        hd = int(out.get("HEAD_DIM", 16))
+        allowed = [16, 32, 64]
+        out["HEAD_DIM"] = int(min(allowed, key=lambda x: abs(int(x) - hd)))
+        return out
+
     specs.extend(
         [
             KernelSpec(
@@ -1402,6 +1527,32 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 attr="mlp2d_kernel.src",
                 runner=_run_mlp2d_reference,
                 canonical_shapes={"M": 32, "N": 32, "K": 32, "H": 32},
+                vary_axes=["M"],
+            ),
+            KernelSpec(
+                name="gather2d",
+                module="kernels.triton.ops.gather2d",
+                attr="gather2d_kernel.src",
+                runner=_run_gather2d_reference,
+                canonical_shapes={"M": 16, "N": 64, "L": 256},
+                vary_axes=["M"],
+            ),
+            KernelSpec(
+                name="masked_attention2d",
+                module="kernels.triton.ops.masked_attention2d",
+                attr="masked_attention2d_kernel.src",
+                runner=_run_masked_attention2d_reference,
+                canonical_shapes={"Q_CTX": 16, "KV_CTX": 16, "HEAD_DIM": 16},
+                vary_axes=["Q_CTX", "KV_CTX"],
+                exclude_axes=["HEAD_DIM"],
+                normalize_shapes=_norm_masked_attention2d,
+            ),
+            KernelSpec(
+                name="matmul_fused_epilogue2d",
+                module="kernels.triton.ops.matmul_fused_epilogue2d",
+                attr="matmul_fused_epilogue2d_kernel.src",
+                runner=_run_matmul_fused_epilogue2d_reference,
+                canonical_shapes={"M": 32, "N": 32, "K": 32},
                 vary_axes=["M"],
             ),
         ]

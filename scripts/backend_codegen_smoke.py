@@ -65,6 +65,14 @@ def _external_inputs(intent: IntentFunction) -> tuple[list[str], list[str]]:
 def _write_bin(path: Path, arr: np.ndarray, dtype: str) -> None:
     if dtype in {"bool", "i1"}:
         raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
+    elif dtype == "i8":
+        raw = np.asarray(arr, dtype=np.int8).tobytes(order="C")
+    elif dtype == "u8":
+        raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
+    elif dtype == "i32":
+        raw = np.asarray(arr, dtype=np.int32).tobytes(order="C")
+    elif dtype == "i64":
+        raw = np.asarray(arr, dtype=np.int64).tobytes(order="C")
     else:
         raw = np.asarray(arr, dtype=np.float32).tobytes(order="C")
     path.write_bytes(raw)
