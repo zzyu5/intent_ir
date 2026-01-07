@@ -167,6 +167,8 @@ def _summarize(entries: List[Entry]) -> Dict[str, Any]:
     tier_counts: Dict[str, Dict[str, int]] = {t: {"n": 0, "ok": 0, "remote_ok": 0, "remote_total": 0} for t in tiers}
     contract_counts: Dict[str, int] = {}
     failures: Dict[str, int] = {}
+    failures_by_tier: Dict[str, Dict[str, int]] = {t: {} for t in tiers}
+    contracts_by_tier: Dict[str, Dict[str, int]] = {t: {} for t in tiers}
     reason_counts: Dict[str, int] = {}
 
     for e in entries:
@@ -181,6 +183,10 @@ def _summarize(entries: List[Entry]) -> Dict[str, Any]:
 
         contract_counts[e.contract] = contract_counts.get(e.contract, 0) + 1
         failures[e.failure] = failures.get(e.failure, 0) + 1
+        failures_by_tier.setdefault(e.anchor_tier, {})
+        failures_by_tier[e.anchor_tier][e.failure] = failures_by_tier[e.anchor_tier].get(e.failure, 0) + 1
+        contracts_by_tier.setdefault(e.anchor_tier, {})
+        contracts_by_tier[e.anchor_tier][e.contract] = contracts_by_tier[e.anchor_tier].get(e.contract, 0) + 1
         for r in e.contract_reasons:
             reason_counts[str(r)] = reason_counts.get(str(r), 0) + 1
 
@@ -197,6 +203,8 @@ def _summarize(entries: List[Entry]) -> Dict[str, Any]:
         "tiers": tier_counts,
         "contracts": contract_counts,
         "failures": failures,
+        "failures_by_tier": failures_by_tier,
+        "contracts_by_tier": contracts_by_tier,
         "contract_reasons": reason_counts,
         "coverage_curve": curve,
     }
@@ -277,6 +285,18 @@ def main() -> None:
         for k, v in sorted((fe_sum.get("failures") or {}).items(), key=lambda kv: (-int(kv[1]), str(kv[0]))):
             frows.append([str(k), str(int(v))])
         _print_table("Failure categories", frows)
+
+        # Per-tier failure distribution (compact): useful for coverage/anchor plots.
+        fb = fe_sum.get("failures_by_tier") or {}
+        fbt_rows = [["tier", "top_failure", "count"]]
+        for tier in ["A_dot", "B_reduce", "C_copy", "D_none"]:
+            d = fb.get(tier) if isinstance(fb, dict) else None
+            if not isinstance(d, dict) or not d:
+                fbt_rows.append([tier, "-", "0"])
+                continue
+            top_k, top_v = sorted(d.items(), key=lambda kv: (-int(kv[1]), str(kv[0])))[0]
+            fbt_rows.append([tier, str(top_k), str(int(top_v))])
+        _print_table("Top failure by tier", fbt_rows)
 
         rrows = [["contract_reason(top)", "count"]]
         reasons = list((fe_sum.get("contract_reasons") or {}).items())
