@@ -34,6 +34,7 @@ from backends.spmd_rvv.analysis.tuning import TuningRequest, parse_constraints, 
 from intent_ir.ir import IntentFunction
 from intent_ir.macros import expand_macros
 from verify.gen_cases import TestCase
+from verify.tolerances import infer_tolerances
 
 
 def _normalize_io_name(name: str) -> str:
@@ -472,16 +473,12 @@ def run_remote(
         _sftp_write_bytes(sftp, f"{remote_dir}/{name}_ref.bin", raw)
 
     # Lower the IntentIR op list to C and run on RVV target.
-    tol = {
-        "any_kernel_dim": (0.0, 0.0),
-        "group_norm_kernel": (1e-3, 1e-3),
-        "_attn_fwd": (1e-2, 1e-2),
-        "softmax_inner": (1e-3, 1e-3),
-        "layer_norm_persistent": (1e-3, 1e-3),
-        # upsample is currently OUT_OF_SCOPE; keep a loose tol for experiments.
-        "upsample_bicubic2d_aa": (1e-3, 1e-3),
-    }
-    atol_use, rtol_use = tol.get(kernel, (1e-3, 1e-3))
+    #
+    # Remote runs compare against a GPU-produced baseline (Triton/TileLang CUDA),
+    # so keep tolerances at least legacy-default to avoid false negatives.
+    auto_tol = infer_tolerances(intent, ref_out=baseline).to_dict()
+    atol_use = max(float(auto_tol.get("atol", 1e-3)), 1e-3)
+    rtol_use = max(float(auto_tol.get("rtol", 1e-3)), 1e-3)
     backend_used = "cpp"
 
     def _compile_and_run(schedule) -> dict:

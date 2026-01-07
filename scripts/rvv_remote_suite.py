@@ -42,6 +42,12 @@ P3_COVERAGE_KERNELS = [
     "add_bias2d",
     "where2d",
     "row_sum",
+    "exp2d",
+    "floor2d",
+    "clamp2d",
+    "row_max",
+    "copy2d_divmod",
+    "matmul_relu2d",
 ]
 
 KERNEL_SUITES = {

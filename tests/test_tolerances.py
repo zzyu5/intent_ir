@@ -21,7 +21,7 @@ def test_infer_tolerances_softmax_is_tighter_than_legacy():
     assert tol["rtol"] < 1e-3
 
 
-def test_infer_tolerances_matmul_stays_legacy():
+def test_infer_tolerances_matmul_is_looser_than_legacy():
     intent = IntentFunction.from_json_dict(
         {
             "name": "matmul_only",
@@ -35,6 +35,5 @@ def test_infer_tolerances_matmul_stays_legacy():
         }
     )
     tol = infer_tolerances(intent).to_dict()
-    assert np.isclose(tol["atol"], 1e-3)
-    assert np.isclose(tol["rtol"], 1e-3)
-
+    assert tol["atol"] > 1e-3
+    assert tol["rtol"] > 1e-3

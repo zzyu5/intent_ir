@@ -670,6 +670,155 @@ def _run_row_sum_reference(case: TestCase) -> Dict[str, np.ndarray]:
     return {"input": inp.cpu().numpy(), "output": out.cpu().numpy()}
 
 
+def _run_exp2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.exp2d import exp2d_kernel
+
+    M = int(case.shapes.get("M", 4))
+    N = int(case.shapes.get("N", 64))
+    device = "cuda"
+    if case.inputs and "input" in case.inputs:
+        inp = torch.as_tensor(case.inputs["input"], device=device).to(torch.float32)
+        if tuple(inp.shape) != (M, N):
+            raise ValueError(f"input shape mismatch: got {tuple(inp.shape)} expected {(M, N)}")
+    else:
+        inp = torch.randn((M, N), device=device, dtype=torch.float32)
+    out = torch.empty((M, N), device=device, dtype=torch.float32)
+    grid = lambda meta: (M, triton.cdiv(N, meta["BLOCK_N"]))
+    exp2d_kernel[grid](inp, out, M, N, BLOCK_N=256)
+    torch.cuda.synchronize()
+    return {"input": inp.cpu().numpy(), "output": out.cpu().numpy()}
+
+
+def _run_floor2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.floor2d import floor2d_kernel
+
+    M = int(case.shapes.get("M", 4))
+    N = int(case.shapes.get("N", 64))
+    device = "cuda"
+    if case.inputs and "input" in case.inputs:
+        inp = torch.as_tensor(case.inputs["input"], device=device).to(torch.float32)
+        if tuple(inp.shape) != (M, N):
+            raise ValueError(f"input shape mismatch: got {tuple(inp.shape)} expected {(M, N)}")
+    else:
+        inp = torch.randn((M, N), device=device, dtype=torch.float32)
+    out = torch.empty((M, N), device=device, dtype=torch.float32)
+    grid = lambda meta: (M, triton.cdiv(N, meta["BLOCK_N"]))
+    floor2d_kernel[grid](inp, out, M, N, BLOCK_N=256)
+    torch.cuda.synchronize()
+    return {"input": inp.cpu().numpy(), "output": out.cpu().numpy()}
+
+
+def _run_clamp2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.clamp2d import clamp2d_kernel
+
+    M = int(case.shapes.get("M", 4))
+    N = int(case.shapes.get("N", 64))
+    device = "cuda"
+    if case.inputs and "input" in case.inputs:
+        inp = torch.as_tensor(case.inputs["input"], device=device).to(torch.float32)
+        if tuple(inp.shape) != (M, N):
+            raise ValueError(f"input shape mismatch: got {tuple(inp.shape)} expected {(M, N)}")
+    else:
+        inp = torch.randn((M, N), device=device, dtype=torch.float32)
+
+    lo = -0.5
+    hi = 0.5
+    if case.inputs and "lo" in case.inputs:
+        lo = float(np.asarray(case.inputs["lo"]).reshape(()))
+    if case.inputs and "hi" in case.inputs:
+        hi = float(np.asarray(case.inputs["hi"]).reshape(()))
+
+    out = torch.empty((M, N), device=device, dtype=torch.float32)
+    grid = lambda meta: (M, triton.cdiv(N, meta["BLOCK_N"]))
+    clamp2d_kernel[grid](inp, out, M, N, float(lo), float(hi), BLOCK_N=256)
+    torch.cuda.synchronize()
+    return {"input": inp.cpu().numpy(), "output": out.cpu().numpy(), "lo": np.array(lo, dtype=np.float32), "hi": np.array(hi, dtype=np.float32)}
+
+
+def _run_row_max_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.row_max import row_max_kernel
+
+    M = int(case.shapes.get("M", 4))
+    N = int(case.shapes.get("N", 256))
+    device = "cuda"
+    if N > 1024:
+        raise ValueError(f"row_max requires N<=1024, got N={N}")
+    if case.inputs and "input" in case.inputs:
+        inp = torch.as_tensor(case.inputs["input"], device=device).to(torch.float32)
+        if tuple(inp.shape) != (M, N):
+            raise ValueError(f"input shape mismatch: got {tuple(inp.shape)} expected {(M, N)}")
+    else:
+        inp = torch.randn((M, N), device=device, dtype=torch.float32)
+    out = torch.empty((M,), device=device, dtype=torch.float32)
+    block_n = 1 if N <= 1 else min(1024, 1 << (int(N) - 1).bit_length())
+    grid = (M,)
+    row_max_kernel[grid](inp, out, M, N, BLOCK_N=block_n)
+    torch.cuda.synchronize()
+    return {"input": inp.cpu().numpy(), "output": out.cpu().numpy()}
+
+
+def _run_copy2d_divmod_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.copy2d_divmod import copy2d_divmod_kernel
+
+    M = int(case.shapes.get("M", 4))
+    N = int(case.shapes.get("N", 64))
+    device = "cuda"
+    if case.inputs and "input" in case.inputs:
+        inp = torch.as_tensor(case.inputs["input"], device=device).to(torch.float32)
+        if tuple(inp.shape) != (M, N):
+            raise ValueError(f"input shape mismatch: got {tuple(inp.shape)} expected {(M, N)}")
+    else:
+        inp = torch.randn((M, N), device=device, dtype=torch.float32)
+    out = torch.empty((M, N), device=device, dtype=torch.float32)
+    grid = lambda meta: (M * triton.cdiv(N, meta["BLOCK_N"]),)
+    copy2d_divmod_kernel[grid](inp, out, M, N, BLOCK_N=256)
+    torch.cuda.synchronize()
+    return {"input": inp.cpu().numpy(), "output": out.cpu().numpy()}
+
+
+def _run_matmul_relu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.matmul_relu2d import matmul_relu2d_kernel
+
+    M = int(case.shapes.get("M", 32))
+    N = int(case.shapes.get("N", 32))
+    K = int(case.shapes.get("K", 32))
+    device = "cuda"
+
+    if case.inputs and "A" in case.inputs:
+        a = torch.as_tensor(case.inputs["A"], device=device).to(torch.float32)
+        if tuple(a.shape) != (M, K):
+            raise ValueError(f"A shape mismatch: got {tuple(a.shape)} expected {(M, K)}")
+    else:
+        a = torch.randn((M, K), device=device, dtype=torch.float32)
+    if case.inputs and "B" in case.inputs:
+        b = torch.as_tensor(case.inputs["B"], device=device).to(torch.float32)
+        if tuple(b.shape) != (K, N):
+            raise ValueError(f"B shape mismatch: got {tuple(b.shape)} expected {(K, N)}")
+    else:
+        b = torch.randn((K, N), device=device, dtype=torch.float32)
+    c = torch.empty((M, N), device=device, dtype=torch.float32)
+    grid = lambda meta: (triton.cdiv(M, meta["BLOCK_M"]), triton.cdiv(N, meta["BLOCK_N"]))
+    matmul_relu2d_kernel[grid](
+        a,
+        b,
+        c,
+        M,
+        N,
+        K,
+        a.stride(0),
+        a.stride(1),
+        b.stride(0),
+        b.stride(1),
+        c.stride(0),
+        c.stride(1),
+        BLOCK_M=32,
+        BLOCK_N=32,
+        BLOCK_K=16,
+    )
+    torch.cuda.synchronize()
+    return {"A": a.cpu().numpy(), "B": b.cpu().numpy(), "C": c.cpu().numpy()}
+
+
 def _run_layernorm_reference(case: TestCase) -> Dict[str, np.ndarray]:
     """
     LayerNorm forward over last dim (shape [M, N]).
@@ -912,6 +1061,55 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 canonical_shapes={"M": 4, "N": 256},
                 vary_axes=["M", "N"],
                 normalize_shapes=_norm_row_sum,
+            ),
+            KernelSpec(
+                name="exp2d",
+                module="kernels.triton.ops.exp2d",
+                attr="exp2d_kernel.src",
+                runner=_run_exp2d_reference,
+                canonical_shapes={"M": 4, "N": 64},
+                vary_axes=["M", "N"],
+            ),
+            KernelSpec(
+                name="floor2d",
+                module="kernels.triton.ops.floor2d",
+                attr="floor2d_kernel.src",
+                runner=_run_floor2d_reference,
+                canonical_shapes={"M": 4, "N": 64},
+                vary_axes=["M", "N"],
+            ),
+            KernelSpec(
+                name="clamp2d",
+                module="kernels.triton.ops.clamp2d",
+                attr="clamp2d_kernel.src",
+                runner=_run_clamp2d_reference,
+                canonical_shapes={"M": 4, "N": 64},
+                vary_axes=["M", "N"],
+            ),
+            KernelSpec(
+                name="row_max",
+                module="kernels.triton.ops.row_max",
+                attr="row_max_kernel.src",
+                runner=_run_row_max_reference,
+                canonical_shapes={"M": 4, "N": 256},
+                vary_axes=["M", "N"],
+                normalize_shapes=_norm_row_sum,
+            ),
+            KernelSpec(
+                name="copy2d_divmod",
+                module="kernels.triton.ops.copy2d_divmod",
+                attr="copy2d_divmod_kernel.src",
+                runner=_run_copy2d_divmod_reference,
+                canonical_shapes={"M": 4, "N": 64},
+                vary_axes=["M", "N"],
+            ),
+            KernelSpec(
+                name="matmul_relu2d",
+                module="kernels.triton.ops.matmul_relu2d",
+                attr="matmul_relu2d_kernel.src",
+                runner=_run_matmul_relu2d_reference,
+                canonical_shapes={"M": 32, "N": 32, "K": 32},
+                vary_axes=["M", "N", "K"],
             ),
         ]
     )

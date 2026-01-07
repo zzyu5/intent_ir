@@ -36,8 +36,14 @@ from frontends.tilelang.runtime import infer_written_global_buffers, run_tilelan
 from kernels.tilelang.ops.any_kernel_dim import make_any_kernel_dim_prim_func
 from kernels.tilelang.ops.add2d import make_add2d_prim_func
 from kernels.tilelang.ops.add_bias2d import make_add_bias2d_prim_func
+from kernels.tilelang.ops.clamp2d import make_clamp2d_prim_func
+from kernels.tilelang.ops.copy2d_divmod import make_copy2d_divmod_prim_func
+from kernels.tilelang.ops.exp2d import make_exp2d_prim_func
+from kernels.tilelang.ops.floor2d import make_floor2d_prim_func
 from kernels.tilelang.ops.groupnorm import make_group_norm_kernel_prim_func
+from kernels.tilelang.ops.matmul_relu2d import make_matmul_relu2d_prim_func
 from kernels.tilelang.ops.relu2d import make_relu2d_prim_func
+from kernels.tilelang.ops.row_max import make_row_max_prim_func
 from kernels.tilelang.ops.row_sum import make_row_sum_prim_func
 from kernels.tilelang.ops.softmax_inner import make_softmax_inner_prim_func
 from kernels.tilelang.ops.layernorm import make_layer_norm_persistent_prim_func
@@ -455,6 +461,194 @@ def _row_sum_intent() -> IntentFunction:
         outputs=["out"],
         schedule=schedule,
         axis_roles={"M": "spatial", "N": "reduction"},
+    )
+
+
+def _exp2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    if case.inputs and "inp" in case.inputs:
+        inp = np.asarray(case.inputs["inp"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        inp = rng.standard_normal((m, n), dtype=np.float32)
+    return {"inp": inp}
+
+
+def _exp2d_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors = {
+        "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "out": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+    }
+    ops = [Op(op="exp", inputs=["inp"], output="out", attrs={})]
+    schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="exp2d",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "spatial"},
+    )
+
+
+def _floor2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    if case.inputs and "inp" in case.inputs:
+        inp = np.asarray(case.inputs["inp"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        inp = rng.standard_normal((m, n), dtype=np.float32)
+    return {"inp": inp}
+
+
+def _floor2d_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors = {
+        "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "out": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+    }
+    ops = [Op(op="floor", inputs=["inp"], output="out", attrs={})]
+    schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="floor2d",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "spatial"},
+    )
+
+
+def _clamp2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    if case.inputs and "inp" in case.inputs:
+        inp = np.asarray(case.inputs["inp"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        inp = rng.standard_normal((m, n), dtype=np.float32)
+    return {"inp": inp}
+
+
+def _clamp2d_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors: Dict[str, TensorType] = {
+        "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "out": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+    }
+    ops: list[Op] = []
+    ops.append(Op(op="const", inputs=[], output="lo", attrs={"value": -0.5, "dtype": "f32"}))
+    tensors["lo"] = TensorType(dtype="f32", shape=[], layout=rm)
+    ops.append(Op(op="const", inputs=[], output="hi", attrs={"value": 0.5, "dtype": "f32"}))
+    tensors["hi"] = TensorType(dtype="f32", shape=[], layout=rm)
+    ops.append(Op(op="max", inputs=["inp", "lo"], output="t0", attrs={}))
+    tensors["t0"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="min", inputs=["t0", "hi"], output="out", attrs={}))
+    schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="clamp2d",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "spatial"},
+    )
+
+
+def _row_max_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    if case.inputs and "inp" in case.inputs:
+        inp = np.asarray(case.inputs["inp"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        inp = rng.standard_normal((m, n), dtype=np.float32)
+    return {"inp": inp}
+
+
+def _row_max_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors = {
+        "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "out": TensorType(dtype="f32", shape=[Dim("sym", "M")], layout=rm),
+    }
+    ops = [Op(op="reduce_max", inputs=["inp"], output="out", attrs={"axes": [1], "keepdims": False})]
+    schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="row_max",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "reduction"},
+    )
+
+
+def _copy2d_divmod_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    if case.inputs and "inp" in case.inputs:
+        inp = np.asarray(case.inputs["inp"], dtype=np.float32)
+    else:
+        rng = np.random.default_rng(int(case.seed))
+        inp = rng.standard_normal((m, n), dtype=np.float32)
+    return {"inp": inp}
+
+
+def _copy2d_divmod_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors = {
+        "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "out": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+    }
+    ops = [Op(op="identity", inputs=["inp"], output="out", attrs={})]
+    schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="copy2d_divmod",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "spatial"},
+    )
+
+
+def _matmul_relu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    k = int(case.shapes["K"])
+    rng = np.random.default_rng(int(case.seed))
+    if case.inputs and "A" in case.inputs:
+        a = np.asarray(case.inputs["A"], dtype=np.float32)
+    else:
+        a = rng.standard_normal((m, k), dtype=np.float32)
+    if case.inputs and "B" in case.inputs:
+        b = np.asarray(case.inputs["B"], dtype=np.float32)
+    else:
+        b = rng.standard_normal((k, n), dtype=np.float32)
+    return {"A": a, "B": b}
+
+
+def _matmul_relu2d_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors = {
+        "A": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "K")], layout=rm),
+        "B": TensorType(dtype="f32", shape=[Dim("sym", "K"), Dim("sym", "N")], layout=rm),
+        "C": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+    }
+    ops = [Op(op="matmul", inputs=["A", "B"], output="mm", attrs={}), Op(op="relu", inputs=["mm"], output="C", attrs={})]
+    tensors["mm"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    schedule = ScheduleSketch(tile_m=32, tile_n=32, tile_k=16, vec_width=1, pipeline_depth=2)
+    return IntentFunction(
+        name="matmul_relu2d",
+        tensors=tensors,
+        ops=ops,
+        outputs=["C"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "spatial", "K": "reduction"},
     )
 
 
@@ -948,6 +1142,72 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 vary_axes=["M"],
                 runner=_row_sum_reference,
                 intent_builder=_row_sum_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="exp2d",
+                prim_func=make_exp2d_prim_func(n=64, threads=128),
+                arg_names=["inp", "out", "M", "N"],
+                canonical_shapes={"M": 16, "N": 64},
+                vary_axes=["M"],
+                runner=_exp2d_reference,
+                intent_builder=_exp2d_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="floor2d",
+                prim_func=make_floor2d_prim_func(n=64, threads=128),
+                arg_names=["inp", "out", "M", "N"],
+                canonical_shapes={"M": 16, "N": 64},
+                vary_axes=["M"],
+                runner=_floor2d_reference,
+                intent_builder=_floor2d_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="clamp2d",
+                prim_func=make_clamp2d_prim_func(n=64, lo=-0.5, hi=0.5, threads=128),
+                arg_names=["inp", "out", "M", "N"],
+                canonical_shapes={"M": 16, "N": 64},
+                vary_axes=["M"],
+                runner=_clamp2d_reference,
+                intent_builder=_clamp2d_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="row_max",
+                prim_func=make_row_max_prim_func(n=64, threads=128),
+                arg_names=["inp", "out", "M", "N"],
+                canonical_shapes={"M": 16, "N": 64},
+                vary_axes=["M"],
+                runner=_row_max_reference,
+                intent_builder=_row_max_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="copy2d_divmod",
+                prim_func=make_copy2d_divmod_prim_func(n=64, block_n=16, threads=128),
+                arg_names=["inp", "out", "M", "N"],
+                canonical_shapes={"M": 16, "N": 64},
+                vary_axes=["M"],
+                runner=_copy2d_divmod_reference,
+                intent_builder=_copy2d_divmod_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="matmul_relu2d",
+                prim_func=make_matmul_relu2d_prim_func(block_m=32, block_n=32, block_k=16, num_stages=2, threads=128),
+                arg_names=["A", "B", "C", "M", "N", "K"],
+                canonical_shapes={"M": 32, "N": 32, "K": 32},
+                vary_axes=["M"],
+                runner=_matmul_relu2d_reference,
+                intent_builder=_matmul_relu2d_intent,
                 exclude_axes=[],
                 constexpr_names=[],
             ),
