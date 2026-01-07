@@ -3,6 +3,11 @@ TileLang constraints extraction (MVP).
 
 For PR#9 we only derive a minimal FrontendConstraints:
 - needs_mask: True if any access carries predicate clauses.
+
+Strengthening (P2/P3): also attach *computable* access witnesses (stride/penalty)
+derived from CanonicalEvidence-style access summaries so downstream components
+(contract/casegen/tuning) can consume richer constraints without importing heavy
+TileLang/TVM machinery.
 """
 
 from __future__ import annotations
@@ -108,6 +113,30 @@ def extract_constraints(desc: KernelDescriptor, facts: TileLangFacts) -> Fronten
             clauses.extend([str(c) for c in a.predicate.clauses])
     if clauses:
         meta["predicate_clauses"] = sorted(set(clauses))
+
+    # Access witness: stride + penalties derived from CanonicalEvidence-style accesses.
+    # This is intentionally best-effort and should never raise.
+    try:
+        from frontends.common.access_witness import build_stride_summary  # noqa: PLC0415
+
+        shape_bindings: Dict[str, int] = {}
+        try:
+            cs = (desc.launch or {}).get("canonical_shapes")
+            if isinstance(cs, dict):
+                for k, v in cs.items():
+                    if isinstance(k, str) and isinstance(v, (int, float)):
+                        shape_bindings[str(k)] = int(v)
+        except Exception:
+            shape_bindings = {}
+
+        evidence_like = {
+            "canonical_evidence": {"accesses": [a.to_json_dict() for a in (facts.accesses or [])]},
+            "schedule_hints": {"symbol_ranges": dict(getattr(facts, "symbol_ranges", {}) or {})},
+        }
+        summary = build_stride_summary(evidence_like, shape_bindings=shape_bindings)
+        meta["access_witness"] = summary.to_json_dict()
+    except Exception:
+        pass
 
     return FrontendConstraints(needs_mask=bool(needs_mask), suggested_edge_cases=suggested, meta=meta)
 
