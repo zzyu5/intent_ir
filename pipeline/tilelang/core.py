@@ -41,8 +41,11 @@ from kernels.tilelang.ops.copy2d_divmod import make_copy2d_divmod_prim_func
 from kernels.tilelang.ops.exp2d import make_exp2d_prim_func
 from kernels.tilelang.ops.floor2d import make_floor2d_prim_func
 from kernels.tilelang.ops.groupnorm import make_group_norm_kernel_prim_func
+from kernels.tilelang.ops.matmul_bias_relu2d import make_matmul_bias_relu2d_prim_func
 from kernels.tilelang.ops.matmul_relu2d import make_matmul_relu2d_prim_func
 from kernels.tilelang.ops.relu2d import make_relu2d_prim_func
+from kernels.tilelang.ops.rms_norm2d import make_rms_norm2d_prim_func
+from kernels.tilelang.ops.rowmask_where2d import make_rowmask_where2d_prim_func
 from kernels.tilelang.ops.row_max import make_row_max_prim_func
 from kernels.tilelang.ops.row_sum import make_row_sum_prim_func
 from kernels.tilelang.ops.softmax_inner import make_softmax_inner_prim_func
@@ -652,6 +655,152 @@ def _matmul_relu2d_intent() -> IntentFunction:
     )
 
 
+def _rms_norm2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    rng = np.random.default_rng(int(case.seed))
+    if case.inputs and "inp" in case.inputs:
+        inp = np.asarray(case.inputs["inp"], dtype=np.float32)
+    else:
+        inp = rng.standard_normal((m, n), dtype=np.float32)
+    if case.inputs and "weight" in case.inputs:
+        w = np.asarray(case.inputs["weight"], dtype=np.float32)
+    else:
+        w = rng.standard_normal((n,), dtype=np.float32)
+    return {"inp": inp, "weight": w}
+
+
+def _rms_norm2d_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors: Dict[str, TensorType] = {
+        "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "weight": TensorType(dtype="f32", shape=[Dim("sym", "N")], layout=rm),
+        "out": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "rstd": TensorType(dtype="f32", shape=[Dim("sym", "M")], layout=rm),
+    }
+    ops: list[Op] = []
+
+    ops.append(Op(op="mul", inputs=["inp", "inp"], output="sq", attrs={}))
+    tensors["sq"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="reduce_sum", inputs=["sq"], output="sum_sq", attrs={"axes": [1], "keepdims": True}))
+    tensors["sum_sq"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
+    ops.append(Op(op="div", inputs=["sum_sq"], output="mean_sq", attrs={"divisor": "N"}))
+    tensors["mean_sq"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
+    ops.append(Op(op="const", inputs=[], output="eps", attrs={"value": 1e-5, "dtype": "f32"}))
+    tensors["eps"] = TensorType(dtype="f32", shape=[], layout=rm)
+    ops.append(Op(op="add", inputs=["mean_sq", "eps"], output="ms_eps", attrs={}))
+    tensors["ms_eps"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
+    ops.append(Op(op="rsqrt", inputs=["ms_eps"], output="rstd1", attrs={}))
+    tensors["rstd1"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
+    ops.append(Op(op="reshape", inputs=["rstd1"], output="rstd", attrs={"shape": ["M"]}))
+
+    ops.append(Op(op="broadcast_in_dim", inputs=["rstd"], output="rstd2", attrs={"out_shape": ["M", "N"], "broadcast_dims": [0]}))
+    tensors["rstd2"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="broadcast_in_dim", inputs=["weight"], output="w2", attrs={"out_shape": ["M", "N"], "broadcast_dims": [1]}))
+    tensors["w2"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="mul", inputs=["inp", "rstd2"], output="norm", attrs={}))
+    tensors["norm"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="mul", inputs=["norm", "w2"], output="out", attrs={}))
+
+    schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="rms_norm2d",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out", "rstd"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "channel"},
+    )
+
+
+def _matmul_bias_relu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    k = int(case.shapes["K"])
+    rng = np.random.default_rng(int(case.seed))
+    if case.inputs and "A" in case.inputs:
+        a = np.asarray(case.inputs["A"], dtype=np.float32)
+    else:
+        a = rng.standard_normal((m, k), dtype=np.float32)
+    if case.inputs and "B" in case.inputs:
+        b = np.asarray(case.inputs["B"], dtype=np.float32)
+    else:
+        b = rng.standard_normal((k, n), dtype=np.float32)
+    if case.inputs and "bias" in case.inputs:
+        bias = np.asarray(case.inputs["bias"], dtype=np.float32)
+    else:
+        bias = rng.standard_normal((n,), dtype=np.float32)
+    return {"A": a, "B": b, "bias": bias}
+
+
+def _matmul_bias_relu2d_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors: Dict[str, TensorType] = {
+        "A": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "K")], layout=rm),
+        "B": TensorType(dtype="f32", shape=[Dim("sym", "K"), Dim("sym", "N")], layout=rm),
+        "bias": TensorType(dtype="f32", shape=[Dim("sym", "N")], layout=rm),
+        "C": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+    }
+    ops: list[Op] = []
+    ops.append(Op(op="matmul", inputs=["A", "B"], output="mm", attrs={}))
+    tensors["mm"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="broadcast_in_dim", inputs=["bias"], output="b2", attrs={"out_shape": ["M", "N"], "broadcast_dims": [1]}))
+    tensors["b2"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="add", inputs=["mm", "b2"], output="mm_b", attrs={}))
+    tensors["mm_b"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="relu", inputs=["mm_b"], output="C", attrs={}))
+    schedule = ScheduleSketch(tile_m=32, tile_n=32, tile_k=16, vec_width=1, pipeline_depth=2)
+    return IntentFunction(
+        name="matmul_bias_relu2d",
+        tensors=tensors,
+        ops=ops,
+        outputs=["C"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "spatial", "K": "reduction"},
+    )
+
+
+def _rowmask_where2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    rng = np.random.default_rng(int(case.seed))
+    if case.inputs and "inp" in case.inputs:
+        inp = np.asarray(case.inputs["inp"], dtype=np.float32)
+    else:
+        inp = rng.standard_normal((m, n), dtype=np.float32)
+    if case.inputs and "row_mask" in case.inputs:
+        rm = np.asarray(case.inputs["row_mask"], dtype=bool)
+    else:
+        rm = (np.arange(m) % 2 == 0)
+    return {"inp": inp, "row_mask": rm}
+
+
+def _rowmask_where2d_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors: Dict[str, TensorType] = {
+        "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "row_mask": TensorType(dtype="bool", shape=[Dim("sym", "M")], layout=rm),
+        "out": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+    }
+    ops: list[Op] = []
+    ops.append(Op(op="broadcast_in_dim", inputs=["row_mask"], output="m2", attrs={"out_shape": ["M", "N"], "broadcast_dims": [0]}))
+    tensors["m2"] = TensorType(dtype="bool", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="const", inputs=[], output="z", attrs={"value": 0.0, "dtype": "f32"}))
+    tensors["z"] = TensorType(dtype="f32", shape=[], layout=rm)
+    ops.append(Op(op="broadcast_in_dim", inputs=["z"], output="z2", attrs={"out_shape": ["M", "N"], "broadcast_dims": []}))
+    tensors["z2"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="where", inputs=["m2", "inp", "z2"], output="out", attrs={}))
+    schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="rowmask_where2d",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "spatial"},
+    )
+
+
 def _layer_norm_persistent_reference(case: TestCase) -> Dict[str, np.ndarray]:
     m = int(case.shapes["M"])
     n = int(case.shapes["N"])
@@ -1208,6 +1357,39 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 vary_axes=["M"],
                 runner=_matmul_relu2d_reference,
                 intent_builder=_matmul_relu2d_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="rms_norm2d",
+                prim_func=make_rms_norm2d_prim_func(n=64, eps=1e-5, threads=128),
+                arg_names=["inp", "weight", "out", "rstd", "M", "N"],
+                canonical_shapes={"M": 16, "N": 64},
+                vary_axes=["M"],
+                runner=_rms_norm2d_reference,
+                intent_builder=_rms_norm2d_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="matmul_bias_relu2d",
+                prim_func=make_matmul_bias_relu2d_prim_func(block_m=32, block_n=32, block_k=16, num_stages=2, threads=128),
+                arg_names=["A", "B", "bias", "C", "M", "N", "K"],
+                canonical_shapes={"M": 32, "N": 32, "K": 32},
+                vary_axes=["M"],
+                runner=_matmul_bias_relu2d_reference,
+                intent_builder=_matmul_bias_relu2d_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="rowmask_where2d",
+                prim_func=make_rowmask_where2d_prim_func(n=64, threads=128),
+                arg_names=["inp", "row_mask", "out", "M", "N"],
+                canonical_shapes={"M": 16, "N": 64},
+                vary_axes=["M"],
+                runner=_rowmask_where2d_reference,
+                intent_builder=_rowmask_where2d_intent,
                 exclude_axes=[],
                 constexpr_names=[],
             ),

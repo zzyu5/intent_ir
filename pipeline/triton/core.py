@@ -819,6 +819,118 @@ def _run_matmul_relu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     return {"A": a.cpu().numpy(), "B": b.cpu().numpy(), "C": c.cpu().numpy()}
 
 
+def _run_rms_norm2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.rms_norm2d import rms_norm2d_kernel
+
+    M = int(case.shapes.get("M", 4))
+    N = int(case.shapes.get("N", 64))
+    eps = float(case.shapes.get("eps", 1e-5))
+    device = "cuda"
+    if N > 1024:
+        raise ValueError(f"rms_norm2d requires N<=1024, got N={N}")
+    if case.inputs and "input" in case.inputs:
+        inp = torch.as_tensor(case.inputs["input"], device=device).to(torch.float32)
+        if tuple(inp.shape) != (M, N):
+            raise ValueError(f"input shape mismatch: got {tuple(inp.shape)} expected {(M, N)}")
+    else:
+        inp = torch.randn((M, N), device=device, dtype=torch.float32)
+    if case.inputs and "weight" in case.inputs:
+        w = torch.as_tensor(case.inputs["weight"], device=device).to(torch.float32)
+        if tuple(w.shape) != (N,):
+            raise ValueError(f"weight shape mismatch: got {tuple(w.shape)} expected {(N,)}")
+    else:
+        w = torch.ones((N,), device=device, dtype=torch.float32)
+    out = torch.empty((M, N), device=device, dtype=torch.float32)
+    rstd = torch.empty((M,), device=device, dtype=torch.float32)
+    block_n = 1 if N <= 1 else min(1024, 1 << (int(N) - 1).bit_length())
+    grid = (M,)
+    rms_norm2d_kernel[grid](inp, w, out, rstd, M, N, eps, BLOCK_N=block_n)
+    torch.cuda.synchronize()
+    return {
+        "input": inp.cpu().numpy(),
+        "weight": w.cpu().numpy(),
+        "output": out.cpu().numpy(),
+        "rstd": rstd.cpu().numpy(),
+        "eps": np.array(eps, dtype=np.float32),
+    }
+
+
+def _run_matmul_bias_relu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.matmul_bias_relu2d import matmul_bias_relu2d_kernel
+
+    M = int(case.shapes.get("M", 32))
+    N = int(case.shapes.get("N", 32))
+    K = int(case.shapes.get("K", 32))
+    device = "cuda"
+
+    if case.inputs and "A" in case.inputs:
+        a = torch.as_tensor(case.inputs["A"], device=device).to(torch.float32)
+        if tuple(a.shape) != (M, K):
+            raise ValueError(f"A shape mismatch: got {tuple(a.shape)} expected {(M, K)}")
+    else:
+        a = torch.randn((M, K), device=device, dtype=torch.float32)
+    if case.inputs and "B" in case.inputs:
+        b = torch.as_tensor(case.inputs["B"], device=device).to(torch.float32)
+        if tuple(b.shape) != (K, N):
+            raise ValueError(f"B shape mismatch: got {tuple(b.shape)} expected {(K, N)}")
+    else:
+        b = torch.randn((K, N), device=device, dtype=torch.float32)
+    if case.inputs and "bias" in case.inputs:
+        bias = torch.as_tensor(case.inputs["bias"], device=device).to(torch.float32)
+        if tuple(bias.shape) != (N,):
+            raise ValueError(f"bias shape mismatch: got {tuple(bias.shape)} expected {(N,)}")
+    else:
+        bias = torch.randn((N,), device=device, dtype=torch.float32)
+    c = torch.empty((M, N), device=device, dtype=torch.float32)
+    grid = lambda meta: (triton.cdiv(M, meta["BLOCK_M"]), triton.cdiv(N, meta["BLOCK_N"]))
+    matmul_bias_relu2d_kernel[grid](
+        a,
+        b,
+        bias,
+        c,
+        M,
+        N,
+        K,
+        a.stride(0),
+        a.stride(1),
+        b.stride(0),
+        b.stride(1),
+        c.stride(0),
+        c.stride(1),
+        BLOCK_M=32,
+        BLOCK_N=32,
+        BLOCK_K=16,
+    )
+    torch.cuda.synchronize()
+    return {"A": a.cpu().numpy(), "B": b.cpu().numpy(), "bias": bias.cpu().numpy(), "C": c.cpu().numpy()}
+
+
+def _run_rowmask_where2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.rowmask_where2d import rowmask_where2d_kernel
+
+    M = int(case.shapes.get("M", 4))
+    N = int(case.shapes.get("N", 64))
+    device = "cuda"
+    if case.inputs and "input" in case.inputs:
+        inp = torch.as_tensor(case.inputs["input"], device=device).to(torch.float32)
+        if tuple(inp.shape) != (M, N):
+            raise ValueError(f"input shape mismatch: got {tuple(inp.shape)} expected {(M, N)}")
+    else:
+        inp = torch.randn((M, N), device=device, dtype=torch.float32)
+    if case.inputs and "row_mask" in case.inputs:
+        rm = torch.as_tensor(case.inputs["row_mask"], device=device).to(torch.bool)
+        if tuple(rm.shape) != (M,):
+            raise ValueError(f"row_mask shape mismatch: got {tuple(rm.shape)} expected {(M,)}")
+    else:
+        # deterministic-ish: mask odd rows
+        rm = (torch.arange(M, device=device) % 2 == 0)
+    out = torch.empty((M, N), device=device, dtype=torch.float32)
+    grid = lambda meta: (M, triton.cdiv(N, meta["BLOCK_N"]))
+    rowmask_where2d_kernel[grid](inp, rm, out, M, N, BLOCK_N=256)
+    torch.cuda.synchronize()
+    return {"input": inp.cpu().numpy(), "row_mask": rm.cpu().numpy(), "output": out.cpu().numpy()}
+
+
 def _run_layernorm_reference(case: TestCase) -> Dict[str, np.ndarray]:
     """
     LayerNorm forward over last dim (shape [M, N]).
@@ -1110,6 +1222,31 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 runner=_run_matmul_relu2d_reference,
                 canonical_shapes={"M": 32, "N": 32, "K": 32},
                 vary_axes=["M", "N", "K"],
+            ),
+            KernelSpec(
+                name="rms_norm2d",
+                module="kernels.triton.ops.rms_norm2d",
+                attr="rms_norm2d_kernel.src",
+                runner=_run_rms_norm2d_reference,
+                canonical_shapes={"M": 4, "N": 64},
+                vary_axes=["M", "N"],
+                normalize_shapes=_norm_row_sum,
+            ),
+            KernelSpec(
+                name="matmul_bias_relu2d",
+                module="kernels.triton.ops.matmul_bias_relu2d",
+                attr="matmul_bias_relu2d_kernel.src",
+                runner=_run_matmul_bias_relu2d_reference,
+                canonical_shapes={"M": 32, "N": 32, "K": 32},
+                vary_axes=["M", "N", "K"],
+            ),
+            KernelSpec(
+                name="rowmask_where2d",
+                module="kernels.triton.ops.rowmask_where2d",
+                attr="rowmask_where2d_kernel.src",
+                runner=_run_rowmask_where2d_reference,
+                canonical_shapes={"M": 4, "N": 64},
+                vary_axes=["M", "N"],
             ),
         ]
     )

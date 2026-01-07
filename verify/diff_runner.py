@@ -226,8 +226,22 @@ def _with_io_aliases(intent: IntentFunction, ref_io: Dict[str, np.ndarray]) -> D
             continue
         norm = _normalize_io_name(name)
         keys = norm_to_keys.get(norm) or []
-        if len(keys) == 1:
-            out[name] = ref_io[keys[0]]
+        if keys:
+            if len(keys) == 1:
+                out[name] = ref_io[keys[0]]
+                continue
+            # Collision: pick the best match (prefer exact case-insensitive match).
+            lower_name = str(name).lower()
+            preferred = None
+            for k in keys:
+                if str(k).lower() == lower_name:
+                    preferred = k
+                    break
+            if preferred is None and norm in ref_io:
+                preferred = norm
+            if preferred is None:
+                preferred = keys[0]
+            out[name] = ref_io[preferred]
             continue
         # Fallback: substring match on normalized keys (e.g., out_mean_ptr -> Mean).
         # Avoid overly-short names (e.g., "N", "C") accidentally matching "input".
