@@ -91,6 +91,16 @@ def run_diff(
                 bindings["num_elements"] = int(bindings["group_size"]) * int(bindings["HW"])
             except Exception:
                 pass
+        # Generic grouped reductions: if a kernel uses [M, N] reshaped into [M, G, group_size],
+        # bind G = N / group_size when possible (LLM often emits a symbolic G).
+        if "N" in bindings and "group_size" in bindings and "G" not in bindings:
+            try:
+                n = int(bindings["N"])
+                gs = int(bindings["group_size"])
+                if gs > 0 and n % gs == 0:
+                    bindings["G"] = n // gs
+            except Exception:
+                pass
         # Only feed/validate true external inputs (values consumed by the ops graph).
         produced = {op.output for op in intent_exec.ops if op.output}
         used: set[str] = set()
@@ -273,7 +283,11 @@ def _compare_outputs(pred: Dict[str, np.ndarray], ref: Dict[str, np.ndarray], ou
                 return DiffResult(False, max_abs, max_rel, bad_idx, f"shape mismatch for {name}: {p.shape} vs {ref_arr.shape}")
             p = p2
         if ref_arr.dtype == bool or p.dtype == bool:
-            abs_err = np.not_equal(p, ref_arr).astype(np.int32)
+            neq = np.not_equal(p.astype(bool), ref_arr.astype(bool))
+            if np.any(neq):
+                bi = tuple(np.unravel_index(np.argmax(neq.astype(np.int32)), neq.shape))
+                return DiffResult(False, float("inf"), float("inf"), bi, f"mismatch in {name} (bool)")
+            continue
         else:
             # Be strict about non-finite values: allow them only if the pattern AND
             # values match (e.g., NaN vs NaN at the same indices).
@@ -286,26 +300,24 @@ def _compare_outputs(pred: Dict[str, np.ndarray], ref: Dict[str, np.ndarray], ou
                     return DiffResult(False, float("inf"), float("inf"), None, f"non-finite values mismatch in {name}")
             finite = ~(p_nonfinite | r_nonfinite)
             abs_err = np.zeros_like(ref_arr, dtype=np.float64)
+            rel_err = np.zeros_like(ref_arr, dtype=np.float64)
             if np.any(finite):
                 abs_err[finite] = np.abs(p[finite] - ref_arr[finite]).astype(np.float64)
-        max_abs_err = abs_err.max()
+                rel_err[finite] = abs_err[finite] / (np.abs(ref_arr[finite]) + 1e-8)
+        max_abs_err = float(abs_err.max()) if abs_err.size else 0.0
+        max_rel_err = float(rel_err.max()) if rel_err.size else 0.0
         max_abs = max(max_abs, max_abs_err)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            if ref_arr.dtype == bool or p.dtype == bool:
-                rel_err = abs_err / (np.abs(ref_arr) + 1e-8)
-            else:
-                # Avoid NaNs from 0/NaN at non-finite positions by only computing
-                # rel error on finite elements.
-                rel_err = np.zeros_like(abs_err, dtype=np.float64)
-                if np.any(finite):
-                    rel_err[finite] = abs_err[finite] / (np.abs(ref_arr[finite]) + 1e-8)
-        max_rel_err = rel_err.max()
         max_rel = max(max_rel, max_rel_err)
-        # If anything went wrong and we still ended up with NaN, treat as failure.
-        if not np.isfinite(max_abs_err) or not np.isfinite(max_rel_err):
-            return DiffResult(False, float("inf"), float("inf"), None, f"non-finite error metric in {name}")
-        if max_abs_err > tol["atol"] and max_rel_err > tol["rtol"]:
-            bad_idx = tuple(np.unravel_index(np.argmax(abs_err), abs_err.shape))
+
+        # Pass/fail uses a per-element tolerance (np.allclose-style).
+        # This avoids false negatives where the max-abs and max-rel occur at different indices.
+        atol = float(tol.get("atol", 1e-3))
+        rtol = float(tol.get("rtol", 1e-3))
+        thresh = atol + rtol * np.abs(ref_arr).astype(np.float64)
+        viol = (abs_err > thresh) & finite
+        if np.any(viol):
+            margin = np.where(viol, abs_err - thresh, -np.inf)
+            bad_idx = tuple(np.unravel_index(int(np.argmax(margin)), margin.shape))
             return DiffResult(False, max_abs, max_rel, bad_idx, f"mismatch in {name}")
     return DiffResult(True, max_abs, max_rel, bad_idx, "ok")
 

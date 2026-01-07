@@ -51,6 +51,9 @@ P3_COVERAGE_KERNELS = [
     "rms_norm2d",
     "matmul_bias_relu2d",
     "rowmask_where2d",
+    "masked_softmax2d",
+    "grouped_row_sum2d",
+    "mlp2d",
 ]
 
 KERNEL_SUITES = {

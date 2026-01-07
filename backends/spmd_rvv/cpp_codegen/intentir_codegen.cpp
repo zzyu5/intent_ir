@@ -1600,20 +1600,58 @@ struct CProgramEmitter {
         for (const auto& nm : idxs) idx_dtypes.push_back(dtype_env.at(nm));
         emit_gather(w, out, op.inputs[0], idxs, shape_env.at(op.inputs[0]), idx_shapes, out_shape, dtype_env.at(op.inputs[0]), idx_dtypes, dtype_env.at(out));
       } else if (op.op == "reduce_sum") {
+        // Accept both "axes" and "dims" (parser/LLM may emit either). Prefer "axes"
+        // when both are present to match interpreter semantics.
         std::vector<int> dims;
-        for (const auto& d : op.attrs["dims"]) dims.push_back(d.get<int>());
+        if (op.attrs.contains("axes")) {
+          for (const auto& d : op.attrs["axes"]) dims.push_back(d.get<int>());
+        } else if (op.attrs.contains("dims")) {
+          for (const auto& d : op.attrs["dims"]) dims.push_back(d.get<int>());
+        } else if (op.attrs.contains("axis")) {
+          if (op.attrs["axis"].is_array()) {
+            for (const auto& d : op.attrs["axis"]) dims.push_back(d.get<int>());
+          } else {
+            dims.push_back(op.attrs["axis"].get<int>());
+          }
+        } else {
+          fail("reduce_sum missing dims/axes");
+        }
         bool keepdims = op.attrs.value("keepdims", false);
         std::optional<double> scale;
         if (op.attrs.contains("scale")) scale = resolve_const_value(op.attrs["scale"], bindings);
         emit_reduce_sum(w, out, op.inputs[0], shape_env.at(op.inputs[0]), out_shape, dims, keepdims, scale);
       } else if (op.op == "reduce_max") {
         std::vector<int> dims;
-        for (const auto& d : op.attrs["dims"]) dims.push_back(d.get<int>());
+        if (op.attrs.contains("axes")) {
+          for (const auto& d : op.attrs["axes"]) dims.push_back(d.get<int>());
+        } else if (op.attrs.contains("dims")) {
+          for (const auto& d : op.attrs["dims"]) dims.push_back(d.get<int>());
+        } else if (op.attrs.contains("axis")) {
+          if (op.attrs["axis"].is_array()) {
+            for (const auto& d : op.attrs["axis"]) dims.push_back(d.get<int>());
+          } else {
+            dims.push_back(op.attrs["axis"].get<int>());
+          }
+        } else {
+          fail("reduce_max missing dims/axes");
+        }
         bool keepdims = op.attrs.value("keepdims", false);
         emit_reduce_max(w, out, op.inputs[0], shape_env.at(op.inputs[0]), out_shape, dims, keepdims);
       } else if (op.op == "reduce_any") {
         std::vector<int> dims;
-        for (const auto& d : op.attrs["dims"]) dims.push_back(d.get<int>());
+        if (op.attrs.contains("axes")) {
+          for (const auto& d : op.attrs["axes"]) dims.push_back(d.get<int>());
+        } else if (op.attrs.contains("dims")) {
+          for (const auto& d : op.attrs["dims"]) dims.push_back(d.get<int>());
+        } else if (op.attrs.contains("axis")) {
+          if (op.attrs["axis"].is_array()) {
+            for (const auto& d : op.attrs["axis"]) dims.push_back(d.get<int>());
+          } else {
+            dims.push_back(op.attrs["axis"].get<int>());
+          }
+        } else {
+          fail("reduce_any missing dims/axes");
+        }
         bool keepdims = op.attrs.value("keepdims", false);
         emit_reduce_any(w, out, op.inputs[0], shape_env.at(op.inputs[0]), out_shape, dims, keepdims, dtype_env.at(op.inputs[0]), dtype_env.at(out));
       } else if (op.op == "exp") {

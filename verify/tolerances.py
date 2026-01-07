@@ -78,6 +78,7 @@ def infer_tolerances(
     - If output is f32-only and op mix is "stable", uses tighter defaults (e.g., softmax 1e-4).
     """
     op_set: Set[str] = {op.op for op in intent.ops}
+    matmul_count = sum(1 for op in intent.ops if op.op == "matmul")
 
     # 1) Op mix.
     tol = Tolerances(1e-4, 1e-4)
@@ -86,6 +87,10 @@ def infer_tolerances(
         if op_tol is None:
             continue
         tol = Tolerances(atol=max(tol.atol, op_tol.atol), rtol=max(tol.rtol, op_tol.rtol))
+    if matmul_count > 1:
+        # Multiple matmuls in one graph (e.g., attention / MLP) accumulate more rounding error.
+        matmul_base = 2e-2 * (1.0 + 0.5 * max(0, matmul_count - 1))
+        tol = Tolerances(atol=max(tol.atol, matmul_base), rtol=max(tol.rtol, matmul_base))
 
     # 2) Dtype adjustment (outputs AND external inputs).
     # If any external dtype is f16/bf16, keep legacy tolerances (avoid false positives).
@@ -114,8 +119,12 @@ def infer_tolerances(
     # 3) Global cap: keep most kernels at legacy tolerances, but allow explicit loosening
     # for certain op classes (e.g. matmul).
     cap = _LEGACY_DEFAULT
-    if "matmul" in op_set:
-        cap = Tolerances(atol=max(cap.atol, 2e-2), rtol=max(cap.rtol, 2e-2))
+    if matmul_count > 0:
+        # A single matmul typically stays within ~2e-2 across backends, but fused graphs
+        # (e.g., attention or MLP with multiple matmuls) can accumulate more rounding error,
+        # especially when the reference uses TF32-like dot paths.
+        matmul_cap = 2e-2 * (1.0 + 0.5 * max(0, matmul_count - 1))
+        cap = Tolerances(atol=max(cap.atol, matmul_cap), rtol=max(cap.rtol, matmul_cap))
     tol = Tolerances(atol=min(max(tol.atol, 0.0), cap.atol), rtol=min(max(tol.rtol, 0.0), cap.rtol))
     return tol
 

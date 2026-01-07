@@ -123,6 +123,14 @@ def run_one(
             bindings["num_elements"] = int(bindings["group_size"]) * int(bindings["HW"])
         except Exception:
             pass
+    if "N" in bindings and "group_size" in bindings and "G" not in bindings:
+        try:
+            n = int(bindings["N"])
+            gs = int(bindings["group_size"])
+            if gs > 0 and n % gs == 0:
+                bindings["G"] = n // gs
+        except Exception:
+            pass
     if tune_request is not None:
         prof = load_profile(tune_profile or "generic_rvv_256")
         tuned = select_schedule(intent, shape_bindings=bindings, profile=prof, request=tune_request, tile_hints=tile_hints, evidence=cert_v2)

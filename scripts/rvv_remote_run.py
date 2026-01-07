@@ -298,6 +298,15 @@ def run_remote(
             bindings["num_elements"] = int(bindings["group_size"]) * int(bindings["HW"])
         except Exception:
             pass
+    # Generic grouped reductions: bind G = N / group_size when present.
+    if "N" in bindings and "group_size" in bindings and "G" not in bindings:
+        try:
+            n = int(bindings["N"])
+            gs = int(bindings["group_size"])
+            if gs > 0 and n % gs == 0:
+                bindings["G"] = n // gs
+        except Exception:
+            pass
 
     tuning_info: dict | None = None
     tune_candidates = None

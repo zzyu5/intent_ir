@@ -40,9 +40,12 @@ from kernels.tilelang.ops.clamp2d import make_clamp2d_prim_func
 from kernels.tilelang.ops.copy2d_divmod import make_copy2d_divmod_prim_func
 from kernels.tilelang.ops.exp2d import make_exp2d_prim_func
 from kernels.tilelang.ops.floor2d import make_floor2d_prim_func
+from kernels.tilelang.ops.grouped_row_sum2d import make_grouped_row_sum2d_prim_func
 from kernels.tilelang.ops.groupnorm import make_group_norm_kernel_prim_func
 from kernels.tilelang.ops.matmul_bias_relu2d import make_matmul_bias_relu2d_prim_func
 from kernels.tilelang.ops.matmul_relu2d import make_matmul_relu2d_prim_func
+from kernels.tilelang.ops.masked_softmax2d import make_masked_softmax2d_prim_func
+from kernels.tilelang.ops.mlp2d import make_mlp2d_prim_func
 from kernels.tilelang.ops.relu2d import make_relu2d_prim_func
 from kernels.tilelang.ops.rms_norm2d import make_rms_norm2d_prim_func
 from kernels.tilelang.ops.rowmask_where2d import make_rowmask_where2d_prim_func
@@ -801,6 +804,165 @@ def _rowmask_where2d_intent() -> IntentFunction:
     )
 
 
+def _masked_softmax2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    rng = np.random.default_rng(int(case.seed))
+    if case.inputs and "inp" in case.inputs:
+        inp = np.asarray(case.inputs["inp"], dtype=np.float32)
+    else:
+        inp = rng.standard_normal((m, n), dtype=np.float32)
+    if case.inputs and "mask" in case.inputs:
+        mask = np.asarray(case.inputs["mask"], dtype=bool)
+    else:
+        # Ensure at least one True to avoid the all-masked undefined semantics.
+        mask = (np.arange(n) % 3 != 0)
+        if n >= 1:
+            mask[0] = True
+    x = np.where(mask[None, :], inp, np.float32(-1.0e9))
+    x_max = np.max(x, axis=1, keepdims=True)
+    e = np.exp(x - x_max)
+    out = e / np.sum(e, axis=1, keepdims=True)
+    return {"inp": inp, "mask": mask, "out": out.astype(np.float32)}
+
+
+def _masked_softmax2d_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors: Dict[str, TensorType] = {
+        "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "mask": TensorType(dtype="bool", shape=[Dim("sym", "N")], layout=rm),
+        "out": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+    }
+    ops: list[Op] = []
+    ops.append(Op(op="broadcast_in_dim", inputs=["mask"], output="m2", attrs={"out_shape": ["M", "N"], "broadcast_dims": [1]}))
+    tensors["m2"] = TensorType(dtype="bool", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="const", inputs=[], output="neg", attrs={"value": -1.0e9, "dtype": "f32"}))
+    tensors["neg"] = TensorType(dtype="f32", shape=[], layout=rm)
+    ops.append(Op(op="broadcast_in_dim", inputs=["neg"], output="neg2", attrs={"out_shape": ["M", "N"], "broadcast_dims": []}))
+    tensors["neg2"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="where", inputs=["m2", "inp", "neg2"], output="masked", attrs={}))
+    tensors["masked"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="softmax", inputs=["masked"], output="out", attrs={"axis": -1}))
+    schedule = ScheduleSketch(tile_m=16, tile_n=64, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="masked_softmax2d",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "channel"},
+    )
+
+
+def _grouped_row_sum2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    group_size = int(case.shapes.get("group_size", 4))
+    if group_size <= 0:
+        raise ValueError("group_size must be positive")
+    if n % group_size != 0:
+        raise ValueError(f"N must be divisible by group_size, got N={n} group_size={group_size}")
+    g = int(n // group_size)
+    rng = np.random.default_rng(int(case.seed))
+    if case.inputs and "inp" in case.inputs:
+        inp = np.asarray(case.inputs["inp"], dtype=np.float32)
+    else:
+        inp = rng.standard_normal((m, n), dtype=np.float32)
+    out = inp.reshape(m, g, group_size).sum(axis=2)
+    return {"inp": inp, "out": out.astype(np.float32)}
+
+
+def _grouped_row_sum2d_intent() -> IntentFunction:
+    rm = _rm_layout()
+    # Keep this deterministic intent as a fixed grouping factor (coverage kernel).
+    group_size = 4
+    n = 64
+    g = n // group_size
+    tensors: Dict[str, TensorType] = {
+        "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", n)], layout=rm),
+        "out": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", g)], layout=rm),
+    }
+    ops: list[Op] = []
+    ops.append(Op(op="reshape", inputs=["inp"], output="x3", attrs={"shape": ["M", g, group_size]}))
+    tensors["x3"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", g), Dim("const", group_size)], layout=rm)
+    ops.append(Op(op="reduce_sum", inputs=["x3"], output="out", attrs={"axes": [2], "keepdims": False}))
+    schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="grouped_row_sum2d",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out"],
+        schedule=schedule,
+        axis_roles={"M": "spatial"},
+    )
+
+
+def _mlp2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    k = int(case.shapes["K"])
+    h = int(case.shapes["H"])
+    rng = np.random.default_rng(int(case.seed))
+    if case.inputs and "A" in case.inputs:
+        a = np.asarray(case.inputs["A"], dtype=np.float32)
+    else:
+        a = rng.standard_normal((m, k), dtype=np.float32)
+    if case.inputs and "W1" in case.inputs:
+        w1 = np.asarray(case.inputs["W1"], dtype=np.float32)
+    else:
+        w1 = rng.standard_normal((k, h), dtype=np.float32)
+    if case.inputs and "b1" in case.inputs:
+        b1 = np.asarray(case.inputs["b1"], dtype=np.float32)
+    else:
+        b1 = rng.standard_normal((h,), dtype=np.float32)
+    if case.inputs and "W2" in case.inputs:
+        w2 = np.asarray(case.inputs["W2"], dtype=np.float32)
+    else:
+        w2 = rng.standard_normal((h, n), dtype=np.float32)
+    if case.inputs and "b2" in case.inputs:
+        b2 = np.asarray(case.inputs["b2"], dtype=np.float32)
+    else:
+        b2 = rng.standard_normal((n,), dtype=np.float32)
+    hid = np.maximum(a @ w1 + b1[None, :], 0.0).astype(np.float32)
+    c = (hid @ w2 + b2[None, :]).astype(np.float32)
+    return {"A": a, "W1": w1, "b1": b1, "W2": w2, "b2": b2, "C": c}
+
+
+def _mlp2d_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors: Dict[str, TensorType] = {
+        "A": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "K")], layout=rm),
+        "W1": TensorType(dtype="f32", shape=[Dim("sym", "K"), Dim("sym", "H")], layout=rm),
+        "b1": TensorType(dtype="f32", shape=[Dim("sym", "H")], layout=rm),
+        "W2": TensorType(dtype="f32", shape=[Dim("sym", "H"), Dim("sym", "N")], layout=rm),
+        "b2": TensorType(dtype="f32", shape=[Dim("sym", "N")], layout=rm),
+        "C": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+    }
+    ops: list[Op] = []
+    ops.append(Op(op="matmul", inputs=["A", "W1"], output="mm1", attrs={}))
+    tensors["mm1"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "H")], layout=rm)
+    ops.append(Op(op="broadcast_in_dim", inputs=["b1"], output="b1_2", attrs={"out_shape": ["M", "H"], "broadcast_dims": [1]}))
+    tensors["b1_2"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "H")], layout=rm)
+    ops.append(Op(op="add", inputs=["mm1", "b1_2"], output="mm1_b", attrs={}))
+    tensors["mm1_b"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "H")], layout=rm)
+    ops.append(Op(op="relu", inputs=["mm1_b"], output="hid", attrs={}))
+    tensors["hid"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "H")], layout=rm)
+    ops.append(Op(op="matmul", inputs=["hid", "W2"], output="mm2", attrs={}))
+    tensors["mm2"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="broadcast_in_dim", inputs=["b2"], output="b2_2", attrs={"out_shape": ["M", "N"], "broadcast_dims": [1]}))
+    tensors["b2_2"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="add", inputs=["mm2", "b2_2"], output="C", attrs={}))
+    schedule = ScheduleSketch(tile_m=32, tile_n=32, tile_k=16, vec_width=1, pipeline_depth=2)
+    return IntentFunction(
+        name="mlp2d",
+        tensors=tensors,
+        ops=ops,
+        outputs=["C"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "spatial", "K": "reduction", "H": "reduction"},
+    )
+
+
 def _layer_norm_persistent_reference(case: TestCase) -> Dict[str, np.ndarray]:
     m = int(case.shapes["M"])
     n = int(case.shapes["N"])
@@ -1390,6 +1552,39 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 vary_axes=["M"],
                 runner=_rowmask_where2d_reference,
                 intent_builder=_rowmask_where2d_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="masked_softmax2d",
+                prim_func=make_masked_softmax2d_prim_func(n=64, threads=128),
+                arg_names=["inp", "mask", "out", "M", "N"],
+                canonical_shapes={"M": 16, "N": 64},
+                vary_axes=["M"],
+                runner=_masked_softmax2d_reference,
+                intent_builder=_masked_softmax2d_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="grouped_row_sum2d",
+                prim_func=make_grouped_row_sum2d_prim_func(n=64, group_size=4, threads=128),
+                arg_names=["inp", "out", "M", "N", "group_size"],
+                canonical_shapes={"M": 16, "N": 64, "group_size": 4},
+                vary_axes=["M"],
+                runner=_grouped_row_sum2d_reference,
+                intent_builder=_grouped_row_sum2d_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="mlp2d",
+                prim_func=make_mlp2d_prim_func(block_m=32, block_n=32, block_k=16, block_h=16, num_stages=2, threads=128),
+                arg_names=["A", "W1", "b1", "W2", "b2", "C", "M", "N", "K", "H"],
+                canonical_shapes={"M": 32, "N": 32, "K": 32, "H": 32},
+                vary_axes=["M"],
+                runner=_mlp2d_reference,
+                intent_builder=_mlp2d_intent,
                 exclude_axes=[],
                 constexpr_names=[],
             ),

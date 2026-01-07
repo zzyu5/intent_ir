@@ -931,6 +931,109 @@ def _run_rowmask_where2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     return {"input": inp.cpu().numpy(), "row_mask": rm.cpu().numpy(), "output": out.cpu().numpy()}
 
 
+def _run_masked_softmax2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.masked_softmax2d import masked_softmax2d
+
+    M = int(case.shapes.get("M", 4))
+    N = int(case.shapes.get("N", 64))
+    if N > 256:
+        raise ValueError(f"masked_softmax2d expects N<=256 (single-tile softmax), got N={N}")
+    device = "cuda"
+    if case.inputs and "input" in case.inputs:
+        inp = torch.as_tensor(case.inputs["input"], device=device).to(torch.float32)
+        if tuple(inp.shape) != (M, N):
+            raise ValueError(f"input shape mismatch: got {tuple(inp.shape)} expected {(M, N)}")
+    else:
+        inp = torch.randn((M, N), device=device, dtype=torch.float32)
+    if case.inputs and "mask" in case.inputs:
+        mask = torch.as_tensor(case.inputs["mask"], device=device).to(torch.bool)
+        if tuple(mask.shape) != (N,):
+            raise ValueError(f"mask shape mismatch: got {tuple(mask.shape)} expected {(N,)}")
+    else:
+        # deterministic-ish: keep every 3rd element masked out, ensure at least one True.
+        if N <= 0:
+            raise ValueError("N must be positive")
+        mask = (torch.arange(N, device=device) % 3 != 0)
+        mask[0] = True
+    out = masked_softmax2d(inp, mask)
+    torch.cuda.synchronize()
+    return {"input": inp.cpu().numpy(), "mask": mask.cpu().numpy(), "output": out.cpu().numpy()}
+
+
+def _run_grouped_row_sum2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.grouped_row_sum2d import grouped_row_sum2d
+
+    M = int(case.shapes.get("M", 4))
+    N = int(case.shapes.get("N", 64))
+    group_size = int(case.shapes.get("group_size", 4))
+    if group_size <= 0:
+        raise ValueError("group_size must be positive")
+    if N % group_size != 0:
+        raise ValueError(f"grouped_row_sum2d expects N divisible by group_size, got N={N} group_size={group_size}")
+    device = "cuda"
+    if case.inputs and "input" in case.inputs:
+        inp = torch.as_tensor(case.inputs["input"], device=device).to(torch.float32)
+        if tuple(inp.shape) != (M, N):
+            raise ValueError(f"input shape mismatch: got {tuple(inp.shape)} expected {(M, N)}")
+    else:
+        inp = torch.randn((M, N), device=device, dtype=torch.float32)
+    out = grouped_row_sum2d(inp, group_size=group_size)
+    torch.cuda.synchronize()
+    return {"input": inp.cpu().numpy(), "output": out.cpu().numpy()}
+
+
+def _run_mlp2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.mlp2d import mlp2d
+
+    M = int(case.shapes.get("M", 32))
+    N = int(case.shapes.get("N", 32))
+    K = int(case.shapes.get("K", 32))
+    H = int(case.shapes.get("H", 32))
+    device = "cuda"
+
+    if case.inputs and "A" in case.inputs:
+        A = torch.as_tensor(case.inputs["A"], device=device).to(torch.float32)
+        if tuple(A.shape) != (M, K):
+            raise ValueError(f"A shape mismatch: got {tuple(A.shape)} expected {(M, K)}")
+    else:
+        A = torch.randn((M, K), device=device, dtype=torch.float32)
+    if case.inputs and "W1" in case.inputs:
+        W1 = torch.as_tensor(case.inputs["W1"], device=device).to(torch.float32)
+        if tuple(W1.shape) != (K, H):
+            raise ValueError(f"W1 shape mismatch: got {tuple(W1.shape)} expected {(K, H)}")
+    else:
+        W1 = torch.randn((K, H), device=device, dtype=torch.float32)
+    if case.inputs and "b1" in case.inputs:
+        b1 = torch.as_tensor(case.inputs["b1"], device=device).to(torch.float32)
+        if tuple(b1.shape) != (H,):
+            raise ValueError(f"b1 shape mismatch: got {tuple(b1.shape)} expected {(H,)}")
+    else:
+        b1 = torch.randn((H,), device=device, dtype=torch.float32)
+    if case.inputs and "W2" in case.inputs:
+        W2 = torch.as_tensor(case.inputs["W2"], device=device).to(torch.float32)
+        if tuple(W2.shape) != (H, N):
+            raise ValueError(f"W2 shape mismatch: got {tuple(W2.shape)} expected {(H, N)}")
+    else:
+        W2 = torch.randn((H, N), device=device, dtype=torch.float32)
+    if case.inputs and "b2" in case.inputs:
+        b2 = torch.as_tensor(case.inputs["b2"], device=device).to(torch.float32)
+        if tuple(b2.shape) != (N,):
+            raise ValueError(f"b2 shape mismatch: got {tuple(b2.shape)} expected {(N,)}")
+    else:
+        b2 = torch.randn((N,), device=device, dtype=torch.float32)
+
+    C = mlp2d(A, W1, b1, W2, b2)
+    torch.cuda.synchronize()
+    return {
+        "A": A.cpu().numpy(),
+        "W1": W1.cpu().numpy(),
+        "b1": b1.cpu().numpy(),
+        "W2": W2.cpu().numpy(),
+        "b2": b2.cpu().numpy(),
+        "C": C.cpu().numpy(),
+    }
+
+
 def _run_layernorm_reference(case: TestCase) -> Dict[str, np.ndarray]:
     """
     LayerNorm forward over last dim (shape [M, N]).
@@ -1123,6 +1226,32 @@ def coverage_kernel_specs() -> List[KernelSpec]:
             out["M"] = max(1, int(out["M"]))
         return out
 
+    def _norm_masked_softmax(shapes: Dict[str, int]) -> Dict[str, int]:
+        out = dict(shapes)
+        if "N" in out:
+            # masked_softmax2d kernel is a single-tile softmax (N <= 256)
+            out["N"] = max(1, min(int(out["N"]), 256))
+        if "M" in out:
+            out["M"] = max(1, int(out["M"]))
+        return out
+
+    def _norm_grouped_row_sum(shapes: Dict[str, int]) -> Dict[str, int]:
+        out = dict(shapes)
+        gs = int(out.get("group_size", 4))
+        if gs <= 0:
+            gs = 1
+        out["group_size"] = gs
+        if "N" in out:
+            n = max(1, min(int(out["N"]), 256))
+            if n < gs:
+                n = gs
+            # round down to nearest multiple (keep >= gs)
+            n = max(gs, (n // gs) * gs)
+            out["N"] = int(n)
+        if "M" in out:
+            out["M"] = max(1, int(out["M"]))
+        return out
+
     specs.extend(
         [
             KernelSpec(
@@ -1247,6 +1376,33 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 runner=_run_rowmask_where2d_reference,
                 canonical_shapes={"M": 4, "N": 64},
                 vary_axes=["M", "N"],
+            ),
+            KernelSpec(
+                name="masked_softmax2d",
+                module="kernels.triton.ops.masked_softmax2d",
+                attr="masked_softmax2d_kernel.src",
+                runner=_run_masked_softmax2d_reference,
+                canonical_shapes={"M": 4, "N": 64},
+                vary_axes=["M", "N"],
+                normalize_shapes=_norm_masked_softmax,
+            ),
+            KernelSpec(
+                name="grouped_row_sum2d",
+                module="kernels.triton.ops.grouped_row_sum2d",
+                attr="grouped_row_sum2d_kernel.src",
+                runner=_run_grouped_row_sum2d_reference,
+                canonical_shapes={"M": 4, "N": 64, "group_size": 4},
+                vary_axes=["M", "N"],
+                exclude_axes=[],
+                normalize_shapes=_norm_grouped_row_sum,
+            ),
+            KernelSpec(
+                name="mlp2d",
+                module="kernels.triton.ops.mlp2d",
+                attr="mlp2d_kernel.src",
+                runner=_run_mlp2d_reference,
+                canonical_shapes={"M": 32, "N": 32, "K": 32, "H": 32},
+                vary_axes=["M"],
             ),
         ]
     )
