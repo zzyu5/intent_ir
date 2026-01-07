@@ -89,6 +89,7 @@ def extract_facts(source_text: str, *, tvm_ir_json_path: str | None = None, tvm_
 
     accesses: List[AccessSummary] = []
     loop_ranges: Dict[str, Dict[str, int]] = {}
+    has_tileop_copy = False
 
     def affine(expr: Any, *, max_depth: int = 64) -> tuple[Dict[str, int], int, bool]:
         if max_depth <= 0:
@@ -313,38 +314,133 @@ def extract_facts(source_text: str, *, tvm_ir_json_path: str | None = None, tvm_
                 )
             )
 
+    def _flat_index_from_buffer(buf: Any, nd_indices: List[Any]) -> tuple[IndexExpr, Dict[str, Any], bool]:
+        """
+        Best-effort linearization of a BufferLoad/Store multi-dimensional index.
+
+        Returns (flat_index_expr, meta, unresolved).
+        """
+        nd_idx = [to_index_expr(i) for i in list(nd_indices)]
+        meta: Dict[str, Any] = {
+            "nd_index_exprs": [ix.to_json_dict() for ix in nd_idx],
+            "shape": [_dim_token(d) for d in list(getattr(buf, "shape", []) or [])],
+        }
+        strides = list(getattr(buf, "strides", []) or [])
+        if strides:
+            meta["strides"] = [_dim_token(s) for s in strides]
+
+        flat = IndexExpr(terms={}, const=0)
+        unresolved = False
+        if (not strides) or (len(strides) != len(nd_idx)):
+            unresolved = True
+        else:
+            for ix, st in zip(nd_idx, strides):
+                if not isinstance(st, tir.IntImm):
+                    unresolved = True
+                    break
+                flat = _add_ix(flat, _scale_ix(ix, int(st.value)))
+
+        if unresolved:
+            meta["unresolved"] = True
+            # Fallback: keep the first dimension as a best-effort witness.
+            flat = nd_idx[0] if nd_idx else IndexExpr(terms={}, const=0)
+        return flat, meta, unresolved
+
+    def _record_buffer_load(node: tir.BufferLoad) -> None:
+        nonlocal anchors, accesses
+        if has_tileop_copy:
+            return
+        buf = node.buffer
+        scope = buf.scope() if callable(getattr(buf, "scope", None)) else "global"
+        if str(scope) != "global":
+            return
+        flat, meta, _ = _flat_index_from_buffer(buf, list(getattr(node, "indices", []) or []))
+        anchors["has_copy"] = True
+        accesses.append(
+            AccessSummary(
+                kind="load",
+                tensor=str(getattr(buf, "name", "")),
+                dtype=str(getattr(buf, "dtype", "unknown")),
+                rank=int(len(getattr(buf, "shape", []) or [])),
+                index_exprs=[flat],
+                predicate=None,
+                address_space=str(scope),
+                meta={"tir": "BufferLoad", **meta},
+            )
+        )
+
+    def _record_buffer_store(node: tir.BufferStore) -> None:
+        nonlocal anchors, accesses
+        if has_tileop_copy:
+            return
+        buf = node.buffer
+        scope = buf.scope() if callable(getattr(buf, "scope", None)) else "global"
+        if str(scope) != "global":
+            return
+        flat, meta, _ = _flat_index_from_buffer(buf, list(getattr(node, "indices", []) or []))
+        anchors["has_copy"] = True
+        accesses.append(
+            AccessSummary(
+                kind="store",
+                tensor=str(getattr(buf, "name", "")),
+                dtype=str(getattr(buf, "dtype", "unknown")),
+                rank=int(len(getattr(buf, "shape", []) or [])),
+                index_exprs=[flat],
+                predicate=None,
+                address_space=str(scope),
+                meta={"tir": "BufferStore", **meta},
+            )
+        )
+
     def visit(node: Any) -> None:
         nonlocal anchors
-        if not isinstance(node, tir.Call):
+        if isinstance(node, tir.Call):
+            op_name = getattr(node.op, "name", "")
+            if op_name.startswith("tl.tileop."):
+                anchors["kernel_kind_hint"] = "tilelang_tileop"
+            if op_name == "tl.tileop.copy":
+                anchors["has_copy"] = True
+                parse_copy(node)
+            if "gemm" in op_name:
+                anchors["has_dot"] = True
+            if "reduce" in op_name:
+                anchors["has_reduce"] = True
+            if "atomic" in op_name:
+                anchors["has_atomic"] = True
+            if "barrier" in op_name or "syncthreads" in op_name or "thread_allreduce" in op_name or "allreduce" in op_name:
+                anchors["has_barrier"] = True
+            if "async" in op_name:
+                anchors["has_async"] = True
+            # Some syncs are expressed as extern calls; conservatively scan string args.
+            if op_name in {"tir.call_extern", "tir.call_packed"}:
+                for a in list(getattr(node, "args", []) or []):
+                    try:
+                        s = str(a)
+                    except Exception:
+                        continue
+                    if "barrier" in s or "syncthreads" in s:
+                        anchors["has_barrier"] = True
+                    if "async" in s:
+                        anchors["has_async"] = True
             return
-        op_name = getattr(node.op, "name", "")
-        if op_name.startswith("tl.tileop."):
-            anchors["kernel_kind_hint"] = "tilelang_tileop"
-        if op_name == "tl.tileop.copy":
-            anchors["has_copy"] = True
-            parse_copy(node)
-        if "gemm" in op_name:
-            anchors["has_dot"] = True
-        if "reduce" in op_name:
-            anchors["has_reduce"] = True
-        if "atomic" in op_name:
-            anchors["has_atomic"] = True
-        if "barrier" in op_name or "syncthreads" in op_name or "thread_allreduce" in op_name or "allreduce" in op_name:
-            anchors["has_barrier"] = True
-        if "async" in op_name:
-            anchors["has_async"] = True
-        # Some syncs are expressed as extern calls; conservatively scan string args.
-        if op_name in {"tir.call_extern", "tir.call_packed"}:
-            for a in list(getattr(node, "args", []) or []):
-                try:
-                    s = str(a)
-                except Exception:
-                    continue
-                if "barrier" in s or "syncthreads" in s:
-                    anchors["has_barrier"] = True
-                if "async" in s:
-                    anchors["has_async"] = True
 
+        # Generic TIR accesses (used by "plain" TileLang kernels without tl.tileop.copy).
+        if isinstance(node, tir.BufferLoad):
+            _record_buffer_load(node)
+        if isinstance(node, tir.BufferStore):
+            _record_buffer_store(node)
+
+    # Fast pre-scan: if TileLang lowering uses tl.tileop.copy anywhere, skip raw
+    # BufferLoad/BufferStore access collection to avoid double-counting (copy
+    # already records the global edges via tl.tileop.region).
+    def _scan(node: Any) -> None:
+        nonlocal has_tileop_copy
+        if has_tileop_copy:
+            return
+        if isinstance(node, tir.Call) and getattr(getattr(node, "op", None), "name", "") == "tl.tileop.copy":
+            has_tileop_copy = True
+
+    tir.stmt_functor.post_order_visit(prim_func.body, _scan)
     tir.stmt_functor.post_order_visit(prim_func.body, visit)
 
     # Collect constant loop/thread ranges (used for bounded reasoning / guided tuning).

@@ -87,6 +87,10 @@ class KernelSpec:
     constexpr_names: List[str] | None = None
     # For LLM evidence only (not used by TileLang runtime executor).
     arg_names: List[str] | None = None
+    # Whether executing `prim_func` via tilelang.compile is a semantically-valid
+    # reference for diff/remote. Some kernels keep PrimFunc as "evidence only"
+    # (e.g., upsample macro) and should use the numpy/PyTorch reference instead.
+    runtime_ref_ok: bool = True
 
 
 def _rm_layout() -> TensorLayout:
@@ -1573,6 +1577,7 @@ def default_kernel_specs() -> List[KernelSpec]:
             vary_axes=[],
             runner=_upsample_bicubic2d_aa_reference,
             intent_builder=_upsample_bicubic2d_aa_intent,
+            runtime_ref_ok=False,  # PrimFunc is evidence-only (not full bicubic); use numpy/PyTorch reference for diff/remote.
             exclude_axes=[],
             constexpr_names=[],
         ),
@@ -1850,13 +1855,14 @@ def run_pipeline_for_spec(
     desc = adapter.ensure_artifacts(desc, spec)
     print(f"[{spec.name}] stage3: launch tilelang once (baseline)", flush=True)
     baseline_case = TestCase(shapes=dict(spec.canonical_shapes), dtypes={}, seed=0)
-    baseline_io_raw = (_run_tilelang_ref(spec, baseline_case) if use_tilelang_runtime else spec.runner(baseline_case))
+    use_rt_baseline = bool(use_tilelang_runtime) and bool(getattr(spec, "runtime_ref_ok", True))
+    baseline_io_raw = (_run_tilelang_ref(spec, baseline_case) if use_rt_baseline else spec.runner(baseline_case))
     report["baseline"] = {
         "shapes": dict(baseline_case.shapes),
         "seed": int(baseline_case.seed),
         "npz_path": None,
         "keys": sorted(list(baseline_io_raw.keys())),
-        "source": ("tilelang_runtime" if use_tilelang_runtime else "numpy_reference"),
+        "source": ("tilelang_runtime" if use_rt_baseline else "numpy_reference"),
     }
 
     print(f"[{spec.name}] stage4: Task4 facts/constraints/certificate", flush=True)
@@ -1961,7 +1967,7 @@ def run_pipeline_for_spec(
     # 3) Stage B: cases + diff
     print(f"[{spec.name}] stage7: Task5 cases + diff", flush=True)
     cand_for_run = cand_expanded or cand
-    use_rt_ref = bool(use_tilelang_runtime) and (contract.level != "OUT_OF_SCOPE")
+    use_rt_ref = bool(use_tilelang_runtime) and bool(getattr(spec, "runtime_ref_ok", True)) and (contract.level != "OUT_OF_SCOPE")
     run_ref_fn = (lambda c: _run_tilelang_ref(spec, c)) if use_rt_ref else spec.runner
     tile_hints: List[int] = []
     try:
