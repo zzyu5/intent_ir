@@ -43,6 +43,7 @@ from kernels.tilelang.ops.floor2d import make_floor2d_prim_func
 from kernels.tilelang.ops.gather2d import make_gather2d_prim_func
 from kernels.tilelang.ops.grouped_row_sum2d import make_grouped_row_sum2d_prim_func
 from kernels.tilelang.ops.groupnorm import make_group_norm_kernel_prim_func
+from kernels.tilelang.ops.flash_attention2d import make_flash_attention2d_prim_func
 from kernels.tilelang.ops.masked_attention2d import make_masked_attention2d_prim_func
 from kernels.tilelang.ops.matmul_bias_relu2d import make_matmul_bias_relu2d_prim_func
 from kernels.tilelang.ops.matmul_fused_epilogue2d import make_matmul_fused_epilogue2d_prim_func
@@ -1147,6 +1148,25 @@ def _masked_attention2d_intent() -> IntentFunction:
     )
 
 
+def _flash_attention2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    # Semantics are identical to masked_attention2d; only the implementation differs.
+    return _masked_attention2d_reference(case)
+
+
+def _flash_attention2d_intent() -> IntentFunction:
+    base = _masked_attention2d_intent()
+    return IntentFunction(
+        name="flash_attention2d",
+        tensors=dict(base.tensors),
+        ops=list(base.ops),
+        outputs=list(base.outputs),
+        parallel_axes=list(base.parallel_axes),
+        schedule=base.schedule,
+        meta=dict(base.meta),
+        axis_roles=dict(base.axis_roles),
+    )
+
+
 def _grouped_row_sum2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     m = int(case.shapes["M"])
     n = int(case.shapes["N"])
@@ -2026,6 +2046,17 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 vary_axes=[],
                 runner=_masked_attention2d_reference,
                 intent_builder=_masked_attention2d_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="flash_attention2d",
+                prim_func=make_flash_attention2d_prim_func(q_ctx=64, kv_ctx=64, head_dim=64, block_kv=16, threads=128),
+                arg_names=["Q", "K", "V", "sm_scale", "Out", "Q_CTX", "KV_CTX", "HEAD_DIM"],
+                canonical_shapes={"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
+                vary_axes=[],
+                runner=_flash_attention2d_reference,
+                intent_builder=_flash_attention2d_intent,
                 exclude_axes=[],
                 constexpr_names=[],
             ),

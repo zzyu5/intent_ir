@@ -1212,6 +1212,47 @@ def _run_masked_attention2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     }
 
 
+def _run_flash_attention2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.flash_attention2d import flash_attention2d
+
+    Q_CTX = int(case.shapes.get("Q_CTX", 64))
+    KV_CTX = int(case.shapes.get("KV_CTX", Q_CTX))
+    HEAD_DIM = int(case.shapes.get("HEAD_DIM", 64))
+    device = "cuda"
+
+    if case.inputs and "Q" in case.inputs:
+        Q = torch.as_tensor(case.inputs["Q"], device=device).to(torch.float32)
+        if tuple(Q.shape) != (Q_CTX, HEAD_DIM):
+            raise ValueError(f"Q shape mismatch: got {tuple(Q.shape)} expected {(Q_CTX, HEAD_DIM)}")
+    else:
+        Q = torch.randn((Q_CTX, HEAD_DIM), device=device, dtype=torch.float32)
+
+    if case.inputs and "K" in case.inputs:
+        K = torch.as_tensor(case.inputs["K"], device=device).to(torch.float32)
+        if tuple(K.shape) != (KV_CTX, HEAD_DIM):
+            raise ValueError(f"K shape mismatch: got {tuple(K.shape)} expected {(KV_CTX, HEAD_DIM)}")
+    else:
+        K = torch.randn((KV_CTX, HEAD_DIM), device=device, dtype=torch.float32)
+
+    if case.inputs and "V" in case.inputs:
+        V = torch.as_tensor(case.inputs["V"], device=device).to(torch.float32)
+        if tuple(V.shape) != (KV_CTX, HEAD_DIM):
+            raise ValueError(f"V shape mismatch: got {tuple(V.shape)} expected {(KV_CTX, HEAD_DIM)}")
+    else:
+        V = torch.randn((KV_CTX, HEAD_DIM), device=device, dtype=torch.float32)
+
+    Out = flash_attention2d(Q, K, V)
+    torch.cuda.synchronize()
+    sm_scale = float(1.0 / (float(HEAD_DIM) ** 0.5))
+    return {
+        "Q": Q.cpu().numpy(),
+        "K": K.cpu().numpy(),
+        "V": V.cpu().numpy(),
+        "sm_scale": np.array(sm_scale, dtype=np.float32),
+        "Out": Out.cpu().numpy(),
+    }
+
+
 def _run_matmul_fused_epilogue2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     from kernels.triton.ops.matmul_fused_epilogue2d import matmul_fused_epilogue2d
 
@@ -1490,6 +1531,17 @@ def coverage_kernel_specs() -> List[KernelSpec]:
         out["HEAD_DIM"] = int(min(allowed, key=lambda x: abs(int(x) - hd)))
         return out
 
+    def _norm_flash_attention2d(shapes: Dict[str, int]) -> Dict[str, int]:
+        out = dict(shapes)
+        q = max(1, min(int(out.get("Q_CTX", 64)), 256))
+        out["Q_CTX"] = int(q)
+        # Keep KV_CTX aligned with Q_CTX for causal self-attention by default.
+        out["KV_CTX"] = int(q)
+        hd = int(out.get("HEAD_DIM", 64))
+        allowed = [16, 32, 64]
+        out["HEAD_DIM"] = int(min(allowed, key=lambda x: abs(int(x) - hd)))
+        return out
+
     specs.extend(
         [
             KernelSpec(
@@ -1677,6 +1729,16 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 vary_axes=["Q_CTX", "KV_CTX"],
                 exclude_axes=["HEAD_DIM"],
                 normalize_shapes=_norm_masked_attention2d,
+            ),
+            KernelSpec(
+                name="flash_attention2d",
+                module="kernels.triton.ops.flash_attention2d",
+                attr="flash_attention2d_kernel.src",
+                runner=_run_flash_attention2d_reference,
+                canonical_shapes={"Q_CTX": 64, "KV_CTX": 64, "HEAD_DIM": 64},
+                vary_axes=["Q_CTX"],
+                exclude_axes=["KV_CTX", "HEAD_DIM"],
+                normalize_shapes=_norm_flash_attention2d,
             ),
             KernelSpec(
                 name="matmul_fused_epilogue2d",
