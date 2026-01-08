@@ -106,3 +106,21 @@ def test_store_prefixed_outputs_are_canonicalized():
     cand = parse_candidate_json(d)
     assert cand.intent.outputs == ["C"]
     assert cand.intent.ops[-1].output == "C"
+
+
+def test_duplicate_op_outputs_are_ssa_renamed():
+    d = {
+        "kernel_type": "dup_scalar",
+        "tensors": {
+            "num_elements": {"dtype": "i32", "shape": [], "layout": "row_major"},
+        },
+        "ops": [
+            {"op": "const", "inputs": [], "output": "num_elements", "attrs": {"value": 1, "dtype": "i32"}},
+            {"op": "const", "inputs": [], "output": "num_elements", "attrs": {"value": 2, "dtype": "i32"}},
+        ],
+        "outputs": ["num_elements"],
+        "parallel_axes": [],
+    }
+    cand = parse_candidate_json(d)
+    assert cand.intent.ops[0].output == "num_elements"
+    assert cand.intent.ops[1].output != "num_elements"

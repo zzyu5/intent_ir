@@ -139,6 +139,8 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
     ops: List[Dict[str, Any]] = []
     produced_outputs: List[str] = []
     used_names = set(tensors.keys())
+    current_ssa: Dict[str, str] = {}
+    seen_op_outputs: set[str] = set()
 
     def _fresh_name(base: str) -> str:
         base = str(base)
@@ -163,6 +165,12 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
             if isinstance(dt, str):
                 return dt
         return "f32"
+
+    def _resolve_input_name(x: Any) -> Any:
+        x = _canonical_tensor_ref(x)
+        if isinstance(x, str) and x in current_ssa:
+            return current_ssa[x]
+        return x
     for idx, op in enumerate(ops_raw):
         if not isinstance(op, dict):
             raise LLMJsonParseError("op must be object", path=f"ops[{idx}]")
@@ -211,8 +219,8 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
             op["inputs"] = [inps]
         elif not isinstance(inps, list):
             raise LLMJsonParseError("op.inputs must be list", path=f"ops[{idx}].inputs")
-        # Apply naming canonicalization after list normalization.
-        op["inputs"] = [_canonical_tensor_ref(x) for x in (op.get("inputs") or [])]
+        # Apply naming canonicalization + SSA-resolution after list normalization.
+        op["inputs"] = [_resolve_input_name(x) for x in (op.get("inputs") or [])]
 
         # Canonicalize common attrs key variants (non-semantic).
         if op.get("op") == "iota":
@@ -318,10 +326,23 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
                 attrs["dims"] = [attrs["axis"]] if not isinstance(attrs["axis"], list) else attrs["axis"]
             if "dims" not in attrs:
                 attrs["dims"] = [0]
-        # Canonicalize output names (e.g., store_C -> C when C is a declared tensor).
+        # Canonicalize + SSA-rename output names (e.g., store_C -> C, and ensure unique outputs).
         if "output" in op and op["output"]:
-            op["output"] = _canonical_tensor_ref(op["output"])
-        if "output" in op and op["output"]:
+            base_out = _canonical_tensor_ref(op["output"])
+            out_name = base_out
+            if isinstance(out_name, str) and out_name:
+                # Enforce unique op outputs by SSA-renaming duplicates (common LLM mistake).
+                if out_name in seen_op_outputs:
+                    new_name = _fresh_name(out_name)
+                    # Preserve typing info when available (helps interpreter/backends).
+                    if out_name in tensors and new_name not in tensors and isinstance(tensors.get(out_name), dict):
+                        tensors[new_name] = dict(tensors[out_name])
+                    out_name = new_name
+                op["output"] = out_name
+                seen_op_outputs.add(out_name)
+                current_ssa[str(base_out)] = str(out_name)
+            else:
+                op["output"] = out_name
             produced_outputs.append(op["output"])
             used_names.add(op["output"])
         ops.append(op)
