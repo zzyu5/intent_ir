@@ -217,6 +217,10 @@ def parse_dim(x: int | str) -> Dim:
 
 def parse_layout(x: str | Dict[str, Any]) -> TensorLayout:
     if isinstance(x, str):
+        # LLMs sometimes emit "scalar" for 0-rank tensors. Layout is irrelevant for scalars;
+        # treat it as row_major for compatibility.
+        if x == "scalar":
+            return TensorLayout(kind="row_major", params={})
         if x not in {"row_major", "col_major"}:
             raise IntentIRValidationError(f"unsupported layout: {x}")
         return TensorLayout(kind=x, params={})

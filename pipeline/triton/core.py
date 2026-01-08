@@ -855,6 +855,119 @@ def _run_rms_norm2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     }
 
 
+def _run_rms_norm_residual2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    """
+    Fused residual + RMSNorm over last dim (shape [M, N]).
+    Returns out + per-row rstd (shape [M]).
+    """
+    from kernels.triton.ops.rms_norm_residual2d import rms_norm_residual2d_kernel
+
+    M = int(case.shapes.get("M", 4))
+    N = int(case.shapes.get("N", 64))
+    eps = float(case.shapes.get("eps", 1e-5))
+    device = "cuda"
+    if N > 1024:
+        raise ValueError(f"rms_norm_residual2d requires N<=1024, got N={N}")
+    if case.inputs and "input" in case.inputs:
+        inp = torch.as_tensor(case.inputs["input"], device=device).to(torch.float32)
+        if tuple(inp.shape) != (M, N):
+            raise ValueError(f"input shape mismatch: got {tuple(inp.shape)} expected {(M, N)}")
+    else:
+        inp = torch.randn((M, N), device=device, dtype=torch.float32)
+    if case.inputs and "residual" in case.inputs:
+        residual = torch.as_tensor(case.inputs["residual"], device=device).to(torch.float32)
+        if tuple(residual.shape) != (M, N):
+            raise ValueError(f"residual shape mismatch: got {tuple(residual.shape)} expected {(M, N)}")
+    else:
+        residual = torch.randn((M, N), device=device, dtype=torch.float32)
+    if case.inputs and "weight" in case.inputs:
+        w = torch.as_tensor(case.inputs["weight"], device=device).to(torch.float32)
+        if tuple(w.shape) != (N,):
+            raise ValueError(f"weight shape mismatch: got {tuple(w.shape)} expected {(N,)}")
+    else:
+        w = torch.ones((N,), device=device, dtype=torch.float32)
+    if case.inputs and "bias" in case.inputs:
+        b = torch.as_tensor(case.inputs["bias"], device=device).to(torch.float32)
+        if tuple(b.shape) != (N,):
+            raise ValueError(f"bias shape mismatch: got {tuple(b.shape)} expected {(N,)}")
+    else:
+        b = torch.zeros((N,), device=device, dtype=torch.float32)
+
+    out = torch.empty((M, N), device=device, dtype=torch.float32)
+    rstd = torch.empty((M,), device=device, dtype=torch.float32)
+    block_n = 1 if N <= 1 else min(1024, 1 << (int(N) - 1).bit_length())
+    grid = (M,)
+    rms_norm_residual2d_kernel[grid](inp, residual, w, b, out, rstd, M, N, eps, BLOCK_N=block_n)
+    torch.cuda.synchronize()
+    return {
+        "input": inp.cpu().numpy(),
+        "residual": residual.cpu().numpy(),
+        "weight": w.cpu().numpy(),
+        "bias": b.cpu().numpy(),
+        "output": out.cpu().numpy(),
+        "rstd": rstd.cpu().numpy(),
+        "eps": np.array(eps, dtype=np.float32),
+    }
+
+
+def _run_layer_norm_residual2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    """
+    Fused residual + LayerNorm forward over last dim (shape [M, N]).
+    Returns out + per-row mean/rstd (shape [M]).
+    """
+    from kernels.triton.ops.layer_norm_residual2d import layer_norm_residual2d_kernel
+
+    M = int(case.shapes.get("M", 4))
+    N = int(case.shapes.get("N", 64))
+    eps = float(case.shapes.get("eps", 1e-5))
+    device = "cuda"
+    if N > 1024:
+        raise ValueError(f"layer_norm_residual2d requires N<=1024, got N={N}")
+
+    if case.inputs and "input" in case.inputs:
+        inp = torch.as_tensor(case.inputs["input"], device=device).to(torch.float32)
+        if tuple(inp.shape) != (M, N):
+            raise ValueError(f"input shape mismatch: got {tuple(inp.shape)} expected {(M, N)}")
+    else:
+        inp = torch.randn((M, N), device=device, dtype=torch.float32)
+    if case.inputs and "residual" in case.inputs:
+        residual = torch.as_tensor(case.inputs["residual"], device=device).to(torch.float32)
+        if tuple(residual.shape) != (M, N):
+            raise ValueError(f"residual shape mismatch: got {tuple(residual.shape)} expected {(M, N)}")
+    else:
+        residual = torch.randn((M, N), device=device, dtype=torch.float32)
+    if case.inputs and "weight" in case.inputs:
+        w = torch.as_tensor(case.inputs["weight"], device=device).to(torch.float32)
+        if tuple(w.shape) != (N,):
+            raise ValueError(f"weight shape mismatch: got {tuple(w.shape)} expected {(N,)}")
+    else:
+        w = torch.ones((N,), device=device, dtype=torch.float32)
+    if case.inputs and "bias" in case.inputs:
+        b = torch.as_tensor(case.inputs["bias"], device=device).to(torch.float32)
+        if tuple(b.shape) != (N,):
+            raise ValueError(f"bias shape mismatch: got {tuple(b.shape)} expected {(N,)}")
+    else:
+        b = torch.zeros((N,), device=device, dtype=torch.float32)
+
+    out = torch.empty((M, N), device=device, dtype=torch.float32)
+    mean = torch.empty((M,), device=device, dtype=torch.float32)
+    rstd = torch.empty((M,), device=device, dtype=torch.float32)
+    block_n = 1 if N <= 1 else min(1024, 1 << (int(N) - 1).bit_length())
+    grid = (M,)
+    layer_norm_residual2d_kernel[grid](inp, residual, w, b, out, mean, rstd, M, N, eps, BLOCK_N=block_n)
+    torch.cuda.synchronize()
+    return {
+        "input": inp.cpu().numpy(),
+        "residual": residual.cpu().numpy(),
+        "weight": w.cpu().numpy(),
+        "bias": b.cpu().numpy(),
+        "output": out.cpu().numpy(),
+        "mean": mean.cpu().numpy(),
+        "rstd": rstd.cpu().numpy(),
+        "eps": np.array(eps, dtype=np.float32),
+    }
+
+
 def _run_matmul_bias_relu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     from kernels.triton.ops.matmul_bias_relu2d import matmul_bias_relu2d_kernel
 
@@ -1482,6 +1595,24 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 module="kernels.triton.ops.rms_norm2d",
                 attr="rms_norm2d_kernel.src",
                 runner=_run_rms_norm2d_reference,
+                canonical_shapes={"M": 4, "N": 64},
+                vary_axes=["M", "N"],
+                normalize_shapes=_norm_row_sum,
+            ),
+            KernelSpec(
+                name="rms_norm_residual2d",
+                module="kernels.triton.ops.rms_norm_residual2d",
+                attr="rms_norm_residual2d_kernel.src",
+                runner=_run_rms_norm_residual2d_reference,
+                canonical_shapes={"M": 4, "N": 64},
+                vary_axes=["M", "N"],
+                normalize_shapes=_norm_row_sum,
+            ),
+            KernelSpec(
+                name="layer_norm_residual2d",
+                module="kernels.triton.ops.layer_norm_residual2d",
+                attr="layer_norm_residual2d_kernel.src",
+                runner=_run_layer_norm_residual2d_reference,
                 canonical_shapes={"M": 4, "N": 64},
                 vary_axes=["M", "N"],
                 normalize_shapes=_norm_row_sum,

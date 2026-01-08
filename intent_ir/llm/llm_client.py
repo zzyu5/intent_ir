@@ -143,6 +143,18 @@ def chat_completion(
     Call the chat completions endpoint and return an LLMResponse.
     Provider and key are selected from local config with automatic fallback.
     """
+    # Allow global toggles without changing call sites.
+    # - INTENTIR_LLM_USE_CACHE=0 disables the on-disk cache.
+    # - INTENTIR_LLM_CACHE_DIR overrides cache location (when cache_dir is not explicitly provided).
+    env_use_cache = os.getenv("INTENTIR_LLM_USE_CACHE")
+    if env_use_cache is not None:
+        v = str(env_use_cache).strip().lower()
+        use_cache = v not in {"0", "false", "no", "off"}
+    if cache_dir is None:
+        env_cd = os.getenv("INTENTIR_LLM_CACHE_DIR")
+        if env_cd and str(env_cd).strip():
+            cache_dir = str(env_cd).strip()
+
     providers = _load_providers()
     cache_path: Path | None = None
     if use_cache:

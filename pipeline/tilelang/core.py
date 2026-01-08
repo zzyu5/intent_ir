@@ -51,11 +51,13 @@ from kernels.tilelang.ops.masked_softmax2d import make_masked_softmax2d_prim_fun
 from kernels.tilelang.ops.mlp2d import make_mlp2d_prim_func
 from kernels.tilelang.ops.relu2d import make_relu2d_prim_func
 from kernels.tilelang.ops.rms_norm2d import make_rms_norm2d_prim_func
+from kernels.tilelang.ops.rms_norm_residual2d import make_rms_norm_residual2d_prim_func
 from kernels.tilelang.ops.rowmask_where2d import make_rowmask_where2d_prim_func
 from kernels.tilelang.ops.row_max import make_row_max_prim_func
 from kernels.tilelang.ops.row_sum import make_row_sum_prim_func
 from kernels.tilelang.ops.softmax_inner import make_softmax_inner_prim_func
 from kernels.tilelang.ops.layernorm import make_layer_norm_persistent_prim_func
+from kernels.tilelang.ops.layer_norm_residual2d import make_layer_norm_residual2d_prim_func
 from kernels.tilelang.ops.transpose2d import make_transpose2d_prim_func
 from kernels.tilelang.ops.upsample_bicubic2d_aa import make_upsample_bicubic2d_aa_prim_func
 from kernels.tilelang.ops.where2d import make_where2d_prim_func
@@ -766,6 +768,94 @@ def _rms_norm2d_intent() -> IntentFunction:
     )
 
 
+def _rms_norm_residual2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    rng = np.random.default_rng(int(case.seed))
+    if case.inputs and "inp" in case.inputs:
+        inp = np.asarray(case.inputs["inp"], dtype=np.float32)
+    else:
+        inp = rng.standard_normal((m, n), dtype=np.float32)
+    if case.inputs and "residual" in case.inputs:
+        residual = np.asarray(case.inputs["residual"], dtype=np.float32)
+    else:
+        residual = rng.standard_normal((m, n), dtype=np.float32)
+    if case.inputs and "weight" in case.inputs:
+        w = np.asarray(case.inputs["weight"], dtype=np.float32)
+    else:
+        w = rng.standard_normal((n,), dtype=np.float32)
+    if case.inputs and "bias" in case.inputs:
+        b = np.asarray(case.inputs["bias"], dtype=np.float32)
+    else:
+        b = rng.standard_normal((n,), dtype=np.float32)
+    eps = np.float32(1e-5)
+    z = inp + residual + b[None, :]
+    mean_sq = np.mean(z * z, axis=1, keepdims=True)
+    rstd = 1.0 / np.sqrt(mean_sq + eps)
+    out = z * rstd * w[None, :]
+    return {
+        "inp": inp,
+        "residual": residual,
+        "weight": w,
+        "bias": b,
+        "out": out.astype(np.float32),
+        "rstd": rstd.reshape(-1).astype(np.float32),
+    }
+
+
+def _rms_norm_residual2d_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors: Dict[str, TensorType] = {
+        "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "residual": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "weight": TensorType(dtype="f32", shape=[Dim("sym", "N")], layout=rm),
+        "bias": TensorType(dtype="f32", shape=[Dim("sym", "N")], layout=rm),
+        "out": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "rstd": TensorType(dtype="f32", shape=[Dim("sym", "M")], layout=rm),
+    }
+    ops: list[Op] = []
+
+    ops.append(Op(op="broadcast_in_dim", inputs=["bias"], output="b2", attrs={"out_shape": ["M", "N"], "broadcast_dims": [1]}))
+    tensors["b2"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="broadcast_in_dim", inputs=["weight"], output="w2", attrs={"out_shape": ["M", "N"], "broadcast_dims": [1]}))
+    tensors["w2"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+
+    ops.append(Op(op="add", inputs=["inp", "residual"], output="z0", attrs={}))
+    tensors["z0"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="add", inputs=["z0", "b2"], output="z", attrs={}))
+    tensors["z"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+
+    ops.append(Op(op="mul", inputs=["z", "z"], output="sq", attrs={}))
+    tensors["sq"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="reduce_sum", inputs=["sq"], output="sum_sq", attrs={"axes": [1], "keepdims": True}))
+    tensors["sum_sq"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
+    ops.append(Op(op="div", inputs=["sum_sq"], output="mean_sq", attrs={"divisor": "N"}))
+    tensors["mean_sq"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
+    ops.append(Op(op="const", inputs=[], output="eps", attrs={"value": 1e-5, "dtype": "f32"}))
+    tensors["eps"] = TensorType(dtype="f32", shape=[], layout=rm)
+    ops.append(Op(op="add", inputs=["mean_sq", "eps"], output="ms_eps", attrs={}))
+    tensors["ms_eps"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
+    ops.append(Op(op="rsqrt", inputs=["ms_eps"], output="rstd1", attrs={}))
+    tensors["rstd1"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
+    ops.append(Op(op="reshape", inputs=["rstd1"], output="rstd", attrs={"shape": ["M"]}))
+
+    ops.append(Op(op="broadcast_in_dim", inputs=["rstd"], output="rstd2", attrs={"out_shape": ["M", "N"], "broadcast_dims": [0]}))
+    tensors["rstd2"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="mul", inputs=["z", "rstd2"], output="norm", attrs={}))
+    tensors["norm"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="mul", inputs=["norm", "w2"], output="out", attrs={}))
+
+    schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="rms_norm_residual2d",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out", "rstd"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "channel"},
+    )
+
+
 def _matmul_bias_relu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     m = int(case.shapes["M"])
     n = int(case.shapes["N"])
@@ -1264,6 +1354,109 @@ def _layer_norm_persistent_intent() -> IntentFunction:
     )
 
 
+def _layer_norm_residual2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes["M"])
+    n = int(case.shapes["N"])
+    rng = np.random.default_rng(int(case.seed))
+    if case.inputs and "inp" in case.inputs:
+        inp = np.asarray(case.inputs["inp"], dtype=np.float32)
+    else:
+        inp = rng.standard_normal((m, n), dtype=np.float32)
+    if case.inputs and "residual" in case.inputs:
+        residual = np.asarray(case.inputs["residual"], dtype=np.float32)
+    else:
+        residual = rng.standard_normal((m, n), dtype=np.float32)
+    if case.inputs and "weight" in case.inputs:
+        w = np.asarray(case.inputs["weight"], dtype=np.float32)
+    else:
+        w = rng.standard_normal((n,), dtype=np.float32)
+    if case.inputs and "bias" in case.inputs:
+        b = np.asarray(case.inputs["bias"], dtype=np.float32)
+    else:
+        b = rng.standard_normal((n,), dtype=np.float32)
+    eps = np.float32(1e-5)
+
+    z = inp + residual
+    mean = np.mean(z, axis=1, keepdims=True)
+    var = np.mean((z - mean) ** 2, axis=1, keepdims=True)
+    rstd = 1.0 / np.sqrt(var + eps)
+    out = (z - mean) * rstd * w[None, :] + b[None, :]
+
+    return {
+        "inp": inp,
+        "residual": residual,
+        "weight": w,
+        "bias": b,
+        "out": out.astype(np.float32),
+        "mean": mean.reshape(-1).astype(np.float32),
+        "rstd": rstd.reshape(-1).astype(np.float32),
+    }
+
+
+def _layer_norm_residual2d_intent() -> IntentFunction:
+    rm = _rm_layout()
+    tensors = {
+        "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "residual": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "weight": TensorType(dtype="f32", shape=[Dim("sym", "N")], layout=rm),
+        "bias": TensorType(dtype="f32", shape=[Dim("sym", "N")], layout=rm),
+        "out": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "mean": TensorType(dtype="f32", shape=[Dim("sym", "M")], layout=rm),
+        "rstd": TensorType(dtype="f32", shape=[Dim("sym", "M")], layout=rm),
+    }
+    ops: list[Op] = []
+
+    ops.append(Op(op="add", inputs=["inp", "residual"], output="z", attrs={}))
+    tensors["z"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+
+    ops.append(Op(op="reduce_sum", inputs=["z"], output="sum_row", attrs={"axes": [1], "keepdims": True}))
+    tensors["sum_row"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
+    ops.append(Op(op="div", inputs=["sum_row"], output="mean_row", attrs={"divisor": "N"}))
+    tensors["mean_row"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
+    ops.append(Op(op="reshape", inputs=["mean_row"], output="mean", attrs={"shape": ["M"]}))
+
+    ops.append(Op(op="broadcast_in_dim", inputs=["mean"], output="mean_b", attrs={"out_shape": ["M", "N"], "broadcast_dims": [0]}))
+    tensors["mean_b"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="sub", inputs=["z", "mean_b"], output="diff", attrs={}))
+    tensors["diff"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="mul", inputs=["diff", "diff"], output="sq", attrs={}))
+    tensors["sq"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="reduce_sum", inputs=["sq"], output="var_sum", attrs={"axes": [1], "keepdims": True}))
+    tensors["var_sum"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
+    ops.append(Op(op="div", inputs=["var_sum"], output="var", attrs={"divisor": "N"}))
+    tensors["var"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
+    ops.append(Op(op="const", inputs=[], output="eps", attrs={"value": 1e-5, "dtype": "f32"}))
+    tensors["eps"] = TensorType(dtype="f32", shape=[], layout=rm)
+    ops.append(Op(op="add", inputs=["var", "eps"], output="var_eps", attrs={}))
+    tensors["var_eps"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
+    ops.append(Op(op="rsqrt", inputs=["var_eps"], output="rstd_row", attrs={}))
+    tensors["rstd_row"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
+    ops.append(Op(op="reshape", inputs=["rstd_row"], output="rstd", attrs={"shape": ["M"]}))
+
+    ops.append(Op(op="broadcast_in_dim", inputs=["rstd"], output="rstd_b", attrs={"out_shape": ["M", "N"], "broadcast_dims": [0]}))
+    tensors["rstd_b"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="broadcast_in_dim", inputs=["weight"], output="w_b", attrs={"out_shape": ["M", "N"], "broadcast_dims": [1]}))
+    tensors["w_b"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="broadcast_in_dim", inputs=["bias"], output="b_b", attrs={"out_shape": ["M", "N"], "broadcast_dims": [1]}))
+    tensors["b_b"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+
+    ops.append(Op(op="mul", inputs=["diff", "rstd_b"], output="xhat", attrs={}))
+    tensors["xhat"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="mul", inputs=["xhat", "w_b"], output="scaled", attrs={}))
+    tensors["scaled"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="add", inputs=["scaled", "b_b"], output="out", attrs={}))
+
+    schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="layer_norm_residual2d",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out", "mean", "rstd"],
+        schedule=schedule,
+        axis_roles={"M": "spatial", "N": "channel"},
+    )
+
+
 def _attn_fwd_reference(case: TestCase) -> Dict[str, np.ndarray]:
     q_ctx = int(case.shapes.get("Q_CTX", 16))
     kv_ctx = int(case.shapes.get("KV_CTX", 16))
@@ -1734,6 +1927,28 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 vary_axes=["M"],
                 runner=_rms_norm2d_reference,
                 intent_builder=_rms_norm2d_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="rms_norm_residual2d",
+                prim_func=make_rms_norm_residual2d_prim_func(n=64, eps=1e-5, threads=128),
+                arg_names=["inp", "residual", "weight", "bias", "out", "rstd", "M", "N"],
+                canonical_shapes={"M": 16, "N": 64},
+                vary_axes=["M"],
+                runner=_rms_norm_residual2d_reference,
+                intent_builder=_rms_norm_residual2d_intent,
+                exclude_axes=[],
+                constexpr_names=[],
+            ),
+            KernelSpec(
+                name="layer_norm_residual2d",
+                prim_func=make_layer_norm_residual2d_prim_func(n=64, eps=1e-5, threads=128),
+                arg_names=["inp", "residual", "weight", "bias", "out", "mean", "rstd", "M", "N"],
+                canonical_shapes={"M": 16, "N": 64},
+                vary_axes=["M"],
+                runner=_layer_norm_residual2d_reference,
+                intent_builder=_layer_norm_residual2d_intent,
                 exclude_axes=[],
                 constexpr_names=[],
             ),
