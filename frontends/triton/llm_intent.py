@@ -65,6 +65,8 @@ SYSTEM_PROMPT = """You are an expert compiler engineer. Given the Triton
 - For groupnorm kernels: Mean/Rstd must be shaped as [N, num_groups] (optionally [N,num_groups,1] if keepdims=true).
 - For layernorm kernels: Mean/Rstd must be shaped as [M] (optionally [M,1] if keepdims=true).
   Use explicit reshape/broadcast ops for any view changes; do NOT fake shapes by redefining inputs.
+- Naming: tensor names must be canonical and stable. Prefer the base pointer names (strip `_ptr`) and do NOT invent op-derived names
+  such as `store_C`, `load_A`, or `tmp_store_*`. Outputs must use the declared tensor names.
 - axis_roles: {axis: role} with role in {spatial,reduction,batch,channel}; do NOT invert.
 - parallel_axes: list of axis strings, and every axis must appear in some tensor shape; do not invent axes.
 - schedule may include tile_m/tile_n/tile_k/vec_width/axis_bindings/vec_axis/parallel_axes; if unknown, omit rather than guess.

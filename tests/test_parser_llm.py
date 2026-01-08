@@ -89,3 +89,20 @@ def test_schedule_params_kept_in_candidateintent():
     merged["outputs"] = ["C"]
     cand = parse_candidate_json(merged)
     assert cand.schedule_params["BLOCK_N"] == 128
+
+
+def test_store_prefixed_outputs_are_canonicalized():
+    d = {
+        "kernel_type": "add2d",
+        "tensors": {
+            "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            "B": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            "C": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+        },
+        "ops": [{"op": "add", "inputs": ["A", "B"], "output": "store_C"}],
+        "outputs": ["store_C"],
+        "parallel_axes": ["M", "N"],
+    }
+    cand = parse_candidate_json(d)
+    assert cand.intent.outputs == ["C"]
+    assert cand.intent.ops[-1].output == "C"

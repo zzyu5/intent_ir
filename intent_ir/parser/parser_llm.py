@@ -106,6 +106,23 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
     tensors = tensors_raw
     data["tensors"] = tensors
 
+    def _canonical_tensor_ref(name: Any) -> Any:
+        """
+        Canonicalize common LLM-emitted value names to match declared tensor names.
+
+        This is strictly a *naming* repair (no semantic reshaping): for example,
+        some providers name the output of a store as `store_C` while the declared
+        tensor is `C`. When the base tensor exists, we rewrite references so IR
+        validation can proceed and downstream stages see stable names.
+        """
+        if not isinstance(name, str):
+            return name
+        if name.startswith("store_"):
+            base = name[len("store_") :]
+            if base in tensors and name not in tensors:
+                return base
+        return name
+
     # Collect shape symbols (strings) appearing in tensor shapes and shape attrs.
     shape_symbols: set[str] = set()
     for t in tensors.values():
@@ -185,6 +202,17 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
             op["output"] = op["name"]
         if "attrs" not in op or op["attrs"] is None:
             op["attrs"] = {}
+
+        # Normalize inputs to list[str] and canonicalize common naming variants.
+        inps = op.get("inputs")
+        if inps is None:
+            op["inputs"] = []
+        elif isinstance(inps, str):
+            op["inputs"] = [inps]
+        elif not isinstance(inps, list):
+            raise LLMJsonParseError("op.inputs must be list", path=f"ops[{idx}].inputs")
+        # Apply naming canonicalization after list normalization.
+        op["inputs"] = [_canonical_tensor_ref(x) for x in (op.get("inputs") or [])]
 
         # Canonicalize common attrs key variants (non-semantic).
         if op.get("op") == "iota":
@@ -290,6 +318,9 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
                 attrs["dims"] = [attrs["axis"]] if not isinstance(attrs["axis"], list) else attrs["axis"]
             if "dims" not in attrs:
                 attrs["dims"] = [0]
+        # Canonicalize output names (e.g., store_C -> C when C is a declared tensor).
+        if "output" in op and op["output"]:
+            op["output"] = _canonical_tensor_ref(op["output"])
         if "output" in op and op["output"]:
             produced_outputs.append(op["output"])
             used_names.add(op["output"])
@@ -471,6 +502,7 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
             outputs = data["outputs"]
         if not isinstance(outputs, list):
             raise LLMJsonParseError("outputs must be a list if provided", path="outputs")
+        outputs = [_canonical_tensor_ref(o) for o in outputs]
         kept = [o for o in outputs if o in produced_outputs]
         missing = [o for o in outputs if o not in produced_outputs]
         if missing:
