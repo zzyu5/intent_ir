@@ -479,6 +479,23 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
     elif op.op == "where":
         if len(op.inputs) != 3:
             raise IntentIRValidationError(f"op[{idx}] where requires 3 inputs (cond, x, y)")
+    elif op.op in {"add", "sub", "mul", "div", "max", "min"}:
+        # Canonical form is binary; allow a small set of legacy shorthands
+        # (1 input + scalar attr) for compatibility with older LLM outputs.
+        if len(op.inputs) == 2:
+            return
+        if len(op.inputs) == 1:
+            if op.op == "div" and ("divisor" in attrs):
+                return
+            if op.op == "add" and ("addend" in attrs):
+                return
+            if op.op == "sub" and ("subtract" in attrs):
+                return
+            if op.op == "mul" and ("mul_factor" in attrs):
+                return
+            if op.op in {"max", "min"} and ("other" in attrs):
+                return
+        raise IntentIRValidationError(f"op[{idx}] {op.op} requires 2 inputs (or 1+scalar attr)")
     elif op.op in {"abs", "floor", "not"}:
         if len(op.inputs) != 1:
             raise IntentIRValidationError(f"op[{idx}] {op.op} requires 1 input")
@@ -486,13 +503,21 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
         if len(op.inputs) != 2:
             raise IntentIRValidationError(f"op[{idx}] {op.op} requires 2 inputs")
     elif op.op in {"reduce_sum", "reduce_max", "reduce_any"}:
-        dims = attrs.get("dims", attrs.get("axis"))
+        dims = attrs.get("dims")
+        if dims is None:
+            dims = attrs.get("axis")
+            if isinstance(dims, int):
+                dims = [dims]
         if dims is None:
             raise IntentIRValidationError(f"op[{idx}] {op.op} requires dims or axis")
+        if not isinstance(dims, list) or not dims or not all(isinstance(x, int) for x in dims):
+            raise IntentIRValidationError(f"op[{idx}] {op.op}.dims must be list[int]")
     elif op.op == "softmax":
         axis = attrs.get("axis")
         if axis is None:
             raise IntentIRValidationError(f"op[{idx}] softmax requires axis")
+        if not isinstance(axis, int):
+            raise IntentIRValidationError(f"op[{idx}] softmax.axis must be int, got {type(axis).__name__}")
         stable = attrs.get("stable")
         if stable is not None and not isinstance(stable, bool):
             raise IntentIRValidationError(f"op[{idx}].attrs.stable must be bool when provided")

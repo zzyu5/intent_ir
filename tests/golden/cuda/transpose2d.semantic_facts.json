@@ -1,0 +1,124 @@
+{
+  "anchors": {
+    "has_async": false,
+    "has_atomic": false,
+    "has_barrier": false,
+    "has_copy": true,
+    "has_dot": false,
+    "has_reduce": false,
+    "kernel_kind_hint": "cuda_ptx"
+  },
+  "canonical_evidence": {
+    "accesses": [
+      {
+        "address_space": "global",
+        "dtype": "f32",
+        "index_exprs": [
+          {
+            "const": 0,
+            "terms": {
+              "pid1": 16,
+              "r1": 1
+            }
+          },
+          {
+            "const": 0,
+            "terms": {
+              "pid0": 16,
+              "r0": 1
+            }
+          }
+        ],
+        "kind": "load",
+        "meta": {},
+        "predicate": {
+          "clauses": [
+            "16*pid0 + r0 < N",
+            "16*pid1 + r1 < M"
+          ]
+        },
+        "rank": 2,
+        "tensor": "inp"
+      },
+      {
+        "address_space": "global",
+        "dtype": "f32",
+        "index_exprs": [
+          {
+            "const": 0,
+            "terms": {
+              "pid0": 16,
+              "r0": 1
+            }
+          },
+          {
+            "const": 0,
+            "terms": {
+              "pid1": 16,
+              "r1": 1
+            }
+          }
+        ],
+        "kind": "store",
+        "meta": {},
+        "predicate": {
+          "clauses": [
+            "16*pid0 + r0 < N",
+            "16*pid1 + r1 < M"
+          ]
+        },
+        "rank": 2,
+        "tensor": "out"
+      }
+    ],
+    "anchors": {
+      "has_async": false,
+      "has_atomic": false,
+      "has_barrier": false,
+      "has_copy": true,
+      "has_dot": false,
+      "has_reduce": false,
+      "kernel_kind_hint": "cuda_ptx"
+    },
+    "meta": {
+      "symbols": {
+        "ranges": [
+          "r0",
+          "r1"
+        ]
+      }
+    },
+    "schedule_hints": {}
+  },
+  "io_spec": {
+    "arg_names": [
+      "inp",
+      "out",
+      "M",
+      "N"
+    ],
+    "kernel_name": "transpose2d",
+    "scalars": {
+      "M": "i32",
+      "N": "i32"
+    },
+    "tensors": {
+      "inp": {
+        "dtype": "f32",
+        "rank": 2,
+        "shape": [
+          "M",
+          "N"
+        ]
+      },
+      "out": {
+        "dtype": "f32",
+        "rank": 2,
+        "shape": [
+          "N",
+          "M"
+        ]
+      }
+    }
+  }
+}

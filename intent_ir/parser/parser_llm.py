@@ -76,7 +76,10 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
             try:
                 parse_layout(t["layout"])
             except IntentIRValidationError as e:
-                raise LLMJsonParseError(str(e), path=f"tensors.{name}.layout")
+                # Layout is often incidental in LLM outputs (e.g., "NCH", "scalar", "contiguous").
+                # Our current core IR only models row/col major; fall back to row_major
+                # instead of failing the whole parse.
+                t["layout"] = "row_major"
         # normalize dtype if using long form
         dtype = t.get("dtype")
         if isinstance(dtype, str):
@@ -115,6 +118,19 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
         tensor is `C`. When the base tensor exists, we rewrite references so IR
         validation can proceed and downstream stages see stable names.
         """
+        if isinstance(name, dict):
+            # Some providers wrap tensor refs as objects, e.g. {"tensor":"X"} or {"name":"X"}.
+            for k in ("tensor", "name", "value", "id", "ref", "var"):
+                v = name.get(k)
+                if isinstance(v, str) and v:
+                    name = v
+                    break
+            else:
+                # If the dict is a single-key wrapper, unwrap it.
+                if len(name) == 1:
+                    v = next(iter(name.values()))
+                    if isinstance(v, str) and v:
+                        name = v
         if not isinstance(name, str):
             return name
         if name.startswith("store_"):
@@ -166,6 +182,32 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
                 return dt
         return "f32"
 
+    def _normalize_dtype_str(dt: Any, *, fallback: str) -> str:
+        if not isinstance(dt, str):
+            return fallback
+        dd = dt.lower()
+        if dd in {"float16", "fp16"}:
+            return "f16"
+        if dd in {"float32", "fp32", "float"}:
+            return "f32"
+        if dd in {"float64", "fp64"}:
+            return "f64"
+        if dd in {"bfloat16", "bf16"}:
+            return "bf16"
+        if dd in {"int1", "i1"}:
+            return "i1"
+        if dd in {"int8", "i8"}:
+            return "i8"
+        if dd in {"uint8", "u8"}:
+            return "u8"
+        if dd in {"int32", "i32"}:
+            return "i32"
+        if dd in {"int64", "i64"}:
+            return "i64"
+        if dd in {"bool", "boolean"}:
+            return "bool"
+        return fallback
+
     def _resolve_input_name(x: Any) -> Any:
         x = _canonical_tensor_ref(x)
         if isinstance(x, str) and x in current_ssa:
@@ -208,8 +250,33 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
         # Accept it only when `output` is absent to preserve canonical schema.
         if "output" not in op and "name" in op and isinstance(op["name"], str) and op["name"]:
             op["output"] = op["name"]
+        # Additional common output field variants.
+        if "output" not in op and "out" in op and isinstance(op.get("out"), str) and op["out"]:
+            op["output"] = op.pop("out")
+        if "output" not in op and "dst" in op and isinstance(op.get("dst"), str) and op["dst"]:
+            op["output"] = op.pop("dst")
+        if "output" not in op and "result" in op and isinstance(op.get("result"), str) and op["result"]:
+            op["output"] = op.pop("result")
         if "attrs" not in op or op["attrs"] is None:
             op["attrs"] = {}
+        # Merge provider-style `attributes` into `attrs` (non-semantic schema normalization).
+        if "attributes" in op and isinstance(op.get("attributes"), dict):
+            for k, v in dict(op["attributes"]).items():
+                op["attrs"].setdefault(k, v)
+            op.pop("attributes", None)
+        # Some providers put common attrs at the top-level.
+        for k in ("dims", "axes", "axis", "dimension", "dimensions", "keepdims", "init", "shape", "out_shape"):
+            if k in op and k not in op["attrs"]:
+                op["attrs"][k] = op.pop(k)
+
+        # Input shorthands: allow `x` / `a,b` / `lhs,rhs` when `inputs` is absent.
+        if op.get("inputs") is None:
+            if "x" in op:
+                op["inputs"] = [op.pop("x")]
+            elif "a" in op and "b" in op:
+                op["inputs"] = [op.pop("a"), op.pop("b")]
+            elif "lhs" in op and "rhs" in op:
+                op["inputs"] = [op.pop("lhs"), op.pop("rhs")]
 
         # Normalize inputs to list[str] and canonicalize common naming variants.
         inps = op.get("inputs")
@@ -221,6 +288,53 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
             raise LLMJsonParseError("op.inputs must be list", path=f"ops[{idx}].inputs")
         # Apply naming canonicalization + SSA-resolution after list normalization.
         op["inputs"] = [_resolve_input_name(x) for x in (op.get("inputs") or [])]
+        # Inline const objects inside inputs (common provider shorthand):
+        #   inputs: ["x", {"op":"const","value":0.0,"dtype":"f32"}]
+        inps2 = list(op.get("inputs") or [])
+        for j, x in enumerate(list(inps2)):
+            if not isinstance(x, dict):
+                continue
+            op_name = x.get("op") or x.get("type")
+            if isinstance(op_name, str) and op_name.lower() != "const":
+                continue
+            # Accept {"op":"const","value":...,"dtype":...} and similar.
+            val = x.get("value")
+            if val is None and isinstance(x.get("attrs"), dict):
+                val = x["attrs"].get("value")
+            if val is None and "const" in x:
+                val = x.get("const")
+            if val is None:
+                raise LLMJsonParseError("inline const missing value", path=f"ops[{idx}].inputs[{j}].value")
+            const_dtype = _normalize_dtype_str(x.get("dtype") or (x.get("attrs") or {}).get("dtype"), fallback=_infer_scalar_dtype(op))
+            const_out = _fresh_name(f"{op.get('output') or f'op{idx}'}__const{j}")
+            ops.append({"op": "const", "inputs": [], "output": const_out, "attrs": {"value": val, "dtype": const_dtype}})
+            produced_outputs.append(const_out)
+            inps2[j] = const_out
+        op["inputs"] = inps2
+
+        # Comparator shorthand: allow 1 input + rhs_const attr.
+        if op.get("op") in {"ne", "lt", "le", "gt", "ge"}:
+            inps3 = list(op.get("inputs") or [])
+            if len(inps3) == 1:
+                rhs_val = None
+                for k in ("rhs_const", "rhs", "other", "scalar", "value", "const"):
+                    if k in op["attrs"]:
+                        rhs_val = op["attrs"].pop(k)
+                        break
+                if rhs_val is not None:
+                    const_dtype = _infer_scalar_dtype(op)
+                    const_out = _fresh_name(f"{op.get('output') or f'op{idx}'}__rhs")
+                    ops.append({"op": "const", "inputs": [], "output": const_out, "attrs": {"value": rhs_val, "dtype": const_dtype}})
+                    produced_outputs.append(const_out)
+                    op["inputs"] = [inps3[0], const_out]
+
+        # Enforce `list[str]` after normalization (avoid late unhashable dict crashes).
+        for j, x in enumerate(list(op.get("inputs") or [])):
+            if not isinstance(x, str):
+                raise LLMJsonParseError(
+                    f"op.inputs[{j}] must be string after normalization, got {type(x).__name__}",
+                    path=f"ops[{idx}].inputs[{j}]",
+                )
 
         # Canonicalize common attrs key variants (non-semantic).
         if op.get("op") == "iota":
@@ -272,7 +386,137 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
                     op["attrs"]["to"] = "i64"
                 elif dt in {"bool", "boolean"}:
                     op["attrs"]["to"] = "bool"
+        if op.get("op") == "broadcast_in_dim":
+            attrs = op["attrs"]
+            if "out_shape" not in attrs and "shape" in attrs:
+                attrs["out_shape"] = attrs.pop("shape")
+            if "broadcast_dims" not in attrs and "dims" in attrs:
+                attrs["broadcast_dims"] = attrs.pop("dims")
+            # Some providers forget `out_shape`; when the output tensor has a declared
+            # shape, we can safely derive it (needed to infer broadcast_dims below).
+            out_shape = attrs.get("out_shape")
+            if not (isinstance(out_shape, list) and out_shape):
+                out_name = _canonical_tensor_ref(op.get("output"))
+                t = tensors.get(out_name) if isinstance(out_name, str) else None
+                if isinstance(t, dict) and isinstance(t.get("shape"), list) and t["shape"]:
+                    attrs["out_shape"] = list(t["shape"])
+            if "broadcast_dims" not in attrs and "broadcast_dimensions" in attrs:
+                attrs["broadcast_dims"] = attrs.pop("broadcast_dimensions")
+            if "broadcast_dims" not in attrs and "broadcast_dim" in attrs:
+                attrs["broadcast_dims"] = [attrs.pop("broadcast_dim")]
+            bd = attrs.get("broadcast_dims")
+            if isinstance(bd, int):
+                attrs["broadcast_dims"] = [bd]
+            elif isinstance(bd, str):
+                # Allow "0" or "0,1"
+                parts = [p.strip() for p in bd.split(",") if p.strip()]
+                if parts:
+                    try:
+                        attrs["broadcast_dims"] = [int(p) for p in parts]
+                    except Exception:
+                        pass
+            elif isinstance(bd, tuple):
+                attrs["broadcast_dims"] = list(bd)
+            elif isinstance(bd, dict):
+                picked = bd.get("dims") or bd.get("broadcast_dims") or bd.get("axes")
+                if isinstance(picked, list):
+                    attrs["broadcast_dims"] = picked
+                else:
+                    # Common dict encodings:
+                    # - {"0":0,"1":1} (input-axis-index -> out-axis-index)
+                    # - {"N":0,"G":1} (input-axis-symbol -> out-axis-index)
+                    idx_items = []
+                    all_digit_keys = True
+                    for k, v in bd.items():
+                        if not (isinstance(k, str) and k.isdigit()):
+                            all_digit_keys = False
+                            break
+                        idx_items.append((int(k), v))
+                    if all_digit_keys and idx_items:
+                        try:
+                            idx_items.sort(key=lambda kv: kv[0])
+                            attrs["broadcast_dims"] = [int(v) for _k, v in idx_items]
+                        except Exception:
+                            pass
+                    else:
+                        inp0 = None
+                        inps = op.get("inputs") or []
+                        if isinstance(inps, list) and inps and isinstance(inps[0], str):
+                            inp0 = inps[0]
+                        in_shape = None
+                        if isinstance(inp0, str) and isinstance(tensors.get(inp0), dict):
+                            sh = tensors[inp0].get("shape")
+                            if isinstance(sh, list):
+                                in_shape = sh
+                        if in_shape is not None:
+                            try:
+                                mapped = []
+                                for d in in_shape:
+                                    if not isinstance(d, str) or d not in bd:
+                                        mapped = []
+                                        break
+                                    mapped.append(int(bd[d]))
+                                if mapped:
+                                    attrs["broadcast_dims"] = mapped
+                            except Exception:
+                                pass
+            if isinstance(attrs.get("broadcast_dims"), list):
+                out_bds: list[int] = []
+                for x in attrs["broadcast_dims"]:
+                    try:
+                        out_bds.append(int(x))
+                    except Exception:
+                        continue
+                attrs["broadcast_dims"] = out_bds
+            # Final fallback: infer broadcast dims from input/output shapes when possible.
+            if not isinstance(attrs.get("broadcast_dims"), list):
+                inp0 = None
+                inps = op.get("inputs") or []
+                if isinstance(inps, list) and inps and isinstance(inps[0], str):
+                    inp0 = inps[0]
+                out_shape = attrs.get("out_shape")
+                in_shape = None
+                if isinstance(inp0, str) and isinstance(tensors.get(inp0), dict):
+                    sh = tensors[inp0].get("shape")
+                    if isinstance(sh, list):
+                        in_shape = sh
+                if isinstance(out_shape, list) and in_shape is not None:
+                    def _norm_dim(d: Any) -> Any:
+                        if isinstance(d, str) and d.isdigit():
+                            try:
+                                return int(d)
+                            except Exception:
+                                return d
+                        return d
+                    # scalar broadcast
+                    if len(in_shape) == 0:
+                        attrs["broadcast_dims"] = []
+                    else:
+                        out_shape_norm = [_norm_dim(d) for d in out_shape]
+                        idxs: list[int] = []
+                        cursor = 0
+                        for d in in_shape:
+                            d_norm = _norm_dim(d)
+                            try:
+                                j = out_shape_norm.index(d_norm, cursor)
+                            except Exception:
+                                j = -1
+                            if j < 0:
+                                idxs = []
+                                break
+                            idxs.append(int(j))
+                            cursor = j + 1
+                        if idxs:
+                            attrs["broadcast_dims"] = idxs
         if op.get("op") == "const":
+            # Some providers place const fields at top-level instead of attrs.
+            if "value" not in op["attrs"]:
+                for k in ("value", "val", "const"):
+                    if k in op:
+                        op["attrs"]["value"] = op.pop(k)
+                        break
+            if "dtype" not in op["attrs"] and "dtype" in op:
+                op["attrs"]["dtype"] = op.pop("dtype")
             dt = op["attrs"].get("dtype")
             if isinstance(dt, str):
                 dd = dt.lower()
@@ -302,7 +546,7 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
             if isinstance(inps, list) and len(inps) == 1:
                 attrs = op["attrs"]
                 scalar_val = None
-                for k in ("scalar", "addend", "subtract", "mul_factor", "divisor", "other"):
+                for k in ("scalar", "addend", "subtract", "mul_factor", "divisor", "other", "const", "rhs_const", "rhs"):
                     if k in attrs:
                         scalar_val = attrs.pop(k)
                         break
@@ -322,6 +566,12 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
         # For reduce_sum allow "axes" to map to dims
         if op.get("op") in {"reduce_sum", "reduce_max", "reduce_any"}:
             attrs = op["attrs"]
+            if "keepdims" not in attrs and "keep_dims" in attrs:
+                attrs["keepdims"] = attrs.pop("keep_dims")
+            if "dims" not in attrs and "dimensions" in attrs:
+                attrs["dims"] = attrs.get("dimensions")
+            if "dims" not in attrs and "axes" in attrs:
+                attrs["dims"] = attrs.get("axes")
             if "dims" not in attrs and "axis" in attrs:
                 attrs["dims"] = [attrs["axis"]] if not isinstance(attrs["axis"], list) else attrs["axis"]
             if "dims" not in attrs:
@@ -422,6 +672,9 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
 
     # normalize parallel_axes possibly given as list of objects
     pa_raw = data.get("parallel_axes") or []
+    # Some providers emit parallel_axes as an object (axis -> role/meta). Use keys.
+    if isinstance(pa_raw, dict):
+        pa_raw = [k for k in pa_raw.keys() if isinstance(k, str)]
     if isinstance(pa_raw, list) and pa_raw and isinstance(pa_raw[0], dict):
         pa_raw = [p.get("name") for p in pa_raw if isinstance(p, dict) and "name" in p]
     # collect known symbolic axes from raw tensor dicts
@@ -524,6 +777,17 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(outputs, list):
             raise LLMJsonParseError("outputs must be a list if provided", path="outputs")
         outputs = [_canonical_tensor_ref(o) for o in outputs]
+        # Resolve SSA-renamed outputs: if the LLM reuses a name, we SSA-rename the
+        # op.output; update `outputs` to match the final produced name.
+        resolved: List[Any] = []
+        for o in outputs:
+            if isinstance(o, str) and o in current_ssa:
+                resolved.append(str(current_ssa[o]))
+            elif isinstance(o, str):
+                resolved.append(o)
+            else:
+                resolved.append(o)
+        outputs = resolved
         kept = [o for o in outputs if o in produced_outputs]
         missing = [o for o in outputs if o not in produced_outputs]
         if missing:

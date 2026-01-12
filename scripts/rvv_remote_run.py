@@ -7,8 +7,11 @@ Current support:
 Usage:
   INTENTIR_SSH_PASSWORD=... python scripts/rvv_remote_run.py --kernel any_kernel_dim --host <host> --user <user>
   # or omit INTENTIR_SSH_PASSWORD and type it when prompted
-Requires: `artifacts/<frontend>_full_pipeline/<kernel>.json` produced beforehand
-(Triton uses `artifacts/full_pipeline_verify/` for historical reasons).
+Requires: `artifacts/<frontend>_full_pipeline/<kernel>.json` produced beforehand.
+Artifact dirs:
+  - triton:   artifacts/full_pipeline_verify/ (historical)
+  - tilelang: artifacts/tilelang_full_pipeline/
+  - cuda:     artifacts/cuda_full_pipeline/
 """
 
 from __future__ import annotations
@@ -144,11 +147,14 @@ def run_remote(
         except Exception:
             pass
 
-    artifact_dir = "full_pipeline_verify" if frontend == "triton" else "tilelang_full_pipeline"
+    artifact_dirs = {"triton": "full_pipeline_verify", "tilelang": "tilelang_full_pipeline", "cuda": "cuda_full_pipeline"}
+    if frontend not in artifact_dirs:
+        raise ValueError(f"unsupported frontend: {frontend}")
+    artifact_dir = artifact_dirs[frontend]
     report_path = ROOT / "artifacts" / artifact_dir / f"{kernel}.json"
     if not report_path.exists():
         raise FileNotFoundError(
-            f"artifact not found: {report_path}, please run scripts/{frontend}/full_pipeline_verify.py first"
+            f"artifact not found: {report_path}, please run `python scripts/full_pipeline_verify.py --frontend {frontend}` first"
         )
     _log(f"[{frontend}:{kernel}] load artifact: {report_path}")
     report = json.loads(report_path.read_text())
@@ -243,27 +249,25 @@ def run_remote(
                 from pipeline.triton.core import default_kernel_specs
 
                 spec_map = {s.name: s for s in default_kernel_specs()}
-                if kernel not in spec_map:
-                    raise RuntimeError(f"unknown kernel {kernel}")
-                spec = spec_map[kernel]
-                if not bindings:
-                    bindings = dict(spec.canonical_shapes)
-                baseline = spec.runner(TestCase(shapes=bindings, dtypes={}, seed=0))
-            else:
+            elif frontend == "tilelang":
                 from pipeline.tilelang.core import default_kernel_specs, mvp_kernel_specs
 
                 spec_map = {s.name: s for s in (mvp_kernel_specs() + default_kernel_specs())}
-                if kernel not in spec_map:
-                    raise RuntimeError(f"unknown kernel {kernel}")
-                spec = spec_map[kernel]
-                if not bindings:
-                    bindings = dict(spec.canonical_shapes)
-                baseline = spec.runner(TestCase(shapes=bindings, dtypes={}, seed=0))
+            else:
+                from pipeline.cuda.core import default_kernel_specs
+
+                spec_map = {s.name: s for s in default_kernel_specs()}
+            if kernel not in spec_map:
+                raise RuntimeError(f"unknown kernel {kernel}")
+            spec = spec_map[kernel]
+            if not bindings:
+                bindings = dict(spec.canonical_shapes)
+            baseline = spec.runner(TestCase(shapes=bindings, dtypes={}, seed=0))
         except Exception as e:
             raise RuntimeError(
-                "baseline not available: no cached baseline .npz in artifacts and live Triton launch failed. "
-                "Run `python scripts/triton/full_pipeline_verify.py` on a CUDA machine to produce "
-                "`artifacts/full_pipeline_verify/<kernel>.baseline.npz`, or pass --baseline-npz.\n"
+                "baseline not available: no cached baseline .npz in artifacts and live baseline launch failed. "
+                "Run `python scripts/full_pipeline_verify.py --frontend <frontend>` on a CUDA machine to produce "
+                "`artifacts/<frontend>_full_pipeline/<kernel>.baseline.npz`, or pass --baseline-npz.\n"
                 f"live launch error: {type(e).__name__}: {e}"
             ) from e
 
@@ -684,7 +688,7 @@ def run_remote(
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--kernel", default="any_kernel_dim")
-    ap.add_argument("--frontend", choices=["triton", "tilelang"], default="triton")
+    ap.add_argument("--frontend", choices=["triton", "tilelang", "cuda"], default="triton")
     ap.add_argument("--host", required=True)
     ap.add_argument("--user", default="ubuntu")
     ap.add_argument("--password", default=None, help="SSH password (prefer env INTENTIR_SSH_PASSWORD or prompt)")
@@ -692,7 +696,7 @@ def main():
     ap.add_argument("--port", type=int, default=22)
     ap.add_argument("--case-index", type=int, default=0, help="pick case from artifacts report (default 0)")
     ap.add_argument("--baseline-npz", default=None, help="override baseline npz path (default: from artifact report)")
-    ap.add_argument("--prefer-live-baseline", action="store_true", help="re-launch Triton for baseline even if npz exists")
+    ap.add_argument("--prefer-live-baseline", action="store_true", help="re-launch frontend baseline even if npz exists")
     ap.add_argument("--no-tune", action="store_true", help="disable backend schedule selection (use IntentIR schedule as-is)")
     ap.add_argument("--tune-mode", choices=["auto", "guided", "locked"], default="auto")
     ap.add_argument("--tune-budget", type=int, default=1, help="if >1, benchmark top-K predicted schedules (requires --bench-iters>0)")

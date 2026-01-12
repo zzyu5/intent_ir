@@ -6,6 +6,11 @@ try:
 except Exception:
     triton = None
 
+try:
+    import torch
+except Exception:
+    torch = None
+
 from frontends.triton.compile_ttir import TTIRArtifact, TTIRCompileError, compile_ttir, normalize_signature
 
 
@@ -18,7 +23,24 @@ def test_normalize_signature():
     assert out["N"] == "i64"
 
 
+def _cuda_free_mem_mb() -> int:
+    if torch is None:
+        return 0
+    try:
+        if not torch.cuda.is_available():
+            return 0
+        try:
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+        free, _total = torch.cuda.mem_get_info()
+        return int(free // (1024 * 1024))
+    except Exception:
+        return 0
+
+
 @pytest.mark.skipif(triton is None, reason="triton not available")
+@pytest.mark.skipif(_cuda_free_mem_mb() < 1024, reason="CUDA free memory too low (<1024 MiB)")
 def test_compile_ttir_smoke():
     @triton.jit
     def add_kernel(X_ptr, Y_ptr, Z_ptr, N, BLOCK: tl.constexpr):
@@ -35,6 +57,10 @@ def test_compile_ttir_smoke():
         art: TTIRArtifact = compile_ttir(add_kernel, sig, meta={"num_warps": 1, "num_stages": 1})
     except TTIRCompileError as e:
         pytest.skip(f"TTIR compile failed (likely missing CUDA backend): {e}")
+    except RuntimeError as e:
+        msg = str(e).lower()
+        if "out of memory" in msg or "cuda error" in msg:
+            pytest.skip(f"TTIR compile failed due to CUDA runtime error: {e}")
+        raise
     assert art.ttir
     assert "func" in art.ttir or "module" in art.ttir
-
