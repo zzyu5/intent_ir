@@ -15,6 +15,19 @@ from typing import Any, Dict, List, Optional
 from ..ir.ir_types import IntentFunction, IntentIRValidationError, parse_layout
 
 AXIS_ROLE_VALUES = {"spatial", "reduction", "batch", "channel"}
+AXIS_ROLE_ALIASES = {
+    # Attention-style dims.
+    "seq": "spatial",
+    "sequence": "spatial",
+    "token": "spatial",
+    "tokens": "spatial",
+    "ctx": "spatial",
+    "context": "spatial",
+    # Common informal shorthands.
+    "reduce": "reduction",
+    "red": "reduction",
+    "chan": "channel",
+}
 
 
 class LLMJsonParseError(Exception):
@@ -704,18 +717,34 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
         norm_ar: Dict[str, str] = {}
         for ax, val in ar_raw.items():
             if isinstance(val, str):
-                norm_ar[ax] = val
+                role = val.strip()
+                role_key = role.lower()
+                role_norm = AXIS_ROLE_ALIASES.get(role_key, role_key)
+                # Keep only supported roles; axis_roles is metadata and should not
+                # hard-fail parsing for new frontends/kernels.
+                if role_norm in AXIS_ROLE_VALUES:
+                    norm_ar[ax] = role_norm
             elif isinstance(val, list) and val:
                 first = val[0]
-                norm_ar[ax] = first if isinstance(first, str) else str(first)
+                role = first if isinstance(first, str) else str(first)
+                role_key = role.strip().lower()
+                role_norm = AXIS_ROLE_ALIASES.get(role_key, role_key)
+                if role_norm in AXIS_ROLE_VALUES:
+                    norm_ar[ax] = role_norm
             elif isinstance(val, dict):
                 picked = val.get("role") or val.get("type") or val.get("name")
                 if picked is not None:
-                    norm_ar[ax] = picked
-                else:
-                    norm_ar[ax] = str(val)
+                    role = str(picked)
+                    role_key = role.strip().lower()
+                    role_norm = AXIS_ROLE_ALIASES.get(role_key, role_key)
+                    if role_norm in AXIS_ROLE_VALUES:
+                        norm_ar[ax] = role_norm
             else:
-                norm_ar[ax] = str(val)
+                role = str(val)
+                role_key = role.strip().lower()
+                role_norm = AXIS_ROLE_ALIASES.get(role_key, role_key)
+                if role_norm in AXIS_ROLE_VALUES:
+                    norm_ar[ax] = role_norm
         # Keep derived/implicit axes (e.g., group_size/num_groups) even if they are not
         # explicit tensor shape symbols; downstream stages may still use this metadata.
         data["axis_roles"] = norm_ar

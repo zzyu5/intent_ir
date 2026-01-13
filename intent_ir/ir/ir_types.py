@@ -437,18 +437,24 @@ def _validate_ops(ops: List[Op], tensors: Dict[str, TensorType]) -> None:
 def _validate_op_attrs(op: Op, idx: int) -> None:
     attrs = op.attrs or {}
     if op.op == "matmul":
+        if len(op.inputs) != 2:
+            raise IntentIRValidationError(f"op[{idx}] matmul requires 2 inputs (A, B)")
         accum = attrs.get("accum_dtype")
         if accum is not None and accum not in SUPPORTED_DTYPES:
             raise IntentIRValidationError(f"op[{idx}].attrs.accum_dtype unsupported: {accum}")
         if "epilogue" in attrs:
             _validate_epilogue(attrs["epilogue"], f"op[{idx}].attrs.epilogue")
     elif op.op == "const":
+        if op.inputs:
+            raise IntentIRValidationError(f"op[{idx}] const requires 0 inputs")
         if "value" not in attrs:
             raise IntentIRValidationError(f"op[{idx}] const requires attrs.value")
         dtype = attrs.get("dtype")
         if dtype is not None and dtype not in SUPPORTED_DTYPES:
             raise IntentIRValidationError(f"op[{idx}].attrs.dtype unsupported: {dtype}")
     elif op.op == "cast":
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] cast requires 1 input")
         to = attrs.get("to")
         if to is None and "dtype" in attrs:
             raise IntentIRValidationError(f"op[{idx}] cast requires attrs.to (not attrs.dtype)")
@@ -457,6 +463,8 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
         if to not in SUPPORTED_DTYPES:
             raise IntentIRValidationError(f"op[{idx}] cast.to unsupported: {to}")
     elif op.op == "iota":
+        if op.inputs:
+            raise IntentIRValidationError(f"op[{idx}] iota requires 0 inputs")
         shape = attrs.get("shape")
         axis = attrs.get("axis")
         if axis is None and "dimension" in attrs:
@@ -496,13 +504,18 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
             if op.op in {"max", "min"} and ("other" in attrs):
                 return
         raise IntentIRValidationError(f"op[{idx}] {op.op} requires 2 inputs (or 1+scalar attr)")
-    elif op.op in {"abs", "floor", "not"}:
+    elif op.op == "ne":
+        if len(op.inputs) != 2:
+            raise IntentIRValidationError(f"op[{idx}] ne requires 2 inputs")
+    elif op.op in {"abs", "floor", "not", "exp", "relu", "rsqrt", "identity"}:
         if len(op.inputs) != 1:
             raise IntentIRValidationError(f"op[{idx}] {op.op} requires 1 input")
     elif op.op in {"lt", "le", "gt", "ge", "and", "or"}:
         if len(op.inputs) != 2:
             raise IntentIRValidationError(f"op[{idx}] {op.op} requires 2 inputs")
     elif op.op in {"reduce_sum", "reduce_max", "reduce_any"}:
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] {op.op} requires 1 input")
         dims = attrs.get("dims")
         if dims is None:
             dims = attrs.get("axis")
@@ -513,6 +526,8 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
         if not isinstance(dims, list) or not dims or not all(isinstance(x, int) for x in dims):
             raise IntentIRValidationError(f"op[{idx}] {op.op}.dims must be list[int]")
     elif op.op == "softmax":
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] softmax requires 1 input")
         axis = attrs.get("axis")
         if axis is None:
             raise IntentIRValidationError(f"op[{idx}] softmax requires axis")
@@ -522,6 +537,8 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
         if stable is not None and not isinstance(stable, bool):
             raise IntentIRValidationError(f"op[{idx}].attrs.stable must be bool when provided")
     elif op.op == "broadcast_in_dim":
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] broadcast_in_dim requires 1 input")
         out_shape = attrs.get("out_shape")
         bcast_dims = attrs.get("broadcast_dims")
         if not isinstance(out_shape, list) or not out_shape:
@@ -536,16 +553,22 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
                     f"op[{idx}] broadcast_in_dim.broadcast_dims[{j}] must be int"
                 )
     elif op.op == "transpose":
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] transpose requires 1 input")
         perm = attrs.get("perm")
         if not isinstance(perm, list) or not perm or not all(isinstance(p, int) for p in perm):
             raise IntentIRValidationError(f"op[{idx}] transpose.perm must be list of int")
     elif op.op == "reshape":
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] reshape requires 1 input")
         shape = attrs.get("shape")
         if not isinstance(shape, list) or not shape:
             raise IntentIRValidationError(f"op[{idx}] reshape.shape must be non-empty list")
         for j, d in enumerate(shape):
             parse_dim(d)
     elif op.op == "layout_cast":
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] layout_cast requires 1 input")
         target = attrs.get("to")
         if not isinstance(target, str):
             raise IntentIRValidationError(f"op[{idx}] layout_cast.to must be string")

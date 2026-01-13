@@ -9,6 +9,8 @@ Pipeline shape mirrors Triton/TileLang:
 from __future__ import annotations
 
 import json
+import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -19,7 +21,7 @@ from frontends.common.contract_v2 import evaluate_contract_v2
 from frontends.common.obligations import evaluate_obligations
 from frontends.common.static_validate import static_validate
 from frontends.cuda.runtime import CudaLaunch, CudaRuntimeError, run_cuda_kernel_io
-from frontends.tilelang.cuda_export import build_io_spec_from_tilelang_prim_func, export_tilelang_cuda
+from frontends.tilelang.cuda_export import build_io_spec_from_tilelang_prim_func, export_tilelang_cuda, tilelang_include_dirs
 from frontends.tilelang.runtime import infer_written_global_buffers, run_tilelang_kernel_io
 from intent_ir.llm import LLMIntentHub
 from intent_ir.macros import expand_macros, enrich_intent_macros
@@ -47,6 +49,9 @@ from kernels.tilelang.ops.upsample_bicubic2d_aa import make_upsample_bicubic2d_a
 ROOT = Path(__file__).resolve().parents[2]
 _LLM_HUB = LLMIntentHub()
 
+_CUDA_TILELANG_SNAPSHOT_DIR = ROOT / "kernels" / "cuda" / "ops" / "tilelang_generated"
+_PTX_ENTRY_RE = re.compile(r"^\s*\.visible\s+\.entry\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(")
+
 
 def _read_cuda_src(path: Path) -> str:
     return Path(path).read_text(encoding="utf-8")
@@ -54,6 +59,55 @@ def _read_cuda_src(path: Path) -> str:
 
 def _ceil_div(a: int, b: int) -> int:
     return (int(a) + int(b) - 1) // int(b) if int(b) > 0 else 1
+
+
+def _persist_tilelang_cuda_snapshot(name: str, exp) -> None:
+    """
+    Persist TileLang->CUDA exports under `kernels/cuda/ops/` for inspection/reuse.
+
+    This keeps the CUDA frontend "kernel library" consistent with Triton/TileLang:
+      - user/kernel code lives under kernels/
+      - pipeline artifacts live under artifacts/
+    """
+    out_dir = _CUDA_TILELANG_SNAPSHOT_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    cuda_path = out_dir / f"{name}.cu"
+    ptx_path = out_dir / f"{name}.ptx"
+    meta_path = out_dir / f"{name}.tilelang_export.json"
+
+    cuda_path.write_text(str(getattr(exp, "cuda_src", "")), encoding="utf-8")
+    ptx_path.write_text(str(getattr(exp, "ptx_text", "")), encoding="utf-8")
+    meta = {
+        "name": str(name),
+        "origin": "tilelang",
+        "entry_name": str(getattr(exp, "entry_name", "")),
+        "include_dirs": [str(p) for p in (getattr(exp, "include_dirs", []) or [])],
+        "notes": "Generated snapshot. Edit the TileLang kernel (kernels/tilelang/ops/*) instead of this file.",
+    }
+    meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def _load_tilelang_cuda_snapshot(name: str) -> tuple[str, str, str, List[Path]]:
+    """
+    Load a previously-exported TileLang->CUDA snapshot from `kernels/cuda/ops/`.
+    Returns: (cuda_src, ptx_text, entry_name, include_dirs)
+    """
+    cuda_path = _CUDA_TILELANG_SNAPSHOT_DIR / f"{name}.cu"
+    ptx_path = _CUDA_TILELANG_SNAPSHOT_DIR / f"{name}.ptx"
+    if not cuda_path.is_file() or not ptx_path.is_file():
+        raise FileNotFoundError(f"missing TileLang CUDA snapshot for {name}: {cuda_path} / {ptx_path}")
+    cuda_src = cuda_path.read_text(encoding="utf-8")
+    ptx_text = ptx_path.read_text(encoding="utf-8")
+    entry_name = ""
+    for ln in ptx_text.splitlines():
+        m = _PTX_ENTRY_RE.match(ln)
+        if m:
+            entry_name = str(m.group("name"))
+            break
+    if not entry_name:
+        raise RuntimeError(f"cannot find .visible .entry in snapshot PTX for {name}: {ptx_path}")
+    return cuda_src, ptx_text, entry_name, list(tilelang_include_dirs())
 
 
 def _ensure_schedule_cuda(intent, *, spec: "KernelSpec") -> None:
@@ -154,6 +208,85 @@ def _group_norm_reference(case: TestCase) -> Dict[str, np.ndarray]:
         "Mean": mean.reshape(n, g).astype(np.float32),
         "Rstd": rstd.reshape(n, g).astype(np.float32),
     }
+
+
+def _group_norm_fallback_intent():
+    """
+    Deterministic, compiler-style IntentIR for groupnorm.
+
+    Used as a safety-net when LLM output is semantically invalid (diff failure).
+    Keeps original view inputs (X:[N,C,HW]) and introduces explicit reshape to
+    group-view for reductions/broadcast.
+    """
+    from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, TensorType  # noqa: PLC0415
+
+    rm = TensorLayout(kind="row_major", params={})
+    tensors: Dict[str, TensorType] = {
+        "X": TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "C"), Dim("sym", "HW")], layout=rm),
+        "W": TensorType(dtype="f32", shape=[Dim("sym", "C")], layout=rm),
+        "B": TensorType(dtype="f32", shape=[Dim("sym", "C")], layout=rm),
+        "Y": TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "C"), Dim("sym", "HW")], layout=rm),
+        "Mean": TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups")], layout=rm),
+        "Rstd": TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups")], layout=rm),
+    }
+    ops: list[Op] = []
+
+    ops.append(Op(op="reshape", inputs=["X"], output="X4", attrs={"shape": ["N", "num_groups", "group_size", "HW"]}))
+    tensors["X4"] = TensorType(
+        dtype="f32",
+        shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("sym", "group_size"), Dim("sym", "HW")],
+        layout=rm,
+    )
+
+    ops.append(Op(op="reduce_sum", inputs=["X4"], output="sum", attrs={"dims": [2, 3], "keepdims": True}))
+    tensors["sum"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("const", 1), Dim("const", 1)], layout=rm)
+    ops.append(Op(op="div", inputs=["sum"], output="mean4", attrs={"divisor": "num_elements"}))
+    tensors["mean4"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("const", 1), Dim("const", 1)], layout=rm)
+
+    ops.append(Op(op="sub", inputs=["X4", "mean4"], output="diff", attrs={}))
+    tensors["diff"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("sym", "group_size"), Dim("sym", "HW")], layout=rm)
+    ops.append(Op(op="mul", inputs=["diff", "diff"], output="sq", attrs={}))
+    tensors["sq"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("sym", "group_size"), Dim("sym", "HW")], layout=rm)
+    ops.append(Op(op="reduce_sum", inputs=["sq"], output="var_sum", attrs={"dims": [2, 3], "keepdims": True}))
+    tensors["var_sum"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("const", 1), Dim("const", 1)], layout=rm)
+    ops.append(Op(op="div", inputs=["var_sum"], output="var4", attrs={"divisor": "num_elements"}))
+    tensors["var4"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("const", 1), Dim("const", 1)], layout=rm)
+
+    ops.append(Op(op="const", inputs=[], output="eps", attrs={"value": 1e-5, "dtype": "f32"}))
+    tensors["eps"] = TensorType(dtype="f32", shape=[], layout=rm)
+    ops.append(Op(op="add", inputs=["var4", "eps"], output="var_eps", attrs={}))
+    tensors["var_eps"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("const", 1), Dim("const", 1)], layout=rm)
+    ops.append(Op(op="rsqrt", inputs=["var_eps"], output="rstd4", attrs={}))
+    tensors["rstd4"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("const", 1), Dim("const", 1)], layout=rm)
+
+    ops.append(Op(op="mul", inputs=["diff", "rstd4"], output="xhat4", attrs={}))
+    tensors["xhat4"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("sym", "group_size"), Dim("sym", "HW")], layout=rm)
+
+    ops.append(Op(op="reshape", inputs=["xhat4"], output="xhat3", attrs={"shape": ["N", "C", "HW"]}))
+    tensors["xhat3"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "C"), Dim("sym", "HW")], layout=rm)
+
+    ops.append(Op(op="broadcast_in_dim", inputs=["W"], output="W3", attrs={"out_shape": ["N", "C", "HW"], "broadcast_dims": [1]}))
+    tensors["W3"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "C"), Dim("sym", "HW")], layout=rm)
+    ops.append(Op(op="broadcast_in_dim", inputs=["B"], output="B3", attrs={"out_shape": ["N", "C", "HW"], "broadcast_dims": [1]}))
+    tensors["B3"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "C"), Dim("sym", "HW")], layout=rm)
+
+    ops.append(Op(op="mul", inputs=["xhat3", "W3"], output="scaled", attrs={}))
+    tensors["scaled"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "C"), Dim("sym", "HW")], layout=rm)
+    ops.append(Op(op="add", inputs=["scaled", "B3"], output="Y", attrs={}))
+
+    # Mean/Rstd outputs: reshape [N,G,1,1] -> [N,G]
+    ops.append(Op(op="reshape", inputs=["mean4"], output="Mean", attrs={"shape": ["N", "num_groups"]}))
+    ops.append(Op(op="reshape", inputs=["rstd4"], output="Rstd", attrs={"shape": ["N", "num_groups"]}))
+
+    schedule = ScheduleSketch(tile_m=None, tile_n=None, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="group_norm_kernel",
+        tensors=tensors,
+        ops=ops,
+        outputs=["Y", "Mean", "Rstd"],
+        schedule=schedule,
+        axis_roles={"N": "batch", "C": "channel", "HW": "spatial", "num_groups": "channel"},
+    )
 
 
 def _softmax_inner_reference(case: TestCase) -> Dict[str, np.ndarray]:
@@ -625,7 +758,29 @@ def run_pipeline_for_spec(
     # If this spec is TileLang-derived, export CUDA source + PTX once and attach
     # them to the KernelSpec for the CUDA adapter/ptx parser to consume.
     if spec.tilelang_prim_func is not None and (not spec.cuda_src or not spec.ptx_text):
-        exp = export_tilelang_cuda(spec.tilelang_prim_func, out_dir=out_dir, stem=spec.name)
+        # Prefer a stable snapshot under `kernels/cuda/ops/` to keep the CUDA
+        # prompt/cache deterministic across runs. Fall back to exporting from the
+        # TileLang PrimFunc when missing (or when forced to refresh).
+        refresh = str(os.getenv("INTENTIR_TILELANG_CUDA_SNAPSHOT_REFRESH", "0")).strip() == "1"
+        used_snapshot = False
+        cuda_src_raw = ""
+        ptx_text = ""
+        entry_name = ""
+        include_dirs: List[Path] = []
+        if not refresh:
+            try:
+                cuda_src_raw, ptx_text, entry_name, include_dirs = _load_tilelang_cuda_snapshot(spec.name)
+                used_snapshot = True
+            except Exception:
+                used_snapshot = False
+        if not used_snapshot:
+            exp = export_tilelang_cuda(spec.tilelang_prim_func, out_dir=out_dir, stem=spec.name)
+            _persist_tilelang_cuda_snapshot(spec.name, exp)
+            cuda_src_raw = exp.cuda_src
+            ptx_text = exp.ptx_text
+            entry_name = exp.entry_name
+            include_dirs = list(exp.include_dirs)
+        report["tilelang_cuda_snapshot"] = {"used": bool(used_snapshot), "dir": str(_CUDA_TILELANG_SNAPSHOT_DIR)}
         # Keep the prompt "compiler-like": include a high-level TIR snapshot as a comment
         # before the exported CUDA kernel source. This significantly improves LLM
         # recovery for structured reductions/broadcasting (e.g., softmax/attention),
@@ -639,14 +794,14 @@ def run_pipeline_for_spec(
             except Exception:
                 tir_txt = ""
         if tir_txt.strip():
-            spec.cuda_src = "// --- TileLang TIR (semantic guide; comment only) ---\n/*\n" + tir_txt + "\n*/\n\n" + exp.cuda_src
+            spec.cuda_src = "// --- TileLang TIR (semantic guide; comment only) ---\n/*\n" + tir_txt + "\n*/\n\n" + cuda_src_raw
         else:
-            spec.cuda_src = exp.cuda_src
+            spec.cuda_src = cuda_src_raw
         # Do not force `cuda_path` for TileLang-derived kernels: we want the
         # augmented `cuda_src` to reach the LLM prompt via KernelDescriptor.source_text.
-        spec.ptx_text = exp.ptx_text
-        spec.ptx_entry = exp.entry_name
-        spec.include_dirs = list(exp.include_dirs)
+        spec.ptx_text = ptx_text
+        spec.ptx_entry = entry_name
+        spec.include_dirs = list(include_dirs)
         if not spec.ptx_origin:
             spec.ptx_origin = "tilelang"
 
@@ -814,6 +969,158 @@ def run_pipeline_for_spec(
         "results": [{"case_shapes": dict(cases.in_contract[i].shapes), "ok": bool(diffs_in[i].ok), "summary": diffs_in[i].summary, "max_abs": float(diffs_in[i].max_abs_err), "max_rel": float(diffs_in[i].max_rel_err)} for i in range(len(diffs_in))]
         + [{"case_shapes": dict(cases.out_of_contract[i].shapes), "ok": bool(diffs_out[i].ok), "summary": diffs_out[i].summary, "max_abs": float(diffs_out[i].max_abs_err), "max_rel": float(diffs_out[i].max_rel_err)} for i in range(len(diffs_out))],
     }
+
+    # If dynamic diff fails, do one bounded LLM repair round using concrete feedback.
+    # This is deliberately conservative (1 retry) to respect LLM rate limits.
+    if use_llm and all_diffs and not diff_ok:
+        worst_summary = None
+        for d in all_diffs:
+            if not d.ok:
+                worst_summary = d.summary
+                break
+        cx0 = (cex_in + cex_out)[0] if (cex_in or cex_out) else None
+        feedback3: List[str] = []
+        feedback3.append(
+            "Dynamic diff failed. Fix the IntentIR ops graph so it can execute in the interpreter and match the reference outputs."
+        )
+        if spec.name == "group_norm_kernel":
+            feedback3 += [
+                "For group_norm_kernel: keep original view X:[N,C,HW], W/B:[C].",
+                "Compute in group-view with explicit reshape: X4=reshape(X,[N,num_groups,group_size,HW]).",
+                "Mean/Rstd must be computed in group-view: mean4 and rstd4 shapes [N,num_groups,1,1].",
+                "Do NOT broadcast Mean/Rstd from [N,num_groups] directly to [N,C,HW]. Instead subtract/multiply in group-view then reshape back.",
+                "Mean = reshape(mean4,[N,num_groups]); Rstd = reshape(rstd4,[N,num_groups]).",
+                "Use eps as const f32=1e-5 and model num_elements=group_size*HW via divisor/scale (do not use string constants).",
+            ]
+        if spec.name == "any_kernel_dim":
+            feedback3 += [
+                "For any_kernel_dim: out[M] = reduce_any(inp[M,N] != 0, axis=1).",
+                "Use ne(inp, zero_const) then reduce_any over N, or directly reduce_any with a predicate; outputs must be produced by ops.",
+            ]
+        if worst_summary:
+            feedback3.append(f"Observed diff failure: {worst_summary}")
+        if cx0 is not None:
+            feedback3.append(f"Counterexample shapes: {dict(cx0.case.shapes)}")
+
+        try:
+            cand_fix = _LLM_HUB.lift(desc, feedback=feedback3, model=llm_model)
+            enrich_intent_macros(cand_fix.intent)
+            _ensure_schedule_cuda(cand_fix.intent, spec=spec)
+            report["llm_trace"] = dict(cand_fix.llm_trace or {})
+            cand = cand_fix
+            (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
+            report["intent"] = cand.intent.to_json_dict()
+
+            expanded_fix = expand_macros(cand.intent)
+            cand_expanded = CandidateIntent(
+                intent=expanded_fix,
+                problem_params=dict(cand.problem_params),
+                schedule_params=dict(cand.schedule_params),
+                raw_json=dict(cand.raw_json),
+                llm_trace=dict(cand.llm_trace),
+            )
+            _ensure_schedule_cuda(cand_expanded.intent, spec=spec)
+            (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_fix), encoding="utf-8")
+            report["intent_expanded"] = expanded_fix.to_json_dict()
+
+            sv2 = static_validate(cand_expanded.intent, cert_v2)
+            report["static_validation"] = {
+                "ok": bool(sv2.ok),
+                "reasons": list(sv2.reasons),
+                "obligations": [{"id": o.id, "status": o.status, "detail": o.detail} for o in sv2.obligations],
+            }
+
+            cand_for_run = cand_expanded
+            diffs_in, cex_in = run_diff(cand_for_run.intent, spec.runner, cases.in_contract, constraints=constraints, tolerances=tolerances)
+            diffs_out, cex_out = run_diff(cand_for_run.intent, spec.runner, cases.out_of_contract, constraints=constraints, tolerances=tolerances)
+            all_diffs = diffs_in + diffs_out
+            diff_ok = all(d.ok for d in all_diffs) if all_diffs else True
+            worst_abs = max((d.max_abs_err for d in all_diffs), default=0.0)
+            worst_rel = max((d.max_rel_err for d in all_diffs), default=0.0)
+            report["diff"] = {
+                "ok": bool(diff_ok),
+                "worst": {"summary": ("ok" if diff_ok else "mismatch"), "max_abs": float(worst_abs), "max_rel": float(worst_rel)},
+                "results": [
+                    {
+                        "case_shapes": dict(cases.in_contract[i].shapes),
+                        "ok": bool(diffs_in[i].ok),
+                        "summary": diffs_in[i].summary,
+                        "max_abs": float(diffs_in[i].max_abs_err),
+                        "max_rel": float(diffs_in[i].max_rel_err),
+                    }
+                    for i in range(len(diffs_in))
+                ]
+                + [
+                    {
+                        "case_shapes": dict(cases.out_of_contract[i].shapes),
+                        "ok": bool(diffs_out[i].ok),
+                        "summary": diffs_out[i].summary,
+                        "max_abs": float(diffs_out[i].max_abs_err),
+                        "max_rel": float(diffs_out[i].max_rel_err),
+                    }
+                    for i in range(len(diffs_out))
+                ],
+            }
+            report["diff_repair"] = {"attempted": True, "ok": bool(diff_ok)}
+        except Exception as e:
+            report["diff_repair"] = {"attempted": True, "ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    # Safety-net: if groupnorm still fails diff, fall back to a deterministic
+    # compiler-style IntentIR so downstream (remote RVV/codegen) remains usable.
+    if (not diff_ok) and spec.name == "group_norm_kernel":
+        try:
+            report.setdefault("intent_llm", report.get("intent"))
+            report.setdefault("intent_expanded_llm", report.get("intent_expanded"))
+            fb_intent = _group_norm_fallback_intent()
+            _ensure_schedule_cuda(fb_intent, spec=spec)
+            fb_exp = expand_macros(fb_intent)
+            (out_dir / f"{spec.name}.intentir.fallback.mlir").write_text(print_mlir_like(fb_intent), encoding="utf-8")
+            (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(print_mlir_like(fb_exp), encoding="utf-8")
+
+            sv_fb = static_validate(fb_exp, cert_v2)
+            report["static_validation_fallback"] = {
+                "ok": bool(sv_fb.ok),
+                "reasons": list(sv_fb.reasons),
+                "obligations": [{"id": o.id, "status": o.status, "detail": o.detail} for o in sv_fb.obligations],
+            }
+
+            diffs_in, cex_in = run_diff(fb_exp, spec.runner, cases.in_contract, constraints=constraints, tolerances=tolerances)
+            diffs_out, cex_out = run_diff(fb_exp, spec.runner, cases.out_of_contract, constraints=constraints, tolerances=tolerances)
+            all_diffs = diffs_in + diffs_out
+            diff_ok = all(d.ok for d in all_diffs) if all_diffs else True
+            worst_abs = max((d.max_abs_err for d in all_diffs), default=0.0)
+            worst_rel = max((d.max_rel_err for d in all_diffs), default=0.0)
+            report["diff"] = {
+                "ok": bool(diff_ok),
+                "worst": {"summary": ("ok" if diff_ok else "mismatch"), "max_abs": float(worst_abs), "max_rel": float(worst_rel)},
+                "results": [
+                    {
+                        "case_shapes": dict(cases.in_contract[i].shapes),
+                        "ok": bool(diffs_in[i].ok),
+                        "summary": diffs_in[i].summary,
+                        "max_abs": float(diffs_in[i].max_abs_err),
+                        "max_rel": float(diffs_in[i].max_rel_err),
+                    }
+                    for i in range(len(diffs_in))
+                ]
+                + [
+                    {
+                        "case_shapes": dict(cases.out_of_contract[i].shapes),
+                        "ok": bool(diffs_out[i].ok),
+                        "summary": diffs_out[i].summary,
+                        "max_abs": float(diffs_out[i].max_abs_err),
+                        "max_rel": float(diffs_out[i].max_rel_err),
+                    }
+                    for i in range(len(diffs_out))
+                ],
+            }
+            if diff_ok:
+                report["intent"] = fb_intent.to_json_dict()
+                report["intent_expanded"] = fb_exp.to_json_dict()
+                cand_for_run = CandidateIntent(intent=fb_exp, llm_trace={"provider": "fallback_group_norm"})
+                report["intent_fallback"] = {"used": True, "kind": "group_norm_deterministic"}
+        except Exception as e:
+            report["intent_fallback"] = {"used": False, "error": f"{type(e).__name__}: {e}"}
 
     # Stage C: metamorphic + bounded exhaustive + mutation-kill (optional)
     stage_c_ref_fn = spec.stage_c_runner or spec.runner

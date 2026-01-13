@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 
 import pytest
@@ -38,8 +39,19 @@ def _cuda_free_mem_mb() -> int:
         return 0
 
 
+def _cuda_min_free_mem_mb() -> int:
+    # Default to disabled. Tiny smoke tests can run even when the GPU is mostly busy.
+    try:
+        return max(0, int(os.getenv("INTENTIR_CUDA_MIN_FREE_MB", "0")))
+    except Exception:
+        return 0
+
+
+_MIN_FREE_MB = _cuda_min_free_mem_mb()
+
+
 @pytest.mark.skipif(not _cuda_available(), reason="CUDA not available")
-@pytest.mark.skipif(_cuda_free_mem_mb() < 1024, reason="CUDA free memory too low (<1024 MiB)")
+@pytest.mark.skipif((_MIN_FREE_MB > 0) and (_cuda_free_mem_mb() < _MIN_FREE_MB), reason=f"CUDA free memory too low (<{_MIN_FREE_MB} MiB)")
 @pytest.mark.skipif(shutil.which("nvcc") is None, reason="nvcc not available (torch extension build)")
 def test_cuda_vec_add_baseline_smoke():
     spec = next(s for s in default_kernel_specs() if s.name == "vec_add")

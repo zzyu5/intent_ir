@@ -112,7 +112,7 @@ def _run_one(cmd: List[str], *, env: Dict[str, str]) -> Dict[str, Any]:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--frontend", choices=["triton", "tilelang", "both"], default="both")
+    ap.add_argument("--frontend", choices=["triton", "tilelang", "cuda", "both", "all"], default="both")
     ap.add_argument("--kernel", action="append", default=[], help="repeatable; default runs 6 kernels")
     ap.add_argument("--suite", choices=["smoke", "coverage", "all"], default="smoke", help="Kernel suite (default: smoke)")
     ap.add_argument("--host", required=True)
@@ -133,7 +133,12 @@ def main() -> None:
     args = ap.parse_args()
 
     kernels = args.kernel or list(KERNEL_SUITES[str(args.suite)])
-    frontends = ["triton", "tilelang"] if args.frontend == "both" else [str(args.frontend)]
+    if args.frontend == "both":
+        frontends = ["triton", "tilelang"]
+    elif args.frontend == "all":
+        frontends = ["triton", "tilelang", "cuda"]
+    else:
+        frontends = [str(args.frontend)]
 
     base_env = dict(os.environ)
     if not bool(args.use_key):

@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 try:
@@ -39,8 +41,19 @@ def _cuda_free_mem_mb() -> int:
         return 0
 
 
+def _cuda_min_free_mem_mb() -> int:
+    # Default to disabled. Triton compilation can succeed with small headroom.
+    try:
+        return max(0, int(os.getenv("INTENTIR_CUDA_MIN_FREE_MB", "0")))
+    except Exception:
+        return 0
+
+
+_MIN_FREE_MB = _cuda_min_free_mem_mb()
+
+
 @pytest.mark.skipif(triton is None, reason="triton not available")
-@pytest.mark.skipif(_cuda_free_mem_mb() < 1024, reason="CUDA free memory too low (<1024 MiB)")
+@pytest.mark.skipif((_MIN_FREE_MB > 0) and (_cuda_free_mem_mb() < _MIN_FREE_MB), reason=f"CUDA free memory too low (<{_MIN_FREE_MB} MiB)")
 def test_compile_ttir_smoke():
     @triton.jit
     def add_kernel(X_ptr, Y_ptr, Z_ptr, N, BLOCK: tl.constexpr):

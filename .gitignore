@@ -7,6 +7,9 @@ doc/
 # Artifacts directory
 artifacts/
 
+# Generated kernel snapshots (not source-of-truth)
+kernels/cuda/ops/tilelang_generated/
+
 # C++ codegen build output
 backends/spmd_rvv/cpp_codegen/build/
 

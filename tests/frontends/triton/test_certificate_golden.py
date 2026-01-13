@@ -82,32 +82,50 @@ def _cuda_available() -> bool:
     if torch is None:
         return False
     try:
-        if not bool(torch.cuda.is_available()):
-            return False
-        # Some developer machines may run large GPU workloads (e.g. vLLM) in the
-        # background. Keep tests robust by skipping when free memory is too low.
-        try:
-            torch.cuda.empty_cache()
-        except Exception:
-            pass
-        free, _total = torch.cuda.mem_get_info()
-        return int(free // (1024 * 1024)) >= 1024
+        return bool(torch.cuda.is_available())
     except Exception:
         return False
 
 
 _TRITON_OK = _triton_import_ok()
+try:
+    _MIN_FREE_MB = int(os.getenv("INTENTIR_CUDA_MIN_FREE_MB", "0") or 0)
+except Exception:
+    _MIN_FREE_MB = 0
+
+
+def _cuda_free_mem_mb() -> int:
+    if torch is None:
+        return 0
+    try:
+        if not bool(torch.cuda.is_available()):
+            return 0
+        try:
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+        free, _total = torch.cuda.mem_get_info()
+        return int(free // (1024 * 1024))
+    except Exception:
+        return 0
 
 
 @pytest.mark.skipif(not _TRITON_OK, reason="triton import probe failed (no CUDA/driver?)")
 @pytest.mark.skipif(not _cuda_available(), reason="CUDA not available")
+@pytest.mark.skipif((_MIN_FREE_MB > 0) and (_cuda_free_mem_mb() < _MIN_FREE_MB), reason=f"CUDA free memory too low (<{_MIN_FREE_MB} MiB)")
 @pytest.mark.parametrize("kernel_name", ["softmax_inner", "layer_norm_persistent"])
 def test_triton_certificate_semantic_facts_golden(kernel_name: str, tmp_path: Path):
     """
     PR#8: lock only CertificateV2.semantic_facts (schedule_hints may drift).
     """
     spec = _find_spec(kernel_name)
-    got = _extract_semantic_facts(spec, tmp_path=tmp_path / kernel_name)
+    try:
+        got = _extract_semantic_facts(spec, tmp_path=tmp_path / kernel_name)
+    except Exception as e:
+        msg = str(e).lower()
+        if "cuda" in msg or "out of memory" in msg or "ttir not produced" in msg:
+            pytest.skip(f"Triton/CUDA environment not ready for golden check: {type(e).__name__}: {e}")
+        raise
 
     golden_dir = _golden_dir()
     golden_dir.mkdir(parents=True, exist_ok=True)

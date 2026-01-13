@@ -486,6 +486,33 @@ void emit_elemwise_bin(CodeWriter& w, const Intent& intent, const std::unordered
   emit_scalar();
 }
 
+void emit_elemwise_scalar_f32(CodeWriter& w, const std::string& op, const std::string& out, const std::string& a,
+                              const std::vector<int64_t>& out_shape, double scalar) {
+  const int r = static_cast<int>(out_shape.size());
+  if (r > 4) fail("elemwise scalar supports rank<=4");
+  const int64_t n = numel(out_shape);
+  const std::string s = c_float(scalar);
+  w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) {");
+  w.indent();
+  if (op == "add") {
+    w.line(out + "[i] = " + a + "[i] + " + s + ";");
+  } else if (op == "sub") {
+    w.line(out + "[i] = " + a + "[i] - " + s + ";");
+  } else if (op == "mul") {
+    w.line(out + "[i] = " + a + "[i] * " + s + ";");
+  } else if (op == "div") {
+    w.line(out + "[i] = " + a + "[i] / " + s + ";");
+  } else if (op == "max") {
+    w.line(out + "[i] = fmaxf(" + a + "[i], " + s + ");");
+  } else if (op == "min") {
+    w.line(out + "[i] = fminf(" + a + "[i], " + s + ");");
+  } else {
+    fail("unsupported elemwise scalar op: " + op);
+  }
+  w.dedent();
+  w.line("}");
+}
+
 void emit_cmp(CodeWriter& w, const std::string& cmp_op, const std::string& out, const std::string& a, const std::string& b,
               const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape,
               const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings,
@@ -1562,11 +1589,29 @@ struct CProgramEmitter {
 	            emit_transpose_generic(w, out, op.inputs[0], in_shape, out_shape, perm);
 	          }
 	        }
-	      } else if (op.op == "broadcast_in_dim") {
+      } else if (op.op == "broadcast_in_dim") {
 	        emit_broadcast_in_dim(op, out_shape);
       } else if (op.op == "add" || op.op == "sub" || op.op == "mul" || op.op == "div" || op.op == "max" || op.op == "min") {
-        emit_elemwise_bin(w, intent, bindings, op.op, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape,
-                          dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(out));
+        if (op.inputs.size() == 2) {
+          emit_elemwise_bin(w, intent, bindings, op.op, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape,
+                            dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(out));
+        } else if (op.inputs.size() == 1) {
+          // Legacy scalar form (1 input + scalar attr), used by some LLM outputs and
+          // by deterministic intent builders for reductions (mean/var normalization).
+          std::string key;
+          if (op.op == "div" && op.attrs.contains("divisor")) key = "divisor";
+          else if (op.op == "add" && op.attrs.contains("addend")) key = "addend";
+          else if (op.op == "sub" && op.attrs.contains("subtract")) key = "subtract";
+          else if (op.op == "mul" && op.attrs.contains("mul_factor")) key = "mul_factor";
+          else if ((op.op == "max" || op.op == "min") && op.attrs.contains("other")) key = "other";
+          else fail("elemwise op requires 2 inputs (or 1 + scalar attr)");
+          if (dtype_env.at(op.inputs[0]) != "f32" || dtype_env.at(out) != "f32") fail("elemwise scalar path supports only f32");
+          if (shape_env.at(op.inputs[0]) != out_shape) fail("elemwise scalar expects input shape == output shape");
+          double scalar = resolve_const_value(op.attrs[key], bindings);
+          emit_elemwise_scalar_f32(w, op.op, out, op.inputs[0], out_shape, scalar);
+        } else {
+          fail("elemwise op requires 2 inputs (or 1 + scalar attr)");
+        }
       } else if (op.op == "ne") {
         emit_ne(w, out, op.inputs[0], op.inputs[1], shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, intent, bindings,
                 dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(out));
@@ -1846,10 +1891,18 @@ int main(int argc, char** argv) {
         continue;
       }
       if (kind == "add" || kind == "sub" || kind == "mul" || kind == "div" || kind == "max" || kind == "min") {
-        const auto& sa = get_shape(op.inputs[0]);
-        const auto& sb = get_shape(op.inputs[1]);
-        shape_env[out] = broadcast_shape_named(intent, bindings, op.inputs[0], op.inputs[1], sa, sb);
-        dtype_env[out] = get_dtype(op.inputs[0]);
+        if (op.inputs.size() == 2) {
+          const auto& sa = get_shape(op.inputs[0]);
+          const auto& sb = get_shape(op.inputs[1]);
+          shape_env[out] = broadcast_shape_named(intent, bindings, op.inputs[0], op.inputs[1], sa, sb);
+          dtype_env[out] = get_dtype(op.inputs[0]);
+        } else if (op.inputs.size() == 1) {
+          // Scalar-attr form: output shape matches the single tensor input.
+          shape_env[out] = get_shape(op.inputs[0]);
+          dtype_env[out] = get_dtype(op.inputs[0]);
+        } else {
+          fail("elemwise op requires 1 or 2 inputs");
+        }
         continue;
       }
       if (kind == "ne" || kind == "lt" || kind == "le" || kind == "gt" || kind == "ge" || kind == "and" || kind == "or") {
