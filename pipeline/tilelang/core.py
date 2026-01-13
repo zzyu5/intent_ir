@@ -118,7 +118,7 @@ def _any_kernel_dim_intent() -> IntentFunction:
         "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
         "out": TensorType(dtype="bool", shape=[Dim("sym", "M")], layout=rm),
     }
-    ops = [Op(op="reduce_any", inputs=["inp"], output="out", attrs={"axes": [1], "keepdims": False})]
+    ops = [Op(op="reduce_any", inputs=["inp"], output="out", attrs={"dims": [1], "keepdims": False})]
     schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
     return IntentFunction(
         name="any_kernel_dim",
@@ -191,7 +191,7 @@ def _group_norm_intent() -> IntentFunction:
         layout=rm,
     )
 
-    ops.append(Op(op="reduce_sum", inputs=["X4"], output="sum", attrs={"axes": [2, 3], "keepdims": True}))
+    ops.append(Op(op="reduce_sum", inputs=["X4"], output="sum", attrs={"dims": [2, 3], "keepdims": True}))
     tensors["sum"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("const", 1), Dim("const", 1)], layout=rm)
     ops.append(Op(op="div", inputs=["sum"], output="mean4", attrs={"divisor": "num_elements"}))
     tensors["mean4"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("const", 1), Dim("const", 1)], layout=rm)
@@ -200,7 +200,7 @@ def _group_norm_intent() -> IntentFunction:
     tensors["diff"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("sym", "group_size"), Dim("sym", "HW")], layout=rm)
     ops.append(Op(op="mul", inputs=["diff", "diff"], output="sq", attrs={}))
     tensors["sq"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("sym", "group_size"), Dim("sym", "HW")], layout=rm)
-    ops.append(Op(op="reduce_sum", inputs=["sq"], output="var_sum", attrs={"axes": [2, 3], "keepdims": True}))
+    ops.append(Op(op="reduce_sum", inputs=["sq"], output="var_sum", attrs={"dims": [2, 3], "keepdims": True}))
     tensors["var_sum"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("const", 1), Dim("const", 1)], layout=rm)
     ops.append(Op(op="div", inputs=["var_sum"], output="var4", attrs={"divisor": "num_elements"}))
     tensors["var4"] = TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "num_groups"), Dim("const", 1), Dim("const", 1)], layout=rm)
@@ -468,7 +468,7 @@ def _row_sum_intent() -> IntentFunction:
         "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
         "out": TensorType(dtype="f32", shape=[Dim("sym", "M")], layout=rm),
     }
-    ops = [Op(op="reduce_sum", inputs=["inp"], output="out", attrs={"axes": [1], "keepdims": False})]
+    ops = [Op(op="reduce_sum", inputs=["inp"], output="out", attrs={"dims": [1], "keepdims": False})]
     schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
     return IntentFunction(
         name="row_sum",
@@ -591,7 +591,7 @@ def _row_max_intent() -> IntentFunction:
         "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
         "out": TensorType(dtype="f32", shape=[Dim("sym", "M")], layout=rm),
     }
-    ops = [Op(op="reduce_max", inputs=["inp"], output="out", attrs={"axes": [1], "keepdims": False})]
+    ops = [Op(op="reduce_max", inputs=["inp"], output="out", attrs={"dims": [1], "keepdims": False})]
     schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
     return IntentFunction(
         name="row_max",
@@ -738,7 +738,7 @@ def _rms_norm2d_intent() -> IntentFunction:
 
     ops.append(Op(op="mul", inputs=["inp", "inp"], output="sq", attrs={}))
     tensors["sq"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
-    ops.append(Op(op="reduce_sum", inputs=["sq"], output="sum_sq", attrs={"axes": [1], "keepdims": True}))
+    ops.append(Op(op="reduce_sum", inputs=["sq"], output="sum_sq", attrs={"dims": [1], "keepdims": True}))
     tensors["sum_sq"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
     ops.append(Op(op="div", inputs=["sum_sq"], output="mean_sq", attrs={"divisor": "N"}))
     tensors["mean_sq"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
@@ -828,7 +828,7 @@ def _rms_norm_residual2d_intent() -> IntentFunction:
 
     ops.append(Op(op="mul", inputs=["z", "z"], output="sq", attrs={}))
     tensors["sq"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
-    ops.append(Op(op="reduce_sum", inputs=["sq"], output="sum_sq", attrs={"axes": [1], "keepdims": True}))
+    ops.append(Op(op="reduce_sum", inputs=["sq"], output="sum_sq", attrs={"dims": [1], "keepdims": True}))
     tensors["sum_sq"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
     ops.append(Op(op="div", inputs=["sum_sq"], output="mean_sq", attrs={"divisor": "N"}))
     tensors["mean_sq"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
@@ -1198,7 +1198,7 @@ def _grouped_row_sum2d_intent() -> IntentFunction:
     ops: list[Op] = []
     ops.append(Op(op="reshape", inputs=["inp"], output="x3", attrs={"shape": ["M", g, group_size]}))
     tensors["x3"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", g), Dim("const", group_size)], layout=rm)
-    ops.append(Op(op="reduce_sum", inputs=["x3"], output="out", attrs={"axes": [2], "keepdims": False}))
+    ops.append(Op(op="reduce_sum", inputs=["x3"], output="out", attrs={"dims": [2], "keepdims": False}))
     schedule = ScheduleSketch(tile_m=16, tile_n=16, tile_k=None, vec_width=1, pipeline_depth=1)
     return IntentFunction(
         name="grouped_row_sum2d",
@@ -1321,7 +1321,7 @@ def _layer_norm_persistent_intent() -> IntentFunction:
     }
     ops: list[Op] = []
 
-    ops.append(Op(op="reduce_sum", inputs=["in_ptr"], output="sum_row", attrs={"axes": [1], "keepdims": True}))
+    ops.append(Op(op="reduce_sum", inputs=["in_ptr"], output="sum_row", attrs={"dims": [1], "keepdims": True}))
     tensors["sum_row"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
 
     ops.append(Op(op="div", inputs=["sum_row"], output="mean_row", attrs={"divisor": "N"}))
@@ -1333,7 +1333,7 @@ def _layer_norm_persistent_intent() -> IntentFunction:
     ops.append(Op(op="mul", inputs=["diff", "diff"], output="sq", attrs={}))
     tensors["sq"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
 
-    ops.append(Op(op="reduce_sum", inputs=["sq"], output="var_sum", attrs={"axes": [1], "keepdims": True}))
+    ops.append(Op(op="reduce_sum", inputs=["sq"], output="var_sum", attrs={"dims": [1], "keepdims": True}))
     tensors["var_sum"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
 
     ops.append(Op(op="div", inputs=["var_sum"], output="var", attrs={"divisor": "N"}))
@@ -1429,7 +1429,7 @@ def _layer_norm_residual2d_intent() -> IntentFunction:
     ops.append(Op(op="add", inputs=["inp", "residual"], output="z", attrs={}))
     tensors["z"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
 
-    ops.append(Op(op="reduce_sum", inputs=["z"], output="sum_row", attrs={"axes": [1], "keepdims": True}))
+    ops.append(Op(op="reduce_sum", inputs=["z"], output="sum_row", attrs={"dims": [1], "keepdims": True}))
     tensors["sum_row"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
     ops.append(Op(op="div", inputs=["sum_row"], output="mean_row", attrs={"divisor": "N"}))
     tensors["mean_row"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
@@ -1441,7 +1441,7 @@ def _layer_norm_residual2d_intent() -> IntentFunction:
     tensors["diff"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
     ops.append(Op(op="mul", inputs=["diff", "diff"], output="sq", attrs={}))
     tensors["sq"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
-    ops.append(Op(op="reduce_sum", inputs=["sq"], output="var_sum", attrs={"axes": [1], "keepdims": True}))
+    ops.append(Op(op="reduce_sum", inputs=["sq"], output="var_sum", attrs={"dims": [1], "keepdims": True}))
     tensors["var_sum"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)
     ops.append(Op(op="div", inputs=["var_sum"], output="var", attrs={"divisor": "N"}))
     tensors["var"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("const", 1)], layout=rm)

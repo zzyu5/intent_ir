@@ -42,6 +42,72 @@
         ],
         "kind": "load",
         "meta": {
+          "addr_off_bytes": 4,
+          "unresolved": true
+        },
+        "predicate": {
+          "clauses": [
+            "256*pid0 + r0 < M"
+          ]
+        },
+        "rank": 2,
+        "tensor": "inp"
+      },
+      {
+        "address_space": "global",
+        "dtype": "f32",
+        "index_exprs": [
+          {
+            "const": 0,
+            "terms": {}
+          }
+        ],
+        "kind": "load",
+        "meta": {
+          "addr_off_bytes": 8,
+          "unresolved": true
+        },
+        "predicate": {
+          "clauses": [
+            "256*pid0 + r0 < M"
+          ]
+        },
+        "rank": 2,
+        "tensor": "inp"
+      },
+      {
+        "address_space": "global",
+        "dtype": "f32",
+        "index_exprs": [
+          {
+            "const": 0,
+            "terms": {}
+          }
+        ],
+        "kind": "load",
+        "meta": {
+          "addr_off_bytes": 12,
+          "unresolved": true
+        },
+        "predicate": {
+          "clauses": [
+            "256*pid0 + r0 < M"
+          ]
+        },
+        "rank": 2,
+        "tensor": "inp"
+      },
+      {
+        "address_space": "global",
+        "dtype": "f32",
+        "index_exprs": [
+          {
+            "const": 0,
+            "terms": {}
+          }
+        ],
+        "kind": "load",
+        "meta": {
           "unresolved": true
         },
         "predicate": {

@@ -71,14 +71,29 @@ _MUL_LO_RE = re.compile(
 )
 _MAD_LO_RE = re.compile(r"^\s*mad\.lo\.s32\s+(?P<dst>%r\d+)\s*,\s*(?P<a>%r\d+)\s*,\s*(?P<b>%r\d+)\s*,\s*(?P<c>%r\d+)\s*;\s*$")
 
-_MUL_WIDE_RE = re.compile(r"^\s*mul\.wide\.s32\s+(?P<dst>%rd\d+)\s*,\s*(?P<src>%r\d+)\s*,\s*(?P<imm>[-0-9a-fA-FxX]+)\s*;\s*$")
-_ADD_S64_RE = re.compile(r"^\s*add\.s64\s+(?P<dst>%rd\d+)\s*,\s*(?P<a>%rd\d+)\s*,\s*(?P<b>%rd\d+)\s*;\s*$")
+_MUL_WIDE_RE = re.compile(
+    r"^\s*mul\.wide\.(?P<ty>s32|u32)\s+(?P<dst>%rd\d+)\s*,\s*(?P<src>%r\d+)\s*,\s*(?P<imm>[-0-9a-fA-FxX]+)\s*;\s*$"
+)
+_ADD_S64_RE = re.compile(r"^\s*add\.(?:s64|u64)\s+(?P<dst>%rd\d+)\s*,\s*(?P<a>%rd\d+)\s*,\s*(?P<b>%rd\d+)\s*;\s*$")
+
+_CVT_S64_S32_RE = re.compile(r"^\s*cvt\.(?:s64|u64)\.(?:s32|u32)\s+(?P<dst>%rd\d+)\s*,\s*(?P<src>%r\d+)\s*;\s*$")
+_SHL_B64_RE = re.compile(r"^\s*shl\.b64\s+(?P<dst>%rd\d+)\s*,\s*(?P<src>%rd\d+)\s*,\s*(?P<imm>\d+)\s*;\s*$")
 
 _SETP_RE = re.compile(r"^\s*setp\.(?P<cmp>ge|gt|le|lt)\.s32\s+(?P<pred>%p\d+)\s*,\s*(?P<lhs>%r\d+)\s*,\s*(?P<rhs>%r\d+)\s*;\s*$")
 _BRA_PRED_RE = re.compile(r"^\s*@(?P<pred>%p\d+)\s+bra\s+\$L.*;\s*$")
 
-_LD_GLOBAL_RE = re.compile(r"^\s*ld\.global\.(?P<ty>f16|f32|u8|s8|u16|u32|s32)\s+%[a-z0-9]+\s*,\s*\[(?P<addr>%rd\d+)\]\s*;\s*$")
-_ST_GLOBAL_RE = re.compile(r"^\s*st\.global\.(?P<ty>f16|f32|u8|s8|u16|u32|s32)\s+\[(?P<addr>%rd\d+)\]\s*,\s*%[a-z0-9]+\s*;\s*$")
+_LD_GLOBAL_RE = re.compile(
+    r"^\s*(?:@(?P<pred>%p\d+)\s+)?"
+    r"ld\.global(?:\.[A-Za-z0-9]+)*\.(?P<ty>f16|f32|u8|s8|u16|u32|s32)\s+"
+    r"(?:%[a-z0-9]+|\{[^\}]*\})\s*,\s*"
+    r"\[(?P<addr>%rd\d+)(?P<off>(?:\+\-?\d+|-\d+))?\]\s*;\s*$"
+)
+_ST_GLOBAL_RE = re.compile(
+    r"^\s*(?:@(?P<pred>%p\d+)\s+)?"
+    r"st\.global(?:\.[A-Za-z0-9]+)*\.(?P<ty>f16|f32|u8|s8|u16|u32|s32)\s+"
+    r"\[(?P<addr>%rd\d+)(?P<off>(?:\+\-?\d+|-\d+))?\]\s*,\s*"
+    r"(?:%[a-z0-9]+|\{[^\}]*\})\s*;\s*$"
+)
 
 
 def _dtype_from_ptx_suffix(s: str) -> Tuple[str, int]:
@@ -214,7 +229,9 @@ def parse_ptx_kernel(
     ptx_all = "\n".join(lines)
     anchors: Dict[str, Any] = {
         "kernel_kind_hint": "cuda_ptx",
-        "has_copy": True,  # Tier-A elementwise/copy kernels still count as anchors
+        # `has_copy` is refined after access recovery; initialize to True so we
+        # don't accidentally regress older golden tests on partial parsers.
+        "has_copy": True,
         "has_dot": ("wmma." in ptx_all) or ("mma." in ptx_all),
         "has_reduce": False,
         "has_atomic": ("atom." in ptx_all) or ("atom.global" in ptx_all),
@@ -287,6 +304,14 @@ def parse_ptx_kernel(
                 reg_aff[dst] = AffineExpr.const_val(int(imm))
             continue
 
+        # cvt s64/u64 from s32/u32 (propagate affine)
+        m = _CVT_S64_S32_RE.match(ln)
+        if m:
+            dst = str(m.group("dst"))
+            src = str(m.group("src"))
+            reg_aff[dst] = get_aff(src)
+            continue
+
         # add/sub s32
         m = _ADD_S32_RE.match(ln)
         if m:
@@ -344,7 +369,26 @@ def parse_ptx_kernel(
                 saw_branch = True
                 continue
 
-        # offset bytes (mul.wide idx, elem_bytes)
+        # shift-left b64 (common byte-offset pattern: idx << log2(elem_bytes))
+        m = _SHL_B64_RE.match(ln)
+        if m:
+            dst = str(m.group("dst"))
+            src = str(m.group("src"))
+            imm = parse_int_literal(str(m.group("imm")))
+            if imm is None:
+                continue
+            shift = int(imm)
+            if shift < 0 or shift > 63:
+                continue
+            mul = 1 << shift
+            src_aff = get_aff(src)
+            if src_aff.ok:
+                reg_aff[dst] = src_aff.mul_const(mul)
+                if mul in {1, 2, 4, 8}:
+                    byte_offsets[dst] = _OffsetVal(idx=src_aff, elem_bytes=int(mul))
+            continue
+
+        # offset bytes (mul.wide idx, elem_bytes) — only treat {1,2,4,8} as element-bytes.
         m = _MUL_WIDE_RE.match(ln)
         if m:
             dst = str(m.group("dst"))
@@ -352,13 +396,19 @@ def parse_ptx_kernel(
             imm = parse_int_literal(str(m.group("imm")))
             if imm is None:
                 continue
+            imm_i = int(imm)
             # Recover flatten2d form if src was marked as such.
             key = f"__flat2d__{src}"
             if key in byte_offsets:
                 idx = byte_offsets[key].idx
             else:
                 idx = get_aff(src)
-            byte_offsets[dst] = _OffsetVal(idx=idx, elem_bytes=int(imm))
+            if isinstance(idx, AffineExpr) and idx.ok:
+                reg_aff[dst] = idx.mul_const(imm_i)
+            else:
+                reg_aff[dst] = AffineExpr(ok=False)
+            if imm_i in {1, 2, 4, 8}:
+                byte_offsets[dst] = _OffsetVal(idx=idx, elem_bytes=int(imm_i))
             continue
 
         # ptr add (base + offset)
@@ -368,13 +418,28 @@ def parse_ptx_kernel(
             a = str(m.group("a"))
             b = str(m.group("b"))
             base = None
+            off_reg = None
             if a in ptr_base:
                 base = ptr_base[a].tensor
+                off_reg = b
             elif a in addr_regs:
                 base = addr_regs[a].tensor
-            if base and b in byte_offsets:
-                off = byte_offsets[b]
-                addr_regs[dst] = _AddrVal(tensor=base, idx=off.idx, elem_bytes=int(off.elem_bytes))
+                off_reg = b
+            elif b in ptr_base:
+                base = ptr_base[b].tensor
+                off_reg = a
+            elif b in addr_regs:
+                base = addr_regs[b].tensor
+                off_reg = a
+            if base is not None and off_reg is not None:
+                if off_reg in byte_offsets:
+                    off = byte_offsets[off_reg]
+                    addr_regs[dst] = _AddrVal(tensor=base, idx=off.idx, elem_bytes=int(off.elem_bytes))
+                elif off_reg in reg_aff and reg_aff[off_reg].ok:
+                    # Unknown unit (bytes vs elems). Use elem_bytes=1 and mark unresolved later.
+                    addr_regs[dst] = _AddrVal(tensor=base, idx=reg_aff[off_reg], elem_bytes=1)
+                else:
+                    addr_regs[dst] = _AddrVal(tensor=base, idx=AffineExpr(ok=False), elem_bytes=1)
             continue
 
     # 4) Predicate clauses (MVP): invert early-exit setp.ge into "<" clauses.
@@ -402,16 +467,19 @@ def parse_ptx_kernel(
         kind = None
         ty = None
         addr = None
+        off_raw = None
         if m:
             kind = "load"
             ty = str(m.group("ty"))
             addr = str(m.group("addr"))
+            off_raw = m.group("off")
         else:
             m2 = _ST_GLOBAL_RE.match(ln)
             if m2:
                 kind = "store"
                 ty = str(m2.group("ty"))
                 addr = str(m2.group("addr"))
+                off_raw = m2.group("off")
         if not kind:
             continue
 
@@ -419,6 +487,15 @@ def parse_ptx_kernel(
         tensor = "<unresolved>"
         idx_exprs: List[IndexExpr] = [IndexExpr(terms={}, const=0)]
         meta: Dict[str, Any] = {}
+        if off_raw:
+            s = str(off_raw).strip()
+            # PTX sometimes prints "+-32" instead of "-32".
+            if s.startswith("+-"):
+                s = "-" + s[2:]
+            try:
+                meta["addr_off_bytes"] = int(s)
+            except Exception:
+                pass
 
         ai = addr_regs.get(str(addr))
         if ai is not None:
@@ -435,6 +512,9 @@ def parse_ptx_kernel(
             else:
                 meta["unresolved"] = True
         else:
+            # Fall back to ptr base mapping when add-tree recovery fails.
+            if str(addr) in ptr_base:
+                tensor = str(ptr_base[str(addr)].tensor)
             meta["unresolved"] = True
 
         rank = int((tensors_spec.get(tensor) or {}).get("rank", 1)) if isinstance(tensors_spec, dict) else 1
@@ -459,6 +539,11 @@ def parse_ptx_kernel(
         if isinstance(spec, dict) and isinstance(spec.get("shape"), list):
             return list(spec.get("shape"))  # type: ignore[return-value]
         return None
+
+    # `has_copy` is a weak-but-useful semantic anchor: any global load+store.
+    # Do NOT require tensor name resolution here; otherwise Tier-A kernels with
+    # unresolved ptr mapping would become OUT_OF_SCOPE (O1 FAIL) too easily.
+    anchors["has_copy"] = any(a.kind == "load" for a in accesses) and any(a.kind == "store" for a in accesses)
 
     read_tensors = {a.tensor for a in accesses if a.kind == "load" and a.tensor in tensors_spec}
     write_tensors = {a.tensor for a in accesses if a.kind == "store" and a.tensor in tensors_spec}
@@ -505,6 +590,55 @@ def parse_ptx_kernel(
             has_reduce = True
 
     anchors["has_reduce"] = bool(has_reduce)
+
+    # Infer has_dot (matmul-like) from tensor shape symbols:
+    #   A:[M,K], B:[K,N], C:[M,N]  -> has_dot
+    #
+    # This is intentionally conservative: it requires two distinct read tensors
+    # and one written tensor, all rank-2, sharing a single reduction symbol.
+    def _infer_has_dot() -> bool:
+        for wt in sorted(write_tensors):
+            wshape = tensor_shape(wt)
+            if not wshape or len(wshape) != 2:
+                continue
+            osyms = _shape_syms(wshape)
+            if len(osyms) != 2:
+                continue
+            for a in sorted(read_tensors):
+                if a == wt:
+                    continue
+                ashp = tensor_shape(a)
+                if not ashp or len(ashp) != 2:
+                    continue
+                asyms = _shape_syms(ashp)
+                for b in sorted(read_tensors):
+                    if b == wt or b == a:
+                        continue
+                    bshp = tensor_shape(b)
+                    if not bshp or len(bshp) != 2:
+                        continue
+                    bsyms = _shape_syms(bshp)
+                    # Candidate reduction symbols are those present in reads but not in output.
+                    red = (asyms | bsyms) - osyms
+                    if len(red) != 1:
+                        continue
+                    (k_sym,) = tuple(red)
+                    if (k_sym not in asyms) or (k_sym not in bsyms):
+                        continue
+                    a_out = asyms & osyms
+                    b_out = bsyms & osyms
+                    if len(a_out) != 1 or len(b_out) != 1:
+                        continue
+                    if a_out == b_out:
+                        continue
+                    # No extra symbols besides M/N/K.
+                    if (asyms | bsyms | osyms) != (osyms | {k_sym}):
+                        continue
+                    return True
+        return False
+
+    if not bool(anchors.get("has_dot")):
+        anchors["has_dot"] = bool(_infer_has_dot())
 
     # 6) Symbol ranges (best-effort, for SMT domains).
     # Use canonical shapes to approximate pid domains for deterministic checks.
