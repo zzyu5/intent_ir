@@ -98,6 +98,36 @@ def _dtype_from_ptx_suffix(s: str) -> Tuple[str, int]:
     return ("unknown", 4)
 
 
+def _shape_syms(shape: List[object]) -> set[str]:
+    out: set[str] = set()
+    for d in shape:
+        if isinstance(d, str) and d:
+            out.add(str(d))
+    return out
+
+
+def _shape_num_elems(shape: List[object], canonical_shapes: Dict[str, Any]) -> Optional[int]:
+    prod = 1
+    for d in shape:
+        if isinstance(d, int):
+            v = d
+        elif isinstance(d, str):
+            if d in canonical_shapes:
+                try:
+                    v = int(canonical_shapes[d])
+                except Exception:
+                    return None
+            else:
+                # Unknown symbolic dim.
+                return None
+        else:
+            return None
+        if v < 0:
+            return None
+        prod *= int(v)
+    return int(prod)
+
+
 def _block_dim_from_launch(launch: Dict[str, Any], axis: str) -> Optional[int]:
     blk = launch.get("block")
     if isinstance(blk, (list, tuple)) and len(blk) >= 3:
@@ -421,9 +451,63 @@ def parse_ptx_kernel(
             )
         )
 
+    # 5.1) Infer has_reduce (anchor) from IO shape relations + PTX accesses.
+    canonical_shapes = launch.get("canonical_shapes") if isinstance(launch.get("canonical_shapes"), dict) else {}
+
+    def tensor_shape(t: str) -> Optional[List[object]]:
+        spec = tensors_spec.get(t) if isinstance(tensors_spec, dict) else None
+        if isinstance(spec, dict) and isinstance(spec.get("shape"), list):
+            return list(spec.get("shape"))  # type: ignore[return-value]
+        return None
+
+    read_tensors = {a.tensor for a in accesses if a.kind == "load" and a.tensor in tensors_spec}
+    write_tensors = {a.tensor for a in accesses if a.kind == "store" and a.tensor in tensors_spec}
+
+    has_reduce = False
+    # Strong signals: any written tensor is lower-rank or has fewer elements than some read tensor.
+    for wt in sorted(write_tensors):
+        wshape = tensor_shape(wt)
+        if not wshape:
+            continue
+        wrank = len(wshape)
+        wne = _shape_num_elems(wshape, canonical_shapes)
+        for rt in sorted(read_tensors):
+            rshape = tensor_shape(rt)
+            if not rshape:
+                continue
+            rrank = len(rshape)
+            if wrank < rrank:
+                has_reduce = True
+                break
+            rne = _shape_num_elems(rshape, canonical_shapes)
+            if wne is not None and rne is not None and wne < rne:
+                has_reduce = True
+                break
+        if has_reduce:
+            break
+
+    # Fallback signal: symbols used by reads form a strict superset of symbols used by writes,
+    # with no new symbols introduced by writes (typical "reduce over K" / "reduce over N").
+    if not has_reduce:
+        read_syms: set[str] = set()
+        write_syms: set[str] = set()
+        for t in sorted(read_tensors):
+            shp = tensor_shape(t)
+            if shp:
+                read_syms |= _shape_syms(shp)
+        for t in sorted(write_tensors):
+            shp = tensor_shape(t)
+            if shp:
+                write_syms |= _shape_syms(shp)
+        missing = read_syms - write_syms
+        new = write_syms - read_syms
+        if missing and not new:
+            has_reduce = True
+
+    anchors["has_reduce"] = bool(has_reduce)
+
     # 6) Symbol ranges (best-effort, for SMT domains).
     # Use canonical shapes to approximate pid domains for deterministic checks.
-    canonical_shapes = launch.get("canonical_shapes") if isinstance(launch.get("canonical_shapes"), dict) else {}
     bx = _block_dim_from_launch(launch, "x") or 1
     by = _block_dim_from_launch(launch, "y") or 1
     bz = _block_dim_from_launch(launch, "z") or 1

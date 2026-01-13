@@ -49,7 +49,7 @@ def _diff(a: dict, b: dict) -> str:
 
 
 @pytest.mark.skipif(not _nvcc_available(), reason="nvcc not available")
-@pytest.mark.parametrize("kernel_name", ["vec_add", "transpose2d"])
+@pytest.mark.parametrize("kernel_name", ["vec_add", "transpose2d", "row_sum"])
 def test_cuda_certificate_semantic_facts_golden(kernel_name: str, tmp_path: Path):
     """
     Lock only CertificateV2.semantic_facts (schedule_hints may drift).

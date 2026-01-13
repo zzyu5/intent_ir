@@ -38,6 +38,7 @@ from verify.tolerances import infer_tolerances
 
 from kernels.cuda.ops.vec_add import VEC_ADD_CU_PATH, vec_add_io
 from kernels.cuda.ops.transpose2d import TRANSPOSE2D_CU_PATH, transpose2d_io
+from kernels.cuda.ops.row_sum import ROW_SUM_CU_PATH, row_sum_io
 from kernels.tilelang.ops.any_kernel_dim import make_any_kernel_dim_prim_func
 from kernels.tilelang.ops.groupnorm import make_group_norm_kernel_prim_func
 from kernels.tilelang.ops._attn_fwd import make_attn_fwd_prim_func
@@ -148,6 +149,25 @@ def _transpose2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         kernel_name="transpose2d",
         cuda_src=_read_cuda_src(TRANSPOSE2D_CU_PATH),
         io_spec=dict(transpose2d_io),
+        launch=launch,
+        bindings=dict(case.shapes),
+        inputs_np={"inp": inp},
+        output_names=["out"],
+    )
+    return {"inp": io["inp"], "out": io["out"]}
+
+
+def _row_sum_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 0))
+    n = int(case.shapes.get("N", 0))
+    rng = np.random.default_rng(int(case.seed))
+    inp = rng.standard_normal((m, n), dtype=np.float32)
+    block = (256, 1, 1)
+    launch = CudaLaunch(grid=(_ceil_div(m, block[0]), 1, 1), block=block, shared_mem=0)
+    io = run_cuda_kernel_io(
+        kernel_name="row_sum",
+        cuda_src=_read_cuda_src(ROW_SUM_CU_PATH),
+        io_spec=dict(row_sum_io),
         launch=launch,
         bindings=dict(case.shapes),
         inputs_np={"inp": inp},
@@ -526,6 +546,16 @@ def _native_cuda_kernel_specs() -> List[KernelSpec]:
             vary_axes=["M", "N"],
             runner=_transpose2d_reference,
             block=(16, 16, 1),
+            exclude_axes=[],
+        ),
+        KernelSpec(
+            name="row_sum",
+            cuda_path=ROW_SUM_CU_PATH,
+            io_spec=dict(row_sum_io),
+            canonical_shapes={"M": 256, "N": 256},
+            vary_axes=["M", "N"],
+            runner=_row_sum_reference,
+            block=(256, 1, 1),
             exclude_axes=[],
         ),
     ]
