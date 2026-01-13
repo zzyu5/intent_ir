@@ -150,6 +150,25 @@ def chat_completion(
     if env_use_cache is not None:
         v = str(env_use_cache).strip().lower()
         use_cache = v not in {"0", "false", "no", "off"}
+    # Optional runtime overrides for unstable/slow providers.
+    env_timeout = os.getenv("INTENTIR_LLM_TIMEOUT_S")
+    if env_timeout is not None and str(env_timeout).strip():
+        try:
+            timeout = int(env_timeout)
+        except Exception:
+            pass
+    env_retries = os.getenv("INTENTIR_LLM_HTTP_MAX_RETRIES")
+    if env_retries is not None and str(env_retries).strip():
+        try:
+            max_retries = int(env_retries)
+        except Exception:
+            pass
+    env_total_wait = os.getenv("INTENTIR_LLM_HTTP_MAX_TOTAL_WAIT_S")
+    if env_total_wait is not None and str(env_total_wait).strip():
+        try:
+            max_total_wait_s = int(env_total_wait)
+        except Exception:
+            pass
     if cache_dir is None:
         env_cd = os.getenv("INTENTIR_LLM_CACHE_DIR")
         if env_cd and str(env_cd).strip():
@@ -246,7 +265,18 @@ def chat_completion(
                     wait_s = int(retry_after) if retry_after is not None else 15
                 except Exception:
                     wait_s = 15
-                wait_s = float(max(1, min(wait_s, 20)))
+                # If the provider does not specify Retry-After, back off with attempt index
+                # to avoid hammering and to better match "per-minute" quotas.
+                if retry_after is None:
+                    wait_s = int(wait_s) * max(1, int(attempt) + 1)
+                cap = 60
+                env_cap = os.getenv("INTENTIR_LLM_RETRY_AFTER_CAP_S")
+                if env_cap is not None and str(env_cap).strip():
+                    try:
+                        cap = int(env_cap)
+                    except Exception:
+                        cap = 60
+                wait_s = float(max(1, min(wait_s, int(max(1, cap)))))
                 errors.append(
                     f"{m}@{url_base}: 429 rate limited, waiting {wait_s:.0f}s (attempt {attempt+1}/{max_retries})"
                 )

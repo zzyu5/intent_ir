@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from pipeline import registry
-from pipeline.cuda.core import default_kernel_specs
+from pipeline.cuda.core import native_kernel_specs
 
 
 def _repo_root() -> Path:
@@ -22,7 +22,7 @@ def _golden_dir() -> Path:
 
 
 def _find_spec(name: str):
-    for s in default_kernel_specs():
+    for s in native_kernel_specs():
         if s.name == name:
             return s
     raise KeyError(f"unknown kernel spec: {name}")
@@ -73,4 +73,3 @@ def test_cuda_certificate_semantic_facts_golden(kernel_name: str, tmp_path: Path
 
     expected = json.loads(golden_path.read_text(encoding="utf-8"))
     assert got == expected, _diff(got, expected)
-

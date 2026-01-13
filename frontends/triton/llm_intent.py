@@ -77,11 +77,34 @@ SYSTEM_PROMPT = """You are an expert compiler engineer. Given the Triton
 Return a single JSON object with no prose and no code fences."""
 
 
+# Provider-safety: for very large/complex kernels (where source may be truncated),
+# a shorter system prompt reduces 5xx errors from some proxy providers.
+SYSTEM_PROMPT_COMPACT = """You are an expert compiler engineer. Convert the given
+Triton @triton.jit kernel into ONE Intent-IR v1.1 JSON object (no prose, no code fences).
+
+Required keys: name, kernel_type, tensors, ops, outputs, parallel_axes (schedule/axis_roles/meta optional).
+Rules:
+- tensors is an object {name:{dtype,shape,layout}}, NOT a list.
+- outputs is a list; every output must be declared in tensors and produced by some op.
+- Allowed ops only:
+  add/sub/mul/div/max/min/exp/relu/rsqrt/abs/floor,
+  ne/lt/le/gt/ge/and/or/not/where,
+  reshape/broadcast_in_dim/transpose/layout_cast,
+  reduce_sum/reduce_max/reduce_any/softmax,
+  matmul/conv2d/cast/iota/gather/identity/const,
+  macro: upsample_bicubic2d_aa (only when semantically appropriate).
+- Do NOT invent new shape symbols; use only symbols from the kernel signature/evidence.
+- Keep original input view shapes; use reshape ops for any grouped/view computation (e.g., groupnorm).
+- Scalars/constants should be explicit (`const` or scalar tensors from signature).
+"""
+
+
 def build_messages(
     triton_src: str,
     *,
     kernel_name: Optional[str] = None,
     extra_instruction: Optional[str] = None,
+    compact: bool = False,
 ) -> List[Dict[str, str]]:
     user_lines = []
     if kernel_name:
@@ -93,7 +116,7 @@ def build_messages(
         user_lines.append(extra_instruction)
     content = "\n".join(user_lines)
     return [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": (SYSTEM_PROMPT_COMPACT if compact else SYSTEM_PROMPT)},
         {"role": "user", "content": content},
     ]
 

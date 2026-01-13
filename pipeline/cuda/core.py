@@ -724,21 +724,56 @@ def _tilelang_export_regression_specs() -> List[KernelSpec]:
 
 
 def default_kernel_specs() -> List[KernelSpec]:
-    # Default CUDA smoke suite:
-    # - always include tiny native CUDA anchors (stable PTX patterns for tests)
-    # - additionally include the 6-kernel regression suite when TileLang is available
-    specs: List[KernelSpec] = []
-    specs.extend(_native_cuda_kernel_specs())
+    """
+    CUDA smoke suite (cross-frontend parity):
+      - Prefer the 6-kernel regression suite (TileLang-exported CUDA/PTX).
+      - Fall back to a tiny native CUDA anchor set when TileLang is unavailable.
+    """
     try:
-        specs.extend(_tilelang_export_regression_specs())
+        return regression_kernel_specs()
     except Exception:
-        pass
-    return specs
+        return native_kernel_specs()
 
 
 def coverage_kernel_specs() -> List[KernelSpec]:
-    # No extra coverage suite yet; keep API parity with other frontends.
-    return list(default_kernel_specs())
+    """
+    CUDA coverage suite:
+      - Always include native CUDA anchors (stable PTX patterns for golden tests).
+      - Include the 6-kernel regression suite when TileLang is available.
+    """
+    specs: List[KernelSpec] = []
+    specs.extend(native_kernel_specs())
+    try:
+        specs.extend(regression_kernel_specs())
+    except Exception:
+        pass
+    # De-dup by name while preserving first occurrence order.
+    out: List[KernelSpec] = []
+    seen: set[str] = set()
+    for s in specs:
+        if s.name in seen:
+            continue
+        seen.add(s.name)
+        out.append(s)
+    return out
+
+
+def native_kernel_specs() -> List[KernelSpec]:
+    """
+    Tiny native CUDA anchors (kernel-only .cu sources under kernels/cuda/ops).
+
+    These are intentionally small and stable, mainly used for:
+      - CUDA PTX parsing golden tests
+      - smoke-testing baseline CUDA runtime (torch extension + nvcc)
+    """
+    return list(_native_cuda_kernel_specs())
+
+
+def regression_kernel_specs() -> List[KernelSpec]:
+    """
+    Mirror Triton/TileLang's 6-kernel regression suite via TileLang->CUDA export.
+    """
+    return list(_tilelang_export_regression_specs())
 
 
 def run_pipeline_for_spec(
@@ -854,13 +889,43 @@ def run_pipeline_for_spec(
     (out_dir / f"{spec.name}.contract.json").write_text(json.dumps(report["contract"], indent=2), encoding="utf-8")
 
     print(f"[{spec.name}] stage5: LLM -> IntentIR (may take a while)", flush=True)
+    llm_err: Exception | None = None
+    cand: CandidateIntent | None = None
     if use_llm:
-        cand = _LLM_HUB.lift(desc, model=llm_model)
-        enrich_intent_macros(cand.intent)
-        _ensure_schedule_cuda(cand.intent, spec=spec)
+        try:
+            cand = _LLM_HUB.lift(desc, model=llm_model)
+        except Exception as e:
+            llm_err = e
+            cand = None
+    if cand is None:
+        # Resilience fallback: when CUDA kernels are TileLang-exported (our regression
+        # suite), we can fall back to TileLang's deterministic intent builder so
+        # downstream stages (diff/remote RVV) remain usable even if providers are
+        # temporarily unavailable / quota-limited.
+        fb_intent = None
+        try:
+            if spec.tilelang_prim_func is not None:
+                from pipeline.tilelang.core import coverage_kernel_specs  # noqa: PLC0415
+
+                for s in coverage_kernel_specs():
+                    if getattr(s, "name", None) == spec.name:
+                        fb_intent = s.intent_builder()
+                        break
+        except Exception:
+            fb_intent = None
+        if fb_intent is None:
+            raise llm_err or RuntimeError("CUDA pipeline requires LLM (no deterministic fallback available)")
+        cand = CandidateIntent(intent=fb_intent, problem_params={}, schedule_params={}, raw_json={"fallback": True}, llm_trace={})
+        report["llm_fallback"] = {
+            "used": True,
+            "kind": "tilelang_deterministic",
+            "reason": (f"{type(llm_err).__name__}: {llm_err}" if llm_err is not None else "use_llm disabled"),
+        }
+
+    enrich_intent_macros(cand.intent)
+    _ensure_schedule_cuda(cand.intent, spec=spec)
+    if cand.llm_trace:
         report["llm_trace"] = dict(cand.llm_trace or {})
-    else:
-        raise RuntimeError("CUDA pipeline currently requires LLM (use_llm=False not supported)")
 
     (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
     report["intent"] = cand.intent.to_json_dict()
@@ -1190,4 +1255,11 @@ def run_pipeline_for_spec(
     return report
 
 
-__all__ = ["KernelSpec", "default_kernel_specs", "coverage_kernel_specs", "run_pipeline_for_spec"]
+__all__ = [
+    "KernelSpec",
+    "native_kernel_specs",
+    "regression_kernel_specs",
+    "default_kernel_specs",
+    "coverage_kernel_specs",
+    "run_pipeline_for_spec",
+]

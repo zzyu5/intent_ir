@@ -51,6 +51,11 @@ def _kernels_from_pipeline(frontend: str, suite: str) -> List[str]:
 
         specs_fn = default_kernel_specs if suite == "smoke" else coverage_kernel_specs
         return [s.name for s in specs_fn()]
+    if frontend == "cuda":
+        from pipeline.cuda.core import coverage_kernel_specs, default_kernel_specs
+
+        specs_fn = default_kernel_specs if suite == "smoke" else coverage_kernel_specs
+        return [s.name for s in specs_fn()]
     raise ValueError(f"unknown frontend: {frontend}")
 
 
@@ -175,8 +180,14 @@ def _summarize(results: List[KernelResult]) -> Dict[str, Any]:
     return {"n": len(results), "failures": failures, "tiers": tiers, "coverage_curve": curve}
 
 
-def _artifact_dirs(frontend: str, *, triton_dir: Path, tilelang_dir: Path) -> Path:
-    return triton_dir if frontend == "triton" else tilelang_dir
+def _artifact_dirs(frontend: str, *, triton_dir: Path, tilelang_dir: Path, cuda_dir: Path) -> Path:
+    if frontend == "triton":
+        return triton_dir
+    if frontend == "tilelang":
+        return tilelang_dir
+    if frontend == "cuda":
+        return cuda_dir
+    raise ValueError(f"unknown frontend: {frontend}")
 
 
 def _maybe_sleep_rate_limit(*, rpm: int, last_api_s: float | None) -> None:
@@ -308,11 +319,12 @@ def run_one(
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--frontend", choices=["triton", "tilelang", "both"], default="both")
+    ap.add_argument("--frontend", choices=["triton", "tilelang", "cuda", "both", "all"], default="both")
     ap.add_argument("--suite", choices=["smoke", "coverage", "all"], default="coverage")
     ap.add_argument("--kernel", action="append", default=[], help="repeatable: restrict to kernel name(s)")
     ap.add_argument("--triton-dir", default=str(ROOT / "artifacts" / "full_pipeline_verify"))
     ap.add_argument("--tilelang-dir", default=str(ROOT / "artifacts" / "tilelang_full_pipeline"))
+    ap.add_argument("--cuda-dir", default=str(ROOT / "artifacts" / "cuda_full_pipeline"))
     ap.add_argument("--model", default=None, help="override LLM model name (provider config key)")
     ap.add_argument("--timeout", type=int, default=600)
     ap.add_argument("--attempts", type=int, default=2, help="max LLM attempts inside the hub")
@@ -324,9 +336,15 @@ def main() -> None:
 
     triton_dir = Path(str(args.triton_dir))
     tilelang_dir = Path(str(args.tilelang_dir))
+    cuda_dir = Path(str(args.cuda_dir))
 
     wanted = set(str(x) for x in (args.kernel or []) if str(x).strip())
-    frontends = ["triton", "tilelang"] if str(args.frontend) == "both" else [str(args.frontend)]
+    if str(args.frontend) == "both":
+        frontends = ["triton", "tilelang"]
+    elif str(args.frontend) == "all":
+        frontends = ["triton", "tilelang", "cuda"]
+    else:
+        frontends = [str(args.frontend)]
     kernels_by_fe: Dict[str, List[str]] = {}
     for fe in frontends:
         ks = _kernels_from_pipeline(str(fe), str(args.suite))
@@ -339,7 +357,7 @@ def main() -> None:
     results: List[KernelResult] = []
     last_api_s: float | None = None
     for fe in frontends:
-        art_dir = _artifact_dirs(fe, triton_dir=triton_dir, tilelang_dir=tilelang_dir)
+        art_dir = _artifact_dirs(fe, triton_dir=triton_dir, tilelang_dir=tilelang_dir, cuda_dir=cuda_dir)
         for k in kernels_by_fe.get(str(fe), []):
             r, last_api_s = run_one(
                 hub=hub,

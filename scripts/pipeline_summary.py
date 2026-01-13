@@ -20,6 +20,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TRITON_DIR = ROOT / "artifacts" / "full_pipeline_verify"
 DEFAULT_TILELANG_DIR = ROOT / "artifacts" / "tilelang_full_pipeline"
+DEFAULT_CUDA_DIR = ROOT / "artifacts" / "cuda_full_pipeline"
 DEFAULT_REMOTE_JSON = ROOT / "artifacts" / "rvv_remote_suite_latest.json"
 
 
@@ -212,16 +213,23 @@ def _summarize(entries: List[Entry]) -> Dict[str, Any]:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--frontend", choices=["triton", "tilelang", "both"], default="both")
+    ap.add_argument("--frontend", choices=["triton", "tilelang", "cuda", "both", "all"], default="both")
     ap.add_argument("--triton-dir", default=str(DEFAULT_TRITON_DIR))
     ap.add_argument("--tilelang-dir", default=str(DEFAULT_TILELANG_DIR))
+    ap.add_argument("--cuda-dir", default=str(DEFAULT_CUDA_DIR))
     ap.add_argument("--remote", default=str(DEFAULT_REMOTE_JSON))
     ap.add_argument("--no-remote", action="store_true")
     ap.add_argument("--json", default=None, help="write summary JSON to this path (otherwise print text)")
     args = ap.parse_args()
 
     remote_map = {} if args.no_remote else _load_remote_map(Path(args.remote))
-    entries_by_fe: Dict[str, List[Entry]] = {"triton": [], "tilelang": []}
+    if args.frontend == "both":
+        frontends = ["triton", "tilelang"]
+    elif args.frontend == "all":
+        frontends = ["triton", "tilelang", "cuda"]
+    else:
+        frontends = [str(args.frontend)]
+    entries_by_fe: Dict[str, List[Entry]] = {fe: [] for fe in frontends}
 
     def ingest(frontend: str, reports_dir: Path) -> None:
         for kernel, report in _iter_reports(reports_dir):
@@ -247,15 +255,18 @@ def main() -> None:
                 )
             )
 
-    if args.frontend in {"triton", "both"}:
-        ingest("triton", Path(args.triton_dir))
-    if args.frontend in {"tilelang", "both"}:
-        ingest("tilelang", Path(args.tilelang_dir))
+    for fe in frontends:
+        if fe == "triton":
+            ingest("triton", Path(args.triton_dir))
+        elif fe == "tilelang":
+            ingest("tilelang", Path(args.tilelang_dir))
+        elif fe == "cuda":
+            ingest("cuda", Path(args.cuda_dir))
+        else:
+            raise ValueError(f"unknown frontend: {fe}")
 
     summary: Dict[str, Any] = {"frontends": {}}
     for fe, xs in entries_by_fe.items():
-        if args.frontend != "both" and fe != args.frontend:
-            continue
         summary["frontends"][fe] = _summarize(xs)
 
     if args.json:

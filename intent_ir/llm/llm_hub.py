@@ -29,6 +29,35 @@ def _hash_messages(messages: List[Dict[str, str]]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _maybe_truncate_source(source_text: str) -> str:
+    """
+    Provider-facing safeguard: truncate very long kernel sources.
+
+    Some proxy providers become unstable (5xx) on large prompts for complex kernels
+    (e.g., bicubic upsample with many repeated loads). For such cases, the evidence
+    appendix + kernel name is usually sufficient for the LLM to emit a macro op.
+    """
+    text = str(source_text)
+    lines = text.splitlines()
+    # Conservative-but-not-overzealous defaults:
+    # - do NOT truncate normal kernels (~100–600 LOC), since this breaks cache
+    #   locality and can reduce LLM quality for non-macro kernels.
+    # - only truncate very large sources that are likely to trigger proxy 5xx.
+    max_lines = 1200
+    max_chars = 60000
+    head = 400
+    tail = 120
+    try:
+        if len(text) <= max_chars and len(lines) <= max_lines:
+            return text
+    except Exception:
+        return text
+    head_lines = lines[: max(0, int(head))]
+    tail_lines = lines[-max(0, int(tail)) :] if int(tail) > 0 else []
+    banner = f"[IntentIR] SOURCE TRUNCATED: original_lines={len(lines)} kept_head={len(head_lines)} kept_tail={len(tail_lines)}"
+    return "\n".join([banner, *head_lines, "[IntentIR] ... TRUNCATED ...", *tail_lines])
+
+
 def _evidence_blob(descriptor: KernelDescriptor) -> str:
     ev = {
         "kernel": descriptor.name,
@@ -48,6 +77,8 @@ def _evidence_blob(descriptor: KernelDescriptor) -> str:
 class LLMIntentHub:
     default_model: str = DEFAULT_MODEL
     timeout_s: int = 600
+    http_max_retries: int = 4
+    http_max_total_wait_s: int = 180
     max_parse_retries: int = 2
     max_attempts: int = 2
     extra_chat_kwargs: Dict[str, Any] = field(default_factory=dict)
@@ -81,7 +112,8 @@ class LLMIntentHub:
                         stream=False,
                         allow_fallback=False,
                         timeout=int(self.timeout_s),
-                        max_retries=2,
+                        max_retries=int(self.http_max_retries),
+                        max_total_wait_s=int(self.http_max_total_wait_s),
                         **extra,
                     )
                 except LLMClientError as e:
@@ -117,7 +149,8 @@ class LLMIntentHub:
                                     stream=False,
                                     allow_fallback=False,
                                     timeout=int(self.timeout_s),
-                                    max_retries=2,
+                                    max_retries=int(self.http_max_retries),
+                                    max_total_wait_s=int(self.http_max_total_wait_s),
                                     **extra,
                                 )
                                 raw2 = resp2.first_message()
@@ -189,18 +222,20 @@ class LLMIntentHub:
             extra_lines += ["", f"Retry attempt={attempt} after error: {type(last_error).__name__}: {last_error}"]
         extra_instruction = "\n".join(extra_lines).strip()
 
+        src = _maybe_truncate_source(descriptor.source_text)
+        compact = bool(src.startswith("[IntentIR] SOURCE TRUNCATED"))
         if descriptor.frontend == "triton":
             from frontends.triton.llm_intent import build_messages
 
-            return build_messages(descriptor.source_text, kernel_name=descriptor.name, extra_instruction=extra_instruction)
+            return build_messages(src, kernel_name=descriptor.name, extra_instruction=extra_instruction, compact=compact)
         if descriptor.frontend == "tilelang":
             from frontends.tilelang.llm_intent import build_messages
 
-            return build_messages(descriptor.source_text, kernel_name=descriptor.name, extra_instruction=extra_instruction)
+            return build_messages(src, kernel_name=descriptor.name, extra_instruction=extra_instruction, compact=compact)
         if descriptor.frontend == "cuda":
             from frontends.cuda.llm_intent import build_messages
 
-            return build_messages(descriptor.source_text, kernel_name=descriptor.name, extra_instruction=extra_instruction)
+            return build_messages(src, kernel_name=descriptor.name, extra_instruction=extra_instruction, compact=compact)
         raise NotImplementedError(f"LLMIntentHub does not support frontend={descriptor.frontend}")
 
 

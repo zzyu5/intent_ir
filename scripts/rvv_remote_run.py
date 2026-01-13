@@ -254,9 +254,9 @@ def run_remote(
 
                 spec_map = {s.name: s for s in (mvp_kernel_specs() + default_kernel_specs())}
             else:
-                from pipeline.cuda.core import default_kernel_specs
+                from pipeline.cuda.core import coverage_kernel_specs
 
-                spec_map = {s.name: s for s in default_kernel_specs()}
+                spec_map = {s.name: s for s in coverage_kernel_specs()}
             if kernel not in spec_map:
                 raise RuntimeError(f"unknown kernel {kernel}")
             spec = spec_map[kernel]

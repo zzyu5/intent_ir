@@ -47,7 +47,11 @@ def main() -> None:
             "coverage": coverage_kernel_specs,
             "all": coverage_kernel_specs,
         }
-        specs = [s for s in suites[str(args.suite)]() if (not wanted or s.name in wanted)]
+        if wanted:
+            # Kernel filter should be usable without remembering which suite a kernel lives in.
+            specs = [s for s in coverage_kernel_specs() if s.name in wanted]
+        else:
+            specs = list(suites[str(args.suite)]())
 
         def _write(name: str, payload: object) -> Path:
             out_path = out_dir / f"{name}.json"
@@ -83,12 +87,14 @@ def main() -> None:
             "coverage": coverage_kernel_specs,
             "all": coverage_kernel_specs,
         }
-        specs = list(suites[str(args.suite)]())
         if args.list:
             for s in suites[str(args.suite)]():
                 print(s.name)
             return
-        specs = [s for s in specs if (not wanted or s.name in wanted)]
+        if wanted:
+            specs = [s for s in coverage_kernel_specs() if s.name in wanted]
+        else:
+            specs = list(suites[str(args.suite)]())
 
         def _write(name: str, payload: object) -> Path:
             out_path = out_dir / f"{name}.json"
@@ -124,12 +130,14 @@ def main() -> None:
         "coverage": coverage_kernel_specs,
         "all": coverage_kernel_specs,
     }
-    specs = list(suites[str(args.suite)]())
     if args.list:
         for s in suites[str(args.suite)]():
             print(s.name)
         return
-    specs = [s for s in specs if (not wanted or s.name in wanted)]
+    if wanted:
+        specs = [s for s in coverage_kernel_specs() if s.name in wanted]
+    else:
+        specs = list(suites[str(args.suite)]())
 
     def _write(name: str, payload: object) -> Path:
         out_path = out_dir / f"{name}.json"

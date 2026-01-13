@@ -11,7 +11,7 @@ except Exception:
     torch = None
 
 from verify.gen_cases import TestCase
-from pipeline.cuda.core import default_kernel_specs
+from pipeline.cuda.core import native_kernel_specs
 
 
 def _cuda_available() -> bool:
@@ -54,7 +54,7 @@ _MIN_FREE_MB = _cuda_min_free_mem_mb()
 @pytest.mark.skipif((_MIN_FREE_MB > 0) and (_cuda_free_mem_mb() < _MIN_FREE_MB), reason=f"CUDA free memory too low (<{_MIN_FREE_MB} MiB)")
 @pytest.mark.skipif(shutil.which("nvcc") is None, reason="nvcc not available (torch extension build)")
 def test_cuda_vec_add_baseline_smoke():
-    spec = next(s for s in default_kernel_specs() if s.name == "vec_add")
+    spec = next(s for s in native_kernel_specs() if s.name == "vec_add")
     case = TestCase(shapes=dict(spec.canonical_shapes), dtypes={}, seed=0)
     io = spec.runner(case)
     assert "A" in io and "B" in io and "C" in io

@@ -8,6 +8,7 @@ the same helpers by constructing a KernelSpec and calling `run_pipeline_for_spec
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
@@ -1402,6 +1403,157 @@ def _run_upsample_bicubic2d_aa_reference(case: TestCase) -> Dict[str, np.ndarray
     }
 
 
+def _upsample_bicubic2d_aa_fallback_intent():
+    """
+    Deterministic macro IntentIR for bicubic AA upsample.
+
+    This is a resilience fallback when LLM providers are unavailable (5xx/429/403),
+    because the raw Triton kernel body is extremely long and can trigger proxy
+    instability. The macro op will still be expanded by the compiler later.
+    """
+    from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, TensorType  # noqa: PLC0415
+
+    rm = TensorLayout(kind="row_major", params={})
+    tensors = {
+        "I": TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "C"), Dim("sym", "IH"), Dim("sym", "IW")], layout=rm),
+        "reciprocal_scale_h": TensorType(dtype="f32", shape=[], layout=rm),
+        "reciprocal_scale_w": TensorType(dtype="f32", shape=[], layout=rm),
+        "O": TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "C"), Dim("sym", "OH"), Dim("sym", "OW")], layout=rm),
+    }
+    ops = [
+        Op(
+            op="upsample_bicubic2d_aa",
+            inputs=["I"],
+            output="O",
+            attrs={"a": -0.5, "support": 2.0, "invscale": 1.0, "separable": True, "normalize_weights": True},
+        )
+    ]
+    schedule = ScheduleSketch(tile_m="BLOCK_Y", tile_n="BLOCK_X", tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="upsample_bicubic2d_aa",
+        tensors=tensors,
+        ops=ops,
+        outputs=["O"],
+        schedule=schedule,
+        axis_roles={"N": "batch", "C": "channel", "IH": "spatial", "IW": "spatial", "OH": "spatial", "OW": "spatial"},
+    )
+
+
+def _attn_fwd_fallback_intent():
+    """
+    Deterministic, compiler-style IntentIR for the Triton _attn_fwd kernel.
+
+    Keeps original view shapes:
+      Q, Out: [Z, q_numhead, Q_CTX, HEAD_DIM]
+      K, V:   [Z, kv_numhead, KV_CTX, HEAD_DIM]
+      attn_mask: [Z, q_numhead, Q_CTX, KV_CTX] (may be all-zeros if HAS_ATTN_MASK=0)
+    """
+    from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, TensorType  # noqa: PLC0415
+
+    rm = TensorLayout(kind="row_major", params={})
+    tensors = {
+        "Q": TensorType(
+            dtype="f32",
+            shape=[Dim("sym", "Z"), Dim("sym", "q_numhead"), Dim("sym", "Q_CTX"), Dim("sym", "HEAD_DIM")],
+            layout=rm,
+        ),
+        "K": TensorType(
+            dtype="f32",
+            shape=[Dim("sym", "Z"), Dim("sym", "kv_numhead"), Dim("sym", "KV_CTX"), Dim("sym", "HEAD_DIM")],
+            layout=rm,
+        ),
+        "V": TensorType(
+            dtype="f32",
+            shape=[Dim("sym", "Z"), Dim("sym", "kv_numhead"), Dim("sym", "KV_CTX"), Dim("sym", "HEAD_DIM")],
+            layout=rm,
+        ),
+        "attn_mask": TensorType(
+            dtype="f32",
+            shape=[Dim("sym", "Z"), Dim("sym", "q_numhead"), Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")],
+            layout=rm,
+        ),
+        "sm_scale": TensorType(dtype="f32", shape=[], layout=rm),
+        "Out": TensorType(
+            dtype="f32",
+            shape=[Dim("sym", "Z"), Dim("sym", "q_numhead"), Dim("sym", "Q_CTX"), Dim("sym", "HEAD_DIM")],
+            layout=rm,
+        ),
+    }
+    ops: list[Op] = []
+    ops.append(Op(op="transpose", inputs=["K"], output="K_t", attrs={"perm": [0, 1, 3, 2]}))
+    tensors["K_t"] = TensorType(
+        dtype="f32",
+        shape=[Dim("sym", "Z"), Dim("sym", "kv_numhead"), Dim("sym", "HEAD_DIM"), Dim("sym", "KV_CTX")],
+        layout=rm,
+    )
+
+    ops.append(Op(op="matmul", inputs=["Q", "K_t"], output="scores", attrs={}))
+    tensors["scores"] = TensorType(
+        dtype="f32",
+        shape=[Dim("sym", "Z"), Dim("sym", "q_numhead"), Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")],
+        layout=rm,
+    )
+
+    # Add optional attention mask (when mask is all zeros, this is a no-op).
+    ops.append(Op(op="add", inputs=["scores", "attn_mask"], output="scores_m", attrs={}))
+    tensors["scores_m"] = TensorType(
+        dtype="f32",
+        shape=[Dim("sym", "Z"), Dim("sym", "q_numhead"), Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")],
+        layout=rm,
+    )
+
+    ops.append(Op(op="mul", inputs=["scores_m", "sm_scale"], output="scores_s", attrs={}))
+    tensors["scores_s"] = TensorType(
+        dtype="f32",
+        shape=[Dim("sym", "Z"), Dim("sym", "q_numhead"), Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")],
+        layout=rm,
+    )
+
+    ops.append(Op(op="softmax", inputs=["scores_s"], output="probs", attrs={"axis": -1}))
+    tensors["probs"] = TensorType(
+        dtype="f32",
+        shape=[Dim("sym", "Z"), Dim("sym", "q_numhead"), Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")],
+        layout=rm,
+    )
+
+    ops.append(Op(op="matmul", inputs=["probs", "V"], output="Out", attrs={}))
+    schedule = ScheduleSketch(tile_m="BLOCK_M", tile_n="BLOCK_N", tile_k="BLOCK_N", vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="_attn_fwd",
+        tensors=tensors,
+        ops=ops,
+        outputs=["Out"],
+        schedule=schedule,
+        # Keep axis roles within the v1.1 allowed set (batch/channel/spatial/reduction).
+        axis_roles={
+            "Z": "batch",
+            "q_numhead": "channel",
+            "kv_numhead": "channel",
+            "Q_CTX": "spatial",
+            "KV_CTX": "spatial",
+            "HEAD_DIM": "channel",
+        },
+    )
+
+
+def _tilelang_deterministic_intent_for(kernel_name: str):
+    """
+    Resilience fallback: reuse TileLang's deterministic intent builders.
+
+    This is used only when LLM providers are unavailable/quota-limited, to keep
+    the end-to-end pipeline (static_validate/diff/remote) usable.
+    """
+    try:
+        from pipeline.tilelang.core import coverage_kernel_specs  # noqa: PLC0415
+
+        for s in coverage_kernel_specs():
+            if getattr(s, "name", None) == str(kernel_name):
+                return s.intent_builder()
+    except Exception:
+        return None
+    return None
+
+
 def default_kernel_specs() -> List[KernelSpec]:
     def _norm_groupnorm(shapes: Dict[str, int]) -> Dict[str, int]:
         out = dict(shapes)
@@ -1876,31 +2028,119 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
     feedback: List[str] = []
     cand: CandidateIntent | None = None
     cand_expanded: CandidateIntent | None = None
-    for attempt in range(2):
-        try:
-            cand = llm_to_intent(desc, feedback=feedback)
-            report["llm_trace"] = dict(cand.llm_trace)
-            _ensure_schedule(cand.intent, kernel_name=spec.name, triton_src=src)
+    # Some macro/complex kernels can easily trigger provider instability or long
+    # waits. Keep the default full pipeline usable by allowing deterministic
+    # fallbacks, while still permitting LLM forcing via env vars.
+    use_llm_for_macro = str(os.getenv("INTENTIR_TRITON_UPSAMPLE_USE_LLM", "0")).strip() in {"1", "true", "yes", "on"}
+    use_llm_for_attn = str(os.getenv("INTENTIR_TRITON_ATTN_USE_LLM", "0")).strip() in {"1", "true", "yes", "on"}
+    if spec.name == "upsample_bicubic2d_aa" and not use_llm_for_macro:
+        fb_intent = _upsample_bicubic2d_aa_fallback_intent()
+        cand = CandidateIntent(intent=fb_intent, problem_params={}, schedule_params={}, raw_json={"fallback": True}, llm_trace={})
+        report["llm_fallback"] = {"used": True, "kind": "macro_deterministic", "reason": "default (set INTENTIR_TRITON_UPSAMPLE_USE_LLM=1 to force LLM)"}
+        enrich_intent_macros(cand.intent)
+        mlir_txt = print_mlir_like(cand.intent)
+        (out_dir / f"{spec.name}.intentir.mlir").write_text(mlir_txt, encoding="utf-8")
+        (out_dir / f"{spec.name}.intentir.fallback.mlir").write_text(mlir_txt, encoding="utf-8")
+        expanded_intent = expand_macros(cand.intent)
+        cand_expanded = CandidateIntent(
+            intent=expanded_intent,
+            problem_params={},
+            schedule_params={},
+            raw_json={"fallback": True},
+            llm_trace={},
+        )
+        exp_txt = print_mlir_like(expanded_intent)
+        (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
+        (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
+    elif spec.name == "_attn_fwd" and not use_llm_for_attn:
+        fb_intent = _attn_fwd_fallback_intent()
+        cand = CandidateIntent(intent=fb_intent, problem_params={}, schedule_params={}, raw_json={"fallback": True}, llm_trace={})
+        report["llm_fallback"] = {"used": True, "kind": "deterministic_attn", "reason": "default (set INTENTIR_TRITON_ATTN_USE_LLM=1 to force LLM)"}
+        enrich_intent_macros(cand.intent)
+        mlir_txt = print_mlir_like(cand.intent)
+        (out_dir / f"{spec.name}.intentir.mlir").write_text(mlir_txt, encoding="utf-8")
+        (out_dir / f"{spec.name}.intentir.fallback.mlir").write_text(mlir_txt, encoding="utf-8")
+        expanded_intent = expand_macros(cand.intent)
+        cand_expanded = CandidateIntent(
+            intent=expanded_intent,
+            problem_params={},
+            schedule_params={},
+            raw_json={"fallback": True},
+            llm_trace={},
+        )
+        exp_txt = print_mlir_like(expanded_intent)
+        (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
+        (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
+    else:
+        for attempt in range(2):
+            try:
+                cand = llm_to_intent(desc, feedback=feedback)
+                report["llm_trace"] = dict(cand.llm_trace)
+                _ensure_schedule(cand.intent, kernel_name=spec.name, triton_src=src)
+                enrich_intent_macros(cand.intent)
+                intent_mlir = print_mlir_like(cand.intent)
+                (out_dir / f"{spec.name}.intentir.mlir").write_text(intent_mlir, encoding="utf-8")
+                expanded_intent = expand_macros(cand.intent)
+                cand_expanded = CandidateIntent(
+                    intent=expanded_intent,
+                    problem_params=dict(cand.problem_params),
+                    schedule_params=dict(cand.schedule_params),
+                    raw_json=dict(cand.raw_json),
+                    llm_trace=dict(cand.llm_trace),
+                )
+                (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_intent), encoding="utf-8")
+                break
+            except Exception as e:
+                feedback = [f"Previous failure: {e}"]
+                cand = None
+                cand_expanded = None
+                continue
+    if cand is None:
+        # Resilience fallback for macro-heavy kernels when providers are unstable.
+        if spec.name == "upsample_bicubic2d_aa":
+            fb_intent = _upsample_bicubic2d_aa_fallback_intent()
+            cand = CandidateIntent(intent=fb_intent, problem_params={}, schedule_params={}, raw_json={"fallback": True}, llm_trace={})
+            report["llm_fallback"] = {"used": True, "kind": "macro_deterministic", "reason": "; ".join(feedback) if feedback else "LLM failed"}
             enrich_intent_macros(cand.intent)
-            intent_mlir = print_mlir_like(cand.intent)
-            (out_dir / f"{spec.name}.intentir.mlir").write_text(intent_mlir, encoding="utf-8")
+            mlir_txt = print_mlir_like(cand.intent)
+            (out_dir / f"{spec.name}.intentir.mlir").write_text(mlir_txt, encoding="utf-8")
+            (out_dir / f"{spec.name}.intentir.fallback.mlir").write_text(mlir_txt, encoding="utf-8")
             expanded_intent = expand_macros(cand.intent)
             cand_expanded = CandidateIntent(
                 intent=expanded_intent,
-                problem_params=dict(cand.problem_params),
-                schedule_params=dict(cand.schedule_params),
-                raw_json=dict(cand.raw_json),
-                llm_trace=dict(cand.llm_trace),
+                problem_params={},
+                schedule_params={},
+                raw_json={"fallback": True},
+                llm_trace={},
             )
-            (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_intent), encoding="utf-8")
-            break
-        except Exception as e:
-            feedback = [f"Previous failure: {e}"]
-            cand = None
-            cand_expanded = None
-            continue
-    if cand is None:
-        raise RuntimeError(f"LLM/Intent parse failed after retries for {spec.name}: {'; '.join(feedback)}")
+            exp_txt = print_mlir_like(expanded_intent)
+            (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
+            (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
+        else:
+            fb_intent = (_attn_fwd_fallback_intent() if spec.name == "_attn_fwd" else _tilelang_deterministic_intent_for(spec.name))
+            if fb_intent is None:
+                raise RuntimeError(f"LLM/Intent parse failed after retries for {spec.name}: {'; '.join(feedback)}")
+            cand = CandidateIntent(intent=fb_intent, problem_params={}, schedule_params={}, raw_json={"fallback": True}, llm_trace={})
+            report["llm_fallback"] = {
+                "used": True,
+                "kind": ("deterministic_attn" if spec.name == "_attn_fwd" else "tilelang_deterministic"),
+                "reason": "; ".join(feedback) if feedback else "LLM failed",
+            }
+            enrich_intent_macros(cand.intent)
+            mlir_txt = print_mlir_like(cand.intent)
+            (out_dir / f"{spec.name}.intentir.mlir").write_text(mlir_txt, encoding="utf-8")
+            (out_dir / f"{spec.name}.intentir.fallback.mlir").write_text(mlir_txt, encoding="utf-8")
+            expanded_intent = expand_macros(cand.intent)
+            cand_expanded = CandidateIntent(
+                intent=expanded_intent,
+                problem_params={},
+                schedule_params={},
+                raw_json={"fallback": True},
+                llm_trace={},
+            )
+            exp_txt = print_mlir_like(expanded_intent)
+            (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
+            (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
     # Ensure schedule is attached even if the LLM emits only partial schedule fields.
     _ensure_schedule(cand.intent, kernel_name=spec.name, triton_src=src)
     report["intent"] = cand.intent.to_json_dict()
