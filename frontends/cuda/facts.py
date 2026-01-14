@@ -18,6 +18,7 @@ from pipeline.interfaces import KernelDescriptor
 from frontends.common.evidence import AccessSummary, sort_accesses
 
 from .ptx import parse_ptx_kernel
+from .signature import infer_runtime_io_spec
 
 
 @dataclass
@@ -53,7 +54,16 @@ def extract_facts(desc: KernelDescriptor, *, ptx_text: Optional[str] = None) -> 
     ptx = str(ptx_text) if ptx_text is not None else _load_ptx_text(desc)
     entry = desc.meta.get("ptx_entry") if isinstance(getattr(desc, "meta", None), dict) else None
     kernel_entry = str(entry) if isinstance(entry, str) and entry.strip() else str(desc.name)
-    parsed = parse_ptx_kernel(ptx, kernel_name=kernel_entry, io_spec=dict(desc.io_spec or {}), launch=dict(desc.launch or {}))
+    io_spec = dict(desc.io_spec or {})
+    # The PTX param order follows the CUDA kernel signature, which may differ
+    # from the higher-level "semantic" io_spec order (TileLang exports reorder).
+    # Use signature parsing to build a runtime io_spec for correct param mapping.
+    try:
+        io_spec = infer_runtime_io_spec(cuda_src=str(desc.source_text), kernel_name=kernel_entry, semantic_io_spec=io_spec)
+    except Exception:
+        io_spec = dict(desc.io_spec or {})
+
+    parsed = parse_ptx_kernel(ptx, kernel_name=kernel_entry, io_spec=io_spec, launch=dict(desc.launch or {}))
     accesses = sort_accesses(list(parsed.accesses or []))
     return CudaFacts(
         schema_version="cuda_facts_v0.1",

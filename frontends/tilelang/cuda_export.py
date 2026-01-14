@@ -40,9 +40,17 @@ def tilelang_include_dirs() -> List[Path]:
         import tilelang  # noqa: PLC0415
 
         root = Path(tilelang.__file__).resolve().parent
+        out: List[Path] = []
         inc = root / "src"
         if inc.is_dir():
-            return [inc]
+            out.append(inc)
+        # TileLang templates may depend on CUTLASS/CUTE headers for newer arch
+        # specializations (e.g., gemm_sm89.h includes <cute/...>).
+        cutlass_inc = root / "3rdparty" / "cutlass" / "include"
+        if cutlass_inc.is_dir():
+            out.append(cutlass_inc)
+        if out:
+            return out
     except Exception:
         pass
     return []
@@ -163,4 +171,3 @@ def build_io_spec_from_tilelang_prim_func(prim_func: Any) -> Dict[str, Any]:
 
 
 __all__ = ["TileLangCudaExport", "build_io_spec_from_tilelang_prim_func", "export_tilelang_cuda", "tilelang_include_dirs"]
-

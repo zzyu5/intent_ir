@@ -74,8 +74,12 @@ def _dtype_to_torch(dt: str):
         return torch.float16
     if s == "f32":
         return torch.float32
+    if s == "i8":
+        return torch.int8
     if s == "i32":
         return torch.int32
+    if s == "i64":
+        return torch.int64
     if s == "u8":
         return torch.uint8
     if s == "bool":
@@ -89,8 +93,12 @@ def _c_type(dt: str) -> str:
         return "__half"
     if s == "f32":
         return "float"
+    if s == "i8":
+        return "int8_t"
     if s == "i32":
         return "int"
+    if s == "i64":
+        return "int64_t"
     if s == "u8":
         return "uint8_t"
     if s == "bool":
@@ -130,8 +138,14 @@ def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, 
                 checks.append(f"TORCH_CHECK({name}.scalar_type() == at::kHalf, \"{name} must be float16\");")
             elif dt == "u8":
                 checks.append(f"TORCH_CHECK({name}.scalar_type() == at::kByte, \"{name} must be uint8\");")
+            elif dt == "i8":
+                checks.append(f"TORCH_CHECK({name}.scalar_type() == at::kChar, \"{name} must be int8\");")
             elif dt == "i32":
                 checks.append(f"TORCH_CHECK({name}.scalar_type() == at::kInt, \"{name} must be int32\");")
+            elif dt == "i64":
+                checks.append(f"TORCH_CHECK({name}.scalar_type() == at::kLong, \"{name} must be int64\");")
+            elif dt == "bool":
+                checks.append(f"TORCH_CHECK({name}.scalar_type() == at::kBool, \"{name} must be bool\");")
             cty = _c_type(dt)
             ptr_decls.append(f"auto {name}_ptr = ({cty}*){name}.data_ptr();")
             call_args.append(f"{name}_ptr")

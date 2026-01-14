@@ -9,6 +9,7 @@ Pipeline shape mirrors Triton/TileLang:
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from frontends.common.contract_v2 import evaluate_contract_v2
 from frontends.common.obligations import O3_MASK_IMPLIES_INBOUNDS, evaluate_obligations
 from frontends.common.static_validate import static_validate
 from frontends.cuda.runtime import CudaLaunch, CudaRuntimeError, run_cuda_kernel_io
+from frontends.cuda.signature import infer_runtime_io_spec
 from frontends.tilelang.cuda_export import build_io_spec_from_tilelang_prim_func, export_tilelang_cuda, tilelang_include_dirs
 from frontends.tilelang.runtime import infer_written_global_buffers, run_tilelang_kernel_io
 from intent_ir.llm import LLMIntentHub
@@ -523,6 +525,63 @@ def _run_tilelang_exported_cuda_kernel(
     return run_tilelang_kernel_io(prim_func, bindings=bindings, inputs_np=inputs_np)
 
 
+def _run_tilelang_snapshot_cuda_kernel(
+    *,
+    name: str,
+    semantic_io_spec: Dict[str, Any],
+    launch: CudaLaunch,
+    case: TestCase,
+    output_names: List[str],
+    inputs_np: Dict[str, np.ndarray],
+    extra_bindings: Dict[str, int] | None = None,
+) -> Dict[str, np.ndarray]:
+    """
+    Reference runner: execute the *saved* TileLang->CUDA snapshot via the CUDA runtime.
+
+    This is the "real CUDA path" for our CUDA frontend: compile the `.cu` snapshot,
+    launch it with explicit grid/block, and return numpy IO.
+    """
+    cuda_src_raw, _ptx, _entry, include_dirs = _load_tilelang_cuda_snapshot(name)
+    rt_io_spec = infer_runtime_io_spec(cuda_src=cuda_src_raw, kernel_name="main_kernel", semantic_io_spec=dict(semantic_io_spec))
+    # Torch's CUDA extension build defines macros that disable half/bf16
+    # conversions by default; TileLang templates rely on those conversions.
+    cflags = [f"-I{p}" for p in include_dirs]
+    cflags += [
+        "-U__CUDA_NO_HALF_OPERATORS__",
+        "-U__CUDA_NO_HALF_CONVERSIONS__",
+        "-U__CUDA_NO_BFLOAT16_CONVERSIONS__",
+        "-U__CUDA_NO_HALF2_OPERATORS__",
+    ]
+
+    bindings = dict(case.shapes)
+    if extra_bindings:
+        bindings.update({str(k): int(v) for k, v in extra_bindings.items()})
+
+    io = run_cuda_kernel_io(
+        kernel_name="main_kernel",
+        cuda_src=cuda_src_raw,
+        io_spec=rt_io_spec,
+        launch=launch,
+        bindings=bindings,
+        inputs_np=inputs_np,
+        output_names=list(output_names),
+        extra_cuda_cflags=cflags,
+    )
+
+    # If the CUDA snapshot uses i8 for boolean buffers, convert to bool to match
+    # semantic io_spec (and the numpy interpreter).
+    sem_tensors = semantic_io_spec.get("tensors") if isinstance(semantic_io_spec.get("tensors"), dict) else {}
+    rt_tensors = rt_io_spec.get("tensors") if isinstance(rt_io_spec.get("tensors"), dict) else {}
+    for out_name in output_names:
+        sem = sem_tensors.get(out_name)
+        rt = rt_tensors.get(out_name)
+        if not isinstance(sem, dict) or not isinstance(rt, dict):
+            continue
+        if str(sem.get("dtype")) == "bool" and str(rt.get("dtype")) == "i8" and out_name in io:
+            io[out_name] = (np.asarray(io[out_name]).astype(np.int8) != 0)
+    return io
+
+
 @dataclass
 class KernelSpec:
     name: str
@@ -620,7 +679,24 @@ def _tilelang_export_regression_specs() -> List[KernelSpec]:
             io_spec=io_any,
             canonical_shapes={"M": 16, "N": 16},
             vary_axes=["M"],
-            runner=(lambda case, _pf=pf_any, _io=io_any: _run_tilelang_exported_cuda_kernel(prim_func=_pf, io_spec=_io, case=case)),
+            runner=(
+                lambda case, _io=io_any: _run_tilelang_snapshot_cuda_kernel(
+                    name="any_kernel_dim",
+                    semantic_io_spec=_io,
+                    launch=CudaLaunch(grid=(int(case.shapes.get("M", 16)), 1, 1), block=(threads, 1, 1), shared_mem=0),
+                    case=case,
+                    output_names=["out"],
+                    inputs_np={
+                        "inp": (
+                            np.asarray(case.inputs.get("inp"), dtype=np.float32)
+                            if case.inputs and "inp" in case.inputs
+                            else np.random.default_rng(int(case.seed))
+                            .integers(0, 2, size=(int(case.shapes.get("M", 16)), int(case.shapes.get("N", 16))), dtype=np.int32)
+                            .astype(np.float32)
+                        )
+                    },
+                )
+            ),
             stage_c_runner=_any_kernel_dim_reference,
             block=(threads, 1, 1),
             exclude_axes=[],
@@ -649,7 +725,39 @@ def _tilelang_export_regression_specs() -> List[KernelSpec]:
             io_spec=io_gn,
             canonical_shapes={"N": 16, "C": 64, "HW": 16, "num_groups": 4},
             vary_axes=["N"],
-            runner=(lambda case, _pf=pf_gn, _io=io_gn: _run_tilelang_exported_cuda_kernel(prim_func=_pf, io_spec=_io, case=case)),
+            runner=(
+                lambda case, _io=io_gn: (
+                    lambda n, c, hw, g: _run_tilelang_snapshot_cuda_kernel(
+                        name="group_norm_kernel",
+                        semantic_io_spec=_io,
+                        launch=CudaLaunch(grid=(n, g, 1), block=(threads, 1, 1), shared_mem=0),
+                        case=case,
+                        output_names=["Y", "Mean", "Rstd"],
+                        inputs_np={
+                            "X": (
+                                np.asarray(case.inputs.get("X"), dtype=np.float32)
+                                if case.inputs and "X" in case.inputs
+                                else np.random.default_rng(int(case.seed)).standard_normal((n, c, hw), dtype=np.float32)
+                            ),
+                            "W": (
+                                np.asarray(case.inputs.get("W"), dtype=np.float32)
+                                if case.inputs and "W" in case.inputs
+                                else np.random.default_rng(int(case.seed) + 1).standard_normal((c,), dtype=np.float32)
+                            ),
+                            "B": (
+                                np.asarray(case.inputs.get("B"), dtype=np.float32)
+                                if case.inputs and "B" in case.inputs
+                                else np.random.default_rng(int(case.seed) + 2).standard_normal((c,), dtype=np.float32)
+                            ),
+                        },
+                    )
+                )(
+                    int(case.shapes.get("N", 16)),
+                    int(case.shapes.get("C", 64)),
+                    int(case.shapes.get("HW", 16)),
+                    int(case.shapes.get("num_groups", 4)),
+                )
+            ),
             stage_c_runner=_group_norm_reference,
             block=(threads, 1, 1),
             exclude_axes=["group_size", "num_elements"],
@@ -672,7 +780,7 @@ def _tilelang_export_regression_specs() -> List[KernelSpec]:
         "scalars": {"Q_CTX": "i32", "KV_CTX": "i32", "HEAD_DIM": "i32"},
     }
 
-    def _attn_runner(case: TestCase, _pf=pf_attn) -> Dict[str, np.ndarray]:
+    def _attn_runner(case: TestCase, _io=io_attn) -> Dict[str, np.ndarray]:
         q_ctx = int(case.shapes.get("Q_CTX", 16))
         kv_ctx = int(case.shapes.get("KV_CTX", 16))
         head_dim = int(case.shapes.get("HEAD_DIM", 16))
@@ -680,7 +788,14 @@ def _tilelang_export_regression_specs() -> List[KernelSpec]:
         q = rng.standard_normal((q_ctx, head_dim), dtype=np.float32)
         k = rng.standard_normal((kv_ctx, head_dim), dtype=np.float32)
         v = rng.standard_normal((kv_ctx, head_dim), dtype=np.float32)
-        io = run_tilelang_kernel_io(_pf, bindings=dict(case.shapes), inputs_np={"Q": q, "K": k, "V": v})
+        io = _run_tilelang_snapshot_cuda_kernel(
+            name="_attn_fwd",
+            semantic_io_spec=_io,
+            launch=CudaLaunch(grid=(q_ctx, 1, 1), block=(threads, 1, 1), shared_mem=0),
+            case=case,
+            output_names=["Out"],
+            inputs_np={"Q": q, "K": k, "V": v},
+        )
         io["sm_scale"] = np.array(1.0 / np.sqrt(float(head_dim)), dtype=np.float32)
         return io
 
@@ -717,7 +832,23 @@ def _tilelang_export_regression_specs() -> List[KernelSpec]:
             io_spec=io_sm,
             canonical_shapes={"M": 16, "N": 16},
             vary_axes=["M"],
-            runner=(lambda case, _pf=pf_sm, _io=io_sm: _run_tilelang_exported_cuda_kernel(prim_func=_pf, io_spec=_io, case=case)),
+            runner=(
+                lambda case, _io=io_sm: _run_tilelang_snapshot_cuda_kernel(
+                    name="softmax_inner",
+                    semantic_io_spec=_io,
+                    launch=CudaLaunch(grid=(int(case.shapes.get("M", 16)), 1, 1), block=(threads, 1, 1), shared_mem=0),
+                    case=case,
+                    output_names=["output_ptr", "row_max_ptr", "row_sum_ptr"],
+                    inputs_np={
+                        "input_ptr": (
+                            np.asarray(case.inputs.get("input_ptr"), dtype=np.float32)
+                            if case.inputs and "input_ptr" in case.inputs
+                            else np.random.default_rng(int(case.seed))
+                            .standard_normal((int(case.shapes.get("M", 16)), int(case.shapes.get("N", 16))), dtype=np.float32)
+                        )
+                    },
+                )
+            ),
             stage_c_runner=_softmax_inner_reference,
             block=(threads, 1, 1),
             exclude_axes=[],
@@ -746,7 +877,34 @@ def _tilelang_export_regression_specs() -> List[KernelSpec]:
             io_spec=io_ln,
             canonical_shapes={"M": 16, "N": 16},
             vary_axes=["M"],
-            runner=(lambda case, _pf=pf_ln, _io=io_ln: _run_tilelang_exported_cuda_kernel(prim_func=_pf, io_spec=_io, case=case)),
+            runner=(
+                lambda case, _io=io_ln: (
+                    lambda m, n: _run_tilelang_snapshot_cuda_kernel(
+                        name="layer_norm_persistent",
+                        semantic_io_spec=_io,
+                        launch=CudaLaunch(grid=(m, 1, 1), block=(threads, 1, 1), shared_mem=0),
+                        case=case,
+                        output_names=["out_ptr", "out_mean_ptr", "out_rstd_ptr"],
+                        inputs_np={
+                            "in_ptr": (
+                                np.asarray(case.inputs.get("in_ptr"), dtype=np.float32)
+                                if case.inputs and "in_ptr" in case.inputs
+                                else np.random.default_rng(int(case.seed)).standard_normal((m, n), dtype=np.float32)
+                            ),
+                            "weight_ptr": (
+                                np.asarray(case.inputs.get("weight_ptr"), dtype=np.float32)
+                                if case.inputs and "weight_ptr" in case.inputs
+                                else np.random.default_rng(int(case.seed) + 1).standard_normal((n,), dtype=np.float32)
+                            ),
+                            "bias_ptr": (
+                                np.asarray(case.inputs.get("bias_ptr"), dtype=np.float32)
+                                if case.inputs and "bias_ptr" in case.inputs
+                                else np.random.default_rng(int(case.seed) + 2).standard_normal((n,), dtype=np.float32)
+                            ),
+                        },
+                    )
+                )(int(case.shapes.get("M", 16)), int(case.shapes.get("N", 16)))
+            ),
             stage_c_runner=_layer_norm_persistent_reference,
             block=(threads, 1, 1),
             exclude_axes=[],
@@ -1129,21 +1287,50 @@ def run_pipeline_for_spec(
 
     print(f"[{spec.name}] stage3: launch CUDA once (baseline)", flush=True)
     baseline_case = TestCase(shapes=dict(spec.canonical_shapes), dtypes={}, seed=0)
-    try:
-        baseline_io = spec.runner(baseline_case)
-    except Exception as e:
-        # Wrap baseline errors to make user-facing scripts more actionable.
-        if isinstance(e, CudaRuntimeError):
-            raise RuntimeError(f"CUDA baseline failed: {e}") from e
-        raise RuntimeError(f"CUDA baseline failed: {type(e).__name__}: {e}") from e
     npz_path = out_dir / f"{spec.name}.baseline.npz"
-    np.savez(npz_path, **{k: np.asarray(v) for k, v in baseline_io.items()})
+    meta_path = out_dir / f"{spec.name}.baseline.meta.json"
+    reuse = str(os.getenv("INTENTIR_CUDA_REUSE_BASELINE_NPZ", "1")).strip().lower() not in {"0", "false", "no", "off"}
+    src_hash = hashlib.sha256(str(desc.source_text).encode("utf-8")).hexdigest()[:16]
+    baseline_io: Dict[str, np.ndarray] = {}
+    reused = False
+    if reuse and npz_path.is_file() and meta_path.is_file():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            if (
+                isinstance(meta, dict)
+                and meta.get("seed") == int(baseline_case.seed)
+                and meta.get("shapes") == dict(baseline_case.shapes)
+                and meta.get("src_hash") == src_hash
+            ):
+                data = np.load(npz_path, allow_pickle=False)
+                baseline_io = {k: np.asarray(data[k]) for k in data.files}
+                reused = True
+        except Exception:
+            reused = False
+
+    if not reused:
+        try:
+            baseline_io = spec.runner(baseline_case)
+        except Exception as e:
+            # Wrap baseline errors to make user-facing scripts more actionable.
+            if isinstance(e, CudaRuntimeError):
+                raise RuntimeError(f"CUDA baseline failed: {e}") from e
+            raise RuntimeError(f"CUDA baseline failed: {type(e).__name__}: {e}") from e
+        np.savez(npz_path, **{k: np.asarray(v) for k, v in baseline_io.items()})
+        try:
+            meta_path.write_text(
+                json.dumps({"seed": int(baseline_case.seed), "shapes": dict(baseline_case.shapes), "src_hash": src_hash}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
     report["baseline"] = {
         "shapes": dict(baseline_case.shapes),
         "seed": int(baseline_case.seed),
         "npz_path": str(npz_path.relative_to(ROOT)),
         "keys": sorted(list(baseline_io.keys())),
-        "source": ("tilelang_cuda" if spec.tilelang_prim_func is not None else "cuda_runtime"),
+        "source": ("npz_cache" if reused else ("tilelang_cuda" if spec.tilelang_prim_func is not None else "cuda_runtime")),
     }
 
     print(f"[{spec.name}] stage4: Task4 facts/constraints/certificate", flush=True)
