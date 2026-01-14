@@ -118,3 +118,20 @@ def test_o3_parses_div_upper_bound_clause():
     ]
     rep = check_mask_implies_inbounds(accesses, shape_hints={"M": 32}, symbol_ranges={"r0": {"start": 0, "end": 4}})
     assert rep.status == "PASS"
+
+
+def test_o3_parses_floor_div_token():
+    # Some frontends emit Python-style floor division in predicates.
+    accesses = [
+        AccessSummary(
+            kind="load",
+            tensor="X",
+            dtype="fp32",
+            rank=1,
+            index_exprs=[IndexExpr(terms={"pid0": 1, "r0": 1}, const=0)],
+            predicate=Predicate(clauses=["pid0 + r0 < (M // 2)", "M // 2 > pid0 + r0"]),
+            address_space="global",
+        )
+    ]
+    rep = check_mask_implies_inbounds(accesses, shape_hints={"M": 32}, symbol_ranges={"r0": {"start": 0, "end": 4}})
+    assert rep.status == "PASS"

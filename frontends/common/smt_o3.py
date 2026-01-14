@@ -116,7 +116,9 @@ _R_INDEX_RE = re.compile(r"^r\d+$")
 # -----------------------------
 
 
-_TOKEN_RE = re.compile(r"\s*(==|!=|<=|>=|[()+\-*/%]|[A-Za-z_%][A-Za-z0-9_%]*|\d+)\s*")
+# Note: include '//' as a single token (TileLang/TVM scripts and some predicates
+# use Python-style floor division).
+_TOKEN_RE = re.compile(r"\s*(==|!=|<=|>=|//|[()+\-*/%]|[A-Za-z_%][A-Za-z0-9_%]*|\d+)\s*")
 
 
 class _TokStream:
@@ -160,7 +162,7 @@ def _parse_add(ts: _TokStream) -> _Node:
 
 def _parse_mul(ts: _TokStream) -> _Node:
     node = _parse_unary(ts)
-    while ts.peek() in {"*", "/", "%"}:
+    while ts.peek() in {"*", "/", "//", "%"}:
         op = ts.pop()
         rhs = _parse_unary(ts)
         node = ("bin", op, node, rhs)
@@ -271,7 +273,7 @@ def _node_to_affine(node: _Node) -> Optional[IndexExpr]:
                 return _mul_ix(aa, int(bb.const))
             return None
         # Non-affine ops
-        if op in {"/", "%"}:
+        if op in {"/", "//", "%"}:
             return None
     return None
 
@@ -397,6 +399,10 @@ def _eval_node(node: _Node, env: Dict[str, int]) -> Optional[int]:
         if op == "*":
             return int(aa) * int(bb)
         if op == "/":
+            if int(bb) == 0:
+                return None
+            return int(aa) // int(bb)
+        if op == "//":
             if int(bb) == 0:
                 return None
             return int(aa) // int(bb)
