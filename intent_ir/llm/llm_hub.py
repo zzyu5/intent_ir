@@ -195,6 +195,29 @@ class LLMIntentHub:
                 return cand
 
             # If all model candidates failed, append the last error as feedback and retry.
+            if trace.get("attempts"):
+                # Preserve multi-provider failure context: by default we would only
+                # raise the *last* LLMClientError, losing earlier provider errors.
+                # This aggregated message is safe (no API keys) and makes regressions
+                # debuggable without rerunning with verbose logs.
+                try:
+                    attempts = trace.get("attempts") or []
+                    errs: List[str] = []
+                    for a in attempts:
+                        if not isinstance(a, dict) or a.get("ok") is True:
+                            continue
+                        m = a.get("model")
+                        st = a.get("stage")
+                        er = a.get("error")
+                        if isinstance(m, str) and isinstance(st, str) and isinstance(er, str) and er.strip():
+                            errs.append(f"{m}[{st}]: {er}")
+                    if errs:
+                        # Keep the exception string compact but informative.
+                        head = errs[:6]
+                        tail = f" (+{len(errs) - 6} more)" if len(errs) > 6 else ""
+                        last_err = LLMClientError("all candidates failed: " + " | ".join(head) + tail)
+                except Exception:
+                    pass
             if last_err is not None:
                 fb = fb or []
                 fb = fb + [f"Previous failure: {type(last_err).__name__}: {last_err}"]

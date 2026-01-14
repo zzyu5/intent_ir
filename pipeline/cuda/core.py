@@ -1351,6 +1351,67 @@ def regression_kernel_specs() -> List[KernelSpec]:
     return list(_tilelang_export_regression_specs())
 
 
+def prepare_cuda_spec_for_frontend(spec: KernelSpec, *, out_dir: Path) -> Dict[str, Any]:
+    """
+    Prepare a CUDA `KernelSpec` for frontend extraction (Stage 1/2/4).
+
+    If the spec is TileLang-derived, this ensures `spec.cuda_src` / `spec.ptx_text`
+    exist by exporting (or reusing a stable snapshot under `kernels/cuda/ops/`).
+
+    Returns a small info dict suitable for pipeline reports (may be empty).
+    """
+    if spec.tilelang_prim_func is None:
+        return {}
+    if spec.cuda_src and spec.ptx_text:
+        return {}
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    refresh = str(os.getenv("INTENTIR_TILELANG_CUDA_SNAPSHOT_REFRESH", "0")).strip() == "1"
+    used_snapshot = False
+    cuda_src_raw = ""
+    ptx_text = ""
+    entry_name = ""
+    include_dirs: List[Path] = []
+    if not refresh:
+        try:
+            cuda_src_raw, ptx_text, entry_name, include_dirs = _load_tilelang_cuda_snapshot(spec.name)
+            used_snapshot = True
+        except Exception:
+            used_snapshot = False
+    if not used_snapshot:
+        exp = export_tilelang_cuda(spec.tilelang_prim_func, out_dir=out_dir, stem=spec.name)
+        _persist_tilelang_cuda_snapshot(spec.name, exp)
+        cuda_src_raw = exp.cuda_src
+        ptx_text = exp.ptx_text
+        entry_name = exp.entry_name
+        include_dirs = list(exp.include_dirs)
+
+    # Keep the prompt "compiler-like": include a high-level TIR snapshot as a comment
+    # before the exported CUDA kernel source.
+    tir_txt = ""
+    try:
+        tir_txt = str(spec.tilelang_prim_func.script(show_meta=False))
+    except Exception:
+        try:
+            tir_txt = str(spec.tilelang_prim_func)
+        except Exception:
+            tir_txt = ""
+    if tir_txt.strip():
+        spec.cuda_src = "// --- TileLang TIR (semantic guide; comment only) ---\n/*\n" + tir_txt + "\n*/\n\n" + cuda_src_raw
+    else:
+        spec.cuda_src = cuda_src_raw
+
+    # Do not force `cuda_path` for TileLang-derived kernels: we want the augmented
+    # `cuda_src` to reach the LLM prompt via KernelDescriptor.source_text.
+    spec.ptx_text = ptx_text
+    spec.ptx_entry = entry_name
+    spec.include_dirs = list(include_dirs)
+    if not spec.ptx_origin:
+        spec.ptx_origin = "tilelang"
+
+    return {"used": bool(used_snapshot), "dir": str(_CUDA_TILELANG_SNAPSHOT_DIR)}
+
+
 def run_pipeline_for_spec(
     spec: KernelSpec,
     *,
@@ -1365,55 +1426,9 @@ def run_pipeline_for_spec(
     out_dir.mkdir(parents=True, exist_ok=True)
     adapter = pipeline_registry.get("cuda")
 
-    # If this spec is TileLang-derived, export CUDA source + PTX once and attach
-    # them to the KernelSpec for the CUDA adapter/ptx parser to consume.
-    if spec.tilelang_prim_func is not None and (not spec.cuda_src or not spec.ptx_text):
-        # Prefer a stable snapshot under `kernels/cuda/ops/` to keep the CUDA
-        # prompt/cache deterministic across runs. Fall back to exporting from the
-        # TileLang PrimFunc when missing (or when forced to refresh).
-        refresh = str(os.getenv("INTENTIR_TILELANG_CUDA_SNAPSHOT_REFRESH", "0")).strip() == "1"
-        used_snapshot = False
-        cuda_src_raw = ""
-        ptx_text = ""
-        entry_name = ""
-        include_dirs: List[Path] = []
-        if not refresh:
-            try:
-                cuda_src_raw, ptx_text, entry_name, include_dirs = _load_tilelang_cuda_snapshot(spec.name)
-                used_snapshot = True
-            except Exception:
-                used_snapshot = False
-        if not used_snapshot:
-            exp = export_tilelang_cuda(spec.tilelang_prim_func, out_dir=out_dir, stem=spec.name)
-            _persist_tilelang_cuda_snapshot(spec.name, exp)
-            cuda_src_raw = exp.cuda_src
-            ptx_text = exp.ptx_text
-            entry_name = exp.entry_name
-            include_dirs = list(exp.include_dirs)
-        report["tilelang_cuda_snapshot"] = {"used": bool(used_snapshot), "dir": str(_CUDA_TILELANG_SNAPSHOT_DIR)}
-        # Keep the prompt "compiler-like": include a high-level TIR snapshot as a comment
-        # before the exported CUDA kernel source. This significantly improves LLM
-        # recovery for structured reductions/broadcasting (e.g., softmax/attention),
-        # while still treating the kernel as a CUDA-source frontend.
-        tir_txt = ""
-        try:
-            tir_txt = str(spec.tilelang_prim_func.script(show_meta=False))
-        except Exception:
-            try:
-                tir_txt = str(spec.tilelang_prim_func)
-            except Exception:
-                tir_txt = ""
-        if tir_txt.strip():
-            spec.cuda_src = "// --- TileLang TIR (semantic guide; comment only) ---\n/*\n" + tir_txt + "\n*/\n\n" + cuda_src_raw
-        else:
-            spec.cuda_src = cuda_src_raw
-        # Do not force `cuda_path` for TileLang-derived kernels: we want the
-        # augmented `cuda_src` to reach the LLM prompt via KernelDescriptor.source_text.
-        spec.ptx_text = ptx_text
-        spec.ptx_entry = entry_name
-        spec.include_dirs = list(include_dirs)
-        if not spec.ptx_origin:
-            spec.ptx_origin = "tilelang"
+    snap_info = prepare_cuda_spec_for_frontend(spec, out_dir=out_dir)
+    if snap_info:
+        report["tilelang_cuda_snapshot"] = dict(snap_info)
 
     print(f"[{spec.name}] stage1: build cuda descriptor", flush=True)
     desc = adapter.build_descriptor(spec)

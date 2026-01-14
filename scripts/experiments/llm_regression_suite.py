@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from frontends.common.certificate_v2 import SemanticCertificateV2
+from frontends.common.contract_v2 import evaluate_contract_v2
+from frontends.common.obligations import evaluate_obligations
 from frontends.common.static_validate import static_validate
 from intent_ir.llm.llm_hub import LLMIntentHub
 from intent_ir.macros import expand_macros
@@ -31,6 +33,108 @@ from pipeline.interfaces import KernelArtifactBundle, KernelDescriptor
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _spec_from_pipeline(frontend: str, kernel: str) -> Any:
+    """
+    Recover the kernel spec object used by the frontend adapter.
+
+    We intentionally use the *coverage* suite as the lookup table because it
+    includes the smoke kernels (see `scripts/full_pipeline_verify.py`).
+    """
+    if frontend == "triton":
+        from pipeline.triton.core import coverage_kernel_specs  # noqa: PLC0415
+
+        for s in coverage_kernel_specs():
+            if getattr(s, "name", None) == kernel:
+                return s
+        raise KeyError(kernel)
+    if frontend == "tilelang":
+        from pipeline.tilelang.core import coverage_kernel_specs  # noqa: PLC0415
+
+        for s in coverage_kernel_specs():
+            if getattr(s, "name", None) == kernel:
+                return s
+        raise KeyError(kernel)
+    if frontend == "cuda":
+        from pipeline.cuda.core import coverage_kernel_specs  # noqa: PLC0415
+
+        for s in coverage_kernel_specs():
+            if getattr(s, "name", None) == kernel:
+                return s
+        raise KeyError(kernel)
+    raise ValueError(f"unknown frontend: {frontend}")
+
+
+def _prepare_frontend_artifacts(*, frontend: str, kernel: str, artifacts_dir: Path) -> None:
+    """
+    Stage-4-only artifact preparation for the regression suite.
+
+    Unlike `scripts/full_pipeline_verify.py`, we do NOT run:
+      - baseline launch (Task3)
+      - Task5 diff / remote RVV
+
+    We only materialize what the LLM regression suite needs:
+      - `<kernel>.descriptor.json`
+      - `<kernel>.certificate_v2.json` (+ contract summary in cert.meta)
+    """
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    spec = _spec_from_pipeline(str(frontend), str(kernel))
+
+    # CUDA frontend: TileLang-derived KernelSpecs need a snapshot/export attach
+    # step before the adapter sees `cuda_src` / `ptx_text`.
+    if str(frontend) == "cuda":
+        from pipeline.cuda.core import prepare_cuda_spec_for_frontend  # noqa: PLC0415
+
+        prepare_cuda_spec_for_frontend(spec, out_dir=artifacts_dir)
+
+    # Build descriptor + frontend artifacts via adapter (TTIR/PTX/TVM JSON snapshots).
+    from pipeline import registry as pipeline_registry  # noqa: PLC0415
+
+    adapter = pipeline_registry.get(str(frontend))
+    desc = adapter.build_descriptor(spec)
+    desc.meta["artifact_dir"] = str(artifacts_dir)
+    if str(frontend) == "cuda":
+        ptx_entry = getattr(spec, "ptx_entry", None)
+        if isinstance(ptx_entry, str) and ptx_entry.strip():
+            desc.meta["ptx_entry"] = str(ptx_entry)
+    desc = adapter.ensure_artifacts(desc, spec)
+
+    # Facts/constraints + CertificateV2.
+    facts = adapter.extract_facts(desc)
+    constraints = adapter.extract_constraints(desc, facts)
+
+    cert_v2: SemanticCertificateV2
+    if str(frontend) == "triton":
+        # Triton adapter keeps legacy v1 cert builder for backward compat; use
+        # the v2 builder directly (matches pipeline/triton/core.py Stage 4).
+        from frontends.triton.certificate import build_certificate_v2  # noqa: PLC0415
+
+        ttir_text = None
+        try:
+            if desc.artifacts.ttir_path:
+                ttir_text = Path(str(desc.artifacts.ttir_path)).read_text(encoding="utf-8")
+        except Exception:
+            ttir_text = None
+        if not ttir_text:
+            raise FileNotFoundError("TTIR not available for Triton kernel (missing dump/copy?)")
+        cert_v2 = build_certificate_v2(ttir_text, desc=desc, facts=facts)
+    else:
+        cert = adapter.build_certificate(desc, facts, constraints)
+        if not isinstance(cert, SemanticCertificateV2):
+            raise TypeError(f"{frontend} adapter returned non-CertificateV2: {type(cert).__name__}")
+        cert_v2 = cert
+
+    obligations = evaluate_obligations(desc, cert_v2)
+    cert_v2.semantic_facts["obligations"] = [o.to_json_dict() for o in obligations]
+    contract = evaluate_contract_v2(desc, cert_v2, obligations, constraints=constraints)
+    cert_v2.meta = dict(getattr(cert_v2, "meta", {}) or {})
+    cert_v2.meta["contract"] = {"level": str(contract.level), "reasons": list(contract.reasons), "assumptions": list(contract.assumptions)}
+
+    # Persist the artifacts this suite consumes.
+    (artifacts_dir / f"{kernel}.descriptor.json").write_text(json.dumps(desc.to_json_dict(), indent=2), encoding="utf-8")
+    (artifacts_dir / f"{kernel}.certificate_v2.json").write_text(json.dumps(cert_v2.to_json_dict(), indent=2), encoding="utf-8")
+
 
 def _kernels_from_pipeline(frontend: str, suite: str) -> List[str]:
     """
@@ -214,23 +318,28 @@ def run_one(
     cert_path = artifacts_dir / f"{kernel}.certificate_v2.json"
 
     if not desc_path.exists() or not cert_path.exists():
-        missing = []
-        if not desc_path.exists():
-            missing.append(str(desc_path))
-        if not cert_path.exists():
-            missing.append(str(cert_path))
-        r = KernelResult(
-            frontend=frontend,
-            kernel=kernel,
-            contract="N/A",
-            anchor_tier="D_none",
-            anchor_score=0,
-            ok=False,
-            category="artifact_missing",
-            reasons=[f"missing: {p}" for p in missing],
-            llm={},
-        )
-        return r, last_api_s
+        # Regression suite is expected to be runnable "from scratch". Prepare
+        # frontend-side artifacts on demand (Stage 4 only).
+        try:
+            _prepare_frontend_artifacts(frontend=frontend, kernel=kernel, artifacts_dir=artifacts_dir)
+        except Exception as e:
+            missing = []
+            if not desc_path.exists():
+                missing.append(str(desc_path))
+            if not cert_path.exists():
+                missing.append(str(cert_path))
+            r = KernelResult(
+                frontend=frontend,
+                kernel=kernel,
+                contract="N/A",
+                anchor_tier="D_none",
+                anchor_score=0,
+                ok=False,
+                category=f"artifact_prepare_error:{type(e).__name__}",
+                reasons=[str(e)] + ([f"missing: {p}" for p in missing] if missing else []),
+                llm={},
+            )
+            return r, last_api_s
 
     desc = _descriptor_from_json(_load_json(desc_path))
     cert_v2 = _cert_v2_from_json(_load_json(cert_path))
