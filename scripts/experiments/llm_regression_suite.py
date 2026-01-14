@@ -80,13 +80,8 @@ def _prepare_frontend_artifacts(*, frontend: str, kernel: str, artifacts_dir: Pa
     """
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     spec = _spec_from_pipeline(str(frontend), str(kernel))
-
-    # CUDA frontend: TileLang-derived KernelSpecs need a snapshot/export attach
-    # step before the adapter sees `cuda_src` / `ptx_text`.
-    if str(frontend) == "cuda":
-        from pipeline.cuda.core import prepare_cuda_spec_for_frontend  # noqa: PLC0415
-
-        prepare_cuda_spec_for_frontend(spec, out_dir=artifacts_dir)
+    # CUDA frontend: requires pre-generated snapshots under kernels/cuda/ops/.
+    # If missing, run `PYTHONPATH=. python scripts/tilelang/export_cuda_snapshots.py`.
 
     # Build descriptor + frontend artifacts via adapter (TTIR/PTX/TVM JSON snapshots).
     from pipeline import registry as pipeline_registry  # noqa: PLC0415

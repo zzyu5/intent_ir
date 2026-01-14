@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import hashlib
 import os
-import re
 import ast
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,9 +23,7 @@ from frontends.common.obligations import O3_MASK_IMPLIES_INBOUNDS, evaluate_obli
 from frontends.common.static_validate import static_validate
 from frontends.cuda.runtime import CudaLaunch, CudaRuntimeError, run_cuda_kernel_io
 from frontends.cuda.signature import infer_runtime_io_spec
-from frontends.tilelang.cuda_export import build_io_spec_from_tilelang_prim_func, export_tilelang_cuda, tilelang_include_dirs
-from frontends.tilelang.runtime import infer_written_global_buffers, run_tilelang_kernel_io
-from intent_ir.llm import LLMIntentHub
+from intent_ir.llm import LLMClientError, LLMIntentHub
 from intent_ir.macros import expand_macros, enrich_intent_macros
 from intent_ir.parser import CandidateIntent
 from intent_ir.ir import ScheduleSketch
@@ -43,27 +40,23 @@ from kernels.cuda.ops.vec_add import VEC_ADD_CU_PATH, vec_add_io
 from kernels.cuda.ops.transpose2d import TRANSPOSE2D_CU_PATH, transpose2d_io
 from kernels.cuda.ops.row_sum import ROW_SUM_CU_PATH, row_sum_io
 from kernels.cuda.ops.naive_gemm import NAIVE_GEMM_CU_PATH, naive_gemm_io
-from kernels.tilelang.ops.any_kernel_dim import make_any_kernel_dim_prim_func
-from kernels.tilelang.ops.groupnorm import make_group_norm_kernel_prim_func
-from kernels.tilelang.ops._attn_fwd import make_attn_fwd_prim_func
-from kernels.tilelang.ops.softmax_inner import make_softmax_inner_prim_func
-from kernels.tilelang.ops.layernorm import make_layer_norm_persistent_prim_func
-from kernels.tilelang.ops.upsample_bicubic2d_aa import make_upsample_bicubic2d_aa_prim_func
 
 
 ROOT = Path(__file__).resolve().parents[2]
 _LLM_HUB = LLMIntentHub()
 
-_CUDA_TILELANG_SNAPSHOT_DIR = ROOT / "kernels" / "cuda" / "ops" / "tilelang_generated"
-_PTX_ENTRY_RE = re.compile(r"^\s*\.visible\s+\.entry\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(")
-_LAUNCH_THREAD_RE = re.compile(r'^\s*[A-Za-z_][A-Za-z0-9_]*\s*=\s*T\.launch_thread\(\"(?P<tag>blockIdx\.(?:x|y|z))\",\s*(?P<extent>.+)\)\s*$')
+# CUDA pipeline consumes pre-generated snapshots under kernels/cuda/ops/.
+# TileLang is allowed to generate these snapshots offline, but the CUDA runtime
+# pipeline must not import TileLang or parse TIR.
+_CUDA_SNAPSHOT_DIR = ROOT / "kernels" / "cuda" / "ops" / "tilelang_generated"
+_CUDA_SNAPSHOT_META_SUFFIX = ".tilelang_export.json"
 
 
 def _eval_int_expr(expr: str, bindings: Dict[str, int]) -> int:
     """
     Evaluate a small, safe subset of Python integer expressions.
 
-    Used for TileLang/TIR-derived launch extents like:
+    Used for snapshot launch expressions like:
       - M
       - M * 4
       - (N + 64 - 1) // 64
@@ -120,33 +113,6 @@ def _eval_int_expr(expr: str, bindings: Dict[str, int]) -> int:
     tree = ast.parse(s, mode="eval")
     return int(ev(tree))
 
-
-def _infer_grid_from_tilelang_prim_func(prim_func: Any, bindings: Dict[str, int]) -> tuple[int, int, int]:
-    """
-    Infer CUDA grid dims from a TileLang/TVM PrimFunc TIR script.
-
-    TileLang emits TIR with launch-thread lines like:
-      bx = T.launch_thread("blockIdx.x", M)
-      by = T.launch_thread("blockIdx.y", (N + 64 - 1) // 64)
-    """
-    txt = str(prim_func.script(show_meta=False))
-    ext: Dict[str, str] = {}
-    for ln in txt.splitlines():
-        m = _LAUNCH_THREAD_RE.match(ln.strip())
-        if not m:
-            continue
-        tag = str(m.group("tag"))
-        e = str(m.group("extent")).strip()
-        # Strip trailing comments if any.
-        if "#" in e:
-            e = e.split("#", 1)[0].strip()
-        ext[tag] = e
-    gx = _eval_int_expr(ext.get("blockIdx.x", "1"), bindings) if "blockIdx.x" in ext else 1
-    gy = _eval_int_expr(ext.get("blockIdx.y", "1"), bindings) if "blockIdx.y" in ext else 1
-    gz = _eval_int_expr(ext.get("blockIdx.z", "1"), bindings) if "blockIdx.z" in ext else 1
-    return (max(1, int(gx)), max(1, int(gy)), max(1, int(gz)))
-
-
 def _read_cuda_src(path: Path) -> str:
     return Path(path).read_text(encoding="utf-8")
 
@@ -155,53 +121,67 @@ def _ceil_div(a: int, b: int) -> int:
     return (int(a) + int(b) - 1) // int(b) if int(b) > 0 else 1
 
 
-def _persist_tilelang_cuda_snapshot(name: str, exp) -> None:
+def _snapshot_paths(name: str) -> tuple[Path, Path, Path]:
+    cu = _CUDA_SNAPSHOT_DIR / f"{name}.cu"
+    ptx = _CUDA_SNAPSHOT_DIR / f"{name}.ptx"
+    meta = _CUDA_SNAPSHOT_DIR / f"{name}{_CUDA_SNAPSHOT_META_SUFFIX}"
+    return cu, ptx, meta
+
+
+def _load_snapshot_meta(name: str) -> Dict[str, Any]:
+    _, _, meta_path = _snapshot_paths(name)
+    if not meta_path.is_file():
+        raise FileNotFoundError(
+            f"missing CUDA snapshot metadata for {name}: {meta_path} "
+            f"(run `PYTHONPATH=. python scripts/tilelang/export_cuda_snapshots.py --suite smoke --kernel {name}`)"
+        )
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    if not isinstance(meta, dict):
+        raise TypeError(f"invalid snapshot meta JSON for {name}: expected dict, got {type(meta)}")
+    return meta
+
+
+def _load_cuda_snapshot(name: str) -> Dict[str, Any]:
     """
-    Persist TileLang->CUDA exports under `kernels/cuda/ops/` for inspection/reuse.
+    Load a kernel snapshot (CUDA source + PTX + extended meta).
 
-    This keeps the CUDA frontend "kernel library" consistent with Triton/TileLang:
-      - user/kernel code lives under kernels/
-      - pipeline artifacts live under artifacts/
+    Runtime contract: CUDA pipeline must NOT import TileLang here.
     """
-    out_dir = _CUDA_TILELANG_SNAPSHOT_DIR
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    cuda_path = out_dir / f"{name}.cu"
-    ptx_path = out_dir / f"{name}.ptx"
-    meta_path = out_dir / f"{name}.tilelang_export.json"
-
-    cuda_path.write_text(str(getattr(exp, "cuda_src", "")), encoding="utf-8")
-    ptx_path.write_text(str(getattr(exp, "ptx_text", "")), encoding="utf-8")
-    meta = {
-        "name": str(name),
-        "origin": "tilelang",
-        "entry_name": str(getattr(exp, "entry_name", "")),
-        "include_dirs": [str(p) for p in (getattr(exp, "include_dirs", []) or [])],
-        "notes": "Generated snapshot. Edit the TileLang kernel (kernels/tilelang/ops/*) instead of this file.",
-    }
-    meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
-
-def _load_tilelang_cuda_snapshot(name: str) -> tuple[str, str, str, List[Path]]:
-    """
-    Load a previously-exported TileLang->CUDA snapshot from `kernels/cuda/ops/`.
-    Returns: (cuda_src, ptx_text, entry_name, include_dirs)
-    """
-    cuda_path = _CUDA_TILELANG_SNAPSHOT_DIR / f"{name}.cu"
-    ptx_path = _CUDA_TILELANG_SNAPSHOT_DIR / f"{name}.ptx"
-    if not cuda_path.is_file() or not ptx_path.is_file():
-        raise FileNotFoundError(f"missing TileLang CUDA snapshot for {name}: {cuda_path} / {ptx_path}")
-    cuda_src = cuda_path.read_text(encoding="utf-8")
+    cu_path, ptx_path, meta_path = _snapshot_paths(name)
+    if not cu_path.is_file() or not ptx_path.is_file():
+        raise FileNotFoundError(
+            f"missing CUDA snapshot files for {name}: {cu_path} / {ptx_path} "
+            f"(run `PYTHONPATH=. python scripts/tilelang/export_cuda_snapshots.py --suite smoke --kernel {name}`)"
+        )
+    meta = _load_snapshot_meta(name)
+    cuda_src = cu_path.read_text(encoding="utf-8")
     ptx_text = ptx_path.read_text(encoding="utf-8")
-    entry_name = ""
-    for ln in ptx_text.splitlines():
-        m = _PTX_ENTRY_RE.match(ln)
-        if m:
-            entry_name = str(m.group("name"))
-            break
-    if not entry_name:
-        raise RuntimeError(f"cannot find .visible .entry in snapshot PTX for {name}: {ptx_path}")
-    return cuda_src, ptx_text, entry_name, list(tilelang_include_dirs())
+
+    entry_name = str(meta.get("entry_name") or meta.get("ptx_entry") or "main_kernel")
+    include_dirs_raw = meta.get("include_dirs")
+    include_dirs: List[Path] = []
+    if isinstance(include_dirs_raw, list):
+        include_dirs = [Path(str(x)) for x in include_dirs_raw if str(x).strip()]
+
+    io_spec = meta.get("io_spec")
+    outputs = meta.get("outputs")
+    launch = meta.get("launch")
+    if not isinstance(io_spec, dict) or not isinstance(launch, dict):
+        raise RuntimeError(
+            f"snapshot meta for {name} is missing required fields (io_spec/launch); got keys={sorted(meta.keys())} "
+            f"(re-export with `PYTHONPATH=. python scripts/tilelang/export_cuda_snapshots.py --refresh --kernel {name}`)"
+        )
+    if outputs is not None and not isinstance(outputs, list):
+        raise TypeError(f"snapshot meta outputs must be a list for {name} | path={meta_path}")
+
+    return {
+        "name": name,
+        "cuda_src": cuda_src,
+        "ptx_text": ptx_text,
+        "entry_name": entry_name,
+        "include_dirs": include_dirs,
+        "meta": meta,
+    }
 
 
 def _ensure_schedule_cuda(intent, *, spec: "KernelSpec") -> None:
@@ -423,6 +403,183 @@ def _group_norm_fallback_intent():
     )
 
 
+def _any_kernel_dim_fallback_intent():
+    from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, TensorType  # noqa: PLC0415
+
+    rm = TensorLayout(kind="row_major", params={})
+    tensors: Dict[str, TensorType] = {
+        "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "out": TensorType(dtype="bool", shape=[Dim("sym", "M")], layout=rm),
+    }
+    ops = [Op(op="reduce_any", inputs=["inp"], output="out", attrs={"dims": [1], "keepdims": False})]
+    schedule = ScheduleSketch(tile_m=None, tile_n=None, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="any_kernel_dim",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out"],
+        schedule=schedule,
+        axis_roles={"M": "batch", "N": "reduction"},
+    )
+
+
+def _softmax_inner_fallback_intent():
+    from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, TensorType  # noqa: PLC0415
+
+    rm = TensorLayout(kind="row_major", params={})
+    tensors: Dict[str, TensorType] = {
+        "input_ptr": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "output_ptr": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "row_max_ptr": TensorType(dtype="f32", shape=[Dim("sym", "M")], layout=rm),
+        "row_sum_ptr": TensorType(dtype="f32", shape=[Dim("sym", "M")], layout=rm),
+    }
+    ops: List[Op] = []
+    ops.append(Op(op="reduce_max", inputs=["input_ptr"], output="row_max_ptr", attrs={"dims": [1], "keepdims": False}))
+    ops.append(
+        Op(
+            op="broadcast_in_dim",
+            inputs=["row_max_ptr"],
+            output="row_max_2d",
+            attrs={"out_shape": ["M", "N"], "broadcast_dims": [0]},
+        )
+    )
+    ops.append(Op(op="sub", inputs=["input_ptr", "row_max_2d"], output="x_shift", attrs={}))
+    ops.append(Op(op="exp", inputs=["x_shift"], output="exp_scores", attrs={}))
+    ops.append(Op(op="reduce_sum", inputs=["exp_scores"], output="row_sum_ptr", attrs={"dims": [1], "keepdims": False}))
+    ops.append(
+        Op(
+            op="broadcast_in_dim",
+            inputs=["row_sum_ptr"],
+            output="row_sum_2d",
+            attrs={"out_shape": ["M", "N"], "broadcast_dims": [0]},
+        )
+    )
+    ops.append(Op(op="div", inputs=["exp_scores", "row_sum_2d"], output="output_ptr", attrs={}))
+    schedule = ScheduleSketch(tile_m=None, tile_n=None, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="softmax_inner",
+        tensors=tensors,
+        ops=ops,
+        outputs=["output_ptr", "row_max_ptr", "row_sum_ptr"],
+        schedule=schedule,
+        axis_roles={"M": "batch", "N": "reduction"},
+    )
+
+
+def _layer_norm_persistent_fallback_intent():
+    from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, TensorType  # noqa: PLC0415
+
+    rm = TensorLayout(kind="row_major", params={})
+    tensors: Dict[str, TensorType] = {
+        "in_ptr": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "weight_ptr": TensorType(dtype="f32", shape=[Dim("sym", "N")], layout=rm),
+        "bias_ptr": TensorType(dtype="f32", shape=[Dim("sym", "N")], layout=rm),
+        "out_ptr": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "out_mean_ptr": TensorType(dtype="f32", shape=[Dim("sym", "M")], layout=rm),
+        "out_rstd_ptr": TensorType(dtype="f32", shape=[Dim("sym", "M")], layout=rm),
+    }
+    ops: List[Op] = []
+    ops.append(
+        Op(op="reduce_sum", inputs=["in_ptr"], output="out_mean_ptr", attrs={"dims": [1], "keepdims": False, "scale": "1.0/N"})
+    )
+    ops.append(
+        Op(
+            op="broadcast_in_dim",
+            inputs=["out_mean_ptr"],
+            output="mean_2d",
+            attrs={"out_shape": ["M", "N"], "broadcast_dims": [0]},
+        )
+    )
+    ops.append(Op(op="sub", inputs=["in_ptr", "mean_2d"], output="centered", attrs={}))
+    ops.append(Op(op="mul", inputs=["centered", "centered"], output="sq", attrs={}))
+    ops.append(Op(op="reduce_sum", inputs=["sq"], output="var", attrs={"dims": [1], "keepdims": False, "scale": "1.0/N"}))
+    ops.append(Op(op="const", inputs=[], output="eps", attrs={"value": 1e-5, "dtype": "f32"}))
+    ops.append(Op(op="add", inputs=["var", "eps"], output="var_eps", attrs={}))
+    ops.append(Op(op="rsqrt", inputs=["var_eps"], output="out_rstd_ptr", attrs={}))
+    ops.append(
+        Op(
+            op="broadcast_in_dim",
+            inputs=["out_rstd_ptr"],
+            output="rstd_2d",
+            attrs={"out_shape": ["M", "N"], "broadcast_dims": [0]},
+        )
+    )
+    ops.append(Op(op="mul", inputs=["centered", "rstd_2d"], output="norm", attrs={}))
+    ops.append(Op(op="mul", inputs=["norm", "weight_ptr"], output="scaled", attrs={}))
+    ops.append(Op(op="add", inputs=["scaled", "bias_ptr"], output="out_ptr", attrs={}))
+    schedule = ScheduleSketch(tile_m=None, tile_n=None, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="layer_norm_persistent",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out_ptr", "out_mean_ptr", "out_rstd_ptr"],
+        schedule=schedule,
+        axis_roles={"M": "batch", "N": "channel"},
+    )
+
+
+def _attn_fwd_fallback_intent():
+    from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, TensorType  # noqa: PLC0415
+
+    rm = TensorLayout(kind="row_major", params={})
+    tensors: Dict[str, TensorType] = {
+        "Q": TensorType(dtype="f32", shape=[Dim("sym", "Q_CTX"), Dim("sym", "HEAD_DIM")], layout=rm),
+        "K": TensorType(dtype="f32", shape=[Dim("sym", "KV_CTX"), Dim("sym", "HEAD_DIM")], layout=rm),
+        "V": TensorType(dtype="f32", shape=[Dim("sym", "KV_CTX"), Dim("sym", "HEAD_DIM")], layout=rm),
+        "Out": TensorType(dtype="f32", shape=[Dim("sym", "Q_CTX"), Dim("sym", "HEAD_DIM")], layout=rm),
+    }
+    ops: List[Op] = []
+    ops.append(Op(op="matmul", inputs=["Q", "K"], output="scores", attrs={"transpose_b": True}))
+    ops.append(Op(op="const", inputs=[], output="sm_scale", attrs={"value": "1.0/(HEAD_DIM**0.5)", "dtype": "f32"}))
+    ops.append(Op(op="mul", inputs=["scores", "sm_scale"], output="scores_s", attrs={}))
+    ops.append(Op(op="softmax", inputs=["scores_s"], output="probs", attrs={"axis": 1}))
+    ops.append(Op(op="matmul", inputs=["probs", "V"], output="Out", attrs={}))
+    schedule = ScheduleSketch(tile_m=None, tile_n=None, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="_attn_fwd",
+        tensors=tensors,
+        ops=ops,
+        outputs=["Out"],
+        schedule=schedule,
+        axis_roles={"Q_CTX": "batch", "KV_CTX": "reduction", "HEAD_DIM": "channel"},
+    )
+
+
+def _upsample_bicubic2d_aa_fallback_intent():
+    from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, TensorType  # noqa: PLC0415
+
+    rm = TensorLayout(kind="row_major", params={})
+    tensors: Dict[str, TensorType] = {
+        "I": TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "C"), Dim("sym", "IH"), Dim("sym", "IW")], layout=rm),
+        "reciprocal_scale_h": TensorType(dtype="f32", shape=[], layout=rm),
+        "reciprocal_scale_w": TensorType(dtype="f32", shape=[], layout=rm),
+        "O": TensorType(dtype="f32", shape=[Dim("sym", "N"), Dim("sym", "C"), Dim("sym", "OH"), Dim("sym", "OW")], layout=rm),
+    }
+    ops: List[Op] = [Op(op="upsample_bicubic2d_aa", inputs=["I"], output="O", attrs={})]
+    schedule = ScheduleSketch(tile_m=None, tile_n=None, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="upsample_bicubic2d_aa",
+        tensors=tensors,
+        ops=ops,
+        outputs=["O"],
+        schedule=schedule,
+        axis_roles={"N": "batch", "C": "channel", "IH": "spatial", "IW": "spatial", "OH": "spatial", "OW": "spatial"},
+    )
+
+
+def _deterministic_fallback_intent_for(name: str):
+    table = {
+        "any_kernel_dim": _any_kernel_dim_fallback_intent,
+        "group_norm_kernel": _group_norm_fallback_intent,
+        "_attn_fwd": _attn_fwd_fallback_intent,
+        "softmax_inner": _softmax_inner_fallback_intent,
+        "layer_norm_persistent": _layer_norm_persistent_fallback_intent,
+        "upsample_bicubic2d_aa": _upsample_bicubic2d_aa_fallback_intent,
+    }
+    fn = table.get(str(name))
+    return None if fn is None else fn()
+
+
 def _softmax_inner_reference(case: TestCase) -> Dict[str, np.ndarray]:
     if case.inputs and "input_ptr" in case.inputs:
         x = np.asarray(case.inputs["input_ptr"], dtype=np.float32)
@@ -582,69 +739,125 @@ def _random_array(rng: np.random.Generator, *, shape: tuple[int, ...], dtype: st
     raise ValueError(f"unsupported dtype for generator: {dtype}")
 
 
-def _run_tilelang_exported_cuda_kernel(
+def _compute_launch_from_meta(launch_meta: Dict[str, Any], bindings: Dict[str, int]) -> CudaLaunch:
+    grid_raw = launch_meta.get("grid") if isinstance(launch_meta.get("grid"), list) else ["1", "1", "1"]
+    block_raw = launch_meta.get("block") if isinstance(launch_meta.get("block"), list) else ["1", "1", "1"]
+
+    def _eval_dim(v: Any) -> int:
+        if isinstance(v, (int, float)):
+            return max(1, int(v))
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return 1
+            return max(1, int(_eval_int_expr(s, bindings)))
+        return 1
+
+    grid = tuple(_eval_dim(x) for x in (grid_raw + ["1", "1", "1"])[:3])
+    block = tuple(_eval_dim(x) for x in (block_raw + ["1", "1", "1"])[:3])
+
+    sm = launch_meta.get("shared_mem", 0)
+    shared_mem = 0
+    if isinstance(sm, (int, float)):
+        shared_mem = max(0, int(sm))
+    elif isinstance(sm, str) and sm.strip():
+        shared_mem = max(0, int(_eval_int_expr(sm.strip(), bindings)))
+    return CudaLaunch(grid=grid, block=block, shared_mem=shared_mem)
+
+
+def _inputs_from_io_spec(
     *,
-    prim_func: Any,
     io_spec: Dict[str, Any],
-    case: TestCase,
+    outputs: List[str],
+    bindings: Dict[str, int],
+    seed: int,
 ) -> Dict[str, np.ndarray]:
-    """
-    Reference runner: execute the real TileLang kernel (CUDA) for baseline IO.
-
-    Inputs are generated from io_spec (buffer shapes); outputs are those written
-    by the PrimFunc (inferred via TIR traversal).
-    """
-    bindings = dict(case.shapes)
-    rng = np.random.default_rng(int(case.seed))
-    written = set(infer_written_global_buffers(prim_func))
-
+    rng = np.random.default_rng(int(seed))
+    out_set = {str(x) for x in outputs}
     tensors = io_spec.get("tensors") if isinstance(io_spec.get("tensors"), dict) else {}
     inputs_np: Dict[str, np.ndarray] = {}
     for name, tspec in tensors.items():
-        if name in written:
+        if name in out_set:
             continue
         if not isinstance(tspec, dict):
             continue
         dt = str(tspec.get("dtype") or "f32")
-        shape_tpl = tspec.get("shape") if isinstance(tspec.get("shape"), list) else None
-        if not shape_tpl:
-            raise RuntimeError(f"missing shape for TileLang buffer {name} in io_spec")
+        shape_tpl = tspec.get("shape") if isinstance(tspec.get("shape"), list) else []
         shape = tuple(int(bindings[str(d)]) if isinstance(d, str) else int(d) for d in shape_tpl)
+        # Small semantic constants (prefer deterministic values over random):
+        if str(name) == "sm_scale":
+            hd = bindings.get("HEAD_DIM")
+            if hd is not None and int(hd) > 0:
+                inputs_np[name] = np.array(1.0 / np.sqrt(float(hd)), dtype=np.float32)
+                continue
+        if str(name) in {"reciprocal_scale_h", "reciprocal_scale_w"}:
+            # Avoid negative/zero scales.
+            val = float(abs(rng.standard_normal())) + 0.1
+            inputs_np[name] = np.array(val, dtype=np.float32)
+            continue
         inputs_np[name] = _random_array(rng, shape=shape, dtype=dt)
+    return inputs_np
 
-    return run_tilelang_kernel_io(prim_func, bindings=bindings, inputs_np=inputs_np)
 
-
-def _run_tilelang_snapshot_cuda_kernel(
+def _run_cuda_snapshot_kernel(
     *,
     name: str,
-    semantic_io_spec: Dict[str, Any],
-    launch: CudaLaunch,
     case: TestCase,
-    output_names: List[str],
-    inputs_np: Dict[str, np.ndarray],
+    semantic_io_spec: Dict[str, Any] | None = None,
+    output_names: List[str] | None = None,
+    inputs_np: Dict[str, np.ndarray] | None = None,
     extra_bindings: Dict[str, int] | None = None,
 ) -> Dict[str, np.ndarray]:
     """
-    Reference runner: execute the *saved* TileLang->CUDA snapshot via the CUDA runtime.
+    Execute a *saved* CUDA snapshot via the CUDA runtime.
 
-    This is the "real CUDA path" for our CUDA frontend: compile the `.cu` snapshot,
-    launch it with explicit grid/block, and return numpy IO.
+    This is the canonical baseline path for the CUDA pipeline:
+      snapshot (.cu/.ptx/.json) -> torch extension -> kernel launch -> numpy IO
     """
-    cuda_src_raw, _ptx, _entry, include_dirs = _load_tilelang_cuda_snapshot(name)
+    snap = _load_cuda_snapshot(name)
+    cuda_src_raw = str(snap["cuda_src"])
+    entry_name = str(snap["entry_name"])
+    include_dirs = list(snap.get("include_dirs") or [])
+    meta = snap.get("meta") if isinstance(snap.get("meta"), dict) else {}
 
-    # Some TileLang kernels (e.g. matmul) use dynamic shared memory (`extern __shared__`).
-    # TileLang's runtime launches with an appropriate shared_mem size; replicate
-    # that behavior here with a conservative default.
+    bindings = dict(case.shapes)
+    if extra_bindings:
+        bindings.update({str(k): int(v) for k, v in extra_bindings.items()})
+    # Optional derived bindings (from snapshot meta).
+    db = meta.get("derived_bindings") if isinstance(meta, dict) else None
+    if isinstance(db, dict):
+        for k, expr in db.items():
+            if str(k) in bindings:
+                continue
+            if isinstance(expr, (int, float)):
+                bindings[str(k)] = int(expr)
+            elif isinstance(expr, str) and expr.strip():
+                try:
+                    bindings[str(k)] = int(_eval_int_expr(expr.strip(), bindings))
+                except Exception:
+                    pass
+
+    sem_io = dict(semantic_io_spec) if isinstance(semantic_io_spec, dict) else dict(meta.get("io_spec") or {})
+    outs = list(output_names) if isinstance(output_names, list) else [str(x) for x in (meta.get("outputs") or [])]
+    if not outs:
+        raise RuntimeError(f"snapshot meta missing outputs for {name}")
+    launch_meta = meta.get("launch") if isinstance(meta, dict) else {}
+    launch = _compute_launch_from_meta(dict(launch_meta or {}), bindings)
+
+    # Some kernels use dynamic shared memory (`extern __shared__`); if not specified,
+    # use a conservative default (overridable via env).
     if int(getattr(launch, "shared_mem", 0) or 0) <= 0 and "extern __shared__" in cuda_src_raw:
         try:
-            smem = int(os.getenv("INTENTIR_CUDA_TILELANG_DYNAMIC_SMEM", "16384"))
+            raw_smem = os.getenv("INTENTIR_CUDA_DYNAMIC_SMEM")
+            if raw_smem is None:
+                raw_smem = os.getenv("INTENTIR_CUDA_TILELANG_DYNAMIC_SMEM", "16384")  # legacy name
+            smem = int(raw_smem)
         except Exception:
             smem = 16384
         launch = CudaLaunch(grid=launch.grid, block=launch.block, shared_mem=max(0, int(smem)))
-    rt_io_spec = infer_runtime_io_spec(cuda_src=cuda_src_raw, kernel_name="main_kernel", semantic_io_spec=dict(semantic_io_spec))
+    rt_io_spec = infer_runtime_io_spec(cuda_src=cuda_src_raw, kernel_name=entry_name, semantic_io_spec=dict(sem_io))
     # Torch's CUDA extension build defines macros that disable half/bf16
-    # conversions by default; TileLang templates rely on those conversions.
+    # conversions by default; some generated kernels rely on those conversions.
     cflags = [f"-I{p}" for p in include_dirs]
     cflags += [
         "-U__CUDA_NO_HALF_OPERATORS__",
@@ -652,27 +865,25 @@ def _run_tilelang_snapshot_cuda_kernel(
         "-U__CUDA_NO_BFLOAT16_CONVERSIONS__",
         "-U__CUDA_NO_HALF2_OPERATORS__",
     ]
-
-    bindings = dict(case.shapes)
-    if extra_bindings:
-        bindings.update({str(k): int(v) for k, v in extra_bindings.items()})
+    if inputs_np is None:
+        inputs_np = _inputs_from_io_spec(io_spec=sem_io, outputs=outs, bindings=bindings, seed=int(case.seed))
 
     io = run_cuda_kernel_io(
-        kernel_name="main_kernel",
+        kernel_name=entry_name,
         cuda_src=cuda_src_raw,
         io_spec=rt_io_spec,
         launch=launch,
         bindings=bindings,
         inputs_np=inputs_np,
-        output_names=list(output_names),
+        output_names=list(outs),
         extra_cuda_cflags=cflags,
     )
 
     # If the CUDA snapshot uses i8 for boolean buffers, convert to bool to match
     # semantic io_spec (and the numpy interpreter).
-    sem_tensors = semantic_io_spec.get("tensors") if isinstance(semantic_io_spec.get("tensors"), dict) else {}
+    sem_tensors = sem_io.get("tensors") if isinstance(sem_io.get("tensors"), dict) else {}
     rt_tensors = rt_io_spec.get("tensors") if isinstance(rt_io_spec.get("tensors"), dict) else {}
-    for out_name in output_names:
+    for out_name in outs:
         sem = sem_tensors.get(out_name)
         rt = rt_tensors.get(out_name)
         if not isinstance(sem, dict) or not isinstance(rt, dict):
@@ -703,8 +914,8 @@ class KernelSpec:
     ptx_text: str | None = None
     ptx_entry: str | None = None
     ptx_origin: str | None = None
-    # Optional TileLang origin (used to export CUDA/PTX and run baseline).
-    tilelang_prim_func: Any | None = None
+    # Origin hint for debugging only (no runtime dependency).
+    origin: str | None = None
 
 
 def _native_cuda_kernel_specs() -> List[KernelSpec]:
@@ -752,553 +963,124 @@ def _native_cuda_kernel_specs() -> List[KernelSpec]:
     ]
 
 
-def _tilelang_export_regression_specs() -> List[KernelSpec]:
-    """
-    6-kernel regression suite, mirroring Triton/TileLang names.
+_CUDA_REGRESSION_KERNELS: list[str] = [
+    "any_kernel_dim",
+    "group_norm_kernel",
+    "_attn_fwd",
+    "softmax_inner",
+    "layer_norm_persistent",
+    "upsample_bicubic2d_aa",
+]
 
-    We treat TileLang as a *kernel generator*:
-      PrimFunc --(TileLang compile)--> CUDA C + PTX
-    then run the CUDA frontend pipeline on the exported artifacts.
-    """
-    threads = 128
+
+def _block_from_launch_meta(launch_meta: Dict[str, Any], bindings: Dict[str, int]) -> tuple[int, int, int]:
+    raw = launch_meta.get("block") if isinstance(launch_meta.get("block"), list) else ["1", "1", "1"]
+
+    def _one(v: Any) -> int:
+        if isinstance(v, (int, float)):
+            return max(1, int(v))
+        if isinstance(v, str) and v.strip():
+            try:
+                return max(1, int(_eval_int_expr(v.strip(), bindings)))
+            except Exception:
+                return 1
+        return 1
+
+    return tuple(_one(x) for x in (raw + ["1", "1", "1"])[:3])
+
+
+def _stage_c_runner_for(name: str):
+    table = {
+        "any_kernel_dim": _any_kernel_dim_reference,
+        "group_norm_kernel": _group_norm_reference,
+        "_attn_fwd": _attn_fwd_reference,
+        "softmax_inner": _softmax_inner_reference,
+        "layer_norm_persistent": _layer_norm_persistent_reference,
+        "upsample_bicubic2d_aa": _upsample_bicubic2d_aa_reference,
+    }
+    return table.get(str(name))
+
+
+def _baseline_runner_for(name: str):
+    # Some CUDA snapshots are evidence-only; keep diff baseline as the numpy/PyTorch reference.
+    table = {
+        "upsample_bicubic2d_aa": _upsample_bicubic2d_aa_reference,
+    }
+    return table.get(str(name))
+
+
+def _snapshot_kernel_spec(name: str) -> KernelSpec:
+    snap = _load_cuda_snapshot(name)
+    meta = snap.get("meta") if isinstance(snap.get("meta"), dict) else {}
+    io_spec = meta.get("io_spec")
+    if not isinstance(io_spec, dict):
+        raise RuntimeError(f"snapshot meta missing io_spec for {name}")
+    canonical_shapes_raw = meta.get("canonical_shapes")
+    if not isinstance(canonical_shapes_raw, dict):
+        raise RuntimeError(f"snapshot meta missing canonical_shapes for {name}")
+    canonical_shapes = {str(k): int(v) for k, v in canonical_shapes_raw.items()}
+    vary_axes = [str(x) for x in (meta.get("vary_axes") or []) if str(x)]
+    exclude_axes = [str(x) for x in (meta.get("exclude_axes") or []) if str(x)]
+    launch_meta = meta.get("launch") if isinstance(meta.get("launch"), dict) else {}
+    block = _block_from_launch_meta(dict(launch_meta or {}), dict(canonical_shapes))
+
+    baseline = str(meta.get("baseline") or "cuda").strip().lower()
+    ref_runner = _baseline_runner_for(name) if baseline == "numpy" else None
+    if baseline == "numpy" and ref_runner is None:
+        raise RuntimeError(f"snapshot requests numpy baseline but no reference runner is available: {name}")
+
+    def _runner(case: TestCase, _name=str(name), _io=dict(io_spec)) -> Dict[str, np.ndarray]:
+        if ref_runner is not None:
+            return ref_runner(case)
+        return _run_cuda_snapshot_kernel(name=_name, semantic_io_spec=_io, case=case)
+
+    stage_c_runner = _stage_c_runner_for(name)
+    return KernelSpec(
+        name=str(name),
+        io_spec=dict(io_spec),
+        canonical_shapes=canonical_shapes,
+        vary_axes=vary_axes,
+        runner=_runner,
+        stage_c_runner=stage_c_runner,
+        block=block,
+        exclude_axes=exclude_axes,
+        cuda_path=_CUDA_SNAPSHOT_DIR / f"{name}.cu",
+        include_dirs=list(snap.get("include_dirs") or []),
+        ptx_text=str(snap.get("ptx_text") or ""),
+        ptx_entry=str(snap.get("entry_name") or "main_kernel"),
+        ptx_origin=str(meta.get("origin") or "snapshot"),
+        origin=str(meta.get("origin") or None),
+    )
+
+
+def snapshot_regression_kernel_specs() -> List[KernelSpec]:
+    return [_snapshot_kernel_spec(n) for n in _CUDA_REGRESSION_KERNELS]
+
+
+def snapshot_coverage_kernel_specs() -> List[KernelSpec]:
+    if not _CUDA_SNAPSHOT_DIR.is_dir():
+        return []
+    names: list[str] = []
+    for p in sorted(_CUDA_SNAPSHOT_DIR.glob(f"*{_CUDA_SNAPSHOT_META_SUFFIX}")):
+        names.append(p.name[: -len(_CUDA_SNAPSHOT_META_SUFFIX)])
     out: List[KernelSpec] = []
-
-    # any_kernel_dim
-    pf_any = make_any_kernel_dim_prim_func(n=16, threads=threads)
-    io_any = {
-        "arg_names": ["inp", "out", "M", "N"],
-        "tensors": {
-            "inp": {"dtype": "f32", "shape": ["M", "N"]},
-            "out": {"dtype": "bool", "shape": ["M"]},
-        },
-        "scalars": {"M": "i32", "N": "i32"},
-    }
-    out.append(
-        KernelSpec(
-            name="any_kernel_dim",
-            io_spec=io_any,
-            canonical_shapes={"M": 16, "N": 16},
-            vary_axes=["M"],
-            runner=(
-                lambda case, _io=io_any: _run_tilelang_snapshot_cuda_kernel(
-                    name="any_kernel_dim",
-                    semantic_io_spec=_io,
-                    launch=CudaLaunch(grid=(int(case.shapes.get("M", 16)), 1, 1), block=(threads, 1, 1), shared_mem=0),
-                    case=case,
-                    output_names=["out"],
-                    inputs_np={
-                        "inp": (
-                            np.asarray(case.inputs.get("inp"), dtype=np.float32)
-                            if case.inputs and "inp" in case.inputs
-                            else np.random.default_rng(int(case.seed))
-                            .integers(0, 2, size=(int(case.shapes.get("M", 16)), int(case.shapes.get("N", 16))), dtype=np.int32)
-                            .astype(np.float32)
-                        )
-                    },
-                )
-            ),
-            stage_c_runner=_any_kernel_dim_reference,
-            block=(threads, 1, 1),
-            exclude_axes=[],
-            tilelang_prim_func=pf_any,
-            ptx_origin="tilelang",
-        )
-    )
-
-    # group_norm_kernel
-    pf_gn = make_group_norm_kernel_prim_func(c=64, hw=16, num_groups=4, threads=threads)
-    io_gn = {
-        "arg_names": ["X", "Y", "W", "B", "Mean", "Rstd", "N", "C", "HW", "num_groups", "group_size", "num_elements"],
-        "tensors": {
-            "X": {"dtype": "f32", "shape": ["N", "C", "HW"]},
-            "Y": {"dtype": "f32", "shape": ["N", "C", "HW"]},
-            "W": {"dtype": "f32", "shape": ["C"]},
-            "B": {"dtype": "f32", "shape": ["C"]},
-            "Mean": {"dtype": "f32", "shape": ["N", "num_groups"]},
-            "Rstd": {"dtype": "f32", "shape": ["N", "num_groups"]},
-        },
-        "scalars": {"N": "i32", "C": "i32", "HW": "i32", "num_groups": "i32", "group_size": "i32", "num_elements": "i32"},
-    }
-    out.append(
-        KernelSpec(
-            name="group_norm_kernel",
-            io_spec=io_gn,
-            canonical_shapes={"N": 16, "C": 64, "HW": 16, "num_groups": 4},
-            vary_axes=["N"],
-            runner=(
-                lambda case, _io=io_gn: (
-                    lambda n, c, hw, g: _run_tilelang_snapshot_cuda_kernel(
-                        name="group_norm_kernel",
-                        semantic_io_spec=_io,
-                        launch=CudaLaunch(grid=(n, g, 1), block=(threads, 1, 1), shared_mem=0),
-                        case=case,
-                        output_names=["Y", "Mean", "Rstd"],
-                        inputs_np={
-                            "X": (
-                                np.asarray(case.inputs.get("X"), dtype=np.float32)
-                                if case.inputs and "X" in case.inputs
-                                else np.random.default_rng(int(case.seed)).standard_normal((n, c, hw), dtype=np.float32)
-                            ),
-                            "W": (
-                                np.asarray(case.inputs.get("W"), dtype=np.float32)
-                                if case.inputs and "W" in case.inputs
-                                else np.random.default_rng(int(case.seed) + 1).standard_normal((c,), dtype=np.float32)
-                            ),
-                            "B": (
-                                np.asarray(case.inputs.get("B"), dtype=np.float32)
-                                if case.inputs and "B" in case.inputs
-                                else np.random.default_rng(int(case.seed) + 2).standard_normal((c,), dtype=np.float32)
-                            ),
-                        },
-                    )
-                )(
-                    int(case.shapes.get("N", 16)),
-                    int(case.shapes.get("C", 64)),
-                    int(case.shapes.get("HW", 16)),
-                    int(case.shapes.get("num_groups", 4)),
-                )
-            ),
-            stage_c_runner=_group_norm_reference,
-            block=(threads, 1, 1),
-            exclude_axes=["group_size", "num_elements"],
-            tilelang_prim_func=pf_gn,
-            ptx_origin="tilelang",
-        )
-    )
-
-    # _attn_fwd
-    pf_attn = make_attn_fwd_prim_func(q_ctx=16, kv_ctx=16, head_dim=16, threads=threads)
-    io_attn = {
-        "arg_names": ["Q", "K", "V", "Out", "sm_scale", "Q_CTX", "KV_CTX", "HEAD_DIM"],
-        "tensors": {
-            "Q": {"dtype": "f32", "shape": ["Q_CTX", "HEAD_DIM"]},
-            "K": {"dtype": "f32", "shape": ["KV_CTX", "HEAD_DIM"]},
-            "V": {"dtype": "f32", "shape": ["KV_CTX", "HEAD_DIM"]},
-            "sm_scale": {"dtype": "f32", "shape": []},
-            "Out": {"dtype": "f32", "shape": ["Q_CTX", "HEAD_DIM"]},
-        },
-        "scalars": {"Q_CTX": "i32", "KV_CTX": "i32", "HEAD_DIM": "i32"},
-    }
-
-    def _attn_runner(case: TestCase, _io=io_attn) -> Dict[str, np.ndarray]:
-        q_ctx = int(case.shapes.get("Q_CTX", 16))
-        kv_ctx = int(case.shapes.get("KV_CTX", 16))
-        head_dim = int(case.shapes.get("HEAD_DIM", 16))
-        rng = np.random.default_rng(int(case.seed))
-        q = rng.standard_normal((q_ctx, head_dim), dtype=np.float32)
-        k = rng.standard_normal((kv_ctx, head_dim), dtype=np.float32)
-        v = rng.standard_normal((kv_ctx, head_dim), dtype=np.float32)
-        io = _run_tilelang_snapshot_cuda_kernel(
-            name="_attn_fwd",
-            semantic_io_spec=_io,
-            launch=CudaLaunch(grid=(q_ctx, 1, 1), block=(threads, 1, 1), shared_mem=0),
-            case=case,
-            output_names=["Out"],
-            inputs_np={"Q": q, "K": k, "V": v},
-        )
-        io["sm_scale"] = np.array(1.0 / np.sqrt(float(head_dim)), dtype=np.float32)
-        return io
-
-    out.append(
-        KernelSpec(
-            name="_attn_fwd",
-            io_spec=io_attn,
-            canonical_shapes={"Q_CTX": 16, "KV_CTX": 16, "HEAD_DIM": 16},
-            vary_axes=[],
-            runner=_attn_runner,
-            stage_c_runner=_attn_fwd_reference,
-            block=(threads, 1, 1),
-            exclude_axes=[],
-            tilelang_prim_func=pf_attn,
-            ptx_origin="tilelang",
-        )
-    )
-
-    # softmax_inner
-    pf_sm = make_softmax_inner_prim_func(n=16, threads=threads)
-    io_sm = {
-        "arg_names": ["output_ptr", "input_ptr", "row_max_ptr", "row_sum_ptr", "M", "N"],
-        "tensors": {
-            "input_ptr": {"dtype": "f32", "shape": ["M", "N"]},
-            "output_ptr": {"dtype": "f32", "shape": ["M", "N"]},
-            "row_max_ptr": {"dtype": "f32", "shape": ["M"]},
-            "row_sum_ptr": {"dtype": "f32", "shape": ["M"]},
-        },
-        "scalars": {"M": "i32", "N": "i32"},
-    }
-    out.append(
-        KernelSpec(
-            name="softmax_inner",
-            io_spec=io_sm,
-            canonical_shapes={"M": 16, "N": 16},
-            vary_axes=["M"],
-            runner=(
-                lambda case, _io=io_sm: _run_tilelang_snapshot_cuda_kernel(
-                    name="softmax_inner",
-                    semantic_io_spec=_io,
-                    launch=CudaLaunch(grid=(int(case.shapes.get("M", 16)), 1, 1), block=(threads, 1, 1), shared_mem=0),
-                    case=case,
-                    output_names=["output_ptr", "row_max_ptr", "row_sum_ptr"],
-                    inputs_np={
-                        "input_ptr": (
-                            np.asarray(case.inputs.get("input_ptr"), dtype=np.float32)
-                            if case.inputs and "input_ptr" in case.inputs
-                            else np.random.default_rng(int(case.seed))
-                            .standard_normal((int(case.shapes.get("M", 16)), int(case.shapes.get("N", 16))), dtype=np.float32)
-                        )
-                    },
-                )
-            ),
-            stage_c_runner=_softmax_inner_reference,
-            block=(threads, 1, 1),
-            exclude_axes=[],
-            tilelang_prim_func=pf_sm,
-            ptx_origin="tilelang",
-        )
-    )
-
-    # layer_norm_persistent
-    pf_ln = make_layer_norm_persistent_prim_func(n=16, threads=threads)
-    io_ln = {
-        "arg_names": ["in_ptr", "out_ptr", "weight_ptr", "bias_ptr", "out_mean_ptr", "out_rstd_ptr", "M", "N"],
-        "tensors": {
-            "in_ptr": {"dtype": "f32", "shape": ["M", "N"]},
-            "out_ptr": {"dtype": "f32", "shape": ["M", "N"]},
-            "weight_ptr": {"dtype": "f32", "shape": ["N"]},
-            "bias_ptr": {"dtype": "f32", "shape": ["N"]},
-            "out_mean_ptr": {"dtype": "f32", "shape": ["M"]},
-            "out_rstd_ptr": {"dtype": "f32", "shape": ["M"]},
-        },
-        "scalars": {"M": "i32", "N": "i32"},
-    }
-    out.append(
-        KernelSpec(
-            name="layer_norm_persistent",
-            io_spec=io_ln,
-            canonical_shapes={"M": 16, "N": 16},
-            vary_axes=["M"],
-            runner=(
-                lambda case, _io=io_ln: (
-                    lambda m, n: _run_tilelang_snapshot_cuda_kernel(
-                        name="layer_norm_persistent",
-                        semantic_io_spec=_io,
-                        launch=CudaLaunch(grid=(m, 1, 1), block=(threads, 1, 1), shared_mem=0),
-                        case=case,
-                        output_names=["out_ptr", "out_mean_ptr", "out_rstd_ptr"],
-                        inputs_np={
-                            "in_ptr": (
-                                np.asarray(case.inputs.get("in_ptr"), dtype=np.float32)
-                                if case.inputs and "in_ptr" in case.inputs
-                                else np.random.default_rng(int(case.seed)).standard_normal((m, n), dtype=np.float32)
-                            ),
-                            "weight_ptr": (
-                                np.asarray(case.inputs.get("weight_ptr"), dtype=np.float32)
-                                if case.inputs and "weight_ptr" in case.inputs
-                                else np.random.default_rng(int(case.seed) + 1).standard_normal((n,), dtype=np.float32)
-                            ),
-                            "bias_ptr": (
-                                np.asarray(case.inputs.get("bias_ptr"), dtype=np.float32)
-                                if case.inputs and "bias_ptr" in case.inputs
-                                else np.random.default_rng(int(case.seed) + 2).standard_normal((n,), dtype=np.float32)
-                            ),
-                        },
-                    )
-                )(int(case.shapes.get("M", 16)), int(case.shapes.get("N", 16)))
-            ),
-            stage_c_runner=_layer_norm_persistent_reference,
-            block=(threads, 1, 1),
-            exclude_axes=[],
-            tilelang_prim_func=pf_ln,
-            ptx_origin="tilelang",
-        )
-    )
-    # NOTE: TileLang's upsample PrimFunc is "evidence-only" (nearest-neighbor-like).
-    # Keep the semantic diff baseline as the PyTorch bicubic reference, but still
-    # export CUDA/PTX from the PrimFunc for anchors/accesses/contract.
-    up_pf = make_upsample_bicubic2d_aa_prim_func(threads=threads)
-    up_io_spec = {
-        "arg_names": ["I", "O", "reciprocal_scale_h", "reciprocal_scale_w", "N", "C", "IH", "IW", "OH", "OW"],
-        "tensors": {
-            "I": {"dtype": "f32", "shape": ["N", "C", "IH", "IW"]},
-            "reciprocal_scale_h": {"dtype": "f32", "shape": []},
-            "reciprocal_scale_w": {"dtype": "f32", "shape": []},
-            "O": {"dtype": "f32", "shape": ["N", "C", "OH", "OW"]},
-        },
-        "scalars": {},
-    }
-    out.append(
-        KernelSpec(
-            name="upsample_bicubic2d_aa",
-            io_spec=up_io_spec,
-            canonical_shapes={"N": 1, "C": 1, "IH": 4, "IW": 4, "OH": 8, "OW": 8},
-            vary_axes=[],
-            runner=_upsample_bicubic2d_aa_reference,
-            stage_c_runner=_upsample_bicubic2d_aa_reference,
-            block=(threads, 1, 1),
-            exclude_axes=[],
-            tilelang_prim_func=up_pf,
-            ptx_origin="tilelang",
-        )
-    )
+    for n in names:
+        try:
+            out.append(_snapshot_kernel_spec(n))
+        except Exception:
+            continue
     return out
 
 
-def _tilelang_export_coverage_specs() -> List[KernelSpec]:
-    """
-    P3: expanded CUDA coverage suite via TileLang->CUDA export.
-
-    We intentionally reuse the same kernel names as Triton/TileLang coverage so:
-      - `scripts/full_pipeline_verify.py --suite coverage` stays comparable
-      - `scripts/pipeline_summary.py` can aggregate frontends consistently
-
-    Note: Some kernels need structured input generation (e.g., gather indices);
-    those get a custom runner instead of the generic io_spec-based generator.
-    """
-    threads = 128
-
-    # Import lazily to keep CUDA users working without TileLang installed.
-    from kernels.tilelang.ops.add2d import make_add2d_prim_func  # noqa: PLC0415
-    from kernels.tilelang.ops.transpose2d import make_transpose2d_prim_func  # noqa: PLC0415
-    from kernels.tilelang.ops.relu2d import make_relu2d_prim_func  # noqa: PLC0415
-    from kernels.tilelang.ops.add_bias2d import make_add_bias2d_prim_func  # noqa: PLC0415
-    from kernels.tilelang.ops.where2d import make_where2d_prim_func  # noqa: PLC0415
-    from kernels.tilelang.ops.row_sum import make_row_sum_prim_func  # noqa: PLC0415
-    from kernels.tilelang.ops.exp2d import make_exp2d_prim_func  # noqa: PLC0415
-    from kernels.tilelang.ops.floor2d import make_floor2d_prim_func  # noqa: PLC0415
-    from kernels.tilelang.ops.clamp2d import make_clamp2d_prim_func  # noqa: PLC0415
-    from kernels.tilelang.ops.row_max import make_row_max_prim_func  # noqa: PLC0415
-    from kernels.tilelang.ops.copy2d_divmod import make_copy2d_divmod_prim_func  # noqa: PLC0415
-    from kernels.tilelang.ops.gather2d import make_gather2d_prim_func  # noqa: PLC0415
-    from kernels.tilelang.ops.matmul_relu2d import make_matmul_relu2d_prim_func  # noqa: PLC0415
-    from kernels.tilelang.ops.rms_norm2d import make_rms_norm2d_prim_func  # noqa: PLC0415
-    from kernels.tilelang.ops.matmul_bias_relu2d import make_matmul_bias_relu2d_prim_func  # noqa: PLC0415
-    from kernels.tilelang.ops.matmul_fused_epilogue2d import make_matmul_fused_epilogue2d_prim_func  # noqa: PLC0415
-    from kernels.tilelang.ops.rowmask_where2d import make_rowmask_where2d_prim_func  # noqa: PLC0415
-    from kernels.tilelang.ops.masked_softmax2d import make_masked_softmax2d_prim_func  # noqa: PLC0415
-    from kernels.tilelang.ops.masked_attention2d import make_masked_attention2d_prim_func  # noqa: PLC0415
-    from kernels.tilelang.ops.grouped_row_sum2d import make_grouped_row_sum2d_prim_func  # noqa: PLC0415
-    from kernels.tilelang.ops.mlp2d import make_mlp2d_prim_func  # noqa: PLC0415
-
-    def _mk_spec(
-        *,
-        name: str,
-        prim_func: Any,
-        canonical_shapes: Dict[str, int],
-        vary_axes: List[str],
-        exclude_axes: Optional[List[str]] = None,
-        stage_c_runner: Callable[[TestCase], Dict[str, np.ndarray]] | None = None,
-    ) -> KernelSpec:
-        io_spec = build_io_spec_from_tilelang_prim_func(prim_func)
-        written = set(infer_written_global_buffers(prim_func))
-
-        def _run(case: TestCase, _pf=prim_func, _io=io_spec) -> Dict[str, np.ndarray]:
-            bindings = dict(case.shapes)
-            rng = np.random.default_rng(int(case.seed))
-            tensors = _io.get("tensors") if isinstance(_io.get("tensors"), dict) else {}
-            inputs_np: Dict[str, np.ndarray] = {}
-            for tname, tspec in tensors.items():
-                if tname in written:
-                    continue
-                if not isinstance(tspec, dict):
-                    continue
-                dt = str(tspec.get("dtype") or "f32")
-                shape_tpl = tspec.get("shape") if isinstance(tspec.get("shape"), list) else None
-                if not shape_tpl:
-                    raise RuntimeError(f"missing shape for TileLang buffer {tname} in io_spec")
-                shape = tuple(int(bindings[str(d)]) if isinstance(d, str) else int(d) for d in shape_tpl)
-                inputs_np[str(tname)] = _random_array(rng, shape=shape, dtype=dt)
-
-            grid = _infer_grid_from_tilelang_prim_func(_pf, bindings)
-            launch = CudaLaunch(grid=grid, block=(threads, 1, 1), shared_mem=0)
-            out_names = sorted(written)
-            return _run_tilelang_snapshot_cuda_kernel(
-                name=str(name),
-                semantic_io_spec=_io,
-                launch=launch,
-                case=case,
-                output_names=out_names,
-                inputs_np=inputs_np,
-            )
-
-        run = _run
-        return KernelSpec(
-            name=str(name),
-            io_spec=io_spec,
-            canonical_shapes=dict(canonical_shapes),
-            vary_axes=list(vary_axes),
-            runner=run,
-            stage_c_runner=stage_c_runner,
-            block=(threads, 1, 1),
-            exclude_axes=list(exclude_axes or []),
-            tilelang_prim_func=prim_func,
-            ptx_origin="tilelang",
-        )
-
-    out: List[KernelSpec] = []
-
-    # Elementwise / simple shape ops.
-    out.append(_mk_spec(name="add2d", prim_func=make_add2d_prim_func(n=16, threads=threads), canonical_shapes={"M": 16, "N": 16}, vary_axes=["M"]))
-    out.append(
-        _mk_spec(
-            name="transpose2d",
-            prim_func=make_transpose2d_prim_func(n=16, threads=threads),
-            canonical_shapes={"M": 16, "N": 16},
-            vary_axes=["M"],
-        )
-    )
-    out.append(_mk_spec(name="relu2d", prim_func=make_relu2d_prim_func(n=16, threads=threads), canonical_shapes={"M": 16, "N": 16}, vary_axes=["M"]))
-    out.append(
-        _mk_spec(
-            name="add_bias2d",
-            prim_func=make_add_bias2d_prim_func(n=16, threads=threads),
-            canonical_shapes={"M": 16, "N": 16},
-            vary_axes=["M"],
-        )
-    )
-    out.append(_mk_spec(name="where2d", prim_func=make_where2d_prim_func(n=16, threads=threads), canonical_shapes={"M": 16, "N": 16}, vary_axes=["M"]))
-
-    # Reductions.
-    out.append(_mk_spec(name="row_sum", prim_func=make_row_sum_prim_func(n=16, threads=threads), canonical_shapes={"M": 16, "N": 16}, vary_axes=["M"]))
-    out.append(_mk_spec(name="row_max", prim_func=make_row_max_prim_func(n=64, threads=threads), canonical_shapes={"M": 16, "N": 64}, vary_axes=["M"]))
-
-    # Unary math.
-    out.append(_mk_spec(name="exp2d", prim_func=make_exp2d_prim_func(n=64, threads=threads), canonical_shapes={"M": 16, "N": 64}, vary_axes=["M"]))
-    out.append(_mk_spec(name="floor2d", prim_func=make_floor2d_prim_func(n=64, threads=threads), canonical_shapes={"M": 16, "N": 64}, vary_axes=["M"]))
-    out.append(_mk_spec(name="clamp2d", prim_func=make_clamp2d_prim_func(n=64, lo=-0.5, hi=0.5, threads=threads), canonical_shapes={"M": 16, "N": 64}, vary_axes=["M"]))
-
-    # Copy/transpose indexing.
-    out.append(
-        _mk_spec(
-            name="copy2d_divmod",
-            prim_func=make_copy2d_divmod_prim_func(n=64, block_n=16, threads=threads),
-            canonical_shapes={"M": 16, "N": 64},
-            vary_axes=["M"],
-        )
-    )
-
-    # Gather (requires in-bounds indices; use a custom runner).
-    pf_gather = make_gather2d_prim_func(n=64, l=256, threads=threads)
-    io_gather = build_io_spec_from_tilelang_prim_func(pf_gather)
-
-    def _gather_runner(case: TestCase, _pf=pf_gather) -> Dict[str, np.ndarray]:
-        M = int(case.shapes.get("M", 64))
-        N = 64
-        L = 256
-        rng = np.random.default_rng(int(case.seed))
-        inp = rng.standard_normal((M, N), dtype=np.float32)
-        row_idx = rng.integers(0, max(1, M), size=(L,), dtype=np.int32)
-        col_idx = rng.integers(0, N, size=(L,), dtype=np.int32)
-        bindings = dict(case.shapes)
-        grid = _infer_grid_from_tilelang_prim_func(_pf, bindings)
-        launch = CudaLaunch(grid=grid, block=(threads, 1, 1), shared_mem=0)
-        return _run_tilelang_snapshot_cuda_kernel(
-            name="gather2d",
-            semantic_io_spec=io_gather,
-            launch=launch,
-            case=case,
-            output_names=["out"],
-            inputs_np={"inp": inp, "row_idx": row_idx, "col_idx": col_idx},
-        )
-
-    out.append(
-        KernelSpec(
-            name="gather2d",
-            io_spec=io_gather,
-            canonical_shapes={"M": 64, "N": 64, "L": 256},
-            vary_axes=["M"],
-            runner=_gather_runner,
-            stage_c_runner=_gather_runner,
-            block=(threads, 1, 1),
-            exclude_axes=[],
-            tilelang_prim_func=pf_gather,
-            ptx_origin="tilelang",
-        )
-    )
-
-    # Matmul-ish / fused kernels.
-    out.append(
-        _mk_spec(
-            name="matmul_relu2d",
-            prim_func=make_matmul_relu2d_prim_func(block_m=32, block_n=32, block_k=16, num_stages=2, threads=threads),
-            canonical_shapes={"M": 32, "N": 32, "K": 32},
-            vary_axes=["M"],
-        )
-    )
-    out.append(
-        _mk_spec(
-            name="rms_norm2d",
-            prim_func=make_rms_norm2d_prim_func(n=64, eps=1e-5, threads=threads),
-            canonical_shapes={"M": 16, "N": 64},
-            vary_axes=["M"],
-        )
-    )
-    out.append(
-        _mk_spec(
-            name="matmul_bias_relu2d",
-            prim_func=make_matmul_bias_relu2d_prim_func(block_m=32, block_n=32, block_k=16, num_stages=2, threads=threads),
-            canonical_shapes={"M": 32, "N": 32, "K": 32},
-            vary_axes=["M"],
-        )
-    )
-    out.append(
-        _mk_spec(
-            name="matmul_fused_epilogue2d",
-            prim_func=make_matmul_fused_epilogue2d_prim_func(block_m=32, block_n=32, block_k=16, num_stages=2, threads=threads),
-            canonical_shapes={"M": 32, "N": 32, "K": 32},
-            vary_axes=["M"],
-        )
-    )
-    out.append(
-        _mk_spec(
-            name="mlp2d",
-            prim_func=make_mlp2d_prim_func(block_m=32, block_n=32, block_k=16, block_h=16, num_stages=2, threads=threads),
-            canonical_shapes={"M": 32, "N": 32, "K": 32, "H": 32},
-            vary_axes=["M"],
-        )
-    )
-
-    # Mask/broadcast-heavy kernels.
-    out.append(
-        _mk_spec(
-            name="rowmask_where2d",
-            prim_func=make_rowmask_where2d_prim_func(n=64, threads=threads),
-            canonical_shapes={"M": 16, "N": 64},
-            vary_axes=["M"],
-        )
-    )
-    out.append(
-        _mk_spec(
-            name="masked_softmax2d",
-            prim_func=make_masked_softmax2d_prim_func(n=64, threads=threads),
-            canonical_shapes={"M": 16, "N": 64},
-            vary_axes=["M"],
-        )
-    )
-    out.append(
-        _mk_spec(
-            name="masked_attention2d",
-            prim_func=make_masked_attention2d_prim_func(q_ctx=16, kv_ctx=16, head_dim=16, threads=threads),
-            canonical_shapes={"Q_CTX": 16, "KV_CTX": 16, "HEAD_DIM": 16},
-            vary_axes=[],
-        )
-    )
-    out.append(
-        _mk_spec(
-            name="grouped_row_sum2d",
-            prim_func=make_grouped_row_sum2d_prim_func(n=64, group_size=4, threads=threads),
-            canonical_shapes={"M": 16, "N": 64, "group_size": 4},
-            vary_axes=["M"],
-        )
-    )
-
-    return out
+# NOTE: TileLang->CUDA export is performed offline via `scripts/tilelang/export_cuda_snapshots.py`.
+# The CUDA pipeline consumes saved snapshots under `kernels/cuda/ops/tilelang_generated/`.
 
 
 def default_kernel_specs() -> List[KernelSpec]:
     """
     CUDA smoke suite (cross-frontend parity):
-      - Prefer the 6-kernel regression suite (TileLang-exported CUDA/PTX).
-      - Fall back to a tiny native CUDA anchor set when TileLang is unavailable.
+      - Prefer the 6-kernel regression suite from pre-generated CUDA snapshots.
+      - Fall back to a tiny native CUDA anchor set when snapshots are missing.
     """
     try:
         return regression_kernel_specs()
@@ -1310,16 +1092,12 @@ def coverage_kernel_specs() -> List[KernelSpec]:
     """
     CUDA coverage suite:
       - Always include native CUDA anchors (stable PTX patterns for golden tests).
-      - Include the 6-kernel regression suite when TileLang is available.
+      - Include all available pre-generated CUDA snapshots (smoke + extra).
     """
     specs: List[KernelSpec] = []
     specs.extend(native_kernel_specs())
     try:
-        specs.extend(regression_kernel_specs())
-    except Exception:
-        pass
-    try:
-        specs.extend(_tilelang_export_coverage_specs())
+        specs.extend(snapshot_coverage_kernel_specs())
     except Exception:
         pass
     # De-dup by name while preserving first occurrence order.
@@ -1346,70 +1124,20 @@ def native_kernel_specs() -> List[KernelSpec]:
 
 def regression_kernel_specs() -> List[KernelSpec]:
     """
-    Mirror Triton/TileLang's 6-kernel regression suite via TileLang->CUDA export.
+    Mirror Triton/TileLang's 6-kernel regression suite via pre-generated CUDA snapshots.
     """
-    return list(_tilelang_export_regression_specs())
+    return snapshot_regression_kernel_specs()
 
 
 def prepare_cuda_spec_for_frontend(spec: KernelSpec, *, out_dir: Path) -> Dict[str, Any]:
     """
-    Prepare a CUDA `KernelSpec` for frontend extraction (Stage 1/2/4).
+    Legacy shim (kept for older scripts).
 
-    If the spec is TileLang-derived, this ensures `spec.cuda_src` / `spec.ptx_text`
-    exist by exporting (or reusing a stable snapshot under `kernels/cuda/ops/`).
-
-    Returns a small info dict suitable for pipeline reports (may be empty).
+    CUDA pipeline no longer performs any TileLang export at runtime; snapshots
+    must be generated offline via `scripts/tilelang/export_cuda_snapshots.py`.
     """
-    if spec.tilelang_prim_func is None:
-        return {}
-    if spec.cuda_src and spec.ptx_text:
-        return {}
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-    refresh = str(os.getenv("INTENTIR_TILELANG_CUDA_SNAPSHOT_REFRESH", "0")).strip() == "1"
-    used_snapshot = False
-    cuda_src_raw = ""
-    ptx_text = ""
-    entry_name = ""
-    include_dirs: List[Path] = []
-    if not refresh:
-        try:
-            cuda_src_raw, ptx_text, entry_name, include_dirs = _load_tilelang_cuda_snapshot(spec.name)
-            used_snapshot = True
-        except Exception:
-            used_snapshot = False
-    if not used_snapshot:
-        exp = export_tilelang_cuda(spec.tilelang_prim_func, out_dir=out_dir, stem=spec.name)
-        _persist_tilelang_cuda_snapshot(spec.name, exp)
-        cuda_src_raw = exp.cuda_src
-        ptx_text = exp.ptx_text
-        entry_name = exp.entry_name
-        include_dirs = list(exp.include_dirs)
-
-    # Keep the prompt "compiler-like": include a high-level TIR snapshot as a comment
-    # before the exported CUDA kernel source.
-    tir_txt = ""
-    try:
-        tir_txt = str(spec.tilelang_prim_func.script(show_meta=False))
-    except Exception:
-        try:
-            tir_txt = str(spec.tilelang_prim_func)
-        except Exception:
-            tir_txt = ""
-    if tir_txt.strip():
-        spec.cuda_src = "// --- TileLang TIR (semantic guide; comment only) ---\n/*\n" + tir_txt + "\n*/\n\n" + cuda_src_raw
-    else:
-        spec.cuda_src = cuda_src_raw
-
-    # Do not force `cuda_path` for TileLang-derived kernels: we want the augmented
-    # `cuda_src` to reach the LLM prompt via KernelDescriptor.source_text.
-    spec.ptx_text = ptx_text
-    spec.ptx_entry = entry_name
-    spec.include_dirs = list(include_dirs)
-    if not spec.ptx_origin:
-        spec.ptx_origin = "tilelang"
-
-    return {"used": bool(used_snapshot), "dir": str(_CUDA_TILELANG_SNAPSHOT_DIR)}
+    _ = (spec, out_dir)
+    return {}
 
 
 def run_pipeline_for_spec(
@@ -1425,10 +1153,6 @@ def run_pipeline_for_spec(
     report: Dict[str, object] = {"kernel": spec.name, "frontend": "cuda"}
     out_dir.mkdir(parents=True, exist_ok=True)
     adapter = pipeline_registry.get("cuda")
-
-    snap_info = prepare_cuda_spec_for_frontend(spec, out_dir=out_dir)
-    if snap_info:
-        report["tilelang_cuda_snapshot"] = dict(snap_info)
 
     print(f"[{spec.name}] stage1: build cuda descriptor", flush=True)
     desc = adapter.build_descriptor(spec)
@@ -1486,7 +1210,7 @@ def run_pipeline_for_spec(
         "seed": int(baseline_case.seed),
         "npz_path": str(npz_path.relative_to(ROOT)),
         "keys": sorted(list(baseline_io.keys())),
-        "source": ("npz_cache" if reused else ("tilelang_cuda" if spec.tilelang_prim_func is not None else "cuda_runtime")),
+        "source": ("npz_cache" if reused else ("cuda_snapshot" if spec.origin else "cuda_runtime")),
     }
 
     print(f"[{spec.name}] stage4: Task4 facts/constraints/certificate", flush=True)
@@ -1517,28 +1241,18 @@ def run_pipeline_for_spec(
             llm_err = e
             cand = None
     if cand is None:
-        # Resilience fallback: when CUDA kernels are TileLang-exported (our regression
-        # suite), we can fall back to TileLang's deterministic intent builder so
-        # downstream stages (diff/remote RVV) remain usable even if providers are
-        # temporarily unavailable / quota-limited.
         fb_intent = None
-        try:
-            if spec.tilelang_prim_func is not None:
-                from pipeline.tilelang.core import coverage_kernel_specs  # noqa: PLC0415
-
-                for s in coverage_kernel_specs():
-                    if getattr(s, "name", None) == spec.name:
-                        fb_intent = s.intent_builder()
-                        break
-        except Exception:
-            fb_intent = None
+        # Only fall back when:
+        # - LLM is explicitly disabled (use_llm=False), or
+        # - LLM infrastructure failed (LLMClientError). Do not mask semantic/parser bugs.
+        if (not use_llm) or isinstance(llm_err, LLMClientError):
+            fb_intent = _deterministic_fallback_intent_for(spec.name)
         if fb_intent is None:
             raise llm_err or RuntimeError("CUDA pipeline requires LLM (no deterministic fallback available)")
-        cand = CandidateIntent(intent=fb_intent, problem_params={}, schedule_params={}, raw_json={"fallback": True}, llm_trace={})
+        cand = CandidateIntent(intent=fb_intent, raw_json={"fallback": True})
         report["llm_fallback"] = {
             "used": True,
-            "kind": "tilelang_deterministic",
-            "reason": (f"{type(llm_err).__name__}: {llm_err}" if llm_err is not None else "use_llm disabled"),
+            "reason": ("use_llm=False" if not use_llm else f"{type(llm_err).__name__}: {llm_err}"),
         }
 
     enrich_intent_macros(cand.intent)
@@ -1575,84 +1289,34 @@ def run_pipeline_for_spec(
     }
 
     if use_llm and not sv.ok:
-        # If this CUDA kernel was generated by TileLang (our regression suite), use a
-        # deterministic intent builder on static-validate failure instead of making
-        # an extra LLM call (important for request-limited providers).
-        if spec.tilelang_prim_func is not None:
-            fb_intent = None
-            try:
-                from pipeline.tilelang.core import coverage_kernel_specs  # noqa: PLC0415
-
-                for s in coverage_kernel_specs():
-                    if getattr(s, "name", None) == spec.name:
-                        fb_intent = s.intent_builder()
-                        break
-            except Exception:
-                fb_intent = None
-            if fb_intent is not None:
-                report.setdefault("intent_llm", report.get("intent"))
-                report.setdefault("intent_expanded_llm", report.get("intent_expanded"))
-                report["static_validation_llm"] = dict(report.get("static_validation") or {})
-                cand = CandidateIntent(intent=fb_intent, problem_params={}, schedule_params={}, raw_json={"fallback": True}, llm_trace={})
-                report["intent_fallback"] = {
-                    "used": True,
-                    "kind": "tilelang_deterministic",
-                    "reason": "static_validation failed; use deterministic builder",
-                    "llm_reasons": list(sv.reasons),
-                }
-                enrich_intent_macros(cand.intent)
-                _ensure_schedule_cuda(cand.intent, spec=spec)
-                (out_dir / f"{spec.name}.intentir.fallback.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
-                try:
-                    expanded_fix = expand_macros(cand.intent)
-                    cand_expanded = CandidateIntent(
-                        intent=expanded_fix,
-                        problem_params=dict(cand.problem_params),
-                        schedule_params=dict(cand.schedule_params),
-                        raw_json=dict(cand.raw_json),
-                        llm_trace=dict(cand.llm_trace),
-                    )
-                    _ensure_schedule_cuda(cand_expanded.intent, spec=spec)
-                    (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(print_mlir_like(expanded_fix), encoding="utf-8")
-                    report["intent"] = cand.intent.to_json_dict()
-                    report["intent_expanded"] = expanded_fix.to_json_dict()
-                    sv = static_validate((cand_expanded.intent if cand_expanded is not None else cand.intent), cert_v2)
-                    report["static_validation"] = {
-                        "ok": bool(sv.ok),
-                        "reasons": list(sv.reasons),
-                        "obligations": [{"id": o.id, "status": o.status, "detail": o.detail} for o in sv.obligations],
-                    }
-                except Exception as e:
-                    report["intent_expand_error"] = f"{type(e).__name__}: {e}"
-        else:
-            # One conservative LLM repair round for native CUDA kernels.
-            try:
-                cand_fix = _LLM_HUB.lift(desc, feedback=list(sv.reasons), model=llm_model)
-                enrich_intent_macros(cand_fix.intent)
-                _ensure_schedule_cuda(cand_fix.intent, spec=spec)
-                report["llm_trace"] = dict(cand_fix.llm_trace or {})
-                cand = cand_fix
-                (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
-                report["intent"] = cand.intent.to_json_dict()
-                expanded_fix = expand_macros(cand.intent)
-                cand_expanded = CandidateIntent(
-                    intent=expanded_fix,
-                    problem_params=dict(cand.problem_params),
-                    schedule_params=dict(cand.schedule_params),
-                    raw_json=dict(cand.raw_json),
-                    llm_trace=dict(cand.llm_trace),
-                )
-                _ensure_schedule_cuda(cand_expanded.intent, spec=spec)
-                (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_fix), encoding="utf-8")
-                report["intent_expanded"] = expanded_fix.to_json_dict()
-                sv = static_validate((cand_expanded.intent if cand_expanded is not None else cand.intent), cert_v2)
-                report["static_validation"] = {
-                    "ok": bool(sv.ok),
-                    "reasons": list(sv.reasons),
-                    "obligations": [{"id": o.id, "status": o.status, "detail": o.detail} for o in sv.obligations],
-                }
-            except Exception:
-                pass
+        # One conservative LLM repair round (applies to both native kernels and snapshots).
+        try:
+            cand_fix = _LLM_HUB.lift(desc, feedback=list(sv.reasons), model=llm_model)
+            enrich_intent_macros(cand_fix.intent)
+            _ensure_schedule_cuda(cand_fix.intent, spec=spec)
+            report["llm_trace"] = dict(cand_fix.llm_trace or {})
+            cand = cand_fix
+            (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
+            report["intent"] = cand.intent.to_json_dict()
+            expanded_fix = expand_macros(cand.intent)
+            cand_expanded = CandidateIntent(
+                intent=expanded_fix,
+                problem_params=dict(cand.problem_params),
+                schedule_params=dict(cand.schedule_params),
+                raw_json=dict(cand.raw_json),
+                llm_trace=dict(cand.llm_trace),
+            )
+            _ensure_schedule_cuda(cand_expanded.intent, spec=spec)
+            (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_fix), encoding="utf-8")
+            report["intent_expanded"] = expanded_fix.to_json_dict()
+            sv = static_validate((cand_expanded.intent if cand_expanded is not None else cand.intent), cert_v2)
+            report["static_validation"] = {
+                "ok": bool(sv.ok),
+                "reasons": list(sv.reasons),
+                "obligations": [{"id": o.id, "status": o.status, "detail": o.detail} for o in sv.obligations],
+            }
+        except Exception:
+            pass
 
     print(f"[{spec.name}] stage7: Task5 cases + diff", flush=True)
     cand_for_run = cand_expanded or cand
