@@ -785,6 +785,216 @@ def _tilelang_export_regression_specs() -> List[KernelSpec]:
     return out
 
 
+def _tilelang_export_coverage_specs() -> List[KernelSpec]:
+    """
+    P3: expanded CUDA coverage suite via TileLang->CUDA export.
+
+    We intentionally reuse the same kernel names as Triton/TileLang coverage so:
+      - `scripts/full_pipeline_verify.py --suite coverage` stays comparable
+      - `scripts/pipeline_summary.py` can aggregate frontends consistently
+
+    Note: Some kernels need structured input generation (e.g., gather indices);
+    those get a custom runner instead of the generic io_spec-based generator.
+    """
+    threads = 128
+
+    # Import lazily to keep CUDA users working without TileLang installed.
+    from kernels.tilelang.ops.add2d import make_add2d_prim_func  # noqa: PLC0415
+    from kernels.tilelang.ops.transpose2d import make_transpose2d_prim_func  # noqa: PLC0415
+    from kernels.tilelang.ops.relu2d import make_relu2d_prim_func  # noqa: PLC0415
+    from kernels.tilelang.ops.add_bias2d import make_add_bias2d_prim_func  # noqa: PLC0415
+    from kernels.tilelang.ops.where2d import make_where2d_prim_func  # noqa: PLC0415
+    from kernels.tilelang.ops.row_sum import make_row_sum_prim_func  # noqa: PLC0415
+    from kernels.tilelang.ops.exp2d import make_exp2d_prim_func  # noqa: PLC0415
+    from kernels.tilelang.ops.floor2d import make_floor2d_prim_func  # noqa: PLC0415
+    from kernels.tilelang.ops.clamp2d import make_clamp2d_prim_func  # noqa: PLC0415
+    from kernels.tilelang.ops.row_max import make_row_max_prim_func  # noqa: PLC0415
+    from kernels.tilelang.ops.copy2d_divmod import make_copy2d_divmod_prim_func  # noqa: PLC0415
+    from kernels.tilelang.ops.gather2d import make_gather2d_prim_func  # noqa: PLC0415
+    from kernels.tilelang.ops.matmul_relu2d import make_matmul_relu2d_prim_func  # noqa: PLC0415
+    from kernels.tilelang.ops.rms_norm2d import make_rms_norm2d_prim_func  # noqa: PLC0415
+    from kernels.tilelang.ops.matmul_bias_relu2d import make_matmul_bias_relu2d_prim_func  # noqa: PLC0415
+    from kernels.tilelang.ops.matmul_fused_epilogue2d import make_matmul_fused_epilogue2d_prim_func  # noqa: PLC0415
+    from kernels.tilelang.ops.rowmask_where2d import make_rowmask_where2d_prim_func  # noqa: PLC0415
+    from kernels.tilelang.ops.masked_softmax2d import make_masked_softmax2d_prim_func  # noqa: PLC0415
+    from kernels.tilelang.ops.masked_attention2d import make_masked_attention2d_prim_func  # noqa: PLC0415
+    from kernels.tilelang.ops.grouped_row_sum2d import make_grouped_row_sum2d_prim_func  # noqa: PLC0415
+    from kernels.tilelang.ops.mlp2d import make_mlp2d_prim_func  # noqa: PLC0415
+
+    def _mk_spec(
+        *,
+        name: str,
+        prim_func: Any,
+        canonical_shapes: Dict[str, int],
+        vary_axes: List[str],
+        exclude_axes: Optional[List[str]] = None,
+        stage_c_runner: Callable[[TestCase], Dict[str, np.ndarray]] | None = None,
+    ) -> KernelSpec:
+        io_spec = build_io_spec_from_tilelang_prim_func(prim_func)
+        run = lambda case, _pf=prim_func, _io=io_spec: _run_tilelang_exported_cuda_kernel(prim_func=_pf, io_spec=_io, case=case)
+        return KernelSpec(
+            name=str(name),
+            io_spec=io_spec,
+            canonical_shapes=dict(canonical_shapes),
+            vary_axes=list(vary_axes),
+            runner=run,
+            stage_c_runner=stage_c_runner,
+            block=(threads, 1, 1),
+            exclude_axes=list(exclude_axes or []),
+            tilelang_prim_func=prim_func,
+            ptx_origin="tilelang",
+        )
+
+    out: List[KernelSpec] = []
+
+    # Elementwise / simple shape ops.
+    out.append(_mk_spec(name="add2d", prim_func=make_add2d_prim_func(n=16, threads=threads), canonical_shapes={"M": 16, "N": 16}, vary_axes=["M"]))
+    out.append(
+        _mk_spec(
+            name="transpose2d",
+            prim_func=make_transpose2d_prim_func(n=16, threads=threads),
+            canonical_shapes={"M": 16, "N": 16},
+            vary_axes=["M"],
+        )
+    )
+    out.append(_mk_spec(name="relu2d", prim_func=make_relu2d_prim_func(n=16, threads=threads), canonical_shapes={"M": 16, "N": 16}, vary_axes=["M"]))
+    out.append(
+        _mk_spec(
+            name="add_bias2d",
+            prim_func=make_add_bias2d_prim_func(n=16, threads=threads),
+            canonical_shapes={"M": 16, "N": 16},
+            vary_axes=["M"],
+        )
+    )
+    out.append(_mk_spec(name="where2d", prim_func=make_where2d_prim_func(n=16, threads=threads), canonical_shapes={"M": 16, "N": 16}, vary_axes=["M"]))
+
+    # Reductions.
+    out.append(_mk_spec(name="row_sum", prim_func=make_row_sum_prim_func(n=16, threads=threads), canonical_shapes={"M": 16, "N": 16}, vary_axes=["M"]))
+    out.append(_mk_spec(name="row_max", prim_func=make_row_max_prim_func(n=64, threads=threads), canonical_shapes={"M": 16, "N": 64}, vary_axes=["M"]))
+
+    # Unary math.
+    out.append(_mk_spec(name="exp2d", prim_func=make_exp2d_prim_func(n=64, threads=threads), canonical_shapes={"M": 16, "N": 64}, vary_axes=["M"]))
+    out.append(_mk_spec(name="floor2d", prim_func=make_floor2d_prim_func(n=64, threads=threads), canonical_shapes={"M": 16, "N": 64}, vary_axes=["M"]))
+    out.append(_mk_spec(name="clamp2d", prim_func=make_clamp2d_prim_func(n=64, lo=-0.5, hi=0.5, threads=threads), canonical_shapes={"M": 16, "N": 64}, vary_axes=["M"]))
+
+    # Copy/transpose indexing.
+    out.append(
+        _mk_spec(
+            name="copy2d_divmod",
+            prim_func=make_copy2d_divmod_prim_func(n=64, block_n=16, threads=threads),
+            canonical_shapes={"M": 16, "N": 64},
+            vary_axes=["M"],
+        )
+    )
+
+    # Gather (requires in-bounds indices; use a custom runner).
+    pf_gather = make_gather2d_prim_func(n=64, l=256, threads=threads)
+    io_gather = build_io_spec_from_tilelang_prim_func(pf_gather)
+
+    def _gather_runner(case: TestCase, _pf=pf_gather) -> Dict[str, np.ndarray]:
+        M = int(case.shapes.get("M", 64))
+        N = 64
+        L = 256
+        rng = np.random.default_rng(int(case.seed))
+        inp = rng.standard_normal((M, N), dtype=np.float32)
+        row_idx = rng.integers(0, max(1, M), size=(L,), dtype=np.int32)
+        col_idx = rng.integers(0, N, size=(L,), dtype=np.int32)
+        return run_tilelang_kernel_io(_pf, bindings=dict(case.shapes), inputs_np={"inp": inp, "row_idx": row_idx, "col_idx": col_idx})
+
+    out.append(
+        KernelSpec(
+            name="gather2d",
+            io_spec=io_gather,
+            canonical_shapes={"M": 64, "N": 64, "L": 256},
+            vary_axes=["M"],
+            runner=_gather_runner,
+            stage_c_runner=_gather_runner,
+            block=(threads, 1, 1),
+            exclude_axes=[],
+            tilelang_prim_func=pf_gather,
+            ptx_origin="tilelang",
+        )
+    )
+
+    # Matmul-ish / fused kernels.
+    out.append(
+        _mk_spec(
+            name="matmul_relu2d",
+            prim_func=make_matmul_relu2d_prim_func(block_m=32, block_n=32, block_k=16, num_stages=2, threads=threads),
+            canonical_shapes={"M": 32, "N": 32, "K": 32},
+            vary_axes=["M"],
+        )
+    )
+    out.append(
+        _mk_spec(
+            name="rms_norm2d",
+            prim_func=make_rms_norm2d_prim_func(n=64, eps=1e-5, threads=threads),
+            canonical_shapes={"M": 16, "N": 64},
+            vary_axes=["M"],
+        )
+    )
+    out.append(
+        _mk_spec(
+            name="matmul_bias_relu2d",
+            prim_func=make_matmul_bias_relu2d_prim_func(block_m=32, block_n=32, block_k=16, num_stages=2, threads=threads),
+            canonical_shapes={"M": 32, "N": 32, "K": 32},
+            vary_axes=["M"],
+        )
+    )
+    out.append(
+        _mk_spec(
+            name="matmul_fused_epilogue2d",
+            prim_func=make_matmul_fused_epilogue2d_prim_func(block_m=32, block_n=32, block_k=16, num_stages=2, threads=threads),
+            canonical_shapes={"M": 32, "N": 32, "K": 32},
+            vary_axes=["M"],
+        )
+    )
+    out.append(
+        _mk_spec(
+            name="mlp2d",
+            prim_func=make_mlp2d_prim_func(block_m=32, block_n=32, block_k=16, block_h=16, num_stages=2, threads=threads),
+            canonical_shapes={"M": 32, "N": 32, "K": 32, "H": 32},
+            vary_axes=["M"],
+        )
+    )
+
+    # Mask/broadcast-heavy kernels.
+    out.append(
+        _mk_spec(
+            name="rowmask_where2d",
+            prim_func=make_rowmask_where2d_prim_func(n=64, threads=threads),
+            canonical_shapes={"M": 16, "N": 64},
+            vary_axes=["M"],
+        )
+    )
+    out.append(
+        _mk_spec(
+            name="masked_softmax2d",
+            prim_func=make_masked_softmax2d_prim_func(n=64, threads=threads),
+            canonical_shapes={"M": 16, "N": 64},
+            vary_axes=["M"],
+        )
+    )
+    out.append(
+        _mk_spec(
+            name="masked_attention2d",
+            prim_func=make_masked_attention2d_prim_func(q_ctx=16, kv_ctx=16, head_dim=16, threads=threads),
+            canonical_shapes={"Q_CTX": 16, "KV_CTX": 16, "HEAD_DIM": 16},
+            vary_axes=[],
+        )
+    )
+    out.append(
+        _mk_spec(
+            name="grouped_row_sum2d",
+            prim_func=make_grouped_row_sum2d_prim_func(n=64, group_size=4, threads=threads),
+            canonical_shapes={"M": 16, "N": 64, "group_size": 4},
+            vary_axes=["M"],
+        )
+    )
+
+    return out
+
+
 def default_kernel_specs() -> List[KernelSpec]:
     """
     CUDA smoke suite (cross-frontend parity):
@@ -807,6 +1017,10 @@ def coverage_kernel_specs() -> List[KernelSpec]:
     specs.extend(native_kernel_specs())
     try:
         specs.extend(regression_kernel_specs())
+    except Exception:
+        pass
+    try:
+        specs.extend(_tilelang_export_coverage_specs())
     except Exception:
         pass
     # De-dup by name while preserving first occurrence order.
