@@ -12,6 +12,7 @@ import json
 import hashlib
 import os
 import re
+import ast
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -55,6 +56,95 @@ _LLM_HUB = LLMIntentHub()
 
 _CUDA_TILELANG_SNAPSHOT_DIR = ROOT / "kernels" / "cuda" / "ops" / "tilelang_generated"
 _PTX_ENTRY_RE = re.compile(r"^\s*\.visible\s+\.entry\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(")
+_LAUNCH_THREAD_RE = re.compile(r'^\s*[A-Za-z_][A-Za-z0-9_]*\s*=\s*T\.launch_thread\(\"(?P<tag>blockIdx\.(?:x|y|z))\",\s*(?P<extent>.+)\)\s*$')
+
+
+def _eval_int_expr(expr: str, bindings: Dict[str, int]) -> int:
+    """
+    Evaluate a small, safe subset of Python integer expressions.
+
+    Used for TileLang/TIR-derived launch extents like:
+      - M
+      - M * 4
+      - (N + 64 - 1) // 64
+    """
+    s = str(expr).strip()
+    if not s:
+        raise ValueError("empty int expr")
+
+    def ev(node: ast.AST) -> int:
+        if isinstance(node, ast.Expression):
+            return ev(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return int(node.value)
+        if isinstance(node, ast.Name):
+            name = str(node.id)
+            if name not in bindings:
+                raise KeyError(name)
+            return int(bindings[name])
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            v = ev(node.operand)
+            return v if isinstance(node.op, ast.UAdd) else -v
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.FloorDiv, ast.Mod)):
+            a = ev(node.left)
+            b = ev(node.right)
+            if isinstance(node.op, ast.Add):
+                return int(a) + int(b)
+            if isinstance(node.op, ast.Sub):
+                return int(a) - int(b)
+            if isinstance(node.op, ast.Mult):
+                return int(a) * int(b)
+            if isinstance(node.op, ast.FloorDiv):
+                if int(b) == 0:
+                    raise ZeroDivisionError("floordiv by 0")
+                return int(a) // int(b)
+            if isinstance(node.op, ast.Mod):
+                if int(b) == 0:
+                    raise ZeroDivisionError("mod by 0")
+                return int(a) % int(b)
+        if isinstance(node, ast.Call):
+            # Support ceildiv(a,b) / T.ceildiv(a,b) patterns if they appear.
+            fn = node.func
+            fn_name = None
+            if isinstance(fn, ast.Name):
+                fn_name = fn.id
+            elif isinstance(fn, ast.Attribute):
+                fn_name = fn.attr
+            if fn_name in {"ceildiv", "ceil_div"} and len(node.args) == 2:
+                a = ev(node.args[0])
+                b = ev(node.args[1])
+                return _ceil_div(int(a), int(b))
+            raise ValueError(f"unsupported call in int expr: {ast.unparse(node) if hasattr(ast, 'unparse') else fn_name}")
+        raise ValueError(f"unsupported int expr node: {type(node).__name__}")
+
+    tree = ast.parse(s, mode="eval")
+    return int(ev(tree))
+
+
+def _infer_grid_from_tilelang_prim_func(prim_func: Any, bindings: Dict[str, int]) -> tuple[int, int, int]:
+    """
+    Infer CUDA grid dims from a TileLang/TVM PrimFunc TIR script.
+
+    TileLang emits TIR with launch-thread lines like:
+      bx = T.launch_thread("blockIdx.x", M)
+      by = T.launch_thread("blockIdx.y", (N + 64 - 1) // 64)
+    """
+    txt = str(prim_func.script(show_meta=False))
+    ext: Dict[str, str] = {}
+    for ln in txt.splitlines():
+        m = _LAUNCH_THREAD_RE.match(ln.strip())
+        if not m:
+            continue
+        tag = str(m.group("tag"))
+        e = str(m.group("extent")).strip()
+        # Strip trailing comments if any.
+        if "#" in e:
+            e = e.split("#", 1)[0].strip()
+        ext[tag] = e
+    gx = _eval_int_expr(ext.get("blockIdx.x", "1"), bindings) if "blockIdx.x" in ext else 1
+    gy = _eval_int_expr(ext.get("blockIdx.y", "1"), bindings) if "blockIdx.y" in ext else 1
+    gz = _eval_int_expr(ext.get("blockIdx.z", "1"), bindings) if "blockIdx.z" in ext else 1
+    return (max(1, int(gx)), max(1, int(gy)), max(1, int(gz)))
 
 
 def _read_cuda_src(path: Path) -> str:
@@ -542,6 +632,16 @@ def _run_tilelang_snapshot_cuda_kernel(
     launch it with explicit grid/block, and return numpy IO.
     """
     cuda_src_raw, _ptx, _entry, include_dirs = _load_tilelang_cuda_snapshot(name)
+
+    # Some TileLang kernels (e.g. matmul) use dynamic shared memory (`extern __shared__`).
+    # TileLang's runtime launches with an appropriate shared_mem size; replicate
+    # that behavior here with a conservative default.
+    if int(getattr(launch, "shared_mem", 0) or 0) <= 0 and "extern __shared__" in cuda_src_raw:
+        try:
+            smem = int(os.getenv("INTENTIR_CUDA_TILELANG_DYNAMIC_SMEM", "16384"))
+        except Exception:
+            smem = 16384
+        launch = CudaLaunch(grid=launch.grid, block=launch.block, shared_mem=max(0, int(smem)))
     rt_io_spec = infer_runtime_io_spec(cuda_src=cuda_src_raw, kernel_name="main_kernel", semantic_io_spec=dict(semantic_io_spec))
     # Torch's CUDA extension build defines macros that disable half/bf16
     # conversions by default; TileLang templates rely on those conversions.
@@ -989,7 +1089,38 @@ def _tilelang_export_coverage_specs() -> List[KernelSpec]:
         stage_c_runner: Callable[[TestCase], Dict[str, np.ndarray]] | None = None,
     ) -> KernelSpec:
         io_spec = build_io_spec_from_tilelang_prim_func(prim_func)
-        run = lambda case, _pf=prim_func, _io=io_spec: _run_tilelang_exported_cuda_kernel(prim_func=_pf, io_spec=_io, case=case)
+        written = set(infer_written_global_buffers(prim_func))
+
+        def _run(case: TestCase, _pf=prim_func, _io=io_spec) -> Dict[str, np.ndarray]:
+            bindings = dict(case.shapes)
+            rng = np.random.default_rng(int(case.seed))
+            tensors = _io.get("tensors") if isinstance(_io.get("tensors"), dict) else {}
+            inputs_np: Dict[str, np.ndarray] = {}
+            for tname, tspec in tensors.items():
+                if tname in written:
+                    continue
+                if not isinstance(tspec, dict):
+                    continue
+                dt = str(tspec.get("dtype") or "f32")
+                shape_tpl = tspec.get("shape") if isinstance(tspec.get("shape"), list) else None
+                if not shape_tpl:
+                    raise RuntimeError(f"missing shape for TileLang buffer {tname} in io_spec")
+                shape = tuple(int(bindings[str(d)]) if isinstance(d, str) else int(d) for d in shape_tpl)
+                inputs_np[str(tname)] = _random_array(rng, shape=shape, dtype=dt)
+
+            grid = _infer_grid_from_tilelang_prim_func(_pf, bindings)
+            launch = CudaLaunch(grid=grid, block=(threads, 1, 1), shared_mem=0)
+            out_names = sorted(written)
+            return _run_tilelang_snapshot_cuda_kernel(
+                name=str(name),
+                semantic_io_spec=_io,
+                launch=launch,
+                case=case,
+                output_names=out_names,
+                inputs_np=inputs_np,
+            )
+
+        run = _run
         return KernelSpec(
             name=str(name),
             io_spec=io_spec,
@@ -1057,7 +1188,17 @@ def _tilelang_export_coverage_specs() -> List[KernelSpec]:
         inp = rng.standard_normal((M, N), dtype=np.float32)
         row_idx = rng.integers(0, max(1, M), size=(L,), dtype=np.int32)
         col_idx = rng.integers(0, N, size=(L,), dtype=np.int32)
-        return run_tilelang_kernel_io(_pf, bindings=dict(case.shapes), inputs_np={"inp": inp, "row_idx": row_idx, "col_idx": col_idx})
+        bindings = dict(case.shapes)
+        grid = _infer_grid_from_tilelang_prim_func(_pf, bindings)
+        launch = CudaLaunch(grid=grid, block=(threads, 1, 1), shared_mem=0)
+        return _run_tilelang_snapshot_cuda_kernel(
+            name="gather2d",
+            semantic_io_spec=io_gather,
+            launch=launch,
+            case=case,
+            output_names=["out"],
+            inputs_np={"inp": inp, "row_idx": row_idx, "col_idx": col_idx},
+        )
 
     out.append(
         KernelSpec(
