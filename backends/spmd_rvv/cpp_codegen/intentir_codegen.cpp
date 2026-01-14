@@ -246,7 +246,7 @@ Intent parse_intent(const json& j) {
 
 // ---- small expression evaluator for const values (supports +,-,*,/,(), symbols, numbers) ----
 
-enum class TokKind { End, Number, Ident, Plus, Minus, Star, Slash, LParen, RParen };
+enum class TokKind { End, Number, Ident, Plus, Minus, Star, Slash, Pow, LParen, RParen };
 
 struct Tok {
   TokKind kind;
@@ -269,7 +269,12 @@ struct Lexer {
     char c = src[i];
     if (c == '+') { ++i; return {TokKind::Plus}; }
     if (c == '-') { ++i; return {TokKind::Minus}; }
-    if (c == '*') { ++i; return {TokKind::Star}; }
+    if (c == '*') {
+      // exponentiation: '**'
+      if (i + 1 < src.size() && src[i + 1] == '*') { i += 2; return {TokKind::Pow}; }
+      ++i;
+      return {TokKind::Star};
+    }
     if (c == '/') { ++i; return {TokKind::Slash}; }
     if (c == '(') { ++i; return {TokKind::LParen}; }
     if (c == ')') { ++i; return {TokKind::RParen}; }
@@ -344,6 +349,20 @@ struct Parser {
   double parse_factor() {
     if (cur.kind == TokKind::Plus) { eat(TokKind::Plus); return parse_factor(); }
     if (cur.kind == TokKind::Minus) { eat(TokKind::Minus); return -parse_factor(); }
+    return parse_pow();
+  }
+
+  double parse_pow() {
+    double v = parse_atom();
+    if (cur.kind == TokKind::Pow) {
+      eat(TokKind::Pow);
+      double rhs = parse_factor();  // right-associative; exponent can be unary
+      v = std::pow(v, rhs);
+    }
+    return v;
+  }
+
+  double parse_atom() {
     if (cur.kind == TokKind::Number) {
       double v = cur.num;
       eat(TokKind::Number);
