@@ -377,6 +377,20 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
         if op.get("op") == "cast":
             if "to" not in op["attrs"] and "dtype" in op["attrs"]:
                 op["attrs"]["to"] = op["attrs"].pop("dtype")
+            # Some providers omit `to` entirely; infer from the declared output dtype.
+            if "to" not in op["attrs"]:
+                out_name = _canonical_tensor_ref(op.get("output"))
+                if isinstance(out_name, str) and isinstance(tensors.get(out_name), dict):
+                    dt = tensors[out_name].get("dtype")
+                    if isinstance(dt, str) and dt:
+                        op["attrs"]["to"] = dt
+            if "to" not in op["attrs"]:
+                # Fallback: treat cast as a no-op cast when output dtype is unavailable.
+                inps = op.get("inputs") or []
+                if isinstance(inps, list) and inps and isinstance(inps[0], str) and isinstance(tensors.get(inps[0]), dict):
+                    dt = tensors[inps[0]].get("dtype")
+                    if isinstance(dt, str) and dt:
+                        op["attrs"]["to"] = dt
             # Normalize dtype spellings commonly emitted by providers.
             to = op["attrs"].get("to")
             if isinstance(to, str):
@@ -399,6 +413,92 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
                     op["attrs"]["to"] = "i64"
                 elif dt in {"bool", "boolean"}:
                     op["attrs"]["to"] = "bool"
+        if op.get("op") == "matmul":
+            attrs = op["attrs"]
+            # Canonicalize common transpose flag spellings.
+            if "transpose_rhs" in attrs and "transpose_b" not in attrs:
+                attrs["transpose_b"] = attrs.pop("transpose_rhs")
+            if "transpose_lhs" in attrs and "transpose_a" not in attrs:
+                attrs["transpose_a"] = attrs.pop("transpose_lhs")
+            for k in ("transpose_a", "transpose_b"):
+                v = attrs.get(k)
+                if isinstance(v, str):
+                    s = v.strip().lower()
+                    if s in {"1", "true", "yes", "y"}:
+                        attrs[k] = True
+                    elif s in {"0", "false", "no", "n"}:
+                        attrs[k] = False
+        if op.get("op") == "transpose":
+            attrs = op["attrs"]
+            if "perm" not in attrs and "axes" in attrs:
+                attrs["perm"] = attrs.pop("axes")
+            if "perm" not in attrs and "order" in attrs:
+                attrs["perm"] = attrs.pop("order")
+            perm = attrs.get("perm")
+            if isinstance(perm, tuple):
+                perm = list(perm)
+            if isinstance(perm, str):
+                parts = [p.strip() for p in perm.replace(" ", ",").split(",") if p.strip()]
+                try:
+                    perm = [int(p) for p in parts]
+                except Exception:
+                    perm = None
+            if isinstance(perm, dict):
+                # Common encodings:
+                # - {"0":1,"1":0}
+                # - {"from0":1,"from1":0}
+                items = []
+                for k, v in perm.items():
+                    kk = str(k).strip()
+                    if kk.isdigit():
+                        items.append((int(kk), v))
+                    elif kk.lower().startswith("from") and kk[4:].isdigit():
+                        items.append((int(kk[4:]), v))
+                if items:
+                    try:
+                        items.sort(key=lambda kv: kv[0])
+                        perm = [int(v) for _k, v in items]
+                    except Exception:
+                        perm = None
+            if isinstance(perm, list):
+                # Accept list[str] digits or list[str] dim-names (map via input tensor shape).
+                out_perm: List[int] = []
+                all_str = all(isinstance(x, str) for x in perm)
+                if all_str:
+                    # First try numeric strings.
+                    try:
+                        out_perm = [int(str(x).strip()) for x in perm]
+                    except Exception:
+                        out_perm = []
+                    if not out_perm:
+                        inps = op.get("inputs") or []
+                        inp0 = inps[0] if isinstance(inps, list) and inps else None
+                        in_shape = None
+                        if isinstance(inp0, str) and isinstance(tensors.get(inp0), dict):
+                            sh = tensors[inp0].get("shape")
+                            if isinstance(sh, list):
+                                in_shape = list(sh)
+                        if in_shape is not None:
+                            try:
+                                out_perm = [int(in_shape.index(str(d))) for d in perm]
+                            except Exception:
+                                out_perm = []
+                else:
+                    for x in perm:
+                        if isinstance(x, int):
+                            out_perm.append(int(x))
+                        elif isinstance(x, str) and x.strip().isdigit():
+                            out_perm.append(int(x.strip()))
+                if out_perm:
+                    attrs["perm"] = out_perm
+            # Final fallback: infer a simple 2D transpose when possible.
+            if "perm" not in attrs:
+                inps = op.get("inputs") or []
+                inp0 = inps[0] if isinstance(inps, list) and inps else None
+                if isinstance(inp0, str) and isinstance(tensors.get(inp0), dict):
+                    sh = tensors[inp0].get("shape")
+                    if isinstance(sh, list) and len(sh) == 2:
+                        attrs["perm"] = [1, 0]
         if op.get("op") == "broadcast_in_dim":
             attrs = op["attrs"]
             if "out_shape" not in attrs and "shape" in attrs:

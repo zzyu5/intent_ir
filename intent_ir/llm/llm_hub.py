@@ -82,6 +82,32 @@ class LLMIntentHub:
     max_parse_retries: int = 2
     max_attempts: int = 2
     extra_chat_kwargs: Dict[str, Any] = field(default_factory=dict)
+    disabled_models: set[str] = field(default_factory=set)
+
+    def _maybe_disable_model(self, model: str, err: Exception) -> None:
+        """
+        Disable a provider/model for the lifetime of this process when we detect
+        hard failures (quota exhausted, repeated 5xx), so large suites don't get
+        stuck retrying a dead endpoint.
+        """
+        m = str(model)
+        msg = str(err)
+        # Quota/credit exhaustion: these won't recover without user action.
+        hard_markers = [
+            "pre_consume_token_quota_failed",
+            "insufficient_quota",
+            "quota",
+            "余额",
+            "令牌总使用次数已达到限制",
+        ]
+        if any(x in msg for x in hard_markers):
+            self.disabled_models.add(m)
+            return
+        # Repeated 5xx from a proxy is usually persistent for a while; disable to
+        # avoid spending dozens of seconds per kernel before falling back.
+        if "server error" in msg or " 520 " in msg or " 502 " in msg or " 503 " in msg or " 504 " in msg:
+            self.disabled_models.add(m)
+            return
 
     def lift(self, descriptor: KernelDescriptor, *, feedback: Optional[List[str]] = None, model: Optional[str] = None) -> CandidateIntent:
         """
@@ -96,7 +122,10 @@ class LLMIntentHub:
             prompt_hash = _hash_messages(messages)
             requested = model or self.default_model
             extra = dict(self.extra_chat_kwargs)
-            extra.setdefault("max_tokens", 800)
+            # Complex kernels can exceed 800 tokens (truncation -> invalid JSON).
+            extra.setdefault("max_tokens", 1600)
+            # Reduce non-determinism; helps providers obey "JSON only" prompts.
+            extra.setdefault("temperature", 0)
 
             trace: Dict[str, Any] = {
                 "requested_model": requested,
@@ -105,6 +134,9 @@ class LLMIntentHub:
             }
 
             for m in trace["candidates"]:
+                if str(m) in self.disabled_models:
+                    trace["attempts"].append({"model": m, "ok": False, "cache_hit": False, "stage": "skip", "error": "disabled"})
+                    continue
                 try:
                     resp = chat_completion(
                         messages,
@@ -118,6 +150,7 @@ class LLMIntentHub:
                     )
                 except LLMClientError as e:
                     last_err = e
+                    self._maybe_disable_model(m, e)
                     trace["attempts"].append({"model": m, "ok": False, "cache_hit": False, "stage": "http", "error": str(e)})
                     continue
 

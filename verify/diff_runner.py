@@ -108,6 +108,48 @@ def run_diff(
             used.update(op.inputs)
         external_inputs = {n for n in used if (n in intent_exec.tensors and n not in produced)}
         inputs = {k: v for k, v in ref_out.items() if k in external_inputs}
+        # Some frontends expose semantic scalar inputs (e.g., sm_scale) that may be
+        # compiled away in the runtime kernel signature (so the baseline runner
+        # cannot return them). If IntentIR models them as scalar tensors, inject
+        # derived 0-d arrays so the interpreter can evaluate the graph.
+        missing = sorted([n for n in external_inputs if n not in inputs])
+        for name in missing:
+            tt = intent_exec.tensors.get(name)
+            if tt is None:
+                continue
+            # Only inject scalars (rank-0 tensors).
+            if getattr(tt, "shape", None):
+                continue
+            if case.inputs and name in case.inputs:
+                try:
+                    inputs[name] = np.asarray(case.inputs[name])
+                    continue
+                except Exception:
+                    pass
+            # Derived semantic constants.
+            if name == "sm_scale":
+                hd = bindings.get("HEAD_DIM")
+                if hd is not None and int(hd) > 0:
+                    inputs[name] = np.array(1.0 / np.sqrt(float(hd)), dtype=np.float32)
+                    continue
+            if name in bindings:
+                dt = str(getattr(tt, "dtype", "f32"))
+                np_dt = np.float32
+                if dt == "f16":
+                    np_dt = np.float16
+                elif dt == "f64":
+                    np_dt = np.float64
+                elif dt == "i32":
+                    np_dt = np.int32
+                elif dt == "i64":
+                    np_dt = np.int64
+                elif dt == "i8":
+                    np_dt = np.int8
+                elif dt == "u8":
+                    np_dt = np.uint8
+                elif dt == "bool":
+                    np_dt = np.bool_
+                inputs[name] = np.array(bindings[name], dtype=np_dt)
         # Strict "original view" check: inputs must match declared tensor shapes exactly.
         # If the LLM needs a grouped/view shape, it must introduce explicit reshape ops
         # inside IntentIR, rather than redefining the input tensor shape.
