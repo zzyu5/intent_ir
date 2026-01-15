@@ -6,12 +6,12 @@ Goal: keep the CUDA pipeline runtime-independent from TileLang.
 This script is the *only* place that imports TileLang/TIR to:
   - compile TileLang PrimFunc to CUDA C + PTX
   - extract launch config (grid/block) from TIR `T.launch_thread(...)`
-  - write a self-contained snapshot under `kernels/cuda/ops/tilelang_generated/`
+  - write a self-contained snapshot under `kernels/cuda/ops/snapshots/`
 
 The CUDA frontend (`pipeline/cuda/core.py`) consumes only these snapshots:
   - `<name>.cu`
   - `<name>.ptx`
-  - `<name>.tilelang_export.json` (extended schema; includes io_spec + launch)
+  - `<name>.cuda_snapshot.json` (extended schema; includes io_spec + launch)
 """
 
 from __future__ import annotations
@@ -157,7 +157,7 @@ def _export_one(
     out_dir.mkdir(parents=True, exist_ok=True)
     cu_path = out_dir / f"{name}.cu"
     ptx_path = out_dir / f"{name}.ptx"
-    meta_path = out_dir / f"{name}.tilelang_export.json"
+    meta_path = out_dir / f"{name}.cuda_snapshot.json"
 
     if (not refresh) and cu_path.is_file() and ptx_path.is_file() and meta_path.is_file():
         # Load existing meta and trust it (for incremental workflow).
@@ -241,7 +241,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--suite", choices=["smoke", "coverage", "all"], default="smoke")
     ap.add_argument("--kernel", action="append", default=[], help="repeatable; filter by kernel name")
-    ap.add_argument("--out-dir", default=str(ROOT / "kernels" / "cuda" / "ops" / "tilelang_generated"))
+    ap.add_argument("--out-dir", default=str(ROOT / "kernels" / "cuda" / "ops" / "snapshots"))
     ap.add_argument("--refresh", action="store_true", help="re-export even if snapshots already exist")
     args = ap.parse_args()
 

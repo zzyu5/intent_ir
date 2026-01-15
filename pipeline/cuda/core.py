@@ -48,8 +48,8 @@ _LLM_HUB = LLMIntentHub()
 # CUDA pipeline consumes pre-generated snapshots under kernels/cuda/ops/.
 # TileLang is allowed to generate these snapshots offline, but the CUDA runtime
 # pipeline must not import TileLang or parse TIR.
-_CUDA_SNAPSHOT_DIR = ROOT / "kernels" / "cuda" / "ops" / "tilelang_generated"
-_CUDA_SNAPSHOT_META_SUFFIX = ".tilelang_export.json"
+_CUDA_SNAPSHOT_DIR = ROOT / "kernels" / "cuda" / "ops" / "snapshots"
+_CUDA_SNAPSHOT_META_SUFFIX = ".cuda_snapshot.json"
 
 
 def _eval_int_expr(expr: str, bindings: Dict[str, int]) -> int:
@@ -133,7 +133,7 @@ def _load_snapshot_meta(name: str) -> Dict[str, Any]:
     if not meta_path.is_file():
         raise FileNotFoundError(
             f"missing CUDA snapshot metadata for {name}: {meta_path} "
-            f"(run `PYTHONPATH=. python scripts/tilelang/export_cuda_snapshots.py --suite smoke --kernel {name}`)"
+            f"(generate it via a snapshot exporter, e.g. `PYTHONPATH=. python scripts/tilelang/export_cuda_snapshots.py --suite coverage --kernel {name}`)"
         )
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     if not isinstance(meta, dict):
@@ -151,7 +151,7 @@ def _load_cuda_snapshot(name: str) -> Dict[str, Any]:
     if not cu_path.is_file() or not ptx_path.is_file():
         raise FileNotFoundError(
             f"missing CUDA snapshot files for {name}: {cu_path} / {ptx_path} "
-            f"(run `PYTHONPATH=. python scripts/tilelang/export_cuda_snapshots.py --suite smoke --kernel {name}`)"
+            f"(generate them via a snapshot exporter, e.g. `PYTHONPATH=. python scripts/tilelang/export_cuda_snapshots.py --suite coverage --kernel {name}`)"
         )
     meta = _load_snapshot_meta(name)
     cuda_src = cu_path.read_text(encoding="utf-8")
@@ -176,6 +176,9 @@ def _load_cuda_snapshot(name: str) -> Dict[str, Any]:
 
     return {
         "name": name,
+        "cu_path": str(cu_path),
+        "ptx_path": str(ptx_path),
+        "meta_path": str(meta_path),
         "cuda_src": cuda_src,
         "ptx_text": ptx_text,
         "entry_name": entry_name,
@@ -1011,6 +1014,7 @@ def _baseline_runner_for(name: str):
 
 def _snapshot_kernel_spec(name: str) -> KernelSpec:
     snap = _load_cuda_snapshot(name)
+    cu_path = Path(str(snap.get("cu_path") or (_CUDA_SNAPSHOT_DIR / f"{name}.cu")))
     meta = snap.get("meta") if isinstance(snap.get("meta"), dict) else {}
     io_spec = meta.get("io_spec")
     if not isinstance(io_spec, dict):
@@ -1044,7 +1048,7 @@ def _snapshot_kernel_spec(name: str) -> KernelSpec:
         stage_c_runner=stage_c_runner,
         block=block,
         exclude_axes=exclude_axes,
-        cuda_path=_CUDA_SNAPSHOT_DIR / f"{name}.cu",
+        cuda_path=cu_path,
         include_dirs=list(snap.get("include_dirs") or []),
         ptx_text=str(snap.get("ptx_text") or ""),
         ptx_entry=str(snap.get("entry_name") or "main_kernel"),
@@ -1072,8 +1076,8 @@ def snapshot_coverage_kernel_specs() -> List[KernelSpec]:
     return out
 
 
-# NOTE: TileLang->CUDA export is performed offline via `scripts/tilelang/export_cuda_snapshots.py`.
-# The CUDA pipeline consumes saved snapshots under `kernels/cuda/ops/tilelang_generated/`.
+# NOTE: Snapshots are produced offline (e.g., from TileLang) and saved under `kernels/cuda/ops/snapshots/`.
+# The CUDA runtime pipeline consumes only `.cu/.ptx/.cuda_snapshot.json` and does not import TileLang.
 
 
 def default_kernel_specs() -> List[KernelSpec]:
@@ -1091,15 +1095,15 @@ def default_kernel_specs() -> List[KernelSpec]:
 def coverage_kernel_specs() -> List[KernelSpec]:
     """
     CUDA coverage suite:
-      - Always include native CUDA anchors (stable PTX patterns for golden tests).
-      - Include all available pre-generated CUDA snapshots (smoke + extra).
+      - Prefer available CUDA snapshots (for cross-frontend parity).
+      - Include native CUDA anchors for PTX golden tests / extra coverage.
     """
     specs: List[KernelSpec] = []
-    specs.extend(native_kernel_specs())
     try:
         specs.extend(snapshot_coverage_kernel_specs())
     except Exception:
         pass
+    specs.extend(native_kernel_specs())
     # De-dup by name while preserving first occurrence order.
     out: List[KernelSpec] = []
     seen: set[str] = set()

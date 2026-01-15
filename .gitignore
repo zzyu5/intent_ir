@@ -8,6 +8,7 @@ doc/
 artifacts/
 
 # Generated kernel snapshots (not source-of-truth)
+kernels/cuda/ops/snapshots/
 kernels/cuda/ops/tilelang_generated/
 
 # C++ codegen build output
