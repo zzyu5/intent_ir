@@ -75,6 +75,7 @@ void intentir_relu_f32(const float* a, float* out, size_t n);
 #define INTENTIR_TYPE_I64 3
 #define INTENTIR_TYPE_F32 4
 #define INTENTIR_TYPE_F64 5
+#define INTENTIR_TYPE_I16 6
 void intentir_cast_1d(const void* inp, void* out, size_t n, int from_type, int to_type);
 
 // Transpose (f32), rank<=4.

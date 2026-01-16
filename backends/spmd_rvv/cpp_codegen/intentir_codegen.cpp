@@ -65,6 +65,7 @@ std::string c_float(double x) {
 std::string ctype_for_dtype(const std::string& dt) {
   if (dt == "bool" || dt == "i1" || dt == "u8") return "uint8_t";
   if (dt == "i8") return "int8_t";
+  if (dt == "i16") return "int16_t";
   if (dt == "i32") return "int32_t";
   if (dt == "i64") return "int64_t";
   if (dt == "f64") return "double";
@@ -74,6 +75,7 @@ std::string ctype_for_dtype(const std::string& dt) {
 std::string typecode_for_dtype(const std::string& dt) {
   if (dt == "bool" || dt == "i1" || dt == "u8") return "INTENTIR_TYPE_U8";
   if (dt == "i8") return "INTENTIR_TYPE_I8";
+  if (dt == "i16") return "INTENTIR_TYPE_I16";
   if (dt == "i32") return "INTENTIR_TYPE_I32";
   if (dt == "i64") return "INTENTIR_TYPE_I64";
   if (dt == "f64") return "INTENTIR_TYPE_F64";
@@ -1453,11 +1455,12 @@ struct CProgramEmitter {
 		        int64_t n = numel(shp);
 		        std::string ct = ctype_for_dtype(dtype_env.at(name));
 		        std::string dt = dtype_env.at(name);
+		        const bool byte_buf = (dt == "bool" || dt == "i1" || dt == "u8" || dt == "i8" || dt == "i16" || dt == "i32" || dt == "i64");
 		        const std::string& var = v(name);
 		        std::string bytes_expr = "sizeof(" + ct + ") * (size_t)" + std::to_string(n);
 		        if (dt == "bool" || dt == "i1") bytes_expr = "sizeof(uint8_t) * (size_t)" + std::to_string(n);
 		        w.line("{\"" + name + "\", (void**)&" + var + ", (size_t)(" + bytes_expr + "), " +
-		               ((dt == "bool" || dt == "i1") ? "INTENTIR_DTYPE_U8" : "INTENTIR_DTYPE_F32") + "},");
+		               (byte_buf ? "INTENTIR_DTYPE_U8" : "INTENTIR_DTYPE_F32") + "},");
 		      }
 	      w.dedent();
 	      w.line("};");
@@ -1558,11 +1561,12 @@ struct CProgramEmitter {
 		          int64_t n = numel(shp);
 		          std::string ct = ctype_for_dtype(dtype_env.at(name));
 		          std::string dt = dtype_env.at(name);
+		          const bool byte_buf = (dt == "bool" || dt == "i1" || dt == "u8" || dt == "i8" || dt == "i16" || dt == "i32" || dt == "i64");
 		          const std::string& var = v(name);
 		          std::string bytes_expr = "sizeof(" + ct + ") * (size_t)" + std::to_string(n);
 		          if (dt == "bool" || dt == "i1") bytes_expr = "sizeof(uint8_t) * (size_t)" + std::to_string(n);
 		          w.line("{\"" + name + "\", (void**)&" + var + ", (size_t)(" + bytes_expr + "), " +
-		                 ((dt == "bool" || dt == "i1") ? "INTENTIR_DTYPE_U8" : "INTENTIR_DTYPE_F32") + "},");
+		                 (byte_buf ? "INTENTIR_DTYPE_U8" : "INTENTIR_DTYPE_F32") + "},");
 		        }
 	        w.dedent();
 	        w.line("};");

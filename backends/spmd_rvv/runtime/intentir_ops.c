@@ -1547,6 +1547,8 @@ static inline double intentir_read_as_f64(const void* p, size_t i, int from_type
       return (double)((const uint8_t*)p)[i];
     case INTENTIR_TYPE_I8:
       return (double)((const int8_t*)p)[i];
+    case INTENTIR_TYPE_I16:
+      return (double)((const int16_t*)p)[i];
     case INTENTIR_TYPE_I32:
       return (double)((const int32_t*)p)[i];
     case INTENTIR_TYPE_I64:
@@ -1618,6 +1620,11 @@ void intentir_cast_1d(const void* inp, void* out, size_t n, int from_type, int t
     case INTENTIR_TYPE_I8: {
       int8_t* o = (int8_t*)out;
       for (size_t i = 0; i < n; ++i) o[i] = (int8_t)intentir_read_as_f64(inp, i, from_type);
+      return;
+    }
+    case INTENTIR_TYPE_I16: {
+      int16_t* o = (int16_t*)out;
+      for (size_t i = 0; i < n; ++i) o[i] = (int16_t)intentir_read_as_f64(inp, i, from_type);
       return;
     }
     case INTENTIR_TYPE_I32: {

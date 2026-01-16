@@ -93,6 +93,8 @@ def _np_dtype(dtype: str | None) -> Any:
         return np.int64
     if dt in {"i8"}:
         return np.int8
+    if dt in {"i16"}:
+        return np.int16
     if dt in {"u8"}:
         return np.uint8
     if dt in {"bool", "i1"}:

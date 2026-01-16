@@ -488,6 +488,8 @@ def run_remote(
                 raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
             elif dt == "i8":
                 raw = np.asarray(arr, dtype=np.int8).tobytes(order="C")
+            elif dt == "i16":
+                raw = np.asarray(arr, dtype=np.int16).tobytes(order="C")
             elif dt == "u8":
                 raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
             elif dt == "i32":
@@ -507,6 +509,8 @@ def run_remote(
                 raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
             elif dt == "i8":
                 raw = np.asarray(arr, dtype=np.int8).tobytes(order="C")
+            elif dt == "i16":
+                raw = np.asarray(arr, dtype=np.int16).tobytes(order="C")
             elif dt == "u8":
                 raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
             elif dt == "i32":
