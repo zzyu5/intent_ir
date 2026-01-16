@@ -7,6 +7,9 @@ doc/
 # Artifacts directory
 artifacts/
 
+# External benchmark suites / large local datasets (not source-of-truth)
+experiment/
+
 # Generated kernel snapshots (not source-of-truth)
 kernels/cuda/ops/snapshots/
 kernels/cuda/ops/tilelang_generated/
