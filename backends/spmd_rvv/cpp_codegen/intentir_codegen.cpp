@@ -1887,6 +1887,44 @@ struct CProgramEmitter {
 	        int64_t n = numel(out_shape);
 	        w.line("intentir_dropout_f32(" + v(op.inputs[0]) + ", " + out_var + ", (size_t)" + std::to_string(n) + ", " + v(op.inputs[1]) +
 	               "[0], " + seed_expr + ", " + std::to_string(rounds) + ");");
+	      } else if (op.op == "correlation") {
+	        if (op.inputs.size() != 3) fail("correlation requires 3 inputs (src0, src1, out_shift)");
+	        if (dtype_env.at(op.inputs[0]) != "i8" || dtype_env.at(op.inputs[1]) != "i8" || dtype_env.at(out) != "i8") fail("correlation supports only i8 tensors");
+	        const auto& s0 = shape_env.at(op.inputs[0]);
+	        const auto& s1 = shape_env.at(op.inputs[1]);
+	        if (s0.size() != 3 || s1.size() != 3 || out_shape.size() != 3) fail("correlation expects rank-3 tensors");
+	        if (s0 != s1) fail("correlation expects src0/src1 shapes to match");
+	        if (s0[1] != out_shape[1] || s0[2] != out_shape[2]) fail("correlation spatial shape mismatch");
+	        if (!shape_env.at(op.inputs[2]).empty()) fail("correlation out_shift must be a scalar tensor (rank-0)");
+	        const std::string sh_dt = dtype_env.at(op.inputs[2]);
+	        if (!(sh_dt == "i32" || sh_dt == "i64")) fail("correlation out_shift dtype must be i32 or i64");
+	        const int64_t OC = out_shape[0];
+	        const int64_t IC = s0[0];
+	        const int64_t H = out_shape[1];
+	        const int64_t W = out_shape[2];
+	        w.line("intentir_correlation_i8(" + v(op.inputs[0]) + ", " + v(op.inputs[1]) + ", " + out_var + ", " + std::to_string(OC) +
+	               ", " + std::to_string(IC) + ", " + std::to_string(H) + ", " + std::to_string(W) + ", (int32_t)" + v(op.inputs[2]) + "[0]);");
+	      } else if (op.op == "resize") {
+	        if (op.inputs.size() != 1) fail("resize requires 1 input (src)");
+	        if (dtype_env.at(op.inputs[0]) != "i8" || dtype_env.at(out) != "i8") fail("resize supports only i8 tensors");
+	        const auto& s = shape_env.at(op.inputs[0]);
+	        if (s.size() != 3 || out_shape.size() != 3) fail("resize expects rank-3 tensors [C,H,W]");
+	        if (out_shape[0] != s[0]) fail("resize channel mismatch");
+	        if (out_shape[1] != 2 * s[1] || out_shape[2] != 2 * s[2]) fail("resize currently supports only 2x upsample");
+	        int hw_fl = 7;
+	        if (op.attrs.contains("hw_fl")) hw_fl = (int)resolve_const_value(op.attrs["hw_fl"], bindings);
+	        w.line("intentir_resize_bilinear2x_i8(" + v(op.inputs[0]) + ", " + out_var + ", " + std::to_string(s[0]) + ", " + std::to_string(s[1]) + ", " +
+	               std::to_string(s[2]) + ", " + std::to_string(hw_fl) + ");");
+	      } else if (op.op == "warp") {
+	        if (op.inputs.size() != 2) fail("warp requires 2 inputs (src, offset)");
+	        if (dtype_env.at(op.inputs[0]) != "i8" || dtype_env.at(op.inputs[1]) != "i16" || dtype_env.at(out) != "i8") fail("warp expects src/out i8 and offset i16");
+	        const auto& s = shape_env.at(op.inputs[0]);
+	        const auto& off = shape_env.at(op.inputs[1]);
+	        if (s.size() != 3 || off.size() != 2 || out_shape.size() != 3) fail("warp expects src/out rank-3 and offset rank-2");
+	        if (out_shape != s) fail("warp output shape must match src shape");
+	        if (off[0] != s[1] || off[1] != s[2]) fail("warp offset shape must match [H,W]");
+	        w.line("intentir_warp_q8_8_i8_i16(" + v(op.inputs[0]) + ", " + v(op.inputs[1]) + ", " + out_var + ", " + std::to_string(s[0]) + ", " +
+	               std::to_string(s[1]) + ", " + std::to_string(s[2]) + ");");
 	      } else if (op.op == "iota") {
 	        int axis = op.attrs.value("axis", 0);
 	        emit_iota(w, out_var, out_shape, axis, dtype_env.at(out));

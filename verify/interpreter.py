@@ -64,6 +64,9 @@ INTERPRETER_SUPPORTED_OPS: set[str] = set().union(
         "gather",
         "where",
         "dropout",
+        "correlation",
+        "resize",
+        "warp",
         "reduce_sum",
         "reduce_any",
         "reduce_max",
@@ -323,6 +326,131 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         keep = rnd > np.float32(p)
         out = np.where(keep, x_f32 / np.float32(keep_prob), np.float32(0.0))
         return out.astype(np.float32, copy=False)
+    if op.op == "correlation":
+        if len(op.inputs) != 3:
+            raise ValueError("correlation requires 3 inputs (src0, src1, out_shift)")
+        src0 = np.asarray(_get(env, op.inputs[0]), dtype=np.int8, order="C")
+        src1 = np.asarray(_get(env, op.inputs[1]), dtype=np.int8, order="C")
+        out_shift = int(np.asarray(_get(env, op.inputs[2])).reshape(()))
+        out_shape = _shape_from_tensor(intent, op.output, shape_bindings)
+        if out_shape is None or len(out_shape) != 3:
+            raise ValueError(f"correlation output must be rank-3, got {out_shape}")
+        out_c, H, W = (int(out_shape[0]), int(out_shape[1]), int(out_shape[2]))
+        if src0.ndim != 3 or src1.ndim != 3:
+            raise ValueError(f"correlation inputs must be rank-3, got {src0.shape} and {src1.shape}")
+        if src0.shape != src1.shape:
+            raise ValueError(f"correlation inputs shape mismatch: {src0.shape} vs {src1.shape}")
+        in_c, h0, w0 = (int(src0.shape[0]), int(src0.shape[1]), int(src0.shape[2]))
+        if (h0, w0) != (H, W):
+            raise ValueError(f"correlation spatial shape mismatch: src={src0.shape[1:]} out={(H, W)}")
+        out = np.zeros((out_c, H, W), dtype=np.int8)
+        if out_c == 0 or in_c == 0 or H == 0 or W == 0:
+            return out
+        for oc in range(out_c):
+            acc = np.zeros((H, W), dtype=np.int32)
+            if oc == 0:
+                for k in range(in_c):
+                    acc += (src0[k].astype(np.int16) * src1[k].astype(np.int16)).astype(np.int32)
+            else:
+                # Shift src1 by oc along width: src1[..., w-oc] contributes to out[..., w].
+                for k in range(in_c):
+                    a = src0[k].astype(np.int16)
+                    b = src1[k].astype(np.int16)
+                    acc[:, oc:] += (a[:, oc:] * b[:, : W - oc]).astype(np.int32)
+            out[oc] = (acc >> out_shift).astype(np.int8)
+        return out
+    if op.op == "resize":
+        if len(op.inputs) != 1:
+            raise ValueError("resize requires 1 input (src)")
+        src = np.asarray(_get(env, op.inputs[0]), dtype=np.int8, order="C")
+        out_shape = _shape_from_tensor(intent, op.output, shape_bindings)
+        if out_shape is None or len(out_shape) != 3:
+            raise ValueError(f"resize output must be rank-3, got {out_shape}")
+        if src.ndim != 3:
+            raise ValueError(f"resize input must be rank-3, got {src.shape}")
+        C, H, W = (int(src.shape[0]), int(src.shape[1]), int(src.shape[2]))
+        OC, OH, OW = (int(out_shape[0]), int(out_shape[1]), int(out_shape[2]))
+        if OC != C:
+            raise ValueError(f"resize channel mismatch: src C={C} out C={OC}")
+        hw_fl = int(op.attrs.get("hw_fl", 7))
+        factor = int(1 << hw_fl)
+        # Current semantic: bilinear resize with 2x upsample (matches AI-Benchmark kernel).
+        if OH != 2 * H or OW != 2 * W:
+            raise ValueError(f"resize currently expects 2x upsample: src={(H, W)} out={(OH, OW)}")
+        # Vectorized coordinate maps (integer fixed-point math).
+        h_idx = np.arange(OH, dtype=np.int32)
+        input_y = h_idx << (hw_fl - 1)
+        y0 = input_y >> hw_fl
+        h1 = input_y - (y0 << hw_fl)
+        h0 = factor - h1
+        y1 = np.minimum(y0 + 1, H - 1)
+
+        w_idx = np.arange(OW, dtype=np.int32)
+        input_x = w_idx << (hw_fl - 1)
+        x0 = input_x >> hw_fl
+        w1 = input_x - (x0 << hw_fl)
+        w0 = factor - w1
+        x1 = np.minimum(x0 + 1, W - 1)
+
+        out = np.empty((C, OH, OW), dtype=np.int8)
+        w0_i32 = w0.astype(np.int32, copy=False)
+        w1_i32 = w1.astype(np.int32, copy=False)
+        h0_i32 = h0.astype(np.int32, copy=False)[:, None]
+        h1_i32 = h1.astype(np.int32, copy=False)[:, None]
+        for c in range(C):
+            s = src[c].astype(np.int16, copy=False)
+            s0 = s[y0]  # (OH, W)
+            s1 = s[y1]
+            y0x0 = s0[:, x0]
+            y0x1 = s0[:, x1]
+            y1x0 = s1[:, x0]
+            y1x1 = s1[:, x1]
+            sum1 = ((y0x0.astype(np.int32) * w0_i32 + y0x1.astype(np.int32) * w1_i32) >> hw_fl).astype(np.int32)
+            sum2 = ((y1x0.astype(np.int32) * w0_i32 + y1x1.astype(np.int32) * w1_i32) >> hw_fl).astype(np.int32)
+            val = ((sum1 * h0_i32 + sum2 * h1_i32) >> hw_fl).astype(np.int32)
+            out[c] = val.astype(np.int8)
+        return out
+    if op.op == "warp":
+        if len(op.inputs) != 2:
+            raise ValueError("warp requires 2 inputs (src, offset)")
+        src = np.asarray(_get(env, op.inputs[0]), dtype=np.int8, order="C")
+        offset = np.asarray(_get(env, op.inputs[1]), dtype=np.int16, order="C")
+        out_shape = _shape_from_tensor(intent, op.output, shape_bindings)
+        if out_shape is None or len(out_shape) != 3:
+            raise ValueError(f"warp output must be rank-3, got {out_shape}")
+        if src.ndim != 3 or offset.ndim != 2:
+            raise ValueError(f"warp expects src rank-3 and offset rank-2, got {src.shape} and {offset.shape}")
+        C, H, W = (int(src.shape[0]), int(src.shape[1]), int(src.shape[2]))
+        OC, OH, OW = (int(out_shape[0]), int(out_shape[1]), int(out_shape[2]))
+        if (OC, OH, OW) != (C, H, W):
+            raise ValueError(f"warp output shape mismatch: src={(C, H, W)} out={(OC, OH, OW)}")
+        if offset.shape != (H, W):
+            raise ValueError(f"warp offset shape mismatch: expected {(H, W)} got {offset.shape}")
+        # Match AI-Benchmark warp semantics (Q8.8 offset packed into int16).
+        indvar = np.arange(W, dtype=np.int16).astype(np.int8)
+        out = np.empty((C, H, W), dtype=np.int8)
+        for h in range(H):
+            off = offset[h].astype(np.int16, copy=False)
+            offset_int = (off >> 8).astype(np.int8)
+            offset_frac = ((off << 8) >> 8).astype(np.int8)
+            right_i8 = (indvar.astype(np.int16) - offset_int.astype(np.int16)).astype(np.int8)
+            left_i8 = (right_i8.astype(np.int16) - 1).astype(np.int8)
+            right = right_i8.astype(np.int16)
+            left = left_i8.astype(np.int16)
+            right_ok = right >= 0
+            left_ok = left >= 0
+            right_idx = np.clip(right.astype(np.int64), 0, W - 1)
+            left_idx = np.clip(left.astype(np.int64), 0, W - 1)
+            frac_i16 = offset_frac.astype(np.int16)
+            for c in range(C):
+                row = src[c, h]
+                rv = row[right_idx].astype(np.int8, copy=False)
+                lv = row[left_idx].astype(np.int8, copy=False)
+                rv = np.where(right_ok, rv, np.int8(0))
+                lv = np.where(left_ok, lv, np.int8(0))
+                outv = (rv.astype(np.int16) << 8) + (lv.astype(np.int16) - rv.astype(np.int16)) * frac_i16
+                out[c, h] = (outv >> 8).astype(np.int8)
+        return out
     if op.op == "reduce_sum":
         x = _get(env, op.inputs[0])
         dims_raw = op.attrs.get("axes", op.attrs.get("dims", op.attrs.get("axis")))
@@ -391,6 +519,25 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         np_dt = _np_dtype(dtype) if dtype is not None else None
         return np.array(val, dtype=np_dt)
     raise ValueError(f"Unsupported op: {op.op}")
+
+
+def _shape_from_tensor(intent: IntentFunction, tensor_name: str, bindings: Dict[str, int]) -> tuple[int, ...] | None:
+    tt = intent.tensors.get(tensor_name)
+    if tt is None:
+        return None
+    out: list[int] = []
+    for d in tt.shape:
+        if getattr(d, "kind", None) == "const":
+            out.append(int(getattr(d, "value")))
+            continue
+        if getattr(d, "kind", None) == "sym":
+            sym = str(getattr(d, "value"))
+            if sym not in bindings:
+                raise ValueError(f"unbound symbolic dim in tensor shape: {tensor_name}.{sym}")
+            out.append(int(bindings[sym]))
+            continue
+        raise ValueError(f"invalid dim kind for {tensor_name}: {d}")
+    return tuple(out)
 
 
 def _eval_epilogue(node: Any, env: Dict[str, np.ndarray]) -> np.ndarray:

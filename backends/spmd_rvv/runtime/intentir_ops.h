@@ -26,6 +26,16 @@ void intentir_layernorm_2d_f32(
 // Uses Triton-compatible Philox (n_rounds default is 10).
 void intentir_dropout_f32(const float* X, float* Y, size_t n, float p, uint64_t seed, int n_rounds);
 
+// Correlation (int8): out[oc,h,w] = (sum_k src0[k,h,w] * src1[k,h,w-oc] >> out_shift).to(int8)
+void intentir_correlation_i8(
+    const int8_t* src0, const int8_t* src1, int8_t* out, int64_t out_channel, int64_t in_channel, int64_t height, int64_t width, int32_t out_shift);
+
+// Resize (int8): bilinear 2x upsample (fixed-point hw_fl=7 in the baseline kernel).
+void intentir_resize_bilinear2x_i8(const int8_t* src, int8_t* out, int64_t channel, int64_t height, int64_t width, int hw_fl);
+
+// Warp (int8,int16): per-pixel horizontal warp using Q8.8 packed offsets in int16.
+void intentir_warp_q8_8_i8_i16(const int8_t* src, const int16_t* offset, int8_t* out, int64_t channel, int64_t height, int64_t width);
+
 // Softmax over the last axis for rank-1..4 f32 tensors.
 void intentir_softmax_1d_last_f32(const float* a, float* out, int64_t K);
 void intentir_softmax_2d_last_f32(const float* a, float* out, int64_t M, int64_t K);

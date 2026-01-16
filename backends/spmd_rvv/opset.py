@@ -52,6 +52,9 @@ SPMD_RVV_SUPPORTED_OPS: set[str] = {
     "softmax",
     "matmul",
     "dropout",
+    "correlation",
+    "resize",
+    "warp",
 }
 
 

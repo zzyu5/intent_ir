@@ -21,6 +21,10 @@ CORE_OPS: set[str] = {
     "matmul",
     "softmax",
     "dropout",
+    # Common CV/NLP semantic ops (lowered to runtime libraries today).
+    "correlation",
+    "resize",
+    "warp",
     # Elementwise arithmetic / comparisons / boolean.
     "add",
     "sub",

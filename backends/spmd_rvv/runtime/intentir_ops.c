@@ -361,6 +361,126 @@ void intentir_dropout_f32(const float* X, float* Y, size_t n, float p, uint64_t 
 #endif
 }
 
+void intentir_correlation_i8(
+    const int8_t* src0, const int8_t* src1, int8_t* out, int64_t out_channel, int64_t in_channel, int64_t height, int64_t width, int32_t out_shift) {
+  if (!src0 || !src1 || !out) return;
+  if (out_channel <= 0 || in_channel <= 0 || height <= 0 || width <= 0) return;
+  const int64_t hw = height * width;
+  int sh = (int)out_shift;
+  if (sh < 0) sh = 0;
+  if (sh > 30) sh = 30;
+
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) schedule(static) if ((out_channel * height) >= 4)
+#endif
+  for (int64_t oc = 0; oc < out_channel; ++oc) {
+    for (int64_t h = 0; h < height; ++h) {
+      const int64_t row_base = h * width;
+      const int64_t out_base = oc * hw + row_base;
+      for (int64_t w = 0; w < width; ++w) {
+        if (w < oc) {
+          out[out_base + w] = 0;
+          continue;
+        }
+        int32_t acc = 0;
+        const int64_t off0 = row_base + w;
+        const int64_t off1 = row_base + (w - oc);
+        for (int64_t k = 0; k < in_channel; ++k) {
+          const int64_t base = k * hw;
+          acc += (int32_t)src0[base + off0] * (int32_t)src1[base + off1];
+        }
+        out[out_base + w] = (int8_t)(acc >> sh);
+      }
+    }
+  }
+}
+
+void intentir_resize_bilinear2x_i8(const int8_t* src, int8_t* out, int64_t channel, int64_t height, int64_t width, int hw_fl) {
+  if (!src || !out) return;
+  if (channel <= 0 || height <= 0 || width <= 0) return;
+  if (hw_fl <= 0) hw_fl = 7;
+  const int factor = 1 << hw_fl;
+  const int64_t dst_h = 2 * height;
+  const int64_t dst_w = 2 * width;
+  const int64_t src_hw = height * width;
+  const int64_t dst_hw = dst_h * dst_w;
+
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) schedule(static) if ((channel * dst_h) >= 4)
+#endif
+  for (int64_t c = 0; c < channel; ++c) {
+    for (int64_t h_idx = 0; h_idx < dst_h; ++h_idx) {
+      const int input_y = (int)h_idx << (hw_fl - 1);
+      const int y0 = input_y >> hw_fl;
+      const int h1 = input_y - (y0 << hw_fl);
+      const int h0 = factor - h1;
+      int y1 = y0 + 1;
+      if (y1 >= (int)height) y1 = (int)height - 1;
+
+      const int64_t src_base = c * src_hw;
+      const int64_t out_base = c * dst_hw + h_idx * dst_w;
+      const int64_t src_row0 = src_base + (int64_t)y0 * width;
+      const int64_t src_row1 = src_base + (int64_t)y1 * width;
+
+      for (int64_t w_idx = 0; w_idx < dst_w; ++w_idx) {
+        const int input_x = (int)w_idx << (hw_fl - 1);
+        const int x0 = input_x >> hw_fl;
+        const int w1 = input_x - (x0 << hw_fl);
+        const int w0 = factor - w1;
+        int x1 = x0 + 1;
+        if (x1 >= (int)width) x1 = (int)width - 1;
+
+        const int16_t y0x0 = (int16_t)src[src_row0 + x0];
+        const int16_t y0x1 = (int16_t)src[src_row0 + x1];
+        const int16_t y1x0 = (int16_t)src[src_row1 + x0];
+        const int16_t y1x1 = (int16_t)src[src_row1 + x1];
+
+        const int32_t sum1 = (((int32_t)y0x0 * (int32_t)w0) + ((int32_t)y0x1 * (int32_t)w1)) >> hw_fl;
+        const int32_t sum2 = (((int32_t)y1x0 * (int32_t)w0) + ((int32_t)y1x1 * (int32_t)w1)) >> hw_fl;
+        const int32_t sum = (((sum1 * (int32_t)h0) + (sum2 * (int32_t)h1)) >> hw_fl);
+
+        out[out_base + w_idx] = (int8_t)sum;
+      }
+    }
+  }
+}
+
+void intentir_warp_q8_8_i8_i16(const int8_t* src, const int16_t* offset, int8_t* out, int64_t channel, int64_t height, int64_t width) {
+  if (!src || !offset || !out) return;
+  if (channel <= 0 || height <= 0 || width <= 0) return;
+  const int64_t hw = height * width;
+
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) schedule(static) if ((channel * height) >= 4)
+#endif
+  for (int64_t c = 0; c < channel; ++c) {
+    for (int64_t h = 0; h < height; ++h) {
+      const int64_t row_base = c * hw + h * width;
+      const int64_t off_base = h * width;
+      for (int64_t w = 0; w < width; ++w) {
+        const int16_t ov = offset[off_base + w];
+        const int8_t offset_int = (int8_t)(ov >> 8);
+        const int8_t offset_frac = (int8_t)(((int16_t)(ov << 8)) >> 8);
+        const int8_t indvar = (int8_t)w;
+        const int8_t right_i8 = (int8_t)(indvar - offset_int);
+        const int8_t left_i8 = (int8_t)(right_i8 - 1);
+        const int right = (int)right_i8;
+        const int left = (int)left_i8;
+
+        int8_t right_val = 0;
+        int8_t left_val = 0;
+        if (right >= 0 && right < (int)width) right_val = src[row_base + (int64_t)right];
+        if (left >= 0 && left < (int)width) left_val = src[row_base + (int64_t)left];
+
+        int16_t outv = (int16_t)((int16_t)right_val << 8);
+        outv = (int16_t)(outv + (int16_t)((int16_t)(left_val - right_val) * (int16_t)offset_frac));
+        outv = (int16_t)(outv >> 8);
+        out[row_base + w] = (int8_t)outv;
+      }
+    }
+  }
+}
+
 void intentir_softmax_1d_last_f32(const float* a, float* out, int64_t K) {
   if (!a || !out || K <= 0) return;
 #if defined(__riscv_vector) || defined(__riscv_v)

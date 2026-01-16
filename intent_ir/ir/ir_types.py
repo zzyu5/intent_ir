@@ -499,6 +499,22 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
         n_rounds = attrs.get("n_rounds")
         if n_rounds is not None and not isinstance(n_rounds, int):
             raise IntentIRValidationError(f"op[{idx}] dropout.attrs.n_rounds must be int when provided")
+    elif op.op == "correlation":
+        # Semantic op: correlation(src0, src1, out_shift) -> out
+        # Used by AI-Benchmark kernels (int8 fixed-point correlation).
+        if len(op.inputs) != 3:
+            raise IntentIRValidationError(f"op[{idx}] correlation requires 3 inputs (src0, src1, out_shift)")
+    elif op.op == "resize":
+        # Semantic op: resize(src) -> out (typically bilinear upsample).
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] resize requires 1 input (src)")
+        hw_fl = attrs.get("hw_fl")
+        if hw_fl is not None and not isinstance(hw_fl, int):
+            raise IntentIRValidationError(f"op[{idx}] resize.attrs.hw_fl must be int when provided")
+    elif op.op == "warp":
+        # Semantic op: warp(src, offset) -> out (Q8.8 fixed-point offsets).
+        if len(op.inputs) != 2:
+            raise IntentIRValidationError(f"op[{idx}] warp requires 2 inputs (src, offset)")
     elif op.op in {"add", "sub", "mul", "div", "max", "min"}:
         # Canonical form is binary; allow a small set of legacy shorthands
         # (1 input + scalar attr) for compatibility with older LLM outputs.
