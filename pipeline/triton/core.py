@@ -1355,6 +1355,106 @@ def _run_layernorm_reference(case: TestCase) -> Dict[str, np.ndarray]:
     }
 
 
+def _run_ai_bench_matmul_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.ai_bench_matmul import ai_bench_matmul_kernel
+
+    M = int(case.shapes.get("M", 256))
+    N = int(case.shapes.get("N", 512))
+    K = int(case.shapes.get("K", 256))
+    device = "cuda"
+
+    A = torch.randn((M, K), device=device, dtype=torch.float32)
+    B = torch.randn((K, N), device=device, dtype=torch.float32)
+    C = torch.empty((M, N), device=device, dtype=torch.float32)
+    grid = lambda meta: (triton.cdiv(M, meta["BLOCK_M"]) * triton.cdiv(N, meta["BLOCK_N"]),)
+    ai_bench_matmul_kernel[grid](
+        A,
+        B,
+        C,
+        M,
+        N,
+        K,
+        A.stride(0),
+        A.stride(1),
+        B.stride(0),
+        B.stride(1),
+        C.stride(0),
+        C.stride(1),
+        BLOCK_M=64,
+        BLOCK_N=16,
+        BLOCK_K=16,
+    )
+    torch.cuda.synchronize()
+    return {"A": A.cpu().numpy(), "B": B.cpu().numpy(), "C": C.cpu().numpy()}
+
+
+def _run_ai_bench_softmax_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.ai_bench_softmax import ai_bench_softmax_kernel
+
+    R = int(case.shapes.get("R", 1823))
+    C = int(case.shapes.get("C", 781))
+    device = "cuda"
+
+    inp = torch.randn((R, C), device=device, dtype=torch.float32)
+    out = torch.empty_like(inp)
+    block = 1 << (int(C) - 1).bit_length()
+    if block > 1024:
+        block = 1024
+    ai_bench_softmax_kernel[(R,)](out, inp, R, C, BLOCK_SIZE=block)
+    torch.cuda.synchronize()
+    return {"input": inp.cpu().numpy(), "output": out.cpu().numpy()}
+
+
+def _run_ai_bench_layernorm_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.ai_bench_layernorm import ai_bench_layernorm_fwd_kernel
+
+    M = int(case.shapes.get("M", 1151))
+    N = int(case.shapes.get("N", 8192))
+    eps = float(case.shapes.get("eps", 1e-5))
+    device = "cuda"
+
+    X = torch.randn((M, N), device=device, dtype=torch.float32)
+    W = torch.randn((N,), device=device, dtype=torch.float32)
+    B = torch.randn((N,), device=device, dtype=torch.float32)
+    Y = torch.empty_like(X)
+    Mean = torch.empty((M,), device=device, dtype=torch.float32)
+    Rstd = torch.empty((M,), device=device, dtype=torch.float32)
+    ai_bench_layernorm_fwd_kernel[(M,)](X, Y, W, B, Mean, Rstd, M, N, eps, BLOCK_SIZE=16)
+    torch.cuda.synchronize()
+    return {"X": X.cpu().numpy(), "W": W.cpu().numpy(), "B": B.cpu().numpy(), "Y": Y.cpu().numpy(), "Mean": Mean.cpu().numpy(), "Rstd": Rstd.cpu().numpy(), "eps": np.array(eps, dtype=np.float32)}
+
+
+def _run_ai_bench_rope_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.ai_bench_rope import ai_bench_rope_fwd_kernel
+
+    SEQ_LEN = int(case.shapes.get("SEQ_LEN", 128))
+    BATCH_NUM = int(case.shapes.get("BATCH_NUM", 4))
+    HEAD_NUM = int(case.shapes.get("HEAD_NUM", 2))
+    HEAD_DIM = int(case.shapes.get("HEAD_DIM", 128))
+    if HEAD_DIM % 2 != 0:
+        raise ValueError(f"rope requires even HEAD_DIM, got {HEAD_DIM}")
+    device = "cuda"
+
+    inp = torch.randn((SEQ_LEN, BATCH_NUM, HEAD_NUM, HEAD_DIM), device=device, dtype=torch.float32)
+    out = torch.empty_like(inp)
+    cos = torch.randn((SEQ_LEN, HEAD_DIM // 2), device=device, dtype=torch.float32)
+    sin = torch.randn((SEQ_LEN, HEAD_DIM // 2), device=device, dtype=torch.float32)
+    grid = (HEAD_NUM, BATCH_NUM, SEQ_LEN)
+    ai_bench_rope_fwd_kernel[grid](
+        inp,
+        out,
+        cos,
+        sin,
+        SEQ_LEN,
+        BATCH_NUM,
+        HEAD_NUM,
+        HEAD_DIM,
+        BLOCK_SIZE=32,
+    )
+    torch.cuda.synchronize()
+    return {"input": inp.cpu().numpy(), "cos": cos.cpu().numpy(), "sin": sin.cpu().numpy(), "output": out.cpu().numpy()}
+
+
 def _run_upsample_bicubic2d_aa_reference(case: TestCase) -> Dict[str, np.ndarray]:
     """
     Upsample bicubic2d AA: input/output are NCHW float32.
@@ -1899,6 +1999,40 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 runner=_run_matmul_fused_epilogue2d_reference,
                 canonical_shapes={"M": 32, "N": 32, "K": 32},
                 vary_axes=["M"],
+            ),
+            # AI-Benchmark (Triton-CPU) kernel equivalents used for Experiment A baselines.
+            KernelSpec(
+                name="ai_bench_matmul",
+                module="kernels.triton.ops.ai_bench_matmul",
+                attr="ai_bench_matmul_kernel.src",
+                runner=_run_ai_bench_matmul_reference,
+                canonical_shapes={"M": 256, "N": 512, "K": 256},
+                vary_axes=["M", "N", "K"],
+            ),
+            KernelSpec(
+                name="ai_bench_softmax",
+                module="kernels.triton.ops.ai_bench_softmax",
+                attr="ai_bench_softmax_kernel.src",
+                runner=_run_ai_bench_softmax_reference,
+                canonical_shapes={"R": 1823, "C": 781},
+                vary_axes=["R", "C"],
+            ),
+            KernelSpec(
+                name="ai_bench_layernorm",
+                module="kernels.triton.ops.ai_bench_layernorm",
+                attr="ai_bench_layernorm_fwd_kernel.src",
+                runner=_run_ai_bench_layernorm_reference,
+                canonical_shapes={"M": 1151, "N": 8192},
+                vary_axes=["M", "N"],
+            ),
+            KernelSpec(
+                name="ai_bench_rope",
+                module="kernels.triton.ops.ai_bench_rope",
+                attr="ai_bench_rope_fwd_kernel.src",
+                runner=_run_ai_bench_rope_reference,
+                canonical_shapes={"SEQ_LEN": 128, "BATCH_NUM": 4, "HEAD_NUM": 2, "HEAD_DIM": 128},
+                vary_axes=["SEQ_LEN", "BATCH_NUM", "HEAD_NUM", "HEAD_DIM"],
+                exclude_axes=["HEAD_DIM"],
             ),
         ]
     )
