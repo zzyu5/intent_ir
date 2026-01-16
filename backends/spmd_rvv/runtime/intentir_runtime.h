@@ -19,6 +19,11 @@ int intentir_compare_u8(const char* name, const uint8_t* got, const uint8_t* ref
 
 uint64_t intentir_now_ns(void);
 
+// Optional OpenMP runtime setup (no-op when built without OpenMP).
+// Controlled by env:
+//   INTENTIR_OMP_THREADS=<int>  (if >0, calls omp_set_num_threads)
+void intentir_runtime_init(void);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

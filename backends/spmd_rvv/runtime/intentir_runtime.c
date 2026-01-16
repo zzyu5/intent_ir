@@ -1,5 +1,23 @@
 #include "intentir_runtime.h"
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+void intentir_runtime_init(void) {
+#ifdef _OPENMP
+  const char* t = getenv("INTENTIR_OMP_THREADS");
+  if (t && *t) {
+    int n = atoi(t);
+    if (n > 0) {
+      // Keep behavior deterministic for benchmarking.
+      omp_set_dynamic(0);
+      omp_set_num_threads(n);
+    }
+  }
+#endif
+}
+
 int intentir_read_bytes(const char* path, void* dst, size_t bytes) {
   FILE* f = fopen(path, "rb");
   if (!f) {
@@ -47,4 +65,3 @@ uint64_t intentir_now_ns(void) {
   timespec_get(&ts, TIME_UTC);
   return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
-

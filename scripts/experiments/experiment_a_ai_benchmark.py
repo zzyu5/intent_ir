@@ -27,6 +27,7 @@ if str(ROOT) not in sys.path:
 
 from pipeline.triton.core import coverage_kernel_specs, run_pipeline_for_spec
 from scripts.rvv_remote_run import run_remote
+from backends.spmd_rvv.analysis.tuning import TuningRequest
 
 
 ARTIFACT_DIR = ROOT / "artifacts" / "full_pipeline_verify"
@@ -198,6 +199,8 @@ def _run_ours_remote_bench(
     shapes: dict[str, int],
     bench_iters: int,
     bench_warmup: int,
+    omp_threads: int,
+    tune: bool,
     timeout_s: int,
 ) -> dict:
     # scripts/rvv_remote_run.py currently has a fixed paramiko timeout of 60s;
@@ -212,9 +215,11 @@ def _run_ours_remote_bench(
         port=int(port),
         case_index=0,
         shape_overrides=dict(shapes),
+        tune_request=(TuningRequest(mode="auto", budget=1) if bool(tune) else None),
         bench_iters=int(bench_iters),
         bench_warmup=int(bench_warmup),
         bench_only=True,
+        omp_threads=int(omp_threads),
         log=_log,
     )
     bench = res.get("bench")
@@ -237,9 +242,11 @@ def main() -> None:
     ap.add_argument("--baseline-root", default="/home/ubuntu/triton_benchmark")
     ap.add_argument("--baseline-mode", choices=["report", "remote"], default="report")
     ap.add_argument("--baseline-threads", type=int, default=1, choices=[1, 16])
+    ap.add_argument("--no-tune", action="store_true", help="disable schedule selection (use artifact schedule as-is)")
     ap.add_argument("--cases-limit", type=int, default=4)
     ap.add_argument("--bench-iters", type=int, default=3)
     ap.add_argument("--bench-warmup", type=int, default=1)
+    ap.add_argument("--ours-threads", type=int, default=1, help="OpenMP threads for our RVV backend (default: 1)")
     ap.add_argument("--timeout", type=int, default=600)
     ap.add_argument("--out", default=str(ROOT / "artifacts" / "experiments" / "experiment_a_ai_benchmark.json"))
     args = ap.parse_args()
@@ -264,6 +271,8 @@ def main() -> None:
             "bench_only": True,
             "bench_iters": int(args.bench_iters),
             "bench_warmup": int(args.bench_warmup),
+            "omp_threads": int(args.ours_threads),
+            "tune": (not bool(args.no_tune)),
         },
         "kernels": [],
     }
@@ -323,6 +332,8 @@ def main() -> None:
                 shapes=shapes,
                 bench_iters=int(args.bench_iters),
                 bench_warmup=int(args.bench_warmup),
+                omp_threads=int(args.ours_threads),
+                tune=(not bool(args.no_tune)),
                 timeout_s=int(args.timeout),
             )
             entry["ours"] = {"status": "OK", "kernel": kernel_name, "shapes": shapes, "remote": ours}

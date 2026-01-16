@@ -1,5 +1,9 @@
 #include "intentir_ops.h"
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 #if defined(__riscv_vector) || defined(__riscv_v)
 static inline vfloat32m1_t intentir_vexp_approx_f32m1(vfloat32m1_t x, size_t vl) {
   const float LOG2E = 1.4426950408889634f;
@@ -44,6 +48,9 @@ static inline vfloat32m1_t intentir_vexp_approx_f32m1(vfloat32m1_t x, size_t vl)
 void intentir_reduce_sum_2d_axis1_f32(const float* a, float* out, int64_t M, int64_t K, float scale, int has_scale) {
   if (!a || !out || M <= 0 || K <= 0) return;
 #if defined(__riscv_vector) || defined(__riscv_v)
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if (M >= 4)
+#endif
   for (int64_t m = 0; m < M; ++m) {
     size_t vlmax = intentir_vsetvl_e32m1((size_t)K);
     vfloat32m1_t vsum = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
@@ -60,6 +67,9 @@ void intentir_reduce_sum_2d_axis1_f32(const float* a, float* out, int64_t M, int
     out[(size_t)m] = s;
   }
 #else
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if (M >= 4)
+#endif
   for (int64_t m = 0; m < M; ++m) {
     double acc = 0.0;
     for (int64_t k = 0; k < K; ++k) acc += (double)a[idx2((int)m, (int)k, (int)K)];
@@ -74,6 +84,9 @@ void intentir_reduce_sum_4d_axis23_f32(
   if (!a || !out || N <= 0 || G <= 0 || GS <= 0 || HW <= 0) return;
   const int64_t len = GS * HW;
 #if defined(__riscv_vector) || defined(__riscv_v)
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) schedule(static) if ((N * G) >= 4)
+#endif
   for (int64_t n0 = 0; n0 < N; ++n0) {
     for (int64_t g0 = 0; g0 < G; ++g0) {
       const size_t base = ((size_t)n0 * (size_t)G + (size_t)g0) * (size_t)len;
@@ -93,6 +106,9 @@ void intentir_reduce_sum_4d_axis23_f32(
     }
   }
 #else
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) schedule(static) if ((N * G) >= 4)
+#endif
   for (int64_t n0 = 0; n0 < N; ++n0) {
     for (int64_t g0 = 0; g0 < G; ++g0) {
       double acc = 0.0;
@@ -111,6 +127,9 @@ void intentir_reduce_sum_4d_axis23_f32(
 void intentir_reduce_max_2d_axis1_f32(const float* a, float* out, int64_t M, int64_t K) {
   if (!a || !out || M <= 0 || K <= 0) return;
 #if defined(__riscv_vector) || defined(__riscv_v)
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if (M >= 4)
+#endif
   for (int64_t m = 0; m < M; ++m) {
     size_t vlmax = intentir_vsetvl_e32m1((size_t)K);
     vfloat32m1_t vmax = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
@@ -125,6 +144,9 @@ void intentir_reduce_max_2d_axis1_f32(const float* a, float* out, int64_t M, int
     out[(size_t)m] = __riscv_vfmv_f_s_f32m1_f32(vres);
   }
 #else
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if (M >= 4)
+#endif
   for (int64_t m = 0; m < M; ++m) {
     float mx = -INFINITY;
     for (int64_t k = 0; k < K; ++k) mx = fmaxf(mx, a[idx2((int)m, (int)k, (int)K)]);
@@ -193,6 +215,9 @@ void intentir_softmax_1d_last_f32(const float* a, float* out, int64_t K) {
 void intentir_softmax_2d_last_f32(const float* a, float* out, int64_t M, int64_t K) {
   if (!a || !out || M <= 0 || K <= 0) return;
 #if defined(__riscv_vector) || defined(__riscv_v)
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if (M >= 4)
+#endif
   for (int64_t m = 0; m < M; ++m) {
     size_t vlmax = intentir_vsetvl_e32m1((size_t)K);
     size_t base = idx2((int)m, 0, (int)K);
@@ -235,6 +260,9 @@ void intentir_softmax_2d_last_f32(const float* a, float* out, int64_t M, int64_t
   return;
 #endif
 
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if (M >= 4)
+#endif
   for (int64_t m = 0; m < M; ++m) {
     double mx = -1e30;
     for (int64_t k = 0; k < K; ++k) {
@@ -258,6 +286,9 @@ void intentir_softmax_2d_last_f32(const float* a, float* out, int64_t M, int64_t
 void intentir_softmax_3d_last_f32(const float* a, float* out, int64_t A0, int64_t A1, int64_t K) {
   if (!a || !out || A0 <= 0 || A1 <= 0 || K <= 0) return;
 #if defined(__riscv_vector) || defined(__riscv_v)
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) schedule(static) if ((A0 * A1) >= 4)
+#endif
   for (int64_t i0 = 0; i0 < A0; ++i0) {
     for (int64_t i1 = 0; i1 < A1; ++i1) {
       size_t vlmax = intentir_vsetvl_e32m1((size_t)K);
@@ -302,6 +333,9 @@ void intentir_softmax_3d_last_f32(const float* a, float* out, int64_t A0, int64_
   return;
 #endif
 
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) schedule(static) if ((A0 * A1) >= 4)
+#endif
   for (int64_t i0 = 0; i0 < A0; ++i0) {
     for (int64_t i1 = 0; i1 < A1; ++i1) {
       double mx = -1e30;
@@ -328,6 +362,9 @@ void intentir_softmax_3d_last_f32(const float* a, float* out, int64_t A0, int64_
 void intentir_softmax_4d_last_f32(const float* a, float* out, int64_t B, int64_t H, int64_t Q, int64_t K) {
   if (!a || !out || B <= 0 || H <= 0 || Q <= 0 || K <= 0) return;
 #if defined(__riscv_vector) || defined(__riscv_v)
+#ifdef _OPENMP
+#pragma omp parallel for collapse(3) schedule(static) if (((B * H) * Q) >= 4)
+#endif
   for (int64_t b = 0; b < B; ++b) {
     for (int64_t h = 0; h < H; ++h) {
       for (int64_t q = 0; q < Q; ++q) {
@@ -374,6 +411,9 @@ void intentir_softmax_4d_last_f32(const float* a, float* out, int64_t B, int64_t
   return;
 #endif
 
+#ifdef _OPENMP
+#pragma omp parallel for collapse(3) schedule(static) if (((B * H) * Q) >= 4)
+#endif
   for (int64_t b = 0; b < B; ++b) {
     for (int64_t h = 0; h < H; ++h) {
       for (int64_t q = 0; q < Q; ++q) {
@@ -453,6 +493,39 @@ static inline float intentir_apply_f32_bin(float x, float y, int op) {
 
 static void intentir_f32_bin_contig(const float* a, const float* b, float* out, size_t n, int op) {
   if (!a || !b || !out || n == 0) return;
+#ifdef _OPENMP
+  if (n >= 16384) {
+#pragma omp parallel
+    {
+      size_t tid = (size_t)omp_get_thread_num();
+      size_t nt = (size_t)omp_get_num_threads();
+      size_t chunk = (n + nt - 1) / nt;
+      size_t i0 = tid * chunk;
+      size_t i1 = i0 + chunk;
+      if (i1 > n) i1 = n;
+#if defined(__riscv_vector) || defined(__riscv_v)
+      for (size_t i = i0; i < i1;) {
+        size_t vl = intentir_vsetvl_e32m1(i1 - i);
+        vfloat32m1_t va = __riscv_vle32_v_f32m1(&a[i], vl);
+        vfloat32m1_t vb = __riscv_vle32_v_f32m1(&b[i], vl);
+        vfloat32m1_t vc;
+        if (op == INTENTIR_F32_BIN_ADD) vc = __riscv_vfadd_vv_f32m1(va, vb, vl);
+        else if (op == INTENTIR_F32_BIN_SUB) vc = __riscv_vfsub_vv_f32m1(va, vb, vl);
+        else if (op == INTENTIR_F32_BIN_MUL) vc = __riscv_vfmul_vv_f32m1(va, vb, vl);
+        else if (op == INTENTIR_F32_BIN_DIV) vc = __riscv_vfdiv_vv_f32m1(va, vb, vl);
+        else if (op == INTENTIR_F32_BIN_MAX) vc = __riscv_vfmax_vv_f32m1(va, vb, vl);
+        else if (op == INTENTIR_F32_BIN_MIN) vc = __riscv_vfmin_vv_f32m1(va, vb, vl);
+        else vc = va;
+        __riscv_vse32_v_f32m1(&out[i], vc, vl);
+        i += vl;
+      }
+#else
+      for (size_t i = i0; i < i1; ++i) out[i] = intentir_apply_f32_bin(a[i], b[i], op);
+#endif
+    }
+    return;
+  }
+#endif
 #if defined(__riscv_vector) || defined(__riscv_v)
   for (size_t i = 0; i < n;) {
     size_t vl = intentir_vsetvl_e32m1(n - i);
@@ -1671,6 +1744,27 @@ void intentir_reduce_any_2d_axis1_u8(const uint8_t* a, uint8_t* out, int64_t M, 
 void intentir_abs_f32(const float* a, float* out, size_t n) {
   if (!a || !out || n == 0) return;
 #if defined(__riscv_vector) || defined(__riscv_v)
+#ifdef _OPENMP
+  if (n >= 16384) {
+#pragma omp parallel
+    {
+      size_t tid = (size_t)omp_get_thread_num();
+      size_t nt = (size_t)omp_get_num_threads();
+      size_t chunk = (n + nt - 1) / nt;
+      size_t i0 = tid * chunk;
+      size_t i1 = i0 + chunk;
+      if (i1 > n) i1 = n;
+      for (size_t i = i0; i < i1;) {
+        size_t vl = intentir_vsetvl_e32m1(i1 - i);
+        vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[i], vl);
+        vfloat32m1_t vy = __riscv_vfabs_v_f32m1(vx, vl);
+        __riscv_vse32_v_f32m1(&out[i], vy, vl);
+        i += vl;
+      }
+    }
+    return;
+  }
+#endif
   for (size_t i = 0; i < n;) {
     size_t vl = intentir_vsetvl_e32m1(n - i);
     vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[i], vl);
@@ -1679,6 +1773,9 @@ void intentir_abs_f32(const float* a, float* out, size_t n) {
     i += vl;
   }
 #else
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if (n >= 16384)
+#endif
   for (size_t i = 0; i < n; ++i) out[i] = fabsf(a[i]);
 #endif
 }
@@ -1686,6 +1783,32 @@ void intentir_abs_f32(const float* a, float* out, size_t n) {
 void intentir_floor_f32(const float* a, float* out, size_t n) {
   if (!a || !out || n == 0) return;
 #if defined(__riscv_vector) || defined(__riscv_v)
+#ifdef _OPENMP
+  if (n >= 16384) {
+#pragma omp parallel
+    {
+      size_t tid = (size_t)omp_get_thread_num();
+      size_t nt = (size_t)omp_get_num_threads();
+      size_t chunk = (n + nt - 1) / nt;
+      size_t i0 = tid * chunk;
+      size_t i1 = i0 + chunk;
+      if (i1 > n) i1 = n;
+      for (size_t i = i0; i < i1;) {
+        size_t vl = intentir_vsetvl_e32m1(i1 - i);
+        vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[i], vl);
+        // rtz trunc -> floor correction for negative, non-integer values.
+        vint32m1_t vi = __riscv_vfcvt_x_f_v_i32m1(vx, vl);
+        vfloat32m1_t vt = __riscv_vfcvt_f_x_v_f32m1(vi, vl);
+        vbool32_t m = __riscv_vmflt_vv_f32m1_b32(vx, vt, vl);  // true when vx is negative with fractional part
+        vfloat32m1_t vt1 = __riscv_vfadd_vf_f32m1(vt, -1.0f, vl);
+        vfloat32m1_t vy = __riscv_vmerge_vvm_f32m1(vt, vt1, m, vl);
+        __riscv_vse32_v_f32m1(&out[i], vy, vl);
+        i += vl;
+      }
+    }
+    return;
+  }
+#endif
   for (size_t i = 0; i < n;) {
     size_t vl = intentir_vsetvl_e32m1(n - i);
     vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[i], vl);
@@ -1699,6 +1822,9 @@ void intentir_floor_f32(const float* a, float* out, size_t n) {
     i += vl;
   }
 #else
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if (n >= 16384)
+#endif
   for (size_t i = 0; i < n; ++i) out[i] = floorf(a[i]);
 #endif
 }
@@ -1706,6 +1832,28 @@ void intentir_floor_f32(const float* a, float* out, size_t n) {
 void intentir_rsqrt_f32(const float* a, float* out, size_t n) {
   if (!a || !out || n == 0) return;
 #if defined(__riscv_vector) || defined(__riscv_v)
+#ifdef _OPENMP
+  if (n >= 16384) {
+#pragma omp parallel
+    {
+      size_t tid = (size_t)omp_get_thread_num();
+      size_t nt = (size_t)omp_get_num_threads();
+      size_t chunk = (n + nt - 1) / nt;
+      size_t i0 = tid * chunk;
+      size_t i1 = i0 + chunk;
+      if (i1 > n) i1 = n;
+      for (size_t i = i0; i < i1;) {
+        size_t vl = intentir_vsetvl_e32m1(i1 - i);
+        vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[i], vl);
+        vfloat32m1_t vs = __riscv_vfsqrt_v_f32m1(vx, vl);
+        vfloat32m1_t vy = __riscv_vfrdiv_vf_f32m1(vs, 1.0f, vl);
+        __riscv_vse32_v_f32m1(&out[i], vy, vl);
+        i += vl;
+      }
+    }
+    return;
+  }
+#endif
   for (size_t i = 0; i < n;) {
     size_t vl = intentir_vsetvl_e32m1(n - i);
     vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[i], vl);
@@ -1715,6 +1863,9 @@ void intentir_rsqrt_f32(const float* a, float* out, size_t n) {
     i += vl;
   }
 #else
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if (n >= 16384)
+#endif
   for (size_t i = 0; i < n; ++i) out[i] = 1.0f / sqrtf(a[i]);
 #endif
 }
@@ -1722,6 +1873,27 @@ void intentir_rsqrt_f32(const float* a, float* out, size_t n) {
 void intentir_exp_f32(const float* a, float* out, size_t n) {
   if (!a || !out || n == 0) return;
 #if defined(__riscv_vector) || defined(__riscv_v)
+#ifdef _OPENMP
+  if (n >= 16384) {
+#pragma omp parallel
+    {
+      size_t tid = (size_t)omp_get_thread_num();
+      size_t nt = (size_t)omp_get_num_threads();
+      size_t chunk = (n + nt - 1) / nt;
+      size_t i0 = tid * chunk;
+      size_t i1 = i0 + chunk;
+      if (i1 > n) i1 = n;
+      for (size_t i = i0; i < i1;) {
+        size_t vl = intentir_vsetvl_e32m1(i1 - i);
+        vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[i], vl);
+        vfloat32m1_t vy = intentir_vexp_approx_f32m1(vx, vl);
+        __riscv_vse32_v_f32m1(&out[i], vy, vl);
+        i += vl;
+      }
+    }
+    return;
+  }
+#endif
   for (size_t i = 0; i < n;) {
     size_t vl = intentir_vsetvl_e32m1(n - i);
     vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[i], vl);
@@ -1731,12 +1903,37 @@ void intentir_exp_f32(const float* a, float* out, size_t n) {
   }
   return;
 #endif
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if (n >= 16384)
+#endif
   for (size_t i = 0; i < n; ++i) out[i] = expf(a[i]);
 }
 
 void intentir_relu_f32(const float* a, float* out, size_t n) {
   if (!a || !out || n == 0) return;
 #if defined(__riscv_vector) || defined(__riscv_v)
+#ifdef _OPENMP
+  if (n >= 16384) {
+#pragma omp parallel
+    {
+      size_t tid = (size_t)omp_get_thread_num();
+      size_t nt = (size_t)omp_get_num_threads();
+      size_t chunk = (n + nt - 1) / nt;
+      size_t i0 = tid * chunk;
+      size_t i1 = i0 + chunk;
+      if (i1 > n) i1 = n;
+      for (size_t i = i0; i < i1;) {
+        size_t vl = intentir_vsetvl_e32m1(i1 - i);
+        vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[i], vl);
+        vfloat32m1_t v0 = __riscv_vfmv_v_f_f32m1(0.0f, vl);
+        vfloat32m1_t vy = __riscv_vfmax_vv_f32m1(vx, v0, vl);
+        __riscv_vse32_v_f32m1(&out[i], vy, vl);
+        i += vl;
+      }
+    }
+    return;
+  }
+#endif
   for (size_t i = 0; i < n;) {
     size_t vl = intentir_vsetvl_e32m1(n - i);
     vfloat32m1_t vx = __riscv_vle32_v_f32m1(&a[i], vl);
@@ -1746,6 +1943,9 @@ void intentir_relu_f32(const float* a, float* out, size_t n) {
     i += vl;
   }
 #else
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if (n >= 16384)
+#endif
   for (size_t i = 0; i < n; ++i) {
     float v = a[i];
     out[i] = v > 0.0f ? v : 0.0f;
@@ -1989,6 +2189,26 @@ void intentir_broadcast_in_dim_f32(
     const float v = inp[0];
     const size_t n = intentir_numel_rank(out_shape, out_rank);
 #if defined(__riscv_vector) || defined(__riscv_v)
+#ifdef _OPENMP
+    if (n >= 16384) {
+#pragma omp parallel
+      {
+        size_t tid = (size_t)omp_get_thread_num();
+        size_t nt = (size_t)omp_get_num_threads();
+        size_t chunk = (n + nt - 1) / nt;
+        size_t i0 = tid * chunk;
+        size_t i1 = i0 + chunk;
+        if (i1 > n) i1 = n;
+        for (size_t i = i0; i < i1;) {
+          size_t vl = intentir_vsetvl_e32m1(i1 - i);
+          vfloat32m1_t vv = __riscv_vfmv_v_f_f32m1(v, vl);
+          __riscv_vse32_v_f32m1(&out[i], vv, vl);
+          i += vl;
+        }
+      }
+      return;
+    }
+#endif
     for (size_t i = 0; i < n;) {
       size_t vl = intentir_vsetvl_e32m1(n - i);
       vfloat32m1_t vv = __riscv_vfmv_v_f_f32m1(v, vl);
@@ -1996,6 +2216,9 @@ void intentir_broadcast_in_dim_f32(
       i += vl;
     }
 #else
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if (n >= 16384)
+#endif
     for (size_t i = 0; i < n; ++i) out[i] = v;
 #endif
     return;
@@ -2046,6 +2269,9 @@ void intentir_broadcast_in_dim_f32(
 
       if (out_rank == 2) {
         const int64_t D0 = out_shape[0];
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if (D0 >= 4)
+#endif
         for (int64_t o0 = 0; o0 < D0; ++o0) {
           const size_t ob = (size_t)o0 * (size_t)last_dim;
           size_t base0 = 0;
@@ -2076,6 +2302,9 @@ void intentir_broadcast_in_dim_f32(
 
       if (out_rank == 3) {
         const int64_t D0 = out_shape[0], D1 = out_shape[1];
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) schedule(static) if ((D0 * D1) >= 4)
+#endif
         for (int64_t o0 = 0; o0 < D0; ++o0) {
           for (int64_t o1 = 0; o1 < D1; ++o1) {
             const size_t ob = ((size_t)o0 * (size_t)D1 + (size_t)o1) * (size_t)last_dim;
@@ -2109,6 +2338,9 @@ void intentir_broadcast_in_dim_f32(
 
       if (out_rank == 4) {
         const int64_t D0 = out_shape[0], D1 = out_shape[1], D2 = out_shape[2];
+#ifdef _OPENMP
+#pragma omp parallel for collapse(3) schedule(static) if (((D0 * D1) * D2) >= 4)
+#endif
         for (int64_t o0 = 0; o0 < D0; ++o0) {
           for (int64_t o1 = 0; o1 < D1; ++o1) {
             for (int64_t o2 = 0; o2 < D2; ++o2) {
@@ -2231,6 +2463,9 @@ void intentir_matmul_2d_f32(
 
 #if defined(__riscv_vector) || defined(__riscv_v)
   if (!transpose_a) {
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) schedule(static) if ((M * N) >= 4096)
+#endif
     for (int64_t m_base = 0; m_base < M; m_base += tm) {
       int64_t m_end = m_base + tm;
       if (m_end > M) m_end = M;
@@ -2267,6 +2502,9 @@ void intentir_matmul_2d_f32(
   }
 #endif
 
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) schedule(static) if ((M * N) >= 4096)
+#endif
   for (int64_t m_base = 0; m_base < M; m_base += tm) {
     int64_t m_end = m_base + tm;
     if (m_end > M) m_end = M;
@@ -2302,6 +2540,9 @@ void intentir_matmul_4d_f32(
 
 #if defined(__riscv_vector) || defined(__riscv_v)
   if (!transpose_a) {
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) schedule(static) if ((B * H) >= 2)
+#endif
     for (int64_t b0 = 0; b0 < B; ++b0) {
       for (int64_t h0 = 0; h0 < H; ++h0) {
         for (int64_t m_base = 0; m_base < M; m_base += tm) {
@@ -2344,6 +2585,9 @@ void intentir_matmul_4d_f32(
   }
 #endif
 
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) schedule(static) if ((B * H) >= 2)
+#endif
   for (int64_t b0 = 0; b0 < B; ++b0) {
     for (int64_t h0 = 0; h0 < H; ++h0) {
       for (int64_t m_base = 0; m_base < M; m_base += tm) {

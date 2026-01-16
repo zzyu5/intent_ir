@@ -138,6 +138,7 @@ def run_remote(
     bench_warmup: int = 1,
     profile_ops: bool = False,
     bench_only: bool = False,
+    omp_threads: int = 1,
     log: Callable[[str], None] | None = None,
 ):
     def _log(msg: str) -> None:
@@ -544,8 +545,9 @@ def run_remote(
             f.write(src)
 
         _log(f"[{frontend}:{kernel}] remote compile")
+        opt = "-O3" if (int(bench_iters) > 0 or bool(bench_only)) else "-O2"
         compile_cmd = (
-            f"gcc -O2 -std=c11 -march=rv64gcv -I{remote_dir} -o {remote_bin} {remote_c} "
+            f"gcc {opt} -std=c11 -march=rv64gcv -fopenmp -I{remote_dir} -o {remote_bin} {remote_c} "
             f"{remote_dir}/intentir_runtime.c {remote_dir}/intentir_driver.c {remote_dir}/intentir_ops.c -lm -lrt"
         )
         stdin, stdout, stderr = client.exec_command(compile_cmd, timeout=60)
@@ -566,6 +568,9 @@ def run_remote(
 
         _log(f"[{frontend}:{kernel}] remote run")
         env_prefix = ""
+        if int(omp_threads) > 0:
+            t = int(omp_threads)
+            env_prefix += f"INTENTIR_OMP_THREADS={t} OMP_NUM_THREADS={t} OMP_DYNAMIC=FALSE "
         if bool(profile_ops):
             env_prefix += "INTENTIR_PROFILE_OPS=1 "
         run_cmd = f"cd {remote_dir} && {env_prefix}{remote_bin}"
@@ -702,6 +707,7 @@ def run_remote(
         baseline_summary = {}
     return {
         "backend": backend_used,
+        "omp_threads": int(omp_threads),
         "compile_rc": rc,
         "run_rc": run_rc,
         "stdout": run_out,
@@ -740,6 +746,7 @@ def main():
     ap.add_argument("--profile", default=None, help="RVV profile name or JSON path (default: query remote host)")
     ap.add_argument("--bench-iters", type=int, default=0, help="if >0, run microbenchmark loop and print INTENTIR_BENCH JSON line")
     ap.add_argument("--bench-warmup", type=int, default=1, help="warmup iterations for benchmark loop")
+    ap.add_argument("--omp-threads", type=int, default=1, help="OpenMP threads for RVV backend (default: 1)")
     ap.add_argument("--profile-ops", action="store_true", help="emit per-op timing JSON line (INTENTIR_PROFILE) from the RVV program")
     ap.add_argument(
         "--bench-only",
@@ -799,6 +806,7 @@ def main():
         tune_profile=str(args.profile) if args.profile else None,
         bench_iters=int(args.bench_iters),
         bench_warmup=int(args.bench_warmup),
+        omp_threads=int(args.omp_threads),
         profile_ops=bool(args.profile_ops),
         bench_only=bool(args.bench_only),
         log=_log,

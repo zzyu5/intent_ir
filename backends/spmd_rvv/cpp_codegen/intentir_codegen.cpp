@@ -1430,6 +1430,7 @@ struct CProgramEmitter {
 
 	    w.line("setvbuf(stdout, NULL, _IONBF, 0);");
 	    w.line("setvbuf(stderr, NULL, _IONBF, 0);");
+	    w.line("intentir_runtime_init();");
 	    w.line("const char* __intentir_prof = getenv(\"INTENTIR_PROFILE_OPS\");");
 	    w.line("if (__intentir_prof && atoi(__intentir_prof) > 0) intentir_profile_enabled = 1;");
 	    w.line("const float ATOL = " + c_float(atol) + ";");
