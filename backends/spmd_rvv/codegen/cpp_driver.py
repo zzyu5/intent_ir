@@ -96,6 +96,7 @@ def lower_intent_to_c_with_files_cpp(
     shape_bindings: Mapping[str, Any],
     atol: float = 1e-3,
     rtol: float = 1e-3,
+    mode: str = "verify",
     build_type: str = "Release",
 ) -> str:
     """
@@ -129,6 +130,8 @@ def lower_intent_to_c_with_files_cpp(
             str(intent_path),
             "--shapes",
             str(shapes_path),
+            "--mode",
+            str(mode),
             "--atol",
             str(float(atol)),
             "--rtol",

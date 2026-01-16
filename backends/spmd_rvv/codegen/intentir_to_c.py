@@ -40,9 +40,10 @@ def lower_intent_to_c_with_files(
     shape_bindings: Mapping[str, Any],
     atol: float = 1e-3,
     rtol: float = 1e-3,
+    mode: str = "verify",
 ) -> str:
     _preflight_supported_ops(intent)
-    return lower_intent_to_c_with_files_cpp(intent, shape_bindings=shape_bindings, atol=atol, rtol=rtol)
+    return lower_intent_to_c_with_files_cpp(intent, shape_bindings=shape_bindings, atol=atol, rtol=rtol, mode=str(mode))
 
 
 __all__ = ["lower_intent_to_c_with_files"]

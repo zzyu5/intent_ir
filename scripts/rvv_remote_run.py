@@ -137,6 +137,7 @@ def run_remote(
     bench_iters: int = 0,
     bench_warmup: int = 1,
     profile_ops: bool = False,
+    bench_only: bool = False,
     log: Callable[[str], None] | None = None,
 ):
     def _log(msg: str) -> None:
@@ -229,47 +230,48 @@ def run_remote(
             pass
 
     baseline = None
-    npz_path = baseline_npz or (report.get("baseline") or {}).get("npz_path")
-    if (not prefer_live_baseline) and npz_path:
-        _log(f"[{frontend}:{kernel}] load baseline npz: {npz_path}")
-        npz_path = str(npz_path)
-        baseline_npz_path = Path(npz_path)
-        if not baseline_npz_path.is_absolute():
-            baseline_npz_path = (ROOT / baseline_npz_path).resolve()
-        if not baseline_npz_path.exists():
-            raise FileNotFoundError(f"baseline npz not found: {baseline_npz_path}")
-        baseline = dict(np.load(baseline_npz_path, allow_pickle=False))
+    if not bool(bench_only):
+        npz_path = baseline_npz or (report.get("baseline") or {}).get("npz_path")
+        if (not prefer_live_baseline) and npz_path:
+            _log(f"[{frontend}:{kernel}] load baseline npz: {npz_path}")
+            npz_path = str(npz_path)
+            baseline_npz_path = Path(npz_path)
+            if not baseline_npz_path.is_absolute():
+                baseline_npz_path = (ROOT / baseline_npz_path).resolve()
+            if not baseline_npz_path.exists():
+                raise FileNotFoundError(f"baseline npz not found: {baseline_npz_path}")
+            baseline = dict(np.load(baseline_npz_path, allow_pickle=False))
 
-    # Fallback: if baseline is missing (or user forces live), try to re-launch Triton
-    # to get baseline IO. This keeps Task6 usable on machines with CUDA.
-    if baseline is None:
-        _log(f"[{frontend}:{kernel}] baseline npz missing; try live baseline launch")
-        try:
-            if frontend == "triton":
-                from pipeline.triton.core import default_kernel_specs
+        # Fallback: if baseline is missing (or user forces live), try to re-launch Triton
+        # to get baseline IO. This keeps Task6 usable on machines with CUDA.
+        if baseline is None:
+            _log(f"[{frontend}:{kernel}] baseline npz missing; try live baseline launch")
+            try:
+                if frontend == "triton":
+                    from pipeline.triton.core import default_kernel_specs
 
-                spec_map = {s.name: s for s in default_kernel_specs()}
-            elif frontend == "tilelang":
-                from pipeline.tilelang.core import default_kernel_specs, mvp_kernel_specs
+                    spec_map = {s.name: s for s in default_kernel_specs()}
+                elif frontend == "tilelang":
+                    from pipeline.tilelang.core import default_kernel_specs, mvp_kernel_specs
 
-                spec_map = {s.name: s for s in (mvp_kernel_specs() + default_kernel_specs())}
-            else:
-                from pipeline.cuda.core import coverage_kernel_specs
+                    spec_map = {s.name: s for s in (mvp_kernel_specs() + default_kernel_specs())}
+                else:
+                    from pipeline.cuda.core import coverage_kernel_specs
 
-                spec_map = {s.name: s for s in coverage_kernel_specs()}
-            if kernel not in spec_map:
-                raise RuntimeError(f"unknown kernel {kernel}")
-            spec = spec_map[kernel]
-            if not bindings:
-                bindings = dict(spec.canonical_shapes)
-            baseline = spec.runner(TestCase(shapes=bindings, dtypes={}, seed=0))
-        except Exception as e:
-            raise RuntimeError(
-                "baseline not available: no cached baseline .npz in artifacts and live baseline launch failed. "
-                "Run `python scripts/full_pipeline_verify.py --frontend <frontend>` on a CUDA machine to produce "
-                "`artifacts/<frontend>_full_pipeline/<kernel>.baseline.npz`, or pass --baseline-npz.\n"
-                f"live launch error: {type(e).__name__}: {e}"
-            ) from e
+                    spec_map = {s.name: s for s in coverage_kernel_specs()}
+                if kernel not in spec_map:
+                    raise RuntimeError(f"unknown kernel {kernel}")
+                spec = spec_map[kernel]
+                if not bindings:
+                    bindings = dict(spec.canonical_shapes)
+                baseline = spec.runner(TestCase(shapes=bindings, dtypes={}, seed=0))
+            except Exception as e:
+                raise RuntimeError(
+                    "baseline not available: no cached baseline .npz in artifacts and live baseline launch failed. "
+                    "Run `python scripts/full_pipeline_verify.py --frontend <frontend>` on a CUDA machine to produce "
+                    "`artifacts/<frontend>_full_pipeline/<kernel>.baseline.npz`, or pass --baseline-npz.\n"
+                    f"live launch error: {type(e).__name__}: {e}"
+                ) from e
 
     # Prefer baseline shapes (the embedded inputs correspond to that launch).
     baseline_shapes = ((report.get("baseline") or {}).get("shapes") or {}) if isinstance(report.get("baseline"), dict) else {}
@@ -287,7 +289,8 @@ def run_remote(
     # Add naming aliases to baseline to match IntentIR tensor names.
     # Add naming aliases to baseline to match IntentIR tensor names.
     # Use the macro intent here to avoid iterating over a huge expanded tensor set.
-    baseline = _with_io_aliases(intent_macro, baseline)
+    if baseline is not None:
+        baseline = _with_io_aliases(intent_macro, baseline)
 
     # Derive a few common implicit symbols.
     if "group" in bindings and "num_groups" not in bindings:
@@ -309,6 +312,17 @@ def run_remote(
             gs = int(bindings["group_size"])
             if gs > 0 and n % gs == 0:
                 bindings["G"] = n // gs
+        except Exception:
+            pass
+
+    # Common derived symbols used by some frontends/LLM outputs (avoid "unbound symbol" failures).
+    if "HEAD_DIM" in bindings:
+        try:
+            hd = int(bindings["HEAD_DIM"])
+            if hd > 0:
+                bindings.setdefault("HEAD_DIM_DIV2", hd // 2)
+                bindings.setdefault("HEAD_DIM_HALF", hd // 2)
+                bindings.setdefault("HEAD_DIM_MID", hd // 2)
         except Exception:
             pass
 
@@ -460,60 +474,72 @@ def run_remote(
     external_inputs = sorted([n for n in used if n in intent.tensors and n not in produced])
     outputs = list(intent.outputs)
 
-    # Upload inputs
-    _log(f"[{frontend}:{kernel}] upload inputs/refs")
-    for name in external_inputs:
-        if name not in baseline:
-            raise RuntimeError(f"baseline missing input tensor {name} for {kernel}")
-        dt = intent.tensors[name].dtype
-        arr = np.asarray(baseline[name])
-        if dt in {"bool", "i1"}:
-            raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
-        elif dt == "i8":
-            raw = np.asarray(arr, dtype=np.int8).tobytes(order="C")
-        elif dt == "u8":
-            raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
-        elif dt == "i32":
-            raw = np.asarray(arr, dtype=np.int32).tobytes(order="C")
-        elif dt == "i64":
-            raw = np.asarray(arr, dtype=np.int64).tobytes(order="C")
-        else:
-            raw = np.asarray(arr, dtype=np.float32).tobytes(order="C")
-        _sftp_write_bytes(sftp, f"{remote_dir}/{name}.bin", raw)
+    if not bool(bench_only):
+        # Upload inputs/refs for correctness runs.
+        _log(f"[{frontend}:{kernel}] upload inputs/refs")
+        assert baseline is not None
+        for name in external_inputs:
+            if name not in baseline:
+                raise RuntimeError(f"baseline missing input tensor {name} for {kernel}")
+            dt = intent.tensors[name].dtype
+            arr = np.asarray(baseline[name])
+            if dt in {"bool", "i1"}:
+                raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
+            elif dt == "i8":
+                raw = np.asarray(arr, dtype=np.int8).tobytes(order="C")
+            elif dt == "u8":
+                raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
+            elif dt == "i32":
+                raw = np.asarray(arr, dtype=np.int32).tobytes(order="C")
+            elif dt == "i64":
+                raw = np.asarray(arr, dtype=np.int64).tobytes(order="C")
+            else:
+                raw = np.asarray(arr, dtype=np.float32).tobytes(order="C")
+            _sftp_write_bytes(sftp, f"{remote_dir}/{name}.bin", raw)
 
-    # Upload reference outputs
-    for name in outputs:
-        if name not in baseline:
-            raise RuntimeError(f"baseline missing output tensor {name} for {kernel}")
-        dt = intent.tensors[name].dtype
-        arr = np.asarray(baseline[name])
-        if dt in {"bool", "i1"}:
-            raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
-        elif dt == "i8":
-            raw = np.asarray(arr, dtype=np.int8).tobytes(order="C")
-        elif dt == "u8":
-            raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
-        elif dt == "i32":
-            raw = np.asarray(arr, dtype=np.int32).tobytes(order="C")
-        elif dt == "i64":
-            raw = np.asarray(arr, dtype=np.int64).tobytes(order="C")
-        else:
-            raw = np.asarray(arr, dtype=np.float32).tobytes(order="C")
-        _sftp_write_bytes(sftp, f"{remote_dir}/{name}_ref.bin", raw)
+        for name in outputs:
+            if name not in baseline:
+                raise RuntimeError(f"baseline missing output tensor {name} for {kernel}")
+            dt = intent.tensors[name].dtype
+            arr = np.asarray(baseline[name])
+            if dt in {"bool", "i1"}:
+                raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
+            elif dt == "i8":
+                raw = np.asarray(arr, dtype=np.int8).tobytes(order="C")
+            elif dt == "u8":
+                raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
+            elif dt == "i32":
+                raw = np.asarray(arr, dtype=np.int32).tobytes(order="C")
+            elif dt == "i64":
+                raw = np.asarray(arr, dtype=np.int64).tobytes(order="C")
+            else:
+                raw = np.asarray(arr, dtype=np.float32).tobytes(order="C")
+            _sftp_write_bytes(sftp, f"{remote_dir}/{name}_ref.bin", raw)
 
     # Lower the IntentIR op list to C and run on RVV target.
     #
     # Remote runs compare against a GPU-produced baseline (Triton/TileLang CUDA),
     # so keep tolerances at least legacy-default to avoid false negatives.
-    auto_tol = infer_tolerances(intent, ref_out=baseline).to_dict()
-    atol_use = max(float(auto_tol.get("atol", 1e-3)), 1e-3)
-    rtol_use = max(float(auto_tol.get("rtol", 1e-3)), 1e-3)
+    if baseline is not None:
+        auto_tol = infer_tolerances(intent, ref_out=baseline).to_dict()
+        atol_use = max(float(auto_tol.get("atol", 1e-3)), 1e-3)
+        rtol_use = max(float(auto_tol.get("rtol", 1e-3)), 1e-3)
+    else:
+        # Perf-only runs do not compare against refs; keep legacy defaults.
+        atol_use = 1e-3
+        rtol_use = 1e-3
     backend_used = "cpp"
 
     def _compile_and_run(schedule) -> dict:
         # Generate + upload code for this schedule.
         intent.schedule = schedule
-        src = lower_intent_to_c_with_files(intent, shape_bindings=bindings, atol=float(atol_use), rtol=float(rtol_use))
+        src = lower_intent_to_c_with_files(
+            intent,
+            shape_bindings=bindings,
+            atol=float(atol_use),
+            rtol=float(rtol_use),
+            mode=("bench" if bool(bench_only) else "verify"),
+        )
         with sftp.file(remote_c, "w") as f:
             f.write(src)
 
@@ -651,7 +677,9 @@ def run_remote(
     # Include a compact baseline summary for quick inspection (avoid huge blobs).
     baseline_summary = {}
     try:
-        if kernel == "any_kernel_dim" and "out" in baseline:
+        if baseline is None:
+            baseline_summary = {}
+        elif kernel == "any_kernel_dim" and "out" in baseline:
             out_ref = np.asarray(baseline["out"]).reshape(-1).astype(np.uint8)
             baseline_summary = {
                 "out_len": int(out_ref.size),
@@ -695,6 +723,12 @@ def main():
     ap.add_argument("--use-key", action="store_true", help="use SSH key auth (no password prompt)")
     ap.add_argument("--port", type=int, default=22)
     ap.add_argument("--case-index", type=int, default=0, help="pick case from artifacts report (default 0)")
+    ap.add_argument(
+        "--shape",
+        action="append",
+        default=[],
+        help="override a shape symbol binding (repeatable), e.g. --shape M=256",
+    )
     ap.add_argument("--baseline-npz", default=None, help="override baseline npz path (default: from artifact report)")
     ap.add_argument("--prefer-live-baseline", action="store_true", help="re-launch frontend baseline even if npz exists")
     ap.add_argument("--no-tune", action="store_true", help="disable backend schedule selection (use IntentIR schedule as-is)")
@@ -707,6 +741,11 @@ def main():
     ap.add_argument("--bench-iters", type=int, default=0, help="if >0, run microbenchmark loop and print INTENTIR_BENCH JSON line")
     ap.add_argument("--bench-warmup", type=int, default=1, help="warmup iterations for benchmark loop")
     ap.add_argument("--profile-ops", action="store_true", help="emit per-op timing JSON line (INTENTIR_PROFILE) from the RVV program")
+    ap.add_argument(
+        "--bench-only",
+        action="store_true",
+        help="perf-only mode: do not upload inputs/refs; emit a bench-only C runner that allocates/fills inputs on target and skips output compare",
+    )
     ap.add_argument("--json", action="store_true", help="print result as JSON (stable for tooling)")
     ap.add_argument("--quiet", action="store_true", help="disable progress logs")
     args = ap.parse_args()
@@ -724,6 +763,22 @@ def main():
             constraints=parse_constraints(args.constraint or []),
             debug=bool(args.tune_debug),
         )
+    shape_overrides = {}
+    for item in list(args.shape or []):
+        if not item:
+            continue
+        if "=" not in str(item):
+            raise ValueError(f"--shape expects key=value, got: {item!r}")
+        k, v = str(item).split("=", 1)
+        k = k.strip()
+        v = v.strip()
+        if not k:
+            raise ValueError(f"--shape expects key=value, got: {item!r}")
+        try:
+            shape_overrides[k] = int(v)
+        except Exception:
+            raise ValueError(f"--shape value must be int, got: {item!r}")
+
     def _log(msg: str) -> None:
         if bool(args.quiet):
             return
@@ -737,6 +792,7 @@ def main():
         password,
         port=args.port,
         case_index=args.case_index,
+        shape_overrides=(shape_overrides if shape_overrides else None),
         baseline_npz=args.baseline_npz,
         prefer_live_baseline=bool(args.prefer_live_baseline),
         tune_request=tune_req,
@@ -744,6 +800,7 @@ def main():
         bench_iters=int(args.bench_iters),
         bench_warmup=int(args.bench_warmup),
         profile_ops=bool(args.profile_ops),
+        bench_only=bool(args.bench_only),
         log=_log,
     )
     if args.json:
