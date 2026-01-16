@@ -1477,6 +1477,82 @@ def _run_ai_bench_rope_reference(case: TestCase) -> Dict[str, np.ndarray]:
     return {"input": inp.cpu().numpy(), "cos": cos.cpu().numpy(), "sin": sin.cpu().numpy(), "output": out.cpu().numpy()}
 
 
+def _run_ai_bench_correlation_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.ai_bench_correlation import ai_bench_correlation_kernel
+
+    out_channel = int(case.shapes.get("out_channel", 5))
+    in_channel = int(case.shapes.get("in_channel", 58))
+    height = int(case.shapes.get("height", 112))
+    width = int(case.shapes.get("width", 88))
+    out_shift = int(case.shapes.get("out_shift", 0))
+    device = "cuda"
+
+    in_size = in_channel * height * width
+    vals0 = (torch.arange(in_size, device=device) % 16).to(torch.int8).reshape((in_channel, height, width))
+    vals1 = (torch.arange(in_size, device=device) % 35).to(torch.int8).reshape((in_channel, height, width))
+    out = torch.empty((out_channel, height, width), device=device, dtype=torch.int8)
+    grid = lambda meta: (
+        triton.cdiv(width, meta["BLOCK_W"]),
+        triton.cdiv(height, meta["BLOCK_H"]),
+        out_channel,
+    )
+    ai_bench_correlation_kernel[grid](
+        vals0,
+        vals1,
+        out,
+        out_channel,
+        in_channel,
+        height,
+        width,
+        out_shift,
+        BLOCK_H=1,
+        BLOCK_W=8,
+        BLOCK_IC=64,
+    )
+    torch.cuda.synchronize()
+    return {
+        "src0": vals0.cpu().numpy(),
+        "src1": vals1.cpu().numpy(),
+        "out": out.cpu().numpy(),
+        "out_shift": np.array(out_shift, dtype=np.int32),
+    }
+
+
+def _run_ai_bench_resize_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.ai_bench_resize import ai_bench_resize_kernel
+
+    channel = int(case.shapes.get("channel", 3))
+    height = int(case.shapes.get("height", 512))
+    width = int(case.shapes.get("width", 512))
+    device = "cuda"
+
+    in_size = channel * height * width
+    src = (torch.arange(in_size, device=device) % 17).to(torch.int8).reshape((channel, height, width))
+    out = torch.empty((channel, 2 * height, 2 * width), device=device, dtype=torch.int8)
+    grid = lambda meta: (2 * height, channel, triton.cdiv(2 * width, meta["BLOCK_W"]))
+    ai_bench_resize_kernel[grid](src, out, channel, height, width, BLOCK_W=128)
+    torch.cuda.synchronize()
+    return {"src": src.cpu().numpy(), "out": out.cpu().numpy()}
+
+
+def _run_ai_bench_warp_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.ai_bench_warp import ai_bench_warp_kernel
+
+    channel = int(case.shapes.get("channel", 3))
+    height = int(case.shapes.get("height", 1024))
+    width = int(case.shapes.get("width", 1024))
+    device = "cuda"
+
+    in_size = channel * height * width
+    src = (torch.arange(in_size, device=device) % 17).to(torch.int8).reshape((channel, height, width))
+    offset = torch.zeros((height, width), device=device, dtype=torch.int16)
+    out = torch.empty((channel, height, width), device=device, dtype=torch.int8)
+    grid = lambda meta: (height, channel, triton.cdiv(width, meta["BLOCK_W"]))
+    ai_bench_warp_kernel[grid](src, offset, out, channel, height, width, BLOCK_W=128)
+    torch.cuda.synchronize()
+    return {"src": src.cpu().numpy(), "offset": offset.cpu().numpy(), "out": out.cpu().numpy()}
+
+
 def _run_upsample_bicubic2d_aa_reference(case: TestCase) -> Dict[str, np.ndarray]:
     """
     Upsample bicubic2d AA: input/output are NCHW float32.
@@ -2056,6 +2132,22 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 vary_axes=["M", "N"],
             ),
             KernelSpec(
+                name="ai_bench_correlation",
+                module="kernels.triton.ops.ai_bench_correlation",
+                attr="ai_bench_correlation_kernel.src",
+                runner=_run_ai_bench_correlation_reference,
+                canonical_shapes={"out_channel": 5, "in_channel": 58, "height": 112, "width": 88, "out_shift": 0},
+                vary_axes=[],
+            ),
+            KernelSpec(
+                name="ai_bench_resize",
+                module="kernels.triton.ops.ai_bench_resize",
+                attr="ai_bench_resize_kernel.src",
+                runner=_run_ai_bench_resize_reference,
+                canonical_shapes={"channel": 3, "height": 512, "width": 512},
+                vary_axes=[],
+            ),
+            KernelSpec(
                 name="ai_bench_rope",
                 module="kernels.triton.ops.ai_bench_rope",
                 attr="ai_bench_rope_fwd_kernel.src",
@@ -2063,6 +2155,14 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 canonical_shapes={"SEQ_LEN": 128, "BATCH_NUM": 4, "HEAD_NUM": 2, "HEAD_DIM": 128},
                 vary_axes=["SEQ_LEN", "BATCH_NUM", "HEAD_NUM", "HEAD_DIM"],
                 exclude_axes=["HEAD_DIM"],
+            ),
+            KernelSpec(
+                name="ai_bench_warp",
+                module="kernels.triton.ops.ai_bench_warp",
+                attr="ai_bench_warp_kernel.src",
+                runner=_run_ai_bench_warp_reference,
+                canonical_shapes={"channel": 3, "height": 1024, "width": 1024},
+                vary_axes=[],
             ),
         ]
     )
