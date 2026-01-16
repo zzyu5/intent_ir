@@ -125,9 +125,9 @@ OURS_EQUIV: dict[str, dict[str, Any]] = {
     # NOTE: AI-Benchmark's layernorm baseline measures fwd+bwd; our current kernel is fwd-only.
     "layernorm": {"kernel": "ai_bench_layernorm", "shapes": {"M": 1151, "N": 8192}},
     "correlation": {"kernel": "ai_bench_correlation", "shapes": {"out_channel": 5, "in_channel": 58, "height": 112, "width": 88, "out_shift": 0}},
-    "resize": {"kernel": "ai_bench_resize", "shapes": {"channel": 3, "height": 512, "width": 512}},
+    "resize": {"kernel": "ai_bench_resize", "shapes": {"C": 3, "H": 512, "W": 512, "OH": 1024, "OW": 1024}},
     "rope": {"kernel": "ai_bench_rope", "shapes": {"SEQ_LEN": 512, "BATCH_NUM": 16, "HEAD_NUM": 8, "HEAD_DIM": 1024}},
-    "warp": {"kernel": "ai_bench_warp", "shapes": {"channel": 3, "height": 1024, "width": 1024}},
+    "warp": {"kernel": "ai_bench_warp", "shapes": {"C": 3, "H": 1024, "W": 1024}},
 }
 
 

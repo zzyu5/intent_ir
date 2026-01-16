@@ -7,17 +7,17 @@ import triton.language as tl
 def ai_bench_resize_kernel(
     src_ptr,  # *int8, [C, H, W]
     out_ptr,  # *int8, [C, 2H, 2W]
-    channel,
-    height,
-    width,
+    C,
+    H,
+    W,
     BLOCK_W: tl.constexpr,
 ):
     pid_h = tl.program_id(axis=0)
     pid_c = tl.program_id(axis=1)
     pid_w = tl.program_id(axis=2)
 
-    dst_h = 2 * height
-    dst_w = 2 * width
+    dst_h = 2 * H
+    dst_w = 2 * W
     hw_fl = 7
     factor = 1 << hw_fl
 
@@ -26,19 +26,19 @@ def ai_bench_resize_kernel(
     y0 = input_y >> hw_fl
     h1 = input_y - (y0 << hw_fl)
     h0 = factor - h1
-    y1 = tl.minimum(y0 + 1, height - 1)
+    y1 = tl.minimum(y0 + 1, H - 1)
 
     w_idx = pid_w * BLOCK_W + tl.arange(0, BLOCK_W)
     mask = w_idx < dst_w
     input_x = w_idx << (hw_fl - 1)
     x0 = input_x >> hw_fl
-    x1 = tl.minimum(x0 + 1, width - 1)
+    x1 = tl.minimum(x0 + 1, W - 1)
     w1 = input_x - (x0 << hw_fl)
     w0 = factor - w1
 
-    src_off = pid_c * height * width
-    src0_row = src_ptr + src_off + y0 * width
-    src1_row = src_ptr + src_off + y1 * width
+    src_off = pid_c * H * W
+    src0_row = src_ptr + src_off + y0 * W
+    src1_row = src_ptr + src_off + y1 * W
     y0x0 = tl.load(src0_row + x0, mask=mask, other=0).to(tl.int16)
     y0x1 = tl.load(src0_row + x1, mask=mask, other=0).to(tl.int16)
     y1x0 = tl.load(src1_row + x0, mask=mask, other=0).to(tl.int16)
@@ -53,22 +53,21 @@ def ai_bench_resize_kernel(
 
 
 def launch(
-    channel: int,
-    height: int,
-    width: int,
+    C: int,
+    H: int,
+    W: int,
     *,
     block_w: int = 128,
     device: str = "cuda",
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    in_size = int(channel) * int(height) * int(width)
+    in_size = int(C) * int(H) * int(W)
     vals = (torch.arange(in_size, device=device) % 17).to(torch.int8)
-    src = vals.reshape((channel, height, width))
-    out = torch.empty((channel, 2 * height, 2 * width), device=device, dtype=torch.int8)
+    src = vals.reshape((C, H, W))
+    out = torch.empty((C, 2 * H, 2 * W), device=device, dtype=torch.int8)
     grid = lambda meta: (
-        2 * height,
-        channel,
-        triton.cdiv(2 * width, meta["BLOCK_W"]),
+        2 * H,
+        C,
+        triton.cdiv(2 * W, meta["BLOCK_W"]),
     )
-    ai_bench_resize_kernel[grid](src, out, channel, height, width, BLOCK_W=int(block_w))
+    ai_bench_resize_kernel[grid](src, out, C, H, W, BLOCK_W=int(block_w))
     return src, out
-

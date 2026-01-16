@@ -347,8 +347,11 @@ def _compare_outputs(pred: Dict[str, np.ndarray], ref: Dict[str, np.ndarray], ou
             abs_err = np.zeros_like(ref_arr, dtype=np.float64)
             rel_err = np.zeros_like(ref_arr, dtype=np.float64)
             if np.any(finite):
-                abs_err[finite] = np.abs(p[finite] - ref_arr[finite]).astype(np.float64)
-                rel_err[finite] = abs_err[finite] / (np.abs(ref_arr[finite]) + 1e-8)
+                # Avoid integer overflow in abs()/sub (e.g., abs(int8(-128))).
+                p_f = p.astype(np.float64, copy=False)
+                r_f = ref_arr.astype(np.float64, copy=False)
+                abs_err[finite] = np.abs(p_f[finite] - r_f[finite])
+                rel_err[finite] = abs_err[finite] / (np.abs(r_f[finite]) + 1e-8)
         max_abs_err = float(abs_err.max()) if abs_err.size else 0.0
         max_rel_err = float(rel_err.max()) if rel_err.size else 0.0
         max_abs = max(max_abs, max_abs_err)
@@ -358,7 +361,8 @@ def _compare_outputs(pred: Dict[str, np.ndarray], ref: Dict[str, np.ndarray], ou
         # This avoids false negatives where the max-abs and max-rel occur at different indices.
         atol = float(tol.get("atol", 1e-3))
         rtol = float(tol.get("rtol", 1e-3))
-        thresh = atol + rtol * np.abs(ref_arr).astype(np.float64)
+        # Cast before abs() to avoid integer overflow (e.g., abs(int8(-128)) -> -128).
+        thresh = atol + rtol * np.abs(ref_arr.astype(np.float64, copy=False))
         viol = (abs_err > thresh) & finite
         if np.any(viol):
             margin = np.where(viol, abs_err - thresh, -np.inf)

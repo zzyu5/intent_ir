@@ -1521,9 +1521,9 @@ def _run_ai_bench_correlation_reference(case: TestCase) -> Dict[str, np.ndarray]
 def _run_ai_bench_resize_reference(case: TestCase) -> Dict[str, np.ndarray]:
     from kernels.triton.ops.ai_bench_resize import ai_bench_resize_kernel
 
-    channel = int(case.shapes.get("channel", 3))
-    height = int(case.shapes.get("height", 512))
-    width = int(case.shapes.get("width", 512))
+    channel = int(case.shapes.get("C", case.shapes.get("channel", 3)))
+    height = int(case.shapes.get("H", case.shapes.get("height", 512)))
+    width = int(case.shapes.get("W", case.shapes.get("width", 512)))
     device = "cuda"
 
     in_size = channel * height * width
@@ -1538,9 +1538,9 @@ def _run_ai_bench_resize_reference(case: TestCase) -> Dict[str, np.ndarray]:
 def _run_ai_bench_warp_reference(case: TestCase) -> Dict[str, np.ndarray]:
     from kernels.triton.ops.ai_bench_warp import ai_bench_warp_kernel
 
-    channel = int(case.shapes.get("channel", 3))
-    height = int(case.shapes.get("height", 1024))
-    width = int(case.shapes.get("width", 1024))
+    channel = int(case.shapes.get("C", case.shapes.get("channel", 3)))
+    height = int(case.shapes.get("H", case.shapes.get("height", 1024)))
+    width = int(case.shapes.get("W", case.shapes.get("width", 1024)))
     device = "cuda"
 
     in_size = channel * height * width
@@ -2144,7 +2144,7 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 module="kernels.triton.ops.ai_bench_resize",
                 attr="ai_bench_resize_kernel.src",
                 runner=_run_ai_bench_resize_reference,
-                canonical_shapes={"channel": 3, "height": 512, "width": 512},
+                canonical_shapes={"C": 3, "H": 512, "W": 512, "OH": 1024, "OW": 1024},
                 vary_axes=[],
             ),
             KernelSpec(
@@ -2161,7 +2161,7 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 module="kernels.triton.ops.ai_bench_warp",
                 attr="ai_bench_warp_kernel.src",
                 runner=_run_ai_bench_warp_reference,
-                canonical_shapes={"channel": 3, "height": 1024, "width": 1024},
+                canonical_shapes={"C": 3, "H": 1024, "W": 1024},
                 vary_axes=[],
             ),
         ]
