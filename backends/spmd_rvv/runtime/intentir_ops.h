@@ -17,6 +17,11 @@ void intentir_reduce_sum_4d_axis23_f32(
 // Reduce-max over the last axis of a 2D f32 tensor [M,K]. Output is length M.
 void intentir_reduce_max_2d_axis1_f32(const float* a, float* out, int64_t M, int64_t K);
 
+// LayerNorm forward (f32), fused: Y = (X-mean)*rstd*W + B, also writes Mean/Rstd per row.
+// Shapes: X,Y are [M,N], W,B are [N], Mean/Rstd are [M].
+void intentir_layernorm_2d_f32(
+    const float* X, float* Y, const float* W, const float* B, float* Mean, float* Rstd, int64_t M, int64_t N, float eps);
+
 // Softmax over the last axis for rank-1..4 f32 tensors.
 void intentir_softmax_1d_last_f32(const float* a, float* out, int64_t K);
 void intentir_softmax_2d_last_f32(const float* a, float* out, int64_t M, int64_t K);

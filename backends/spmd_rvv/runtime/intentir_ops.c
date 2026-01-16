@@ -155,6 +155,92 @@ void intentir_reduce_max_2d_axis1_f32(const float* a, float* out, int64_t M, int
 #endif
 }
 
+void intentir_layernorm_2d_f32(
+    const float* X, float* Y, const float* W, const float* B, float* Mean, float* Rstd, int64_t M, int64_t N, float eps) {
+  if (!X || !Y || !W || !B || !Mean || !Rstd) return;
+  if (M <= 0 || N <= 0) return;
+#if defined(__riscv_vector) || defined(__riscv_v)
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if (M >= 4)
+#endif
+  for (int64_t m = 0; m < M; ++m) {
+    const float* xrow = &X[(size_t)m * (size_t)N];
+    float* yrow = &Y[(size_t)m * (size_t)N];
+
+    // Pass 1: mean
+    size_t vlmax = intentir_vsetvl_e32m1((size_t)N);
+    vfloat32m1_t vsum = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+    for (int64_t n = 0; n < N;) {
+      size_t vl = intentir_vsetvl_e32m1((size_t)(N - n));
+      vfloat32m1_t vx = __riscv_vle32_v_f32m1(&xrow[(size_t)n], vl);
+      vsum = __riscv_vfadd_vv_f32m1(vsum, vx, vl);
+      n += (int64_t)vl;
+    }
+    vfloat32m1_t v0s = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+    vfloat32m1_t vress = __riscv_vfredusum_vs_f32m1_f32m1(vsum, v0s, vlmax);
+    float sum = __riscv_vfmv_f_s_f32m1_f32(vress);
+    float mean = sum / (float)N;
+
+    // Pass 2: variance of centered values.
+    vfloat32m1_t vsumsq = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+    for (int64_t n = 0; n < N;) {
+      size_t vl = intentir_vsetvl_e32m1((size_t)(N - n));
+      vfloat32m1_t vx = __riscv_vle32_v_f32m1(&xrow[(size_t)n], vl);
+      vfloat32m1_t vc = __riscv_vfsub_vf_f32m1(vx, mean, vl);
+      vfloat32m1_t vq = __riscv_vfmul_vv_f32m1(vc, vc, vl);
+      vsumsq = __riscv_vfadd_vv_f32m1(vsumsq, vq, vl);
+      n += (int64_t)vl;
+    }
+    vfloat32m1_t v0q = __riscv_vfmv_v_f_f32m1(0.0f, vlmax);
+    vfloat32m1_t vresq = __riscv_vfredusum_vs_f32m1_f32m1(vsumsq, v0q, vlmax);
+    float sumsq = __riscv_vfmv_f_s_f32m1_f32(vresq);
+    float var = sumsq / (float)N;
+    float rstd = 1.0f / sqrtf(var + eps);
+
+    Mean[(size_t)m] = mean;
+    Rstd[(size_t)m] = rstd;
+
+    // Pass 3: normalize + affine
+    for (int64_t n = 0; n < N;) {
+      size_t vl = intentir_vsetvl_e32m1((size_t)(N - n));
+      vfloat32m1_t vx = __riscv_vle32_v_f32m1(&xrow[(size_t)n], vl);
+      vfloat32m1_t vw = __riscv_vle32_v_f32m1(&W[(size_t)n], vl);
+      vfloat32m1_t vb = __riscv_vle32_v_f32m1(&B[(size_t)n], vl);
+      vfloat32m1_t vc = __riscv_vfsub_vf_f32m1(vx, mean, vl);
+      vfloat32m1_t vn = __riscv_vfmul_vf_f32m1(vc, rstd, vl);
+      vfloat32m1_t vs = __riscv_vfmul_vv_f32m1(vn, vw, vl);
+      vfloat32m1_t vy = __riscv_vfadd_vv_f32m1(vs, vb, vl);
+      __riscv_vse32_v_f32m1(&yrow[(size_t)n], vy, vl);
+      n += (int64_t)vl;
+    }
+  }
+#else
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if (M >= 4)
+#endif
+  for (int64_t m = 0; m < M; ++m) {
+    const float* xrow = &X[(size_t)m * (size_t)N];
+    float* yrow = &Y[(size_t)m * (size_t)N];
+    double sum = 0.0;
+    for (int64_t n = 0; n < N; ++n) sum += (double)xrow[(size_t)n];
+    double mean = sum / (double)N;
+    double sumsq = 0.0;
+    for (int64_t n = 0; n < N; ++n) {
+      double c = (double)xrow[(size_t)n] - mean;
+      sumsq += c * c;
+    }
+    double var = sumsq / (double)N;
+    float rstd = 1.0f / sqrtf((float)var + eps);
+    Mean[(size_t)m] = (float)mean;
+    Rstd[(size_t)m] = rstd;
+    for (int64_t n = 0; n < N; ++n) {
+      float c = xrow[(size_t)n] - (float)mean;
+      yrow[(size_t)n] = (c * rstd) * W[(size_t)n] + B[(size_t)n];
+    }
+  }
+#endif
+}
+
 void intentir_softmax_1d_last_f32(const float* a, float* out, int64_t K) {
   if (!a || !out || K <= 0) return;
 #if defined(__riscv_vector) || defined(__riscv_v)
