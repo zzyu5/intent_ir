@@ -51,6 +51,7 @@ SPMD_RVV_SUPPORTED_OPS: set[str] = {
     # Higher-level kernels.
     "softmax",
     "matmul",
+    "dropout",
 }
 
 

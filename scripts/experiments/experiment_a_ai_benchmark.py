@@ -120,6 +120,7 @@ BASELINE_KERNELS: dict[str, BaselineKernel] = {
 OURS_EQUIV: dict[str, dict[str, Any]] = {
     # baseline_name -> our pipeline kernel name + shape bindings
     "matmul": {"kernel": "ai_bench_matmul", "shapes": {"M": 256, "N": 512, "K": 256}},
+    "dropout": {"kernel": "ai_bench_dropout", "shapes": {"n_elements": 1048576}},
     "softmax": {"kernel": "ai_bench_softmax", "shapes": {"R": 1823, "C": 781}},
     # NOTE: AI-Benchmark's layernorm baseline measures fwd+bwd; our current kernel is fwd-only.
     "layernorm": {"kernel": "ai_bench_layernorm", "shapes": {"M": 1151, "N": 8192}},

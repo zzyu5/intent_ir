@@ -63,6 +63,7 @@ INTERPRETER_SUPPORTED_OPS: set[str] = set().union(
         "iota",
         "gather",
         "where",
+        "dropout",
         "reduce_sum",
         "reduce_any",
         "reduce_max",
@@ -293,6 +294,33 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         cond, y = _align_shapes_for_elemwise_named(intent, cond_name, cond, y_name, y, shape_bindings)
         x, y = _align_shapes_for_elemwise_named(intent, x_name, x, y_name, y, shape_bindings)
         return np.where(cond, x, y)
+    if op.op == "dropout":
+        # Match Triton's tl.rand(seed, offsets) semantics (Philox + uint_to_uniform_float).
+        if len(op.inputs) != 3:
+            raise ValueError("dropout requires 3 inputs (X, p, seed)")
+        x = _get(env, op.inputs[0])
+        p_raw = _get(env, op.inputs[1])
+        seed_raw = _get(env, op.inputs[2])
+        p = float(np.asarray(p_raw).reshape(()))
+        seed = int(np.asarray(seed_raw).reshape(()))
+        n_rounds = int(op.attrs.get("n_rounds", 10))
+        if n_rounds <= 0:
+            n_rounds = 10
+        x_f32 = np.asarray(x, dtype=np.float32, order="C")
+        n = int(x_f32.size)
+        if n == 0:
+            return np.asarray(x, dtype=np.float32)
+        keep_prob = float(1.0 - p)
+        if keep_prob <= 0.0:
+            return np.zeros_like(x_f32)
+        if p <= 0.0:
+            return x_f32
+        offsets = np.arange(n, dtype=np.uint32)
+        rnd_u32 = _philox_randint_u32(seed, offsets, n_rounds=n_rounds)
+        rnd = _uint_to_uniform_float_u32(rnd_u32).reshape(x_f32.shape)
+        keep = rnd > np.float32(p)
+        out = np.where(keep, x_f32 / np.float32(keep_prob), np.float32(0.0))
+        return out.astype(np.float32, copy=False)
     if op.op == "reduce_sum":
         x = _get(env, op.inputs[0])
         dims_raw = op.attrs.get("axes", op.attrs.get("dims", op.attrs.get("axis")))
@@ -491,6 +519,54 @@ def _resolve_dims(dims_raw, x: np.ndarray):
         # Fall back to a common Triton pattern: reduce over all non-leading axes.
         resolved = list(range(1, x.ndim))
     return tuple(resolved)
+
+
+def _philox_randint_u32(seed: int, offsets: np.ndarray, *, n_rounds: int = 10) -> np.ndarray:
+    """
+    Triton-compatible philox (32-bit) for tl.rand/tl.randint.
+
+    Mirrors triton.language.random.randint(seed, offset) which calls:
+      philox(seed, offset, 0, 0, 0, n_rounds) and returns c0 as uint32.
+    """
+    off = np.asarray(offsets, dtype=np.uint32)
+    c0 = off
+    c1 = np.zeros_like(c0, dtype=np.uint32)
+    c2 = np.zeros_like(c0, dtype=np.uint32)
+    c3 = np.zeros_like(c0, dtype=np.uint32)
+    k0 = np.uint32(int(seed) & 0xFFFFFFFF)
+    k1 = np.uint32((int(seed) >> 32) & 0xFFFFFFFF)
+    KEY_A = np.uint32(0x9E3779B9)
+    KEY_B = np.uint32(0xBB67AE85)
+    ROUND_A = np.uint32(0xD2511F53)
+    ROUND_B = np.uint32(0xCD9E8D57)
+    A64 = np.uint64(int(ROUND_A))
+    B64 = np.uint64(int(ROUND_B))
+    for _ in range(int(n_rounds)):
+        _c0 = c0
+        _c2 = c2
+        hi_B_c2 = ((B64 * _c2.astype(np.uint64)) >> 32).astype(np.uint32)
+        hi_A_c0 = ((A64 * _c0.astype(np.uint64)) >> 32).astype(np.uint32)
+        c0 = hi_B_c2 ^ c1 ^ k0
+        c2 = hi_A_c0 ^ c3 ^ k1
+        c1 = (B64 * _c2.astype(np.uint64)).astype(np.uint32)
+        c3 = (A64 * _c0.astype(np.uint64)).astype(np.uint32)
+        k0 = k0 + KEY_A
+        k1 = k1 + KEY_B
+    return c0
+
+
+def _uint_to_uniform_float_u32(x: np.ndarray) -> np.ndarray:
+    """
+    Triton-compatible uint_to_uniform_float for uint32/int32 source.
+
+    Matches triton.language.random.uint_to_uniform_float for 32-bit inputs:
+      x = bitcast to int32; x = where(x < 0, -x-1, x); return x * 4.6566127342e-10
+    Note: for int32, -x-1 is equivalent to bitwise_not(x) in two's complement.
+    """
+    u = np.asarray(x, dtype=np.uint32)
+    xi = u.view(np.int32)
+    xi = np.where(xi < 0, np.bitwise_not(xi), xi)
+    return xi.astype(np.float32) * np.float32(4.6566127342e-10)
 
 
 def _align_shapes_for_elemwise(a: np.ndarray, b: np.ndarray):

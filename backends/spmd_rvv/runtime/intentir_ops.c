@@ -241,6 +241,126 @@ void intentir_layernorm_2d_f32(
 #endif
 }
 
+static inline uint32_t intentir_umulhi_u32(uint32_t a, uint32_t b) { return (uint32_t)(((uint64_t)a * (uint64_t)b) >> 32); }
+
+static inline uint32_t intentir_philox_randint_u32(uint64_t seed, uint32_t offset, int n_rounds) {
+  uint32_t c0 = offset, c1 = 0u, c2 = 0u, c3 = 0u;
+  uint32_t k0 = (uint32_t)(seed & 0xFFFFFFFFu);
+  uint32_t k1 = (uint32_t)((seed >> 32) & 0xFFFFFFFFu);
+  const uint32_t PHILOX_KEY_A = 0x9E3779B9u;
+  const uint32_t PHILOX_KEY_B = 0xBB67AE85u;
+  const uint32_t PHILOX_ROUND_A = 0xD2511F53u;
+  const uint32_t PHILOX_ROUND_B = 0xCD9E8D57u;
+  if (n_rounds <= 0) n_rounds = 10;
+  for (int r = 0; r < n_rounds; ++r) {
+    uint32_t _c0 = c0, _c2 = c2;
+    c0 = intentir_umulhi_u32(PHILOX_ROUND_B, _c2) ^ c1 ^ k0;
+    c2 = intentir_umulhi_u32(PHILOX_ROUND_A, _c0) ^ c3 ^ k1;
+    c1 = (uint32_t)((uint64_t)PHILOX_ROUND_B * (uint64_t)_c2);
+    c3 = (uint32_t)((uint64_t)PHILOX_ROUND_A * (uint64_t)_c0);
+    k0 += PHILOX_KEY_A;
+    k1 += PHILOX_KEY_B;
+  }
+  return c0;
+}
+
+static inline float intentir_uint_to_uniform_float_u32(uint32_t x) {
+  // Matches triton.language.random.uint_to_uniform_float for uint32/int32:
+  // x = bitcast to int32; x = where(x < 0, -x-1, x); return x * 4.6566127342e-10
+  int32_t xi = (int32_t)x;  // bitcast
+  if (xi < 0) xi = ~xi;     // -x-1 in two's complement
+  return (float)xi * 4.6566127342e-10f;
+}
+
+#if defined(__riscv_vector) || defined(__riscv_v)
+static inline vuint32m1_t intentir_philox_randint_u32m1(vuint32m1_t c0, uint64_t seed, int n_rounds, size_t vl) {
+  vuint32m1_t c1 = __riscv_vmv_v_x_u32m1(0u, vl);
+  vuint32m1_t c2 = __riscv_vmv_v_x_u32m1(0u, vl);
+  vuint32m1_t c3 = __riscv_vmv_v_x_u32m1(0u, vl);
+  vuint32m1_t k0 = __riscv_vmv_v_x_u32m1((uint32_t)(seed & 0xFFFFFFFFu), vl);
+  vuint32m1_t k1 = __riscv_vmv_v_x_u32m1((uint32_t)((seed >> 32) & 0xFFFFFFFFu), vl);
+  const uint32_t PHILOX_KEY_A = 0x9E3779B9u;
+  const uint32_t PHILOX_KEY_B = 0xBB67AE85u;
+  const uint32_t PHILOX_ROUND_A = 0xD2511F53u;
+  const uint32_t PHILOX_ROUND_B = 0xCD9E8D57u;
+  if (n_rounds <= 0) n_rounds = 10;
+  vuint32m1_t vA = __riscv_vmv_v_x_u32m1(PHILOX_ROUND_A, vl);
+  vuint32m1_t vB = __riscv_vmv_v_x_u32m1(PHILOX_ROUND_B, vl);
+  for (int r = 0; r < n_rounds; ++r) {
+    vuint32m1_t _c0 = c0, _c2 = c2;
+    vuint32m1_t hi_B_c2 = __riscv_vmulhu_vv_u32m1(vB, _c2, vl);
+    vuint32m1_t hi_A_c0 = __riscv_vmulhu_vv_u32m1(vA, _c0, vl);
+    c0 = __riscv_vxor_vv_u32m1(hi_B_c2, c1, vl);
+    c0 = __riscv_vxor_vv_u32m1(c0, k0, vl);
+    c2 = __riscv_vxor_vv_u32m1(hi_A_c0, c3, vl);
+    c2 = __riscv_vxor_vv_u32m1(c2, k1, vl);
+    c1 = __riscv_vmul_vv_u32m1(vB, _c2, vl);
+    c3 = __riscv_vmul_vv_u32m1(vA, _c0, vl);
+    k0 = __riscv_vadd_vx_u32m1(k0, PHILOX_KEY_A, vl);
+    k1 = __riscv_vadd_vx_u32m1(k1, PHILOX_KEY_B, vl);
+  }
+  return c0;
+}
+#endif
+
+void intentir_dropout_f32(const float* X, float* Y, size_t n, float p, uint64_t seed, int n_rounds) {
+  if (!X || !Y) return;
+  if (n == 0) return;
+  if (p <= 0.0f) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if (n >= 4096)
+#endif
+    for (size_t i = 0; i < n; ++i) Y[i] = X[i];
+    return;
+  }
+  if (p >= 1.0f) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if (n >= 4096)
+#endif
+    for (size_t i = 0; i < n; ++i) Y[i] = 0.0f;
+    return;
+  }
+  const float inv_keep = 1.0f / (1.0f - p);
+#if defined(__riscv_vector) || defined(__riscv_v)
+  const int64_t CHUNK = 16384;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if ((int64_t)n >= (CHUNK * 2))
+#endif
+  for (int64_t base = 0; base < (int64_t)n; base += CHUNK) {
+    size_t i = (size_t)base;
+    size_t end = i + (size_t)CHUNK;
+    if (end > n) end = n;
+    while (i < end) {
+      size_t vl = intentir_vsetvl_e32m1(end - i);
+      vuint32m1_t vid = __riscv_vid_v_u32m1(vl);
+      vuint32m1_t offs = __riscv_vadd_vx_u32m1(vid, (uint32_t)i, vl);
+      vuint32m1_t rnd_u = intentir_philox_randint_u32m1(offs, seed, n_rounds, vl);
+      vint32m1_t xi = __riscv_vreinterpret_v_u32m1_i32m1(rnd_u);
+      vbool32_t neg = __riscv_vmslt_vx_i32m1_b32(xi, 0, vl);
+      vint32m1_t xnot = __riscv_vnot_v_i32m1(xi, vl);
+      vint32m1_t xabs = __riscv_vmerge_vvm_i32m1(xi, xnot, neg, vl);
+      vfloat32m1_t r = __riscv_vfcvt_f_x_v_f32m1(xabs, vl);
+      r = __riscv_vfmul_vf_f32m1(r, 4.6566127342e-10f, vl);
+      vbool32_t keep = __riscv_vmfgt_vf_f32m1_b32(r, p, vl);
+      vfloat32m1_t vx = __riscv_vle32_v_f32m1(&X[i], vl);
+      vfloat32m1_t vy = __riscv_vfmul_vf_f32m1(vx, inv_keep, vl);
+      vfloat32m1_t zeros = __riscv_vfmv_v_f_f32m1(0.0f, vl);
+      vy = __riscv_vmerge_vvm_f32m1(zeros, vy, keep, vl);
+      __riscv_vse32_v_f32m1(&Y[i], vy, vl);
+      i += vl;
+    }
+  }
+#else
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if (n >= 4096)
+#endif
+  for (size_t i = 0; i < n; ++i) {
+    float r = intentir_uint_to_uniform_float_u32(intentir_philox_randint_u32(seed, (uint32_t)i, n_rounds));
+    Y[i] = (r > p) ? (X[i] * inv_keep) : 0.0f;
+  }
+#endif
+}
+
 void intentir_softmax_1d_last_f32(const float* a, float* out, int64_t K) {
   if (!a || !out || K <= 0) return;
 #if defined(__riscv_vector) || defined(__riscv_v)

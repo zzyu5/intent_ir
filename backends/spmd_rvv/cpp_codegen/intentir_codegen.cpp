@@ -1868,6 +1868,21 @@ struct CProgramEmitter {
 	      } else if (op.op == "where") {
 	        emit_where(w, out_var, v(op.inputs[0]), v(op.inputs[1]), v(op.inputs[2]), shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), shape_env.at(op.inputs[2]), out_shape,
 	                   dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(op.inputs[2]), dtype_env.at(out));
+	      } else if (op.op == "dropout") {
+	        if (op.inputs.size() != 3) fail("dropout requires 3 inputs (X, p, seed)");
+	        if (dtype_env.at(op.inputs[0]) != "f32" || dtype_env.at(out) != "f32") fail("dropout supports only f32 tensors");
+	        if (!shape_env.at(op.inputs[1]).empty()) fail("dropout p must be a scalar tensor (rank-0)");
+	        if (!shape_env.at(op.inputs[2]).empty()) fail("dropout seed must be a scalar tensor (rank-0)");
+	        const std::string seed_dt = dtype_env.at(op.inputs[2]);
+	        std::string seed_expr;
+	        if (seed_dt == "i32") seed_expr = "(uint64_t)(uint32_t)" + v(op.inputs[2]) + "[0]";
+	        else if (seed_dt == "i64") seed_expr = "(uint64_t)" + v(op.inputs[2]) + "[0]";
+	        else fail("dropout seed dtype must be i32 or i64");
+	        int rounds = 10;
+	        if (op.attrs.contains("n_rounds")) rounds = (int)resolve_const_value(op.attrs["n_rounds"], bindings);
+	        int64_t n = numel(out_shape);
+	        w.line("intentir_dropout_f32(" + v(op.inputs[0]) + ", " + out_var + ", (size_t)" + std::to_string(n) + ", " + v(op.inputs[1]) +
+	               "[0], " + seed_expr + ", " + std::to_string(rounds) + ");");
 	      } else if (op.op == "iota") {
 	        int axis = op.attrs.value("axis", 0);
 	        emit_iota(w, out_var, out_shape, axis, dtype_env.at(out));

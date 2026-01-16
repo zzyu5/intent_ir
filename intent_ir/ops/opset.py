@@ -20,6 +20,7 @@ CORE_OPS: set[str] = {
     # Core compute.
     "matmul",
     "softmax",
+    "dropout",
     # Elementwise arithmetic / comparisons / boolean.
     "add",
     "sub",

@@ -26,7 +26,7 @@ SYSTEM_PROMPT = """You are an expert compiler engineer. Given the Triton
   - compare/bool: ne/lt/le/gt/ge/and/or/not/where
   - shape: reshape/broadcast_in_dim/transpose/layout_cast
   - reduce: reduce_sum/reduce_max/reduce_any/softmax
-  - misc: matmul/conv2d/cast/iota/gather/identity/const
+  - misc: matmul/conv2d/cast/iota/gather/identity/const/dropout
 - Macro ops are allowed when they represent a well-known semantic operator and will
   be lowered/expanded later by the compiler. Currently allowed macro ops:
   - upsample_bicubic2d_aa: bicubic AA upsample (NCHW). When you use this macro op, include implementation-detail attrs:
@@ -50,6 +50,9 @@ SYSTEM_PROMPT = """You are an expert compiler engineer. Given the Triton
 - Every output tensor MUST be declared in tensors and produced by an op. If the kernel writes Mean/Rstd or similar, add the corresponding reduce/assign ops.
 - reduce_any MUST include dims/axis. Softmax must be present for attention kernels.
 - Reduce dims/axis must be integer axis indices (after any reshape/transpose), not symbolic axis names.
+- IMPORTANT dropout semantics: Triton's tl.rand(seed, offsets) should map to a single `dropout` op.
+  - Use: dropout(X, p, seed) -> Y where p and seed are scalar tensors (rank-0), and Y has the same shape/dtype as X.
+  - dropout implements: keep = rand(seed, offsets) > p; Y = where(keep, X / (1-p), 0.0).
 - IMPORTANT groupnorm semantics: reduce_sum computes SUM; you must normalize by num_elements=group_size*HW
   (mean = sum/num_elements; var = sumsq/num_elements; rstd = rsqrt(var+eps)). Use reduce_sum(attrs.scale=...) or explicit div ops.
 - IMPORTANT layernorm semantics: normalize by N (mean = sum/N; var = sumsq/N).
@@ -91,7 +94,7 @@ Rules:
   ne/lt/le/gt/ge/and/or/not/where,
   reshape/broadcast_in_dim/transpose/layout_cast,
   reduce_sum/reduce_max/reduce_any/softmax,
-  matmul/conv2d/cast/iota/gather/identity/const,
+  matmul/conv2d/cast/iota/gather/identity/const/dropout,
   macro: upsample_bicubic2d_aa (only when semantically appropriate).
 - Do NOT invent new shape symbols; use only symbols from the kernel signature/evidence.
 - Keep original input view shapes; use reshape ops for any grouped/view computation (e.g., groupnorm).

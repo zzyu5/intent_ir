@@ -487,6 +487,16 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
     elif op.op == "where":
         if len(op.inputs) != 3:
             raise IntentIRValidationError(f"op[{idx}] where requires 3 inputs (cond, x, y)")
+    elif op.op == "dropout":
+        # Triton tl.rand(seed, offsets) is modeled as a single semantic op.
+        # Prefer dropout(X, p, seed) where p/seed are scalar tensors (rank-0).
+        if len(op.inputs) != 3:
+            raise IntentIRValidationError(f"op[{idx}] dropout requires 3 inputs (X, p, seed)")
+        # Optional attrs for future extensions (keep lightweight to avoid over-constraining).
+        # - n_rounds: Philox rounds (Triton default is 10).
+        n_rounds = attrs.get("n_rounds")
+        if n_rounds is not None and not isinstance(n_rounds, int):
+            raise IntentIRValidationError(f"op[{idx}] dropout.attrs.n_rounds must be int when provided")
     elif op.op in {"add", "sub", "mul", "div", "max", "min"}:
         # Canonical form is binary; allow a small set of legacy shorthands
         # (1 input + scalar attr) for compatibility with older LLM outputs.

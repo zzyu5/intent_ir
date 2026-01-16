@@ -1388,6 +1388,28 @@ def _run_ai_bench_matmul_reference(case: TestCase) -> Dict[str, np.ndarray]:
     return {"A": A.cpu().numpy(), "B": B.cpu().numpy(), "C": C.cpu().numpy()}
 
 
+def _run_ai_bench_dropout_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    from kernels.triton.ops.ai_bench_dropout import ai_bench_dropout_kernel
+
+    n_elements = int(case.shapes.get("n_elements", 1048576))
+    device = "cuda"
+    # Match the external baseline defaults (AI-Benchmark): p=0.5, seed=123.
+    p = 0.5
+    seed = 123
+
+    x = torch.randn((n_elements,), device=device, dtype=torch.float32)
+    y = torch.empty_like(x)
+    grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
+    ai_bench_dropout_kernel[grid](x, y, n_elements, p, seed, BLOCK_SIZE=32)
+    torch.cuda.synchronize()
+    return {
+        "x": x.cpu().numpy(),
+        "out": y.cpu().numpy(),
+        "p": np.array(p, dtype=np.float32),
+        "seed": np.array(seed, dtype=np.int64),
+    }
+
+
 def _run_ai_bench_softmax_reference(case: TestCase) -> Dict[str, np.ndarray]:
     from kernels.triton.ops.ai_bench_softmax import ai_bench_softmax_kernel
 
@@ -2008,6 +2030,14 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 runner=_run_ai_bench_matmul_reference,
                 canonical_shapes={"M": 256, "N": 512, "K": 256},
                 vary_axes=["M", "N", "K"],
+            ),
+            KernelSpec(
+                name="ai_bench_dropout",
+                module="kernels.triton.ops.ai_bench_dropout",
+                attr="ai_bench_dropout_kernel.src",
+                runner=_run_ai_bench_dropout_reference,
+                canonical_shapes={"n_elements": 1048576},
+                vary_axes=["n_elements"],
             ),
             KernelSpec(
                 name="ai_bench_softmax",

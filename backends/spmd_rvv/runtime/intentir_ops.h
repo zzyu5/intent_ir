@@ -22,6 +22,10 @@ void intentir_reduce_max_2d_axis1_f32(const float* a, float* out, int64_t M, int
 void intentir_layernorm_2d_f32(
     const float* X, float* Y, const float* W, const float* B, float* Mean, float* Rstd, int64_t M, int64_t N, float eps);
 
+// Dropout (f32): Y[i] = (rand(seed, i) > p) ? X[i] / (1-p) : 0
+// Uses Triton-compatible Philox (n_rounds default is 10).
+void intentir_dropout_f32(const float* X, float* Y, size_t n, float p, uint64_t seed, int n_rounds);
+
 // Softmax over the last axis for rank-1..4 f32 tensors.
 void intentir_softmax_1d_last_f32(const float* a, float* out, int64_t K);
 void intentir_softmax_2d_last_f32(const float* a, float* out, int64_t M, int64_t K);
