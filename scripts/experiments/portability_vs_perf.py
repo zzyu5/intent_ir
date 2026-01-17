@@ -48,6 +48,20 @@ AI_BENCH_KERNELS: list[str] = [
     "ai_bench_warp",
 ]
 
+# Use the same "real" shapes as the external AI-Benchmark baseline harness.
+# (Some KernelSpec.canonical_shapes are smaller to keep the GPU artifact pipeline
+# snappy; E5.2 is a performance experiment so we prefer realistic workloads.)
+AI_BENCH_SHAPES: dict[str, dict[str, int]] = {
+    "ai_bench_matmul": {"M": 256, "N": 512, "K": 256},
+    "ai_bench_dropout": {"n_elements": 1048576},
+    "ai_bench_softmax": {"R": 1823, "C": 781},
+    "ai_bench_layernorm": {"M": 1151, "N": 8192},
+    "ai_bench_correlation": {"out_channel": 5, "in_channel": 58, "height": 112, "width": 88, "out_shift": 0},
+    "ai_bench_resize": {"C": 3, "H": 512, "W": 512, "OH": 1024, "OW": 1024},
+    "ai_bench_rope": {"SEQ_LEN": 512, "BATCH_NUM": 16, "HEAD_NUM": 8, "HEAD_DIM": 1024},
+    "ai_bench_warp": {"C": 3, "H": 1024, "W": 1024},
+}
+
 DEFAULT6_KERNELS: list[str] = [
     "any_kernel_dim",
     "group_norm_kernel",
@@ -257,6 +271,8 @@ def main() -> None:
             freeze_notes = [f"freeze_tile_error: {e}"]
 
         shape_bindings = dict(getattr(spec, "canonical_shapes", {}) or {})
+        if k in AI_BENCH_SHAPES:
+            shape_bindings = dict(AI_BENCH_SHAPES[k])
         _log(f"[E5:{k}] freeze vs retune (omp={int(args.omp_threads)})")
 
         try:
