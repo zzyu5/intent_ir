@@ -22,7 +22,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from intent_ir.ir import IntentFunction, Op
+from intent_ir.ir import IntentFunction, Op, TensorType
 from verify.diff_runner import DiffResult, run_diff
 from verify.gen_cases import TestCase
 from verify.metamorphic import MetamorphicSuiteReport, run_bounded_exhaustive, run_metamorphic_suite
@@ -266,9 +266,32 @@ def _apply_one_mutation(intent: IntentFunction, rng: random.Random) -> str | Non
     reduce_ids = pick_indices(lambda o: o.op in {"reduce_sum", "reduce_max", "reduce_any"})
     softmax_ids = pick_indices(lambda o: o.op == "softmax")
     transpose_ids = pick_indices(lambda o: o.op == "transpose")
+    matmul_ids = pick_indices(lambda o: o.op == "matmul")
     elemwise_ids = pick_indices(lambda o: o.op in {"add", "sub", "mul", "div", "max", "min", "ne"})
     const_ids = pick_indices(lambda o: o.op == "const")
     bcast_ids = pick_indices(lambda o: o.op == "broadcast_in_dim")
+
+    def _fresh_name(prefix: str) -> str:
+        for _ in range(1000):
+            cand = f"{prefix}{rng.randrange(1_000_000)}"
+            if cand not in intent.tensors and all(op.output != cand for op in intent.ops):
+                return cand
+        return f"{prefix}fallback"
+
+    def _out_shape_of(value_name: str) -> Optional[List[int | str]]:
+        tt = intent.tensors.get(value_name)
+        if tt is None:
+            return None
+        return [d.value for d in list(tt.shape)]
+
+    def _insert_scalar_const(before_idx: int, *, ref_tensor: TensorType, value: object) -> Optional[str]:
+        cname = _fresh_name("__mut_c_")
+        try:
+            intent.tensors[cname] = TensorType(dtype=ref_tensor.dtype, shape=[], layout=ref_tensor.layout)
+        except Exception:
+            return None
+        intent.ops.insert(before_idx, Op(op="const", inputs=[], output=cname, attrs={"value": value, "dtype": str(ref_tensor.dtype)}))
+        return cname
 
     if reduce_ids:
         def mut_reduce_axes() -> bool:
@@ -313,6 +336,34 @@ def _apply_one_mutation(intent: IntentFunction, rng: random.Random) -> str | Non
 
         candidates.append(("reduce_scale", mut_reduce_scale))
 
+        def mut_reduce_drop_anchor() -> bool:
+            # Replace one reduce op with broadcast(0) so output shape stays valid but the reduce anchor is weakened.
+            idx = rng.choice(reduce_ids)
+            op = ops[idx]
+            out_name = op.output
+            out_shape = _out_shape_of(out_name)
+            tt = intent.tensors.get(out_name)
+            if out_shape is None or tt is None:
+                return False
+            zero: object
+            if str(tt.dtype) in {"i1", "bool"}:
+                zero = False
+            elif str(tt.dtype).startswith(("i", "u")):
+                zero = 0
+            else:
+                zero = 0.0
+            cname = _insert_scalar_const(idx, ref_tensor=tt, value=zero)
+            if cname is None:
+                return False
+            # op shifted to idx+1 after insertion
+            op2 = ops[idx + 1]
+            op2.op = "broadcast_in_dim"
+            op2.inputs = [cname]
+            op2.attrs = {"out_shape": out_shape, "broadcast_dims": []}
+            return True
+
+        candidates.append(("reduce_drop_anchor", mut_reduce_drop_anchor))
+
     if softmax_ids:
         def mut_softmax_axis() -> bool:
             idx = rng.choice(softmax_ids)
@@ -327,6 +378,61 @@ def _apply_one_mutation(intent: IntentFunction, rng: random.Random) -> str | Non
             return True
 
         candidates.append(("softmax_axis", mut_softmax_axis))
+
+        def mut_softmax_drop_anchor() -> bool:
+            idx = rng.choice(softmax_ids)
+            op = ops[idx]
+            # softmax is shape-preserving; identity keeps shapes but removes the anchor.
+            op.op = "identity"
+            op.attrs = {}
+            return True
+
+        candidates.append(("softmax_drop_anchor", mut_softmax_drop_anchor))
+
+    if matmul_ids:
+        def mut_matmul_drop_anchor() -> bool:
+            idx = rng.choice(matmul_ids)
+            op = ops[idx]
+            out_name = op.output
+            out_shape = _out_shape_of(out_name)
+            tt = intent.tensors.get(out_name)
+            if out_shape is None or tt is None:
+                return False
+            zero: object
+            if str(tt.dtype) in {"i1", "bool"}:
+                zero = False
+            elif str(tt.dtype).startswith(("i", "u")):
+                zero = 0
+            else:
+                zero = 0.0
+            cname = _insert_scalar_const(idx, ref_tensor=tt, value=zero)
+            if cname is None:
+                return False
+            op2 = ops[idx + 1]
+            op2.op = "broadcast_in_dim"
+            op2.inputs = [cname]
+            op2.attrs = {"out_shape": out_shape, "broadcast_dims": []}
+            return True
+
+        candidates.append(("matmul_drop_anchor", mut_matmul_drop_anchor))
+
+    # Output aliasing: keep the intent structurally valid, but violate static_validate
+    # ("outputs must be produced by ops") by returning an external input.
+    produced = {o.output for o in ops}
+    used: set[str] = set()
+    for o in ops:
+        used.update(o.inputs)
+    external_inputs = [n for n in used if (n in intent.tensors and n not in produced)]
+    if external_inputs and intent.outputs:
+        def mut_output_alias_input() -> bool:
+            i = rng.randrange(len(intent.outputs))
+            cand = rng.choice(external_inputs)
+            if intent.outputs[i] == cand:
+                return False
+            intent.outputs[i] = cand
+            return True
+
+        candidates.append(("output_alias_input", mut_output_alias_input))
 
     if transpose_ids:
         def mut_transpose_perm() -> bool:

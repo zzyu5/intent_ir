@@ -37,6 +37,7 @@ from frontends.common.static_validate import StaticValidationResult, static_vali
 from intent_ir.ir import IntentFunction
 from verify.gen_cases import TestCase
 from verify.mutation import MutationReport, run_mutation_kill
+from verify.interpreter import execute_intent
 
 
 DEFAULT6 = [
@@ -143,6 +144,94 @@ def _tolerances_from_report(report: Dict[str, Any]) -> Tuple[float, float]:
         return 1e-3, 1e-3
 
 
+def _intent_from_report(report: Dict[str, Any]) -> IntentFunction:
+    intent_json = report.get("intent_expanded") or report.get("intent")
+    if not isinstance(intent_json, dict):
+        raise TypeError("missing intent in report")
+    return IntentFunction.from_json_dict(intent_json)
+
+
+def _np_dtype(dt: str):
+    import numpy as np
+
+    m = {
+        "f16": np.float16,
+        "bf16": np.float32,
+        "f32": np.float32,
+        "f64": np.float64,
+        "i8": np.int8,
+        "u8": np.uint8,
+        "i16": np.int16,
+        "i32": np.int32,
+        "i64": np.int64,
+        "i1": np.bool_,
+        "bool": np.bool_,
+    }
+    return m.get(str(dt), np.float32)
+
+
+def _resolve_tensor_shape(intent: IntentFunction, name: str, bindings: Dict[str, int]) -> Tuple[int, ...] | None:
+    t = intent.tensors.get(name)
+    if t is None:
+        return None
+    out: List[int] = []
+    for d in list(t.shape):
+        if getattr(d, "kind", None) == "const":
+            out.append(int(getattr(d, "value")))
+        else:
+            sym = str(getattr(d, "value"))
+            if sym not in bindings:
+                return None
+            out.append(int(bindings[sym]))
+    return tuple(out)
+
+
+def _external_input_names(intent: IntentFunction) -> List[str]:
+    produced = {op.output for op in intent.ops if op.output}
+    used: set[str] = set()
+    for op in intent.ops:
+        used.update(op.inputs)
+    external = [n for n in used if (n in intent.tensors and n not in produced)]
+    return sorted(set(external))
+
+
+def _oracle_runner_from_intent(intent: IntentFunction) -> Callable[[TestCase], Dict[str, "np.ndarray"]]:
+    import numpy as np
+
+    inputs_names = _external_input_names(intent)
+
+    def run_ref(case: TestCase) -> Dict[str, np.ndarray]:
+        bindings = dict(case.shapes)
+        rng = np.random.default_rng(int(case.seed))
+        # Allow Stage-C to pin exact inputs.
+        provided = dict(case.inputs or {})
+
+        inputs: Dict[str, np.ndarray] = {}
+        for name in inputs_names:
+            if name in provided:
+                inputs[name] = np.asarray(provided[name])
+                continue
+            shape = _resolve_tensor_shape(intent, name, bindings)
+            if shape is None:
+                raise ValueError(f"unbound symbols for input {name}: shape={intent.tensors[name].shape} bindings={bindings}")
+            dt = str(intent.tensors[name].dtype)
+            np_dt = _np_dtype(dt)
+            if np_dt == np.bool_:
+                arr = rng.integers(0, 2, size=shape, dtype=np.int8).astype(np.bool_)
+            elif np.issubdtype(np_dt, np.integer):
+                arr = rng.integers(-3, 4, size=shape, dtype=np_dt)
+            else:
+                arr = rng.standard_normal(size=shape).astype(np_dt)
+            inputs[name] = arr
+
+        # Execute base intent as oracle (we only need a consistent reference for mutation ablation).
+        with np.errstate(all="ignore"):
+            outs = execute_intent(intent, inputs, shape_bindings=bindings)
+        return {**inputs, **outs}
+
+    return run_ref
+
+
 def _summarize_cex(mr: MutationReport) -> Dict[str, Any]:
     """
     Summarize time-to-counterexample info for mutants killed by Stage B.
@@ -182,6 +271,12 @@ def main() -> None:
     ap.add_argument("--frontend", choices=["triton", "tilelang", "cuda"], default="triton")
     ap.add_argument("--suite", choices=["default6", "coverage"], default="default6")
     ap.add_argument("--kernel", action="append", default=[], help="repeatable; restrict to kernel name(s)")
+    ap.add_argument(
+        "--oracle",
+        choices=["intent", "pipeline"],
+        default="intent",
+        help="reference oracle for mutation diff: intent (sandbox-friendly) or pipeline (runs real frontend runner)",
+    )
     ap.add_argument("--refresh-artifacts", action="store_true", help="regenerate per-kernel pipeline report before ablation")
     ap.add_argument("--cases-limit", type=int, default=8, help="used only when regenerating pipeline artifacts")
     ap.add_argument("--diff-cases", type=int, default=2, help="how many in-contract cases to use for mutation stage-B diff")
@@ -195,8 +290,8 @@ def main() -> None:
     out_dir = _artifact_dir(frontend)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    if str(args.suite) == "coverage":
-        # Keep suite definition consistent with pipeline core.
+    if str(args.suite) == "coverage" and (args.oracle == "pipeline" or bool(args.refresh_artifacts)):
+        # Keep suite definition consistent with pipeline core (requires importing the pipeline).
         if frontend == "triton":
             from pipeline.triton.core import coverage_kernel_specs  # noqa: PLC0415
 
@@ -209,6 +304,9 @@ def main() -> None:
             from pipeline.cuda.core import coverage_kernel_specs  # noqa: PLC0415
 
             kernels = [s.name for s in coverage_kernel_specs()]
+    elif str(args.suite) == "coverage":
+        # Artifacts-only mode: scan reports without importing heavy frontends.
+        kernels = sorted(p.stem for p in out_dir.glob("*.json") if "." not in p.stem)
     else:
         kernels = list(DEFAULT6)
 
@@ -226,7 +324,7 @@ def main() -> None:
     t0 = time.time()
     for k in kernels:
         report_path = out_dir / f"{k}.json"
-        if args.refresh_artifacts or not report_path.exists():
+        if args.refresh_artifacts:
             _run_pipeline(frontend, k, out_dir=out_dir, cases_limit=int(args.cases_limit))
         if not report_path.exists():
             results.append({"kernel": k, "status": "MISSING_REPORT"})
@@ -236,20 +334,18 @@ def main() -> None:
         if not isinstance(report.get("diff"), dict) or not bool((report.get("diff") or {}).get("ok", False)):
             results.append({"kernel": k, "status": "BASELINE_DIFF_NOT_OK"})
             continue
-        intent_json = report.get("intent")
         cert_json = report.get("certificate_v2")
-        if not isinstance(intent_json, dict) or not isinstance(cert_json, dict):
+        if not isinstance(cert_json, dict):
             results.append({"kernel": k, "status": "MISSING_INTENT_OR_CERT"})
             continue
 
         try:
-            intent = IntentFunction.from_json_dict(intent_json)
+            intent = _intent_from_report(report)
         except Exception as e:
             results.append({"kernel": k, "status": "INTENT_PARSE_ERROR", "error": f"{type(e).__name__}: {e}"})
             continue
         cert_v2 = _cert_v2_from_json(cert_json)
 
-        spec = _spec_from_pipeline(frontend, k)
         diff_cases = _cases_from_report(report, limit=int(args.diff_cases))
         if not diff_cases:
             results.append({"kernel": k, "status": "NO_CASES"})
@@ -257,7 +353,21 @@ def main() -> None:
         base_case = diff_cases[0]
         atol, rtol = _tolerances_from_report(report)
 
+        def _sv_obligation_counts(sv: StaticValidationResult) -> Dict[str, int]:
+            counts = {"PASS": 0, "FAIL": 0, "UNKNOWN": 0}
+            for o in list(getattr(sv, "obligations", []) or []):
+                st = str(getattr(o, "status", "UNKNOWN"))
+                counts[st] = counts.get(st, 0) + 1
+            return {k: int(v) for k, v in counts.items()}
+
+        if str(args.oracle) == "pipeline":
+            spec = _spec_from_pipeline(frontend, k)
+            run_ref_fn = spec.runner
+        else:
+            run_ref_fn = _oracle_runner_from_intent(intent)
+
         per_mode: Dict[str, Any] = {}
+        base_static: Dict[str, Any] = {}
         for m in modes:
             if m.name == "full":
                 static_fn = lambda x, _c=cert_v2: static_validate(x, _c)  # noqa: E731
@@ -265,10 +375,22 @@ def main() -> None:
                 static_fn = None
             else:
                 static_fn = m.static_validate_fn
+
+            # Base obligations summary (for paper tables; independent of mutation outcomes).
+            if static_fn is not None:
+                try:
+                    sv0 = static_fn(intent)
+                    base_static[m.name] = {
+                        "ok": bool(getattr(sv0, "ok", False)),
+                        "obligations": _sv_obligation_counts(sv0),
+                        "reasons": list(getattr(sv0, "reasons", []) or []),
+                    }
+                except Exception as e:
+                    base_static[m.name] = {"ok": False, "obligations": {}, "reasons": [f"{type(e).__name__}: {e}"]}
             rep = run_mutation_kill(
                 k,
                 intent=intent,
-                run_ref_fn=spec.runner,
+                run_ref_fn=run_ref_fn,
                 diff_cases=diff_cases,
                 metamorphic_base_case=base_case,
                 static_validate_fn=static_fn,
@@ -284,21 +406,50 @@ def main() -> None:
                 "total": int(rep.total),
                 "killed": int(rep.killed),
                 "survived": int(rep.survived),
+                "false_accept_rate": (float(rep.survived) / float(rep.total) if rep.total else 0.0),
                 "killed_by_stage": dict(rep.killed_by_stage),
                 "time_to_counterexample": _summarize_cex(rep),
             }
-        results.append({"kernel": k, "status": "OK", "modes": per_mode})
+        results.append(
+            {
+                "kernel": k,
+                "status": "OK",
+                "contract_level": (report.get("contract") or {}).get("level"),
+                "modes": per_mode,
+                "base_static": base_static,
+            }
+        )
         print(f"[trust_ablation:{frontend}:{k}] OK", flush=True)
+
+    # Aggregate summary across kernels.
+    agg: Dict[str, Dict[str, float]] = {}
+    for r in results:
+        if r.get("status") != "OK":
+            continue
+        modes_r = r.get("modes") or {}
+        if not isinstance(modes_r, dict):
+            continue
+        for mname, payload in modes_r.items():
+            if not isinstance(payload, dict):
+                continue
+            agg.setdefault(str(mname), {"total": 0.0, "killed": 0.0, "kill_rate": 0.0})
+            agg[str(mname)]["total"] += float(payload.get("total") or 0.0)
+            agg[str(mname)]["killed"] += float(payload.get("killed") or 0.0)
+    for mname, a in agg.items():
+        tot = float(a.get("total") or 0.0)
+        a["kill_rate"] = (float(a.get("killed") or 0.0) / tot) if tot > 0 else 0.0
 
     out: Dict[str, Any] = {
         "experiment": "E2_trust_ablation",
         "frontend": frontend,
         "suite": str(args.suite),
+        "oracle": str(args.oracle),
         "kernels": list(kernels),
         "n_mutants": int(args.n_mutants),
         "diff_cases": int(args.diff_cases),
         "seed": int(args.seed),
         "elapsed_s": float(time.time() - t0),
+        "summary": {"aggregate": agg},
         "results": results,
     }
     out_path = Path(str(args.out))
