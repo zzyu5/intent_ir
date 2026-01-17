@@ -1925,6 +1925,23 @@ struct CProgramEmitter {
 	        if (off[0] != s[1] || off[1] != s[2]) fail("warp offset shape must match [H,W]");
 	        w.line("intentir_warp_q8_8_i8_i16(" + v(op.inputs[0]) + ", " + v(op.inputs[1]) + ", " + out_var + ", " + std::to_string(s[0]) + ", " +
 	               std::to_string(s[1]) + ", " + std::to_string(s[2]) + ");");
+	      } else if (op.op == "rope") {
+	        if (op.inputs.size() != 3) fail("rope requires 3 inputs (input, cos, sin)");
+	        if (dtype_env.at(op.inputs[0]) != "f32" || dtype_env.at(op.inputs[1]) != "f32" || dtype_env.at(op.inputs[2]) != "f32" || dtype_env.at(out) != "f32")
+	          fail("rope supports only f32 tensors");
+	        const auto& x = shape_env.at(op.inputs[0]);
+	        const auto& c = shape_env.at(op.inputs[1]);
+	        const auto& s = shape_env.at(op.inputs[2]);
+	        if (x.size() != 4 || out_shape.size() != 4) fail("rope expects rank-4 input/output");
+	        if (c.size() != 2 || s.size() != 2) fail("rope expects rank-2 cos/sin");
+	        if (out_shape != x) fail("rope output shape must match input shape");
+	        const int64_t SEQ = x[0], B = x[1], H = x[2], D = x[3];
+	        if ((D & 1) != 0) fail("rope expects even HEAD_DIM");
+	        const int64_t half = D / 2;
+	        if (c[0] != SEQ || c[1] != half) fail("rope cos shape must be [SEQ_LEN, HEAD_DIM/2]");
+	        if (s[0] != SEQ || s[1] != half) fail("rope sin shape must be [SEQ_LEN, HEAD_DIM/2]");
+	        w.line("intentir_rope_f32(" + v(op.inputs[0]) + ", " + v(op.inputs[1]) + ", " + v(op.inputs[2]) + ", " + out_var + ", " + std::to_string(SEQ) +
+	               ", " + std::to_string(B) + ", " + std::to_string(H) + ", " + std::to_string(D) + ");");
 	      } else if (op.op == "iota") {
 	        int axis = op.attrs.value("axis", 0);
 	        emit_iota(w, out_var, out_shape, axis, dtype_env.at(out));

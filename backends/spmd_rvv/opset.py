@@ -55,6 +55,7 @@ SPMD_RVV_SUPPORTED_OPS: set[str] = {
     "correlation",
     "resize",
     "warp",
+    "rope",
 }
 
 

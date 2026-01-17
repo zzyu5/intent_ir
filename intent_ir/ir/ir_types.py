@@ -515,6 +515,20 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
         # Semantic op: warp(src, offset) -> out (Q8.8 fixed-point offsets).
         if len(op.inputs) != 2:
             raise IntentIRValidationError(f"op[{idx}] warp requires 2 inputs (src, offset)")
+    elif op.op == "rope":
+        # Semantic op: rope(input, cos, sin) -> output
+        # Shapes:
+        #   input/output: [SEQ_LEN, BATCH_NUM, HEAD_NUM, HEAD_DIM] (f32)
+        #   cos/sin: [SEQ_LEN, HEAD_DIM_DIV2] (f32), where HEAD_DIM_DIV2 = HEAD_DIM // 2
+        if len(op.inputs) != 3:
+            raise IntentIRValidationError(f"op[{idx}] rope requires 3 inputs (input, cos, sin)")
+    elif op.op == "identity":
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] identity requires 1 input")
+        # Identity is currently a pure alias/no-op. Do not allow slice/update-style
+        # shorthands here; use a semantic op (e.g., rope) or explicit gather/reshape.
+        if attrs:
+            raise IntentIRValidationError(f"op[{idx}] identity must not have attrs (slice/assign_slice unsupported)")
     elif op.op in {"add", "sub", "mul", "div", "max", "min"}:
         # Canonical form is binary; allow a small set of legacy shorthands
         # (1 input + scalar attr) for compatibility with older LLM outputs.
@@ -535,7 +549,7 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
     elif op.op == "ne":
         if len(op.inputs) != 2:
             raise IntentIRValidationError(f"op[{idx}] ne requires 2 inputs")
-    elif op.op in {"abs", "floor", "not", "exp", "relu", "rsqrt", "identity"}:
+    elif op.op in {"abs", "floor", "not", "exp", "relu", "rsqrt"}:
         if len(op.inputs) != 1:
             raise IntentIRValidationError(f"op[{idx}] {op.op} requires 1 input")
     elif op.op in {"lt", "le", "gt", "ge", "and", "or"}:

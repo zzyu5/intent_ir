@@ -481,6 +481,55 @@ void intentir_warp_q8_8_i8_i16(const int8_t* src, const int16_t* offset, int8_t*
   }
 }
 
+void intentir_rope_f32(
+    const float* input, const float* cos, const float* sin, float* out, int64_t seq_len, int64_t batch_num, int64_t head_num, int64_t head_dim) {
+  if (!input || !cos || !sin || !out) return;
+  if (seq_len <= 0 || batch_num <= 0 || head_num <= 0 || head_dim <= 0) return;
+  if ((head_dim & 1) != 0) return;
+  const int64_t half = head_dim / 2;
+
+  // Parallelize across [SEQ_LEN, BATCH_NUM, HEAD_NUM] "blocks".
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) schedule(static) if ((seq_len * batch_num) >= 4)
+#endif
+  for (int64_t s = 0; s < seq_len; ++s) {
+    for (int64_t bh = 0; bh < (batch_num * head_num); ++bh) {
+      const int64_t b = bh / head_num;
+      const int64_t h = bh - b * head_num;
+      const size_t base = (((size_t)s * (size_t)batch_num + (size_t)b) * (size_t)head_num + (size_t)h) * (size_t)head_dim;
+      const size_t cos_base = (size_t)s * (size_t)half;
+      size_t i = 0;
+#if defined(__riscv_vector) || defined(__riscv_v)
+      while (i < (size_t)half) {
+        size_t vl = intentir_vsetvl_e32m1((size_t)half - i);
+        vfloat32m1_t vcos = __riscv_vle32_v_f32m1(&cos[cos_base + i], vl);
+        vfloat32m1_t vsin = __riscv_vle32_v_f32m1(&sin[cos_base + i], vl);
+        vfloat32m1_t vx1 = __riscv_vle32_v_f32m1(&input[base + i], vl);
+        vfloat32m1_t vx2 = __riscv_vle32_v_f32m1(&input[base + (size_t)half + i], vl);
+        vfloat32m1_t x1c = __riscv_vfmul_vv_f32m1(vx1, vcos, vl);
+        vfloat32m1_t x2s = __riscv_vfmul_vv_f32m1(vx2, vsin, vl);
+        vfloat32m1_t y1 = __riscv_vfsub_vv_f32m1(x1c, x2s, vl);
+        vfloat32m1_t x1s = __riscv_vfmul_vv_f32m1(vx1, vsin, vl);
+        vfloat32m1_t x2c = __riscv_vfmul_vv_f32m1(vx2, vcos, vl);
+        vfloat32m1_t y2 = __riscv_vfadd_vv_f32m1(x1s, x2c, vl);
+        __riscv_vse32_v_f32m1(&out[base + i], y1, vl);
+        __riscv_vse32_v_f32m1(&out[base + (size_t)half + i], y2, vl);
+        i += vl;
+      }
+#else
+      for (int64_t j = 0; j < half; ++j) {
+        const float c = cos[cos_base + (size_t)j];
+        const float s0 = sin[cos_base + (size_t)j];
+        const float x1 = input[base + (size_t)j];
+        const float x2 = input[base + (size_t)half + (size_t)j];
+        out[base + (size_t)j] = x1 * c - x2 * s0;
+        out[base + (size_t)half + (size_t)j] = x1 * s0 + x2 * c;
+      }
+#endif
+    }
+  }
+}
+
 void intentir_softmax_1d_last_f32(const float* a, float* out, int64_t K) {
   if (!a || !out || K <= 0) return;
 #if defined(__riscv_vector) || defined(__riscv_v)
@@ -2794,8 +2843,55 @@ void intentir_matmul_2d_f32(
   const int64_t tn = (tile_n > 0) ? intentir_min_i64(tile_n, N) : N;
   const int64_t tk = (tile_k > 0) ? intentir_min_i64(tile_k, K) : K;
 
+#ifdef _OPENMP
+  // If tile blocking yields too few independent tiles, OpenMP under-utilizes threads.
+  // Use a finer-grained parallelization over (m, n_base) to provide enough work.
+  int use_fine_parallel = 0;
+  {
+    int thr = omp_get_max_threads();
+    if (thr > 1) {
+      const int64_t tiles_m = (M + tm - 1) / tm;
+      const int64_t tiles_n = (N + tn - 1) / tn;
+      if (tiles_m * tiles_n < (int64_t)thr) use_fine_parallel = 1;
+    }
+  }
+#endif
+
 #if defined(__riscv_vector) || defined(__riscv_v)
   if (!transpose_a) {
+#ifdef _OPENMP
+    if (use_fine_parallel) {
+#pragma omp parallel for collapse(2) schedule(static) if ((M * N) >= 4096)
+      for (int64_t m = 0; m < M; ++m) {
+        for (int64_t n_base = 0; n_base < N; n_base += tn) {
+          int64_t n_end = n_base + tn;
+          if (n_end > N) n_end = N;
+          for (int64_t n0 = n_base; n0 < n_end;) {
+            size_t rem = (size_t)(n_end - n0);
+            size_t vl = intentir_vsetvl_e32m1(rem);
+            vfloat32m1_t vacc = __riscv_vfmv_v_f_f32m1(0.0f, vl);
+            for (int64_t k_base = 0; k_base < K; k_base += tk) {
+              int64_t k_end = k_base + tk;
+              if (k_end > K) k_end = K;
+              for (int64_t k0 = k_base; k0 < k_end; ++k0) {
+                float av = a[idx2((int)m, (int)k0, (int)K)];
+                vfloat32m1_t vb;
+                if (!transpose_b) {
+                  vb = __riscv_vle32_v_f32m1(&b[idx2((int)k0, (int)n0, (int)N)], vl);
+                } else {
+                  vb = __riscv_vlse32_v_f32m1(&b[idx2((int)n0, (int)k0, (int)K)], (ptrdiff_t)((size_t)K * sizeof(float)), vl);
+                }
+                vacc = __riscv_vfmacc_vf_f32m1(vacc, av, vb, vl);
+              }
+            }
+            __riscv_vse32_v_f32m1(&out[idx2((int)m, (int)n0, (int)N)], vacc, vl);
+            n0 += (int64_t)vl;
+          }
+        }
+      }
+      return;
+    }
+#endif
 #ifdef _OPENMP
 #pragma omp parallel for collapse(2) schedule(static) if ((M * N) >= 4096)
 #endif
@@ -2835,6 +2931,31 @@ void intentir_matmul_2d_f32(
   }
 #endif
 
+#ifdef _OPENMP
+  if (use_fine_parallel) {
+#pragma omp parallel for collapse(2) schedule(static) if ((M * N) >= 4096)
+    for (int64_t m = 0; m < M; ++m) {
+      for (int64_t n_base = 0; n_base < N; n_base += tn) {
+        int64_t n_end = n_base + tn;
+        if (n_end > N) n_end = N;
+        for (int64_t n0 = n_base; n0 < n_end; ++n0) {
+          double acc = 0.0;
+          for (int64_t k_base = 0; k_base < K; k_base += tk) {
+            int64_t k_end = k_base + tk;
+            if (k_end > K) k_end = K;
+            for (int64_t k0 = k_base; k0 < k_end; ++k0) {
+              size_t ai = (size_t)(transpose_a ? idx2((int)k0, (int)m, (int)M) : idx2((int)m, (int)k0, (int)K));
+              size_t bi = (size_t)(transpose_b ? idx2((int)n0, (int)k0, (int)K) : idx2((int)k0, (int)n0, (int)N));
+              acc += (double)a[ai] * (double)b[bi];
+            }
+          }
+          out[idx2((int)m, (int)n0, (int)N)] = (float)acc;
+        }
+      }
+    }
+    return;
+  }
+#endif
 #ifdef _OPENMP
 #pragma omp parallel for collapse(2) schedule(static) if ((M * N) >= 4096)
 #endif

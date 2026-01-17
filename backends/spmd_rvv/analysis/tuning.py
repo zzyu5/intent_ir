@@ -132,6 +132,12 @@ def _derive_guidance_from_stride_summary(summary, *, lanes: int) -> tuple[Dict[s
     notes: List[str] = []
 
     if summary is None:
+        # No usable access evidence: do not force scalar vec_width. Instead, provide
+        # a conservative candidate set and let the backend (or measured autotune)
+        # decide. INTENTIR_VEC_WIDTH=0 means "no cap" (use vsetvl naturally).
+        cand = [int(max(1, lanes)), int(max(1, lanes // 2)), 1]
+        priors["vec_width_candidates"] = list(dict.fromkeys(int(x) for x in cand if int(x) > 0))
+        notes.append(f"prior: vec_width candidates (no evidence) -> {priors['vec_width_candidates']}")
         return hard, priors, notes
 
     has_contig = bool(getattr(summary, "has_contiguous_range", False))
@@ -139,11 +145,13 @@ def _derive_guidance_from_stride_summary(summary, *, lanes: int) -> tuple[Dict[s
     dom_axis = getattr(summary, "dominant_axis", None)
     dom_range = getattr(summary, "dominant_range", None)
 
-    # If no contiguous range is detected, vectorization is likely unsafe/unhelpful; force scalar.
+    # If no contiguous range is detected, the witness is insufficient to drive a
+    # hard decision. Keep a small, explainable candidate set (including scalar),
+    # and let ranking/measurement decide.
     if not has_contig:
-        hard["vec_width"] = {1}
-        priors["vec_width_candidates"] = [1]
-        notes.append("hard: vec_width in {1} (no contiguous access range)")
+        cand = [int(max(1, lanes)), int(max(1, lanes // 2)), 1]
+        priors["vec_width_candidates"] = list(dict.fromkeys(int(x) for x in cand if int(x) > 0))
+        notes.append(f"prior: vec_width candidates (no contiguous evidence) -> {priors['vec_width_candidates']}")
         return hard, priors, notes
 
     # Otherwise, propose a small vec_width prior set derived from contiguous extent.
@@ -424,8 +432,14 @@ def propose_schedule_candidates(
             if summary.dominant_axis:
                 vec_notes.append(f"vec_axis_hint={summary.dominant_axis}")
         else:
-            vec_candidates = [1]
-            vec_notes = [f"vec_width conservative=1 lanes={vec_lanes}"]
+            # Fall back to derived priors when evidence is missing/insufficient.
+            cand = derived_priors.get("vec_width_candidates")
+            if isinstance(cand, list) and cand:
+                vec_candidates = [int(x) for x in cand if int(x) > 0]
+                vec_notes = [f"vec_width from priors={vec_candidates} lanes={vec_lanes}"]
+            else:
+                vec_candidates = [1]
+                vec_notes = [f"vec_width conservative=1 lanes={vec_lanes}"]
     if derived_notes:
         vec_notes.extend(list(derived_notes))
 

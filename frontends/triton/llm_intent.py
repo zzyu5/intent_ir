@@ -26,7 +26,7 @@ SYSTEM_PROMPT = """You are an expert compiler engineer. Given the Triton
   - compare/bool: ne/lt/le/gt/ge/and/or/not/where
   - shape: reshape/broadcast_in_dim/transpose/layout_cast
   - reduce: reduce_sum/reduce_max/reduce_any/softmax
-  - misc: matmul/conv2d/cast/iota/gather/identity/const/dropout/correlation/resize/warp
+  - misc: matmul/conv2d/cast/iota/gather/identity/const/dropout/correlation/resize/warp/rope
 - Macro ops are allowed when they represent a well-known semantic operator and will
   be lowered/expanded later by the compiler. Currently allowed macro ops:
   - upsample_bicubic2d_aa: bicubic AA upsample (NCHW). When you use this macro op, include implementation-detail attrs:
@@ -58,11 +58,14 @@ SYSTEM_PROMPT = """You are an expert compiler engineer. Given the Triton
     and out_shift is a scalar integer tensor. Implement out[oc,h,w] = (sum_k src0[k,h,w] * src1[k,h,w-oc] >> out_shift).to(int8) with out-of-bounds masked to 0.
   - resize: resize(src) -> out, where src/out are int8 tensors shaped [C,H,W]/[C,2H,2W]. Use bilinear 2x upsample with hw_fl=7 fixed-point math (like the kernel).
   - warp: warp(src, offset) -> out, where src/out are int8 [C,H,W], offset is int16 [H,W] packing Q8.8 (high byte int part, low byte signed frac). Follow the kernel's int8 index arithmetic.
+  - rope: rope(input, cos, sin) -> output, where input/output are f32 [SEQ_LEN,BATCH_NUM,HEAD_NUM,HEAD_DIM] and cos/sin are f32 [SEQ_LEN,HEAD_DIM/2].
+    Do NOT use identity with slice/assign_slice to model RoPE; those shorthands are unsupported. Use the semantic rope op.
 - IMPORTANT groupnorm semantics: reduce_sum computes SUM; you must normalize by num_elements=group_size*HW
   (mean = sum/num_elements; var = sumsq/num_elements; rstd = rsqrt(var+eps)). Use reduce_sum(attrs.scale=...) or explicit div ops.
 - IMPORTANT layernorm semantics: normalize by N (mean = sum/N; var = sumsq/N).
 - Scalars/constants (eps, num_elements, group_size, sm_scale, BLOCK_*) must be explicit. Prefer modeling them as `const` ops (scalar tensors) and pass them as normal op inputs.
   Do NOT use ad-hoc scalar-in-attrs shorthands for arithmetic ops (e.g., add with attrs.scalar); keep arithmetic ops as 2-input ops.
+- identity is a pure alias/no-op in our interpreter/backend. It MUST NOT have attrs (slice/assign_slice unsupported).
 - Scalar runtime parameters that appear in the kernel signature (e.g., reciprocal_scale_h/w) must be declared in tensors as shape=[] and referenced directly; do NOT replace them with const("reciprocal_scale_h").
 - Do NOT model scheduling/tiling details (program_id, tl.constexpr BLOCK_*). Never put BLOCK_* into tensor shapes or iota.shape. Treat ow/oh as full logical ranges [OW] and [OH] rather than per-program tiles.
 - Do NOT put BLOCK_*/TILE_* into tensor shapes or iota.shape. Treat ow/oh as full logical ranges [OW] and [OH] rather than per-program tiles.
@@ -100,6 +103,7 @@ Rules:
   reshape/broadcast_in_dim/transpose/layout_cast,
   reduce_sum/reduce_max/reduce_any/softmax,
   matmul/conv2d/cast/iota/gather/identity/const/dropout/correlation/resize/warp,
+  rope,
   macro: upsample_bicubic2d_aa (only when semantically appropriate).
 - Do NOT invent new shape symbols; use only symbols from the kernel signature/evidence.
 - Keep original input view shapes; use reshape ops for any grouped/view computation (e.g., groupnorm).

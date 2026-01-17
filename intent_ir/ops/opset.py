@@ -25,6 +25,7 @@ CORE_OPS: set[str] = {
     "correlation",
     "resize",
     "warp",
+    "rope",
     # Elementwise arithmetic / comparisons / boolean.
     "add",
     "sub",

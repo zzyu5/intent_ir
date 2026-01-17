@@ -322,6 +322,7 @@ def run_remote(
             hd = int(bindings["HEAD_DIM"])
             if hd > 0:
                 bindings.setdefault("HEAD_DIM_DIV2", hd // 2)
+                bindings.setdefault("HEAD_DIM_DIV_2", hd // 2)
                 bindings.setdefault("HEAD_DIM_HALF", hd // 2)
                 bindings.setdefault("HEAD_DIM_MID", hd // 2)
         except Exception:
@@ -574,7 +575,12 @@ def run_remote(
         env_prefix = ""
         if int(omp_threads) > 0:
             t = int(omp_threads)
-            env_prefix += f"INTENTIR_OMP_THREADS={t} OMP_NUM_THREADS={t} OMP_DYNAMIC=FALSE "
+            # Pin OpenMP threads to physical cores for more stable scaling on many-core RVV hosts.
+            # (GOMP honors these; they are harmless if ignored.)
+            env_prefix += (
+                f"INTENTIR_OMP_THREADS={t} OMP_NUM_THREADS={t} OMP_DYNAMIC=FALSE "
+                f"OMP_PROC_BIND=TRUE OMP_PLACES=cores GOMP_CPU_AFFINITY=0-{t-1} "
+            )
         if bool(profile_ops):
             env_prefix += "INTENTIR_PROFILE_OPS=1 "
         run_cmd = f"cd {remote_dir} && {env_prefix}{remote_bin}"

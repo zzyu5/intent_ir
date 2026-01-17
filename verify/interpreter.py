@@ -67,6 +67,7 @@ INTERPRETER_SUPPORTED_OPS: set[str] = set().union(
         "correlation",
         "resize",
         "warp",
+        "rope",
         "reduce_sum",
         "reduce_any",
         "reduce_max",
@@ -451,6 +452,29 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
                 outv = (rv.astype(np.int16) << 8) + (lv.astype(np.int16) - rv.astype(np.int16)) * frac_i16
                 out[c, h] = (outv >> 8).astype(np.int8)
         return out
+    if op.op == "rope":
+        if len(op.inputs) != 3:
+            raise ValueError("rope requires 3 inputs (input, cos, sin)")
+        x = np.asarray(_get(env, op.inputs[0]), dtype=np.float32, order="C")
+        cos = np.asarray(_get(env, op.inputs[1]), dtype=np.float32, order="C")
+        sin = np.asarray(_get(env, op.inputs[2]), dtype=np.float32, order="C")
+        if x.ndim != 4:
+            raise ValueError(f"rope expects input rank-4 [SEQ,BATCH,HEAD,HEAD_DIM], got {x.shape}")
+        if cos.ndim != 2 or sin.ndim != 2:
+            raise ValueError(f"rope expects cos/sin rank-2 [SEQ,HEAD_DIM/2], got cos={cos.shape} sin={sin.shape}")
+        SEQ, B, H, D = (int(x.shape[0]), int(x.shape[1]), int(x.shape[2]), int(x.shape[3]))
+        if D % 2 != 0:
+            raise ValueError("rope expects even HEAD_DIM")
+        half = D // 2
+        if cos.shape != (SEQ, half) or sin.shape != (SEQ, half):
+            raise ValueError(f"rope cos/sin shape mismatch: expected ({SEQ},{half}) got cos={cos.shape} sin={sin.shape}")
+        cos_b = cos[:, None, None, :]
+        sin_b = sin[:, None, None, :]
+        x1 = x[..., :half]
+        x2 = x[..., half:]
+        y1 = x1 * cos_b - x2 * sin_b
+        y2 = x1 * sin_b + x2 * cos_b
+        return np.concatenate([y1, y2], axis=-1).astype(np.float32, copy=False)
     if op.op == "reduce_sum":
         x = _get(env, op.inputs[0])
         dims_raw = op.attrs.get("axes", op.attrs.get("dims", op.attrs.get("axis")))

@@ -36,6 +36,13 @@ void intentir_resize_bilinear2x_i8(const int8_t* src, int8_t* out, int64_t chann
 // Warp (int8,int16): per-pixel horizontal warp using Q8.8 packed offsets in int16.
 void intentir_warp_q8_8_i8_i16(const int8_t* src, const int16_t* offset, int8_t* out, int64_t channel, int64_t height, int64_t width);
 
+// RoPE (f32): rotary position embedding over the last dim, using cos/sin tables.
+// Shapes:
+//   input/out: [SEQ_LEN, BATCH_NUM, HEAD_NUM, HEAD_DIM]
+//   cos/sin:   [SEQ_LEN, HEAD_DIM/2]
+void intentir_rope_f32(
+    const float* input, const float* cos, const float* sin, float* out, int64_t seq_len, int64_t batch_num, int64_t head_num, int64_t head_dim);
+
 // Softmax over the last axis for rank-1..4 f32 tensors.
 void intentir_softmax_1d_last_f32(const float* a, float* out, int64_t K);
 void intentir_softmax_2d_last_f32(const float* a, float* out, int64_t M, int64_t K);

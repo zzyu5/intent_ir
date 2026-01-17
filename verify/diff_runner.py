@@ -101,6 +101,17 @@ def run_diff(
                     bindings["G"] = n // gs
             except Exception:
                 pass
+        # Common derived symbols used by some frontends/LLM outputs (avoid "unbound symbol" failures).
+        if "HEAD_DIM" in bindings:
+            try:
+                hd = int(bindings["HEAD_DIM"])
+                if hd > 0:
+                    bindings.setdefault("HEAD_DIM_DIV2", hd // 2)
+                    bindings.setdefault("HEAD_DIM_DIV_2", hd // 2)
+                    bindings.setdefault("HEAD_DIM_HALF", hd // 2)
+                    bindings.setdefault("HEAD_DIM_MID", hd // 2)
+            except Exception:
+                pass
         # Only feed/validate true external inputs (values consumed by the ops graph).
         produced = {op.output for op in intent_exec.ops if op.output}
         used: set[str] = set()
