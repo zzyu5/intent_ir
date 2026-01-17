@@ -1,5 +1,5 @@
 """
-E5: Portability vs Performance (performance decoupling) experiment runner.
+E5.2: Performance decoupling ablation (freeze-tile vs retune).
 
 This script focuses on the "freeze tile vs retune" comparison:
   - Freeze: reuse frontend tile/constexpr parameters on the RVV target (no tuning)
@@ -9,6 +9,9 @@ The experiment is designed to be paper-friendly:
   - Uses the same artifact pipeline as the Triton full pipeline (LLM -> IntentIR -> contract).
   - Runs on a real remote RVV host via scripts/rvv_remote_run.py.
   - Produces a single JSON report suitable for tables/plots.
+
+E5.1 (external baseline comparison) is handled separately by:
+  - scripts/experiments/experiment_a_ai_benchmark.py
 """
 
 from __future__ import annotations
@@ -54,6 +57,8 @@ DEFAULT6_KERNELS: list[str] = [
     "upsample_bicubic2d_aa",
 ]
 
+TRITON_COVERAGE_SUITE_NAME = "triton_coverage"
+
 
 def _log(msg: str) -> None:
     print(str(msg), file=sys.stderr, flush=True)
@@ -97,7 +102,7 @@ def main() -> None:
         "--suite",
         action="append",
         default=[],
-        choices=["ai_bench8", "default6", "all"],
+        choices=["ai_bench8", "default6", "all", TRITON_COVERAGE_SUITE_NAME],
         help="kernel suite to run (repeatable)",
     )
     ap.add_argument("--cases-limit", type=int, default=4)
@@ -122,6 +127,9 @@ def main() -> None:
         wanted.extend(AI_BENCH_KERNELS)
     if "default6" in suites:
         wanted.extend(DEFAULT6_KERNELS)
+    # Triton full coverage suite (currently 38 kernels).
+    if TRITON_COVERAGE_SUITE_NAME in suites:
+        wanted.extend([s.name for s in coverage_kernel_specs()])
     if not wanted:
         wanted = list(AI_BENCH_KERNELS)
     # De-dup while preserving order.
