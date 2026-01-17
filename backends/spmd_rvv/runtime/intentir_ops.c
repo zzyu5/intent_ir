@@ -375,22 +375,54 @@ void intentir_correlation_i8(
 #endif
   for (int64_t oc = 0; oc < out_channel; ++oc) {
     for (int64_t h = 0; h < height; ++h) {
-      const int64_t row_base = h * width;
-      const int64_t out_base = oc * hw + row_base;
-      for (int64_t w = 0; w < width; ++w) {
-        if (w < oc) {
-          out[out_base + w] = 0;
-          continue;
+      const size_t row_base = (size_t)h * (size_t)width;
+      const size_t out_base = (size_t)oc * (size_t)hw + row_base;
+
+      // Guarded prefix: outputs for w < oc are defined as 0.
+      const int64_t prefix = (oc < width) ? oc : width;
+      for (int64_t w = 0; w < prefix; ++w) out[out_base + (size_t)w] = 0;
+
+      if (oc >= width) continue;
+
+#if defined(__riscv_vector) || defined(__riscv_v)
+      // Vectorize over the width dimension (contiguous within each channel plane).
+      size_t w_base = (size_t)oc;
+      while (w_base < (size_t)width) {
+        size_t vl = intentir_vsetvl_e8m1((size_t)width - w_base);
+        vint32m4_t vacc = __riscv_vmv_v_x_i32m4(0, vl);
+
+        // Base pointers for k=0; advance by `hw` each channel.
+        const int8_t* a_ptr = src0 + row_base + w_base;
+        const int8_t* b_ptr = src1 + row_base + (w_base - (size_t)oc);
+        for (int64_t k = 0; k < in_channel; ++k) {
+          vint8m1_t va8 = __riscv_vle8_v_i8m1(a_ptr, vl);
+          vint8m1_t vb8 = __riscv_vle8_v_i8m1(b_ptr, vl);
+          vint16m2_t va16 = __riscv_vsext_vf2_i16m2(va8, vl);
+          vint16m2_t vb16 = __riscv_vsext_vf2_i16m2(vb8, vl);
+          vacc = __riscv_vwmacc_vv_i32m4(vacc, va16, vb16, vl);
+          a_ptr += (size_t)hw;
+          b_ptr += (size_t)hw;
         }
+        if (sh != 0) vacc = __riscv_vsra_vx_i32m4(vacc, sh, vl);
+
+        // Match C's (int8_t) truncation semantics (wrap), not saturation.
+        int32_t tmp[vl];
+        __riscv_vse32_v_i32m4(tmp, vacc, vl);
+        for (size_t i = 0; i < vl; ++i) out[out_base + w_base + i] = (int8_t)tmp[i];
+        w_base += vl;
+      }
+#else
+      for (int64_t w = oc; w < width; ++w) {
         int32_t acc = 0;
-        const int64_t off0 = row_base + w;
-        const int64_t off1 = row_base + (w - oc);
+        const int64_t off0 = (int64_t)row_base + w;
+        const int64_t off1 = (int64_t)row_base + (w - oc);
         for (int64_t k = 0; k < in_channel; ++k) {
           const int64_t base = k * hw;
           acc += (int32_t)src0[base + off0] * (int32_t)src1[base + off1];
         }
-        out[out_base + w] = (int8_t)(acc >> sh);
+        out[out_base + (size_t)w] = (int8_t)(acc >> sh);
       }
+#endif
     }
   }
 }
