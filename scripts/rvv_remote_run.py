@@ -34,7 +34,7 @@ if str(ROOT) not in sys.path:
 from backends.spmd_rvv.codegen.intentir_to_c import lower_intent_to_c_with_files
 from backends.spmd_rvv.analysis.device_query import load_profile, query_remote_device
 from backends.spmd_rvv.analysis.tuning import TuningRequest, parse_constraints, parse_locks, propose_schedule_candidates, select_schedule
-from intent_ir.ir import IntentFunction
+from intent_ir.ir import IntentFunction, ScheduleSketch
 from intent_ir.macros import expand_macros
 from verify.gen_cases import TestCase
 from verify.tolerances import infer_tolerances
@@ -133,6 +133,7 @@ def run_remote(
     baseline_npz: str | None = None,
     prefer_live_baseline: bool = False,
     tune_request: TuningRequest | None = None,
+    schedule_override: ScheduleSketch | dict | None = None,
     tune_profile: str | None = None,
     bench_iters: int = 0,
     bench_warmup: int = 1,
@@ -166,6 +167,26 @@ def run_remote(
         intent = IntentFunction.from_json_dict(intent_expanded_json)
     else:
         intent = expand_macros(intent_macro)
+
+    def _coerce_schedule(obj: ScheduleSketch | dict) -> ScheduleSketch:
+        if isinstance(obj, ScheduleSketch):
+            return obj
+        if not isinstance(obj, dict):
+            return ScheduleSketch()
+        return ScheduleSketch(
+            tile_m=obj.get("tile_m"),
+            tile_n=obj.get("tile_n"),
+            tile_k=obj.get("tile_k"),
+            vec_width=obj.get("vec_width"),
+            pipeline_depth=obj.get("pipeline_depth"),
+            axis_bindings=dict(obj.get("axis_bindings") or {}),
+            vec_axis=(obj.get("vec_axis") if isinstance(obj.get("vec_axis"), str) else None),
+            parallel_axes=[str(x) for x in (obj.get("parallel_axes") or [])],
+            memory_hint=dict(obj.get("memory_hint") or {}),
+        )
+
+    if schedule_override is not None:
+        intent.schedule = _coerce_schedule(schedule_override)
 
     # Frontend-derived "tile-ish" constants (schedule hints). Triton CertificateV2
     # extracts these from TTIR; TileLang may leave empty (OK).
@@ -718,6 +739,17 @@ def run_remote(
     return {
         "backend": backend_used,
         "omp_threads": int(omp_threads),
+        "schedule": {
+            "tile_m": chosen_schedule.tile_m,
+            "tile_n": chosen_schedule.tile_n,
+            "tile_k": chosen_schedule.tile_k,
+            "vec_width": chosen_schedule.vec_width,
+            "pipeline_depth": chosen_schedule.pipeline_depth,
+            "axis_bindings": dict(chosen_schedule.axis_bindings or {}),
+            "vec_axis": chosen_schedule.vec_axis,
+            "parallel_axes": list(chosen_schedule.parallel_axes or []),
+            "memory_hint": dict(chosen_schedule.memory_hint or {}),
+        },
         "compile_rc": rc,
         "run_rc": run_rc,
         "stdout": run_out,

@@ -104,6 +104,13 @@ class TritonAdapter:
             "module": str(getattr(spec, "module", "")),
             "attr": str(getattr(spec, "attr", "")),
         }
+        # Compile-time launch meta (for paper experiments like freeze-tile).
+        try:
+            constexpr_vals = dict(getattr(spec, "constexpr", {}) or {})
+            if constexpr_vals:
+                desc.launch["constexpr"] = constexpr_vals
+        except Exception:
+            pass
         desc.io_spec = {
             "arg_names": arg_names,
             "constexpr_names": constexpr_names,

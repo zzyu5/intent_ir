@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
@@ -50,6 +50,9 @@ class KernelSpec:
     runner: Callable[[TestCase], Dict[str, np.ndarray]]  # reference runner (launch Triton kernel)
     canonical_shapes: Dict[str, int]
     vary_axes: List[str]
+    # Compile-time tile/constexpr values used by the reference launcher.
+    # Used by paper experiments (freeze-tile baseline) to reuse frontend tiling.
+    constexpr: Dict[str, int] = field(default_factory=dict)
     exclude_axes: Optional[List[str]] = None
     normalize_shapes: Optional[Callable[[Dict[str, int]], Dict[str, int]]] = None
 def llm_to_intent(desc, feedback: Optional[List[str]] = None) -> CandidateIntent:
@@ -2106,6 +2109,7 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 runner=_run_ai_bench_matmul_reference,
                 canonical_shapes={"M": 256, "N": 512, "K": 256},
                 vary_axes=["M", "N", "K"],
+                constexpr={"BLOCK_M": 64, "BLOCK_N": 16, "BLOCK_K": 16},
             ),
             KernelSpec(
                 name="ai_bench_dropout",
@@ -2114,6 +2118,7 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 runner=_run_ai_bench_dropout_reference,
                 canonical_shapes={"n_elements": 1048576},
                 vary_axes=["n_elements"],
+                constexpr={"BLOCK_SIZE": 32},
             ),
             KernelSpec(
                 name="ai_bench_softmax",
@@ -2130,6 +2135,7 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 runner=_run_ai_bench_layernorm_reference,
                 canonical_shapes={"M": 1151, "N": 8192},
                 vary_axes=["M", "N"],
+                constexpr={"BLOCK_SIZE": 16},
             ),
             KernelSpec(
                 name="ai_bench_correlation",
@@ -2138,6 +2144,7 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 runner=_run_ai_bench_correlation_reference,
                 canonical_shapes={"out_channel": 5, "in_channel": 58, "height": 112, "width": 88, "out_shift": 0},
                 vary_axes=[],
+                constexpr={"BLOCK_H": 1, "BLOCK_W": 8, "BLOCK_IC": 64},
             ),
             KernelSpec(
                 name="ai_bench_resize",
@@ -2146,6 +2153,7 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 runner=_run_ai_bench_resize_reference,
                 canonical_shapes={"C": 3, "H": 512, "W": 512, "OH": 1024, "OW": 1024},
                 vary_axes=[],
+                constexpr={"BLOCK_W": 128},
             ),
             KernelSpec(
                 name="ai_bench_rope",
@@ -2155,6 +2163,7 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 canonical_shapes={"SEQ_LEN": 128, "BATCH_NUM": 4, "HEAD_NUM": 2, "HEAD_DIM": 128},
                 vary_axes=["SEQ_LEN", "BATCH_NUM", "HEAD_NUM", "HEAD_DIM"],
                 exclude_axes=["HEAD_DIM"],
+                constexpr={"BLOCK_SIZE": 32},
             ),
             KernelSpec(
                 name="ai_bench_warp",
@@ -2163,6 +2172,7 @@ def coverage_kernel_specs() -> List[KernelSpec]:
                 runner=_run_ai_bench_warp_reference,
                 canonical_shapes={"C": 3, "H": 1024, "W": 1024},
                 vary_axes=[],
+                constexpr={"BLOCK_W": 128},
             ),
         ]
     )
