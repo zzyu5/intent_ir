@@ -9,6 +9,7 @@ from .ir_types import (
     parse_dim,
     parse_layout,
 )
+from .canonicalize import canonicalize_for_consistency
 
 __all__ = [
     "IntentIRValidationError",
@@ -18,7 +19,7 @@ __all__ = [
     "Op",
     "ScheduleSketch",
     "IntentFunction",
+    "canonicalize_for_consistency",
     "parse_dim",
     "parse_layout",
 ]
-

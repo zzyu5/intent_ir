@@ -34,7 +34,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from frontends.common.certificate_v2 import SemanticCertificateV2
-from intent_ir.ir import IntentFunction, Op, TensorType
+from intent_ir.ir import IntentFunction, Op, TensorType, canonicalize_for_consistency
 
 
 def _artifact_dir(frontend: str) -> Path:
@@ -124,7 +124,7 @@ def _anchor_tier(anchors: Dict[str, Any]) -> str:
 
 def _tensor_sig(t: TensorType) -> Dict[str, Any]:
     return {
-        "dtype": str(t.dtype),
+        "dtype": ("bool" if str(t.dtype) == "i1" else str(t.dtype)),
         "shape": [f"{d.kind}:{d.value}" for d in list(t.shape)],
         "layout": (t.layout.name if hasattr(t.layout, "name") else str(t.layout)),
     }
@@ -183,6 +183,7 @@ def _canonicalize_intent(intent: IntentFunction) -> Dict[str, Any]:
 
     def _tensor_sig_canon(t: TensorType) -> Dict[str, Any]:
         layout = t.layout.name if hasattr(t.layout, "name") else str(t.layout)
+        dt = "bool" if str(t.dtype) == "i1" else str(t.dtype)
         shape: List[str] = []
         for d in list(t.shape):
             k = getattr(d, "kind", None)
@@ -191,7 +192,7 @@ def _canonicalize_intent(intent: IntentFunction) -> Dict[str, Any]:
                 shape.append(f"sym:{sym_map.get(str(v), str(v))}")
             else:
                 shape.append(f"{k}:{v}")
-        return {"dtype": str(t.dtype), "shape": shape, "layout": str(layout)}
+        return {"dtype": dt, "shape": shape, "layout": str(layout)}
 
     # Deterministic renaming:
     # - external inputs: sorted by tensor signature, then name
@@ -380,6 +381,99 @@ def _ops_skeleton(sig: Dict[str, Any]) -> List[str]:
     return out
 
 
+def _stable_hash(obj: Any) -> str:
+    import hashlib
+
+    s = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+
+def _graph_value_hashes(sig: Dict[str, Any]) -> Dict[str, str]:
+    """
+    Order-insensitive structural fingerprint for an Intent signature.
+
+    This is more robust than comparing the raw `ops` list order, and treats
+    `identity/layout_cast` as aliases (common LLM noise).
+    """
+    tensors = sig.get("tensors")
+    ops = sig.get("ops")
+    inputs = sig.get("inputs")
+    outputs = sig.get("outputs")
+    if not isinstance(tensors, dict) or not isinstance(ops, list) or not isinstance(inputs, list) or not isinstance(outputs, list):
+        return {}
+
+    commutative = {"add", "mul", "max", "min", "and", "or", "ne"}
+    alias_ops = {"identity", "layout_cast"}
+
+    val_hash: Dict[str, str] = {}
+    for i, n in enumerate([str(x) for x in inputs]):
+        # Do not bake tensor signatures into structural hashes. Shape specialization
+        # (sym vs const) and symbol spellings are handled by `_interface_compatible`.
+        val_hash[str(n)] = _stable_hash({"kind": "input", "i": int(i)})
+
+    for o in ops:
+        if not isinstance(o, dict):
+            continue
+        op = str(o.get("op"))
+        out = str(o.get("output"))
+        inps = o.get("inputs") or []
+        if not isinstance(inps, list):
+            inps = []
+        in_names = [str(x) for x in inps]
+        in_hashes = [val_hash.get(x, _stable_hash({"kind": "unresolved", "name": x})) for x in in_names]
+        if op in commutative:
+            in_hashes = sorted(in_hashes)
+        if op in alias_ops and len(in_hashes) == 1:
+            val_hash[out] = in_hashes[0]
+            continue
+        # Structural fingerprint deliberately ignores attrs (strict mode covers attrs).
+        node = {"op": op, "inputs": in_hashes}
+        val_hash[out] = _stable_hash(node)
+
+    return val_hash
+
+
+def _graph_outputs_compatible(base_sig: Dict[str, Any], other_sig: Dict[str, Any]) -> bool:
+    """
+    Like `_interface_compatible`, but for structural graph hashes:
+    - base outputs must be matchable in the other frontend
+    - other may expose auxiliary outputs (ignored)
+    """
+    bt = base_sig.get("tensors")
+    ot = other_sig.get("tensors")
+    bo = base_sig.get("outputs")
+    oo = other_sig.get("outputs")
+    if not isinstance(bt, dict) or not isinstance(ot, dict) or not isinstance(bo, list) or not isinstance(oo, list):
+        return False
+
+    bh = _graph_value_hashes(base_sig)
+    oh = _graph_value_hashes(other_sig)
+    if not bh or not oh:
+        return False
+
+    used_other: set[str] = set()
+    for bname in [str(x) for x in bo]:
+        bts = bt.get(str(bname))
+        bvh = bh.get(str(bname))
+        if not isinstance(bts, dict) or not isinstance(bvh, str):
+            return False
+        hit = None
+        for oname in [str(x) for x in oo]:
+            if oname in used_other:
+                continue
+            ots = ot.get(str(oname))
+            ovh = oh.get(str(oname))
+            if not isinstance(ots, dict) or not isinstance(ovh, str):
+                continue
+            if _tensor_compatible(bts, ots) and ovh == bvh:
+                hit = oname
+                break
+        if hit is None:
+            return False
+        used_other.add(hit)
+    return True
+
+
 def _axis_roles_recall(base_sig: Dict[str, Any], other_sig: Dict[str, Any]) -> float:
     # Compare *role values* as a multiset (symbol names may differ across frontends).
     from collections import Counter
@@ -555,8 +649,8 @@ def main() -> None:
                 reasons_expanded_struct.append(f"missing_intent_or_cert:{fe}")
                 continue
             try:
-                intent = IntentFunction.from_json_dict(intent_json)
-                intent_expanded = IntentFunction.from_json_dict(expanded_json)
+                intent = canonicalize_for_consistency(IntentFunction.from_json_dict(intent_json))
+                intent_expanded = canonicalize_for_consistency(IntentFunction.from_json_dict(expanded_json))
             except Exception as e:
                 ok_intent = False
                 ok_expanded = False
@@ -605,9 +699,9 @@ def main() -> None:
                 if not _interface_compatible(base_intent_sig, sig_i):
                     ok_intent_struct = False
                     reasons_intent_struct.append(f"{fe}:io_mismatch")
-                if _ops_skeleton(base_intent_sig) != _ops_skeleton(sig_i):
+                if not _graph_outputs_compatible(base_intent_sig, sig_i):
                     ok_intent_struct = False
-                    reasons_intent_struct.append(f"{fe}:ops_skeleton_mismatch")
+                    reasons_intent_struct.append(f"{fe}:graph_mismatch")
                 axis_recall_intent = min(axis_recall_intent, _axis_roles_recall(base_intent_sig, sig_i))
             else:
                 ok_intent_struct = False
@@ -619,9 +713,9 @@ def main() -> None:
                 if not _interface_compatible(base_exp_sig, sig_e):
                     ok_expanded_struct = False
                     reasons_expanded_struct.append(f"{fe}:io_mismatch")
-                if _ops_skeleton(base_exp_sig) != _ops_skeleton(sig_e):
+                if not _graph_outputs_compatible(base_exp_sig, sig_e):
                     ok_expanded_struct = False
-                    reasons_expanded_struct.append(f"{fe}:ops_skeleton_mismatch")
+                    reasons_expanded_struct.append(f"{fe}:graph_mismatch")
                 axis_recall_expanded = min(axis_recall_expanded, _axis_roles_recall(base_exp_sig, sig_e))
             else:
                 ok_expanded_struct = False
