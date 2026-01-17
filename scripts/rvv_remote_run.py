@@ -140,6 +140,9 @@ def run_remote(
     profile_ops: bool = False,
     bench_only: bool = False,
     omp_threads: int = 1,
+    omp_proc_bind: str = "spread",
+    omp_places: str = "cores",
+    gomp_cpu_affinity: str | None = None,
     log: Callable[[str], None] | None = None,
 ):
     def _log(msg: str) -> None:
@@ -572,8 +575,21 @@ def run_remote(
 
         _log(f"[{frontend}:{kernel}] remote compile")
         opt = "-O3" if (int(bench_iters) > 0 or bool(bench_only)) else "-O2"
+        vec_define = ""
+        try:
+            vw = schedule.vec_width
+            if isinstance(vw, int) and vw > 0:
+                vec_define = f" -DINTENTIR_VEC_WIDTH={int(vw)}"
+            elif isinstance(vw, str):
+                key = vw.strip()
+                if key and key in bindings:
+                    vwi = int(bindings[key])
+                    if vwi > 0:
+                        vec_define = f" -DINTENTIR_VEC_WIDTH={vwi}"
+        except Exception:
+            vec_define = ""
         compile_cmd = (
-            f"gcc {opt} -std=c11 -march=rv64gcv -fopenmp -I{remote_dir} -o {remote_bin} {remote_c} "
+            f"gcc {opt} -std=c11 -march=rv64gcv -fopenmp{vec_define} -I{remote_dir} -o {remote_bin} {remote_c} "
             f"{remote_dir}/intentir_runtime.c {remote_dir}/intentir_driver.c {remote_dir}/intentir_ops.c -lm -lrt"
         )
         stdin, stdout, stderr = client.exec_command(compile_cmd, timeout=60)
@@ -600,8 +616,10 @@ def run_remote(
             # (GOMP honors these; they are harmless if ignored.)
             env_prefix += (
                 f"INTENTIR_OMP_THREADS={t} OMP_NUM_THREADS={t} OMP_DYNAMIC=FALSE "
-                f"OMP_PROC_BIND=TRUE OMP_PLACES=cores GOMP_CPU_AFFINITY=0-{t-1} "
+                f"OMP_PROC_BIND={str(omp_proc_bind)} OMP_PLACES={str(omp_places)} "
             )
+            if gomp_cpu_affinity:
+                env_prefix += f"GOMP_CPU_AFFINITY={str(gomp_cpu_affinity)} "
         if bool(profile_ops):
             env_prefix += "INTENTIR_PROFILE_OPS=1 "
         run_cmd = f"cd {remote_dir} && {env_prefix}{remote_bin}"
@@ -789,6 +807,9 @@ def main():
     ap.add_argument("--bench-iters", type=int, default=0, help="if >0, run microbenchmark loop and print INTENTIR_BENCH JSON line")
     ap.add_argument("--bench-warmup", type=int, default=1, help="warmup iterations for benchmark loop")
     ap.add_argument("--omp-threads", type=int, default=1, help="OpenMP threads for RVV backend (default: 1)")
+    ap.add_argument("--omp-proc-bind", default="spread", help="OpenMP proc bind policy (e.g., spread, close, master, false)")
+    ap.add_argument("--omp-places", default="cores", help="OpenMP places (e.g., cores, threads)")
+    ap.add_argument("--gomp-cpu-affinity", default=None, help="Optional GOMP_CPU_AFFINITY override (advanced)")
     ap.add_argument("--profile-ops", action="store_true", help="emit per-op timing JSON line (INTENTIR_PROFILE) from the RVV program")
     ap.add_argument(
         "--bench-only",
@@ -849,6 +870,9 @@ def main():
         bench_iters=int(args.bench_iters),
         bench_warmup=int(args.bench_warmup),
         omp_threads=int(args.omp_threads),
+        omp_proc_bind=str(args.omp_proc_bind),
+        omp_places=str(args.omp_places),
+        gomp_cpu_affinity=(str(args.gomp_cpu_affinity) if args.gomp_cpu_affinity else None),
         profile_ops=bool(args.profile_ops),
         bench_only=bool(args.bench_only),
         log=_log,

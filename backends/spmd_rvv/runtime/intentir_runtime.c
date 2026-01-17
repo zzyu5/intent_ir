@@ -62,6 +62,6 @@ int intentir_compare_u8(const char* name, const uint8_t* got, const uint8_t* ref
 
 uint64_t intentir_now_ns(void) {
   struct timespec ts;
-  timespec_get(&ts, TIME_UTC);
+  if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
   return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
