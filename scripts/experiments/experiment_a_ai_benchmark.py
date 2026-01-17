@@ -220,6 +220,7 @@ def _run_ours_remote_bench(
         case_index=0,
         shape_overrides=dict(shapes),
         tune_request=(TuningRequest(mode="auto", budget=1) if bool(tune) else None),
+        omp_proc_bind="auto",
         bench_iters=int(bench_iters),
         bench_warmup=int(bench_warmup),
         bench_only=True,

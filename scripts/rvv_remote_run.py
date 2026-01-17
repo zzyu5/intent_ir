@@ -140,7 +140,7 @@ def run_remote(
     profile_ops: bool = False,
     bench_only: bool = False,
     omp_threads: int = 1,
-    omp_proc_bind: str = "spread",
+    omp_proc_bind: str = "auto",
     omp_places: str = "cores",
     gomp_cpu_affinity: str | None = None,
     log: Callable[[str], None] | None = None,
@@ -606,61 +606,109 @@ def run_remote(
                 "stderr": "",
                 "bench": None,
                 "profile_ops": None,
+                "omp": None,
+            }
+
+        def _parse_bench(stdout_text: str) -> dict | None:
+            try:
+                for ln in str(stdout_text).splitlines():
+                    if ln.startswith("INTENTIR_BENCH "):
+                        return json.loads(ln[len("INTENTIR_BENCH ") :].strip())
+            except Exception:
+                return None
+            return None
+
+        def _parse_profile(stdout_text: str) -> dict | None:
+            try:
+                for ln in str(stdout_text).splitlines():
+                    if ln.startswith("INTENTIR_PROFILE "):
+                        return json.loads(ln[len("INTENTIR_PROFILE ") :].strip())
+            except Exception:
+                return None
+            return None
+
+        def _run_once(*, proc_bind: str | None, bench_iters_run: int, bench_warmup_run: int) -> dict:
+            env_prefix = ""
+            if int(omp_threads) > 0:
+                t = int(omp_threads)
+                env_prefix += f"INTENTIR_OMP_THREADS={t} OMP_NUM_THREADS={t} OMP_DYNAMIC=FALSE "
+                if proc_bind:
+                    env_prefix += f"OMP_PROC_BIND={str(proc_bind)} "
+                if omp_places:
+                    env_prefix += f"OMP_PLACES={str(omp_places)} "
+                if gomp_cpu_affinity:
+                    env_prefix += f"GOMP_CPU_AFFINITY={str(gomp_cpu_affinity)} "
+            if bool(profile_ops):
+                env_prefix += "INTENTIR_PROFILE_OPS=1 "
+
+            cmd = f"cd {remote_dir} && {env_prefix}{remote_bin}"
+            if int(bench_iters_run) > 0:
+                bi = int(bench_iters_run)
+                bw = int(bench_warmup_run)
+                if bw < 0:
+                    bw = 0
+                cmd = f"cd {remote_dir} && {env_prefix}INTENTIR_BENCH_ITERS={bi} INTENTIR_BENCH_WARMUP={bw} {remote_bin}"
+
+            stdin, stdout, stderr = client.exec_command(cmd, timeout=60)
+            run_out = stdout.read().decode()
+            run_err = stderr.read().decode()
+            run_rc = stdout.channel.recv_exit_status()
+            return {
+                "run_rc": run_rc,
+                "stdout": run_out,
+                "stderr": run_err,
+                "bench": _parse_bench(run_out),
+                "profile_ops": _parse_profile(run_out),
             }
 
         _log(f"[{frontend}:{kernel}] remote run")
-        env_prefix = ""
-        if int(omp_threads) > 0:
-            t = int(omp_threads)
-            # Pin OpenMP threads to physical cores for more stable scaling on many-core RVV hosts.
-            # (GOMP honors these; they are harmless if ignored.)
-            env_prefix += (
-                f"INTENTIR_OMP_THREADS={t} OMP_NUM_THREADS={t} OMP_DYNAMIC=FALSE "
-                f"OMP_PROC_BIND={str(omp_proc_bind)} OMP_PLACES={str(omp_places)} "
-            )
-            if gomp_cpu_affinity:
-                env_prefix += f"GOMP_CPU_AFFINITY={str(gomp_cpu_affinity)} "
-        if bool(profile_ops):
-            env_prefix += "INTENTIR_PROFILE_OPS=1 "
-        run_cmd = f"cd {remote_dir} && {env_prefix}{remote_bin}"
-        if int(bench_iters) > 0:
-            bi = int(bench_iters)
-            bw = int(bench_warmup)
-            if bw < 0:
-                bw = 0
-            run_cmd = f"cd {remote_dir} && {env_prefix}INTENTIR_BENCH_ITERS={bi} INTENTIR_BENCH_WARMUP={bw} {remote_bin}"
-        stdin, stdout, stderr = client.exec_command(run_cmd, timeout=60)
-        run_out = stdout.read().decode()
-        run_err = stderr.read().decode()
-        run_rc = stdout.channel.recv_exit_status()
 
-        bench = None
-        try:
-            for ln in str(run_out).splitlines():
-                if ln.startswith("INTENTIR_BENCH "):
-                    bench = json.loads(ln[len("INTENTIR_BENCH ") :].strip())
-                    break
-        except Exception:
-            bench = None
+        proc_bind_used: str | None = None
+        proc_bind_trials: list[dict] | None = None
+        if int(omp_threads) > 0 and str(omp_proc_bind).lower() == "auto" and int(bench_iters) > 0:
+            # Micro-autotune proc bind policy; compile is already the dominant cost.
+            candidates = ["spread", "false"]
+            it_small = min(max(int(bench_iters) // 4, 5), 30)
+            wu_small = min(max(int(bench_warmup), 1), 5)
+            proc_bind_trials = []
+            best = None
+            best_ns = None
+            for cand in candidates:
+                r = _run_once(proc_bind=cand, bench_iters_run=it_small, bench_warmup_run=wu_small)
+                b = r.get("bench") or {}
+                ns = None
+                if isinstance(b, dict):
+                    v = b.get("ns_per_iter")
+                    if isinstance(v, (int, float)) and v > 0:
+                        ns = float(v)
+                proc_bind_trials.append({"proc_bind": cand, "run_rc": r.get("run_rc"), "bench": r.get("bench")})
+                if r.get("run_rc") == 0 and ns is not None:
+                    if best_ns is None or ns < best_ns:
+                        best_ns = ns
+                        best = cand
+            proc_bind_used = best or "spread"
+        else:
+            s = str(omp_proc_bind).strip()
+            proc_bind_used = (s if s and s.lower() not in {"none"} else None)
 
-        prof = None
-        try:
-            for ln in str(run_out).splitlines():
-                if ln.startswith("INTENTIR_PROFILE "):
-                    prof = json.loads(ln[len("INTENTIR_PROFILE ") :].strip())
-                    break
-        except Exception:
-            prof = None
+        run = _run_once(proc_bind=proc_bind_used, bench_iters_run=int(bench_iters), bench_warmup_run=int(bench_warmup))
 
         return {
             "compile_rc": compile_rc,
             "compile_stdout": comp_out,
             "compile_stderr": comp_err,
-            "run_rc": run_rc,
-            "stdout": run_out,
-            "stderr": run_err,
-            "bench": bench,
-            "profile_ops": prof,
+            "run_rc": run.get("run_rc"),
+            "stdout": run.get("stdout") or "",
+            "stderr": run.get("stderr") or "",
+            "bench": run.get("bench"),
+            "profile_ops": run.get("profile_ops"),
+            "omp": {
+                "threads": int(omp_threads),
+                "proc_bind": proc_bind_used,
+                "places": str(omp_places),
+                "gomp_cpu_affinity": gomp_cpu_affinity,
+                "proc_bind_trials": proc_bind_trials,
+            },
         }
 
     chosen_schedule = intent.schedule
@@ -757,6 +805,7 @@ def run_remote(
     return {
         "backend": backend_used,
         "omp_threads": int(omp_threads),
+        "omp": chosen.get("omp"),
         "schedule": {
             "tile_m": chosen_schedule.tile_m,
             "tile_n": chosen_schedule.tile_n,
@@ -807,7 +856,7 @@ def main():
     ap.add_argument("--bench-iters", type=int, default=0, help="if >0, run microbenchmark loop and print INTENTIR_BENCH JSON line")
     ap.add_argument("--bench-warmup", type=int, default=1, help="warmup iterations for benchmark loop")
     ap.add_argument("--omp-threads", type=int, default=1, help="OpenMP threads for RVV backend (default: 1)")
-    ap.add_argument("--omp-proc-bind", default="spread", help="OpenMP proc bind policy (e.g., spread, close, master, false)")
+    ap.add_argument("--omp-proc-bind", default="auto", help="OpenMP proc bind policy (spread/close/false/auto)")
     ap.add_argument("--omp-places", default="cores", help="OpenMP places (e.g., cores, threads)")
     ap.add_argument("--gomp-cpu-affinity", default=None, help="Optional GOMP_CPU_AFFINITY override (advanced)")
     ap.add_argument("--profile-ops", action="store_true", help="emit per-op timing JSON line (INTENTIR_PROFILE) from the RVV program")

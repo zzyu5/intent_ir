@@ -22,6 +22,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
+import math
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -124,6 +125,7 @@ def main() -> None:
     ap.add_argument("--bench-iters", type=int, default=5)
     ap.add_argument("--bench-warmup", type=int, default=1)
     ap.add_argument("--omp-threads", type=int, default=16)
+    ap.add_argument("--omp-proc-bind", default="spread", help="OpenMP proc bind policy for E5.2 (fixed to isolate schedule)")
     ap.add_argument("--tune-mode", choices=["auto", "guided", "locked"], default="auto")
     ap.add_argument("--tune-budget", type=int, default=1, help=">1 enables measured autotune (requires bench-iters>0)")
     ap.add_argument("--profile", default=None, help="RVV profile name or JSON path (default: probe remote host)")
@@ -292,6 +294,7 @@ def main() -> None:
                 bench_warmup=int(args.bench_warmup),
                 bench_only=True,
                 omp_threads=int(args.omp_threads),
+                omp_proc_bind=str(args.omp_proc_bind),
                 log=_log,
             )
         except Exception as e:
@@ -334,6 +337,7 @@ def main() -> None:
                 bench_warmup=int(args.bench_warmup),
                 bench_only=True,
                 omp_threads=int(args.omp_threads),
+                omp_proc_bind=str(args.omp_proc_bind),
                 log=_log,
             )
         except Exception as e:
@@ -413,6 +417,7 @@ def main() -> None:
         "experiment": "E5_portability_vs_perf_v1",
         "host": str(args.host),
         "omp_threads": int(args.omp_threads),
+        "omp_proc_bind": str(args.omp_proc_bind),
         "bench_iters": int(args.bench_iters),
         "bench_warmup": int(args.bench_warmup),
         "tune_mode": str(args.tune_mode),
@@ -420,6 +425,36 @@ def main() -> None:
         "profile": profile_name_or_path,
         "kernels_requested": list(wanted),
         "kernels": results,
+    }
+    # Paper-friendly aggregate metrics (avoid micro-kernel noise by also reporting
+    # a runtime-weighted total speedup).
+    speedups = []
+    freeze_total = 0.0
+    retune_total = 0.0
+    for it in results:
+        if it.get("status") != "ok":
+            continue
+        fs = (it.get("freeze") or {}).get("seconds_per_iter")
+        rs = (it.get("retune") or {}).get("seconds_per_iter")
+        sp = it.get("speedup_retune_vs_freeze")
+        if isinstance(fs, (int, float)) and isinstance(rs, (int, float)) and fs > 0 and rs > 0:
+            freeze_total += float(fs)
+            retune_total += float(rs)
+        if isinstance(sp, (int, float)) and float(sp) > 0:
+            speedups.append(float(sp))
+    geom = None
+    if speedups:
+        geom = math.exp(sum(math.log(x) for x in speedups) / float(len(speedups)))
+    total_speedup = None
+    if retune_total > 0:
+        total_speedup = float(freeze_total) / float(retune_total)
+    out["summary"] = {
+        "kernels_total": int(len(results)),
+        "kernels_ok": int(sum(1 for it in results if it.get("status") == "ok")),
+        "geom_mean_speedup_retune_vs_freeze": geom,
+        "total_seconds_per_iter_freeze": freeze_total,
+        "total_seconds_per_iter_retune": retune_total,
+        "total_speedup_retune_vs_freeze": total_speedup,
     }
     out_path.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
     print(out_path)
