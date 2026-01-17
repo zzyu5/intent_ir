@@ -22,19 +22,21 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from frontends.common.certificate_v2 import SemanticCertificateV2
 from frontends.common.static_validate import StaticValidationResult, static_validate
 from intent_ir.ir import IntentFunction
 from verify.gen_cases import TestCase
 from verify.mutation import MutationReport, run_mutation_kill
-
-
-ROOT = Path(__file__).resolve().parents[2]
 
 
 DEFAULT6 = [
@@ -307,4 +309,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

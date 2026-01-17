@@ -24,15 +24,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from frontends.common.certificate_v2 import SemanticCertificateV2
 from intent_ir.ir import IntentFunction, Op, TensorType
-
-
-ROOT = Path(__file__).resolve().parents[2]
 
 
 def _artifact_dir(frontend: str) -> Path:
@@ -368,4 +370,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
