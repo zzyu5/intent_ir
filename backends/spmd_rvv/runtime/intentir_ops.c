@@ -2879,45 +2879,203 @@ void intentir_matmul_2d_f32(
   // If tile blocking yields too few independent tiles, OpenMP under-utilizes threads.
   // Use a finer-grained parallelization over (m, n_base) to provide enough work.
   int use_fine_parallel = 0;
+  int fine_parallel_split_n = 0;
   {
     int thr = omp_get_max_threads();
     if (thr > 1) {
       const int64_t tiles_m = (M + tm - 1) / tm;
       const int64_t tiles_n = (N + tn - 1) / tn;
-      if (tiles_m * tiles_n < (int64_t)thr) use_fine_parallel = 1;
+      if (tiles_m * tiles_n < (int64_t)thr) {
+        use_fine_parallel = 1;
+        // Prefer parallelizing over m-blocks first (better locality + lower scheduling overhead).
+        // Only split n when m-blocks alone are insufficient to saturate threads.
+        const int64_t mr = 4;
+        const int64_t blocks_m = (M + mr - 1) / mr;
+        if (blocks_m < (int64_t)thr) fine_parallel_split_n = 1;
+      }
     }
   }
 #endif
 
 #if defined(__riscv_vector) || defined(__riscv_v)
   if (!transpose_a) {
+    // Micro-kernel: compute up to 4 rows at once to reuse B loads across rows (better scaling on many cores).
+    const int64_t mr = 4;
 #ifdef _OPENMP
     if (use_fine_parallel) {
+      if (!fine_parallel_split_n) {
+#pragma omp parallel for schedule(static) if (M >= 16)
+        for (int64_t m0 = 0; m0 < M; m0 += mr) {
+          int64_t m1 = m0 + mr;
+          if (m1 > M) m1 = M;
+          for (int64_t n_base = 0; n_base < N; n_base += tn) {
+            int64_t n_end = n_base + tn;
+            if (n_end > N) n_end = N;
+            for (int64_t n0 = n_base; n0 < n_end;) {
+              size_t rem = (size_t)(n_end - n0);
+              size_t vl0 = intentir_vsetvl_e32m1(rem);
+              size_t vl1 = 0;
+              if (rem > vl0) vl1 = intentir_vsetvl_e32m1(rem - vl0);
+
+              vfloat32m1_t acc0_0 = __riscv_vfmv_v_f_f32m1(0.0f, vl0);
+              vfloat32m1_t acc1_0, acc2_0, acc3_0;
+              if (m0 + 1 < m1) acc1_0 = __riscv_vfmv_v_f_f32m1(0.0f, vl0);
+              if (m0 + 2 < m1) acc2_0 = __riscv_vfmv_v_f_f32m1(0.0f, vl0);
+              if (m0 + 3 < m1) acc3_0 = __riscv_vfmv_v_f_f32m1(0.0f, vl0);
+
+              vfloat32m1_t acc0_1, acc1_1, acc2_1, acc3_1;
+              if (vl1) {
+                acc0_1 = __riscv_vfmv_v_f_f32m1(0.0f, vl1);
+                if (m0 + 1 < m1) acc1_1 = __riscv_vfmv_v_f_f32m1(0.0f, vl1);
+                if (m0 + 2 < m1) acc2_1 = __riscv_vfmv_v_f_f32m1(0.0f, vl1);
+                if (m0 + 3 < m1) acc3_1 = __riscv_vfmv_v_f_f32m1(0.0f, vl1);
+              }
+
+              for (int64_t k_base = 0; k_base < K; k_base += tk) {
+                int64_t k_end = k_base + tk;
+                if (k_end > K) k_end = K;
+                for (int64_t k0 = k_base; k0 < k_end; ++k0) {
+                  vfloat32m1_t vb0;
+                  vfloat32m1_t vb1;
+                  if (!transpose_b) {
+                    vb0 = __riscv_vle32_v_f32m1(&b[idx2((int)k0, (int)n0, (int)N)], vl0);
+                    if (vl1) vb1 = __riscv_vle32_v_f32m1(&b[idx2((int)k0, (int)(n0 + (int64_t)vl0), (int)N)], vl1);
+                  } else {
+                    vb0 = __riscv_vlse32_v_f32m1(
+                        &b[idx2((int)n0, (int)k0, (int)K)], (ptrdiff_t)((size_t)K * sizeof(float)), vl0);
+                    if (vl1) {
+                      vb1 = __riscv_vlse32_v_f32m1(
+                          &b[idx2((int)(n0 + (int64_t)vl0), (int)k0, (int)K)], (ptrdiff_t)((size_t)K * sizeof(float)), vl1);
+                    }
+                  }
+
+                  float a0 = a[idx2((int)m0, (int)k0, (int)K)];
+                  acc0_0 = __riscv_vfmacc_vf_f32m1(acc0_0, a0, vb0, vl0);
+                  if (vl1) acc0_1 = __riscv_vfmacc_vf_f32m1(acc0_1, a0, vb1, vl1);
+
+                  if (m0 + 1 < m1) {
+                    float a1 = a[idx2((int)(m0 + 1), (int)k0, (int)K)];
+                    acc1_0 = __riscv_vfmacc_vf_f32m1(acc1_0, a1, vb0, vl0);
+                    if (vl1) acc1_1 = __riscv_vfmacc_vf_f32m1(acc1_1, a1, vb1, vl1);
+                  }
+                  if (m0 + 2 < m1) {
+                    float a2 = a[idx2((int)(m0 + 2), (int)k0, (int)K)];
+                    acc2_0 = __riscv_vfmacc_vf_f32m1(acc2_0, a2, vb0, vl0);
+                    if (vl1) acc2_1 = __riscv_vfmacc_vf_f32m1(acc2_1, a2, vb1, vl1);
+                  }
+                  if (m0 + 3 < m1) {
+                    float a3 = a[idx2((int)(m0 + 3), (int)k0, (int)K)];
+                    acc3_0 = __riscv_vfmacc_vf_f32m1(acc3_0, a3, vb0, vl0);
+                    if (vl1) acc3_1 = __riscv_vfmacc_vf_f32m1(acc3_1, a3, vb1, vl1);
+                  }
+                }
+              }
+
+              __riscv_vse32_v_f32m1(&out[idx2((int)m0, (int)n0, (int)N)], acc0_0, vl0);
+              if (vl1) __riscv_vse32_v_f32m1(&out[idx2((int)m0, (int)(n0 + (int64_t)vl0), (int)N)], acc0_1, vl1);
+              if (m0 + 1 < m1) {
+                __riscv_vse32_v_f32m1(&out[idx2((int)(m0 + 1), (int)n0, (int)N)], acc1_0, vl0);
+                if (vl1) __riscv_vse32_v_f32m1(&out[idx2((int)(m0 + 1), (int)(n0 + (int64_t)vl0), (int)N)], acc1_1, vl1);
+              }
+              if (m0 + 2 < m1) {
+                __riscv_vse32_v_f32m1(&out[idx2((int)(m0 + 2), (int)n0, (int)N)], acc2_0, vl0);
+                if (vl1) __riscv_vse32_v_f32m1(&out[idx2((int)(m0 + 2), (int)(n0 + (int64_t)vl0), (int)N)], acc2_1, vl1);
+              }
+              if (m0 + 3 < m1) {
+                __riscv_vse32_v_f32m1(&out[idx2((int)(m0 + 3), (int)n0, (int)N)], acc3_0, vl0);
+                if (vl1) __riscv_vse32_v_f32m1(&out[idx2((int)(m0 + 3), (int)(n0 + (int64_t)vl0), (int)N)], acc3_1, vl1);
+              }
+
+              n0 += (int64_t)(vl0 + vl1);
+            }
+          }
+        }
+        return;
+      }
+
 #pragma omp parallel for collapse(2) schedule(static) if ((M * N) >= 4096)
-      for (int64_t m = 0; m < M; ++m) {
+      for (int64_t m0 = 0; m0 < M; m0 += mr) {
         for (int64_t n_base = 0; n_base < N; n_base += tn) {
+          int64_t m1 = m0 + mr;
+          if (m1 > M) m1 = M;
           int64_t n_end = n_base + tn;
           if (n_end > N) n_end = N;
           for (int64_t n0 = n_base; n0 < n_end;) {
             size_t rem = (size_t)(n_end - n0);
-            size_t vl = intentir_vsetvl_e32m1(rem);
-            vfloat32m1_t vacc = __riscv_vfmv_v_f_f32m1(0.0f, vl);
+            size_t vl0 = intentir_vsetvl_e32m1(rem);
+            size_t vl1 = 0;
+            if (rem > vl0) vl1 = intentir_vsetvl_e32m1(rem - vl0);
+
+            vfloat32m1_t acc0_0 = __riscv_vfmv_v_f_f32m1(0.0f, vl0);
+            vfloat32m1_t acc1_0, acc2_0, acc3_0;
+            if (m0 + 1 < m1) acc1_0 = __riscv_vfmv_v_f_f32m1(0.0f, vl0);
+            if (m0 + 2 < m1) acc2_0 = __riscv_vfmv_v_f_f32m1(0.0f, vl0);
+            if (m0 + 3 < m1) acc3_0 = __riscv_vfmv_v_f_f32m1(0.0f, vl0);
+
+            vfloat32m1_t acc0_1, acc1_1, acc2_1, acc3_1;
+            if (vl1) {
+              acc0_1 = __riscv_vfmv_v_f_f32m1(0.0f, vl1);
+              if (m0 + 1 < m1) acc1_1 = __riscv_vfmv_v_f_f32m1(0.0f, vl1);
+              if (m0 + 2 < m1) acc2_1 = __riscv_vfmv_v_f_f32m1(0.0f, vl1);
+              if (m0 + 3 < m1) acc3_1 = __riscv_vfmv_v_f_f32m1(0.0f, vl1);
+            }
+
             for (int64_t k_base = 0; k_base < K; k_base += tk) {
               int64_t k_end = k_base + tk;
               if (k_end > K) k_end = K;
               for (int64_t k0 = k_base; k0 < k_end; ++k0) {
-                float av = a[idx2((int)m, (int)k0, (int)K)];
-                vfloat32m1_t vb;
+                vfloat32m1_t vb0;
+                vfloat32m1_t vb1;
                 if (!transpose_b) {
-                  vb = __riscv_vle32_v_f32m1(&b[idx2((int)k0, (int)n0, (int)N)], vl);
+                  vb0 = __riscv_vle32_v_f32m1(&b[idx2((int)k0, (int)n0, (int)N)], vl0);
+                  if (vl1) vb1 = __riscv_vle32_v_f32m1(&b[idx2((int)k0, (int)(n0 + (int64_t)vl0), (int)N)], vl1);
                 } else {
-                  vb = __riscv_vlse32_v_f32m1(&b[idx2((int)n0, (int)k0, (int)K)], (ptrdiff_t)((size_t)K * sizeof(float)), vl);
+                  vb0 = __riscv_vlse32_v_f32m1(
+                      &b[idx2((int)n0, (int)k0, (int)K)], (ptrdiff_t)((size_t)K * sizeof(float)), vl0);
+                  if (vl1) {
+                    vb1 = __riscv_vlse32_v_f32m1(
+                        &b[idx2((int)(n0 + (int64_t)vl0), (int)k0, (int)K)], (ptrdiff_t)((size_t)K * sizeof(float)), vl1);
+                  }
                 }
-                vacc = __riscv_vfmacc_vf_f32m1(vacc, av, vb, vl);
+
+                float a0 = a[idx2((int)m0, (int)k0, (int)K)];
+                acc0_0 = __riscv_vfmacc_vf_f32m1(acc0_0, a0, vb0, vl0);
+                if (vl1) acc0_1 = __riscv_vfmacc_vf_f32m1(acc0_1, a0, vb1, vl1);
+
+                if (m0 + 1 < m1) {
+                  float a1 = a[idx2((int)(m0 + 1), (int)k0, (int)K)];
+                  acc1_0 = __riscv_vfmacc_vf_f32m1(acc1_0, a1, vb0, vl0);
+                  if (vl1) acc1_1 = __riscv_vfmacc_vf_f32m1(acc1_1, a1, vb1, vl1);
+                }
+                if (m0 + 2 < m1) {
+                  float a2 = a[idx2((int)(m0 + 2), (int)k0, (int)K)];
+                  acc2_0 = __riscv_vfmacc_vf_f32m1(acc2_0, a2, vb0, vl0);
+                  if (vl1) acc2_1 = __riscv_vfmacc_vf_f32m1(acc2_1, a2, vb1, vl1);
+                }
+                if (m0 + 3 < m1) {
+                  float a3 = a[idx2((int)(m0 + 3), (int)k0, (int)K)];
+                  acc3_0 = __riscv_vfmacc_vf_f32m1(acc3_0, a3, vb0, vl0);
+                  if (vl1) acc3_1 = __riscv_vfmacc_vf_f32m1(acc3_1, a3, vb1, vl1);
+                }
               }
             }
-            __riscv_vse32_v_f32m1(&out[idx2((int)m, (int)n0, (int)N)], vacc, vl);
-            n0 += (int64_t)vl;
+
+            __riscv_vse32_v_f32m1(&out[idx2((int)m0, (int)n0, (int)N)], acc0_0, vl0);
+            if (vl1) __riscv_vse32_v_f32m1(&out[idx2((int)m0, (int)(n0 + (int64_t)vl0), (int)N)], acc0_1, vl1);
+            if (m0 + 1 < m1) {
+              __riscv_vse32_v_f32m1(&out[idx2((int)(m0 + 1), (int)n0, (int)N)], acc1_0, vl0);
+              if (vl1) __riscv_vse32_v_f32m1(&out[idx2((int)(m0 + 1), (int)(n0 + (int64_t)vl0), (int)N)], acc1_1, vl1);
+            }
+            if (m0 + 2 < m1) {
+              __riscv_vse32_v_f32m1(&out[idx2((int)(m0 + 2), (int)n0, (int)N)], acc2_0, vl0);
+              if (vl1) __riscv_vse32_v_f32m1(&out[idx2((int)(m0 + 2), (int)(n0 + (int64_t)vl0), (int)N)], acc2_1, vl1);
+            }
+            if (m0 + 3 < m1) {
+              __riscv_vse32_v_f32m1(&out[idx2((int)(m0 + 3), (int)n0, (int)N)], acc3_0, vl0);
+              if (vl1) __riscv_vse32_v_f32m1(&out[idx2((int)(m0 + 3), (int)(n0 + (int64_t)vl0), (int)N)], acc3_1, vl1);
+            }
+
+            n0 += (int64_t)(vl0 + vl1);
           }
         }
       }
@@ -2933,28 +3091,85 @@ void intentir_matmul_2d_f32(
       for (int64_t n_base = 0; n_base < N; n_base += tn) {
         int64_t n_end = n_base + tn;
         if (n_end > N) n_end = N;
-        for (int64_t m = m_base; m < m_end; ++m) {
+        for (int64_t m0 = m_base; m0 < m_end; m0 += mr) {
+          int64_t m1 = m0 + mr;
+          if (m1 > m_end) m1 = m_end;
           for (int64_t n0 = n_base; n0 < n_end;) {
             size_t rem = (size_t)(n_end - n0);
-            size_t vl = intentir_vsetvl_e32m1(rem);
-            vfloat32m1_t vacc = __riscv_vfmv_v_f_f32m1(0.0f, vl);
+            size_t vl0 = intentir_vsetvl_e32m1(rem);
+            size_t vl1 = 0;
+            if (rem > vl0) vl1 = intentir_vsetvl_e32m1(rem - vl0);
+
+            vfloat32m1_t acc0_0 = __riscv_vfmv_v_f_f32m1(0.0f, vl0);
+            vfloat32m1_t acc1_0, acc2_0, acc3_0;
+            if (m0 + 1 < m1) acc1_0 = __riscv_vfmv_v_f_f32m1(0.0f, vl0);
+            if (m0 + 2 < m1) acc2_0 = __riscv_vfmv_v_f_f32m1(0.0f, vl0);
+            if (m0 + 3 < m1) acc3_0 = __riscv_vfmv_v_f_f32m1(0.0f, vl0);
+
+            vfloat32m1_t acc0_1, acc1_1, acc2_1, acc3_1;
+            if (vl1) {
+              acc0_1 = __riscv_vfmv_v_f_f32m1(0.0f, vl1);
+              if (m0 + 1 < m1) acc1_1 = __riscv_vfmv_v_f_f32m1(0.0f, vl1);
+              if (m0 + 2 < m1) acc2_1 = __riscv_vfmv_v_f_f32m1(0.0f, vl1);
+              if (m0 + 3 < m1) acc3_1 = __riscv_vfmv_v_f_f32m1(0.0f, vl1);
+            }
+
             for (int64_t k_base = 0; k_base < K; k_base += tk) {
               int64_t k_end = k_base + tk;
               if (k_end > K) k_end = K;
               for (int64_t k0 = k_base; k0 < k_end; ++k0) {
-                float av = a[idx2((int)m, (int)k0, (int)K)];
-                vfloat32m1_t vb;
+                vfloat32m1_t vb0;
+                vfloat32m1_t vb1;
                 if (!transpose_b) {
-                  vb = __riscv_vle32_v_f32m1(&b[idx2((int)k0, (int)n0, (int)N)], vl);
+                  vb0 = __riscv_vle32_v_f32m1(&b[idx2((int)k0, (int)n0, (int)N)], vl0);
+                  if (vl1) vb1 = __riscv_vle32_v_f32m1(&b[idx2((int)k0, (int)(n0 + (int64_t)vl0), (int)N)], vl1);
                 } else {
-                  vb = __riscv_vlse32_v_f32m1(
-                      &b[idx2((int)n0, (int)k0, (int)K)], (ptrdiff_t)((size_t)K * sizeof(float)), vl);
+                  vb0 = __riscv_vlse32_v_f32m1(
+                      &b[idx2((int)n0, (int)k0, (int)K)], (ptrdiff_t)((size_t)K * sizeof(float)), vl0);
+                  if (vl1) {
+                    vb1 = __riscv_vlse32_v_f32m1(
+                        &b[idx2((int)(n0 + (int64_t)vl0), (int)k0, (int)K)], (ptrdiff_t)((size_t)K * sizeof(float)), vl1);
+                  }
                 }
-                vacc = __riscv_vfmacc_vf_f32m1(vacc, av, vb, vl);
+
+                float a0 = a[idx2((int)m0, (int)k0, (int)K)];
+                acc0_0 = __riscv_vfmacc_vf_f32m1(acc0_0, a0, vb0, vl0);
+                if (vl1) acc0_1 = __riscv_vfmacc_vf_f32m1(acc0_1, a0, vb1, vl1);
+
+                if (m0 + 1 < m1) {
+                  float a1 = a[idx2((int)(m0 + 1), (int)k0, (int)K)];
+                  acc1_0 = __riscv_vfmacc_vf_f32m1(acc1_0, a1, vb0, vl0);
+                  if (vl1) acc1_1 = __riscv_vfmacc_vf_f32m1(acc1_1, a1, vb1, vl1);
+                }
+                if (m0 + 2 < m1) {
+                  float a2 = a[idx2((int)(m0 + 2), (int)k0, (int)K)];
+                  acc2_0 = __riscv_vfmacc_vf_f32m1(acc2_0, a2, vb0, vl0);
+                  if (vl1) acc2_1 = __riscv_vfmacc_vf_f32m1(acc2_1, a2, vb1, vl1);
+                }
+                if (m0 + 3 < m1) {
+                  float a3 = a[idx2((int)(m0 + 3), (int)k0, (int)K)];
+                  acc3_0 = __riscv_vfmacc_vf_f32m1(acc3_0, a3, vb0, vl0);
+                  if (vl1) acc3_1 = __riscv_vfmacc_vf_f32m1(acc3_1, a3, vb1, vl1);
+                }
               }
             }
-            __riscv_vse32_v_f32m1(&out[idx2((int)m, (int)n0, (int)N)], vacc, vl);
-            n0 += (int64_t)vl;
+
+            __riscv_vse32_v_f32m1(&out[idx2((int)m0, (int)n0, (int)N)], acc0_0, vl0);
+            if (vl1) __riscv_vse32_v_f32m1(&out[idx2((int)m0, (int)(n0 + (int64_t)vl0), (int)N)], acc0_1, vl1);
+            if (m0 + 1 < m1) {
+              __riscv_vse32_v_f32m1(&out[idx2((int)(m0 + 1), (int)n0, (int)N)], acc1_0, vl0);
+              if (vl1) __riscv_vse32_v_f32m1(&out[idx2((int)(m0 + 1), (int)(n0 + (int64_t)vl0), (int)N)], acc1_1, vl1);
+            }
+            if (m0 + 2 < m1) {
+              __riscv_vse32_v_f32m1(&out[idx2((int)(m0 + 2), (int)n0, (int)N)], acc2_0, vl0);
+              if (vl1) __riscv_vse32_v_f32m1(&out[idx2((int)(m0 + 2), (int)(n0 + (int64_t)vl0), (int)N)], acc2_1, vl1);
+            }
+            if (m0 + 3 < m1) {
+              __riscv_vse32_v_f32m1(&out[idx2((int)(m0 + 3), (int)n0, (int)N)], acc3_0, vl0);
+              if (vl1) __riscv_vse32_v_f32m1(&out[idx2((int)(m0 + 3), (int)(n0 + (int64_t)vl0), (int)N)], acc3_1, vl1);
+            }
+
+            n0 += (int64_t)(vl0 + vl1);
           }
         }
       }
