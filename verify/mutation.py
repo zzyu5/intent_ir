@@ -16,6 +16,7 @@ from __future__ import annotations
 import copy
 import json
 import random
+import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -34,6 +35,8 @@ class MutationOutcome:
     killed_by: str  # "A_static" | "B_diff" | "C_metamorphic" | "C_bounded" | "survived" | "invalid"
     detail: str
     diff_summary: Optional[str] = None
+    cases_checked: Optional[int] = None
+    time_s: Optional[float] = None
 
 
 @dataclass
@@ -92,6 +95,7 @@ def run_mutation_kill(
     atol: float = 1e-3,
     rtol: float = 1e-3,
     include_bounded: bool = True,
+    diff_stop_on_first_fail: bool = False,
 ) -> MutationReport:
     mutants = generate_mutants(intent, n=n_mutants, seed=seed)
     killed_by: Dict[str, int] = {"A_static": 0, "B_diff": 0, "C_metamorphic": 0, "C_bounded": 0, "invalid": 0}
@@ -141,7 +145,15 @@ def run_mutation_kill(
 
         # Stage B: dynamic diff (reuse the same cases as the pipeline, but keep it small)
         try:
-            diffs, _ = run_diff(m, run_ref_fn, diff_cases, tolerances={"atol": atol, "rtol": rtol})
+            t0 = time.monotonic()
+            diffs, _ = run_diff(
+                m,
+                run_ref_fn,
+                diff_cases,
+                tolerances={"atol": atol, "rtol": rtol},
+                stop_on_first_fail=bool(diff_stop_on_first_fail),
+            )
+            dt = time.monotonic() - t0
             if not all(d.ok for d in diffs):
                 worst = max(diffs, key=lambda d: (not d.ok, d.max_abs_err))
                 killed_by["B_diff"] += 1
@@ -153,6 +165,8 @@ def run_mutation_kill(
                         killed_by="B_diff",
                         detail="dynamic diff mismatch",
                         diff_summary=worst.summary,
+                        cases_checked=len(diffs),
+                        time_s=float(dt),
                     )
                 )
                 continue
@@ -161,7 +175,12 @@ def run_mutation_kill(
             by_mut[mut_type]["B_diff"] = by_mut[mut_type].get("B_diff", 0) + 1
             outcomes.append(
                 MutationOutcome(
-                    mutant_id=mid, mutation_type=mut_type, killed_by="B_diff", detail=f"diff error: {type(e).__name__}: {e}"
+                    mutant_id=mid,
+                    mutation_type=mut_type,
+                    killed_by="B_diff",
+                    detail=f"diff error: {type(e).__name__}: {e}",
+                    cases_checked=None,
+                    time_s=None,
                 )
             )
             continue

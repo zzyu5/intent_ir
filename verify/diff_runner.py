@@ -40,6 +40,7 @@ def run_diff(
     cases: Iterable[TestCase],
     constraints=None,
     tolerances=None,
+    stop_on_first_fail: bool = False,
 ) -> Tuple[List[DiffResult], List[Counterexample]]:
     inferred_tol = None if tolerances is None else dict(tolerances)
     cases_list = list(cases)
@@ -164,6 +165,7 @@ def run_diff(
         # Strict "original view" check: inputs must match declared tensor shapes exactly.
         # If the LLM needs a grouped/view shape, it must introduce explicit reshape ops
         # inside IntentIR, rather than redefining the input tensor shape.
+        case_failed = False
         for name, arr in list(inputs.items()):
             if name not in intent_exec.tensors:
                 continue
@@ -188,6 +190,7 @@ def run_diff(
                         hints=["ensure all input tensor dims are bound by case shapes (e.g., N/C/HW), and keep original view"],
                     )
                 )
+                case_failed = True
                 break
             if tuple(arr.shape) != tuple(expected_shape):
                 diff = DiffResult(
@@ -209,33 +212,41 @@ def run_diff(
                         ],
                     )
                 )
+                case_failed = True
                 break
-        else:
-            # Feed symbolic shape bindings from TestCase for broadcast/reshape
-            try:
-                with np.errstate(all="ignore"):
-                    pred = execute_intent(intent_exec, inputs, shape_bindings=bindings)
-                diff = _compare_outputs(pred, ref_out, intent_exec.outputs, inferred_tol)
-            except Exception as e:
-                diff = DiffResult(
-                    ok=False,
-                    max_abs_err=0.0,
-                    max_rel_err=0.0,
-                    first_bad_index=None,
-                    summary=f"interpreter error: {type(e).__name__}: {e}",
+
+        if case_failed:
+            if stop_on_first_fail:
+                break
+            continue
+
+        # Feed symbolic shape bindings from TestCase for broadcast/reshape
+        try:
+            with np.errstate(all="ignore"):
+                pred = execute_intent(intent_exec, inputs, shape_bindings=bindings)
+            diff = _compare_outputs(pred, ref_out, intent_exec.outputs, inferred_tol)
+        except Exception as e:
+            diff = DiffResult(
+                ok=False,
+                max_abs_err=0.0,
+                max_rel_err=0.0,
+                first_bad_index=None,
+                summary=f"interpreter error: {type(e).__name__}: {e}",
+            )
+            pred = {}
+        diffs.append(diff)
+        if not diff.ok:
+            counterexamples.append(
+                Counterexample(
+                    case=case,
+                    diff=diff,
+                    intent_json=intent.to_json_dict(),
+                    facts_summary=None,
+                    hints=["check missing ops/reshape/broadcast or wrong reduce axes"],
                 )
-                pred = {}
-            diffs.append(diff)
-            if not diff.ok:
-                counterexamples.append(
-                    Counterexample(
-                        case=case,
-                        diff=diff,
-                        intent_json=intent.to_json_dict(),
-                        facts_summary=None,
-                        hints=["check missing ops/reshape/broadcast or wrong reduce axes"],
-                    )
-                )
+            )
+            if stop_on_first_fail:
+                break
     return diffs, counterexamples
 
 
