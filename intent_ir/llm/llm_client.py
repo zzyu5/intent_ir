@@ -22,7 +22,10 @@ import os
 import requests
 
 
-DEFAULT_MODEL = "claude-sonnet-4.5"
+# Default provider/model to use when callers don't specify one.
+# Keep this as a *working* endpoint; flaky proxies should be listed in
+# `llm_providers.local.json` but not necessarily set as default.
+DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
 
 # Where to load provider configuration from (gitignored).
 # Keep the local config at `intent_ir/llm_providers.local.json` so users don't

@@ -78,6 +78,13 @@ def canonicalize_for_consistency(intent: IntentFunction) -> IntentFunction:
     # that constant-fold the reciprocal.
     _rewrite_reduce_sum_mul_const_to_div(fn)
 
+    # Pass 2e: normalize identity wrappers and +/-inf max/min sentinels.
+    # Some frontends express reductions via explicit sentinel init (e.g., max(-inf, x))
+    # and add identity wrappers around inputs/outputs. These are semantics-preserving
+    # normalizations that reduce cross-frontend drift.
+    _rewrite_max_min_with_infinity_as_identity(fn)
+    _fold_identity_ops(fn)
+
     # Build a producer map after the broadcast folding.
     prod: Dict[str, Op] = {op.output: op for op in fn.ops}
 
@@ -461,7 +468,11 @@ def _is_scalar_const_zero(fn: IntentFunction, prod: Dict[str, Op], name: str) ->
     op = prod.get(name)
     if op is None or op.op != "const" or op.inputs:
         return False
-    if not _is_scalar_like_tensor(fn, name):
+    # Many frontends/LLM outputs omit tensor type entries for intermediates.
+    # For the purpose of consistency canonicalization, treat typeless consts as
+    # scalar-like (rank-0).
+    tt = fn.tensors.get(name)
+    if tt is not None and not _is_scalar_like_tensor(fn, name):
         return False
     attrs = op.attrs or {}
     v = attrs.get("value")
@@ -473,6 +484,144 @@ def _is_scalar_const_zero(fn: IntentFunction, prod: Dict[str, Op], name: str) ->
         return float(v) == 0.0
     except Exception:
         return False
+
+
+def _is_const_inf(fn: IntentFunction, prod: Dict[str, Op], name: str, *, sign: int) -> bool:
+    """
+    Best-effort detection of +/-inf const tensors.
+
+    Note: unlike `_is_scalar_const_zero`, we do NOT require a scalar rank here.
+    Many lowings materialize +/-inf sentinels as full tensors (e.g., `mx = const(-inf)` with shape [M,N]).
+    """
+    op = prod.get(name)
+    if op is None or op.op != "const" or op.inputs:
+        return False
+    v = (op.attrs or {}).get("value")
+    try:
+        fv = float(v)  # type: ignore[arg-type]
+    except Exception:
+        s = str(v).strip().lower()
+        if sign < 0 and s in {"-inf", "-infinity"}:
+            return True
+        if sign > 0 and s in {"+inf", "inf", "infinity", "+infinity"}:
+            return True
+        return False
+    if sign < 0:
+        return fv == float("-inf")
+    return fv == float("inf")
+
+
+def _rewrite_max_min_with_infinity_as_identity(fn: IntentFunction) -> None:
+    """
+    Normalize elementwise +/-inf sentinels:
+
+      max(x, -inf) -> identity(x)
+      min(x, +inf) -> identity(x)
+
+    This is a conservative rewrite used to reduce frontend drift in reduction
+    initializations (common in CUDA/TIR lowering).
+    """
+    if not fn.ops:
+        return
+    prod: Dict[str, Op] = {op.output: op for op in fn.ops}
+    for op in fn.ops:
+        if op.op not in {"max", "min"} or len(op.inputs) != 2:
+            continue
+        a, b = op.inputs[0], op.inputs[1]
+        if op.op == "max":
+            a_inf = _is_const_inf(fn, prod, a, sign=-1)
+            b_inf = _is_const_inf(fn, prod, b, sign=-1)
+        else:
+            a_inf = _is_const_inf(fn, prod, a, sign=+1)
+            b_inf = _is_const_inf(fn, prod, b, sign=+1)
+        if a_inf and not b_inf:
+            op.op = "identity"
+            op.inputs = [b]
+            op.attrs = {}
+        elif b_inf and not a_inf:
+            op.op = "identity"
+            op.inputs = [a]
+            op.attrs = {}
+
+
+def _fold_identity_ops(fn: IntentFunction) -> None:
+    """
+    Fold `identity(x)` away by rewiring its uses.
+
+    Important: avoid turning function outputs into pure aliases of external inputs
+    (e.g., `outputs=["inp"]`), which can confuse E4 structural comparisons. For
+    output identities, we only eliminate them by renaming the producer of `x`
+    to the output name when the producer exists and `x` is not shared.
+    """
+    if not fn.ops:
+        return
+
+    outputs_set = set(fn.outputs or [])
+
+    # Use counts to ensure we only rewrite unshared values.
+    uses: Dict[str, int] = {}
+    for out in outputs_set:
+        uses[out] = uses.get(out, 0) + 1
+    for op in fn.ops:
+        for inp in op.inputs:
+            uses[inp] = uses.get(inp, 0) + 1
+
+    prod: Dict[str, Op] = {op.output: op for op in fn.ops if op.output}
+
+    # Step 1: eliminate `out = identity(x)` when:
+    #   - out is a function output
+    #   - x has a producer op
+    #   - x is not shared (only used by this identity)
+    # This keeps output names stable while removing the wrapper.
+    drop_idxs: set[int] = set()
+    for idx, op in enumerate(list(fn.ops)):
+        if op.op != "identity" or len(op.inputs) != 1:
+            continue
+        out = str(op.output)
+        if out not in outputs_set:
+            continue
+        x = str(op.inputs[0])
+        p = prod.get(x)
+        if p is None:
+            continue
+        if uses.get(x, 0) != 1:
+            continue
+        # Rename producer output to the function output name.
+        p.output = out
+        # Move tensor type if available.
+        if out not in fn.tensors and x in fn.tensors:
+            fn.tensors[out] = fn.tensors.pop(x)
+        drop_idxs.add(int(idx))
+
+    if drop_idxs:
+        fn.ops = [op for i, op in enumerate(fn.ops) if int(i) not in drop_idxs]
+        prod = {op.output: op for op in fn.ops if op.output}
+
+    # Step 2: fold non-output identities by rewiring their uses.
+    repl: Dict[str, str] = {}
+    for op in fn.ops:
+        if op.op == "identity" and len(op.inputs) == 1 and op.output and str(op.output) not in outputs_set:
+            repl[str(op.output)] = str(op.inputs[0])
+
+    if not repl:
+        return
+
+    def resolve(name: str) -> str:
+        seen: set[str] = set()
+        cur = str(name)
+        while cur in repl and cur not in seen:
+            seen.add(cur)
+            cur = str(repl[cur])
+        return cur
+
+    # Rewrite op inputs.
+    for op in fn.ops:
+        if not op.inputs:
+            continue
+        op.inputs = [resolve(x) for x in op.inputs]
+
+    # Drop identity ops; DCE later will clean up now-dead chains.
+    fn.ops = [op for op in fn.ops if not (op.op == "identity" and len(op.inputs) == 1 and op.output in repl)]
 
 
 def _is_zero_like(fn: IntentFunction, prod: Dict[str, Op], name: str) -> bool:

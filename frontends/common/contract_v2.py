@@ -55,7 +55,23 @@ def evaluate_contract_v2(
     anchors = (cert_v2.semantic_facts or {}).get("anchors") if isinstance(cert_v2.semantic_facts, dict) else {}
     anchors = dict(anchors) if isinstance(anchors, dict) else {}
 
-    kernel_kind_hint = anchors.get("kernel_kind_hint") if isinstance(anchors.get("kernel_kind_hint"), str) else None
+    # `kernel_kind_hint` is meant to be semantic ("matmul"/"reduce"/"attention"/"copy").
+    # Some frontends historically used it as a frontend identifier ("cuda_ptx",
+    # "tilelang_tileop"). For the contract, prefer semantic kinds; otherwise
+    # derive best-effort from anchor booleans.
+    kernel_kind_hint: str | None = None
+    raw_kind = anchors.get("kernel_kind_hint")
+    if isinstance(raw_kind, str) and raw_kind.strip() in {"matmul", "reduce", "attention", "copy"}:
+        kernel_kind_hint = raw_kind.strip()
+    if kernel_kind_hint is None:
+        if bool(anchors.get("has_dot")) and bool(anchors.get("has_reduce")):
+            kernel_kind_hint = "attention"
+        elif bool(anchors.get("has_dot")):
+            kernel_kind_hint = "matmul"
+        elif bool(anchors.get("has_reduce")):
+            kernel_kind_hint = "reduce"
+        elif bool(anchors.get("has_copy")):
+            kernel_kind_hint = "copy"
 
     def status(oid: str) -> str:
         o = by_id.get(oid)

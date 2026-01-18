@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -82,7 +83,14 @@ class LLMIntentHub:
     max_parse_retries: int = 2
     max_attempts: int = 2
     extra_chat_kwargs: Dict[str, Any] = field(default_factory=dict)
-    disabled_models: set[str] = field(default_factory=set)
+    # Provider health state:
+    # - Quota exhaustion -> hard disable for this process (until=+inf).
+    # - Transient 5xx/proxy issues -> short cooldown (until=now+cooldown_s),
+    #   only after repeated failures to avoid flaking out a generally-working provider.
+    disabled_models: Dict[str, float] = field(default_factory=dict)  # model -> disabled_until (epoch seconds)
+    model_fail_streak: Dict[str, int] = field(default_factory=dict)
+    server_error_disable_after: int = 2
+    server_error_cooldown_s: int = 180
 
     def _maybe_disable_model(self, model: str, err: Exception) -> None:
         """
@@ -92,6 +100,7 @@ class LLMIntentHub:
         """
         m = str(model)
         msg = str(err)
+        now = time.time()
         # Quota/credit exhaustion: these won't recover without user action.
         hard_markers = [
             "pre_consume_token_quota_failed",
@@ -101,13 +110,33 @@ class LLMIntentHub:
             "令牌总使用次数已达到限制",
         ]
         if any(x in msg for x in hard_markers):
-            self.disabled_models.add(m)
+            self.disabled_models[m] = float("inf")
             return
-        # Repeated 5xx from a proxy is usually persistent for a while; disable to
-        # avoid spending dozens of seconds per kernel before falling back.
+        # Transient 5xx from a proxy is often recoverable; only disable after a
+        # short streak to avoid one-off flakiness making the suite brittle.
         if "server error" in msg or " 520 " in msg or " 502 " in msg or " 503 " in msg or " 504 " in msg:
-            self.disabled_models.add(m)
+            streak = int(self.model_fail_streak.get(m, 0)) + 1
+            self.model_fail_streak[m] = streak
+            if streak >= max(1, int(self.server_error_disable_after)):
+                self.disabled_models[m] = now + float(max(1, int(self.server_error_cooldown_s)))
             return
+
+    def _is_model_disabled(self, model: str) -> bool:
+        m = str(model)
+        until = self.disabled_models.get(m)
+        if until is None:
+            return False
+        if until == float("inf"):
+            return True
+        now = time.time()
+        if until > now:
+            return True
+        # cooldown expired
+        try:
+            del self.disabled_models[m]
+        except KeyError:
+            pass
+        return False
 
     def lift(self, descriptor: KernelDescriptor, *, feedback: Optional[List[str]] = None, model: Optional[str] = None) -> CandidateIntent:
         """
@@ -135,7 +164,7 @@ class LLMIntentHub:
             }
 
             for m in trace["candidates"]:
-                if str(m) in self.disabled_models:
+                if self._is_model_disabled(m):
                     trace["attempts"].append({"model": m, "ok": False, "cache_hit": False, "stage": "skip", "error": "disabled"})
                     continue
                 try:
@@ -220,6 +249,11 @@ class LLMIntentHub:
                     "cache_hit": cache_hit,
                 }
                 trace["attempts"].append({"model": m, "ok": True, "cache_hit": cache_hit, "stage": "semantic"})
+                # Reset transient failure streak on success.
+                try:
+                    self.model_fail_streak.pop(str(m), None)
+                except Exception:
+                    pass
                 cand.llm_trace = {
                     "prompt_hash": prompt_hash,
                     "frontend": descriptor.frontend,

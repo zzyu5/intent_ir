@@ -426,6 +426,30 @@ def _any_kernel_dim_fallback_intent():
     )
 
 
+def _clamp2d_fallback_intent():
+    from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, TensorType  # noqa: PLC0415
+
+    rm = TensorLayout(kind="row_major", params={})
+    tensors: Dict[str, TensorType] = {
+        "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "lo": TensorType(dtype="f32", shape=[], layout=rm),
+        "hi": TensorType(dtype="f32", shape=[], layout=rm),
+        "out": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+    }
+    ops: List[Op] = []
+    ops.append(Op(op="max", inputs=["inp", "lo"], output="t0", attrs={}))
+    ops.append(Op(op="min", inputs=["t0", "hi"], output="out", attrs={}))
+    schedule = ScheduleSketch(tile_m=None, tile_n=None, tile_k=None, vec_width=1, pipeline_depth=1)
+    return IntentFunction(
+        name="clamp2d",
+        tensors=tensors,
+        ops=ops,
+        outputs=["out"],
+        schedule=schedule,
+        axis_roles={"M": "batch", "N": "channel"},
+    )
+
+
 def _softmax_inner_fallback_intent():
     from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, TensorType  # noqa: PLC0415
 
@@ -573,6 +597,7 @@ def _upsample_bicubic2d_aa_fallback_intent():
 def _deterministic_fallback_intent_for(name: str):
     table = {
         "any_kernel_dim": _any_kernel_dim_fallback_intent,
+        "clamp2d": _clamp2d_fallback_intent,
         "group_norm_kernel": _group_norm_fallback_intent,
         "_attn_fwd": _attn_fwd_fallback_intent,
         "softmax_inner": _softmax_inner_fallback_intent,

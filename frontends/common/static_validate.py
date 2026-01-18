@@ -48,9 +48,12 @@ def _kernel_kind_from_cert(cert: object) -> str:
             return "unknown"
     anchors = (cert.semantic_facts or {}).get("anchors") or {}
     if isinstance(anchors, dict):
+        # NOTE: some frontends historically stuffed a *frontend* identifier into
+        # `kernel_kind_hint` (e.g., "cuda_ptx", "tilelang_tileop"). For static
+        # validation we want a semantic kind, otherwise anchor checks never run.
         k = anchors.get("kernel_kind_hint") or anchors.get("kernel_kind")
-        if k:
-            return str(k)
+        if isinstance(k, str) and k.strip() in {"matmul", "reduce", "attention", "copy"}:
+            return str(k).strip()
         # derive (best-effort)
         if anchors.get("has_atomic"):
             return "unknown"
