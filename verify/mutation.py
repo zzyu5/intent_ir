@@ -186,15 +186,28 @@ def run_mutation_kill(
             continue
 
         # Stage C: metamorphic invariants (only for survivors so far)
-        meta: MetamorphicSuiteReport = run_metamorphic_suite(
-            kernel_name,
-            m,
-            run_ref_fn,
-            base_case=metamorphic_base_case,
-            atol=atol,
-            rtol=rtol,
-            rng_seed=seed + mid + 17,
-        )
+        try:
+            meta: MetamorphicSuiteReport = run_metamorphic_suite(
+                kernel_name,
+                m,
+                run_ref_fn,
+                base_case=metamorphic_base_case,
+                atol=atol,
+                rtol=rtol,
+                rng_seed=seed + mid + 17,
+            )
+        except Exception as e:
+            killed_by["C_metamorphic"] += 1
+            by_mut[mut_type]["C_metamorphic"] = by_mut[mut_type].get("C_metamorphic", 0) + 1
+            outcomes.append(
+                MutationOutcome(
+                    mutant_id=mid,
+                    mutation_type=mut_type,
+                    killed_by="C_metamorphic",
+                    detail=f"metamorphic error: {type(e).__name__}: {e}",
+                )
+            )
+            continue
         if not meta.ok:
             killed_by["C_metamorphic"] += 1
             by_mut[mut_type]["C_metamorphic"] = by_mut[mut_type].get("C_metamorphic", 0) + 1
@@ -210,7 +223,22 @@ def run_mutation_kill(
             continue
 
         if include_bounded:
-            bounded = run_bounded_exhaustive(kernel_name, m, run_ref_fn, atol=atol, rtol=rtol, max_cases=None, rng_seed=seed + mid + 101)
+            try:
+                bounded = run_bounded_exhaustive(
+                    kernel_name, m, run_ref_fn, atol=atol, rtol=rtol, max_cases=None, rng_seed=seed + mid + 101
+                )
+            except Exception as e:
+                killed_by["C_bounded"] += 1
+                by_mut[mut_type]["C_bounded"] = by_mut[mut_type].get("C_bounded", 0) + 1
+                outcomes.append(
+                    MutationOutcome(
+                        mutant_id=mid,
+                        mutation_type=mut_type,
+                        killed_by="C_bounded",
+                        detail=f"bounded exhaustive error: {type(e).__name__}: {e}",
+                    )
+                )
+                continue
             if bounded.total > 0 and not bounded.ok:
                 killed_by["C_bounded"] += 1
                 by_mut[mut_type]["C_bounded"] = by_mut[mut_type].get("C_bounded", 0) + 1

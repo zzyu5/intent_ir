@@ -66,7 +66,32 @@ def run_diff(
     diffs: List[DiffResult] = []
     counterexamples: List[Counterexample] = []
     for case in cases_list:
-        ref_out = run_ref_fn(case)
+        try:
+            ref_out = run_ref_fn(case)
+        except Exception as e:
+            diff = DiffResult(
+                ok=False,
+                max_abs_err=0.0,
+                max_rel_err=0.0,
+                first_bad_index=None,
+                summary=f"ref runner error: {type(e).__name__}: {e}",
+            )
+            diffs.append(diff)
+            counterexamples.append(
+                Counterexample(
+                    case=case,
+                    diff=diff,
+                    intent_json=intent.to_json_dict(),
+                    facts_summary=None,
+                    hints=[
+                        "reference runner failed (likely out-of-contract shapes or missing required inputs)",
+                        "try reducing case sizes or regenerating in-contract cases from contract assumptions",
+                    ],
+                )
+            )
+            if stop_on_first_fail:
+                break
+            continue
         # Make IO naming robust: LLM may emit Input/Output while runner returns input/output
         # (or *_ptr variants). Add non-destructive aliases so interpreter can resolve names.
         ref_out = _with_io_aliases(intent_exec, ref_out)
