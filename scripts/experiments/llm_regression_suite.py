@@ -17,10 +17,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from frontends.common.certificate_v2 import SemanticCertificateV2
 from frontends.common.contract_v2 import evaluate_contract_v2
@@ -30,9 +35,6 @@ from intent_ir.llm.llm_hub import LLMIntentHub
 from intent_ir.macros import expand_macros
 from intent_ir.macros.macro_spec import enrich_intent_macros
 from pipeline.interfaces import KernelArtifactBundle, KernelDescriptor
-
-
-ROOT = Path(__file__).resolve().parents[2]
 
 
 def _spec_from_pipeline(frontend: str, kernel: str) -> Any:
