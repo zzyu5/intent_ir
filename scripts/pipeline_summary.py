@@ -22,6 +22,8 @@ DEFAULT_TRITON_DIR = ROOT / "artifacts" / "full_pipeline_verify"
 DEFAULT_TILELANG_DIR = ROOT / "artifacts" / "tilelang_full_pipeline"
 DEFAULT_CUDA_DIR = ROOT / "artifacts" / "cuda_full_pipeline"
 DEFAULT_REMOTE_JSON = ROOT / "artifacts" / "rvv_remote_suite_latest.json"
+DEFAULT_EXPERIMENTS_DIR = ROOT / "artifacts" / "experiments"
+DEFAULT_LLM_REGRESSION_JSON = ROOT / "artifacts" / "llm_regression_suite_coverage_latest.json"
 
 
 def _read_json(path: Path) -> Dict[str, Any]:
@@ -153,6 +155,100 @@ def _load_remote_map(path: Path) -> Dict[Tuple[str, str], bool]:
     return out
 
 
+def _latest_json(dir_path: Path, patterns: List[str]) -> Optional[Path]:
+    """
+    Pick the most recently modified JSON matching any of the glob patterns.
+    """
+    if not dir_path.exists():
+        return None
+    cand: List[Path] = []
+    for pat in patterns:
+        cand.extend(list(dir_path.glob(pat)))
+    cand = [p for p in cand if p.is_file()]
+    if not cand:
+        return None
+    cand.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return cand[0]
+
+
+def _summarize_e2(path: Path) -> Dict[str, Any]:
+    d = _read_json(path)
+    out: Dict[str, Any] = {"path": str(path), "experiment": d.get("experiment"), "frontend": d.get("frontend"), "suite": d.get("suite")}
+    agg = _get(d, "summary", "aggregate", default={})
+    if isinstance(agg, dict):
+        out["aggregate"] = {k: dict(v) for k, v in agg.items() if isinstance(v, dict)}
+    # Aggregate time-to-counterexample across kernels (Stage-B only).
+    per_mode: Dict[str, Dict[str, List[float]]] = {}
+    for r in d.get("results") or []:
+        if not isinstance(r, dict) or r.get("status") != "OK":
+            continue
+        modes = r.get("modes")
+        if not isinstance(modes, dict):
+            continue
+        for m, mp in modes.items():
+            if not isinstance(mp, dict):
+                continue
+            tce = mp.get("time_to_counterexample")
+            if not isinstance(tce, dict):
+                continue
+            for key in ["p50_time_s", "avg_time_s", "p50_cases", "avg_cases"]:
+                v = tce.get(key)
+                if isinstance(v, (int, float)):
+                    per_mode.setdefault(str(m), {}).setdefault(str(key), []).append(float(v))
+    tce_sum: Dict[str, Any] = {}
+    for m, stats in per_mode.items():
+        tce_sum[m] = {}
+        for k, xs in stats.items():
+            ys = sorted(float(x) for x in xs)
+            tce_sum[m][k] = {
+                "n": len(ys),
+                "p50": ys[len(ys) // 2] if ys else None,
+                "avg": (sum(ys) / len(ys)) if ys else None,
+            }
+    out["time_to_counterexample"] = tce_sum
+    return out
+
+
+def _summarize_e4(path: Path) -> Dict[str, Any]:
+    d = _read_json(path)
+    summ = d.get("summary") if isinstance(d.get("summary"), dict) else {}
+    return {
+        "path": str(path),
+        "experiment": d.get("experiment"),
+        "frontends": d.get("frontends"),
+        "suite": d.get("suite"),
+        "n": summ.get("n"),
+        "intent_structural_ok": summ.get("intent_structural_ok"),
+        "intent_structural_ok_rate": summ.get("intent_structural_ok_rate"),
+        "expanded_structural_ok": summ.get("expanded_structural_ok"),
+        "expanded_structural_ok_rate": summ.get("expanded_structural_ok_rate"),
+        "axis_roles_recall_intent_avg": summ.get("axis_roles_recall_intent_avg"),
+        "axis_roles_recall_expanded_avg": summ.get("axis_roles_recall_expanded_avg"),
+        "mismatch_categories": summ.get("mismatch_categories"),
+    }
+
+
+def _summarize_e3_llm_regression(path: Path) -> Dict[str, Any]:
+    d = _read_json(path)
+    out: Dict[str, Any] = {"path": str(path), "suite": d.get("suite"), "frontends": d.get("frontends")}
+    if isinstance(d.get("variants"), dict):
+        out["variants"] = {}
+        for vname, vp in d["variants"].items():
+            if not isinstance(vp, dict):
+                continue
+            summ = vp.get("summary")
+            out["variants"][str(vname)] = {
+                "repair_rounds": vp.get("repair_rounds"),
+                "summary": summ,
+            }
+        if isinstance(d.get("delta"), dict):
+            out["delta"] = dict(d.get("delta") or {})
+        return out
+    # Backward-compatible: older format.
+    out["summary"] = d.get("summary")
+    return out
+
+
 def _print_table(title: str, rows: List[List[str]]) -> None:
     if not rows:
         print(f"{title}: (no data)")
@@ -219,6 +315,11 @@ def main() -> None:
     ap.add_argument("--cuda-dir", default=str(DEFAULT_CUDA_DIR))
     ap.add_argument("--remote", default=str(DEFAULT_REMOTE_JSON))
     ap.add_argument("--no-remote", action="store_true")
+    ap.add_argument("--paper", action="store_true", help="also ingest experiment JSONs (E2/E3/E4) for paper tables")
+    ap.add_argument("--experiments-dir", default=str(DEFAULT_EXPERIMENTS_DIR))
+    ap.add_argument("--e2", default=None, help="path to E2 trust_ablation JSON (defaults to latest under experiments-dir)")
+    ap.add_argument("--e3", default=None, help="path to E3 llm_regression_suite JSON (defaults to artifacts/llm_regression_suite_coverage_latest.json)")
+    ap.add_argument("--e4", default=None, help="path to E4 cross_frontend_consistency JSON (defaults to latest under experiments-dir)")
     ap.add_argument("--json", default=None, help="write summary JSON to this path (otherwise print text)")
     args = ap.parse_args()
 
@@ -268,6 +369,29 @@ def main() -> None:
     summary: Dict[str, Any] = {"frontends": {}}
     for fe, xs in entries_by_fe.items():
         summary["frontends"][fe] = _summarize(xs)
+
+    if bool(args.paper):
+        exp_dir = Path(str(args.experiments_dir))
+        e2_path = Path(str(args.e2)) if args.e2 else _latest_json(exp_dir, ["e2_trust_*.json", "e2_trust_ablation_*.json", "e2_trust_ablation*.json"])
+        e4_path = Path(str(args.e4)) if args.e4 else _latest_json(exp_dir, ["e4_cross_frontend_consistency*.json", "e4_consistency*.json"])
+        e3_path = Path(str(args.e3)) if args.e3 else Path(str(DEFAULT_LLM_REGRESSION_JSON))
+        paper: Dict[str, Any] = {}
+        if e2_path and e2_path.exists():
+            try:
+                paper["E2_trust_ablation"] = _summarize_e2(e2_path)
+            except Exception as e:
+                paper["E2_trust_ablation"] = {"path": str(e2_path), "error": f"{type(e).__name__}: {e}"}
+        if e4_path and e4_path.exists():
+            try:
+                paper["E4_cross_frontend_consistency"] = _summarize_e4(e4_path)
+            except Exception as e:
+                paper["E4_cross_frontend_consistency"] = {"path": str(e4_path), "error": f"{type(e).__name__}: {e}"}
+        if e3_path and e3_path.exists():
+            try:
+                paper["E3_llm_regression_suite"] = _summarize_e3_llm_regression(e3_path)
+            except Exception as e:
+                paper["E3_llm_regression_suite"] = {"path": str(e3_path), "error": f"{type(e).__name__}: {e}"}
+        summary["paper"] = paper
 
     if args.json:
         Path(args.json).write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")

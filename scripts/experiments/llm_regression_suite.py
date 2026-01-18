@@ -265,12 +265,28 @@ class KernelResult:
 def _summarize(results: List[KernelResult]) -> Dict[str, Any]:
     failures: Dict[str, int] = {}
     tiers: Dict[str, Dict[str, int]] = {}
+    ok_n = 0
+    rounds_used: List[int] = []
+    api_calls: List[int] = []
+    cache_hits: List[int] = []
+    cache_misses: List[int] = []
     for r in results:
         failures[r.category] = failures.get(r.category, 0) + 1
         tiers.setdefault(r.anchor_tier, {"n": 0, "ok": 0})
         tiers[r.anchor_tier]["n"] += 1
         if r.ok:
             tiers[r.anchor_tier]["ok"] += 1
+            ok_n += 1
+        st = r.llm.get("stats") if isinstance(r.llm, dict) else None
+        if isinstance(st, dict):
+            if isinstance(st.get("rounds_used"), int):
+                rounds_used.append(int(st.get("rounds_used")))
+            if isinstance(st.get("api_calls"), int):
+                api_calls.append(int(st.get("api_calls")))
+            if isinstance(st.get("cache_hits"), int):
+                cache_hits.append(int(st.get("cache_hits")))
+            if isinstance(st.get("cache_misses"), int):
+                cache_misses.append(int(st.get("cache_misses")))
 
     curve: List[Dict[str, Any]] = []
     ok_prefix = 0
@@ -278,7 +294,28 @@ def _summarize(results: List[KernelResult]) -> Dict[str, Any]:
         ok_prefix += 1 if r.ok else 0
         curve.append({"k": int(i), "ok": int(ok_prefix), "ok_rate": float(ok_prefix / i)})
 
-    return {"n": len(results), "failures": failures, "tiers": tiers, "coverage_curve": curve}
+    def _p50(xs: List[int]) -> int | None:
+        if not xs:
+            return None
+        ys = sorted(int(x) for x in xs)
+        return int(ys[len(ys) // 2])
+
+    return {
+        "n": len(results),
+        "ok": int(ok_n),
+        "ok_rate": (float(ok_n) / float(len(results)) if results else 0.0),
+        "failures": failures,
+        "tiers": tiers,
+        "llm_cost": {
+            "rounds_used_avg": (float(sum(rounds_used)) / float(len(rounds_used)) if rounds_used else None),
+            "rounds_used_p50": _p50(rounds_used),
+            "api_calls_total": int(sum(api_calls)) if api_calls else 0,
+            "api_calls_avg": (float(sum(api_calls)) / float(len(api_calls)) if api_calls else None),
+            "cache_hits_total": int(sum(cache_hits)) if cache_hits else 0,
+            "cache_misses_total": int(sum(cache_misses)) if cache_misses else 0,
+        },
+        "coverage_curve": curve,
+    }
 
 
 def _artifact_dirs(frontend: str, *, triton_dir: Path, tilelang_dir: Path, cuda_dir: Path) -> Path:
@@ -348,12 +385,19 @@ def run_one(
     score = _anchor_score(anchors)
 
     feedback: List[str] = []
+    llm_rounds: List[Dict[str, Any]] = []
     llm_meta: Dict[str, Any] = {}
+    api_calls = 0
+    cache_hits = 0
+    cache_misses = 0
+    rounds_used = 0
+    ok_round: int | None = None
     best_ok = False
     best_reasons: List[str] = []
     best_category = "unknown"
 
     for round_id in range(max(1, int(repair_rounds) + 1)):
+        rounds_used += 1
         _maybe_sleep_rate_limit(rpm=rpm, last_api_s=last_api_s)
         try:
             cand = hub.lift(desc, feedback=feedback, model=model)
@@ -367,13 +411,14 @@ def run_one(
         et = trace.get("extract_trace") if isinstance(trace.get("extract_trace"), dict) else {}
         chosen = et.get("chosen") if isinstance(et, dict) else {}
         cache_hit = bool(chosen.get("cache_hit")) if isinstance(chosen, dict) else False
+        if cache_hit:
+            cache_hits += 1
+        else:
+            cache_misses += 1
+            api_calls += 1
         if not cache_hit:
             last_api_s = time.time()
-        llm_meta = {
-            "round": int(round_id),
-            "prompt_hash": trace.get("prompt_hash"),
-            "chosen": dict(chosen) if isinstance(chosen, dict) else {},
-        }
+        llm_meta = {"prompt_hash": trace.get("prompt_hash"), "chosen": dict(chosen) if isinstance(chosen, dict) else {}}
 
         try:
             enrich_intent_macros(cand.intent)
@@ -398,10 +443,22 @@ def run_one(
             best_reasons = [str(e)]
             break
 
+        llm_rounds.append(
+            {
+                "round": int(round_id),
+                "feedback_n": int(len(feedback)),
+                "prompt_hash": trace.get("prompt_hash"),
+                "chosen": dict(chosen) if isinstance(chosen, dict) else {},
+                "static_ok": bool(sv.ok),
+                "static_reasons": list(sv.reasons),
+            }
+        )
+
         if bool(sv.ok):
             best_ok = True
             best_category = "ok"
             best_reasons = []
+            ok_round = int(round_id)
             break
 
         best_ok = False
@@ -418,7 +475,17 @@ def run_one(
         ok=bool(best_ok),
         category=str(best_category),
         reasons=list(best_reasons),
-        llm=llm_meta,
+        llm={
+            "stats": {
+                "rounds_used": int(rounds_used),
+                "ok_round": int(ok_round) if ok_round is not None else None,
+                "api_calls": int(api_calls),
+                "cache_hits": int(cache_hits),
+                "cache_misses": int(cache_misses),
+            },
+            "rounds": list(llm_rounds),
+            **(dict(llm_meta) if isinstance(llm_meta, dict) else {}),
+        },
     )
     return r, last_api_s
 
@@ -436,6 +503,11 @@ def main() -> None:
     ap.add_argument("--attempts", type=int, default=2, help="max LLM attempts inside the hub")
     ap.add_argument("--parse-retries", type=int, default=2, help="max JSON parse retries inside the hub")
     ap.add_argument("--repair-rounds", type=int, default=1, help="how many static-validate repair rounds (0 disables)")
+    ap.add_argument(
+        "--compare-one-shot",
+        action="store_true",
+        help="run one-shot (repair_rounds=0) and feedback-loop (repair_rounds=N) back-to-back and report delta",
+    )
     ap.add_argument("--rpm", type=int, default=5, help="rate limit (calls per minute) for cache-miss LLM calls; 0 disables")
     ap.add_argument("--out", default=str(ROOT / "artifacts" / "llm_regression_suite_latest.json"))
     args = ap.parse_args()
@@ -458,26 +530,43 @@ def main() -> None:
             ks = [k for k in ks if k in wanted]
         kernels_by_fe[str(fe)] = list(ks)
 
+    if bool(args.compare_one_shot) and int(args.repair_rounds) <= 0:
+        raise SystemExit("--compare-one-shot requires --repair-rounds >= 1")
+
     hub = LLMIntentHub(timeout_s=int(args.timeout), max_attempts=int(args.attempts), max_parse_retries=int(args.parse_retries))
 
-    results: List[KernelResult] = []
+    variants: List[Tuple[str, int]] = [("feedback", int(args.repair_rounds))]
+    if bool(args.compare_one_shot):
+        variants = [("one_shot", 0), ("feedback", int(args.repair_rounds))]
+
+    results_by_variant: Dict[str, List[KernelResult]] = {name: [] for name, _ in variants}
     last_api_s: float | None = None
-    for fe in frontends:
-        art_dir = _artifact_dirs(fe, triton_dir=triton_dir, tilelang_dir=tilelang_dir, cuda_dir=cuda_dir)
-        for k in kernels_by_fe.get(str(fe), []):
-            r, last_api_s = run_one(
-                hub=hub,
-                frontend=str(fe),
-                kernel=str(k),
-                artifacts_dir=art_dir,
-                model=(str(args.model) if args.model else None),
-                repair_rounds=int(args.repair_rounds),
-                rpm=int(args.rpm),
-                last_api_s=last_api_s,
-            )
-            results.append(r)
-            status = "OK" if r.ok else "FAIL"
-            print(f"[{fe}:{k}] {status} ({r.category})", flush=True)
+    for v_name, v_rounds in variants:
+        for fe in frontends:
+            art_dir = _artifact_dirs(fe, triton_dir=triton_dir, tilelang_dir=tilelang_dir, cuda_dir=cuda_dir)
+            for k in kernels_by_fe.get(str(fe), []):
+                # If one-shot already succeeded, feedback-loop will succeed too (same initial prompt),
+                # so we can reuse the result without re-running.
+                if v_name == "feedback" and bool(args.compare_one_shot):
+                    prev = next((x for x in results_by_variant["one_shot"] if x.frontend == str(fe) and x.kernel == str(k)), None)
+                    if prev is not None and prev.ok:
+                        results_by_variant[v_name].append(prev)
+                        print(f"[{v_name}:{fe}:{k}] OK (reused one_shot)", flush=True)
+                        continue
+
+                r, last_api_s = run_one(
+                    hub=hub,
+                    frontend=str(fe),
+                    kernel=str(k),
+                    artifacts_dir=art_dir,
+                    model=(str(args.model) if args.model else None),
+                    repair_rounds=int(v_rounds),
+                    rpm=int(args.rpm),
+                    last_api_s=last_api_s,
+                )
+                results_by_variant[v_name].append(r)
+                status = "OK" if r.ok else "FAIL"
+                print(f"[{v_name}:{fe}:{k}] {status} ({r.category})", flush=True)
 
     all_kernels: List[str] = []
     for fe in frontends:
@@ -489,13 +578,29 @@ def main() -> None:
         "frontends": list(frontends),
         "kernels": list(all_kernels),
         "kernels_by_frontend": dict(kernels_by_fe),
-        "results": [r.to_json_dict() for r in results],
-        "summary": {
-            "by_frontend": {
-                fe: _summarize([r for r in results if r.frontend == fe]) for fe in frontends
+        "variants": {
+            name: {
+                "repair_rounds": int(v_rounds),
+                "results": [r.to_json_dict() for r in results_by_variant.get(name, [])],
+                "summary": {"by_frontend": {fe: _summarize([r for r in results_by_variant.get(name, []) if r.frontend == fe]) for fe in frontends}},
             }
+            for name, v_rounds in variants
         },
     }
+    if bool(args.compare_one_shot):
+        # Convenience: compute success-rate delta for paper tables.
+        a = results_by_variant.get("one_shot", [])
+        b = results_by_variant.get("feedback", [])
+        a_ok = sum(1 for x in a if x.ok)
+        b_ok = sum(1 for x in b if x.ok)
+        out["delta"] = {
+            "one_shot_ok": int(a_ok),
+            "feedback_ok": int(b_ok),
+            "n": int(len(a)),
+            "ok_rate_one_shot": (float(a_ok) / float(len(a)) if a else 0.0),
+            "ok_rate_feedback": (float(b_ok) / float(len(b)) if b else 0.0),
+            "ok_rate_gain": (float(b_ok) / float(len(b)) - float(a_ok) / float(len(a)) if a else 0.0),
+        }
     out_path = Path(str(args.out))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
