@@ -377,6 +377,19 @@ def run_one(
 
     desc = _descriptor_from_json(_load_json(desc_path))
     cert_v2 = _cert_v2_from_json(_load_json(cert_path))
+
+    # Ensure descriptor carries Stage-4 facts/constraints. Full pipeline reports
+    # historically wrote `<kernel>.descriptor.json` before facts extraction,
+    # causing cache-misses and poorer prompts in the regression suite.
+    needs_refresh = (not bool(desc.frontend_facts)) or (not bool(desc.frontend_constraints))
+    if needs_refresh:
+        try:
+            _prepare_frontend_artifacts(frontend=frontend, kernel=kernel, artifacts_dir=artifacts_dir)
+            desc = _descriptor_from_json(_load_json(desc_path))
+            cert_v2 = _cert_v2_from_json(_load_json(cert_path))
+        except Exception:
+            # Best-effort: keep whatever we loaded.
+            pass
     anchors = (cert_v2.semantic_facts or {}).get("anchors") if isinstance(cert_v2.semantic_facts, dict) else {}
     anchors = dict(anchors) if isinstance(anchors, dict) else {}
 
