@@ -13,20 +13,18 @@ def make_masked_attention2d_prim_func(
       probs = softmax(scores)
       Out[q, d] = sum_j probs[j] * V[j, d]
     """
-    import math
-
     import tilelang.language as T
 
     Q_CTX = int(q_ctx)
     KV_CTX = int(kv_ctx)
     HEAD_DIM = int(head_dim)
-    sm_scale = float(1.0 / math.sqrt(float(HEAD_DIM)))
 
     @T.prim_func
     def main(
         Q: T.Tensor((Q_CTX, HEAD_DIM), "float32"),
         K: T.Tensor((KV_CTX, HEAD_DIM), "float32"),
         V: T.Tensor((KV_CTX, HEAD_DIM), "float32"),
+        sm_scale: T.Tensor((1,), "float32"),
         Out: T.Tensor((Q_CTX, HEAD_DIM), "float32"),
     ):
         with T.Kernel(Q_CTX, threads=threads) as (pid_q,):
@@ -37,7 +35,7 @@ def make_masked_attention2d_prim_func(
             tmp = T.alloc_fragment((HEAD_DIM,), "float32")
             acc = T.alloc_fragment((1,), "float32")
             neg = T.float32(-1.0e9)
-            scale = T.float32(sm_scale)
+            scale = sm_scale[0]
             for j in T.serial(KV_CTX):
                 for k in T.serial(HEAD_DIM):
                     tmp[k] = q_row[k] * K[j, k]

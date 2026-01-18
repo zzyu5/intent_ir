@@ -148,21 +148,33 @@ def _canonicalize_intent(intent: IntentFunction) -> Dict[str, Any]:
     # Cross-frontend kernels often use different symbol spellings (e.g., M/N vs m/n).
     # We assign canonical symbols S0,S1,... by first appearance in the *interface*
     # (external inputs + outputs), in a tensor-order that ignores original names.
-    def dim_pat(d) -> Tuple[str, int | None]:
-        if getattr(d, "kind", None) == "const":
-            try:
-                return ("c", int(d.value))
-            except Exception:
-                return ("c", None)
-        return ("s", None)
+    def canon_dtype(dt: object) -> str:
+        s = str(dt)
+        # Treat i1 and bool as equivalent for ordering purposes.
+        return "bool" if s == "i1" else s
 
-    def tensor_key(name: str) -> Tuple[str, int, str, Tuple[Tuple[str, int | None], ...]]:
+    def canon_rank(tt: TensorType) -> int:
+        # Treat trailing singleton dims as reshape-equivalent for ordering
+        # (e.g., [] <-> [1], [M] <-> [M,1]).
+        dims = list(tt.shape)
+        while dims:
+            d = dims[-1]
+            if getattr(d, "kind", None) != "const":
+                break
+            try:
+                if int(getattr(d, "value", -1)) != 1:
+                    break
+            except Exception:
+                break
+            dims.pop()
+        return int(len(dims))
+
+    def tensor_key(name: str) -> Tuple[str, int, str]:
         tt = intent.tensors.get(name)
         if tt is None:
-            return ("", 0, "", tuple())
+            return ("", 0, "")
         layout = tt.layout.name if hasattr(tt.layout, "name") else str(tt.layout)
-        shp = tuple(dim_pat(d) for d in list(tt.shape))
-        return (str(tt.dtype), int(len(tt.shape)), str(layout), shp)
+        return (canon_dtype(tt.dtype), canon_rank(tt), str(layout))
 
     in_sorted = sorted(set(external_inputs), key=lambda n: (tensor_key(n), str(n)))
     out_sorted = sorted(set(intent.outputs or []), key=lambda n: (tensor_key(n), str(n)))
@@ -204,7 +216,9 @@ def _canonicalize_intent(intent: IntentFunction) -> Dict[str, Any]:
         sig = _tensor_sig_canon(t)
         return (f"{sig['dtype']}|{sig['layout']}|{','.join(sig['shape'])}", len(sig["shape"]), n)
 
-    ext_sorted = sorted(set(external_inputs), key=in_key)
+    # Use a signature key that ignores symbol spellings and const-vs-sym
+    # specialization, so input renaming is stable across frontends.
+    ext_sorted = sorted(set(external_inputs), key=lambda n: (tensor_key(n), str(n)))
     name_map: Dict[str, str] = {}
     for i, n in enumerate(ext_sorted):
         name_map[n] = f"in{i}"
@@ -301,6 +315,20 @@ def _parse_dim(s: str) -> Tuple[str, str]:
 
 
 def _shape_compatible(a: List[str], b: List[str]) -> bool:
+    # Treat trailing singleton dims as reshape-equivalent.
+    # Examples: [] <-> [1], [M] <-> [M,1], [N,G] <-> [N,G,1].
+    def strip_trailing_ones(xs: List[str]) -> List[str]:
+        out = list(xs)
+        while out:
+            k, v = _parse_dim(str(out[-1]))
+            if k == "const" and v == "1":
+                out.pop()
+                continue
+            break
+        return out
+
+    a = strip_trailing_ones([str(x) for x in a])
+    b = strip_trailing_ones([str(x) for x in b])
     if len(a) != len(b):
         return False
     for da, db in zip(a, b):

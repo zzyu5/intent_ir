@@ -52,11 +52,37 @@ def canonicalize_for_consistency(intent: IntentFunction) -> IntentFunction:
             op.op = _CMP_SWAP[op.op]
             op.inputs = [op.inputs[1], op.inputs[0]]
 
+    # Pass 1b: iota+broadcast canonicalization.
+    # Some frontends build 2D index grids via iota(1D)+broadcast_in_dim, while
+    # others emit iota directly at the final rank. Rewrite the former into the
+    # latter to reduce representational drift.
+    _rewrite_broadcasted_iota(fn)
+
     # Pass 2: fold "safe" broadcast_in_dim into elementwise consumers.
     _fold_trailing_broadcasts(fn)
 
+    # Pass 2b: normalize matmul transpose surface forms.
+    # Different frontends/LLM outputs may represent transposed matmul operands as
+    # either:
+    #   - an explicit transpose op feeding matmul
+    #   - matmul attrs transpose_{a,b}=True
+    # For cross-frontend consistency, fold the former into the latter.
+    _fold_transpose_into_matmul(fn)
+
+    # Pass 2c: treat reshape that only adjusts trailing singleton dims as a no-op
+    # for consistency purposes (e.g., [M,1] -> [M]).
+    _rewrite_trailing_ones_reshape_as_identity(fn)
+
+    # Pass 2d: prefer `div(reduce_sum(x), N)` over `mul(reduce_sum(x), inv_N)`
+    # when inv_N is a scalar numeric const. This reduces drift between frontends
+    # that constant-fold the reciprocal.
+    _rewrite_reduce_sum_mul_const_to_div(fn)
+
     # Build a producer map after the broadcast folding.
     prod: Dict[str, Op] = {op.output: op for op in fn.ops}
+
+    # Pass 2e: drop no-op casts (e.g., f32 -> f32).
+    _rewrite_noop_cast_as_identity(fn, prod)
 
     # Pass 3: relu canonicalization (max(x,0) -> relu(x)).
     for op in fn.ops:
@@ -77,6 +103,18 @@ def canonicalize_for_consistency(intent: IntentFunction) -> IntentFunction:
 
     # Pass 4: mask multiply canonicalization (mul(x, cast(mask)) -> where(mask, x, 0)).
     _canonicalize_mask_mul_to_where(fn, prod)
+
+    # Pass 4b: affine masking canonicalization.
+    # Normalize:
+    #   where(mask, x, 0) + neg_inf * (1 - cast(mask))  ->  where(mask, x, neg_inf)
+    # This reduces drift between frontends that implement masking as a fused
+    # arithmetic expression vs a direct where.
+    _canonicalize_affine_mask_to_where(fn)
+    # The affine rewrite can strand now-dead arithmetic/cast chains. Drop them
+    # before the next folding pass so broadcasts become foldable (e.g., a mask
+    # broadcast that used to feed cast + mul/sub but now only feeds where).
+    fn.ops = _dce_ops(fn.ops, outputs=set(fn.outputs))
+    _fold_trailing_broadcasts(fn)
 
     # Pass 5: semantic normalizations (safe, local, conservative).
     # For cross-frontend comparison we prefer a lowered, explicit softmax form.
@@ -115,6 +153,9 @@ def _fold_trailing_broadcasts(fn: IntentFunction) -> None:
     if not fn.ops:
         return
 
+    prod: Dict[str, Op] = {op.output: op for op in fn.ops}
+    produced: Set[str] = set(prod.keys())
+
     # Build use-sites for each value.
     uses: Dict[str, Set[int]] = {}
     for i, op in enumerate(fn.ops):
@@ -131,6 +172,13 @@ def _fold_trailing_broadcasts(fn: IntentFunction) -> None:
         src = op.inputs[0]
         in_rank = _tensor_rank(fn, src)
         if in_rank is None:
+            # Many LLM/frontends omit tensor type entries for intermediates.
+            # For broadcast_in_dim, the input rank is typically the length of
+            # broadcast_dims. Use that as a best-effort fallback.
+            bd = op.attrs.get("broadcast_dims")
+            if isinstance(bd, list) and all(isinstance(x, int) for x in bd):
+                in_rank = int(len(bd))
+        if in_rank is None:
             continue
         out_rank = _tensor_rank(fn, out)
         if out_rank is None:
@@ -146,14 +194,24 @@ def _fold_trailing_broadcasts(fn: IntentFunction) -> None:
 
         # Safe fold cases:
         #  1) scalar -> any rank (broadcast dims are irrelevant)
+        #     (also accept scalar-like shape=[1], a common LLM surface form)
         #  2) "numpy trailing" alignment: dims == [out-r_in, ..., out-1]
+        #  3) prefix-aligned broadcast for non-interface intermediates:
+        #     dims == [0,1,...,r_in-1]
         foldable = False
-        if in_rank == 0:
+        if _is_scalar_like_tensor(fn, src):
             foldable = True
         else:
             want = list(range(out_rank - in_rank, out_rank))
             if len(bcast_dims) == in_rank and [int(x) for x in bcast_dims] == want:
                 foldable = True
+            else:
+                want_prefix = list(range(0, int(in_rank)))
+                # Only allow prefix folding for intermediates (not external inputs),
+                # to avoid collapsing interface masks like row_mask/col_mask that
+                # are semantically distinct 1D vectors.
+                if src in produced and len(bcast_dims) == in_rank and [int(x) for x in bcast_dims] == want_prefix:
+                    foldable = True
         if not foldable:
             continue
 
@@ -167,6 +225,236 @@ def _fold_trailing_broadcasts(fn: IntentFunction) -> None:
         for c in sorted(consumer_ids):
             cop = fn.ops[c]
             cop.inputs = [src if x == out else x for x in cop.inputs]
+
+
+def _rewrite_broadcasted_iota(fn: IntentFunction) -> None:
+    if not fn.ops:
+        return
+    prod: Dict[str, Op] = {op.output: op for op in fn.ops}
+    for op in fn.ops:
+        if op.op != "broadcast_in_dim" or len(op.inputs) != 1:
+            continue
+        src = op.inputs[0]
+        src_op = prod.get(src)
+        if src_op is None or src_op.op != "iota" or src_op.inputs:
+            continue
+        iota_shape = (src_op.attrs or {}).get("shape")
+        iota_axis = (src_op.attrs or {}).get("axis")
+        if not isinstance(iota_shape, list) or len(iota_shape) != 1:
+            continue
+        if not isinstance(iota_axis, int) or int(iota_axis) != 0:
+            continue
+        out_shape = (op.attrs or {}).get("out_shape")
+        bcast_dims = (op.attrs or {}).get("broadcast_dims")
+        if not isinstance(out_shape, list) or not out_shape:
+            continue
+        if not isinstance(bcast_dims, list) or len(bcast_dims) != 1 or not isinstance(bcast_dims[0], int):
+            continue
+        axis = int(bcast_dims[0])
+        dtype = (src_op.attrs or {}).get("dtype") or "i32"
+        op.op = "iota"
+        op.inputs = []
+        op.attrs = {"shape": list(out_shape), "axis": axis, "dtype": str(dtype)}
+
+
+def _rewrite_trailing_ones_reshape_as_identity(fn: IntentFunction) -> None:
+    if not fn.ops:
+        return
+
+    def tokens(shape: List[Dim]) -> List[tuple[str, str | int]]:
+        return [(str(d.kind), d.value) for d in list(shape)]
+
+    def strip_trailing_ones(ts: List[tuple[str, str | int]]) -> List[tuple[str, str | int]]:
+        out = list(ts)
+        while out:
+            k, v = out[-1]
+            if k != "const":
+                break
+            try:
+                if int(v) != 1:
+                    break
+            except Exception:
+                break
+            out.pop()
+        return out
+
+    for op in fn.ops:
+        if op.op != "reshape" or len(op.inputs) != 1:
+            continue
+        src = op.inputs[0]
+        in_tt = fn.tensors.get(src)
+        out_tt = fn.tensors.get(op.output)
+        if in_tt is None or out_tt is None:
+            continue
+        if strip_trailing_ones(tokens(in_tt.shape)) == strip_trailing_ones(tokens(out_tt.shape)):
+            op.op = "identity"
+            op.attrs = {}
+
+
+def _rewrite_reduce_sum_mul_const_to_div(fn: IntentFunction) -> None:
+    if not fn.ops:
+        return
+
+    prod: Dict[str, Op] = {op.output: op for op in fn.ops}
+    taken: Set[str] = set(fn.tensors.keys()) | set(prod.keys())
+    prefix_ops: List[Op] = []
+
+    def fresh(base: str) -> str:
+        if base not in taken:
+            taken.add(base)
+            return base
+        k = 0
+        while f"{base}_{k}" in taken:
+            k += 1
+        name = f"{base}_{k}"
+        taken.add(name)
+        return name
+
+    def const_scalar_numeric(name: str) -> Optional[float]:
+        c = prod.get(name)
+        if c is None or c.op != "const" or c.inputs:
+            return None
+        tt = fn.tensors.get(name)
+        if tt is not None and not _is_scalar_like_tensor(fn, name):
+            return None
+        v = (c.attrs or {}).get("value")
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, str):
+            return None
+        try:
+            return float(v)
+        except Exception:
+            return None
+
+    for op in fn.ops:
+        if op.op != "mul" or len(op.inputs) != 2:
+            continue
+        a, b = op.inputs[0], op.inputs[1]
+        pa = prod.get(a)
+        pb = prod.get(b)
+
+        sum_name = None
+        inv_name = None
+        inv_val = None
+        if pa is not None and pa.op == "reduce_sum":
+            inv_val = const_scalar_numeric(b)
+            if inv_val is not None:
+                sum_name, inv_name = a, b
+        if sum_name is None and pb is not None and pb.op == "reduce_sum":
+            inv_val = const_scalar_numeric(a)
+            if inv_val is not None:
+                sum_name, inv_name = b, a
+        if sum_name is None or inv_name is None or inv_val is None:
+            continue
+        if inv_val == 0.0:
+            continue
+
+        denom_val = 1.0 / float(inv_val)
+        denom_name = fresh(f"{op.output}__denom")
+        prefix_ops.append(Op(op="const", inputs=[], output=denom_name, attrs={"value": float(denom_val), "dtype": "f32"}))
+        fn.tensors[denom_name] = TensorType(dtype="f32", shape=[], layout=TensorLayout(kind="row_major", params={}))
+
+        op.op = "div"
+        op.inputs = [str(sum_name), denom_name]
+        op.attrs = {}
+
+    if prefix_ops:
+        fn.ops = list(prefix_ops) + list(fn.ops)
+
+
+def _rewrite_noop_cast_as_identity(fn: IntentFunction, prod: Dict[str, Op]) -> None:
+    for op in fn.ops:
+        if op.op != "cast" or len(op.inputs) != 1:
+            continue
+        src = op.inputs[0]
+        src_tt = fn.tensors.get(src)
+        if src_tt is None:
+            continue
+        to = (op.attrs or {}).get("to")
+        if to is None:
+            continue
+        if str(src_tt.dtype) != str(to):
+            continue
+        out_tt = fn.tensors.get(op.output)
+        if out_tt is not None and str(out_tt.dtype) != str(to):
+            continue
+        op.op = "identity"
+        op.attrs = {}
+
+
+def _fold_transpose_into_matmul(fn: IntentFunction) -> None:
+    if not fn.ops:
+        return
+
+    # Count uses (including function outputs).
+    uses: Dict[str, int] = {}
+    for out in fn.outputs:
+        uses[out] = uses.get(out, 0) + 1
+    for op in fn.ops:
+        for inp in op.inputs:
+            uses[inp] = uses.get(inp, 0) + 1
+
+    prod: Dict[str, Op] = {op.output: op for op in fn.ops}
+    outputs_set = set(fn.outputs or [])
+
+    def is_last_two_swap_perm(perm: object) -> bool:
+        if not isinstance(perm, list) or len(perm) < 2:
+            return False
+        try:
+            p = [int(x) for x in perm]
+        except Exception:
+            return False
+        r = len(p)
+        if sorted(p) != list(range(r)):
+            return False
+        want = list(range(r))
+        want[-2], want[-1] = want[-1], want[-2]
+        return p == want
+
+    for op in fn.ops:
+        if op.op != "matmul" or len(op.inputs) != 2:
+            continue
+        attrs = dict(op.attrs or {})
+        ta = bool(attrs.get("transpose_a", False))
+        tb = bool(attrs.get("transpose_b", False))
+
+        a, b = op.inputs[0], op.inputs[1]
+
+        pa = prod.get(a)
+        if (
+            pa is not None
+            and pa.op == "transpose"
+            and len(pa.inputs) == 1
+            and uses.get(a, 0) == 1
+            and a not in outputs_set
+            and is_last_two_swap_perm((pa.attrs or {}).get("perm"))
+        ):
+            op.inputs[0] = pa.inputs[0]
+            ta = not ta
+
+        pb = prod.get(b)
+        if (
+            pb is not None
+            and pb.op == "transpose"
+            and len(pb.inputs) == 1
+            and uses.get(b, 0) == 1
+            and b not in outputs_set
+            and is_last_two_swap_perm((pb.attrs or {}).get("perm"))
+        ):
+            op.inputs[1] = pb.inputs[0]
+            tb = not tb
+
+        # Canonicalize attrs: only keep transpose flags when True.
+        if ta:
+            attrs["transpose_a"] = True
+        else:
+            attrs.pop("transpose_a", None)
+        if tb:
+            attrs["transpose_b"] = True
+        else:
+            attrs.pop("transpose_b", None)
+        op.attrs = attrs
 
 
 def _is_scalar_const_zero(fn: IntentFunction, prod: Dict[str, Op], name: str) -> bool:
@@ -284,6 +572,87 @@ def _canonicalize_mask_mul_to_where(fn: IntentFunction, prod: Dict[str, Op]) -> 
 
     if prefix_ops:
         fn.ops = list(prefix_ops) + list(fn.ops)
+
+
+def _canonicalize_affine_mask_to_where(fn: IntentFunction) -> None:
+    if not fn.ops:
+        return
+
+    prod: Dict[str, Op] = {op.output: op for op in fn.ops}
+
+    def const_scalar_numeric(name: str) -> Optional[float]:
+        c = prod.get(name)
+        if c is None or c.op != "const" or c.inputs:
+            return None
+        tt = fn.tensors.get(name)
+        if tt is not None and not _is_scalar_like_tensor(fn, name):
+            return None
+        v = (c.attrs or {}).get("value")
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, str):
+            return None
+        try:
+            return float(v)
+        except Exception:
+            return None
+
+    def is_const_zero(name: str) -> bool:
+        v = const_scalar_numeric(name)
+        return v is not None and float(v) == 0.0
+
+    def is_const_one(name: str) -> bool:
+        v = const_scalar_numeric(name)
+        return v is not None and float(v) == 1.0
+
+    def is_const_neg(name: str) -> bool:
+        v = const_scalar_numeric(name)
+        return v is not None and float(v) < 0.0
+
+    for op in fn.ops:
+        if op.op != "add" or len(op.inputs) != 2:
+            continue
+        a, b = op.inputs[0], op.inputs[1]
+
+        # Try both input orderings.
+        for masked, term in [(a, b), (b, a)]:
+            w = prod.get(masked)
+            m = prod.get(term)
+            if w is None or w.op != "where" or len(w.inputs) != 3:
+                continue
+            if m is None or m.op != "mul" or len(m.inputs) != 2:
+                continue
+            cond, x, y = w.inputs[0], w.inputs[1], w.inputs[2]
+            if not is_const_zero(y):
+                continue
+
+            neg_name = None
+            inv_name = None
+            if is_const_neg(m.inputs[0]):
+                neg_name, inv_name = m.inputs[0], m.inputs[1]
+            elif is_const_neg(m.inputs[1]):
+                neg_name, inv_name = m.inputs[1], m.inputs[0]
+            if neg_name is None or inv_name is None:
+                continue
+
+            inv_op = prod.get(inv_name)
+            if inv_op is None or inv_op.op != "sub" or len(inv_op.inputs) != 2:
+                continue
+            if not is_const_one(inv_op.inputs[0]):
+                continue
+            mask_f = inv_op.inputs[1]
+
+            cast_op = prod.get(mask_f)
+            if cast_op is None or cast_op.op != "cast" or len(cast_op.inputs) != 1:
+                continue
+            if cast_op.inputs[0] != cond:
+                continue
+
+            # Rewrite in-place.
+            op.op = "where"
+            op.inputs = [cond, x, neg_name]
+            op.attrs = {}
+            break
 
 
 def _reduce_dims(op: Op) -> Optional[List[int]]:

@@ -122,8 +122,9 @@ class LLMIntentHub:
             prompt_hash = _hash_messages(messages)
             requested = model or self.default_model
             extra = dict(self.extra_chat_kwargs)
-            # Complex kernels can exceed 800 tokens (truncation -> invalid JSON).
-            extra.setdefault("max_tokens", 1600)
+            # Complex kernels (e.g., attention with masks) can exceed 1600 tokens.
+            # Truncation often manifests as invalid JSON; prefer a larger cap.
+            extra.setdefault("max_tokens", 4096)
             # Reduce non-determinism; helps providers obey "JSON only" prompts.
             extra.setdefault("temperature", 0)
 

@@ -546,20 +546,26 @@ def _clamp2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         rng = np.random.default_rng(int(case.seed))
         inp = rng.standard_normal((m, n), dtype=np.float32)
-    return {"inp": inp}
+    if case.inputs and "lo" in case.inputs:
+        lo = np.asarray(case.inputs["lo"], dtype=np.float32).reshape((1,))
+    else:
+        lo = np.array([-0.5], dtype=np.float32)
+    if case.inputs and "hi" in case.inputs:
+        hi = np.asarray(case.inputs["hi"], dtype=np.float32).reshape((1,))
+    else:
+        hi = np.array([0.5], dtype=np.float32)
+    return {"inp": inp, "lo": lo, "hi": hi}
 
 
 def _clamp2d_intent() -> IntentFunction:
     rm = _rm_layout()
     tensors: Dict[str, TensorType] = {
         "inp": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
+        "lo": TensorType(dtype="f32", shape=[], layout=rm),
+        "hi": TensorType(dtype="f32", shape=[], layout=rm),
         "out": TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm),
     }
     ops: list[Op] = []
-    ops.append(Op(op="const", inputs=[], output="lo", attrs={"value": -0.5, "dtype": "f32"}))
-    tensors["lo"] = TensorType(dtype="f32", shape=[], layout=rm)
-    ops.append(Op(op="const", inputs=[], output="hi", attrs={"value": 0.5, "dtype": "f32"}))
-    tensors["hi"] = TensorType(dtype="f32", shape=[], layout=rm)
     ops.append(Op(op="max", inputs=["inp", "lo"], output="t0", attrs={}))
     tensors["t0"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
     ops.append(Op(op="min", inputs=["t0", "hi"], output="out", attrs={}))
@@ -1088,7 +1094,10 @@ def _masked_attention2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         rng = np.random.default_rng(int(case.seed))
         v = rng.standard_normal((kv_ctx, head_dim), dtype=np.float32)
-    sm_scale = np.array(1.0 / np.sqrt(float(head_dim)), dtype=np.float32)
+    if case.inputs and "sm_scale" in case.inputs:
+        sm_scale = np.asarray(case.inputs["sm_scale"], dtype=np.float32).reshape((1,))
+    else:
+        sm_scale = np.array([1.0 / np.sqrt(float(head_dim))], dtype=np.float32)
 
     scores = (q @ k.T) * sm_scale
     causal = (np.arange(kv_ctx)[None, :] <= np.arange(q_ctx)[:, None])
@@ -1106,7 +1115,8 @@ def _masked_attention2d_intent() -> IntentFunction:
         "Q": TensorType(dtype="f32", shape=[Dim("sym", "Q_CTX"), Dim("sym", "HEAD_DIM")], layout=rm),
         "K": TensorType(dtype="f32", shape=[Dim("sym", "KV_CTX"), Dim("sym", "HEAD_DIM")], layout=rm),
         "V": TensorType(dtype="f32", shape=[Dim("sym", "KV_CTX"), Dim("sym", "HEAD_DIM")], layout=rm),
-        "sm_scale": TensorType(dtype="f32", shape=[], layout=rm),
+        # TileLang kernels model scalar-like params as length-1 tensors.
+        "sm_scale": TensorType(dtype="f32", shape=[Dim("const", 1)], layout=rm),
         "Out": TensorType(dtype="f32", shape=[Dim("sym", "Q_CTX"), Dim("sym", "HEAD_DIM")], layout=rm),
     }
     ops: list[Op] = []
@@ -1478,59 +1488,123 @@ def _layer_norm_residual2d_intent() -> IntentFunction:
 
 
 def _attn_fwd_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    z = int(case.shapes.get("Z", 1))
+    q_numhead = int(case.shapes.get("q_numhead", 1))
+    kv_numhead = int(case.shapes.get("kv_numhead", 1))
     q_ctx = int(case.shapes.get("Q_CTX", 16))
     kv_ctx = int(case.shapes.get("KV_CTX", 16))
     head_dim = int(case.shapes.get("HEAD_DIM", 16))
+    rng = np.random.default_rng(int(case.seed))
+
     if case.inputs and "Q" in case.inputs:
         q = np.asarray(case.inputs["Q"], dtype=np.float32)
     else:
-        rng = np.random.default_rng(int(case.seed))
-        q = rng.standard_normal((q_ctx, head_dim), dtype=np.float32)
+        q = rng.standard_normal((z, q_numhead, q_ctx, head_dim), dtype=np.float32)
     if case.inputs and "K" in case.inputs:
         k = np.asarray(case.inputs["K"], dtype=np.float32)
     else:
-        rng = np.random.default_rng(int(case.seed))
-        k = rng.standard_normal((kv_ctx, head_dim), dtype=np.float32)
+        k = rng.standard_normal((z, kv_numhead, kv_ctx, head_dim), dtype=np.float32)
     if case.inputs and "V" in case.inputs:
         v = np.asarray(case.inputs["V"], dtype=np.float32)
     else:
-        rng = np.random.default_rng(int(case.seed))
-        v = rng.standard_normal((kv_ctx, head_dim), dtype=np.float32)
-    if case.inputs and "sm_scale" in case.inputs:
-        sm_scale = np.asarray(case.inputs["sm_scale"], dtype=np.float32).reshape(())
+        v = rng.standard_normal((z, kv_numhead, kv_ctx, head_dim), dtype=np.float32)
+    if case.inputs and "attn_mask" in case.inputs:
+        attn_mask = np.asarray(case.inputs["attn_mask"], dtype=np.float32)
     else:
-        sm_scale = np.array(1.0 / np.sqrt(float(head_dim)), dtype=np.float32)
+        attn_mask = np.zeros((z, q_numhead, q_ctx, kv_ctx), dtype=np.float32)
+    if case.inputs and "sm_scale" in case.inputs:
+        sm_scale = np.asarray(case.inputs["sm_scale"], dtype=np.float32).reshape((1,))
+    else:
+        sm_scale = np.array([1.0 / np.sqrt(float(head_dim))], dtype=np.float32)
 
-    scores = (q @ k.T) * sm_scale
+    # scores: [Z, q_numhead, Q_CTX, KV_CTX]
+    scores = np.empty((z, q_numhead, q_ctx, kv_ctx), dtype=np.float32)
+    for zb in range(z):
+        for h in range(q_numhead):
+            kh = h % max(1, kv_numhead)
+            scores[zb, h] = q[zb, h] @ k[zb, kh].T
+    scores = (scores + attn_mask) * sm_scale
+
+    # softmax over KV_CTX
     scores_max = np.max(scores, axis=-1, keepdims=True)
     probs = np.exp(scores - scores_max)
     probs = probs / np.sum(probs, axis=-1, keepdims=True)
-    out = probs @ v
-    return {"Q": q, "K": k, "V": v, "sm_scale": sm_scale, "Out": out.astype(np.float32)}
+
+    out = np.empty((z, q_numhead, q_ctx, head_dim), dtype=np.float32)
+    for zb in range(z):
+        for h in range(q_numhead):
+            vh = h % max(1, kv_numhead)
+            out[zb, h] = probs[zb, h] @ v[zb, vh]
+
+    return {"Q": q, "K": k, "V": v, "attn_mask": attn_mask, "sm_scale": sm_scale, "Out": out.astype(np.float32)}
 
 
 def _attn_fwd_intent() -> IntentFunction:
     rm = _rm_layout()
     tensors = {
-        "Q": TensorType(dtype="f32", shape=[Dim("sym", "Q_CTX"), Dim("sym", "HEAD_DIM")], layout=rm),
-        "K": TensorType(dtype="f32", shape=[Dim("sym", "KV_CTX"), Dim("sym", "HEAD_DIM")], layout=rm),
-        "V": TensorType(dtype="f32", shape=[Dim("sym", "KV_CTX"), Dim("sym", "HEAD_DIM")], layout=rm),
-        "sm_scale": TensorType(dtype="f32", shape=[], layout=rm),
-        "Out": TensorType(dtype="f32", shape=[Dim("sym", "Q_CTX"), Dim("sym", "HEAD_DIM")], layout=rm),
+        "Q": TensorType(
+            dtype="f32",
+            shape=[Dim("sym", "Z"), Dim("sym", "q_numhead"), Dim("sym", "Q_CTX"), Dim("sym", "HEAD_DIM")],
+            layout=rm,
+        ),
+        "K": TensorType(
+            dtype="f32",
+            shape=[Dim("sym", "Z"), Dim("sym", "kv_numhead"), Dim("sym", "KV_CTX"), Dim("sym", "HEAD_DIM")],
+            layout=rm,
+        ),
+        "V": TensorType(
+            dtype="f32",
+            shape=[Dim("sym", "Z"), Dim("sym", "kv_numhead"), Dim("sym", "KV_CTX"), Dim("sym", "HEAD_DIM")],
+            layout=rm,
+        ),
+        "attn_mask": TensorType(
+            dtype="f32",
+            shape=[Dim("sym", "Z"), Dim("sym", "q_numhead"), Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")],
+            layout=rm,
+        ),
+        # TileLang kernels model scalar-like params as length-1 tensors.
+        "sm_scale": TensorType(dtype="f32", shape=[Dim("const", 1)], layout=rm),
+        "Out": TensorType(
+            dtype="f32",
+            shape=[Dim("sym", "Z"), Dim("sym", "q_numhead"), Dim("sym", "Q_CTX"), Dim("sym", "HEAD_DIM")],
+            layout=rm,
+        ),
     }
 
     ops: list[Op] = []
-    ops.append(Op(op="transpose", inputs=["K"], output="K_t", attrs={"perm": [1, 0]}))
-    tensors["K_t"] = TensorType(dtype="f32", shape=[Dim("sym", "HEAD_DIM"), Dim("sym", "KV_CTX")], layout=rm)
+    ops.append(Op(op="transpose", inputs=["K"], output="K_t", attrs={"perm": [0, 1, 3, 2]}))
+    tensors["K_t"] = TensorType(
+        dtype="f32",
+        shape=[Dim("sym", "Z"), Dim("sym", "kv_numhead"), Dim("sym", "HEAD_DIM"), Dim("sym", "KV_CTX")],
+        layout=rm,
+    )
 
     ops.append(Op(op="matmul", inputs=["Q", "K_t"], output="scores", attrs={}))
-    tensors["scores"] = TensorType(dtype="f32", shape=[Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")], layout=rm)
+    tensors["scores"] = TensorType(
+        dtype="f32",
+        shape=[Dim("sym", "Z"), Dim("sym", "q_numhead"), Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")],
+        layout=rm,
+    )
 
-    ops.append(Op(op="mul", inputs=["scores", "sm_scale"], output="scores_s", attrs={}))
-    tensors["scores_s"] = TensorType(dtype="f32", shape=[Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")], layout=rm)
+    ops.append(Op(op="add", inputs=["scores", "attn_mask"], output="scores_m", attrs={}))
+    tensors["scores_m"] = TensorType(
+        dtype="f32",
+        shape=[Dim("sym", "Z"), Dim("sym", "q_numhead"), Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")],
+        layout=rm,
+    )
+    ops.append(Op(op="mul", inputs=["scores_m", "sm_scale"], output="scores_s", attrs={}))
+    tensors["scores_s"] = TensorType(
+        dtype="f32",
+        shape=[Dim("sym", "Z"), Dim("sym", "q_numhead"), Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")],
+        layout=rm,
+    )
 
     ops.append(Op(op="softmax", inputs=["scores_s"], output="probs", attrs={"axis": -1}))
-    tensors["probs"] = TensorType(dtype="f32", shape=[Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")], layout=rm)
+    tensors["probs"] = TensorType(
+        dtype="f32",
+        shape=[Dim("sym", "Z"), Dim("sym", "q_numhead"), Dim("sym", "Q_CTX"), Dim("sym", "KV_CTX")],
+        layout=rm,
+    )
 
     ops.append(Op(op="matmul", inputs=["probs", "V"], output="Out", attrs={}))
 
@@ -1541,7 +1615,14 @@ def _attn_fwd_intent() -> IntentFunction:
         ops=ops,
         outputs=["Out"],
         schedule=schedule,
-        axis_roles={"Q_CTX": "spatial", "KV_CTX": "reduction", "HEAD_DIM": "channel"},
+        axis_roles={
+            "Z": "batch",
+            "q_numhead": "channel",
+            "kv_numhead": "channel",
+            "Q_CTX": "spatial",
+            "KV_CTX": "spatial",
+            "HEAD_DIM": "channel",
+        },
     )
 
 
@@ -1751,9 +1832,9 @@ def default_kernel_specs() -> List[KernelSpec]:
         ),
         KernelSpec(
             name="_attn_fwd",
-            prim_func=make_attn_fwd_prim_func(q_ctx=16, kv_ctx=16, head_dim=16, threads=128),
-            arg_names=["Q", "K", "V", "sm_scale", "Out", "Q_CTX", "KV_CTX", "HEAD_DIM"],
-            canonical_shapes={"Q_CTX": 16, "KV_CTX": 16, "HEAD_DIM": 16},
+            prim_func=make_attn_fwd_prim_func(z=1, q_numhead=1, kv_numhead=1, q_ctx=16, kv_ctx=16, head_dim=16, threads=128),
+            arg_names=["Q", "K", "V", "attn_mask", "sm_scale", "Out", "Z", "q_numhead", "kv_numhead", "Q_CTX", "KV_CTX", "HEAD_DIM"],
+            canonical_shapes={"Z": 1, "q_numhead": 1, "kv_numhead": 1, "Q_CTX": 16, "KV_CTX": 16, "HEAD_DIM": 16},
             vary_axes=[],
             runner=_attn_fwd_reference,
             intent_builder=_attn_fwd_intent,
@@ -1897,8 +1978,8 @@ def coverage_kernel_specs() -> List[KernelSpec]:
             ),
             KernelSpec(
                 name="clamp2d",
-                prim_func=make_clamp2d_prim_func(n=64, lo=-0.5, hi=0.5, threads=128),
-                arg_names=["inp", "out", "M", "N"],
+                prim_func=make_clamp2d_prim_func(n=64, threads=128),
+                arg_names=["inp", "lo", "hi", "out", "M", "N"],
                 canonical_shapes={"M": 16, "N": 64},
                 vary_axes=["M"],
                 runner=_clamp2d_reference,

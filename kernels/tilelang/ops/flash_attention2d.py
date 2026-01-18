@@ -14,8 +14,6 @@ def make_flash_attention2d_prim_func(
       - maintain per-query-row (m_i, l_i) and output accumulator
       - apply causal mask (j > q -> masked)
     """
-    import math
-
     import tilelang.language as T
 
     Q_CTX = int(q_ctx)
@@ -25,13 +23,12 @@ def make_flash_attention2d_prim_func(
     if KV_CTX % BLOCK_KV != 0:
         raise ValueError("make_flash_attention2d_prim_func requires kv_ctx divisible by block_kv")
 
-    sm_scale = float(1.0 / math.sqrt(float(HEAD_DIM)))
-
     @T.prim_func
     def main(
         Q: T.Tensor((Q_CTX, HEAD_DIM), "float32"),
         K: T.Tensor((KV_CTX, HEAD_DIM), "float32"),
         V: T.Tensor((KV_CTX, HEAD_DIM), "float32"),
+        sm_scale: T.Tensor((1,), "float32"),
         Out: T.Tensor((Q_CTX, HEAD_DIM), "float32"),
     ):
         with T.Kernel(Q_CTX, threads=threads) as (pid_q,):
@@ -40,7 +37,7 @@ def make_flash_attention2d_prim_func(
 
             neg = T.float32(-1.0e9)
             one = T.float32(1.0)
-            scale = T.float32(sm_scale)
+            scale = sm_scale[0]
 
             m_i = T.alloc_fragment((1,), "float32")
             l_i = T.alloc_fragment((1,), "float32")
@@ -104,4 +101,3 @@ def make_flash_attention2d_prim_func(
 
 
 __all__ = ["make_flash_attention2d_prim_func"]
-
