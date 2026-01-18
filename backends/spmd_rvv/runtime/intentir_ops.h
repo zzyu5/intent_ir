@@ -124,10 +124,14 @@ void intentir_reduce_any_2d_axis1_u8(const uint8_t* a, uint8_t* out, int64_t M, 
 
 // Matmul (GEMM) in row-major layouts, with optional transpose flags:
 // - 2D: [M,K] x [K,N] -> [M,N]
+// - 3D: [B,M,K] x [B,K,N] -> [B,M,N]
 // - 4D: [B,H,M,K] x [B,H,K,N] -> [B,H,M,N]
 // Transpose flags follow the IntentIR `matmul` op: transpose_a / transpose_b.
 void intentir_matmul_2d_f32(
     const float* a, const float* b, float* out, int64_t M, int64_t N, int64_t K, int transpose_a, int transpose_b,
+    int64_t tile_m, int64_t tile_n, int64_t tile_k);
+void intentir_matmul_3d_f32(
+    const float* a, const float* b, float* out, int64_t B, int64_t M, int64_t N, int64_t K, int transpose_a, int transpose_b,
     int64_t tile_m, int64_t tile_n, int64_t tile_k);
 void intentir_matmul_4d_f32(
     const float* a, const float* b, float* out, int64_t B, int64_t H, int64_t M, int64_t N, int64_t K, int transpose_a,

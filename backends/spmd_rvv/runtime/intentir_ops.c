@@ -3328,6 +3328,22 @@ void intentir_matmul_2d_f32(
   }
 }
 
+void intentir_matmul_3d_f32(
+    const float* a, const float* b, float* out, int64_t B, int64_t M, int64_t N, int64_t K, int transpose_a, int transpose_b,
+    int64_t tile_m, int64_t tile_n, int64_t tile_k) {
+  if (!a || !b || !out || B <= 0 || M <= 0 || N <= 0 || K <= 0) return;
+  const size_t a_stride = (size_t)(transpose_a ? (K * M) : (M * K));
+  const size_t b_stride = (size_t)(transpose_b ? (N * K) : (K * N));
+  const size_t o_stride = (size_t)(M * N);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if (B >= 2)
+#endif
+  for (int64_t b0 = 0; b0 < B; ++b0) {
+    intentir_matmul_2d_f32(a + (size_t)b0 * a_stride, b + (size_t)b0 * b_stride, out + (size_t)b0 * o_stride, M, N, K, transpose_a, transpose_b,
+                           tile_m, tile_n, tile_k);
+  }
+}
+
 void intentir_matmul_4d_f32(
     const float* a, const float* b, float* out, int64_t B, int64_t H, int64_t M, int64_t N, int64_t K, int transpose_a,
     int transpose_b, int64_t tile_m, int64_t tile_n, int64_t tile_k) {
