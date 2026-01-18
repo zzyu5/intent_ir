@@ -689,7 +689,12 @@ def run_remote(
             proc_bind_used = best or "spread"
         else:
             s = str(omp_proc_bind).strip()
-            proc_bind_used = (s if s and s.lower() not in {"none"} else None)
+            # "auto" is our internal sentinel. Some OpenMP runtimes (libgomp)
+            # reject OMP_PROC_BIND=auto, so choose a safe default.
+            if s.lower() == "auto":
+                proc_bind_used = ("spread" if int(omp_threads) > 1 else None)
+            else:
+                proc_bind_used = (s if s and s.lower() not in {"none"} else None)
 
         run = _run_once(proc_bind=proc_bind_used, bench_iters_run=int(bench_iters), bench_warmup_run=int(bench_warmup))
 
