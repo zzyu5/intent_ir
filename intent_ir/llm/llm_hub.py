@@ -59,19 +59,110 @@ def _maybe_truncate_source(source_text: str) -> str:
     return "\n".join([banner, *head_lines, "[IntentIR] ... TRUNCATED ...", *tail_lines])
 
 
+def _maybe_compact_source_on_server_error(source_text: str, last_error: Exception | None) -> str:
+    """
+    Second-stage compaction: when a provider returns repeated 5xx, retry with a
+    smaller source payload.
+
+    Some proxy endpoints have very small input limits and may respond with 500
+    on slightly larger prompts. In that case, we keep just a prefix + suffix of
+    the CUDA/Triton source and rely on the evidence appendix for details.
+    """
+    if last_error is None:
+        return str(source_text)
+    msg = str(last_error)
+    if "server error" not in msg and " 520 " not in msg and " 502 " not in msg and " 503 " not in msg and " 504 " not in msg:
+        return str(source_text)
+    text = str(source_text)
+    if len(text) <= 1800:
+        return text
+    head = 1200
+    tail = 240
+    return "\n".join(
+        [
+            "[IntentIR] SOURCE COMPACT (server-error retry)",
+            text[:head],
+            "[IntentIR] ... COMPACTED ...",
+            text[-tail:] if tail > 0 else "",
+        ]
+    ).strip()
+
+
 def _evidence_blob(descriptor: KernelDescriptor) -> str:
+    def _summarize_frontend_constraints(fc: Any) -> Any:
+        """
+        Keep the evidence appendix small and stable.
+
+        Some frontends attach large, detailed witnesses (e.g. access lists) that
+        are crucial for debugging/tuning but can blow up prompt size and trigger
+        proxy/provider 5xx. For LLM extraction, we only need a compact subset:
+          - shape symbols / ranges
+          - tile hints / scheduling sketch inputs
+          - mask/predicate clauses (if present)
+          - a *summary* of access witnesses (counts + a few scalars)
+        """
+        if not isinstance(fc, dict):
+            return fc
+        out: Dict[str, Any] = {}
+        for k in ("needs_mask", "suggested_edge_cases"):
+            if k in fc:
+                out[k] = fc.get(k)
+
+        meta = fc.get("meta")
+        if not isinstance(meta, dict):
+            if "meta" in fc:
+                out["meta"] = meta
+            return out
+
+        meta_out: Dict[str, Any] = {}
+        for k in ("symbol_ranges", "tile_hints", "static_ints"):
+            if k in meta:
+                meta_out[k] = meta.get(k)
+
+        # Predicate clauses can get large; cap to keep prompts bounded.
+        pc = meta.get("predicate_clauses")
+        if isinstance(pc, list):
+            clipped: List[str] = []
+            for x in pc[:64]:
+                s = str(x)
+                if len(s) > 256:
+                    s = s[:256] + "…"
+                if s.strip():
+                    clipped.append(s)
+            meta_out["predicate_clauses"] = clipped
+
+        # Access witness: keep only a compact summary (drop full access list).
+        aw = meta.get("access_witness")
+        if isinstance(aw, dict):
+            accesses = aw.get("accesses")
+            meta_out["access_witness_summary"] = {
+                "num_accesses": (len(accesses) if isinstance(accesses, list) else None),
+                "tensor_penalty": aw.get("tensor_penalty"),
+                "dominant_axis": aw.get("dominant_axis"),
+                "dominant_range": aw.get("dominant_range"),
+                "dominant_range_len": aw.get("dominant_range_len"),
+                "has_contiguous_range": aw.get("has_contiguous_range"),
+                "notes": (list(aw.get("notes") or [])[:8] if isinstance(aw.get("notes"), list) else None),
+            }
+
+        if meta_out:
+            out["meta"] = meta_out
+        return out
+
     ev = {
         "kernel": descriptor.name,
         "frontend": descriptor.frontend,
         "io_spec": descriptor.io_spec,
         "launch": descriptor.launch,
         "frontend_facts": descriptor.frontend_facts,
-        "frontend_constraints": descriptor.frontend_constraints,
+        "frontend_constraints": _summarize_frontend_constraints(descriptor.frontend_constraints),
         "meta": {
             "versions": {k: descriptor.meta.get(k) for k in ("triton", "torch", "tilelang") if descriptor.meta.get(k) is not None}
         },
     }
-    return json.dumps(ev, indent=2, ensure_ascii=False, sort_keys=True)
+    # Compact encoding keeps prompts within provider limits and also makes cache
+    # keys less sensitive to whitespace.
+    return json.dumps(ev, ensure_ascii=False, sort_keys=True)
 
 
 @dataclass
@@ -121,7 +212,11 @@ class LLMIntentHub:
         if "server error" in msg or " 520 " in msg or " 502 " in msg or " 503 " in msg or " 504 " in msg:
             streak = int(self.model_fail_streak.get(m, 0)) + 1
             self.model_fail_streak[m] = streak
-            if streak >= max(1, int(self.server_error_disable_after)):
+            # If the caller disables fallback, disabling the only candidate will
+            # cause the rest of a suite to "skip: disabled" without actually
+            # exercising the provider. For paper-grade cold-runs we prefer to
+            # keep trying on later kernels (bounded by retries/timeout/rpm).
+            if bool(self.allow_model_fallback) and streak >= max(1, int(self.server_error_disable_after)):
                 self.disabled_models[m] = now + float(max(1, int(self.server_error_cooldown_s)))
             return
 
@@ -329,6 +424,13 @@ class LLMIntentHub:
 
         src = _maybe_truncate_source(descriptor.source_text)
         compact = bool(src.startswith("[IntentIR] SOURCE TRUNCATED"))
+        if attempt > 0 and last_error is not None:
+            # If the provider is flaky/limited, retry with a smaller source and
+            # a more compact system prompt.
+            src2 = _maybe_compact_source_on_server_error(descriptor.source_text, last_error)
+            if src2 != descriptor.source_text:
+                src = src2
+                compact = True
         if descriptor.frontend == "triton":
             from frontends.triton.llm_intent import build_messages
 

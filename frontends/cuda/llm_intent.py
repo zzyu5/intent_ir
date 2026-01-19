@@ -15,6 +15,7 @@ kernel body, produce Intent-IR v1.1 candidate JSON. Hard rules:
 - Return ONE JSON object only (no prose, no code fences).
 - Emit keys: name, kernel_type, tensors, ops, outputs, parallel_axes, schedule(optional), axis_roles(optional), meta(optional).
 - tensors must be an object {name: {...}}, NOT a list.
+- Every op input must refer to an existing tensor name: either a kernel input (declared in tensors) or a previous op's output.
 - Use ONLY the allowed op set:
   - numeric: add/sub/mul/div/max/min/exp/relu/rsqrt/abs/floor
   - compare/bool: ne/lt/le/gt/ge/and/or/not/where
@@ -29,6 +30,7 @@ kernel body, produce Intent-IR v1.1 candidate JSON. Hard rules:
   If you need a grouped/view shape, insert explicit reshape ops inside IntentIR.
 - CUDA indexing note: blockIdx.* and threadIdx.* are scheduling details; do NOT encode them into tensor shapes.
   Express full logical tensor shapes (e.g., [M,N]) and semantics ops; schedule is optional and should be a sketch only.
+- For normalization means/variances: do NOT invent placeholder constants like const_N. Prefer reduce_sum attrs.scale like \"1.0/N\" (string), or explicitly create scalar constants via const ops.
 """
 
 
@@ -39,12 +41,14 @@ Required keys: name, kernel_type, tensors, ops, outputs, parallel_axes (schedule
 Rules:
 - tensors is an object {name:{dtype,shape,layout}}, NOT a list.
 - outputs is a list; every output must be declared in tensors and produced by some op.
+- Every op input must refer to an existing tensor name (kernel input or previous op output); do not reference undefined placeholders.
 - Allowed ops only: add/sub/mul/div/max/min/exp/relu/rsqrt/abs/floor,
   ne/lt/le/gt/ge/and/or/not/where, reshape/broadcast_in_dim/transpose/layout_cast,
   reduce_sum/reduce_max/reduce_any/softmax, matmul/conv2d/cast/iota/gather/identity/const,
   macro: upsample_bicubic2d_aa (only when semantically appropriate).
 - Do NOT invent new shape symbols; use only symbols from the evidence appendix (io_spec / launch / scalar params).
 - Keep original input view shapes; use reshape ops for any grouped/view computation.
+- For mean/variance normalization, prefer reduce_sum attrs.scale (e.g. \"1.0/N\") instead of inventing const_N tensors.
 """
 
 
