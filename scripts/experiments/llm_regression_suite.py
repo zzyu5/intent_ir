@@ -380,12 +380,32 @@ def _semantic_class_from_intent(intent: IntentFunction) -> str:
         return "matmul"
     if has_reduce:
         return "reduce"
-    if "copy" in ops_set or "identity" in ops_set:
+    if ("copy" in ops_set or "identity" in ops_set) and ops_set.issubset({"copy", "identity"}):
         return "copy"
     # Elementwise / fused epilogue bucket.
-    if ops_set.intersection({"add", "mul", "div", "relu", "exp", "max", "min", "where", "clip", "cast"}):
+    if ops_set.intersection(
+        {
+            "add",
+            "mul",
+            "div",
+            "relu",
+            "exp",
+            "max",
+            "min",
+            "where",
+            "clip",
+            "cast",
+            "floor",
+            "sigmoid",
+            "tanh",
+            "gelu",
+            "ne",
+        }
+    ):
         return "elementwise"
-    return "unknown"
+    # Fallback: remaining graphs are treated as elementwise rather than "unknown"
+    # (e.g., external benchmark kernels with uncommon op names).
+    return "elementwise" if ops else "unknown"
 
 
 def _load_labels(path: Path) -> Dict[str, Any]:

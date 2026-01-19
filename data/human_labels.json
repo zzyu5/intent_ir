@@ -156,11 +156,11 @@
     "axis_roles": {}
   },
   "ai_bench_resize": {
-    "semantic_class": "upsample",
+    "semantic_class": "",
     "axis_roles": {}
   },
   "ai_bench_correlation": {
-    "semantic_class": "reduce",
+    "semantic_class": "",
     "axis_roles": {}
   }
 }
