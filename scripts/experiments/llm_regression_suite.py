@@ -499,9 +499,29 @@ def run_one(
     repair_rounds: int,
     rpm: int,
     last_api_s: float | None,
+    refresh_artifacts: bool = False,
 ) -> Tuple[KernelResult, float | None]:
     desc_path = artifacts_dir / f"{kernel}.descriptor.json"
     cert_path = artifacts_dir / f"{kernel}.certificate_v2.json"
+
+    if bool(refresh_artifacts):
+        try:
+            _prepare_frontend_artifacts(frontend=frontend, kernel=kernel, artifacts_dir=artifacts_dir)
+        except Exception as e:
+            r = KernelResult(
+                frontend=frontend,
+                kernel=kernel,
+                contract="N/A",
+                anchor_tier="D_none",
+                anchor_score=0,
+                predicted_semantic="unknown",
+                predicted_axis_roles={},
+                ok=False,
+                category=f"artifact_prepare_error:{type(e).__name__}",
+                reasons=[str(e)],
+                llm={},
+            )
+            return r, last_api_s
 
     if not desc_path.exists() or not cert_path.exists():
         # Regression suite is expected to be runnable "from scratch". Prepare
@@ -769,6 +789,11 @@ def main() -> None:
     ap.add_argument("--cache", choices=["on", "off"], default="on", help="use on-disk LLM cache (default: on)")
     ap.add_argument("--cache-dir", default=None, help="override LLM cache directory")
     ap.add_argument("--clear-cache", action="store_true", help="clear cache directory before running (safe: only under $HOME)")
+    ap.add_argument(
+        "--refresh-artifacts",
+        action="store_true",
+        help="rebuild Stage-4 artifacts (descriptor/certificate/contract) before each kernel run",
+    )
     ap.add_argument("--no-fallback", action="store_true", help="disable provider/model fallback; use only the requested --model")
     ap.add_argument("--labels", default=None, help="optional: JSON labels file for E1 accuracy scoring")
     ap.add_argument(
@@ -864,6 +889,7 @@ def main() -> None:
                     repair_rounds=int(v_rounds),
                     rpm=int(args.rpm),
                     last_api_s=last_api_s,
+                    refresh_artifacts=bool(args.refresh_artifacts),
                 )
                 results_by_variant[v_name].append(r)
                 status = "OK" if r.ok else "FAIL"
