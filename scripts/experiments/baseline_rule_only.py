@@ -363,7 +363,7 @@ def main() -> None:
     ap.add_argument("--kernel", action="append", default=[], help="repeatable; restrict to kernel name(s)")
     ap.add_argument("--refresh-artifacts", action="store_true", help="rebuild descriptor/cert without LLM (stage4 only)")
     ap.add_argument("--cases-limit", type=int, default=1, help="unused (compat placeholder)")
-    ap.add_argument("--out", default=str(ROOT / "artifacts" / "experiments" / "e1_rule_only_latest.json"))
+    ap.add_argument("--out", default=str(ROOT / "artifacts" / "experiments" / "E1" / "e1_rule_only_latest.json"))
     args = ap.parse_args()
 
     if str(args.frontend) == "both":

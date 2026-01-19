@@ -323,7 +323,7 @@ def main() -> None:
     ap.add_argument("--n-mutants", type=int, default=32)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--no-bounded", action="store_true")
-    ap.add_argument("--out", default=str(ROOT / "artifacts" / "experiments" / "e2_trust_ablation_latest.json"))
+    ap.add_argument("--out", default=str(ROOT / "artifacts" / "experiments" / "E2" / "e2_trust_ablation_latest.json"))
     args = ap.parse_args()
 
     frontend = str(args.frontend)

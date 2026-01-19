@@ -606,7 +606,9 @@ def main() -> None:
     ap.add_argument("--kernel", action="append", default=[], help="repeatable; restrict to kernel name(s)")
     ap.add_argument("--refresh-artifacts", action="store_true")
     ap.add_argument("--cases-limit", type=int, default=4, help="used only when regenerating pipeline artifacts")
-    ap.add_argument("--out", default=str(ROOT / "artifacts" / "experiments" / "e4_cross_frontend_consistency_latest.json"))
+    ap.add_argument(
+        "--out", default=str(ROOT / "artifacts" / "experiments" / "E4" / "e4_cross_frontend_consistency_latest.json")
+    )
     args = ap.parse_args()
 
     frontends = [str(x) for x in (args.frontend or []) if str(x).strip()]

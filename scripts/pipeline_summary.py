@@ -163,7 +163,8 @@ def _latest_json(dir_path: Path, patterns: List[str]) -> Optional[Path]:
         return None
     cand: List[Path] = []
     for pat in patterns:
-        cand.extend(list(dir_path.glob(pat)))
+        # Allow experiments to be organized into per-experiment subdirectories.
+        cand.extend(list(dir_path.rglob(pat)))
     cand = [p for p in cand if p.is_file()]
     if not cand:
         return None

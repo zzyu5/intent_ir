@@ -131,7 +131,7 @@ def main() -> None:
     ap.add_argument("--profile", default=None, help="RVV profile name or JSON path (default: probe remote host)")
     ap.add_argument("--include-out-of-scope", action="store_true", help="include OUT_OF_SCOPE kernels (default: skip)")
     ap.add_argument("--retry-errors", action="store_true", help="retry kernels that previously failed in the output JSON")
-    ap.add_argument("--out", default=str(ROOT / "artifacts" / "experiments" / "portability_vs_perf.json"))
+    ap.add_argument("--out", default=str(ROOT / "artifacts" / "experiments" / "E5" / "portability_vs_perf.json"))
     args = ap.parse_args()
 
     wanted: list[str] = []

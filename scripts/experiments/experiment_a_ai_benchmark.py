@@ -253,7 +253,7 @@ def main() -> None:
     ap.add_argument("--bench-warmup", type=int, default=1)
     ap.add_argument("--ours-threads", type=int, default=1, help="OpenMP threads for our RVV backend (default: 1)")
     ap.add_argument("--timeout", type=int, default=600)
-    ap.add_argument("--out", default=str(ROOT / "artifacts" / "experiments" / "experiment_a_ai_benchmark.json"))
+    ap.add_argument("--out", default=str(ROOT / "artifacts" / "experiments" / "E5" / "experiment_a_ai_benchmark.json"))
     args = ap.parse_args()
 
     password: str | None = None
