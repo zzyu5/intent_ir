@@ -120,8 +120,13 @@ def _anchors_from_cert(cert: SemanticCertificateV2) -> Dict[str, Any]:
 
 
 def _kernel_kind(anchors: Dict[str, Any]) -> str:
-    if bool(anchors.get("has_dot")) and bool(anchors.get("has_reduce")):
-        return "attention"
+    # Prefer explicit semantic hint when available. (Some frontends may store
+    # a frontend identifier here; only accept known semantic kinds.)
+    k = anchors.get("kernel_kind_hint") or anchors.get("kernel_kind")
+    if isinstance(k, str) and k.strip() in {"matmul", "reduce", "attention", "copy"}:
+        return str(k).strip()
+    # Derive: dot is a strong matmul signal; many matmul kernels also have
+    # reductions (accumulation), so dot+reduce must not default to attention.
     if bool(anchors.get("has_dot")):
         return "matmul"
     if bool(anchors.get("has_reduce")):

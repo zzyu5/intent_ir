@@ -54,11 +54,11 @@ def _kernel_kind_from_cert(cert: object) -> str:
         k = anchors.get("kernel_kind_hint") or anchors.get("kernel_kind")
         if isinstance(k, str) and k.strip() in {"matmul", "reduce", "attention", "copy"}:
             return str(k).strip()
-        # derive (best-effort)
+        # Derive (best-effort): dot is a strong indicator of matmul, and many
+        # matmul kernels also contain reductions (e.g., accumulation over K),
+        # so `has_dot && has_reduce` must NOT default to "attention".
         if anchors.get("has_atomic"):
             return "unknown"
-        if anchors.get("has_dot") and anchors.get("has_reduce"):
-            return "attention"
         if anchors.get("has_dot"):
             return "matmul"
         if anchors.get("has_reduce"):

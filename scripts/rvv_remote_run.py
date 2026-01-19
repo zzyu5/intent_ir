@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -103,6 +104,43 @@ def _with_io_aliases(intent: IntentFunction, io: dict) -> dict:
             if len(candidates) == 1:
                 out[name] = io[candidates[0]]
     return out
+
+
+def _np_dtype(dt: str) -> "np.dtype":
+    m = {
+        "f16": np.float16,
+        "bf16": np.float32,
+        "f32": np.float32,
+        "f64": np.float64,
+        "i8": np.int8,
+        "u8": np.uint8,
+        "i16": np.int16,
+        "i32": np.int32,
+        "i64": np.int64,
+        "i1": np.bool_,
+        "bool": np.bool_,
+    }
+    return m.get(str(dt), np.float32)
+
+
+def _derive_scalar_input_array(name: str, *, dtype: str, bindings: dict) -> "np.ndarray" | None:
+    """
+    Derive a semantic scalar input (rank-0 tensor) that may be absent from the
+    baseline runner output (because it was folded into constants).
+
+    This keeps remote RVV correctness checks usable when IntentIR models such
+    values explicitly (for verification / macro lowering).
+    """
+    value = None
+    if name == "sm_scale":
+        hd = bindings.get("HEAD_DIM")
+        if hd is not None and int(hd) > 0:
+            value = 1.0 / math.sqrt(float(hd))
+    elif name in bindings:
+        value = bindings.get(name)
+    if value is None:
+        return None
+    return np.array(value, dtype=_np_dtype(dtype))
 
 
 def _sftp_mkdir_p(sftp: paramiko.SFTPClient, path: str) -> None:
@@ -505,9 +543,15 @@ def run_remote(
         _log(f"[{frontend}:{kernel}] upload inputs/refs")
         assert baseline is not None
         for name in external_inputs:
+            dt = intent.tensors[name].dtype
+            if name not in baseline:
+                tt = intent.tensors.get(name)
+                if tt is not None and len(getattr(tt, "shape", [])) == 0:
+                    arr0 = _derive_scalar_input_array(str(name), dtype=str(tt.dtype), bindings=bindings)
+                    if arr0 is not None:
+                        baseline[name] = arr0
             if name not in baseline:
                 raise RuntimeError(f"baseline missing input tensor {name} for {kernel}")
-            dt = intent.tensors[name].dtype
             arr = np.asarray(baseline[name])
             if dt in {"bool", "i1"}:
                 raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
