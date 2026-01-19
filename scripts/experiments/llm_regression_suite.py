@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
 import sys
 import time
 from dataclasses import dataclass
@@ -563,6 +565,35 @@ def run_one(
     best_semantic = "unknown"
     best_axis_roles: Dict[str, str] = {}
 
+    def _count_calls_from_extract_trace(extract_trace: Dict[str, Any] | None) -> Dict[str, int]:
+        """
+        Compute request accounting from the hub's per-attempt trace.
+
+        We count one call per model candidate that actually invoked chat_completion:
+          - stage == 'skip' does NOT count (model disabled before calling).
+          - all other stages count as a call (http/json/semantic).
+        """
+        if not isinstance(extract_trace, dict):
+            return {"calls": 0, "cache_hits": 0, "cache_misses": 0}
+        attempts = extract_trace.get("attempts")
+        if not isinstance(attempts, list):
+            return {"calls": 0, "cache_hits": 0, "cache_misses": 0}
+        calls = 0
+        hits = 0
+        misses = 0
+        for a in attempts:
+            if not isinstance(a, dict):
+                continue
+            stage = a.get("stage")
+            if stage == "skip":
+                continue
+            calls += 1
+            if bool(a.get("cache_hit")):
+                hits += 1
+            else:
+                misses += 1
+        return {"calls": int(calls), "cache_hits": int(hits), "cache_misses": int(misses)}
+
     for round_id in range(max(1, int(repair_rounds) + 1)):
         rounds_used += 1
         _maybe_sleep_rate_limit(rpm=rpm, last_api_s=last_api_s)
@@ -572,20 +603,46 @@ def run_one(
             best_ok = False
             best_category = f"llm_error:{type(e).__name__}"
             best_reasons = [str(e)]
+            # Preserve provider/model attempt trace if the hub attached one.
+            extract_trace = getattr(e, "intentir_trace", None)
+            prompt_hash = getattr(e, "intentir_prompt_hash", None)
+            counts = _count_calls_from_extract_trace(extract_trace if isinstance(extract_trace, dict) else None)
+            api_calls += counts["cache_misses"]
+            cache_hits += counts["cache_hits"]
+            cache_misses += counts["cache_misses"]
+            if counts["cache_misses"] > 0:
+                last_api_s = time.time()
+            llm_rounds.append(
+                {
+                    "round": int(round_id),
+                    "feedback_n": int(len(feedback)),
+                    "prompt_hash": str(prompt_hash) if isinstance(prompt_hash, str) else None,
+                    "chosen": None,
+                    "extract_trace": dict(extract_trace) if isinstance(extract_trace, dict) else None,
+                    "llm_calls": int(counts["calls"]),
+                    "cache_hits": int(counts["cache_hits"]),
+                    "cache_misses": int(counts["cache_misses"]),
+                    "static_ok": False,
+                    "static_reasons": [],
+                    "llm_error": f"{type(e).__name__}: {e}",
+                }
+            )
             break
 
         trace = dict(cand.llm_trace or {})
         et = trace.get("extract_trace") if isinstance(trace.get("extract_trace"), dict) else {}
         chosen = et.get("chosen") if isinstance(et, dict) else {}
-        cache_hit = bool(chosen.get("cache_hit")) if isinstance(chosen, dict) else False
-        if cache_hit:
-            cache_hits += 1
-        else:
-            cache_misses += 1
-            api_calls += 1
-        if not cache_hit:
+        counts = _count_calls_from_extract_trace(et if isinstance(et, dict) else None)
+        api_calls += counts["cache_misses"]
+        cache_hits += counts["cache_hits"]
+        cache_misses += counts["cache_misses"]
+        if counts["cache_misses"] > 0:
             last_api_s = time.time()
-        llm_meta = {"prompt_hash": trace.get("prompt_hash"), "chosen": dict(chosen) if isinstance(chosen, dict) else {}}
+        llm_meta = {
+            "prompt_hash": trace.get("prompt_hash"),
+            "chosen": dict(chosen) if isinstance(chosen, dict) else {},
+            "extract_trace": dict(et) if isinstance(et, dict) else {},
+        }
 
         try:
             enrich_intent_macros(cand.intent)
@@ -629,6 +686,10 @@ def run_one(
                 "feedback_n": int(len(feedback)),
                 "prompt_hash": trace.get("prompt_hash"),
                 "chosen": dict(chosen) if isinstance(chosen, dict) else {},
+                "extract_trace": dict(et) if isinstance(et, dict) else {},
+                "llm_calls": int(counts["calls"]),
+                "cache_hits": int(counts["cache_hits"]),
+                "cache_misses": int(counts["cache_misses"]),
                 "static_ok": bool(sv.ok),
                 "static_reasons": list(sv.reasons),
             }
@@ -662,6 +723,7 @@ def run_one(
                 "rounds_used": int(rounds_used),
                 "ok_round": int(ok_round) if ok_round is not None else None,
                 "api_calls": int(api_calls),
+                "llm_calls": int(cache_hits + cache_misses),
                 "cache_hits": int(cache_hits),
                 "cache_misses": int(cache_misses),
             },
@@ -685,6 +747,10 @@ def main() -> None:
     ap.add_argument("--attempts", type=int, default=2, help="max LLM attempts inside the hub")
     ap.add_argument("--parse-retries", type=int, default=2, help="max JSON parse retries inside the hub")
     ap.add_argument("--repair-rounds", type=int, default=1, help="how many static-validate repair rounds (0 disables)")
+    ap.add_argument("--cache", choices=["on", "off"], default="on", help="use on-disk LLM cache (default: on)")
+    ap.add_argument("--cache-dir", default=None, help="override LLM cache directory")
+    ap.add_argument("--clear-cache", action="store_true", help="clear cache directory before running (safe: only under $HOME)")
+    ap.add_argument("--no-fallback", action="store_true", help="disable provider/model fallback; use only the requested --model")
     ap.add_argument("--labels", default=None, help="optional: JSON labels file for E1 accuracy scoring")
     ap.add_argument(
         "--compare-one-shot",
@@ -692,7 +758,7 @@ def main() -> None:
         help="run one-shot (repair_rounds=0) and feedback-loop (repair_rounds=N) back-to-back and report delta",
     )
     ap.add_argument("--rpm", type=int, default=5, help="rate limit (calls per minute) for cache-miss LLM calls; 0 disables")
-    ap.add_argument("--out", default=str(ROOT / "artifacts" / "llm_regression_suite_latest.json"))
+    ap.add_argument("--out", default=str(ROOT / "artifacts" / "experiments" / "E1E3" / "llm_regression_suite_latest.json"))
     args = ap.parse_args()
 
     triton_dir = Path(str(args.triton_dir))
@@ -716,7 +782,40 @@ def main() -> None:
     if bool(args.compare_one_shot) and int(args.repair_rounds) <= 0:
         raise SystemExit("--compare-one-shot requires --repair-rounds >= 1")
 
-    hub = LLMIntentHub(timeout_s=int(args.timeout), max_attempts=int(args.attempts), max_parse_retries=int(args.parse_retries))
+    # Cache control is part of the E3 paper protocol:
+    # - cold-run: --cache off --clear-cache
+    # - warm-run: --cache on
+    use_cache = str(args.cache).lower() == "on"
+    cache_dir = None
+    if args.cache_dir:
+        cache_dir = str(args.cache_dir)
+    else:
+        env_cd = os.getenv("INTENTIR_LLM_CACHE_DIR")
+        if env_cd and str(env_cd).strip():
+            cache_dir = str(env_cd).strip()
+    if bool(args.clear_cache):
+        cd = Path(cache_dir) if cache_dir is not None else (Path.home() / ".cache" / "intentir" / "llm")
+        try:
+            home = Path.home().resolve()
+            cd_res = cd.resolve()
+            if home in cd_res.parents or cd_res == home:
+                shutil.rmtree(cd_res, ignore_errors=True)
+                cd_res.mkdir(parents=True, exist_ok=True)
+            else:
+                raise SystemExit(f"--clear-cache refused: cache dir is outside HOME: {cd_res}")
+        except Exception as e:
+            raise SystemExit(f"--clear-cache failed: {type(e).__name__}: {e}")
+
+    hub = LLMIntentHub(
+        timeout_s=int(args.timeout),
+        max_attempts=int(args.attempts),
+        max_parse_retries=int(args.parse_retries),
+        allow_model_fallback=(not bool(args.no_fallback)),
+        extra_chat_kwargs={
+            "use_cache": bool(use_cache),
+            **({"cache_dir": cache_dir} if cache_dir is not None else {}),
+        },
+    )
 
     variants: List[Tuple[str, int]] = [("feedback", int(args.repair_rounds))]
     if bool(args.compare_one_shot):

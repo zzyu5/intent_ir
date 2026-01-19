@@ -55,8 +55,8 @@ def _classify_experiment_file(name: str) -> Optional[str]:
         return "E1"
     if name.startswith("e2_"):
         return "E2"
-    if name.startswith("e3_") or name.startswith("e1e3_"):
-        return "E3"
+    if name.startswith("e3_") or name.startswith("e1e3_") or name.startswith("llm_regression_suite"):
+        return "E1E3"
     if name.startswith("e4_"):
         return "E4"
     if name.startswith("e5_") or name.startswith("experiment_a_") or name.startswith("portability_vs_perf"):
@@ -278,7 +278,11 @@ def write_latest_index() -> Path:
         }
     }
 
-    idx["E3"] = _summarize_e3(p) if (p := _latest(EXP, ["e3_llm_regression_coverage_oneshot_vs_feedback*.json"])) else None
+    idx["E1E3"] = (
+        _summarize_e3(p)
+        if (p := _latest(EXP, ["e3_llm_regression_coverage_oneshot_vs_feedback*.json", "llm_regression_suite*.json", "e1e3_llm_regression*.json"]))
+        else None
+    )
     idx["E4"] = _summarize_e4(p) if (p := _latest(EXP, ["e4_cross_frontend_triton_tilelang_intersection.json"])) else None
     idx["E5"] = {
         "E5_1": _summarize_e5_1(p) if (p := _latest(EXP, ["e5_1_external*_v2.json", "e5_1_external*.json"])) else None,

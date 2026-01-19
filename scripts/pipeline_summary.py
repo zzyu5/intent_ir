@@ -375,7 +375,13 @@ def main() -> None:
         exp_dir = Path(str(args.experiments_dir))
         e2_path = Path(str(args.e2)) if args.e2 else _latest_json(exp_dir, ["e2_trust_*.json", "e2_trust_ablation_*.json", "e2_trust_ablation*.json"])
         e4_path = Path(str(args.e4)) if args.e4 else _latest_json(exp_dir, ["e4_cross_frontend_consistency*.json", "e4_consistency*.json"])
-        e3_path = Path(str(args.e3)) if args.e3 else Path(str(DEFAULT_LLM_REGRESSION_JSON))
+        e3_path = None
+        if args.e3:
+            e3_path = Path(str(args.e3))
+        else:
+            e3_path = _latest_json(exp_dir, ["e3_llm_regression*.json", "e1e3_llm_regression*.json", "llm_regression_suite*.json"])
+            if e3_path is None:
+                e3_path = Path(str(DEFAULT_LLM_REGRESSION_JSON))
         paper: Dict[str, Any] = {}
         if e2_path and e2_path.exists():
             try:

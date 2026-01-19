@@ -91,6 +91,10 @@ class LLMIntentHub:
     model_fail_streak: Dict[str, int] = field(default_factory=dict)
     server_error_disable_after: int = 2
     server_error_cooldown_s: int = 180
+    # When True, try multiple configured provider/model candidates (in order).
+    # For paper experiments, it can be useful to disable fallback to measure
+    # raw reliability/cost of a single provider.
+    allow_model_fallback: bool = True
 
     def _maybe_disable_model(self, model: str, err: Exception) -> None:
         """
@@ -159,7 +163,7 @@ class LLMIntentHub:
 
             trace: Dict[str, Any] = {
                 "requested_model": requested,
-                "candidates": list(candidate_models(requested)),
+                "candidates": (list(candidate_models(requested)) if bool(self.allow_model_fallback) else [requested]),
                 "attempts": [],
             }
 
@@ -284,6 +288,16 @@ class LLMIntentHub:
                         head = errs[:6]
                         tail = f" (+{len(errs) - 6} more)" if len(errs) > 6 else ""
                         last_err = LLMClientError("all candidates failed: " + " | ".join(head) + tail)
+                        # Attach the per-attempt trace so callers (e.g., E3 regression)
+                        # can report accurate cache/API usage and failure breakdown.
+                        try:
+                            setattr(last_err, "intentir_trace", trace)
+                            setattr(last_err, "intentir_prompt_hash", prompt_hash)
+                            setattr(last_err, "intentir_frontend", descriptor.frontend)
+                            setattr(last_err, "intentir_kernel", descriptor.name)
+                            setattr(last_err, "intentir_attempt", int(attempt))
+                        except Exception:
+                            pass
                 except Exception:
                     pass
             if last_err is not None:
