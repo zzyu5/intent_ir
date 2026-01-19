@@ -198,8 +198,16 @@ def evaluate_obligations(desc: "KernelDescriptor", cert_v2: "SemanticCertificate
         results.append(ObligationResult(id=O5_NO_DATA_DEPENDENT_ADDRESS, status="PASS", witness={"terms_subset_ok": True}))
 
     # O6: structured sync
-    # MVP: if the frontend reports no sync/barrier usage, PASS; otherwise FAIL with a reason.
-    # (We keep this cross-frontend by relying only on the stable `anchors` payload.)
+    #
+    # IMPORTANT: sync/barrier presence is not automatically OUT_OF_SCOPE anymore.
+    # Many real kernels (CUDA matmul/MLP reductions) use block-level barriers as an
+    # implementation detail (shared-memory staging). For our MVP contract we:
+    #   - FAIL only on obviously-dangerous patterns (e.g., predicated barriers),
+    #   - otherwise return UNKNOWN and carry a witness so the contract can downgrade
+    #     to PARTIAL + explicit assumptions.
+    #
+    # This keeps the system "landing-ready" (LLM extraction + static validation can run),
+    # while still being honest about the missing structured-sync proof.
     sync_keys = {"has_barrier", "has_async", "has_sync"}
     has_sync_info = any(k in anchors for k in sync_keys)
     has_barrier = bool(anchors.get("has_barrier"))
@@ -210,14 +218,28 @@ def evaluate_obligations(desc: "KernelDescriptor", cert_v2: "SemanticCertificate
     elif not has_sync:
         results.append(ObligationResult(id=O6_STRUCTURED_SYNC, status="PASS", witness={"has_barrier": False, "has_async": False}))
     else:
-        results.append(
-            ObligationResult(
-                id=O6_STRUCTURED_SYNC,
-                status="FAIL",
-                reason="sync/barrier ops detected (structured sync witness not implemented yet)",
-                witness={"has_barrier": has_barrier, "has_async": has_async},
+        sync_w = anchors.get("sync_witness")
+        sync_w = dict(sync_w) if isinstance(sync_w, dict) else {}
+        predicated = bool(sync_w.get("predicated_barrier", False))
+        witness = {"has_barrier": has_barrier, "has_async": has_async, **sync_w}
+        if predicated:
+            results.append(
+                ObligationResult(
+                    id=O6_STRUCTURED_SYNC,
+                    status="FAIL",
+                    reason="predicated barrier detected (unsafe / could deadlock without uniformity proof)",
+                    witness=witness,
+                )
             )
-        )
+        else:
+            results.append(
+                ObligationResult(
+                    id=O6_STRUCTURED_SYNC,
+                    status="UNKNOWN",
+                    reason="sync/barrier present (structured sync witness not proved yet)",
+                    witness=witness,
+                )
+            )
 
     # O3: mask implies inbounds (MVP: check predicate clauses are parseable and LHS is provably non-negative)
     clauses: List[str] = []

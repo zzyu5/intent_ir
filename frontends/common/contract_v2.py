@@ -147,6 +147,7 @@ def evaluate_contract_v2(
         O2_AFFINE_OR_STRUCTURED_INDEXING,
         O4_SHAPE_LAYOUT_MATCH,
         O5_NO_DATA_DEPENDENT_ADDRESS,
+        O6_STRUCTURED_SYNC,
         O7_NO_ATOMICS_OR_CONTROLLED_ATOMICS,
     ]
     missing = [oid for oid in required if status(oid) != "PASS"]
@@ -155,6 +156,14 @@ def evaluate_contract_v2(
         for oid in missing:
             reasons.append(f"{oid} {status(oid)}")
         level = "PARTIAL"
+
+    # If sync/barrier exists but is not proved structured, be explicit: keep in-scope
+    # (PARTIAL) but surface the assumption for downstream casegen/tuning/reporting.
+    if (bool(anchors.get("has_barrier")) or bool(anchors.get("has_async")) or bool(anchors.get("has_sync"))) and status(
+        O6_STRUCTURED_SYNC
+    ) != "PASS":
+        assumptions.append("assume_structured_sync == true")
+        reasons.append("sync present; treat as structured under assumption")
 
     # O3 gating (mask implies inbounds)
     if needs_mask and status(O3_MASK_IMPLIES_INBOUNDS) != "PASS":

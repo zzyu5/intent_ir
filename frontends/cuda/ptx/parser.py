@@ -227,6 +227,26 @@ def parse_ptx_kernel(
 
     # 2) Anchors (MVP hard signals).
     ptx_all = "\n".join(lines)
+    bar_lines = [ln for ln in lines if "bar.sync" in ln]
+    barrier_count = len(bar_lines)
+    predicated_barrier = any(str(ln).lstrip().startswith("@") for ln in bar_lines)
+    # Extract barrier ids when literal (common: `bar.sync 0;`).
+    barrier_ids: set[int] = set()
+    if barrier_count:
+        for ln in bar_lines:
+            try:
+                # Strip predicate prefix and trailing ';'
+                core = str(ln).strip()
+                if core.startswith("@"):
+                    core = core.split(None, 1)[1] if len(core.split(None, 1)) == 2 else core
+                if "bar.sync" in core:
+                    tail = core.split("bar.sync", 1)[1]
+                    tail = tail.replace(";", " ").strip()
+                    tok = tail.split(None, 1)[0] if tail else ""
+                    if tok.isdigit():
+                        barrier_ids.add(int(tok))
+            except Exception:
+                continue
     anchors: Dict[str, Any] = {
         "kernel_kind_hint": "cuda_ptx",
         # `has_copy` is refined after access recovery; initialize to True so we
@@ -238,6 +258,12 @@ def parse_ptx_kernel(
         "has_barrier": ("bar.sync" in ptx_all) or ("barrier" in ptx_all),
         "has_async": ("cp.async" in ptx_all) or ("ldmatrix" in ptx_all),
     }
+    if barrier_count:
+        anchors["sync_witness"] = {
+            "barrier_count": int(barrier_count),
+            "predicated_barrier": bool(predicated_barrier),
+            "barrier_ids": sorted(list(barrier_ids))[:8],
+        }
 
     # 3) Track regs.
     reg_aff: Dict[str, AffineExpr] = {}
