@@ -501,6 +501,12 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
                         attrs["perm"] = [1, 0]
         if op.get("op") == "broadcast_in_dim":
             attrs = op["attrs"]
+            # Schema hardening: broadcast_in_dim is unary (1 input tensor). Some providers
+            # mistakenly treat it as binary; keep the first input and let static_validate
+            # drive repair for semantic issues.
+            inps = op.get("inputs") or []
+            if isinstance(inps, list) and len(inps) > 1:
+                op["inputs"] = [inps[0]]
             if "out_shape" not in attrs and "shape" in attrs:
                 attrs["out_shape"] = attrs.pop("shape")
             if "broadcast_dims" not in attrs and "dims" in attrs:
@@ -917,21 +923,15 @@ def normalize_candidate_json(d: Dict[str, Any]) -> Dict[str, Any]:
             else:
                 resolved.append(o)
         outputs = resolved
-        kept = [o for o in outputs if o in produced_outputs]
-        missing = [o for o in outputs if o not in produced_outputs]
-        if missing:
-            raise LLMJsonParseError(
-                f"outputs must be produced by ops; missing produced outputs: {missing}",
-                path="outputs",
-                hint="Add the missing ops that produce these outputs (do not use placeholder const).",
-            )
-        if not kept:
-            raise LLMJsonParseError(
-                "outputs list does not reference any produced op outputs",
-                path="outputs",
-                hint="Ensure each output name matches an op.output",
-            )
-        data["outputs"] = kept
+        # IMPORTANT: do not require outputs to be produced by ops at JSON-parse time.
+        # That check belongs to Task5 Stage A (static_validate), so the feedback loop
+        # can repair missing outputs instead of failing as an LLMClientError.
+        for i, o in enumerate(outputs):
+            if not isinstance(o, str):
+                raise LLMJsonParseError(f"outputs[{i}] must be string", path=f"outputs[{i}]")
+        if not outputs:
+            raise LLMJsonParseError("outputs must be non-empty list", path="outputs")
+        data["outputs"] = outputs
 
     schedule = data.get("schedule")
     if schedule is not None and not isinstance(schedule, dict):

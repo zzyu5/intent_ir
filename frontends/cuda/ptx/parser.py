@@ -548,9 +548,57 @@ def parse_ptx_kernel(
     read_tensors = {a.tensor for a in accesses if a.kind == "load" and a.tensor in tensors_spec}
     write_tensors = {a.tensor for a in accesses if a.kind == "store" and a.tensor in tensors_spec}
 
+    def _is_int_index_tensor(t: str) -> bool:
+        spec = tensors_spec.get(t) if isinstance(tensors_spec, dict) else None
+        if not isinstance(spec, dict):
+            return False
+        dt = spec.get("dtype")
+        if not isinstance(dt, str):
+            return False
+        d = dt.lower().strip()
+        return d in {"i1", "i8", "i16", "i32", "i64", "u1", "u8", "u16", "u32", "u64"}
+
+    def _is_gather_like_write(wt: str) -> bool:
+        """
+        Heuristic guard against false-positive `has_reduce` when the output rank
+        is smaller than some inputs purely due to *indexing* (gather), not due to
+        a reduction.
+
+        Pattern:
+          - write tensor shape == index tensor shape (int dtype)
+          - there exists another read tensor with higher rank (data source)
+        """
+        wshape = tensor_shape(wt)
+        if not wshape:
+            return False
+        wrank = len(wshape)
+        # Any int index tensor with the same shape as the output.
+        has_index = False
+        for rt in sorted(read_tensors):
+            if not _is_int_index_tensor(rt):
+                continue
+            rshape = tensor_shape(rt)
+            if rshape and list(rshape) == list(wshape):
+                has_index = True
+                break
+        if not has_index:
+            return False
+        # Any higher-rank non-index read tensor.
+        for rt in sorted(read_tensors):
+            if _is_int_index_tensor(rt):
+                continue
+            rshape = tensor_shape(rt)
+            if rshape and len(rshape) > wrank:
+                return True
+        return False
+
     has_reduce = False
+    gather_like_writes = {wt for wt in sorted(write_tensors) if _is_gather_like_write(wt)}
+
     # Strong signals: any written tensor is lower-rank or has fewer elements than some read tensor.
     for wt in sorted(write_tensors):
+        if wt in gather_like_writes:
+            continue
         wshape = tensor_shape(wt)
         if not wshape:
             continue
@@ -573,7 +621,7 @@ def parse_ptx_kernel(
 
     # Fallback signal: symbols used by reads form a strict superset of symbols used by writes,
     # with no new symbols introduced by writes (typical "reduce over K" / "reduce over N").
-    if not has_reduce:
+    if not has_reduce and not gather_like_writes:
         read_syms: set[str] = set()
         write_syms: set[str] = set()
         for t in sorted(read_tensors):

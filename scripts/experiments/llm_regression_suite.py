@@ -627,6 +627,25 @@ def run_one(
                     "llm_error": f"{type(e).__name__}: {e}",
                 }
             )
+            # If the hub failed at the "semantic" stage (JSON parsed but IntentIR validation
+            # failed), treat the semantic error(s) as repair feedback and retry. This keeps
+            # E1E3/E3 from being dominated by minor schema slips (e.g., missing gather inputs)
+            # while still enforcing correctness via static_validate.
+            semantic_fb: List[str] = []
+            if isinstance(extract_trace, dict):
+                attempts = extract_trace.get("attempts")
+                if isinstance(attempts, list):
+                    for a in attempts:
+                        if not isinstance(a, dict):
+                            continue
+                        if a.get("stage") != "semantic":
+                            continue
+                        err = a.get("error")
+                        if isinstance(err, str) and err.strip():
+                            semantic_fb.append(err.strip())
+            if semantic_fb and int(round_id) < int(repair_rounds):
+                feedback = _merge_feedback(feedback, semantic_fb)
+                continue
             break
 
         trace = dict(cand.llm_trace or {})
