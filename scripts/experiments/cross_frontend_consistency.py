@@ -397,7 +397,8 @@ def _ops_skeleton(sig: Dict[str, Any]) -> List[str]:
     ops = sig.get("ops")
     if not isinstance(ops, list):
         return []
-    drop = {"identity", "const"}
+    # Treat pure view ops as non-semantic for E4 structure matching.
+    drop = {"identity", "layout_cast", "reshape", "const"}
     out: List[str] = []
     for o in ops:
         if not isinstance(o, dict):
@@ -431,7 +432,10 @@ def _graph_value_hashes(sig: Dict[str, Any]) -> Dict[str, str]:
         return {}
 
     commutative = {"add", "mul", "max", "min", "and", "or", "ne"}
-    alias_ops = {"identity", "layout_cast"}
+    # View-only ops commonly differ across frontends (e.g., TileLang often
+    # materializes reshape stages explicitly). Treat them as aliases for the
+    # structural hash so E4 measures *semantic* consistency, not view drift.
+    alias_ops = {"identity", "layout_cast", "reshape"}
 
     val_hash: Dict[str, str] = {}
     for i, n in enumerate([str(x) for x in inputs]):
