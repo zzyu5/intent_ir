@@ -1,0 +1,115 @@
+{
+  "__meta__": {
+    "schema_version": "human_labels_v1",
+    "note": "Seed label set for E1 accuracy scoring. Extend this to ~80+ kernels for paper-grade results."
+  },
+  "any_kernel_dim": {
+    "semantic_class": "reduce",
+    "axis_roles": {}
+  },
+  "group_norm_kernel": {
+    "semantic_class": "norm",
+    "axis_roles": {}
+  },
+  "_attn_fwd": {
+    "semantic_class": "attention",
+    "axis_roles": {}
+  },
+  "softmax_inner": {
+    "semantic_class": "softmax",
+    "axis_roles": {}
+  },
+  "layer_norm_persistent": {
+    "semantic_class": "norm",
+    "axis_roles": {}
+  },
+  "upsample_bicubic2d_aa": {
+    "semantic_class": "upsample",
+    "axis_roles": {}
+  },
+  "add2d": {
+    "semantic_class": "elementwise",
+    "axis_roles": {}
+  },
+  "relu2d": {
+    "semantic_class": "elementwise",
+    "axis_roles": {}
+  },
+  "add_bias2d": {
+    "semantic_class": "elementwise",
+    "axis_roles": {}
+  },
+  "where2d": {
+    "semantic_class": "elementwise",
+    "axis_roles": {}
+  },
+  "transpose2d": {
+    "semantic_class": "transpose",
+    "axis_roles": {}
+  },
+  "copy2d_divmod": {
+    "semantic_class": "copy",
+    "axis_roles": {}
+  },
+  "row_sum": {
+    "semantic_class": "reduce",
+    "axis_roles": {}
+  },
+  "row_max": {
+    "semantic_class": "reduce",
+    "axis_roles": {}
+  },
+  "grouped_row_sum2d": {
+    "semantic_class": "reduce",
+    "axis_roles": {}
+  },
+  "masked_softmax2d": {
+    "semantic_class": "softmax",
+    "axis_roles": {}
+  },
+  "gather2d": {
+    "semantic_class": "gather",
+    "axis_roles": {}
+  },
+  "matmul_relu2d": {
+    "semantic_class": "matmul",
+    "axis_roles": {}
+  },
+  "matmul_bias_relu2d": {
+    "semantic_class": "matmul",
+    "axis_roles": {}
+  },
+  "matmul_fused_epilogue2d": {
+    "semantic_class": "matmul",
+    "axis_roles": {}
+  },
+  "mlp2d": {
+    "semantic_class": "matmul",
+    "axis_roles": {}
+  },
+  "masked_attention2d": {
+    "semantic_class": "attention",
+    "axis_roles": {}
+  },
+  "flash_attention2d": {
+    "semantic_class": "attention",
+    "axis_roles": {}
+  },
+  "rms_norm2d": {
+    "semantic_class": "norm",
+    "axis_roles": {}
+  },
+  "rms_norm_residual2d": {
+    "semantic_class": "norm",
+    "axis_roles": {}
+  },
+  "layer_norm_residual2d": {
+    "semantic_class": "norm",
+    "axis_roles": {}
+  },
+  "naive_gemm": {
+    "semantic_class": "matmul",
+    "axis_roles": {}
+  }
+}
+

@@ -31,6 +31,7 @@ from frontends.common.certificate_v2 import SemanticCertificateV2
 from frontends.common.contract_v2 import evaluate_contract_v2
 from frontends.common.obligations import evaluate_obligations
 from frontends.common.static_validate import static_validate
+from intent_ir.ir import IntentFunction
 from intent_ir.llm.llm_hub import LLMIntentHub
 from intent_ir.macros import expand_macros
 from intent_ir.macros.macro_spec import enrich_intent_macros
@@ -243,6 +244,8 @@ class KernelResult:
     contract: str
     anchor_tier: str
     anchor_score: int
+    predicted_semantic: str
+    predicted_axis_roles: Dict[str, str]
     ok: bool
     category: str
     reasons: List[str]
@@ -255,6 +258,10 @@ class KernelResult:
             "contract": str(self.contract),
             "anchor_tier": str(self.anchor_tier),
             "anchor_score": int(self.anchor_score),
+            "predicted": {
+                "semantic_class": str(self.predicted_semantic),
+                "axis_roles": dict(self.predicted_axis_roles),
+            },
             "ok": bool(self.ok),
             "category": str(self.category),
             "reasons": list(self.reasons),
@@ -337,6 +344,129 @@ def _maybe_sleep_rate_limit(*, rpm: int, last_api_s: float | None) -> None:
         time.sleep(min_interval - dt)
 
 
+def _semantic_class_from_intent(intent: IntentFunction) -> str:
+    """
+    Coarse semantic class for E1 human-label evaluation.
+    Kept intentionally simple and stable across frontends.
+    """
+    ops = [op.op for op in intent.ops]
+    ops_set = set(ops)
+    matmul_n = ops.count("matmul")
+    has_reduce = any(str(o).startswith("reduce") for o in ops_set)
+    has_exp = "exp" in ops_set
+    has_rsqrt = "rsqrt" in ops_set
+    if "upsample_bicubic2d_aa" in ops_set:
+        return "upsample"
+    # Attention patterns: matmul + softmax + matmul (or explicit attention macro).
+    if "flash_attention" in ops_set or "attention" in ops_set:
+        return "attention"
+    if matmul_n >= 2 and ("softmax" in ops_set or (has_exp and has_reduce)):
+        return "attention"
+    if "softmax" in ops_set:
+        return "softmax"
+    if any(o in ops_set for o in ["layer_norm", "group_norm", "rms_norm", "batch_norm", "layernorm", "groupnorm"]):
+        return "norm"
+    # Derived norm pattern: reduce + rsqrt (mean/var/rstd style).
+    if has_rsqrt and has_reduce:
+        return "norm"
+    # Derived softmax pattern: exp + reduce, but no matmul-major attention structure.
+    if has_exp and has_reduce and matmul_n < 2 and (not has_rsqrt):
+        return "softmax"
+    if "gather" in ops_set:
+        return "gather"
+    if "transpose" in ops_set:
+        return "transpose"
+    if "matmul" in ops_set:
+        return "matmul"
+    if has_reduce:
+        return "reduce"
+    if "copy" in ops_set or "identity" in ops_set:
+        return "copy"
+    # Elementwise / fused epilogue bucket.
+    if ops_set.intersection({"add", "mul", "div", "relu", "exp", "max", "min", "where", "clip", "cast"}):
+        return "elementwise"
+    return "unknown"
+
+
+def _load_labels(path: Path) -> Dict[str, Any]:
+    d = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(d, dict):
+        raise TypeError("labels must be a JSON object")
+    return d
+
+
+def _eval_labels(results: List[KernelResult], labels: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Evaluate E1 accuracy against a (human) label set.
+
+    Labels format:
+      {
+        "<kernel_name>": {"semantic_class": "...", "axis_roles": {"N": "batch", ...}},
+        ...
+      }
+    """
+    sem_total = 0
+    sem_ok = 0
+    sem_by_class: Dict[str, Dict[str, int]] = {}
+    axis_total = 0
+    axis_ok = 0
+    axis_exact_total = 0
+    axis_exact_ok = 0
+
+    for r in results:
+        lab = labels.get(r.kernel)
+        if not isinstance(lab, dict):
+            continue
+        # semantic class
+        sc = lab.get("semantic_class")
+        if isinstance(sc, str) and sc.strip():
+            sem_total += 1
+            sem_by_class.setdefault(sc, {"n": 0, "ok": 0})
+            sem_by_class[sc]["n"] += 1
+            if str(r.predicted_semantic) == sc:
+                sem_ok += 1
+                sem_by_class[sc]["ok"] += 1
+        # axis roles (recall on labeled axes)
+        ar = lab.get("axis_roles")
+        if isinstance(ar, dict) and ar:
+            axis_exact_total += 1
+            all_ok = True
+            for ax, role in ar.items():
+                if not isinstance(ax, str) or not isinstance(role, str):
+                    continue
+                axis_total += 1
+                if r.predicted_axis_roles.get(ax) == role:
+                    axis_ok += 1
+                else:
+                    all_ok = False
+            if all_ok:
+                axis_exact_ok += 1
+
+    return {
+        "semantic_class": {
+            "n": int(sem_total),
+            "ok": int(sem_ok),
+            "acc": (float(sem_ok) / float(sem_total) if sem_total else None),
+            "by_class": {
+                k: {
+                    "n": int(v["n"]),
+                    "ok": int(v["ok"]),
+                    "acc": (float(v["ok"]) / float(v["n"]) if v["n"] else None),
+                }
+                for k, v in sem_by_class.items()
+            },
+        },
+        "axis_roles": {
+            "n_axes": int(axis_total),
+            "ok_axes": int(axis_ok),
+            "recall": (float(axis_ok) / float(axis_total) if axis_total else None),
+            "n_kernels": int(axis_exact_total),
+            "exact_ok": int(axis_exact_ok),
+            "exact_rate": (float(axis_exact_ok) / float(axis_exact_total) if axis_exact_total else None),
+        },
+    }
+
+
 def run_one(
     *,
     hub: LLMIntentHub,
@@ -368,6 +498,8 @@ def run_one(
                 contract="N/A",
                 anchor_tier="D_none",
                 anchor_score=0,
+                predicted_semantic="unknown",
+                predicted_axis_roles={},
                 ok=False,
                 category=f"artifact_prepare_error:{type(e).__name__}",
                 reasons=[str(e)] + ([f"missing: {p}" for p in missing] if missing else []),
@@ -408,6 +540,8 @@ def run_one(
     best_ok = False
     best_reasons: List[str] = []
     best_category = "unknown"
+    best_semantic = "unknown"
+    best_axis_roles: Dict[str, str] = {}
 
     for round_id in range(max(1, int(repair_rounds) + 1)):
         rounds_used += 1
@@ -438,11 +572,24 @@ def run_one(
         except Exception:
             # Macro enrichment is best-effort; do not fail regression on it.
             pass
+        try:
+            # E1 semantic labels should be evaluated on the macro-level intent
+            # (before macro expansion lowers into primitive ops).
+            best_semantic = _semantic_class_from_intent(cand.intent)
+            best_axis_roles = dict(getattr(cand.intent, "axis_roles", {}) or {})
+        except Exception:
+            best_semantic = "unknown"
+            best_axis_roles = {}
 
         try:
             expanded = expand_macros(cand.intent)
             intent_for_validate = expanded
         except Exception as e:
+            try:
+                best_semantic = _semantic_class_from_intent(cand.intent)
+                best_axis_roles = dict(getattr(cand.intent, "axis_roles", {}) or {})
+            except Exception:
+                pass
             best_ok = False
             best_category = f"macro_expand_error:{type(e).__name__}"
             best_reasons = [str(e)]
@@ -485,6 +632,8 @@ def run_one(
         contract=contract,
         anchor_tier=tier,
         anchor_score=score,
+        predicted_semantic=str(best_semantic),
+        predicted_axis_roles=dict(best_axis_roles),
         ok=bool(best_ok),
         category=str(best_category),
         reasons=list(best_reasons),
@@ -516,6 +665,7 @@ def main() -> None:
     ap.add_argument("--attempts", type=int, default=2, help="max LLM attempts inside the hub")
     ap.add_argument("--parse-retries", type=int, default=2, help="max JSON parse retries inside the hub")
     ap.add_argument("--repair-rounds", type=int, default=1, help="how many static-validate repair rounds (0 disables)")
+    ap.add_argument("--labels", default=None, help="optional: JSON labels file for E1 accuracy scoring")
     ap.add_argument(
         "--compare-one-shot",
         action="store_true",
@@ -600,6 +750,14 @@ def main() -> None:
             for name, v_rounds in variants
         },
     }
+    if args.labels:
+        labels_path = Path(str(args.labels))
+        labels = _load_labels(labels_path)
+        out["labels"] = {"path": str(labels_path)}
+        out["label_eval"] = {
+            name: {"by_frontend": {fe: _eval_labels([r for r in results_by_variant.get(name, []) if r.frontend == fe], labels) for fe in frontends}}
+            for name, _ in variants
+        }
     if bool(args.compare_one_shot):
         # Convenience: compute success-rate delta for paper tables.
         a = results_by_variant.get("one_shot", [])
