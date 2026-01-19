@@ -295,6 +295,7 @@ def _apply_one_mutation(intent: IntentFunction, rng: random.Random) -> str | Non
     softmax_ids = pick_indices(lambda o: o.op == "softmax")
     transpose_ids = pick_indices(lambda o: o.op == "transpose")
     matmul_ids = pick_indices(lambda o: o.op == "matmul")
+    where_ids = pick_indices(lambda o: o.op == "where")
     elemwise_ids = pick_indices(lambda o: o.op in {"add", "sub", "mul", "div", "max", "min", "ne"})
     const_ids = pick_indices(lambda o: o.op == "const")
     bcast_ids = pick_indices(lambda o: o.op == "broadcast_in_dim")
@@ -443,6 +444,29 @@ def _apply_one_mutation(intent: IntentFunction, rng: random.Random) -> str | Non
             return True
 
         candidates.append(("matmul_drop_anchor", mut_matmul_drop_anchor))
+
+    if where_ids:
+        def mut_where_drop_mask() -> bool:
+            """
+            Turn `where(cond, t, f)` into `identity(t)` (mask disabled).
+
+            This is intentionally *boundary-sensitive*: on many masked kernels the
+            condition is only false near tail/boundary regions. Contract-driven
+            casegen should expose such points, while naive interior-only random
+            cases may miss them.
+            """
+            idx = rng.choice(where_ids)
+            op = ops[idx]
+            inps = list(op.inputs)
+            if len(inps) < 2:
+                return False
+            # Prefer keeping the "true" branch to preserve shapes.
+            op.op = "identity"
+            op.inputs = [inps[1]]
+            op.attrs = {}
+            return True
+
+        candidates.append(("where_drop_mask", mut_where_drop_mask))
 
     # Output aliasing: keep the intent structurally valid, but violate static_validate
     # ("outputs must be produced by ops") by returning an external input.

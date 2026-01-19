@@ -132,6 +132,46 @@ def _cases_from_report(report: Dict[str, Any], *, limit: int) -> List[TestCase]:
     return out
 
 
+def _random_interior_cases(cases: List[TestCase], *, n: int, seed: int) -> List[TestCase]:
+    """
+    Generate "naive" random cases that *avoid boundary points* when possible.
+
+    This is used by the E2 diff-only ablation to simulate a baseline that does
+    not leverage certificate-driven boundary-aware case generation.
+    """
+    import random
+
+    if n <= 0 or not cases:
+        return []
+
+    mins: Dict[str, int] = {}
+    maxs: Dict[str, int] = {}
+    for c in cases:
+        for k, v in (c.shapes or {}).items():
+            kk = str(k)
+            vv = int(v)
+            mins[kk] = vv if kk not in mins else min(mins[kk], vv)
+            maxs[kk] = vv if kk not in maxs else max(maxs[kk], vv)
+
+    if not mins:
+        return []
+
+    rng = random.Random(int(seed))
+    keys = sorted(mins.keys())
+    out: List[TestCase] = []
+    for i in range(int(n)):
+        shapes: Dict[str, int] = {}
+        for k in keys:
+            lo = int(mins[k])
+            hi = int(maxs[k])
+            if hi - lo >= 2:
+                shapes[k] = int(rng.randint(lo + 1, hi - 1))
+            else:
+                shapes[k] = int(rng.randint(lo, hi))
+        out.append(TestCase(shapes=shapes, dtypes={}, seed=int(seed) * 1000 + int(i)))
+    return out
+
+
 def _tolerances_from_report(report: Dict[str, Any]) -> Tuple[float, float]:
     tol = report.get("tolerances") or {}
     if not isinstance(tol, dict):
@@ -346,11 +386,16 @@ def main() -> None:
             continue
         cert_v2 = _cert_v2_from_json(cert_json)
 
-        diff_cases = _cases_from_report(report, limit=int(args.diff_cases))
-        if not diff_cases:
+        # NOTE(E2): we need two separate case sources:
+        #  - contract-derived in-contract cases (boundary-aware)
+        #  - naive random interior cases (baseline ablation)
+        case_pool = _cases_from_report(report, limit=1_000_000)
+        contract_cases = case_pool[: max(0, int(args.diff_cases))]
+        if not contract_cases:
             results.append({"kernel": k, "status": "NO_CASES"})
             continue
-        base_case = diff_cases[0]
+        random_cases = _random_interior_cases(case_pool, n=len(contract_cases), seed=int(args.seed) + 17) or list(contract_cases)
+        base_case = contract_cases[0]
         atol, rtol = _tolerances_from_report(report)
 
         def _sv_obligation_counts(sv: StaticValidationResult) -> Dict[str, int]:
@@ -391,14 +436,14 @@ def main() -> None:
                 k,
                 intent=intent,
                 run_ref_fn=run_ref_fn,
-                diff_cases=diff_cases,
-                metamorphic_base_case=base_case,
+                diff_cases=(contract_cases if m.name != "diff_only" else random_cases),
+                metamorphic_base_case=(base_case if m.name != "diff_only" else random_cases[0]),
                 static_validate_fn=static_fn,
                 n_mutants=int(args.n_mutants),
                 seed=int(args.seed),
                 atol=float(atol),
                 rtol=float(rtol),
-                include_bounded=(not bool(args.no_bounded)),
+                include_bounded=(not bool(args.no_bounded)) and (m.name != "diff_only"),
                 diff_stop_on_first_fail=True,
             )
             per_mode[m.name] = {
