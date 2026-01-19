@@ -110,6 +110,57 @@
   "naive_gemm": {
     "semantic_class": "matmul",
     "axis_roles": {}
+  },
+  "vec_add": {
+    "semantic_class": "elementwise",
+    "axis_roles": {}
+  },
+  "rowmask_where2d": {
+    "semantic_class": "elementwise",
+    "axis_roles": {}
+  },
+  "exp2d": {
+    "semantic_class": "elementwise",
+    "axis_roles": {}
+  },
+  "floor2d": {
+    "semantic_class": "elementwise",
+    "axis_roles": {}
+  },
+  "clamp2d": {
+    "semantic_class": "elementwise",
+    "axis_roles": {}
+  },
+  "ai_bench_matmul": {
+    "semantic_class": "matmul",
+    "axis_roles": {}
+  },
+  "ai_bench_softmax": {
+    "semantic_class": "softmax",
+    "axis_roles": {}
+  },
+  "ai_bench_layernorm": {
+    "semantic_class": "norm",
+    "axis_roles": {}
+  },
+  "ai_bench_dropout": {
+    "semantic_class": "elementwise",
+    "axis_roles": {}
+  },
+  "ai_bench_rope": {
+    "semantic_class": "elementwise",
+    "axis_roles": {}
+  },
+  "ai_bench_warp": {
+    "semantic_class": "elementwise",
+    "axis_roles": {}
+  },
+  "ai_bench_resize": {
+    "semantic_class": "upsample",
+    "axis_roles": {}
+  },
+  "ai_bench_correlation": {
+    "semantic_class": "reduce",
+    "axis_roles": {}
   }
 }
-
