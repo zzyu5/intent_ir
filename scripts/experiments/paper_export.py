@@ -109,6 +109,49 @@ def _paired_speedup_from_measured_autotune(retune_remote: dict[str, Any] | None)
     return float(b_ns) / float(best_ns)
 
 
+def _get_e1e3_variant_summary(obj: dict[str, Any], variant: str) -> dict[str, Any] | None:
+    variants = obj.get("variants")
+    if not isinstance(variants, dict):
+        return None
+    v = variants.get(str(variant))
+    if not isinstance(v, dict):
+        return None
+    s = v.get("summary")
+    return s if isinstance(s, dict) else None
+
+
+def _delta_by_frontend(one_shot: dict[str, Any] | None, feedback: dict[str, Any] | None) -> dict[str, Any]:
+    """
+    Compute OK-rate gains (feedback - one_shot) per-frontend from summary blobs.
+    """
+    out: dict[str, Any] = {"by_frontend": {}}
+    os_bf = (one_shot or {}).get("by_frontend")
+    fb_bf = (feedback or {}).get("by_frontend")
+    if not isinstance(os_bf, dict) or not isinstance(fb_bf, dict):
+        return out
+
+    for fe in sorted(set(os_bf.keys()) | set(fb_bf.keys())):
+        os_s = os_bf.get(fe)
+        fb_s = fb_bf.get(fe)
+        os_ok = os_s.get("ok") if isinstance(os_s, dict) else None
+        os_n = os_s.get("n") if isinstance(os_s, dict) else None
+        fb_ok = fb_s.get("ok") if isinstance(fb_s, dict) else None
+        fb_n = fb_s.get("n") if isinstance(fb_s, dict) else None
+        os_rate = os_s.get("ok_rate") if isinstance(os_s, dict) else None
+        fb_rate = fb_s.get("ok_rate") if isinstance(fb_s, dict) else None
+
+        gain = None
+        if isinstance(os_rate, (int, float)) and isinstance(fb_rate, (int, float)):
+            gain = float(fb_rate) - float(os_rate)
+
+        out["by_frontend"][str(fe)] = {
+            "one_shot": {"ok": os_ok, "n": os_n, "ok_rate": os_rate},
+            "feedback": {"ok": fb_ok, "n": fb_n, "ok_rate": fb_rate},
+            "ok_rate_gain": gain,
+        }
+    return out
+
+
 @dataclass(frozen=True)
 class PaperPaths:
     out_dir: Path
@@ -198,23 +241,45 @@ def main() -> None:
     )
 
     # E1E3: LLM regression suite (one-shot vs feedback).
-    e1e3_src = _latest_file(e1e3_dir, "e1e3_llm_regression_all_coverage_cold*.json") or _latest_file(
+    # Base: newest all-frontends cold run (has label_eval + both variants).
+    e1e3_base = _latest_file(e1e3_dir, "e1e3_llm_regression_all_coverage_cold*.json") or _latest_file(
         e1e3_dir, "e1e3_llm_regression_all_coverage*.json"
     )
-    e1e3_obj = _load_json(e1e3_src) if (e1e3_src and e1e3_src.exists()) else {}
+    e1e3_base_obj = _load_json(e1e3_base) if (e1e3_base and e1e3_base.exists()) else {}
+
+    # Newer per-frontend cold follow-ups (e.g., CUDA barrier/O6 fixes) may exist.
+    # We override only the affected frontend+variant summaries, but we keep the
+    # all-frontends cold run as the base for label_eval and metadata.
+    e1e3_cuda_cold = _latest_file(e1e3_dir, "e1e3_llm_regression_cuda_coverage_cold*.json")
+    e1e3_cuda_obj = _load_json(e1e3_cuda_cold) if (e1e3_cuda_cold and e1e3_cuda_cold.exists()) else {}
+
+    e1e3_one_shot = _get_e1e3_variant_summary(e1e3_base_obj, "one_shot")
+    e1e3_feedback = _get_e1e3_variant_summary(e1e3_base_obj, "feedback")
+
+    sources: dict[str, Any] = {"base": (str(e1e3_base) if e1e3_base else None), "overrides": {}}
+    cuda_fb = _get_e1e3_variant_summary(e1e3_cuda_obj, "feedback")
+    if isinstance(cuda_fb, dict) and isinstance(cuda_fb.get("by_frontend"), dict) and "cuda" in cuda_fb.get("by_frontend", {}):
+        if not isinstance(e1e3_feedback, dict):
+            e1e3_feedback = {"by_frontend": {}}
+        e1e3_feedback.setdefault("by_frontend", {})
+        if isinstance(e1e3_feedback.get("by_frontend"), dict):
+            e1e3_feedback["by_frontend"]["cuda"] = cuda_fb["by_frontend"]["cuda"]
+            sources["overrides"].setdefault("feedback", {})
+            sources["overrides"]["feedback"]["cuda"] = str(e1e3_cuda_cold)
+
     _write_json(
         paths.e1e3,
         {
             "experiment": "E1E3_llm_regression",
             "git_head": head,
-            "source": str(e1e3_src) if e1e3_src else None,
-            "suite": e1e3_obj.get("suite"),
-            "frontends": e1e3_obj.get("frontends"),
-            "delta": e1e3_obj.get("delta"),
-            "label_eval": e1e3_obj.get("label_eval"),
+            "source": sources,
+            "suite": e1e3_base_obj.get("suite"),
+            "frontends": e1e3_base_obj.get("frontends"),
+            "delta": _delta_by_frontend(e1e3_one_shot, e1e3_feedback),
+            "label_eval": e1e3_base_obj.get("label_eval"),
             "summary": {
-                v: (e1e3_obj.get("variants", {}).get(v, {}).get("summary") if isinstance(e1e3_obj.get("variants"), dict) else None)
-                for v in ["one_shot", "feedback"]
+                "one_shot": e1e3_one_shot,
+                "feedback": e1e3_feedback,
             },
         },
     )
