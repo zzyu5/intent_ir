@@ -20,6 +20,10 @@ SYSTEM_PROMPT = """You are an expert compiler engineer. Given a TileLang kernel
 - Keep argument tensor shapes as declared by the kernel signature / buffer shapes.
   If you need a grouped/view shape (e.g., [N,G,group_size,HW]) insert explicit
   reshape ops instead of redefining the original tensor shape.
+- You MAY replace a constant extent in an interface tensor shape (e.g., 16) with a
+  symbol from the Evidence appendix `launch.canonical_shapes` (e.g., Q_CTX), but
+  ONLY when the numeric values match exactly. Treat these symbols as compile-time
+  constants; do not invent any other new symbols.
 - Use the standard op set (primitives):
   - numeric: add/sub/mul/div/max/min/exp/relu/rsqrt/abs/floor
   - compare/bool: ne/lt/le/gt/ge/and/or/not/where
@@ -33,8 +37,10 @@ SYSTEM_PROMPT = """You are an expert compiler engineer. Given a TileLang kernel
 - reshape MUST include attrs.shape (non-empty list).
   broadcast_in_dim MUST have attrs.out_shape + attrs.broadcast_dims.
   transpose MUST have attrs.perm.
-- Do NOT invent new shape symbols. Any symbol used in tensor shapes or reshape/broadcast/iota
-  shapes must come from existing kernel signature symbols.
+- Do NOT invent arbitrary new shape symbols. Any symbol used in tensor shapes or
+  reshape/broadcast/iota shapes must come from:
+  - existing kernel signature symbols (if any), OR
+  - Evidence appendix: `launch.canonical_shapes` keys (compile-time constants).
 - Every output tensor MUST be declared in tensors and produced by an op.
   If the kernel writes Mean/Rstd or similar, add the corresponding reduce/compute ops.
 - Each op.output name MUST be unique across the ops list (no duplicates).
@@ -54,6 +60,8 @@ SYSTEM_PROMPT = """You are an expert compiler engineer. Given a TileLang kernel
 - parallel_axes is a list of axis strings, and every axis must appear in some tensor shape;
   do not invent axes.
 - axis_roles values must be in {spatial,reduction,batch,channel}.
+- If `launch.canonical_shapes` provides meaningful symbols for this kernel, prefer emitting
+  `axis_roles` for those symbols (e.g., M/N/K, Q_CTX/KV_CTX/HEAD_DIM, N/C/HW, OH/OW, etc).
 Return JSON only: no prose, no code fences."""
 
 
@@ -68,7 +76,11 @@ Rules:
   ne/lt/le/gt/ge/and/or/not/where, reshape/broadcast_in_dim/transpose/layout_cast,
   reduce_sum/reduce_max/reduce_any/softmax, matmul/conv2d/cast/iota/gather/identity/const,
   macro: upsample_bicubic2d_aa (only when semantically appropriate).
-- Do NOT invent new shape symbols; use only symbols from the kernel signature/evidence.
+- Do NOT invent arbitrary new shape symbols; use only symbols from the kernel signature,
+  and/or Evidence appendix `launch.canonical_shapes` keys (compile-time constants).
+  You MAY replace constant extents in interface tensor shapes with canonical_shapes symbols
+  only when values match exactly.
+- Prefer emitting axis_roles when canonical shape symbols exist (see Evidence appendix).
 - Keep original input view shapes; use reshape ops for any grouped/view computation.
 """
 
