@@ -55,6 +55,60 @@ def _geom_mean(xs: list[float]) -> float | None:
     return math.exp(sum(math.log(x) for x in xs) / float(len(xs)))
 
 
+def _paired_speedup_from_measured_autotune(retune_remote: dict[str, Any] | None) -> float | None:
+    """
+    Extract a paired (stable) freeze-vs-retune speedup from a single measured_autotune run.
+
+    We avoid importing `scripts/experiments/portability_vs_perf.py` as a module,
+    because `scripts/` is not a Python package.
+    """
+    if not isinstance(retune_remote, dict):
+        return None
+    tuning = retune_remote.get("tuning")
+    if not isinstance(tuning, dict):
+        return None
+    ma = tuning.get("measured_autotune")
+    if not isinstance(ma, dict):
+        return None
+    evaluated = ma.get("evaluated")
+    if not isinstance(evaluated, list) or not evaluated:
+        return None
+    best_index = ma.get("best_index")
+    if not isinstance(best_index, int) or not (0 <= best_index < len(evaluated)):
+        return None
+
+    def _bench_ns(x: Any) -> float | None:
+        if not isinstance(x, dict):
+            return None
+        b = x.get("bench")
+        if not isinstance(b, dict):
+            return None
+        ns = b.get("ns_per_iter")
+        if not isinstance(ns, (int, float)) or ns <= 0:
+            return None
+        return float(ns)
+
+    baseline = None
+    for x in evaluated:
+        if not isinstance(x, dict):
+            continue
+        notes = x.get("notes")
+        if not isinstance(notes, list):
+            continue
+        if any("freeze_baseline" in str(n) for n in notes):
+            baseline = x
+            break
+    if baseline is None:
+        return None
+
+    best = evaluated[best_index]
+    b_ns = _bench_ns(baseline)
+    best_ns = _bench_ns(best)
+    if b_ns is None or best_ns is None or best_ns <= 0:
+        return None
+    return float(b_ns) / float(best_ns)
+
+
 @dataclass(frozen=True)
 class PaperPaths:
     out_dir: Path
@@ -210,16 +264,9 @@ def main() -> None:
             sp_u = float(fs) / float(rs)
             unpaired_speedups.append(float(sp_u))
 
-        sp_p = None
-        try:
-            from scripts.experiments.portability_vs_perf import _paired_speedup_from_measured_autotune  # noqa: PLC0415
-
-            paired = _paired_speedup_from_measured_autotune(((it.get("retune") or {}).get("remote")))
-            if isinstance(paired, dict) and isinstance(paired.get("speedup"), (int, float)) and float(paired["speedup"]) > 0:
-                sp_p = float(paired["speedup"])
-                paired_speedups.append(float(sp_p))
-        except Exception:
-            sp_p = None
+        sp_p = _paired_speedup_from_measured_autotune(((it.get("retune") or {}).get("remote")))
+        if isinstance(sp_p, float) and sp_p > 0:
+            paired_speedups.append(float(sp_p))
 
         per_kernel.append(
             {
@@ -277,4 +324,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
