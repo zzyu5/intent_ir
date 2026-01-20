@@ -121,6 +121,71 @@ def _seconds_per_iter(res: dict) -> Optional[float]:
     return float(ns) / 1e9
 
 
+def _paired_speedup_from_measured_autotune(retune_remote: dict) -> Dict[str, Any] | None:
+    """
+    Compute a *paired* freeze-vs-retune speedup from a single measured_autotune run.
+
+    This avoids cross-run drift/noise (freeze and retune are otherwise two separate
+    remote benchmark invocations).
+    """
+    if not isinstance(retune_remote, dict):
+        return None
+    tuning = retune_remote.get("tuning")
+    if not isinstance(tuning, dict):
+        return None
+    ma = tuning.get("measured_autotune")
+    if not isinstance(ma, dict):
+        return None
+    evaluated = ma.get("evaluated")
+    if not isinstance(evaluated, list) or not evaluated:
+        return None
+    best_index = ma.get("best_index")
+    if not isinstance(best_index, int) or not (0 <= best_index < len(evaluated)):
+        return None
+
+    def _bench_ns(x: Any) -> float | None:
+        if not isinstance(x, dict):
+            return None
+        b = x.get("bench")
+        if not isinstance(b, dict):
+            return None
+        ns = b.get("ns_per_iter")
+        if not isinstance(ns, (int, float)) or ns <= 0:
+            return None
+        return float(ns)
+
+    baseline = None
+    for x in evaluated:
+        if not isinstance(x, dict):
+            continue
+        notes = x.get("notes")
+        if not isinstance(notes, list):
+            continue
+        if any("freeze_baseline" in str(n) for n in notes):
+            baseline = x
+            break
+    if baseline is None:
+        return None
+
+    best = evaluated[best_index]
+    b_ns = _bench_ns(baseline)
+    best_ns = _bench_ns(best)
+    if b_ns is None or best_ns is None or best_ns <= 0:
+        return None
+
+    return {
+        "baseline_index": int(baseline.get("idx") if isinstance(baseline.get("idx"), int) else evaluated.index(baseline)),
+        "baseline_ns_per_iter": b_ns,
+        "baseline_schedule": (baseline.get("schedule") if isinstance(baseline.get("schedule"), dict) else None),
+        "baseline_notes": (list(baseline.get("notes") or []) if isinstance(baseline.get("notes"), list) else []),
+        "best_index": int(best.get("idx") if isinstance(best.get("idx"), int) else best_index),
+        "best_ns_per_iter": best_ns,
+        "best_schedule": (best.get("schedule") if isinstance(best.get("schedule"), dict) else None),
+        "best_notes": (list(best.get("notes") or []) if isinstance(best.get("notes"), list) else []),
+        "speedup": float(b_ns) / float(best_ns),
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", required=True)
@@ -393,9 +458,17 @@ def main() -> None:
 
         freeze_s = _seconds_per_iter(freeze_res)
         retune_s = _seconds_per_iter(retune_res)
-        speedup = None
+        speedup_unpaired = None
         if isinstance(freeze_s, float) and isinstance(retune_s, float) and retune_s > 0:
-            speedup = float(freeze_s) / float(retune_s)
+            speedup_unpaired = float(freeze_s) / float(retune_s)
+
+        paired = _paired_speedup_from_measured_autotune(retune_res)
+        speedup_paired = None
+        if isinstance(paired, dict) and isinstance(paired.get("speedup"), (int, float)) and float(paired["speedup"]) > 0:
+            speedup_paired = float(paired["speedup"])
+
+        # Prefer paired numbers for paper plots (avoid cross-run drift).
+        speedup = speedup_paired if isinstance(speedup_paired, float) else speedup_unpaired
 
         results.append(
             {
@@ -418,6 +491,9 @@ def main() -> None:
                     "remote": retune_res,
                 },
                 "speedup_retune_vs_freeze": speedup,
+                "speedup_retune_vs_freeze_unpaired": speedup_unpaired,
+                "speedup_retune_vs_freeze_paired": speedup_paired,
+                "paired_autotune": paired,
             }
         )
 
@@ -462,32 +538,57 @@ def main() -> None:
     speedups = []
     freeze_total = 0.0
     retune_total = 0.0
+    speedups_paired: list[float] = []
+    freeze_total_paired = 0.0
+    retune_total_paired = 0.0
     for it in results:
         if it.get("status") != "ok":
             continue
         fs = (it.get("freeze") or {}).get("seconds_per_iter")
         rs = (it.get("retune") or {}).get("seconds_per_iter")
         sp = it.get("speedup_retune_vs_freeze")
+        sp_p = it.get("speedup_retune_vs_freeze_paired")
         if isinstance(fs, (int, float)) and isinstance(rs, (int, float)) and fs > 0 and rs > 0:
             freeze_total += float(fs)
             retune_total += float(rs)
         if isinstance(sp, (int, float)) and float(sp) > 0:
             speedups.append(float(sp))
+
+        # Paired totals (same measured_autotune run).
+        paired = it.get("paired_autotune")
+        if isinstance(paired, dict):
+            b_ns = paired.get("baseline_ns_per_iter")
+            best_ns = paired.get("best_ns_per_iter")
+            if isinstance(b_ns, (int, float)) and isinstance(best_ns, (int, float)) and b_ns > 0 and best_ns > 0:
+                freeze_total_paired += float(b_ns) / 1e9
+                retune_total_paired += float(best_ns) / 1e9
+        if isinstance(sp_p, (int, float)) and float(sp_p) > 0:
+            speedups_paired.append(float(sp_p))
     geom = None
     if speedups:
         geom = math.exp(sum(math.log(x) for x in speedups) / float(len(speedups)))
+    geom_paired = None
+    if speedups_paired:
+        geom_paired = math.exp(sum(math.log(x) for x in speedups_paired) / float(len(speedups_paired)))
     total_speedup = None
     if retune_total > 0:
         total_speedup = float(freeze_total) / float(retune_total)
+    total_speedup_paired = None
+    if retune_total_paired > 0:
+        total_speedup_paired = float(freeze_total_paired) / float(retune_total_paired)
     out["summary"] = {
         "kernels_total": int(len(results)),
         "kernels_ok": int(sum(1 for it in results if it.get("status") == "ok")),
         "kernels_skipped_out_of_scope": int(sum(1 for it in results if it.get("status") == "skip_out_of_scope")),
         "kernels_errors": int(sum(1 for it in results if it.get("status") not in {"ok", "skip_out_of_scope"})),
         "geom_mean_speedup_retune_vs_freeze": geom,
+        "geom_mean_speedup_retune_vs_freeze_paired": geom_paired,
         "total_seconds_per_iter_freeze": freeze_total,
         "total_seconds_per_iter_retune": retune_total,
         "total_speedup_retune_vs_freeze": total_speedup,
+        "total_seconds_per_iter_freeze_paired": freeze_total_paired,
+        "total_seconds_per_iter_retune_paired": retune_total_paired,
+        "total_speedup_retune_vs_freeze_paired": total_speedup_paired,
     }
 
     # Regression distribution for paper plots (retune slower than freeze).
@@ -495,7 +596,10 @@ def main() -> None:
     for it in results:
         if it.get("status") != "ok":
             continue
-        sp = it.get("speedup_retune_vs_freeze")
+        # Prefer paired (stable) if available.
+        sp = it.get("speedup_retune_vs_freeze_paired")
+        if not isinstance(sp, (int, float)):
+            sp = it.get("speedup_retune_vs_freeze")
         if isinstance(sp, (int, float)) and float(sp) > 0 and float(sp) < 1.0:
             regressions.append({"kernel": it.get("kernel"), "anchor_tier": it.get("anchor_tier"), "speedup": float(sp)})
     out["summary"]["regressions_n"] = int(len(regressions))
@@ -504,7 +608,7 @@ def main() -> None:
     # Speedup histogram (stable bins; easy to plot).
     bins = [0.0, 0.8, 0.95, 1.0, 1.05, 1.2, 1.5, 2.0, float("inf")]
     hist = {f"[{bins[i]},{bins[i+1]})": 0 for i in range(len(bins) - 1)}
-    for sp in speedups:
+    for sp in (speedups_paired or speedups):
         for i in range(len(bins) - 1):
             if bins[i] <= sp < bins[i + 1]:
                 hist[f"[{bins[i]},{bins[i+1]})"] += 1
@@ -519,7 +623,9 @@ def main() -> None:
         t["n"] += 1
         if it.get("status") == "ok":
             t["ok"] += 1
-            sp = it.get("speedup_retune_vs_freeze")
+            sp = it.get("speedup_retune_vs_freeze_paired")
+            if not isinstance(sp, (int, float)):
+                sp = it.get("speedup_retune_vs_freeze")
             if isinstance(sp, (int, float)) and float(sp) > 0 and float(sp) < 1.0:
                 t["regressions"] += 1
     out["summary"]["by_tier"] = by_tier
