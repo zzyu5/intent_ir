@@ -79,6 +79,22 @@ def _log(msg: str) -> None:
     print(str(msg), file=sys.stderr, flush=True)
 
 
+def _anchor_tier_from_contract(contract: dict) -> str:
+    try:
+        signals = contract.get("signals") if isinstance(contract, dict) else None
+        anchors = (signals or {}).get("anchors") if isinstance(signals, dict) else None
+        if isinstance(anchors, dict):
+            if bool(anchors.get("has_dot")):
+                return "A_dot"
+            if bool(anchors.get("has_reduce")):
+                return "B_reduce"
+            if bool(anchors.get("has_copy")):
+                return "C_copy"
+    except Exception:
+        pass
+    return "D_none"
+
+
 def _ensure_artifact(kernel_name: str, *, cases_limit: int, refresh: bool) -> Path:
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     report_path = ARTIFACT_DIR / f"{kernel_name}.json"
@@ -122,8 +138,9 @@ def main() -> None:
     )
     ap.add_argument("--cases-limit", type=int, default=4)
     ap.add_argument("--refresh-artifacts", action="store_true", help="force regenerate pipeline artifacts")
-    ap.add_argument("--bench-iters", type=int, default=5)
-    ap.add_argument("--bench-warmup", type=int, default=1)
+    ap.add_argument("--bench-iters", type=int, default=50, help="bench iterations per schedule candidate (paper default: 50)")
+    ap.add_argument("--bench-warmup", type=int, default=5, help="warmup iterations before timing (paper default: 5)")
+    ap.add_argument("--bench-seed", type=int, default=0, help="deterministic bench input seed (freeze/retune share this)")
     ap.add_argument("--omp-threads", type=int, default=16)
     ap.add_argument("--omp-proc-bind", default="spread", help="OpenMP proc bind policy for E5.2 (fixed to isolate schedule)")
     ap.add_argument("--tune-mode", choices=["auto", "guided", "locked"], default="auto")
@@ -229,10 +246,12 @@ def main() -> None:
             continue
 
         contract = report.get("contract") or {}
+        tier = _anchor_tier_from_contract(contract) if isinstance(contract, dict) else "D_none"
         if isinstance(contract, dict) and (contract.get("level") == "OUT_OF_SCOPE") and (not bool(args.include_out_of_scope)):
             item = {
                 "kernel": k,
                 "status": "skip_out_of_scope",
+                "anchor_tier": tier,
                 "contract": contract,
             }
             results.append(item)
@@ -245,6 +264,7 @@ def main() -> None:
                         "omp_threads": int(args.omp_threads),
                         "bench_iters": int(args.bench_iters),
                         "bench_warmup": int(args.bench_warmup),
+                        "bench_seed": int(args.bench_seed),
                         "tune_mode": str(args.tune_mode),
                         "tune_budget": int(args.tune_budget),
                         "profile": profile_name_or_path,
@@ -297,6 +317,7 @@ def main() -> None:
                 tune_profile=profile_name_or_path,
                 bench_iters=int(args.bench_iters),
                 bench_warmup=int(args.bench_warmup),
+                bench_seed=int(args.bench_seed),
                 bench_only=True,
                 omp_threads=int(args.omp_threads),
                 omp_proc_bind=str(args.omp_proc_bind),
@@ -340,6 +361,7 @@ def main() -> None:
                 tune_profile=profile_name_or_path,
                 bench_iters=int(args.bench_iters),
                 bench_warmup=int(args.bench_warmup),
+                bench_seed=int(args.bench_seed),
                 bench_only=True,
                 omp_threads=int(args.omp_threads),
                 omp_proc_bind=str(args.omp_proc_bind),
@@ -355,6 +377,7 @@ def main() -> None:
                         "omp_threads": int(args.omp_threads),
                         "bench_iters": int(args.bench_iters),
                         "bench_warmup": int(args.bench_warmup),
+                        "bench_seed": int(args.bench_seed),
                         "tune_mode": str(args.tune_mode),
                         "tune_budget": int(args.tune_budget),
                         "profile": profile_name_or_path,
@@ -378,6 +401,7 @@ def main() -> None:
             {
                 "kernel": k,
                 "status": "ok",
+                "anchor_tier": tier,
                 "shapes": shape_bindings,
                 "contract": contract,
                 "freeze": {
@@ -406,6 +430,7 @@ def main() -> None:
                     "omp_threads": int(args.omp_threads),
                     "bench_iters": int(args.bench_iters),
                     "bench_warmup": int(args.bench_warmup),
+                    "bench_seed": int(args.bench_seed),
                     "tune_mode": str(args.tune_mode),
                     "tune_budget": int(args.tune_budget),
                     "profile": profile_name_or_path,
@@ -425,6 +450,7 @@ def main() -> None:
         "omp_proc_bind": str(args.omp_proc_bind),
         "bench_iters": int(args.bench_iters),
         "bench_warmup": int(args.bench_warmup),
+        "bench_seed": int(args.bench_seed),
         "tune_mode": str(args.tune_mode),
         "tune_budget": int(args.tune_budget),
         "profile": profile_name_or_path,
@@ -456,11 +482,47 @@ def main() -> None:
     out["summary"] = {
         "kernels_total": int(len(results)),
         "kernels_ok": int(sum(1 for it in results if it.get("status") == "ok")),
+        "kernels_skipped_out_of_scope": int(sum(1 for it in results if it.get("status") == "skip_out_of_scope")),
+        "kernels_errors": int(sum(1 for it in results if it.get("status") not in {"ok", "skip_out_of_scope"})),
         "geom_mean_speedup_retune_vs_freeze": geom,
         "total_seconds_per_iter_freeze": freeze_total,
         "total_seconds_per_iter_retune": retune_total,
         "total_speedup_retune_vs_freeze": total_speedup,
     }
+
+    # Regression distribution for paper plots (retune slower than freeze).
+    regressions: list[dict[str, object]] = []
+    for it in results:
+        if it.get("status") != "ok":
+            continue
+        sp = it.get("speedup_retune_vs_freeze")
+        if isinstance(sp, (int, float)) and float(sp) > 0 and float(sp) < 1.0:
+            regressions.append({"kernel": it.get("kernel"), "anchor_tier": it.get("anchor_tier"), "speedup": float(sp)})
+    out["summary"]["regressions_n"] = int(len(regressions))
+    out["summary"]["regressions"] = regressions
+
+    # Speedup histogram (stable bins; easy to plot).
+    bins = [0.0, 0.8, 0.95, 1.0, 1.05, 1.2, 1.5, 2.0, float("inf")]
+    hist = {f"[{bins[i]},{bins[i+1]})": 0 for i in range(len(bins) - 1)}
+    for sp in speedups:
+        for i in range(len(bins) - 1):
+            if bins[i] <= sp < bins[i + 1]:
+                hist[f"[{bins[i]},{bins[i+1]})"] += 1
+                break
+    out["summary"]["speedup_histogram"] = hist
+
+    # Tier breakdown.
+    by_tier: dict[str, dict[str, int]] = {}
+    for it in results:
+        tier = str(it.get("anchor_tier") or "D_none")
+        t = by_tier.setdefault(tier, {"n": 0, "ok": 0, "regressions": 0})
+        t["n"] += 1
+        if it.get("status") == "ok":
+            t["ok"] += 1
+            sp = it.get("speedup_retune_vs_freeze")
+            if isinstance(sp, (int, float)) and float(sp) > 0 and float(sp) < 1.0:
+                t["regressions"] += 1
+    out["summary"]["by_tier"] = by_tier
     out_path.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
     print(out_path)
 

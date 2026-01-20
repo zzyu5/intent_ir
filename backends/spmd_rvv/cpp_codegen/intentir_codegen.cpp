@@ -1502,6 +1502,9 @@ struct CProgramEmitter {
 		        w.line("if (!intentir_alloc_and_load_inputs(inputs, (size_t)(sizeof(inputs) / sizeof(inputs[0])))) return 2;");
 		      } else {
 		        w.line("if (!intentir_alloc(inputs, (size_t)(sizeof(inputs) / sizeof(inputs[0])))) return 2;");
+		        w.line("uint64_t intentir_bench_seed = 0;");
+		        w.line("const char* __intentir_bs = getenv(\"INTENTIR_BENCH_SEED\");");
+		        w.line("if (__intentir_bs && *__intentir_bs) intentir_bench_seed = (uint64_t)strtoull(__intentir_bs, NULL, 10);");
 		        w.line("for (size_t bi = 0; bi < (size_t)(sizeof(inputs) / sizeof(inputs[0])); ++bi) {");
 		        w.indent();
 	        w.line("IntentirBufferDesc* b = &inputs[bi];");
@@ -1509,7 +1512,7 @@ struct CProgramEmitter {
 	        w.line("if (b->dtype == INTENTIR_DTYPE_U8) {");
 	        w.indent();
 	        w.line("uint8_t* p = (uint8_t*)(*b->ptr);");
-	        w.line("for (size_t i = 0; i < b->bytes; ++i) p[i] = (uint8_t)(i & 1u);");
+	        w.line("for (size_t i = 0; i < b->bytes; ++i) p[i] = (uint8_t)(((uint64_t)i + intentir_bench_seed) & 1u);");
 	        w.dedent();
 	        w.line("} else {");
 	        w.indent();
@@ -1517,7 +1520,8 @@ struct CProgramEmitter {
 	        w.line("size_t n = b->bytes / sizeof(float);");
 	        w.line("for (size_t i = 0; i < n; ++i) {");
 	        w.indent();
-	        w.line("int t = (int)(i % 127u) - 63;");
+	        w.line("size_t j = (size_t)((uint64_t)i + intentir_bench_seed);");
+	        w.line("int t = (int)(j % 127u) - 63;");
 	        w.line("p[i] = (float)t * 0.01f;");
 	        w.dedent();
 	        w.line("}");

@@ -60,10 +60,13 @@ void intentir_maybe_bench(IntentirComputeFn compute, double matmul_flops_total) 
   if (!compute) return;
   int bench_iters = 0;
   int bench_warmup = 1;
+  unsigned long long bench_seed = 0ull;
   const char* b = getenv("INTENTIR_BENCH_ITERS");
   if (b) bench_iters = atoi(b);
   const char* w = getenv("INTENTIR_BENCH_WARMUP");
   if (w) bench_warmup = atoi(w);
+  const char* s = getenv("INTENTIR_BENCH_SEED");
+  if (s && *s) bench_seed = strtoull(s, NULL, 10);
   if (bench_iters <= 0) return;
   if (bench_warmup < 0) bench_warmup = 0;
   for (int i = 0; i < bench_warmup; ++i) compute();
@@ -73,7 +76,8 @@ void intentir_maybe_bench(IntentirComputeFn compute, double matmul_flops_total) 
   double ns_total = (double)(t1 - t0);
   double ns_per_iter = ns_total / (double)bench_iters;
   double gflops = (ns_per_iter > 0.0) ? (matmul_flops_total / ns_per_iter) : 0.0;
-  printf("INTENTIR_BENCH {\"iters\":%d,\"warmup\":%d,\"ns_total\":%llu,\"ns_per_iter\":%.1f,\"matmul_flops\":%.0f,\"matmul_gflops\":%.6f}\n",
-         bench_iters, bench_warmup, (unsigned long long)(t1 - t0), ns_per_iter, matmul_flops_total, gflops);
+  printf(
+      "INTENTIR_BENCH "
+      "{\"iters\":%d,\"warmup\":%d,\"seed\":%llu,\"ns_total\":%llu,\"ns_per_iter\":%.1f,\"matmul_flops\":%.0f,\"matmul_gflops\":%.6f}\n",
+      bench_iters, bench_warmup, bench_seed, (unsigned long long)(t1 - t0), ns_per_iter, matmul_flops_total, gflops);
 }
-

@@ -183,6 +183,7 @@ def run_remote(
     tune_profile: str | None = None,
     bench_iters: int = 0,
     bench_warmup: int = 1,
+    bench_seed: int = 0,
     profile_ops: bool = False,
     bench_only: bool = False,
     omp_threads: int = 1,
@@ -782,9 +783,13 @@ def run_remote(
             if int(bench_iters_run) > 0:
                 bi = int(bench_iters_run)
                 bw = int(bench_warmup_run)
+                bs = int(bench_seed)
                 if bw < 0:
                     bw = 0
-                cmd = f"cd {remote_dir} && {env_prefix}INTENTIR_BENCH_ITERS={bi} INTENTIR_BENCH_WARMUP={bw} {remote_bin}"
+                cmd = (
+                    f"cd {remote_dir} && {env_prefix}"
+                    f"INTENTIR_BENCH_ITERS={bi} INTENTIR_BENCH_WARMUP={bw} INTENTIR_BENCH_SEED={bs} {remote_bin}"
+                )
 
             stdin, stdout, stderr = client.exec_command(cmd, timeout=60)
             run_out = stdout.read().decode()
@@ -997,6 +1002,7 @@ def main():
     ap.add_argument("--profile", default=None, help="RVV profile name or JSON path (default: query remote host)")
     ap.add_argument("--bench-iters", type=int, default=0, help="if >0, run microbenchmark loop and print INTENTIR_BENCH JSON line")
     ap.add_argument("--bench-warmup", type=int, default=1, help="warmup iterations for benchmark loop")
+    ap.add_argument("--bench-seed", type=int, default=0, help="deterministic seed for bench-only input fill (default: 0)")
     ap.add_argument("--omp-threads", type=int, default=1, help="OpenMP threads for RVV backend (default: 1)")
     ap.add_argument("--omp-proc-bind", default="auto", help="OpenMP proc bind policy (spread/close/false/auto)")
     ap.add_argument("--omp-places", default="cores", help="OpenMP places (e.g., cores, threads)")
@@ -1060,6 +1066,7 @@ def main():
         tune_profile=str(args.profile) if args.profile else None,
         bench_iters=int(args.bench_iters),
         bench_warmup=int(args.bench_warmup),
+        bench_seed=int(args.bench_seed),
         omp_threads=int(args.omp_threads),
         omp_proc_bind=str(args.omp_proc_bind),
         omp_places=str(args.omp_places),
