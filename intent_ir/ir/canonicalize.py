@@ -13,7 +13,7 @@ in-memory IntentFunction.
 from __future__ import annotations
 
 import copy
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from .ir_types import Dim, IntentFunction, Op, TensorLayout, TensorType
 
@@ -130,6 +130,13 @@ def canonicalize_for_consistency(intent: IntentFunction) -> IntentFunction:
 
     # Pass 5: dead code elimination (drop unused broadcast/const/cast/identity chains).
     fn.ops = _dce_ops(fn.ops, outputs=set(fn.outputs))
+
+    # Pass 6: infer axis_roles for interface symbols.
+    # Different frontends/LLM runs often omit or partially fill axis_roles.
+    # For cross-frontend comparisons (E4) and paper metrics, we infer a stable
+    # axis_roles mapping from the *interface* tensor shapes + reduced/contracted
+    # axes, without relying on LLM-provided metadata.
+    fn.axis_roles = _infer_axis_roles_from_interface(fn)
     return fn
 
 
@@ -154,6 +161,233 @@ def _is_scalar_like_tensor(fn: IntentFunction, name: str) -> bool:
         d0 = t.shape[0]
         return getattr(d0, "kind", None) == "const" and int(getattr(d0, "value", -1)) == 1
     return False
+
+
+def _interface_tensors(fn: IntentFunction) -> Tuple[List[str], List[str]]:
+    produced = {op.output for op in fn.ops if op.output}
+    used: List[str] = []
+    for op in fn.ops:
+        used.extend(list(op.inputs))
+    external_inputs = [n for n in used if (n in fn.tensors and n not in produced)]
+    outputs = [n for n in (fn.outputs or []) if n in fn.tensors]
+    # De-dup while preserving order.
+    seen: set[str] = set()
+    ext: List[str] = []
+    for n in external_inputs:
+        if n in seen:
+            continue
+        seen.add(n)
+        ext.append(n)
+    out: List[str] = []
+    for n in outputs:
+        if n in seen:
+            continue
+        seen.add(n)
+        out.append(n)
+    return ext, out
+
+
+def _sym_dims(t: TensorType | None) -> List[str]:
+    if t is None:
+        return []
+    out: List[str] = []
+    for d in list(t.shape):
+        if getattr(d, "kind", None) != "sym":
+            continue
+        v = str(getattr(d, "value", "")).strip()
+        if v:
+            out.append(v)
+    return out
+
+
+def _sym_set(t: TensorType | None) -> Set[str]:
+    return set(_sym_dims(t))
+
+
+def _sym_at(t: TensorType | None, axis: int) -> Optional[str]:
+    if t is None:
+        return None
+    shape = list(t.shape)
+    if not shape:
+        return None
+    ax = int(axis)
+    if ax < 0:
+        ax = len(shape) + ax
+    if ax < 0 or ax >= len(shape):
+        return None
+    d = shape[ax]
+    if getattr(d, "kind", None) != "sym":
+        return None
+    v = str(getattr(d, "value", "")).strip()
+    return v or None
+
+
+def _tokenize_sym(sym: str) -> List[str]:
+    s = str(sym).strip().upper().replace("-", "_")
+    return [t for t in s.split("_") if t]
+
+
+def _looks_spatial(sym: str) -> bool:
+    toks = _tokenize_sym(sym)
+    # Treat "CTX"/(H,W) family and common image/sequence tokens as spatial.
+    for t in toks:
+        if t in {"H", "W", "IH", "IW", "OH", "OW", "HW", "CTX", "SEQ", "POS"}:
+            return True
+    return False
+
+
+def _looks_channel(sym: str) -> bool:
+    toks = _tokenize_sym(sym)
+    # Head dims / channels / groups / embedding dims.
+    for t in toks:
+        if t in {"C", "CH", "CHANNEL", "HEAD", "NUMHEAD", "DIM", "EMBED", "HIDDEN", "FEATURE", "GROUP", "GROUPS", "G"}:
+            return True
+    s = str(sym).upper()
+    return ("NUMHEAD" in s) or ("HEAD" in s) or ("CHANNEL" in s) or ("EMBED" in s) or ("HIDDEN" in s)
+
+
+def _infer_axis_roles_from_interface(fn: IntentFunction) -> Dict[str, str]:
+    ext_inputs, outputs = _interface_tensors(fn)
+    if not ext_inputs and not outputs:
+        return dict(fn.axis_roles or {})
+
+    # Interface symbol set (inputs + outputs only).
+    iface_syms: Set[str] = set()
+    output_syms: Set[str] = set()
+    iface_pos: Dict[str, Set[Tuple[int, int]]] = {}
+
+    def add_tensor(name: str, *, is_output: bool) -> None:
+        t = fn.tensors.get(name)
+        if t is None:
+            return
+        r = int(len(t.shape))
+        for i, d in enumerate(list(t.shape)):
+            if getattr(d, "kind", None) != "sym":
+                continue
+            s = str(getattr(d, "value", "")).strip()
+            if not s:
+                continue
+            iface_syms.add(s)
+            iface_pos.setdefault(s, set()).add((r, int(i)))
+            if is_output:
+                output_syms.add(s)
+
+    for n in ext_inputs:
+        add_tensor(n, is_output=False)
+    for n in outputs:
+        add_tensor(n, is_output=True)
+
+    if not iface_syms:
+        return dict(fn.axis_roles or {})
+
+    # Reduced/contracted axes: infer from ops, but only mark as `reduction` when
+    # the axis does not appear in final outputs (avoid labeling spatial dims like
+    # HW in groupnorm as reduction just because it is used to compute stats).
+    reduced_any: Set[str] = set()
+    reduced_eliminated: Set[str] = set()
+
+    for op in list(fn.ops):
+        if op.op == "matmul" and len(op.inputs) >= 2 and op.output:
+            a = fn.tensors.get(op.inputs[0])
+            b = fn.tensors.get(op.inputs[1])
+            o = fn.tensors.get(op.output)
+            if a is not None and b is not None:
+                common = _sym_set(a) & _sym_set(b)
+                out_syms_op = _sym_set(o)
+                if out_syms_op:
+                    contracted = {s for s in common if s not in out_syms_op}
+                else:
+                    # If the matmul output tensor type is missing (common in LLM output),
+                    # identify the contraction axis by position: batch-like dims appear at
+                    # the same index in both inputs, while K-like dims appear at different
+                    # indices (e.g., [B,M,K] x [B,K,N]).
+                    a_syms = _sym_dims(a)
+                    b_syms = _sym_dims(b)
+                    a_pos: Dict[str, Set[int]] = {}
+                    b_pos: Dict[str, Set[int]] = {}
+                    for i, s in enumerate(a_syms):
+                        a_pos.setdefault(s, set()).add(int(i))
+                    for i, s in enumerate(b_syms):
+                        b_pos.setdefault(s, set()).add(int(i))
+                    contracted = set()
+                    for s in common:
+                        pa = a_pos.get(s, set())
+                        pb = b_pos.get(s, set())
+                        if any(int(i) != int(j) for i in pa for j in pb):
+                            contracted.add(s)
+                for s in contracted:
+                    if s in iface_syms:
+                        reduced_any.add(s)
+            continue
+
+        if (op.op.startswith("reduce_") or op.op in {"reduce_sum", "reduce_max", "reduce_min", "reduce_any", "reduce_all"}) and op.inputs and op.output:
+            a = fn.tensors.get(op.inputs[0])
+            o = fn.tensors.get(op.output)
+            dims = (op.attrs or {}).get("dims")
+            if dims is None:
+                dims = (op.attrs or {}).get("axis")
+                if isinstance(dims, int):
+                    dims = [dims]
+            if isinstance(dims, list) and all(isinstance(x, int) for x in dims) and a is not None:
+                for ax in dims:
+                    s = _sym_at(a, int(ax))
+                    if s and s in iface_syms:
+                        reduced_any.add(s)
+            else:
+                cand = _sym_set(a) - _sym_set(o)
+                for s in cand:
+                    if s in iface_syms:
+                        reduced_any.add(s)
+            continue
+
+    for s in list(reduced_any):
+        if s in output_syms:
+            continue
+        reduced_eliminated.add(s)
+
+    # Batch/channel cues from interface shapes.
+    batch_syms: Set[str] = set()
+    channel_syms: Set[str] = set()
+
+    for s, poses in iface_pos.items():
+        # Only use rank>=3 positional heuristics for batch/channel.
+        if any(r >= 3 and i == 0 for (r, i) in poses):
+            batch_syms.add(s)
+        if any(r >= 3 and i == 1 for (r, i) in poses):
+            channel_syms.add(s)
+
+    # 1D weight/bias tensors imply "channel" (feature) axes.
+    for n in ext_inputs:
+        t = fn.tensors.get(n)
+        if t is None or len(t.shape) != 1:
+            continue
+        s0 = _sym_at(t, 0)
+        if s0 and s0 in iface_syms and not _looks_spatial(s0):
+            channel_syms.add(s0)
+
+    # Reduced-but-preserved axes: likely feature axes (softmax/layernorm).
+    for s in (reduced_any & output_syms):
+        if _looks_spatial(s):
+            continue
+        channel_syms.add(s)
+
+    # Name-based channel hints (e.g., HEAD_DIM, *_numhead).
+    for s in list(iface_syms):
+        if _looks_channel(s) and not _looks_spatial(s):
+            channel_syms.add(s)
+
+    # Final role assignment (interface symbols only).
+    out: Dict[str, str] = {}
+    for s in sorted(iface_syms):
+        if s in reduced_eliminated:
+            out[s] = "reduction"
+        elif s in batch_syms:
+            out[s] = "batch"
+        elif s in channel_syms:
+            out[s] = "channel"
+        else:
+            out[s] = "spatial"
+    return out
 
 
 def _fold_trailing_broadcasts(fn: IntentFunction) -> None:

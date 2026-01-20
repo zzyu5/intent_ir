@@ -5,162 +5,307 @@
   },
   "any_kernel_dim": {
     "semantic_class": "reduce",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "reduction"
+    }
   },
   "group_norm_kernel": {
     "semantic_class": "norm",
-    "axis_roles": {}
+    "axis_roles": {
+      "N": "batch",
+      "C": "channel",
+      "HW": "spatial",
+      "num_groups": "channel"
+    }
   },
   "_attn_fwd": {
     "semantic_class": "attention",
-    "axis_roles": {}
+    "axis_roles": {
+      "Z": "batch",
+      "q_numhead": "channel",
+      "kv_numhead": "channel",
+      "Q_CTX": "spatial",
+      "KV_CTX": "reduction",
+      "HEAD_DIM": "channel"
+    }
   },
   "softmax_inner": {
     "semantic_class": "softmax",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "channel"
+    }
   },
   "layer_norm_persistent": {
     "semantic_class": "norm",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "channel"
+    }
   },
   "upsample_bicubic2d_aa": {
     "semantic_class": "upsample",
-    "axis_roles": {}
+    "axis_roles": {
+      "N": "batch",
+      "C": "channel",
+      "IH": "spatial",
+      "IW": "spatial",
+      "OH": "spatial",
+      "OW": "spatial"
+    }
   },
   "add2d": {
     "semantic_class": "elementwise",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "spatial"
+    }
   },
   "relu2d": {
     "semantic_class": "elementwise",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "spatial"
+    }
   },
   "add_bias2d": {
     "semantic_class": "elementwise",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "spatial"
+    }
   },
   "where2d": {
     "semantic_class": "elementwise",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "spatial"
+    }
   },
   "transpose2d": {
     "semantic_class": "transpose",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "spatial"
+    }
   },
   "copy2d_divmod": {
     "semantic_class": "copy",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "spatial"
+    }
   },
   "row_sum": {
     "semantic_class": "reduce",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "reduction"
+    }
   },
   "row_max": {
     "semantic_class": "reduce",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "reduction"
+    }
   },
   "grouped_row_sum2d": {
     "semantic_class": "reduce",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial"
+    }
   },
   "masked_softmax2d": {
     "semantic_class": "softmax",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "channel"
+    }
   },
   "gather2d": {
     "semantic_class": "gather",
-    "axis_roles": {}
+    "axis_roles": {
+      "L": "spatial",
+      "M": "spatial",
+      "N": "spatial"
+    }
   },
   "matmul_relu2d": {
     "semantic_class": "matmul",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "spatial",
+      "K": "reduction"
+    }
   },
   "matmul_bias_relu2d": {
     "semantic_class": "matmul",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "spatial",
+      "K": "reduction"
+    }
   },
   "matmul_fused_epilogue2d": {
     "semantic_class": "matmul",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "spatial",
+      "K": "reduction"
+    }
   },
   "mlp2d": {
     "semantic_class": "matmul",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "spatial",
+      "K": "reduction",
+      "H": "reduction"
+    }
   },
   "masked_attention2d": {
     "semantic_class": "attention",
-    "axis_roles": {}
+    "axis_roles": {
+      "Q_CTX": "spatial",
+      "KV_CTX": "reduction",
+      "HEAD_DIM": "channel"
+    }
   },
   "flash_attention2d": {
     "semantic_class": "attention",
-    "axis_roles": {}
+    "axis_roles": {
+      "Q_CTX": "spatial",
+      "KV_CTX": "reduction",
+      "HEAD_DIM": "channel"
+    }
   },
   "rms_norm2d": {
     "semantic_class": "norm",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "channel"
+    }
   },
   "rms_norm_residual2d": {
     "semantic_class": "norm",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "channel"
+    }
   },
   "layer_norm_residual2d": {
     "semantic_class": "norm",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "channel"
+    }
   },
   "naive_gemm": {
     "semantic_class": "matmul",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "spatial",
+      "K": "reduction"
+    }
   },
   "vec_add": {
     "semantic_class": "elementwise",
-    "axis_roles": {}
+    "axis_roles": {
+      "N": "spatial"
+    }
   },
   "rowmask_where2d": {
     "semantic_class": "elementwise",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "spatial"
+    }
   },
   "exp2d": {
     "semantic_class": "elementwise",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "spatial"
+    }
   },
   "floor2d": {
     "semantic_class": "elementwise",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "spatial"
+    }
   },
   "clamp2d": {
     "semantic_class": "elementwise",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "spatial"
+    }
   },
   "ai_bench_matmul": {
     "semantic_class": "matmul",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "spatial",
+      "K": "reduction"
+    }
   },
   "ai_bench_softmax": {
     "semantic_class": "softmax",
-    "axis_roles": {}
+    "axis_roles": {
+      "R": "spatial",
+      "C": "channel"
+    }
   },
   "ai_bench_layernorm": {
     "semantic_class": "norm",
-    "axis_roles": {}
+    "axis_roles": {
+      "M": "spatial",
+      "N": "channel"
+    }
   },
   "ai_bench_dropout": {
     "semantic_class": "elementwise",
-    "axis_roles": {}
+    "axis_roles": {
+      "n_elements": "spatial"
+    }
   },
   "ai_bench_rope": {
     "semantic_class": "elementwise",
-    "axis_roles": {}
+    "axis_roles": {
+      "SEQ_LEN": "spatial",
+      "BATCH_NUM": "batch",
+      "HEAD_NUM": "channel",
+      "HEAD_DIM": "channel"
+    }
   },
   "ai_bench_warp": {
     "semantic_class": "elementwise",
-    "axis_roles": {}
+    "axis_roles": {
+      "C": "channel",
+      "H": "spatial",
+      "W": "spatial"
+    }
   },
   "ai_bench_resize": {
     "semantic_class": "",
-    "axis_roles": {}
+    "axis_roles": {
+      "C": "channel",
+      "H": "spatial",
+      "W": "spatial",
+      "OH": "spatial",
+      "OW": "spatial"
+    }
   },
   "ai_bench_correlation": {
     "semantic_class": "",
-    "axis_roles": {}
+    "axis_roles": {
+      "out_channel": "channel",
+      "in_channel": "channel",
+      "height": "spatial",
+      "width": "spatial"
+    }
   }
 }

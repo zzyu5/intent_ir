@@ -1748,6 +1748,50 @@ def _ensure_schedule_tilelang(intent, spec) -> None:
         return
 
 
+def _ensure_interface_symbols_and_roles_tilelang(intent: IntentFunction, spec: KernelSpec) -> None:
+    """
+    Keep TileLang IntentIR in an *abstract* (symbolic) view for paper comparisons.
+
+    TileLang PrimFunc kernels in the coverage suite often specialize some dims
+    as constants (e.g., N=16) for compilation speed. The LLM may mirror those
+    constants into tensor shapes and may also omit/partially-fill axis_roles.
+
+    For E4 (cross-frontend consistency), we want the recovered intent to use a
+    stable symbol vocabulary (M/N/K/...) and a stable axis_roles mapping. We
+    therefore align the interface tensor shapes + axis_roles to the pipeline's
+    deterministic intent builder.
+    """
+    try:
+        tmpl = spec.intent_builder()
+    except Exception:
+        return
+
+    # Promote interface constant dims to the template symbols (do not rename
+    # existing symbols; only lift const->sym where the template expects sym).
+    for name, tt_t in dict(getattr(tmpl, "tensors", {}) or {}).items():
+        if name not in intent.tensors:
+            continue
+        tt = intent.tensors.get(name)
+        if tt is None or len(tt.shape) != len(tt_t.shape):
+            continue
+        new_shape: list[Dim] = []
+        changed = False
+        for d, dt in zip(list(tt.shape), list(tt_t.shape)):
+            if getattr(d, "kind", None) == "const" and getattr(dt, "kind", None) == "sym":
+                new_shape.append(Dim(kind="sym", value=str(getattr(dt, "value"))))
+                changed = True
+            else:
+                new_shape.append(d)
+        if changed:
+            intent.tensors[name] = TensorType(dtype=tt.dtype, shape=new_shape, layout=tt.layout)
+
+    # Align axis_roles to the deterministic builder (override LLM metadata).
+    try:
+        intent.axis_roles = dict(getattr(tmpl, "axis_roles", {}) or {})
+    except Exception:
+        pass
+
+
 def _buffer_param_names(prim_func) -> List[str]:
     try:
         from tvm import tir  # noqa: PLC0415
@@ -2229,6 +2273,7 @@ def run_pipeline_for_spec(
         cand = _LLM_HUB.lift(desc, model=llm_model)
         enrich_intent_macros(cand.intent)
         _ensure_schedule_tilelang(cand.intent, spec)
+        _ensure_interface_symbols_and_roles_tilelang(cand.intent, spec)
         report["llm_trace"] = dict(cand.llm_trace or {})
     else:
         intent = spec.intent_builder()
@@ -2248,6 +2293,7 @@ def run_pipeline_for_spec(
             llm_trace=dict(cand.llm_trace),
         )
         _ensure_schedule_tilelang(cand_expanded.intent, spec)
+        _ensure_interface_symbols_and_roles_tilelang(cand_expanded.intent, spec)
         (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_intent), encoding="utf-8")
         report["intent_expanded"] = expanded_intent.to_json_dict()
     except Exception as e:
@@ -2267,6 +2313,7 @@ def run_pipeline_for_spec(
             cand_fix = _LLM_HUB.lift(desc, feedback=list(sv.reasons), model=llm_model)
             enrich_intent_macros(cand_fix.intent)
             _ensure_schedule_tilelang(cand_fix.intent, spec)
+            _ensure_interface_symbols_and_roles_tilelang(cand_fix.intent, spec)
             report["llm_trace"] = dict(cand_fix.llm_trace or {})
             cand = cand_fix
             (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
@@ -2280,6 +2327,7 @@ def run_pipeline_for_spec(
                 llm_trace=dict(cand.llm_trace),
             )
             _ensure_schedule_tilelang(cand_expanded.intent, spec)
+            _ensure_interface_symbols_and_roles_tilelang(cand_expanded.intent, spec)
             (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_fix), encoding="utf-8")
             report["intent_expanded"] = expanded_fix.to_json_dict()
             sv = static_validate((cand_expanded.intent if cand_expanded is not None else cand.intent), cert_v2)
