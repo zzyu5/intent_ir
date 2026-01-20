@@ -49,6 +49,14 @@ SYSTEM_PROMPT = """You are an expert compiler engineer. Given the Triton
 - iota MUST use attrs.axis (int) and attrs.shape; do NOT use attrs.dimension. cast MUST use attrs.to; do NOT use attrs.dtype.
 - Every output tensor MUST be declared in tensors and produced by an op. If the kernel writes Mean/Rstd or similar, add the corresponding reduce/assign ops.
 - reduce_any MUST include dims/axis. Softmax must be present for attention kernels.
+- IMPORTANT attention axis_roles:
+  - batch axis is Z (or batch); do NOT label Q_CTX/KV_CTX as batch.
+  - Q_CTX is the query sequence axis -> spatial.
+  - KV_CTX is the key/value sequence axis -> reduction (softmax-reduce axis).
+  - HEAD_DIM and head-count axes (q_numhead/kv_numhead) -> channel.
+- IMPORTANT attention graph extraction:
+  - Represent QK^T and (softmax scores)·V via the `matmul` primitive, not ad-hoc reduce_sum loops.
+  - Use the `softmax` primitive for attention; do NOT lower it into exp/reduce_max/reduce_sum/sub/div chains.
 - Reduce dims/axis must be integer axis indices (after any reshape/transpose), not symbolic axis names.
 - IMPORTANT dropout semantics: Triton's tl.rand(seed, offsets) should map to a single `dropout` op.
   - Use: dropout(X, p, seed) -> Y where p and seed are scalar tensors (rank-0), and Y has the same shape/dtype as X.
