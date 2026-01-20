@@ -231,14 +231,47 @@ def main() -> None:
     # E5.1: external baseline comparison.
     e5_1_src = _latest_file(e5_dir, "e5_1_external_ai_benchmark_baseline16_ours16*.json")
     e5_1_obj = _load_json(e5_1_src) if (e5_1_src and e5_1_src.exists()) else {}
+    e5_1_speedups: list[float] = []
+    e5_1_min = None
+    e5_1_max = None
+    e5_1_slower = 0
+    for it in list(e5_1_obj.get("kernels") or []):
+        if not isinstance(it, dict):
+            continue
+        sp = it.get("speedup_ours_over_baseline")
+        if not isinstance(sp, (int, float)) or float(sp) <= 0:
+            continue
+        sp = float(sp)
+        e5_1_speedups.append(sp)
+        if e5_1_min is None or sp < e5_1_min[1]:
+            e5_1_min = (str(it.get("baseline_name") or it.get("kernel") or ""), sp)
+        if e5_1_max is None or sp > e5_1_max[1]:
+            e5_1_max = (str(it.get("baseline_name") or it.get("kernel") or ""), sp)
+        if sp < 1.0:
+            e5_1_slower += 1
     _write_json(
         paths.e5_1,
         {
             "experiment": "E5_1_external_baseline",
             "git_head": head,
             "source": str(e5_1_src) if e5_1_src else None,
-            "summary": e5_1_obj.get("summary"),
-            "kernels": e5_1_obj.get("kernels"),
+            "baseline": e5_1_obj.get("baseline"),
+            "ours": e5_1_obj.get("ours"),
+            "summary": {
+                "n": int(len(e5_1_speedups)),
+                "geom_speedup_ours_over_baseline": _geom_mean(e5_1_speedups),
+                "slower_count": int(e5_1_slower),
+                "min": e5_1_min,
+                "max": e5_1_max,
+            },
+            "per_kernel": [
+                {
+                    "name": str(it.get("baseline_name") or it.get("kernel") or ""),
+                    "speedup_ours_over_baseline": it.get("speedup_ours_over_baseline"),
+                }
+                for it in list(e5_1_obj.get("kernels") or [])
+                if isinstance(it, dict)
+            ],
         },
     )
 
