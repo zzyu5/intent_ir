@@ -37,10 +37,14 @@ SYSTEM_PROMPT = """You are an expert compiler engineer. Given a TileLang kernel
 - reshape MUST include attrs.shape (non-empty list).
   broadcast_in_dim MUST have attrs.out_shape + attrs.broadcast_dims.
   transpose MUST have attrs.perm.
+- iota MUST use attrs.axis (int) + attrs.shape; omit attrs.dtype unless you need a non-default dtype.
 - Do NOT invent arbitrary new shape symbols. Any symbol used in tensor shapes or
   reshape/broadcast/iota shapes must come from:
   - existing kernel signature symbols (if any), OR
   - Evidence appendix: `launch.canonical_shapes` keys (compile-time constants).
+- When you use reshape/iota/broadcast_in_dim, prefer using canonical shape symbols
+  (from `launch.canonical_shapes`) in attrs.shape / attrs.out_shape instead of raw
+  integers, as long as the numeric values match exactly.
 - Every output tensor MUST be declared in tensors and produced by an op.
   If the kernel writes Mean/Rstd or similar, add the corresponding reduce/compute ops.
 - Each op.output name MUST be unique across the ops list (no duplicates).
@@ -51,8 +55,19 @@ SYSTEM_PROMPT = """You are an expert compiler engineer. Given a TileLang kernel
   Prefer explicit arithmetic ops; model eps/num_elements/group_size as `const` ops (scalar tensors)
   unless they are runtime scalar tensors in the kernel signature.
 - IMPORTANT layernorm semantics: normalize by N (mean=sum/N; var=sumsq/N - mean^2).
-- IMPORTANT attention kernels: represent score computation as `matmul` + `mul(sm_scale)` + `softmax`, then `matmul` with V.
-  Do NOT implement matmul via ad-hoc reduce_sum with wrong axes; prefer `matmul` primitive.
+- IMPORTANT attention kernels:
+  - Represent score computation as `matmul` + `mul(sm_scale)` + `softmax`, then `matmul` with V.
+  - You MUST use the `softmax` primitive op for attention/softmax; do NOT expand it into
+    exp/reduce_max/reduce_sum/sub/div chains unless explicitly asked.
+  - For causal masks, prefer this canonical IntentIR pattern (to keep cross-frontend graphs consistent):
+    scores_scaled=mul(scores_raw, sm_scale)  # sm_scale is scalar; do NOT broadcast it
+    query_pos=iota(shape=[Q_CTX],axis=0); key_pos=iota(shape=[KV_CTX],axis=0);
+    query_bc=broadcast_in_dim(query_pos,out_shape=[Q_CTX,KV_CTX],broadcast_dims=[0]);
+    key_bc=broadcast_in_dim(key_pos,out_shape=[Q_CTX,KV_CTX],broadcast_dims=[1]);
+    causal_mask = gt(key_bc, query_bc); neg_inf=const(-1e9);
+    neg_inf_bc=broadcast_in_dim(neg_inf,out_shape=[Q_CTX,KV_CTX],broadcast_dims=[]);
+    scores_masked = where(causal_mask, neg_inf_bc, scores_scaled); then softmax(axis=1).
+  - Do NOT implement matmul via ad-hoc reduce_sum with wrong axes; prefer `matmul` primitive.
 - Do NOT model low-level thread/block/program mapping in tensor shapes or iota.shape.
   Treat logical axes (M/N/K/OH/OW/etc) as full ranges. You MAY emit a schedule sketch:
   - schedule.tile_m/tile_n/tile_k/vec_width/pipeline_depth when obvious tile constants exist.
@@ -80,7 +95,10 @@ Rules:
   and/or Evidence appendix `launch.canonical_shapes` keys (compile-time constants).
   You MAY replace constant extents in interface tensor shapes with canonical_shapes symbols
   only when values match exactly.
+- Prefer using canonical_shapes symbols in attrs.shape/attrs.out_shape too (when values match).
 - Prefer emitting axis_roles when canonical shape symbols exist (see Evidence appendix).
+- Prefer `softmax` op over manual exp/reduce chains (especially for attention kernels).
+- For iota, omit attrs.dtype unless non-default (default i32).
 - Keep original input view shapes; use reshape ops for any grouped/view computation.
 """
 
