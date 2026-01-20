@@ -154,6 +154,35 @@ def main() -> None:
     # E1: rule-only coverage.
     e1_src = _latest_file(e1_dir, "e1_rule_only_*.json") or (e1_dir / "e1_rule_only_coverage.json")
     e1_obj = _load_json(e1_src) if e1_src.exists() else {}
+    labels_path = ROOT / "data" / "human_labels.json"
+    labels = _load_json(labels_path) if labels_path.exists() else {}
+    e1_sem_acc: dict[str, dict[str, Any]] = {}
+    for r in list(e1_obj.get("results") or []):
+        if not isinstance(r, dict):
+            continue
+        k = r.get("kernel")
+        if not isinstance(k, str) or ":" not in k:
+            continue
+        fe, name = k.split(":", 1)
+        fe = str(fe)
+        name = str(name)
+        lab = labels.get(name) if isinstance(labels, dict) else None
+        if not isinstance(lab, dict):
+            continue
+        true_cls = lab.get("semantic_class")
+        pred_cls = r.get("kernel_kind")
+        if not isinstance(true_cls, str) or not isinstance(pred_cls, str):
+            continue
+        st = e1_sem_acc.setdefault(fe, {"n": 0, "ok": 0, "confusion": {}})
+        st["n"] += 1
+        if str(true_cls) == str(pred_cls):
+            st["ok"] += 1
+        st["confusion"].setdefault(str(true_cls), {})
+        st["confusion"][str(true_cls)][str(pred_cls)] = int(st["confusion"][str(true_cls)].get(str(pred_cls), 0)) + 1
+    for fe, st in e1_sem_acc.items():
+        n = int(st.get("n") or 0)
+        ok = int(st.get("ok") or 0)
+        st["acc"] = (float(ok) / float(n)) if n > 0 else None
     _write_json(
         paths.e1,
         {
@@ -161,6 +190,10 @@ def main() -> None:
             "git_head": head,
             "source": str(e1_src) if e1_src.exists() else None,
             "summary": e1_obj.get("summary"),
+            "label_eval": {
+                "labels": str(labels_path) if labels_path.exists() else None,
+                "semantic_class_acc_by_frontend": e1_sem_acc,
+            },
         },
     )
 
