@@ -653,7 +653,24 @@ def main() -> None:
             out_dir.mkdir(parents=True, exist_ok=True)
             report_path = out_dir / f"{k}.json"
             if args.refresh_artifacts:
-                _run_pipeline(fe, k, out_dir=out_dir, cases_limit=int(args.cases_limit))
+                # `run_pipeline_for_spec()` returns the report dict but does not
+                # write the main `<kernel>.json` (the top-level wrapper scripts do).
+                # For E4 we need deterministic refresh, so write it here.
+                try:
+                    fresh = _run_pipeline(fe, k, out_dir=out_dir, cases_limit=int(args.cases_limit))
+                    report_path.write_text(json.dumps(fresh, indent=2, ensure_ascii=False), encoding="utf-8")
+                except Exception as e:
+                    ok_intent = False
+                    ok_expanded = False
+                    ok_intent_struct = False
+                    ok_expanded_struct = False
+                    axis_recall_intent = 0.0
+                    axis_recall_expanded = 0.0
+                    reasons_intent.append(f"refresh_failed:{fe}:{type(e).__name__}")
+                    reasons_expanded.append(f"refresh_failed:{fe}:{type(e).__name__}")
+                    reasons_intent_struct.append(f"refresh_failed:{fe}:{type(e).__name__}")
+                    reasons_expanded_struct.append(f"refresh_failed:{fe}:{type(e).__name__}")
+                    continue
             if not report_path.exists():
                 ok_intent = False
                 ok_expanded = False
