@@ -34,7 +34,15 @@ if str(ROOT) not in sys.path:
 
 from backends.spmd_rvv.codegen.intentir_to_c import lower_intent_to_c_with_files
 from backends.spmd_rvv.analysis.device_query import load_profile, query_remote_device
-from backends.spmd_rvv.analysis.tuning import TuningRequest, parse_constraints, parse_locks, propose_schedule_candidates, select_schedule
+from backends.spmd_rvv.analysis.tuning import (
+    ScheduleCandidate,
+    TuningRequest,
+    parse_constraints,
+    parse_locks,
+    propose_schedule_candidates,
+    select_schedule,
+)
+from backends.spmd_rvv.baseline_freeze_tile import freeze_tile_schedule
 from intent_ir.ir import IntentFunction, ScheduleSketch
 from intent_ir.macros import expand_macros
 from verify.gen_cases import TestCase
@@ -413,17 +421,32 @@ def run_remote(
         if budget > 1:
             if int(bench_iters) <= 0:
                 raise ValueError("tune-budget > 1 requires --bench-iters > 0 (measured autotune)")
-            tune_candidates = propose_schedule_candidates(
+
+            # Always include a "frozen" schedule candidate as a no-regression baseline:
+            # resolve BLOCK_* style schedule symbols using frontend launch constexpr values.
+            frozen_sched = None
+            frozen_notes: list[str] = []
+            try:
+                frozen = freeze_tile_schedule(intent_macro, desc=(report.get("descriptor") if isinstance(report, dict) else None))
+                frozen_sched = frozen.schedule
+                frozen_notes = list(frozen.notes)
+            except Exception:
+                frozen_sched = None
+                frozen_notes = []
+
+            # Build a larger candidate pool, then pick a diverse top-K to benchmark.
+            pool_limit = max(int(budget) * 4, int(budget))
+            pool = propose_schedule_candidates(
                 intent,
                 shape_bindings=shape_bindings_int,
                 profile=prof,
                 request=tune_request,
                 tile_hints=tile_hints,
-                limit=budget,
+                limit=pool_limit,
                 evidence=cert_v2,
             )
-            if not tune_candidates:
-                tune_candidates = propose_schedule_candidates(
+            if not pool:
+                pool = propose_schedule_candidates(
                     intent,
                     shape_bindings=shape_bindings_int,
                     profile=prof,
@@ -432,6 +455,74 @@ def run_remote(
                     limit=1,
                     evidence=cert_v2,
                 )
+
+            def _sched_key(s: ScheduleSketch) -> tuple:
+                return (
+                    s.tile_m,
+                    s.tile_n,
+                    s.tile_k,
+                    s.vec_width,
+                    s.pipeline_depth,
+                    tuple(sorted((s.axis_bindings or {}).items())),
+                    s.vec_axis,
+                    tuple(s.parallel_axes or []),
+                )
+
+            selected: list = []
+            seen: set[tuple] = set()
+
+            # Candidate 0: frozen baseline (if available), otherwise the top predicted one.
+            if frozen_sched is not None:
+                freeze_cand = ScheduleCandidate(schedule=frozen_sched, score=0.0, tile_mnk=None, notes=(["freeze_baseline"] + frozen_notes))
+                k0 = _sched_key(freeze_cand.schedule)
+                selected.append(freeze_cand)
+                seen.add(k0)
+
+            # Prefer diversity across vec_width, then tile_n, then fill by score.
+            def _add_if_new(c) -> bool:
+                k = _sched_key(c.schedule)
+                if k in seen:
+                    return False
+                selected.append(c)
+                seen.add(k)
+                return True
+
+            # Pass 1: cover distinct vec_width values.
+            seen_vw: set[int] = set()
+            for c in pool:
+                if len(selected) >= int(budget):
+                    break
+                vw = c.schedule.vec_width
+                if isinstance(vw, int) and vw > 0 and vw in seen_vw:
+                    continue
+                if _add_if_new(c):
+                    if isinstance(vw, int) and vw > 0:
+                        seen_vw.add(int(vw))
+
+            # Pass 2: cover distinct tile_n values.
+            seen_tn: set[int] = set()
+            for c in selected:
+                tn = c.schedule.tile_n
+                if isinstance(tn, int) and tn > 0:
+                    seen_tn.add(int(tn))
+            for c in pool:
+                if len(selected) >= int(budget):
+                    break
+                tn = c.schedule.tile_n
+                if isinstance(tn, int) and tn > 0 and tn in seen_tn:
+                    continue
+                if _add_if_new(c):
+                    if isinstance(tn, int) and tn > 0:
+                        seen_tn.add(int(tn))
+
+            # Pass 3: fill remaining slots by predicted ranking.
+            for c in pool:
+                if len(selected) >= int(budget):
+                    break
+                _add_if_new(c)
+
+            tune_candidates = selected or pool
+
             # Keep a deterministic default schedule in case benchmarking fails.
             if tune_candidates:
                 intent.schedule = tune_candidates[0].schedule
@@ -441,6 +532,8 @@ def run_remote(
                 "mode": str(tune_request.mode),
                 "budget": int(budget),
                 "tile_hints": list(tile_hints),
+                "candidate_pool_limit": int(pool_limit),
+                "candidate_pool_size": int(len(pool)),
                 "candidates_pred": [
                     {
                         "score": float(c.score),

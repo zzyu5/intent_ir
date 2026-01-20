@@ -144,14 +144,29 @@ def _derive_guidance_from_stride_summary(summary, *, lanes: int) -> tuple[Dict[s
     dom_len = getattr(summary, "dominant_range_len", None)
     dom_axis = getattr(summary, "dominant_axis", None)
     dom_range = getattr(summary, "dominant_range", None)
+    worst_penalty = 1.0
+    try:
+        tp = getattr(summary, "tensor_penalty", None)
+        if isinstance(tp, dict) and tp:
+            worst_penalty = max(float(v) for v in tp.values() if isinstance(v, (int, float)))
+    except Exception:
+        worst_penalty = 1.0
 
     # If no contiguous range is detected, the witness is insufficient to drive a
     # hard decision. Keep a small, explainable candidate set (including scalar),
     # and let ranking/measurement decide.
     if not has_contig:
-        cand = [int(max(1, lanes)), int(max(1, lanes // 2)), 1]
-        priors["vec_width_candidates"] = list(dict.fromkeys(int(x) for x in cand if int(x) > 0))
-        notes.append(f"prior: vec_width candidates (no contiguous evidence) -> {priors['vec_width_candidates']}")
+        # When witnesses are unresolved/irregular (large penalties), force scalar to
+        # avoid wasting the tune budget on obviously-bad vector widths.
+        if worst_penalty >= 8.0:
+            hard["vec_width"] = {1}
+            priors["vec_width_candidates"] = [1]
+            notes.append("hard: vec_width=1 (irregular/unresolved access witness)")
+        else:
+            cand = [int(max(1, lanes // 2)), 1]
+            priors["vec_width_candidates"] = list(dict.fromkeys(int(x) for x in cand if int(x) > 0))
+            hard["vec_width"] = set(priors["vec_width_candidates"])
+            notes.append(f"hard: vec_width in {sorted(hard['vec_width'])} (no contiguous evidence)")
         return hard, priors, notes
 
     # Otherwise, propose a small vec_width prior set derived from contiguous extent.
@@ -163,12 +178,15 @@ def _derive_guidance_from_stride_summary(summary, *, lanes: int) -> tuple[Dict[s
         cand.append(1)
         priors["vec_width_candidates"] = list(dict.fromkeys(int(x) for x in cand if int(x) > 0))
         priors["vec_width_max"] = int(vw)
+        hard["vec_width"] = set(priors["vec_width_candidates"])
         if dom_range:
             priors["dominant_range"] = str(dom_range)
-        notes.append(f"prior: vec_width<=min(lanes,{int(dom_len)}) -> {priors['vec_width_candidates']}")
+        notes.append(f"hard: vec_width<=min(lanes,{int(dom_len)}) -> {priors['vec_width_candidates']}")
     else:
-        priors["vec_width_candidates"] = [int(max(1, lanes)), int(max(1, lanes // 2)), 1]
-        notes.append(f"prior: vec_width candidates (no dom_len) -> {priors['vec_width_candidates']}")
+        cand = [int(max(1, lanes)), int(max(1, lanes // 2)), 1]
+        priors["vec_width_candidates"] = list(dict.fromkeys(int(x) for x in cand if int(x) > 0))
+        hard["vec_width"] = set(priors["vec_width_candidates"])
+        notes.append(f"hard: vec_width candidates (no dom_len) -> {priors['vec_width_candidates']}")
 
     if isinstance(dom_axis, str) and dom_axis:
         priors["vec_axis"] = str(dom_axis)
@@ -406,6 +424,12 @@ def propose_schedule_candidates(
     # vec_width: default to vector lanes; can be constrained/locked.
     vec_lanes = max(1, int(profile.rvv_vlen_bits) // 32)
     vec_allowed = _allowed_set(req, "vec_width")
+    # If the user didn't specify vec_width constraints/locks, let access witnesses
+    # promote a small "hard" allowed set (stable + explainable).
+    if (not vec_allowed) and ("vec_width" not in req.locks) and ("vec_width" not in req.constraints):
+        dh = derived_hard.get("vec_width") if isinstance(derived_hard, dict) else None
+        if isinstance(dh, set) and dh:
+            vec_allowed = set(int(x) for x in dh if isinstance(x, int) and int(x) > 0)
 
     # Derive candidate vec_width values:
     # - user lock/constraint wins

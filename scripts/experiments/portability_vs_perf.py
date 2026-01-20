@@ -127,7 +127,12 @@ def main() -> None:
     ap.add_argument("--omp-threads", type=int, default=16)
     ap.add_argument("--omp-proc-bind", default="spread", help="OpenMP proc bind policy for E5.2 (fixed to isolate schedule)")
     ap.add_argument("--tune-mode", choices=["auto", "guided", "locked"], default="auto")
-    ap.add_argument("--tune-budget", type=int, default=1, help=">1 enables measured autotune (requires bench-iters>0)")
+    ap.add_argument(
+        "--tune-budget",
+        type=int,
+        default=8,
+        help=">1 enables measured autotune (requires bench-iters>0). Default=8 to reduce retune regressions.",
+    )
     ap.add_argument("--profile", default=None, help="RVV profile name or JSON path (default: probe remote host)")
     ap.add_argument("--include-out-of-scope", action="store_true", help="include OUT_OF_SCOPE kernels (default: skip)")
     ap.add_argument("--retry-errors", action="store_true", help="retry kernels that previously failed in the output JSON")
