@@ -271,10 +271,216 @@ def _canonicalize_intent(intent: IntentFunction) -> Dict[str, Any]:
         for op in intent.ops
     ]
 
-    axis_roles = {
-        str(sym_map.get(str(k), str(k))): str(v)
-        for k, v in sorted((intent.axis_roles or {}).items(), key=lambda kv: str(kv[0]))
-    }
+    def _dim_id(d: object) -> tuple[str, str]:
+        k = str(getattr(d, "kind", "unknown"))
+        v = getattr(d, "value", None)
+        if k == "sym":
+            return ("sym", str(v).strip())
+        if k == "const":
+            try:
+                return ("const", str(int(v)))
+            except Exception:
+                return ("const", str(v))
+        return (k, str(v))
+
+    axis_roles_raw = {str(k): str(v) for k, v in (intent.axis_roles or {}).items() if isinstance(k, str)}
+
+    # Compute a stable axis-role signature that remains meaningful under
+    # const-vs-sym specialization (some frontends keep an axis symbolic while
+    # others constant-fold it via canonical_shapes). For E4 we want "roles"
+    # to match even if symbol spellings/specialization differs.
+    #
+    # Strategy:
+    # - Use primary output tensor axes O0..O{r-1} (single-output in most kernels)
+    # - Add reduction-only axes R0.. for eliminated reduction/contract dims that
+    #   appear in the *interface* (external inputs + outputs) but not in outputs
+    axis_roles: Dict[str, str] = {}
+
+    iface_dim_ids: set[tuple[str, str]] = set()
+    for n in list(ext_sorted) + list(out_sorted):
+        tt = intent.tensors.get(str(n))
+        if tt is None:
+            continue
+        for d in list(tt.shape):
+            iface_dim_ids.add(_dim_id(d))
+
+    # Primary output: pick the highest-rank output tensor (some frontends expose
+    # auxiliary scalar/vector outputs like row_max/row_sum alongside the main 2D
+    # output; E4 axis-role signatures should follow the main output).
+    primary_out = None
+    if out_sorted:
+        best = None
+        for n in out_sorted:
+            tt = intent.tensors.get(str(n))
+            if tt is None:
+                continue
+            r = int(len(list(tt.shape)))
+            cand = (r, str(n))
+            if best is None or cand > best[0]:
+                best = (cand, tt)
+        if best is not None:
+            primary_out = best[1]
+    out_dim_ids: list[tuple[str, str]] = []
+    if primary_out is not None:
+        out_rank = int(len(list(primary_out.shape)))
+        out_dim_ids = [_dim_id(d) for d in list(primary_out.shape)]
+        out_id_set = set(out_dim_ids)
+
+        # 1D interface tensors (weights/bias) imply a channel axis; match by
+        # dim identity (sym or const).
+        one_d_ids: set[tuple[str, str]] = set()
+        for n in list(ext_sorted):
+            tt = intent.tensors.get(str(n))
+            if tt is None or len(list(tt.shape)) != 1:
+                continue
+            one_d_ids.add(_dim_id(list(tt.shape)[0]))
+
+        for i, d in enumerate(list(primary_out.shape)):
+            role = None
+            if getattr(d, "kind", None) == "sym":
+                sym = str(getattr(d, "value", "")).strip()
+                if sym:
+                    role = axis_roles_raw.get(sym)
+            if role is None:
+                if out_rank >= 3 and i == 0:
+                    role = "batch"
+                elif out_rank >= 3 and i == 1:
+                    role = "channel"
+                else:
+                    role = "spatial"
+            if _dim_id(d) in one_d_ids:
+                role = "channel"
+            axis_roles[f"O{i}"] = str(role)
+
+        # keepdims-style reductions over an output axis typically indicate a
+        # feature (channel) axis (softmax/layernorm).
+        for op in list(intent.ops):
+            if not (
+                str(op.op).startswith("reduce_")
+                or str(op.op) in {"reduce_sum", "reduce_max", "reduce_min", "reduce_any", "reduce_all"}
+            ):
+                continue
+            if not op.inputs or not op.output:
+                continue
+            a = intent.tensors.get(str(op.inputs[0]))
+            o = intent.tensors.get(str(op.output))
+            if a is None:
+                continue
+            in_rank = int(len(list(a.shape)))
+            out_rank_op = int(len(list(o.shape))) if o is not None else -1
+            keep = (op.attrs or {}).get("keepdims")
+            if not isinstance(keep, bool):
+                keep = bool(out_rank_op == in_rank and out_rank_op != -1)
+            if not keep:
+                continue
+            dims = (op.attrs or {}).get("dims")
+            if dims is None:
+                dims = (op.attrs or {}).get("axis")
+            if isinstance(dims, int):
+                dims = [dims]
+            if not (isinstance(dims, list) and all(isinstance(x, int) for x in dims)):
+                continue
+            for ax in [int(x) for x in dims]:
+                if ax < 0:
+                    ax = in_rank + ax
+                if not (0 <= ax < in_rank):
+                    continue
+                did = _dim_id(list(a.shape)[ax])
+                if did not in iface_dim_ids:
+                    continue
+                # If the reduced axis survives to the final output (by identity),
+                # label it as channel.
+                for i, odid in enumerate(out_dim_ids):
+                    if odid == did and f"O{i}" in axis_roles:
+                        axis_roles[f"O{i}"] = "channel"
+                        break
+
+        # Rank-2 reduce kernels (softmax / grouped reductions) almost always treat
+        # the last axis as a feature/channel axis. This stabilizes roles when the
+        # axis is constant-folded (thus missing from intent.axis_roles).
+        if out_rank == 2 and any(
+            str(op.op).startswith("reduce_")
+            or str(op.op) in {"reduce_sum", "reduce_max", "reduce_min", "reduce_any", "reduce_all"}
+            for op in list(intent.ops)
+        ):
+            axis_roles["O1"] = "channel"
+
+        r_id = 0
+
+        reduced_ids: set[tuple[str, str]] = set()
+
+        def add_reduction_axis(did: tuple[str, str]) -> None:
+            nonlocal r_id
+            if did in reduced_ids:
+                return
+            reduced_ids.add(did)
+            axis_roles[f"R{r_id}"] = "reduction"
+            r_id += 1
+
+        for op in list(intent.ops):
+            if str(op.op) == "matmul" and len(list(op.inputs or [])) >= 2:
+                a = intent.tensors.get(str(op.inputs[0]))
+                b = intent.tensors.get(str(op.inputs[1]))
+                o = intent.tensors.get(str(op.output)) if getattr(op, "output", None) else None
+                if a is None or b is None:
+                    continue
+                a_ids = [_dim_id(d) for d in list(a.shape)]
+                b_ids = [_dim_id(d) for d in list(b.shape)]
+                common = set(a_ids) & set(b_ids)
+                contracted: set[tuple[str, str]] = set()
+                if o is not None:
+                    o_ids = {_dim_id(d) for d in list(o.shape)}
+                    contracted = {x for x in common if x not in o_ids}
+                else:
+                    # Fallback by position mismatch.
+                    for x in common:
+                        a_pos = [i for i, v in enumerate(a_ids) if v == x]
+                        b_pos = [i for i, v in enumerate(b_ids) if v == x]
+                        if any(int(i) != int(j) for i in a_pos for j in b_pos):
+                            contracted.add(x)
+                for x in sorted(contracted):
+                    if x not in iface_dim_ids:
+                        continue
+                    if x in out_id_set:
+                        continue
+                    add_reduction_axis(x)
+                continue
+
+            if not (
+                str(op.op).startswith("reduce_")
+                or str(op.op) in {"reduce_sum", "reduce_max", "reduce_min", "reduce_any", "reduce_all"}
+            ):
+                continue
+            if not op.inputs:
+                continue
+            a = intent.tensors.get(str(op.inputs[0]))
+            if a is None:
+                continue
+            in_rank = int(len(list(a.shape)))
+            dims = (op.attrs or {}).get("dims")
+            if dims is None:
+                dims = (op.attrs or {}).get("axis")
+            if isinstance(dims, int):
+                dims = [dims]
+            if not (isinstance(dims, list) and all(isinstance(x, int) for x in dims)):
+                continue
+            for ax in [int(x) for x in dims]:
+                if ax < 0:
+                    ax = in_rank + ax
+                if not (0 <= ax < in_rank):
+                    continue
+                did = _dim_id(list(a.shape)[ax])
+                if did not in iface_dim_ids:
+                    continue
+                if did in out_id_set:
+                    continue
+                add_reduction_axis(did)
+    else:
+        # Fall back to the original axis_roles mapping when outputs are missing.
+        axis_roles = {
+            str(sym_map.get(str(k), str(k))): str(v)
+            for k, v in sorted((intent.axis_roles or {}).items(), key=lambda kv: str(kv[0]))
+        }
     parallel_axes = sorted([str(sym_map.get(str(x), str(x))) for x in list(intent.parallel_axes or [])], key=lambda x: str(x))
     # Canonicalize output order by tensor signature (avoid spurious mismatches).
     inputs = [canon_name(x) for x in ext_sorted]

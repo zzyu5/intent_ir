@@ -533,9 +533,11 @@ def main() -> None:
         "kernels_requested": list(wanted),
         "kernels": results,
     }
-    # Paper-friendly aggregate metrics (avoid micro-kernel noise by also reporting
-    # a runtime-weighted total speedup).
+    # Paper-friendly aggregate metrics:
+    # - report paired + unpaired to make noise sources explicit
+    # - prefer paired for the "main" headline numbers
     speedups = []
+    speedups_unpaired: list[float] = []
     freeze_total = 0.0
     retune_total = 0.0
     speedups_paired: list[float] = []
@@ -553,6 +555,9 @@ def main() -> None:
             retune_total += float(rs)
         if isinstance(sp, (int, float)) and float(sp) > 0:
             speedups.append(float(sp))
+        sp_u = it.get("speedup_retune_vs_freeze_unpaired")
+        if isinstance(sp_u, (int, float)) and float(sp_u) > 0:
+            speedups_unpaired.append(float(sp_u))
 
         # Paired totals (same measured_autotune run).
         paired = it.get("paired_autotune")
@@ -567,6 +572,9 @@ def main() -> None:
     geom = None
     if speedups:
         geom = math.exp(sum(math.log(x) for x in speedups) / float(len(speedups)))
+    geom_unpaired = None
+    if speedups_unpaired:
+        geom_unpaired = math.exp(sum(math.log(x) for x in speedups_unpaired) / float(len(speedups_unpaired)))
     geom_paired = None
     if speedups_paired:
         geom_paired = math.exp(sum(math.log(x) for x in speedups_paired) / float(len(speedups_paired)))
@@ -582,6 +590,7 @@ def main() -> None:
         "kernels_skipped_out_of_scope": int(sum(1 for it in results if it.get("status") == "skip_out_of_scope")),
         "kernels_errors": int(sum(1 for it in results if it.get("status") not in {"ok", "skip_out_of_scope"})),
         "geom_mean_speedup_retune_vs_freeze": geom,
+        "geom_mean_speedup_retune_vs_freeze_unpaired": geom_unpaired,
         "geom_mean_speedup_retune_vs_freeze_paired": geom_paired,
         "total_seconds_per_iter_freeze": freeze_total,
         "total_seconds_per_iter_retune": retune_total,
@@ -593,17 +602,27 @@ def main() -> None:
 
     # Regression distribution for paper plots (retune slower than freeze).
     regressions: list[dict[str, object]] = []
+    regressions_unpaired: list[dict[str, object]] = []
+    regressions_paired: list[dict[str, object]] = []
     for it in results:
         if it.get("status") != "ok":
             continue
+        sp_u = it.get("speedup_retune_vs_freeze_unpaired")
+        if isinstance(sp_u, (int, float)) and float(sp_u) > 0 and float(sp_u) < 1.0:
+            regressions_unpaired.append({"kernel": it.get("kernel"), "anchor_tier": it.get("anchor_tier"), "speedup": float(sp_u)})
+        sp_p = it.get("speedup_retune_vs_freeze_paired")
+        if isinstance(sp_p, (int, float)) and float(sp_p) > 0 and float(sp_p) < 1.0:
+            regressions_paired.append({"kernel": it.get("kernel"), "anchor_tier": it.get("anchor_tier"), "speedup": float(sp_p)})
         # Prefer paired (stable) if available.
-        sp = it.get("speedup_retune_vs_freeze_paired")
-        if not isinstance(sp, (int, float)):
-            sp = it.get("speedup_retune_vs_freeze")
+        sp = sp_p if isinstance(sp_p, (int, float)) else it.get("speedup_retune_vs_freeze")
         if isinstance(sp, (int, float)) and float(sp) > 0 and float(sp) < 1.0:
             regressions.append({"kernel": it.get("kernel"), "anchor_tier": it.get("anchor_tier"), "speedup": float(sp)})
     out["summary"]["regressions_n"] = int(len(regressions))
     out["summary"]["regressions"] = regressions
+    out["summary"]["regressions_unpaired_n"] = int(len(regressions_unpaired))
+    out["summary"]["regressions_unpaired"] = regressions_unpaired
+    out["summary"]["regressions_paired_n"] = int(len(regressions_paired))
+    out["summary"]["regressions_paired"] = regressions_paired
 
     # Speedup histogram (stable bins; easy to plot).
     bins = [0.0, 0.8, 0.95, 1.0, 1.05, 1.2, 1.5, 2.0, float("inf")]
@@ -614,6 +633,20 @@ def main() -> None:
                 hist[f"[{bins[i]},{bins[i+1]})"] += 1
                 break
     out["summary"]["speedup_histogram"] = hist
+    hist_u = {f"[{bins[i]},{bins[i+1]})": 0 for i in range(len(bins) - 1)}
+    for sp in (speedups_unpaired or []):
+        for i in range(len(bins) - 1):
+            if bins[i] <= sp < bins[i + 1]:
+                hist_u[f"[{bins[i]},{bins[i+1]})"] += 1
+                break
+    out["summary"]["speedup_histogram_unpaired"] = hist_u
+    hist_p = {f"[{bins[i]},{bins[i+1]})": 0 for i in range(len(bins) - 1)}
+    for sp in (speedups_paired or []):
+        for i in range(len(bins) - 1):
+            if bins[i] <= sp < bins[i + 1]:
+                hist_p[f"[{bins[i]},{bins[i+1]})"] += 1
+                break
+    out["summary"]["speedup_histogram_paired"] = hist_p
 
     # Tier breakdown.
     by_tier: dict[str, dict[str, int]] = {}
