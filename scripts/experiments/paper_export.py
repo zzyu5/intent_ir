@@ -161,6 +161,7 @@ class PaperPaths:
     e4: Path
     e5_1: Path
     e5_2: Path
+    e6: Path
     index: Path
 
 
@@ -173,6 +174,7 @@ def _default_paths(out_dir: Path) -> PaperPaths:
         e4=out_dir / "e4_cross_frontend_consistency.paper.json",
         e5_1=out_dir / "e5_1_external_baseline.paper.json",
         e5_2=out_dir / "e5_2_portability_vs_perf.paper.json",
+        e6=out_dir / "e6_ir_usability.paper.json",
         index=out_dir / "paper_index.json",
     )
 
@@ -191,6 +193,7 @@ def main() -> None:
     e2_dir = exp_dir / "E2"
     e4_dir = exp_dir / "E4"
     e5_dir = exp_dir / "E5"
+    e6_dir = exp_dir / "E6"
 
     head = _git_head()
 
@@ -434,6 +437,25 @@ def main() -> None:
         },
     )
 
+    # E6: IR usability (IntentIR JSON vs MLIR Linalg vs tile-centric JSON).
+    e6_src = _latest_file(e6_dir, "e6_ir_usability*.json")
+    e6_obj = _load_json(e6_src) if (e6_src and e6_src.exists()) else {}
+    _write_json(
+        paths.e6,
+        {
+            "experiment": "E6_ir_usability",
+            "git_head": head,
+            "source": str(e6_src) if e6_src else None,
+            "suite": e6_obj.get("suite"),
+            "frontends": e6_obj.get("frontends"),
+            "reps": e6_obj.get("reps"),
+            "model": e6_obj.get("model"),
+            "cache": e6_obj.get("cache"),
+            "repair_rounds": e6_obj.get("repair_rounds"),
+            "summary": e6_obj.get("summary"),
+        },
+    )
+
     _write_json(
         paths.index,
         {
@@ -446,6 +468,7 @@ def main() -> None:
                 "E4": str(paths.e4),
                 "E5_1": str(paths.e5_1),
                 "E5_2": str(paths.e5_2),
+                "E6": str(paths.e6),
             },
         },
     )
