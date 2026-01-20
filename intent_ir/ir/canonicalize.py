@@ -78,6 +78,22 @@ def canonicalize_for_consistency(intent: IntentFunction) -> IntentFunction:
     # that constant-fold the reciprocal.
     _rewrite_reduce_sum_mul_const_to_div(fn)
 
+    # Pass 2d2: normalize scalar "num elements" plumbing.
+    # Some frontends constant-fold element counts (e.g., num_elements=256.0),
+    # while others compute them from shape symbols (e.g., cast(group_size*HW)).
+    # Rewrite the latter into a canonical `const` expression so subsequent hashes
+    # don't depend on whether the frontend folded the product.
+    _rewrite_cast_mul_const_symbols_to_const_expr(fn)
+
+    # Pass 2d3: normalize variance surface forms.
+    # GroupNorm can compute variance as either:
+    #   E[(x-mean)^2]  (centered-square form)
+    # or:
+    #   E[x^2] - mean^2 (mean2 form)
+    # Canonicalize the centered-square form into the mean2 form to reduce
+    # cross-frontend drift (TileLang frequently emits mean2 form).
+    _rewrite_variance_centered_square_to_mean2(fn)
+
     # Pass 2e: normalize identity wrappers and +/-inf max/min sentinels.
     # Some frontends express reductions via explicit sentinel init (e.g., max(-inf, x))
     # and add identity wrappers around inputs/outputs. These are semantics-preserving
@@ -138,6 +154,198 @@ def canonicalize_for_consistency(intent: IntentFunction) -> IntentFunction:
     # axes, without relying on LLM-provided metadata.
     fn.axis_roles = _infer_axis_roles_from_interface(fn)
     return fn
+
+
+def _value_uses(fn: IntentFunction) -> Dict[str, int]:
+    uses: Dict[str, int] = {}
+    for out in fn.outputs:
+        uses[out] = uses.get(out, 0) + 1
+    for op in fn.ops:
+        for inp in op.inputs:
+            uses[inp] = uses.get(inp, 0) + 1
+    return uses
+
+
+def _const_string_value(fn: IntentFunction, prod: Dict[str, Op], name: str) -> str | None:
+    op = prod.get(name)
+    if op is None or op.op != "const":
+        return None
+    v = (op.attrs or {}).get("value")
+    if not isinstance(v, str) or not v.strip():
+        return None
+    if v.startswith("placeholder:"):
+        return None
+    return v.strip()
+
+
+def _rewrite_cast_mul_const_symbols_to_const_expr(fn: IntentFunction) -> None:
+    """
+    Canonicalize scalar element-count expressions.
+
+    Pattern:
+      mul(const("A"), const("B")) -> tmp
+      cast(tmp) {to="f32"}        -> out
+
+    becomes:
+      const() {value="A*B"}       -> out
+
+    This preserves semantics as long as A and B are shape bindings (which our
+    interpreter and backend already support via `eval()` in const resolution).
+    """
+    if not fn.ops:
+        return
+    prod: Dict[str, Op] = {op.output: op for op in fn.ops}
+    uses = _value_uses(fn)
+
+    for op in fn.ops:
+        if op.op != "cast" or len(op.inputs) != 1:
+            continue
+        to = (op.attrs or {}).get("to") or (op.attrs or {}).get("dtype")
+        if str(to) not in {"f32", "float32"}:
+            continue
+        inp = op.inputs[0]
+        mul = prod.get(inp)
+        if mul is None or mul.op != "mul" or len(mul.inputs) != 2:
+            continue
+        if uses.get(inp, 0) != 1:
+            continue
+        a, b = mul.inputs[0], mul.inputs[1]
+        av = _const_string_value(fn, prod, a)
+        bv = _const_string_value(fn, prod, b)
+        if av is None or bv is None:
+            continue
+        # Avoid rewriting arbitrary expressions; keep it simple and stable.
+        expr = f"({av})*({bv})"
+        op.op = "const"
+        op.inputs = []
+        op.attrs = {"value": expr}
+
+
+def _rewrite_variance_centered_square_to_mean2(fn: IntentFunction) -> None:
+    """
+    Rewrite variance computed via centered-square into mean2 form.
+
+    centered-square:
+      mean = div(reduce_sum(x), denom)
+      xc   = sub(x, broadcast(mean))
+      var  = div(reduce_sum(mul(xc,xc)), denom)
+
+    mean2:
+      mean  = div(reduce_sum(x), denom)
+      mean2 = div(reduce_sum(mul(x,x)), denom)
+      var   = sub(mean2, mul(mean,mean))
+    """
+    if not fn.ops:
+        return
+
+    prod: Dict[str, Op] = {op.output: op for op in fn.ops}
+    uses = _value_uses(fn)
+    taken: Set[str] = set(fn.tensors.keys()) | {op.output for op in fn.ops}
+
+    def fresh(base: str) -> str:
+        if base not in taken:
+            taken.add(base)
+            return base
+        k = 0
+        while f"{base}_{k}" in taken:
+            k += 1
+        name = f"{base}_{k}"
+        taken.add(name)
+        return name
+
+    # Find div(sum_sq, denom) where sum_sq comes from reduce_sum(mul(sub(x, bcast(mean)), sub(x, bcast(mean)))).
+    i = 0
+    while i < len(fn.ops):
+        op_var = fn.ops[i]
+        i += 1
+        if op_var.op != "div" or len(op_var.inputs) != 2:
+            continue
+        sum_sq, denom = op_var.inputs
+        if uses.get(sum_sq, 0) != 1:
+            continue
+
+        op_sum_sq = prod.get(sum_sq)
+        if op_sum_sq is None or op_sum_sq.op != "reduce_sum" or len(op_sum_sq.inputs) != 1:
+            continue
+        x_sq = op_sum_sq.inputs[0]
+        if uses.get(x_sq, 0) != 1:
+            continue
+        op_x_sq = prod.get(x_sq)
+        if op_x_sq is None or op_x_sq.op != "mul" or len(op_x_sq.inputs) != 2:
+            continue
+        if op_x_sq.inputs[0] != op_x_sq.inputs[1]:
+            continue
+        x_centered = op_x_sq.inputs[0]
+
+        op_xc = prod.get(x_centered)
+        if op_xc is None or op_xc.op != "sub" or len(op_xc.inputs) != 2:
+            continue
+        a0, b0 = op_xc.inputs[0], op_xc.inputs[1]
+
+        mean = None
+        x0 = None
+
+        # Case 1: explicit broadcast_in_dim(mean) (pre-folding).
+        for maybe_mean_bcast, other in ((a0, b0), (b0, a0)):
+            op_bcast = prod.get(maybe_mean_bcast)
+            if op_bcast is None or op_bcast.op != "broadcast_in_dim" or len(op_bcast.inputs) != 1:
+                continue
+            mean = op_bcast.inputs[0]
+            x0 = other
+            break
+
+        # Case 2: broadcast folded into elementwise (sub(x, mean)).
+        if mean is None:
+            def is_mean_value(v: str) -> bool:
+                op_m = prod.get(v)
+                if op_m is None:
+                    return False
+                if op_m.op == "div" and len(op_m.inputs) == 2:
+                    num = op_m.inputs[0]
+                    op_num = prod.get(num)
+                    return op_num is not None and op_num.op == "reduce_sum" and len(op_num.inputs) == 1
+                if op_m.op == "reduce_sum" and len(op_m.inputs) == 1:
+                    # Some frontends encode mean via reduce_sum(scale=1/N) directly.
+                    return True
+                return False
+
+            if is_mean_value(a0) and not is_mean_value(b0):
+                mean, x0 = a0, b0
+            elif is_mean_value(b0) and not is_mean_value(a0):
+                mean, x0 = b0, a0
+            else:
+                continue
+
+        # mean should be div(sum, denom2) (denom may differ; we only need mean value).
+        op_mean = prod.get(str(mean)) if mean is not None else None
+        if op_mean is None or op_mean.op != "div" or len(op_mean.inputs) != 2:
+            # If mean is reduce_sum(scale=...), accept it as-is (already canonical enough).
+            if op_mean is None or op_mean.op != "reduce_sum":
+                continue
+
+        # Rewrite x_sq to raw square: mul(x,x).
+        if x0 is None:
+            continue
+        op_x_sq.inputs = [x0, x0]
+
+        # sum_sq now becomes sum2 = reduce_sum(mul(x,x)) (keep dims attrs).
+        # Insert mean2 and mean_sq before op_var (current index i-1).
+        mean2 = fresh(f"{op_var.output}__mean2")
+        mean_sq = fresh(f"{op_var.output}__mean_sq")
+
+        fn.ops.insert(i - 1, Op(op="div", inputs=[sum_sq, denom], output=mean2, attrs={}))
+        fn.ops.insert(i, Op(op="mul", inputs=[str(mean), str(mean)], output=mean_sq, attrs={}))
+        i += 2  # account for inserted ops
+
+        # Replace var = div(sum_sq, denom) with var = sub(mean2, mean_sq).
+        op_var.op = "sub"
+        op_var.inputs = [mean2, mean_sq]
+        op_var.attrs = {}
+
+        # Producers map changed; rebuild for subsequent rewrites.
+        prod = {op.output: op for op in fn.ops}
+        uses = _value_uses(fn)
+
 
 
 def _tensor_rank(fn: IntentFunction, name: str) -> Optional[int]:

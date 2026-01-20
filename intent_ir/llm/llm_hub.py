@@ -23,6 +23,7 @@ from pipeline.interfaces import KernelDescriptor
 from intent_ir.ir import IntentIRValidationError
 from intent_ir.llm import DEFAULT_MODEL, LLMClientError, candidate_models, chat_completion, parse_json_block
 from intent_ir.parser import CandidateIntent, LLMJsonParseError, parse_candidate_json
+from intent_ir.ir.repair import repair_missing_outputs
 
 
 def _hash_messages(messages: List[Dict[str, str]]) -> str:
@@ -359,6 +360,13 @@ class LLMIntentHub:
                     "kernel": descriptor.name,
                     "extract_trace": trace,
                 }
+                try:
+                    repairs = repair_missing_outputs(cand.intent)
+                    if repairs:
+                        cand.llm_trace.setdefault("repairs", list(repairs))  # type: ignore[call-arg]
+                except Exception:
+                    # Repairs are best-effort; do not fail extraction on them.
+                    pass
                 return cand
 
             # If all model candidates failed, append the last error as feedback and retry.
