@@ -46,6 +46,7 @@ if str(ROOT) not in sys.path:
 
 from intent_ir.ir.ir_types import IntentFunction  # noqa: E402
 from intent_ir.llm import DEFAULT_MODEL, LLMClientError, chat_completion, parse_json_block, strip_code_fence  # noqa: E402
+from intent_ir.parser import LLMJsonParseError, parse_candidate_json  # noqa: E402
 from pipeline.interfaces import KernelArtifactBundle, KernelDescriptor  # noqa: E402
 from verify.ir_formats import validate_mlir_linalg_text_lenient  # noqa: E402
 
@@ -633,7 +634,11 @@ def _run_intentir_once(
                 else:
                     obj_ir.pop("meta", None)
             try:
-                intent = IntentFunction.from_json_dict(obj_ir)
+                # Use the production LLM JSON normalizer/parser for fairness:
+                # this is deterministic schema correction (no extra evidence) that
+                # reflects how IntentIR is consumed in the real pipeline.
+                cand = parse_candidate_json(obj_ir)
+                intent = cand.intent
                 ir_ok = True
             except Exception as e_ir:
                 reasons.append(f"intent IR parse failed: {type(e_ir).__name__}: {e_ir}")
