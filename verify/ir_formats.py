@@ -95,6 +95,122 @@ def _extract_tensor_type_ranks_from_mlir(text: str) -> List[int]:
     return ranks
 
 
+def _iter_linalg_generic_windows(text: str) -> List[str]:
+    """
+    Return windows starting at each `linalg.generic` occurrence.
+
+    We don't have a real MLIR parser here, so we slice text into per-op windows
+    using the next occurrence as a delimiter (plus a max cap).
+    """
+    t = str(text)
+    pos = [m.start() for m in re.finditer(r"linalg\.generic\b", t)]
+    if not pos:
+        return []
+    out: List[str] = []
+    for i, p in enumerate(pos):
+        nxt = pos[i + 1] if (i + 1) < len(pos) else None
+        end = int(nxt) if nxt is not None else min(len(t), p + 12000)
+        end = min(len(t), max(p, end))
+        out.append(t[p:end])
+    return out
+
+
+def _count_linalg_operands_in_sig(stmt: str) -> tuple[int, int]:
+    """
+    Return (n_ins, n_outs) by counting SSA values inside ins(...) and outs(...).
+    """
+    s = str(stmt)
+    m = re.search(r"ins\((.*?)\)\s*outs\((.*?)\)", s, re.S)
+    if not m:
+        return (0, 0)
+    ins = m.group(1)
+    outs = m.group(2)
+    n_ins = len(re.findall(r"%[A-Za-z_][A-Za-z0-9_]*", ins))
+    n_outs = len(re.findall(r"%[A-Za-z_][A-Za-z0-9_]*", outs))
+    return (int(n_ins), int(n_outs))
+
+
+def _extract_inline_affine_maps(indexing_maps_blob: str) -> List[Tuple[int, int]]:
+    """
+    Return list of (domain_rank, uses_rank) for each inline affine_map in the blob.
+    """
+    out: List[Tuple[int, int]] = []
+    for m in re.finditer(r"affine_map<\(([^)]*)\)\s*->\s*\(([^)]*)\)>", indexing_maps_blob):
+        dom = [x.strip() for x in m.group(1).split(",") if x.strip()]
+        rng = [x.strip() for x in m.group(2).split(",") if x.strip()]
+        out.append((int(len(dom)), int(len(rng))))
+    return out
+
+
+def _extract_iterator_types(blob: str) -> List[str]:
+    return [m.group(1) for m in re.finditer(r"\"(parallel|reduction|window)\"", blob)]
+
+
+def _validate_linalg_generic_attrs(text: str) -> List[str]:
+    """
+    Lightweight structural checks that reflect *real* MLIR Linalg requirements:
+    - linalg.generic should carry `indexing_maps` and `iterator_types`
+    - #maps count should match ins+outs operand count
+    - iterator_types length should match affine_map domain rank (when inlined)
+    """
+    errs: List[str] = []
+    stmts = _iter_linalg_generic_windows(text)
+    if not stmts:
+        return ["missing any 'linalg.generic' op"]
+
+    for idx, stmt in enumerate(stmts):
+        prefix = f"linalg.generic[{idx}] "
+
+        # Require the key attributes exist somewhere near the op.
+        if "indexing_maps" not in stmt:
+            errs.append(prefix + "missing indexing_maps attribute")
+            continue
+        if "iterator_types" not in stmt:
+            errs.append(prefix + "missing iterator_types attribute")
+            continue
+
+        n_ins, n_outs = _count_linalg_operands_in_sig(stmt)
+        n_operands = int(n_ins + n_outs)
+        if n_operands <= 0:
+            errs.append(prefix + "cannot determine ins/outs operand count")
+            continue
+
+        m_maps = re.search(r"indexing_maps\s*=\s*\[(.*?)\]", stmt, re.S)
+        if not m_maps:
+            errs.append(prefix + "cannot parse indexing_maps=[...] list")
+            continue
+        maps_blob = m_maps.group(1)
+        maps = _extract_inline_affine_maps(maps_blob)
+        if not maps:
+            errs.append(prefix + "indexing_maps has no inline affine_map<...> entries (please inline maps)")
+            continue
+        if len(maps) != n_operands:
+            errs.append(prefix + f"indexing_maps count mismatch: got={len(maps)} expected={n_operands} (ins={n_ins}, outs={n_outs})")
+
+        m_it = re.search(r"iterator_types\s*=\s*\[(.*?)\]", stmt, re.S)
+        if not m_it:
+            errs.append(prefix + "cannot parse iterator_types=[...] list")
+            continue
+        iters = _extract_iterator_types(m_it.group(1))
+        if not iters:
+            errs.append(prefix + "iterator_types list empty or missing known iterator strings")
+            continue
+
+        dom_ranks = {int(d) for (d, _u) in maps}
+        if len(dom_ranks) != 1:
+            errs.append(prefix + f"affine_map domain ranks disagree: {sorted(dom_ranks)}")
+        else:
+            dom_rank = next(iter(dom_ranks))
+            if int(dom_rank) != int(len(iters)):
+                errs.append(prefix + f"iterator_types length mismatch: got={len(iters)} expected={dom_rank} (from affine_map domain)")
+
+        # linalg.generic must have a region that yields results.
+        if "linalg.yield" not in stmt:
+            errs.append(prefix + "missing linalg.yield")
+
+    return errs
+
+
 def validate_mlir_linalg_text(text: str, *, io_spec: Any | None = None) -> List[str]:
     """
     Validate that the output looks like *syntactically plausible* MLIR (Linalg).
@@ -116,6 +232,9 @@ def validate_mlir_linalg_text(text: str, *, io_spec: Any | None = None) -> List[
         errs.append("missing 'func.func' or 'func @'")
     if "linalg." not in t:
         errs.append("missing any 'linalg.' op")
+
+    # Linalg structural requirements (lightweight).
+    errs += _validate_linalg_generic_attrs(t)
 
     # Common non-IR artifacts / placeholders.
     bad_markers = ["<TODO", "TODO", "…", "...", "PLACEHOLDER", "fill_me", "TBD"]

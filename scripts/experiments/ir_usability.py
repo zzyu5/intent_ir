@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -33,6 +34,7 @@ if str(ROOT) not in sys.path:
 
 from intent_ir.llm import DEFAULT_MODEL, LLMClientError, chat_completion, parse_json_block, strip_code_fence  # noqa: E402
 from intent_ir.llm.llm_hub import LLMIntentHub, _maybe_truncate_source  # noqa: E402
+from intent_ir.ir import IntentFunction  # noqa: E402
 from pipeline.interfaces import KernelArtifactBundle, KernelDescriptor  # noqa: E402
 from verify.ir_formats import validate_mlir_linalg_text, validate_tile_dsl_json  # noqa: E402
 
@@ -173,24 +175,37 @@ def _load_or_prepare_descriptor(*, frontend: str, kernel: str, artifact_dir: Pat
 
 def _messages_for_linalg(*, desc: KernelDescriptor, feedback: List[str]) -> List[Dict[str, str]]:
     src = _maybe_truncate_source(desc.source_text)
+    expected_kind = _infer_expected_kind(desc)
     fb = "\n".join([f"- {x}" for x in feedback]) if feedback else ""
     sys_prompt = "\n".join(
         [
             "You are a compiler engineer.",
-            "Task: Output syntactically plausible MLIR (text form) using the Linalg dialect.",
+            "Task: Output verifier-grade MLIR (text form) using the Linalg dialect.",
             "Output rules:",
             "- Output plain text only (no markdown fences, no prose).",
             "- Must contain: 'module { ... }' and a function ('func.func' preferred).",
-            "- Must contain at least one 'linalg.' op (e.g., linalg.generic / linalg.matmul).",
+            "- MUST contain at least one 'linalg.generic' op (do NOT use linalg.matmul for this task).",
+            "- The linalg.generic MUST include: indexing_maps=[...] and iterator_types=[...].",
+            "- indexing_maps MUST inline affine_map<...> entries (do NOT use #map0 references).",
+            "- The number of affine_map entries MUST equal (#ins + #outs) operands.",
+            "- iterator_types length MUST equal affine_map domain rank.",
+            "- The linalg.generic region MUST contain a linalg.yield.",
             "- The function signature must cover ALL tensor arguments (by count and rank) from io_spec.tensors.",
             "- You may use 'tensor<?x...xf32>' or 'memref<?x...xf32>' as long as ranks match io_spec.",
             "- If unsure about exact dynamic sizes, use '?' dimensions but keep ranks consistent.",
+            "",
+            "Semantic anchoring (must match EVIDENCE anchors / expected_kind):",
+            "- expected_kind=matmul: use >=2 ins and include at least one \"reduction\" iterator.",
+            "- expected_kind=reduce: include at least one \"reduction\" iterator.",
+            "- expected_kind=softmax: include a reduction iterator AND an exp op token (e.g., math.exp).",
+            "- expected_kind=attention: include >=2 matmul-like generics (QK and PV; each >=2 ins + reduction) AND an exp token + reduction.",
         ]
     )
     user = "\n".join(
         [
             f"Kernel: {desc.name}",
             f"Frontend: {desc.frontend}",
+            f"Expected kind (derived from evidence): {expected_kind}",
             "",
             "SOURCE:",
             str(src),
@@ -265,6 +280,10 @@ class RepResult:
     category: str
     reasons: List[str]
     llm: Dict[str, Any]
+    # E6 extensions: tie validity to "contractable semantic anchors" instead of pure syntax.
+    expected_kind: str = "unknown"
+    syntax_ok: bool = False
+    anchor_ok: bool = False
 
     def to_json_dict(self) -> Dict[str, Any]:
         return {
@@ -272,6 +291,9 @@ class RepResult:
             "kernel": self.kernel,
             "rep": self.rep,
             "ok": self.ok,
+            "syntax_ok": self.syntax_ok,
+            "anchor_ok": self.anchor_ok,
+            "expected_kind": self.expected_kind,
             "rounds_used": self.rounds_used,
             "one_shot_ok": self.one_shot_ok,
             "category": self.category,
@@ -280,12 +302,150 @@ class RepResult:
         }
 
 
+def _anchors_from_descriptor(desc: KernelDescriptor) -> Dict[str, bool]:
+    """
+    Frontend-normalized anchor flags for E6.
+
+    Triton stores anchors as top-level booleans; TileLang/CUDA store them under
+    frontend_facts.anchors. Normalize into a common dict.
+    """
+    ff = desc.frontend_facts or {}
+    if isinstance(ff.get("anchors"), dict):
+        a = ff["anchors"]
+        return {k: bool(a.get(k)) for k in ("has_dot", "has_reduce", "has_atomic", "has_barrier", "has_async")}
+    return {k: bool(ff.get(k)) for k in ("has_dot", "has_reduce", "has_atomic", "has_barrier", "has_async")}
+
+
+def _infer_expected_kind(desc: KernelDescriptor) -> str:
+    """
+    Infer a coarse semantic kind from frontend anchors + kernel name.
+
+    This is intentionally *heuristic* (paper experiment), but it is grounded in
+    frontend-derived anchors rather than LLM output.
+    """
+    name = str(desc.name or "")
+    nlow = name.lower()
+    if "attn" in nlow or "attention" in nlow:
+        return "attention"
+    if "softmax" in nlow:
+        return "softmax"
+    a = _anchors_from_descriptor(desc)
+    if a.get("has_atomic"):
+        return "unknown"
+    if a.get("has_dot") and a.get("has_reduce"):
+        return "attention"
+    if a.get("has_dot"):
+        return "matmul"
+    if a.get("has_reduce"):
+        return "reduce"
+    return "unknown"
+
+
+def _anchor_errors_intentir(intent: IntentFunction, expected_kind: str) -> List[str]:
+    ops = [str(op.op) for op in (intent.ops or [])]
+    has_matmul = "matmul" in ops
+    has_softmax = "softmax" in ops
+    has_exp = "exp" in ops
+    has_reduce = any(o.startswith("reduce_") for o in ops) or has_softmax
+
+    kind = str(expected_kind)
+    errs: List[str] = []
+    if kind == "matmul" and not has_matmul:
+        errs.append("missing matmul anchor (expected_kind=matmul)")
+    if kind == "reduce" and not has_reduce:
+        errs.append("missing reduce anchor (expected_kind=reduce)")
+    if kind == "softmax":
+        # Accept either the macro op, or an explicit exp+reduce chain.
+        if not has_softmax and not (has_reduce and has_exp):
+            errs.append("missing softmax-like anchor (need softmax op OR exp+reduce chain)")
+    if kind == "attention":
+        if not has_matmul:
+            errs.append("missing matmul anchor (expected_kind=attention)")
+        # Accept either macro softmax or an exp+reduce chain for attention.
+        if not has_softmax and not (has_reduce and has_exp):
+            errs.append("missing softmax-like anchor (expected_kind=attention)")
+    return errs
+
+
+def _linalg_generic_summaries(text: str) -> List[Dict[str, Any]]:
+    """
+    Best-effort extraction of semantic hints from linalg.generic ops.
+
+    We don't parse MLIR fully; we just recover:
+      - #ins/#outs operand counts
+      - iterator_types list (parallel/reduction/window)
+    """
+    t = str(text)
+    out: List[Dict[str, Any]] = []
+    for m in re.finditer(r"linalg\.generic\b", t):
+        win = t[m.start() : min(len(t), m.start() + 12000)]
+        io = re.search(r"ins\((.*?)\)\s*outs\((.*?)\)", win, re.S)
+        n_ins = 0
+        n_outs = 0
+        if io:
+            n_ins = len(re.findall(r"%[A-Za-z_][A-Za-z0-9_]*", io.group(1)))
+            n_outs = len(re.findall(r"%[A-Za-z_][A-Za-z0-9_]*", io.group(2)))
+        it = re.search(r"iterator_types\s*=\s*\[(.*?)\]", win, re.S)
+        iters: List[str] = []
+        if it:
+            iters = [x for x in re.findall(r"\"(parallel|reduction|window)\"", it.group(1)) if x]
+        out.append({"n_ins": int(n_ins), "n_outs": int(n_outs), "iters": list(iters)})
+    return out
+
+
+def _anchor_errors_linalg(text: str, expected_kind: str) -> List[str]:
+    t = str(text)
+    summaries = _linalg_generic_summaries(t)
+    has_any_generic = bool(summaries)
+    has_reduce = any("reduction" in s.get("iters", []) for s in summaries)
+    dot_like = [
+        s
+        for s in summaries
+        if (int(s.get("n_ins") or 0) >= 2)
+        and (int(s.get("n_outs") or 0) >= 1)
+        and ("reduction" in s.get("iters", []))
+        and (list(s.get("iters") or []).count("parallel") >= 2)
+        and (len(list(s.get("iters") or [])) >= 3)
+    ]
+    dot_like_n = int(len(dot_like))
+    has_exp = bool(re.search(r"\b[A-Za-z0-9_.]*\.exp\w*\b", t))
+
+    kind = str(expected_kind)
+    errs: List[str] = []
+    if not has_any_generic:
+        # Syntax validator will already complain; keep anchor errors minimal.
+        return errs
+    if kind == "matmul" and dot_like_n < 1:
+        errs.append("missing matmul-like anchor (need generic: >=2 ins, >=1 out, >=2 parallel iters, >=1 reduction, rank>=3)")
+    if kind == "reduce" and not has_reduce:
+        errs.append("missing reduction iterator (expected_kind=reduce)")
+    if kind == "softmax":
+        if not has_reduce:
+            errs.append("missing reduction iterator (expected_kind=softmax)")
+        if not has_exp:
+            errs.append("missing exp op/token (expected_kind=softmax)")
+    if kind == "attention":
+        if dot_like_n < 2:
+            errs.append("missing attention-like anchor (need >=2 matmul-like generics: QK and PV)")
+        if not has_reduce:
+            errs.append("missing reduction iterator (expected_kind=attention)")
+        if not has_exp:
+            errs.append("missing exp op/token (expected_kind=attention)")
+    return errs
+
+
+def _anchor_errors_tile(_obj: Any, expected_kind: str) -> List[str]:
+    # Tile schedule JSON does not carry semantic anchors; treat non-unknown as not satisfiable.
+    return [] if str(expected_kind) == "unknown" else ["tile schedule JSON has no semantic anchors"]
+
+
 def _run_rep_intentir(
     *,
     hub: LLMIntentHub,
     desc: KernelDescriptor,
     model: Optional[str],
     repair_rounds: int,
+    objective: str,
     rpm: int,
     last_api_s: Optional[float],
 ) -> Tuple[RepResult, Optional[float]]:
@@ -293,6 +453,8 @@ def _run_rep_intentir(
     rounds: List[Dict[str, Any]] = []
     cache_hits = 0
     cache_misses = 0
+    expected_kind = _infer_expected_kind(desc)
+    last_errs: List[str] = []
     for r in range(0, max(0, int(repair_rounds)) + 1):
         try:
             cand = hub.lift(desc, feedback=feedback, model=model)
@@ -304,34 +466,56 @@ def _run_rep_intentir(
             else:
                 cache_misses += 1
                 last_api_s = _maybe_rate_limit(last_api_s=last_api_s, rpm=rpm)
-            rounds.append({"round": r, "ok": True, "cache_hit": cache_hit, "chosen": chosen})
-            return (
-                RepResult(
-                    frontend=str(desc.frontend),
-                    kernel=str(desc.name),
-                    rep="intentir",
-                    ok=True,
-                    rounds_used=r + 1,
-                    one_shot_ok=(r == 0),
-                    category="ok",
-                    reasons=[],
-                    llm={
-                        "stats": {
-                            "llm_calls": int(cache_hits + cache_misses),
-                            "cache_hits": int(cache_hits),
-                            "cache_misses": int(cache_misses),
-                            "api_calls": int(cache_misses),
-                        },
-                        "rounds": list(rounds),
-                    },
-                ),
-                last_api_s,
+            syntax_ok = True
+            anchor_errs = _anchor_errors_intentir(cand.intent, expected_kind=expected_kind)
+            anchor_ok = not anchor_errs
+            ok = bool(syntax_ok) if str(objective) == "syntax" else (bool(syntax_ok) and bool(anchor_ok))
+            rounds.append(
+                {
+                    "round": r,
+                    "ok": ok,
+                    "syntax_ok": syntax_ok,
+                    "anchor_ok": anchor_ok,
+                    "cache_hit": cache_hit,
+                    "chosen": chosen,
+                    "anchor_errors": list(anchor_errs),
+                }
             )
+            if ok:
+                return (
+                    RepResult(
+                        frontend=str(desc.frontend),
+                        kernel=str(desc.name),
+                        rep="intentir",
+                        ok=True,
+                        syntax_ok=bool(syntax_ok),
+                        anchor_ok=bool(anchor_ok),
+                        expected_kind=str(expected_kind),
+                        rounds_used=r + 1,
+                        one_shot_ok=(r == 0),
+                        category="ok",
+                        reasons=[],
+                        llm={
+                            "stats": {
+                                "llm_calls": int(cache_hits + cache_misses),
+                                "cache_hits": int(cache_hits),
+                                "cache_misses": int(cache_misses),
+                                "api_calls": int(cache_misses),
+                            },
+                            "rounds": list(rounds),
+                        },
+                    ),
+                    last_api_s,
+                )
+            last_errs = list(anchor_errs) if anchor_errs else ["anchor mismatch"]
+            if str(objective) != "syntax":
+                feedback = feedback + [f"Anchor errors: {', '.join(anchor_errs)}"]
         except Exception as e:
             msg = f"{type(e).__name__}: {e}"
             # IMPORTANT: provide a compact, actionable feedback string.
             feedback = feedback + [f"Previous failure: {msg}"]
             rounds.append({"round": r, "ok": False, "error": msg})
+            last_errs = [msg]
             continue
 
     return (
@@ -340,10 +524,13 @@ def _run_rep_intentir(
             kernel=str(desc.name),
             rep="intentir",
             ok=False,
+            syntax_ok=bool((rounds[-1] or {}).get("syntax_ok")) if rounds and isinstance(rounds[-1], dict) else False,
+            anchor_ok=bool((rounds[-1] or {}).get("anchor_ok")) if rounds and isinstance(rounds[-1], dict) else False,
+            expected_kind=str(expected_kind),
             rounds_used=int(len(rounds)),
             one_shot_ok=False,
-            category="invalid",
-            reasons=[str(rounds[-1].get("error"))] if rounds else ["no attempts"],
+            category=("anchor" if (rounds and rounds[-1].get("anchor_errors")) else "invalid"),
+            reasons=list(last_errs) if last_errs else ([str(rounds[-1].get("error"))] if rounds else ["no attempts"]),
             llm={"stats": {"llm_calls": int(cache_hits + cache_misses), "cache_hits": cache_hits, "cache_misses": cache_misses, "api_calls": cache_misses}, "rounds": rounds},
         ),
         last_api_s,
@@ -357,6 +544,7 @@ def _run_rep_linalg(
     timeout_s: int,
     parse_retries: int,
     repair_rounds: int,
+    objective: str,
     use_cache: bool,
     cache_dir: Optional[str],
     no_fallback: bool,
@@ -368,6 +556,7 @@ def _run_rep_linalg(
     cache_hits = 0
     cache_misses = 0
     last_errs: List[str] = []
+    expected_kind = _infer_expected_kind(desc)
 
     for r in range(0, max(0, int(repair_rounds)) + 1):
         messages = _messages_for_linalg(desc=desc, feedback=feedback)
@@ -393,15 +582,21 @@ def _run_rep_linalg(
                 cache_misses += 1
                 last_api_s = _maybe_rate_limit(last_api_s=last_api_s, rpm=rpm)
             txt = strip_code_fence(raw).strip()
-            errs = validate_mlir_linalg_text(txt, io_spec=desc.io_spec)
-            ok = not errs
+            syntax_errs = validate_mlir_linalg_text(txt, io_spec=desc.io_spec)
+            syntax_ok = not syntax_errs
+            anchor_errs = _anchor_errors_linalg(txt, expected_kind) if syntax_ok else []
+            anchor_ok = not anchor_errs
+            ok = bool(syntax_ok) if str(objective) == "syntax" else (bool(syntax_ok) and bool(anchor_ok))
             rounds.append(
                 {
                     "round": r,
                     "ok": ok,
+                    "syntax_ok": syntax_ok,
+                    "anchor_ok": anchor_ok,
                     "cache_hit": cache_hit,
                     "chosen": {"model": resp.meta.get("response_model") or resp.meta.get("model") or model, "base_url": resp.meta.get("base_url")},
-                    "errors": list(errs),
+                    "syntax_errors": list(syntax_errs),
+                    "anchor_errors": list(anchor_errs),
                 }
             )
             if ok:
@@ -411,6 +606,9 @@ def _run_rep_linalg(
                         kernel=str(desc.name),
                         rep="linalg",
                         ok=True,
+                        syntax_ok=bool(syntax_ok),
+                        anchor_ok=bool(anchor_ok),
+                        expected_kind=str(expected_kind),
                         rounds_used=r + 1,
                         one_shot_ok=(r == 0),
                         category="ok",
@@ -422,8 +620,11 @@ def _run_rep_linalg(
                     ),
                     last_api_s,
                 )
-            last_errs = list(errs)
-            feedback = feedback + [f"Validator errors: {', '.join(errs[:6])}"]
+            last_errs = (list(anchor_errs) if (str(objective) != "syntax" and anchor_errs) else list(syntax_errs))
+            fb_items = list(syntax_errs[:6])
+            if str(objective) != "syntax":
+                fb_items += list(anchor_errs[:6])
+            feedback = feedback + [f"Validator errors: {', '.join([str(x) for x in fb_items])}"]
         except LLMClientError as e:
             msg = f"{type(e).__name__}: {e}"
             rounds.append({"round": r, "ok": False, "error": msg})
@@ -437,6 +638,9 @@ def _run_rep_linalg(
             kernel=str(desc.name),
             rep="linalg",
             ok=False,
+            syntax_ok=bool((rounds[-1] or {}).get("syntax_ok")) if rounds and isinstance(rounds[-1], dict) else False,
+            anchor_ok=bool((rounds[-1] or {}).get("anchor_ok")) if rounds and isinstance(rounds[-1], dict) else False,
+            expected_kind=str(expected_kind),
             rounds_used=int(len(rounds)),
             one_shot_ok=False,
             category="invalid",
@@ -454,12 +658,34 @@ def _run_rep_tile(
     timeout_s: int,
     parse_retries: int,
     repair_rounds: int,
+    objective: str,
     use_cache: bool,
     cache_dir: Optional[str],
     no_fallback: bool,
     rpm: int,
     last_api_s: Optional[float],
 ) -> Tuple[RepResult, Optional[float]]:
+    expected_kind = _infer_expected_kind(desc)
+    if str(objective) != "syntax":
+        # Tile schedule JSON is intentionally not a semantic carrier; don't burn
+        # LLM calls on it in the "contractable" objective.
+        return (
+            RepResult(
+                frontend=str(desc.frontend),
+                kernel=str(desc.name),
+                rep="tile",
+                ok=False,
+                syntax_ok=False,
+                anchor_ok=False,
+                expected_kind=str(expected_kind),
+                rounds_used=0,
+                one_shot_ok=False,
+                category="no_semantics",
+                reasons=_anchor_errors_tile(None, expected_kind),
+                llm={"stats": {"llm_calls": 0, "cache_hits": 0, "cache_misses": 0, "api_calls": 0}, "rounds": []},
+            ),
+            last_api_s,
+        )
     feedback: List[str] = []
     rounds: List[Dict[str, Any]] = []
     cache_hits = 0
@@ -505,6 +731,9 @@ def _run_rep_tile(
                         kernel=str(desc.name),
                         rep="tile",
                         ok=True,
+                        syntax_ok=True,
+                        anchor_ok=True,
+                        expected_kind=str(expected_kind),
                         rounds_used=r + 1,
                         one_shot_ok=(r == 0),
                         category="ok",
@@ -531,6 +760,9 @@ def _run_rep_tile(
             kernel=str(desc.name),
             rep="tile",
             ok=False,
+            syntax_ok=False,
+            anchor_ok=False,
+            expected_kind=str(expected_kind),
             rounds_used=int(len(rounds)),
             one_shot_ok=False,
             category="invalid",
@@ -550,16 +782,33 @@ def _summarize(results: List[RepResult]) -> Dict[str, Any]:
     for rep, items in by_rep.items():
         n = len(items)
         ok = sum(1 for x in items if x.ok)
+        syntax_ok = sum(1 for x in items if bool(getattr(x, "syntax_ok", False)))
+        anchor_ok = sum(1 for x in items if bool(getattr(x, "anchor_ok", False)))
         one_shot_ok = sum(1 for x in items if x.one_shot_ok)
         rounds_ok = [int(x.rounds_used) for x in items if x.ok and int(x.rounds_used) > 0]
-        out["by_rep"][rep] = {
+        rep_summary: Dict[str, Any] = {
             "n": int(n),
             "ok": int(ok),
             "ok_rate": (float(ok) / float(n)) if n else None,
+            "syntax_ok": int(syntax_ok),
+            "syntax_ok_rate": (float(syntax_ok) / float(n)) if n else None,
+            "anchor_ok": int(anchor_ok),
+            "anchor_ok_rate": (float(anchor_ok) / float(n)) if n else None,
             "one_shot_ok": int(one_shot_ok),
             "one_shot_ok_rate": (float(one_shot_ok) / float(n)) if n else None,
             "rounds_used_avg_if_ok": (sum(rounds_ok) / float(len(rounds_ok))) if rounds_ok else None,
         }
+        # Breakdown by expected_kind (helps paper plots: attention vs others).
+        by_kind: Dict[str, List[RepResult]] = {}
+        for it in items:
+            by_kind.setdefault(str(getattr(it, "expected_kind", "unknown")), []).append(it)
+        kind_summary: Dict[str, Any] = {}
+        for kind, ks in by_kind.items():
+            nk = len(ks)
+            okk = sum(1 for x in ks if x.ok)
+            kind_summary[kind] = {"n": int(nk), "ok": int(okk), "ok_rate": (float(okk) / float(nk)) if nk else None}
+        rep_summary["by_kind"] = kind_summary
+        out["by_rep"][rep] = rep_summary
     return out
 
 
@@ -569,6 +818,12 @@ def main() -> None:
     ap.add_argument("--suite", choices=["smoke", "coverage"], default="coverage")
     ap.add_argument("--kernel", action="append", default=[], help="repeatable: restrict to kernel name(s)")
     ap.add_argument("--rep", choices=["intentir", "linalg", "tile", "all"], default="all")
+    ap.add_argument(
+        "--objective",
+        choices=["syntax", "contractable"],
+        default="contractable",
+        help="syntax: only parser/validator; contractable: also require semantic anchors inferred from frontend facts",
+    )
 
     ap.add_argument("--triton-dir", default=str(ROOT / "artifacts" / "full_pipeline_verify"))
     ap.add_argument("--tilelang-dir", default=str(ROOT / "artifacts" / "tilelang_full_pipeline"))
@@ -629,6 +884,9 @@ def main() -> None:
                         category=str(it.get("category") or ""),
                         reasons=list(it.get("reasons") or []),
                         llm=(it.get("llm") if isinstance(it.get("llm"), dict) else {}),
+                        expected_kind=str(it.get("expected_kind") or "unknown"),
+                        syntax_ok=bool(it.get("syntax_ok") or False),
+                        anchor_ok=bool(it.get("anchor_ok") or False),
                     )
                 )
             if results:
@@ -655,6 +913,7 @@ def main() -> None:
                         desc=desc,
                         model=str(args.model) if args.model else None,
                         repair_rounds=int(args.repair_rounds),
+                        objective=str(args.objective),
                         rpm=int(args.rpm),
                         last_api_s=last_api_s,
                     )
@@ -665,6 +924,7 @@ def main() -> None:
                         timeout_s=int(args.timeout),
                         parse_retries=int(args.parse_retries),
                         repair_rounds=int(args.repair_rounds),
+                        objective=str(args.objective),
                         use_cache=bool(use_cache),
                         cache_dir=cache_dir,
                         no_fallback=bool(args.no_fallback),
@@ -678,6 +938,7 @@ def main() -> None:
                         timeout_s=int(args.timeout),
                         parse_retries=int(args.parse_retries),
                         repair_rounds=int(args.repair_rounds),
+                        objective=str(args.objective),
                         use_cache=bool(use_cache),
                         cache_dir=cache_dir,
                         no_fallback=bool(args.no_fallback),
@@ -697,6 +958,7 @@ def main() -> None:
                     "suite": str(args.suite),
                     "frontends": list(frontends),
                     "reps": list(reps),
+                    "objective": str(args.objective),
                     "model": str(args.model),
                     "cache": ("on" if use_cache else "off"),
                     "repair_rounds": int(args.repair_rounds),

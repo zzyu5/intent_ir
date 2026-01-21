@@ -449,6 +449,7 @@ def main() -> None:
             "suite": e6_obj.get("suite"),
             "frontends": e6_obj.get("frontends"),
             "reps": e6_obj.get("reps"),
+            "objective": e6_obj.get("objective"),
             "model": e6_obj.get("model"),
             "cache": e6_obj.get("cache"),
             "repair_rounds": e6_obj.get("repair_rounds"),
