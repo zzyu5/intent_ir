@@ -367,6 +367,14 @@ def _messages_for_intentir(*, desc: KernelDescriptor, evidence: Dict[str, Any], 
             "- Contract level must be derived ONLY from the provided EVIDENCE object below.",
             "- If anchors/mask details are missing in EVIDENCE, you MUST NOT claim FULL; use PARTIAL and list the missing evidence in evidence_gaps.",
             "",
+            "evidence_gaps vocabulary (use these exact tokens, no paraphrases):",
+            '- "anchors" (EVIDENCE has no anchors field)',
+            '- "needs_mask" (EVIDENCE.constraints.needs_mask is missing)',
+            '- "mask_details" (needs_mask=true but EVIDENCE.constraints.predicate_clauses missing/empty)',
+            '- "constraints" (EVIDENCE has no constraints field)',
+            '- "launch" (EVIDENCE has no launch field)',
+            "If level=PARTIAL, evidence_gaps MUST include all missing categories that justify PARTIAL.",
+            "",
             "Do not guess missing evidence from the source code.",
         ]
     )
@@ -420,6 +428,14 @@ def _messages_for_linalg(*, desc: KernelDescriptor, evidence: Dict[str, Any], fe
             "- Contract level must be derived ONLY from the provided EVIDENCE object below.",
             "- If anchors/mask details are missing in EVIDENCE, you MUST NOT claim FULL; use PARTIAL and list the missing evidence in evidence_gaps.",
             "",
+            "evidence_gaps vocabulary (use these exact tokens, no paraphrases):",
+            '- "anchors" (EVIDENCE has no anchors field)',
+            '- "needs_mask" (EVIDENCE.constraints.needs_mask is missing)',
+            '- "mask_details" (needs_mask=true but EVIDENCE.constraints.predicate_clauses missing/empty)',
+            '- "constraints" (EVIDENCE has no constraints field)',
+            '- "launch" (EVIDENCE has no launch field)',
+            "If level=PARTIAL, evidence_gaps MUST include all missing categories that justify PARTIAL.",
+            "",
             "Do not guess missing evidence from the source code.",
         ]
     )
@@ -471,6 +487,7 @@ class SampleResult:
     ok: bool
     contract_level: Optional[str]
     oracle_level: str
+    oracle_gaps: List[str]
     overclaim: Optional[bool]
     underclaim: Optional[bool]
     ir_ok: bool
@@ -490,6 +507,7 @@ class SampleResult:
             "ok": self.ok,
             "contract_level": self.contract_level,
             "oracle_level": self.oracle_level,
+            "oracle_gaps": list(self.oracle_gaps),
             "overclaim": self.overclaim,
             "underclaim": self.underclaim,
             "ir_ok": self.ir_ok,
@@ -683,6 +701,7 @@ def _run_intentir_once(
                     ok=True,
                     contract_level=contract_level,
                     oracle_level=oracle_level,
+                    oracle_gaps=list(oracle_gaps),
                     overclaim=overclaim,
                     underclaim=underclaim,
                     ir_ok=ir_ok,
@@ -721,6 +740,7 @@ def _run_intentir_once(
             ok=False,
             contract_level=(last.get("contract_level") if isinstance(last.get("contract_level"), str) else contract_level),
             oracle_level=str(oracle_level),
+            oracle_gaps=list(oracle_gaps),
             overclaim=overclaim,
             underclaim=underclaim,
             ir_ok=bool(last.get("ir_ok")) if isinstance(last, dict) else False,
@@ -870,6 +890,7 @@ def _run_linalg_once(
                     ok=True,
                     contract_level=contract_level,
                     oracle_level=oracle_level,
+                    oracle_gaps=list(oracle_gaps),
                     overclaim=overclaim,
                     underclaim=underclaim,
                     ir_ok=ir_ok,
@@ -908,6 +929,7 @@ def _run_linalg_once(
             ok=False,
             contract_level=(last.get("contract_level") if isinstance(last.get("contract_level"), str) else contract_level),
             oracle_level=str(oracle_level),
+            oracle_gaps=list(oracle_gaps),
             overclaim=overclaim,
             underclaim=underclaim,
             ir_ok=bool(last.get("ir_ok")) if isinstance(last, dict) else False,
@@ -1034,6 +1056,8 @@ def main() -> None:
                 if not (fe and k and ab and rep):
                     continue
                 done.add((fe, k, ab, rep, str(prev.get("suite") or "")))
+                og = it.get("oracle_gaps")
+                oracle_gaps = [str(x) for x in og if str(x).strip()] if isinstance(og, list) else []
                 results.append(
                     SampleResult(
                         frontend=fe,
@@ -1043,6 +1067,7 @@ def main() -> None:
                         ok=bool(it.get("ok")),
                         contract_level=(None if it.get("contract_level") is None else str(it.get("contract_level"))),
                         oracle_level=str(it.get("oracle_level") or "PARTIAL"),
+                        oracle_gaps=oracle_gaps,
                         overclaim=(None if it.get("overclaim") is None else bool(it.get("overclaim"))),
                         underclaim=(None if it.get("underclaim") is None else bool(it.get("underclaim"))),
                         ir_ok=bool(it.get("ir_ok")),
