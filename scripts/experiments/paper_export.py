@@ -55,6 +55,116 @@ def _geom_mean(xs: list[float]) -> float | None:
     return math.exp(sum(math.log(x) for x in xs) / float(len(xs)))
 
 
+def _e6cc_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    Summarize a list of E6.2 contract-calibration samples.
+
+    Keeps the payload small and plot-friendly (counts + rates + level dists).
+    """
+    n = int(len(rows))
+    ok = int(sum(1 for r in rows if bool(r.get("ok"))))
+    over = int(sum(1 for r in rows if bool(r.get("overclaim"))))
+    under = int(sum(1 for r in rows if bool(r.get("underclaim"))))
+    full = int(sum(1 for r in rows if str(r.get("contract_level")) == "FULL"))
+    partial = int(sum(1 for r in rows if str(r.get("contract_level")) == "PARTIAL"))
+    oos = int(sum(1 for r in rows if str(r.get("contract_level")) == "OUT_OF_SCOPE"))
+    full_false = int(sum(1 for r in rows if str(r.get("contract_level")) == "FULL" and not bool(r.get("ok"))))
+
+    oracle_levels: dict[str, int] = {}
+    contract_levels: dict[str, int] = {}
+    for r in rows:
+        ol = r.get("oracle_level")
+        cl = r.get("contract_level")
+        if isinstance(ol, str) and ol:
+            oracle_levels[ol] = int(oracle_levels.get(ol, 0)) + 1
+        if isinstance(cl, str) and cl:
+            contract_levels[cl] = int(contract_levels.get(cl, 0)) + 1
+
+    def _rate(x: int, denom: int) -> float | None:
+        return (float(x) / float(denom)) if denom > 0 else None
+
+    return {
+        "n": n,
+        "ok": ok,
+        "ok_rate": _rate(ok, n),
+        "overclaim": over,
+        "overclaim_rate": _rate(over, n),
+        "underclaim": under,
+        "underclaim_rate": _rate(under, n),
+        "full_claims": full,
+        "partial_claims": partial,
+        "oos_claims": oos,
+        "full_false_accept": full_false,
+        "full_false_accept_rate": _rate(full_false, full),
+        "oracle_levels": oracle_levels,
+        "contract_levels": contract_levels,
+    }
+
+
+def _summarize_e6_2_contract_calibration(obj: dict[str, Any]) -> dict[str, Any]:
+    """
+    Paper-facing summary for E6.2.
+
+    Key idea: ablation effects are easiest to interpret when conditioned on the
+    oracle level (e.g., no_mask => oracle=PARTIAL for in-scope kernels, but some
+    kernels may still be oracle=OUT_OF_SCOPE due to barrier/atomic anchors).
+    """
+    results = [r for r in list(obj.get("results") or []) if isinstance(r, dict)]
+    reps = sorted({str(r.get("rep")) for r in results if isinstance(r.get("rep"), str)})
+    ablations = sorted({str(r.get("ablation")) for r in results if isinstance(r.get("ablation"), str)})
+    oracle_levels = sorted({str(r.get("oracle_level")) for r in results if isinstance(r.get("oracle_level"), str)})
+
+    by_rep: dict[str, Any] = {}
+    by_rep_ablation: dict[str, Any] = {}
+    by_rep_ablation_oracle: dict[str, Any] = {}
+
+    for rep in reps:
+        rows = [r for r in results if r.get("rep") == rep]
+        by_rep[rep] = _e6cc_metrics(rows)
+        by_rep_ablation[rep] = {}
+        by_rep_ablation_oracle[rep] = {}
+        for ab in ablations:
+            rows_ab = [r for r in rows if r.get("ablation") == ab]
+            by_rep_ablation[rep][ab] = _e6cc_metrics(rows_ab)
+            by_rep_ablation_oracle[rep].setdefault(ab, {})
+            for ol in oracle_levels:
+                rows_ol = [r for r in rows_ab if r.get("oracle_level") == ol]
+                if rows_ol:
+                    by_rep_ablation_oracle[rep][ab][ol] = _e6cc_metrics(rows_ol)
+
+    # Convenience: punchline slice used in the paper narrative (no_mask + oracle=PARTIAL).
+    punchline: dict[str, Any] = {"ablation": "no_mask", "oracle_level": "PARTIAL", "by_rep": {}}
+    for rep in reps:
+        rows = [r for r in results if r.get("rep") == rep and r.get("ablation") == "no_mask" and r.get("oracle_level") == "PARTIAL"]
+        if rows:
+            punchline["by_rep"][rep] = _e6cc_metrics(rows)
+
+    # Identify kernels that are oracle OUT_OF_SCOPE (anchor says barrier/atomic).
+    # Use rep=linalg to avoid IntentIR parse noise affecting this metadata.
+    oos_kernels: list[str] = []
+    for r in results:
+        if r.get("rep") != "linalg":
+            continue
+        if r.get("oracle_level") == "OUT_OF_SCOPE":
+            k = r.get("kernel")
+            if isinstance(k, str) and k not in oos_kernels:
+                oos_kernels.append(k)
+    oos_kernels.sort()
+
+    return {
+        "objective": "E6.2 evidence ablation + contract calibration (fair IR+contract for both reps)",
+        "reps": reps,
+        "ablations": ablations,
+        "oracle_levels": oracle_levels,
+        "by_rep": by_rep,
+        "by_rep_ablation": by_rep_ablation,
+        "by_rep_ablation_oracle": by_rep_ablation_oracle,
+        "punchline": punchline,
+        "oracle_out_of_scope_kernels": oos_kernels,
+        "note": "For interpretation: focus on punchline (no_mask & oracle=PARTIAL). OUT_OF_SCOPE kernels are scope gaps (barrier/atomic) and can be reported separately.",
+    }
+
+
 def _paired_speedup_from_measured_autotune(retune_remote: dict[str, Any] | None) -> float | None:
     """
     Extract a paired (stable) freeze-vs-retune speedup from a single measured_autotune run.
@@ -441,6 +551,13 @@ def main() -> None:
     # Prefer the newer E6.2 contract-calibration experiment (fairer than E6.1).
     e6_src = _latest_file(e6_dir, "e6_2_contract_calibration*.json") or _latest_file(e6_dir, "e6_ir_usability*.json")
     e6_obj = _load_json(e6_src) if (e6_src and e6_src.exists()) else {}
+    e6_summary = e6_obj.get("summary")
+    if str(e6_obj.get("experiment") or "").startswith("E6_2_contract_calibration"):
+        # Make E6.2 plot-friendly by adding ablation/oracle slices and a punchline summary.
+        e6_summary = {
+            "source_summary": e6_obj.get("summary"),
+            "paper_summary": _summarize_e6_2_contract_calibration(e6_obj),
+        }
     _write_json(
         paths.e6,
         {
@@ -454,7 +571,7 @@ def main() -> None:
             "model": e6_obj.get("model"),
             "cache": e6_obj.get("cache"),
             "repair_rounds": e6_obj.get("repair_rounds"),
-            "summary": e6_obj.get("summary"),
+            "summary": e6_summary,
         },
     )
 
