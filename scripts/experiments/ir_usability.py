@@ -284,6 +284,12 @@ class RepResult:
     expected_kind: str = "unknown"
     syntax_ok: bool = False
     anchor_ok: bool = False
+    # Stronger "verification pipeline readiness" signal (IntentIR only):
+    # static_validate(IntentIR, certificate_v2/legacy) results.
+    sv_ok: Optional[bool] = None
+    sv_pass_n: Optional[int] = None
+    sv_fail_n: Optional[int] = None
+    sv_unknown_n: Optional[int] = None
 
     def to_json_dict(self) -> Dict[str, Any]:
         return {
@@ -294,12 +300,75 @@ class RepResult:
             "syntax_ok": self.syntax_ok,
             "anchor_ok": self.anchor_ok,
             "expected_kind": self.expected_kind,
+            "sv_ok": self.sv_ok,
+            "sv_pass_n": self.sv_pass_n,
+            "sv_fail_n": self.sv_fail_n,
+            "sv_unknown_n": self.sv_unknown_n,
             "rounds_used": self.rounds_used,
             "one_shot_ok": self.one_shot_ok,
             "category": self.category,
             "reasons": list(self.reasons),
             "llm": dict(self.llm),
         }
+
+
+def _static_validate_intentir(desc: KernelDescriptor, intent: IntentFunction) -> Dict[str, Any]:
+    """
+    Run Stage-A static validation (contract/certificate aware) for a recovered IntentIR.
+
+    This is the core of the paper claim: IntentIR is designed to be directly
+    checked against per-kernel evidence/certificates; text IR baselines are not.
+    """
+    from frontends.common.certificate_v2 import SemanticCertificateV2  # noqa: PLC0415
+    from frontends.common.static_validate import static_validate  # noqa: PLC0415
+
+    # Prefer the already-built certificate from the frontend pipeline artifacts.
+    # Re-extracting facts here can be slow and, for TileLang, may trigger TVM/TIR
+    # parsing in environments where it's not available/compatible.
+    art_dir_s = (desc.meta or {}).get("artifact_dir") if isinstance(desc.meta, dict) else None
+    art_dir = Path(str(art_dir_s)) if isinstance(art_dir_s, str) and art_dir_s.strip() else None
+    cert_path = (art_dir / f"{desc.name}.certificate_v2.json") if art_dir is not None else None
+    cert: object
+    contract_level: Optional[str] = None
+    if cert_path is not None and cert_path.exists():
+        obj = _load_json(cert_path)
+        cert = SemanticCertificateV2(
+            schema_version=str(obj.get("schema_version") or "cert_v2.0"),
+            semantic_facts=(obj.get("semantic_facts") if isinstance(obj.get("semantic_facts"), dict) else {}),
+            schedule_hints=(obj.get("schedule_hints") if isinstance(obj.get("schedule_hints"), dict) else {}),
+            meta=(obj.get("meta") if isinstance(obj.get("meta"), dict) else {}),
+        )
+        meta = obj.get("meta")
+        if isinstance(meta, dict):
+            c = meta.get("contract")
+            if isinstance(c, dict) and isinstance(c.get("level"), str):
+                contract_level = str(c.get("level"))
+    else:
+        from pipeline import registry as pipeline_registry  # noqa: PLC0415
+
+        adapter = pipeline_registry.get(str(desc.frontend))
+        facts = adapter.extract_facts(desc)
+        constraints = adapter.extract_constraints(desc, facts)
+        cert = adapter.build_certificate(desc, facts, constraints)
+        meta = getattr(cert, "meta", None)
+        if isinstance(meta, dict):
+            c = meta.get("contract")
+            if isinstance(c, dict) and isinstance(c.get("level"), str):
+                contract_level = str(c.get("level"))
+    res = static_validate(intent, cert)
+    pass_n = sum(1 for o in res.obligations if o.status == "PASS")
+    fail_n = sum(1 for o in res.obligations if o.status == "FAIL")
+    unk_n = sum(1 for o in res.obligations if o.status == "UNKNOWN")
+    return {
+        "ok": bool(res.ok),
+        "pass_n": int(pass_n),
+        "fail_n": int(fail_n),
+        "unknown_n": int(unk_n),
+        "contract_level": contract_level,
+        # Keep reasons compact for experiment logs; full obligations remain available
+        # in the frontend pipelines, not in this lightweight E6.
+        "reasons": list(res.reasons[:12]),
+    }
 
 
 def _anchors_from_descriptor(desc: KernelDescriptor) -> Dict[str, bool]:
@@ -332,8 +401,10 @@ def _infer_expected_kind(desc: KernelDescriptor) -> str:
     a = _anchors_from_descriptor(desc)
     if a.get("has_atomic"):
         return "unknown"
+    # NOTE: dot+reduce is common for *matmul* (accumulation over K) as well as
+    # attention. Do NOT default to attention unless the name strongly indicates it.
     if a.get("has_dot") and a.get("has_reduce"):
-        return "attention"
+        return "matmul"
     if a.get("has_dot"):
         return "matmul"
     if a.get("has_reduce"):
@@ -469,13 +540,36 @@ def _run_rep_intentir(
             syntax_ok = True
             anchor_errs = _anchor_errors_intentir(cand.intent, expected_kind=expected_kind)
             anchor_ok = not anchor_errs
-            ok = bool(syntax_ok) if str(objective) == "syntax" else (bool(syntax_ok) and bool(anchor_ok))
+            sv = None
+            if str(objective) != "syntax":
+                try:
+                    sv = _static_validate_intentir(desc, cand.intent)
+                except Exception as e:
+                    sv = {"ok": False, "pass_n": None, "fail_n": None, "unknown_n": None, "reasons": [f"static_validate error: {type(e).__name__}: {e}"]}
+            sv_ok: Optional[bool] = None
+            sv_contract_level: Optional[str] = None
+            if isinstance(sv, dict):
+                sv_contract_level = sv.get("contract_level") if isinstance(sv.get("contract_level"), str) else None
+                # If the cert is OUT_OF_SCOPE, do not treat Stage-A as a pass/fail
+                # signal for E6 "IR usability" (coverage/scope is measured in E1).
+                if sv_contract_level != "OUT_OF_SCOPE":
+                    sv_ok = bool(sv.get("ok"))
+            ok = (
+                bool(syntax_ok)
+                if str(objective) == "syntax"
+                else (
+                    bool(syntax_ok)
+                    and bool(anchor_ok)
+                    and (True if sv_ok is None else bool(sv_ok))
+                )
+            )
             rounds.append(
                 {
                     "round": r,
                     "ok": ok,
                     "syntax_ok": syntax_ok,
                     "anchor_ok": anchor_ok,
+                    "sv": (sv if isinstance(sv, dict) else None),
                     "cache_hit": cache_hit,
                     "chosen": chosen,
                     "anchor_errors": list(anchor_errs),
@@ -491,6 +585,10 @@ def _run_rep_intentir(
                         syntax_ok=bool(syntax_ok),
                         anchor_ok=bool(anchor_ok),
                         expected_kind=str(expected_kind),
+                        sv_ok=sv_ok,
+                        sv_pass_n=(None if not isinstance(sv, dict) else (None if sv.get("pass_n") is None else int(sv.get("pass_n")))),
+                        sv_fail_n=(None if not isinstance(sv, dict) else (None if sv.get("fail_n") is None else int(sv.get("fail_n")))),
+                        sv_unknown_n=(None if not isinstance(sv, dict) else (None if sv.get("unknown_n") is None else int(sv.get("unknown_n")))),
                         rounds_used=r + 1,
                         one_shot_ok=(r == 0),
                         category="ok",
@@ -507,9 +605,24 @@ def _run_rep_intentir(
                     ),
                     last_api_s,
                 )
-            last_errs = list(anchor_errs) if anchor_errs else ["anchor mismatch"]
+            if anchor_errs:
+                last_errs = list(anchor_errs)
+            elif isinstance(sv, dict) and (sv.get("ok") is False):
+                rs = sv.get("reasons")
+                if isinstance(rs, list) and rs:
+                    last_errs = [str(x) for x in rs[:6] if str(x).strip()] or ["static_validate failed"]
+                else:
+                    last_errs = ["static_validate failed"]
+            else:
+                last_errs = ["invalid"]
             if str(objective) != "syntax":
-                feedback = feedback + [f"Anchor errors: {', '.join(anchor_errs)}"]
+                fb_bits = []
+                if anchor_errs:
+                    fb_bits.append("Anchor errors: " + ", ".join(anchor_errs))
+                if isinstance(sv, dict) and sv.get("reasons") and sv.get("contract_level") != "OUT_OF_SCOPE":
+                    fb_bits.append("Static validate: " + ", ".join([str(x) for x in (sv.get("reasons") or [])[:6]]))
+                if fb_bits:
+                    feedback = feedback + fb_bits
         except Exception as e:
             msg = f"{type(e).__name__}: {e}"
             # IMPORTANT: provide a compact, actionable feedback string.
@@ -527,9 +640,29 @@ def _run_rep_intentir(
             syntax_ok=bool((rounds[-1] or {}).get("syntax_ok")) if rounds and isinstance(rounds[-1], dict) else False,
             anchor_ok=bool((rounds[-1] or {}).get("anchor_ok")) if rounds and isinstance(rounds[-1], dict) else False,
             expected_kind=str(expected_kind),
+            sv_ok=(
+                None
+                if not (rounds and isinstance(rounds[-1], dict) and isinstance(rounds[-1].get("sv"), dict))
+                else (
+                    None
+                    if (rounds[-1]["sv"].get("contract_level") == "OUT_OF_SCOPE")
+                    else bool(rounds[-1]["sv"].get("ok"))
+                )
+            ),
+            sv_pass_n=(None if not (rounds and isinstance(rounds[-1], dict) and isinstance(rounds[-1].get("sv"), dict) and rounds[-1]["sv"].get("pass_n") is not None) else int(rounds[-1]["sv"].get("pass_n"))),
+            sv_fail_n=(None if not (rounds and isinstance(rounds[-1], dict) and isinstance(rounds[-1].get("sv"), dict) and rounds[-1]["sv"].get("fail_n") is not None) else int(rounds[-1]["sv"].get("fail_n"))),
+            sv_unknown_n=(None if not (rounds and isinstance(rounds[-1], dict) and isinstance(rounds[-1].get("sv"), dict) and rounds[-1]["sv"].get("unknown_n") is not None) else int(rounds[-1]["sv"].get("unknown_n"))),
             rounds_used=int(len(rounds)),
             one_shot_ok=False,
-            category=("anchor" if (rounds and rounds[-1].get("anchor_errors")) else "invalid"),
+            category=(
+                "anchor"
+                if (rounds and isinstance(rounds[-1], dict) and rounds[-1].get("anchor_errors"))
+                else (
+                    "static_validate"
+                    if (rounds and isinstance(rounds[-1], dict) and isinstance(rounds[-1].get("sv"), dict) and rounds[-1]["sv"].get("ok") is False)
+                    else "invalid"
+                )
+            ),
             reasons=list(last_errs) if last_errs else ([str(rounds[-1].get("error"))] if rounds else ["no attempts"]),
             llm={"stats": {"llm_calls": int(cache_hits + cache_misses), "cache_hits": cache_hits, "cache_misses": cache_misses, "api_calls": cache_misses}, "rounds": rounds},
         ),
@@ -609,6 +742,10 @@ def _run_rep_linalg(
                         syntax_ok=bool(syntax_ok),
                         anchor_ok=bool(anchor_ok),
                         expected_kind=str(expected_kind),
+                        sv_ok=None,
+                        sv_pass_n=None,
+                        sv_fail_n=None,
+                        sv_unknown_n=None,
                         rounds_used=r + 1,
                         one_shot_ok=(r == 0),
                         category="ok",
@@ -641,6 +778,10 @@ def _run_rep_linalg(
             syntax_ok=bool((rounds[-1] or {}).get("syntax_ok")) if rounds and isinstance(rounds[-1], dict) else False,
             anchor_ok=bool((rounds[-1] or {}).get("anchor_ok")) if rounds and isinstance(rounds[-1], dict) else False,
             expected_kind=str(expected_kind),
+            sv_ok=None,
+            sv_pass_n=None,
+            sv_fail_n=None,
+            sv_unknown_n=None,
             rounds_used=int(len(rounds)),
             one_shot_ok=False,
             category="invalid",
@@ -678,6 +819,10 @@ def _run_rep_tile(
                 syntax_ok=False,
                 anchor_ok=False,
                 expected_kind=str(expected_kind),
+                sv_ok=None,
+                sv_pass_n=None,
+                sv_fail_n=None,
+                sv_unknown_n=None,
                 rounds_used=0,
                 one_shot_ok=False,
                 category="no_semantics",
@@ -734,6 +879,10 @@ def _run_rep_tile(
                         syntax_ok=True,
                         anchor_ok=True,
                         expected_kind=str(expected_kind),
+                        sv_ok=None,
+                        sv_pass_n=None,
+                        sv_fail_n=None,
+                        sv_unknown_n=None,
                         rounds_used=r + 1,
                         one_shot_ok=(r == 0),
                         category="ok",
@@ -763,6 +912,10 @@ def _run_rep_tile(
             syntax_ok=False,
             anchor_ok=False,
             expected_kind=str(expected_kind),
+            sv_ok=None,
+            sv_pass_n=None,
+            sv_fail_n=None,
+            sv_unknown_n=None,
             rounds_used=int(len(rounds)),
             one_shot_ok=False,
             category="invalid",
@@ -784,6 +937,8 @@ def _summarize(results: List[RepResult]) -> Dict[str, Any]:
         ok = sum(1 for x in items if x.ok)
         syntax_ok = sum(1 for x in items if bool(getattr(x, "syntax_ok", False)))
         anchor_ok = sum(1 for x in items if bool(getattr(x, "anchor_ok", False)))
+        sv_total = sum(1 for x in items if getattr(x, "sv_ok", None) is not None)
+        sv_ok = sum(1 for x in items if getattr(x, "sv_ok", None) is True)
         one_shot_ok = sum(1 for x in items if x.one_shot_ok)
         rounds_ok = [int(x.rounds_used) for x in items if x.ok and int(x.rounds_used) > 0]
         rep_summary: Dict[str, Any] = {
@@ -794,6 +949,9 @@ def _summarize(results: List[RepResult]) -> Dict[str, Any]:
             "syntax_ok_rate": (float(syntax_ok) / float(n)) if n else None,
             "anchor_ok": int(anchor_ok),
             "anchor_ok_rate": (float(anchor_ok) / float(n)) if n else None,
+            "sv_total": int(sv_total),
+            "sv_ok": int(sv_ok),
+            "sv_ok_rate": (float(sv_ok) / float(sv_total)) if sv_total else None,
             "one_shot_ok": int(one_shot_ok),
             "one_shot_ok_rate": (float(one_shot_ok) / float(n)) if n else None,
             "rounds_used_avg_if_ok": (sum(rounds_ok) / float(len(rounds_ok))) if rounds_ok else None,
@@ -879,14 +1037,18 @@ def main() -> None:
                         kernel=k,
                         rep=rep,
                         ok=bool(it.get("ok")),
+                        syntax_ok=bool(it.get("syntax_ok") or False),
+                        anchor_ok=bool(it.get("anchor_ok") or False),
+                        expected_kind=str(it.get("expected_kind") or "unknown"),
+                        sv_ok=(None if it.get("sv_ok") is None else bool(it.get("sv_ok"))),
+                        sv_pass_n=(None if it.get("sv_pass_n") is None else int(it.get("sv_pass_n"))),
+                        sv_fail_n=(None if it.get("sv_fail_n") is None else int(it.get("sv_fail_n"))),
+                        sv_unknown_n=(None if it.get("sv_unknown_n") is None else int(it.get("sv_unknown_n"))),
                         rounds_used=int(it.get("rounds_used") or 0),
                         one_shot_ok=bool(it.get("one_shot_ok")),
                         category=str(it.get("category") or ""),
                         reasons=list(it.get("reasons") or []),
                         llm=(it.get("llm") if isinstance(it.get("llm"), dict) else {}),
-                        expected_kind=str(it.get("expected_kind") or "unknown"),
-                        syntax_ok=bool(it.get("syntax_ok") or False),
-                        anchor_ok=bool(it.get("anchor_ok") or False),
                     )
                 )
             if results:
