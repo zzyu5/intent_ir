@@ -31,8 +31,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from intent_ir.llm import DEFAULT_MODEL, LLMClientError, chat_completion, strip_code_fence  # noqa: E402
-from intent_ir.llm.llm_extract import extract_json_object_with_trace  # noqa: E402
+from intent_ir.llm import DEFAULT_MODEL, LLMClientError, chat_completion, parse_json_block, strip_code_fence  # noqa: E402
 from intent_ir.llm.llm_hub import LLMIntentHub, _maybe_truncate_source  # noqa: E402
 from pipeline.interfaces import KernelArtifactBundle, KernelDescriptor  # noqa: E402
 from verify.ir_formats import validate_mlir_linalg_text, validate_tile_dsl_json  # noqa: E402
@@ -183,6 +182,8 @@ def _messages_for_linalg(*, desc: KernelDescriptor, feedback: List[str]) -> List
             "- Output plain text only (no markdown fences, no prose).",
             "- Must contain: 'module { ... }' and a function ('func.func' preferred).",
             "- Must contain at least one 'linalg.' op (e.g., linalg.generic / linalg.matmul).",
+            "- The function signature must cover ALL tensor arguments (by count and rank) from io_spec.tensors.",
+            "- You may use 'tensor<?x...xf32>' or 'memref<?x...xf32>' as long as ranks match io_spec.",
             "- If unsure about exact dynamic sizes, use '?' dimensions but keep ranks consistent.",
         ]
     )
@@ -224,6 +225,7 @@ def _messages_for_tile(*, desc: KernelDescriptor, feedback: List[str]) -> List[D
             "- Required top-level keys: schema_version (string), kernel (string), schedule (object).",
             "- schedule.tile must be a non-empty object mapping axis names to positive integers.",
             "- schedule.vec_width and schedule.num_threads are optional positive integers.",
+            "- schedule.tile axis names must be chosen from the symbolic dims appearing in io_spec.tensors[*].shape.",
         ]
     )
     user = "\n".join(
@@ -391,7 +393,7 @@ def _run_rep_linalg(
                 cache_misses += 1
                 last_api_s = _maybe_rate_limit(last_api_s=last_api_s, rpm=rpm)
             txt = strip_code_fence(raw).strip()
-            errs = validate_mlir_linalg_text(txt)
+            errs = validate_mlir_linalg_text(txt, io_spec=desc.io_spec)
             ok = not errs
             rounds.append(
                 {
@@ -467,12 +469,12 @@ def _run_rep_tile(
     for r in range(0, max(0, int(repair_rounds)) + 1):
         messages = _messages_for_tile(desc=desc, feedback=feedback)
         try:
-            obj, trace = extract_json_object_with_trace(
+            resp = chat_completion(
                 messages,
                 model=str(model),
-                max_parse_retries=max(1, int(parse_retries)),
+                stream=False,
                 timeout=int(timeout_s),
-                max_retries=2,
+                max_retries=max(1, int(parse_retries)),
                 max_total_wait_s=45,
                 use_cache=bool(use_cache),
                 cache_dir=cache_dir,
@@ -480,14 +482,20 @@ def _run_rep_tile(
                 temperature=0,
                 max_tokens=1200,
             )
-            chosen = trace.get("chosen") if isinstance(trace, dict) else None
-            cache_hit = bool((chosen or {}).get("cache_hit")) if isinstance(chosen, dict) else False
+            raw = resp.first_message()
+            obj = parse_json_block(raw)
+            chosen = {
+                "model": resp.meta.get("response_model") or resp.meta.get("model") or model,
+                "base_url": resp.meta.get("base_url"),
+                "cache_hit": bool(resp.meta.get("cache_hit")),
+            }
+            cache_hit = bool(chosen.get("cache_hit"))
             if cache_hit:
                 cache_hits += 1
             else:
                 cache_misses += 1
                 last_api_s = _maybe_rate_limit(last_api_s=last_api_s, rpm=rpm)
-            errs = validate_tile_dsl_json(obj)
+            errs = validate_tile_dsl_json(obj, io_spec=desc.io_spec)
             ok = not errs
             rounds.append({"round": r, "ok": ok, "cache_hit": cache_hit, "chosen": chosen, "errors": list(errs)})
             if ok:
@@ -577,6 +585,7 @@ def main() -> None:
     ap.add_argument("--no-fallback", action="store_true")
     ap.add_argument("--rpm", type=int, default=5, help="rate limit for cache-miss calls; 0 disables")
     ap.add_argument("--out", default=str(ROOT / "artifacts" / "experiments" / "E6" / "e6_ir_usability_latest.json"))
+    ap.add_argument("--resume", action="store_true", help="resume from --out if it already exists")
     args = ap.parse_args()
 
     frontends = ["triton", "tilelang", "cuda"] if str(args.frontend) == "all" else [str(args.frontend)]
@@ -596,6 +605,38 @@ def main() -> None:
     out_path = Path(str(args.out))
 
     results: List[RepResult] = []
+    done: set[tuple[str, str, str]] = set()
+    if bool(args.resume) and out_path.exists():
+        try:
+            prev = _load_json(out_path)
+            for it in list(prev.get("results") or []):
+                if not isinstance(it, dict):
+                    continue
+                fe = str(it.get("frontend") or "")
+                k = str(it.get("kernel") or "")
+                rep = str(it.get("rep") or "")
+                if not fe or not k or not rep:
+                    continue
+                done.add((fe, k, rep))
+                results.append(
+                    RepResult(
+                        frontend=fe,
+                        kernel=k,
+                        rep=rep,
+                        ok=bool(it.get("ok")),
+                        rounds_used=int(it.get("rounds_used") or 0),
+                        one_shot_ok=bool(it.get("one_shot_ok")),
+                        category=str(it.get("category") or ""),
+                        reasons=list(it.get("reasons") or []),
+                        llm=(it.get("llm") if isinstance(it.get("llm"), dict) else {}),
+                    )
+                )
+            if results:
+                print(f"[E6] resume: loaded {len(results)} prior results from {out_path}", flush=True)
+        except Exception as e:
+            print(f"[E6] resume ignored (failed to load {out_path}): {type(e).__name__}: {e}", flush=True)
+            results = []
+            done = set()
     last_api_s: Optional[float] = None
 
     for fe in frontends:
@@ -606,6 +647,8 @@ def main() -> None:
         for k in ks:
             desc = _load_or_prepare_descriptor(frontend=str(fe), kernel=str(k), artifact_dir=art_dir, refresh=bool(args.refresh_artifacts))
             for rep in reps:
+                if (str(fe), str(k), str(rep)) in done:
+                    continue
                 if rep == "intentir":
                     rr, last_api_s = _run_rep_intentir(
                         hub=hub,
@@ -644,24 +687,26 @@ def main() -> None:
                 else:
                     raise SystemExit(f"unknown rep: {rep}")
                 results.append(rr)
+                done.add((str(rr.frontend), str(rr.kernel), str(rr.rep)))
                 status = "OK" if rr.ok else "FAIL"
                 print(f"[{fe}:{k}:{rep}] {status} rounds={rr.rounds_used}", flush=True)
 
-    payload = {
-        "experiment": "E6_ir_usability",
-        "suite": str(args.suite),
-        "frontends": list(frontends),
-        "reps": list(reps),
-        "model": str(args.model),
-        "cache": ("on" if use_cache else "off"),
-        "repair_rounds": int(args.repair_rounds),
-        "results": [r.to_json_dict() for r in results],
-        "summary": _summarize(results),
-    }
-    _write_json(out_path, payload)
+                # Checkpoint after each result to avoid losing long runs.
+                payload = {
+                    "experiment": "E6_ir_usability",
+                    "suite": str(args.suite),
+                    "frontends": list(frontends),
+                    "reps": list(reps),
+                    "model": str(args.model),
+                    "cache": ("on" if use_cache else "off"),
+                    "repair_rounds": int(args.repair_rounds),
+                    "results": [r.to_json_dict() for r in results],
+                    "summary": _summarize(results),
+                }
+                _write_json(out_path, payload)
+
     print(str(out_path))
 
 
 if __name__ == "__main__":
     main()
-

@@ -39,8 +39,14 @@ def test_validate_tile_dsl_json_accepts_minimal_shape():
     assert validate_tile_dsl_json(obj) == []
 
 
+def test_validate_tile_dsl_json_checks_axes_against_io_spec():
+    obj = {"schema_version": "tile_dsl_v0", "kernel": "k", "schedule": {"tile": {"X": 16}}}
+    io_spec = {"tensors": {"A": {"dtype": "f32", "shape": ["M", "N"]}}}
+    errs = validate_tile_dsl_json(obj, io_spec=io_spec)
+    assert errs
+
+
 def test_validate_tile_dsl_json_rejects_bad_tile():
     obj = {"schema_version": "tile_dsl_v0", "kernel": "k", "schedule": {"tile": {"M": 0}}}
     errs = validate_tile_dsl_json(obj)
     assert errs
-
