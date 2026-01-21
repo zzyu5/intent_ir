@@ -437,19 +437,20 @@ def main() -> None:
         },
     )
 
-    # E6: IR usability (IntentIR JSON vs MLIR Linalg vs tile-centric JSON).
-    e6_src = _latest_file(e6_dir, "e6_ir_usability*.json")
+    # E6: IR suitability for LLM lifting under uncertainty.
+    # Prefer the newer E6.2 contract-calibration experiment (fairer than E6.1).
+    e6_src = _latest_file(e6_dir, "e6_2_contract_calibration*.json") or _latest_file(e6_dir, "e6_ir_usability*.json")
     e6_obj = _load_json(e6_src) if (e6_src and e6_src.exists()) else {}
     _write_json(
         paths.e6,
         {
-            "experiment": "E6_ir_usability",
+            "experiment": str(e6_obj.get("experiment") or "E6"),
             "git_head": head,
             "source": str(e6_src) if e6_src else None,
             "suite": e6_obj.get("suite"),
             "frontends": e6_obj.get("frontends"),
             "reps": e6_obj.get("reps"),
-            "objective": e6_obj.get("objective"),
+            "ablations": e6_obj.get("ablations"),
             "model": e6_obj.get("model"),
             "cache": e6_obj.get("cache"),
             "repair_rounds": e6_obj.get("repair_rounds"),

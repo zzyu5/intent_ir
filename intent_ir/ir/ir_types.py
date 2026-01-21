@@ -23,6 +23,7 @@ __all__ = [
     "TensorLayout",
     "TensorType",
     "Op",
+    "Contract",
     "ScheduleSketch",
     "IntentFunction",
     "parse_dim",
@@ -83,6 +84,89 @@ EPILOGUE_ELEMWISE_OPS = {
     "rsqrt",
 }
 
+ContractLevel = Literal["FULL", "PARTIAL", "OUT_OF_SCOPE"]
+CONTRACT_LEVEL_VALUES = {"FULL", "PARTIAL", "OUT_OF_SCOPE"}
+
+
+@dataclass(frozen=True)
+class Contract:
+    """
+    Per-kernel contract / uncertainty boundary for lifted semantics.
+
+    This is intentionally lightweight: the compiler/verification stack can treat
+    FULL/PARTIAL/OOS as a coarse-grained promise, while `assumptions` and
+    `evidence_gaps` provide human- and LLM-readable repair signals.
+    """
+
+    schema_version: str = "intentir_contract_v1"
+    level: ContractLevel = "PARTIAL"
+    assumptions: List[str] = field(default_factory=list)
+    evidence_gaps: List[str] = field(default_factory=list)
+    claims: Dict[str, Any] = field(default_factory=dict)
+
+    def to_json_dict(self) -> Dict[str, Any]:
+        return {
+            "schema_version": str(self.schema_version),
+            "level": str(self.level),
+            "assumptions": list(self.assumptions),
+            "evidence_gaps": list(self.evidence_gaps),
+            "claims": dict(self.claims),
+        }
+
+
+def _contract_from_json(data: Dict[str, Any]) -> Contract:
+    if not isinstance(data, dict):
+        raise IntentIRValidationError("contract must be an object")
+    schema_version = data.get("schema_version", "intentir_contract_v1")
+    if not isinstance(schema_version, str) or not schema_version.strip():
+        raise IntentIRValidationError("contract.schema_version must be a non-empty string")
+    level = data.get("level", "PARTIAL")
+    if level not in CONTRACT_LEVEL_VALUES:
+        raise IntentIRValidationError(f"contract.level must be one of {sorted(CONTRACT_LEVEL_VALUES)}")
+    assumptions = data.get("assumptions")
+    if assumptions is None:
+        assumptions = []
+    if not isinstance(assumptions, list) or not all(isinstance(x, str) for x in assumptions):
+        raise IntentIRValidationError("contract.assumptions must be a list of strings")
+    evidence_gaps = data.get("evidence_gaps")
+    if evidence_gaps is None:
+        evidence_gaps = []
+    if not isinstance(evidence_gaps, list) or not all(isinstance(x, str) for x in evidence_gaps):
+        raise IntentIRValidationError("contract.evidence_gaps must be a list of strings")
+    claims = data.get("claims")
+    if claims is None:
+        claims = {}
+    if not isinstance(claims, dict):
+        raise IntentIRValidationError("contract.claims must be an object if provided")
+    return Contract(
+        schema_version=str(schema_version),
+        level=str(level),  # type: ignore[arg-type]
+        assumptions=[str(x) for x in assumptions],
+        evidence_gaps=[str(x) for x in evidence_gaps],
+        claims=dict(claims),
+    )
+
+
+def _validate_contract(contract: Contract) -> None:
+    if not isinstance(contract, Contract):
+        raise IntentIRValidationError("contract must be a Contract object")
+    if not isinstance(contract.schema_version, str) or not contract.schema_version.strip():
+        raise IntentIRValidationError("contract.schema_version must be a non-empty string")
+    if contract.level not in CONTRACT_LEVEL_VALUES:
+        raise IntentIRValidationError(f"contract.level must be one of {sorted(CONTRACT_LEVEL_VALUES)}")
+    if not isinstance(contract.assumptions, list) or not all(isinstance(x, str) for x in contract.assumptions):
+        raise IntentIRValidationError("contract.assumptions must be list[str]")
+    if not isinstance(contract.evidence_gaps, list) or not all(isinstance(x, str) for x in contract.evidence_gaps):
+        raise IntentIRValidationError("contract.evidence_gaps must be list[str]")
+    if not isinstance(contract.claims, dict):
+        raise IntentIRValidationError("contract.claims must be an object")
+    if contract.level == "FULL":
+        if contract.assumptions:
+            raise IntentIRValidationError("contract.level=FULL requires empty assumptions")
+    elif contract.level in {"PARTIAL", "OUT_OF_SCOPE"}:
+        if not contract.assumptions:
+            raise IntentIRValidationError(f"contract.level={contract.level} requires non-empty assumptions")
+
 
 @dataclass(frozen=True)
 class Dim:
@@ -130,6 +214,7 @@ class IntentFunction:
     tensors: Dict[str, TensorType]
     ops: List[Op]
     outputs: List[str]
+    contract: Optional[Contract] = None
     parallel_axes: List[str] = field(default_factory=list)
     schedule: Optional[ScheduleSketch] = None
     meta: Dict[str, Any] = field(default_factory=dict)
@@ -163,12 +248,20 @@ class IntentFunction:
             parallel_axes = schedule.parallel_axes
 
         axis_roles = data.get("axis_roles") or {}
-        meta = data.get("meta") or {}
+        meta_raw = data.get("meta") or {}
+        meta = dict(meta_raw) if isinstance(meta_raw, dict) else {}
+
+        # Contract can be top-level ("contract") or embedded legacy-style in meta.contract.
+        contract_raw = data.get("contract")
+        if contract_raw is None and isinstance(meta.get("contract"), dict):
+            contract_raw = meta.pop("contract")
+        contract = _contract_from_json(contract_raw) if isinstance(contract_raw, dict) else None
         inst = cls(
             name=name,
             tensors=tensors,
             ops=ops,
             outputs=outputs,
+            contract=contract,
             parallel_axes=parallel_axes,
             schedule=schedule,
             meta=meta,
@@ -187,6 +280,8 @@ class IntentFunction:
             "outputs": list(self.outputs),
             "parallel_axes": list(self.parallel_axes),
         }
+        if self.contract is not None:
+            result["contract"] = self.contract.to_json_dict()
         if self.schedule is not None:
             result["schedule"] = _schedule_to_json(self.schedule)
         if self.axis_roles:
@@ -200,6 +295,8 @@ class IntentFunction:
         _validate_axis_roles(self.axis_roles, self.tensors, self.parallel_axes)
         _validate_ops(self.ops, self.tensors)
         _validate_outputs(self.outputs, self.tensors, self.ops)
+        if self.contract is not None:
+            _validate_contract(self.contract)
         _validate_parallel_axes(self.parallel_axes, self.tensors)
         if self.schedule:
             _validate_schedule(self.schedule)
@@ -219,9 +316,9 @@ def parse_dim(x: int | str) -> Dim:
 
 def parse_layout(x: str | Dict[str, Any]) -> TensorLayout:
     if isinstance(x, str):
-        # LLMs sometimes emit "scalar" for 0-rank tensors. Layout is irrelevant for scalars;
-        # treat it as row_major for compatibility.
-        if x == "scalar":
+        # LLMs sometimes emit informal layout tags ("scalar"/"dense"). Layout is irrelevant for
+        # scalars and "dense" almost always implies the default contiguous row-major layout.
+        if x in {"scalar", "dense"}:
             return TensorLayout(kind="row_major", params={})
         if x not in {"row_major", "col_major"}:
             raise IntentIRValidationError(f"unsupported layout: {x}")
@@ -559,6 +656,9 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
         if len(op.inputs) != 1:
             raise IntentIRValidationError(f"op[{idx}] {op.op} requires 1 input")
         dims = attrs.get("dims")
+        if dims is None:
+            # Common LLM alias (used by some toolchains / prior prompts).
+            dims = attrs.get("reduce_dims")
         if dims is None:
             dims = attrs.get("axis")
             if isinstance(dims, int):

@@ -270,6 +270,38 @@ def validate_mlir_linalg_text(text: str, *, io_spec: Any | None = None) -> List[
     return errs
 
 
+def validate_mlir_linalg_text_lenient(text: str) -> List[str]:
+    """
+    Lenient MLIR(Linalg) plausibility checks for experiments.
+
+    Rationale:
+      - For E6.2 we want a *fair* comparison about "IR+contract honesty" under
+        missing evidence, not about whether the LLM can remember every required
+        `linalg.generic` attribute (indexing_maps/iterator_types).
+      - This validator keeps stable structural anchors but does not enforce the
+        full `linalg.generic` attribute schema.
+    """
+    t = strip_code_fence(str(text or "")).strip()
+    if not t:
+        return ["empty output"]
+
+    errs: List[str] = []
+    errs += _balanced_delims(t)
+    if "module" not in t:
+        errs.append("missing 'module'")
+    if "func.func" not in t and "func @" not in t:
+        errs.append("missing 'func.func' or 'func @'")
+    if "linalg." not in t:
+        errs.append("missing any 'linalg.' op")
+
+    bad_markers = ["<TODO", "TODO", "…", "...", "PLACEHOLDER", "fill_me", "TBD"]
+    if any(x in t for x in bad_markers):
+        errs.append("contains placeholder markers")
+    if "```" in t:
+        errs.append("contains markdown code fences")
+    return errs
+
+
 @dataclass(frozen=True)
 class TileDslValidation:
     ok: bool
