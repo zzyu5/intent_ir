@@ -597,9 +597,6 @@ def _run_intentir_once(
         contract_level = None
         overclaim = None
         underclaim = None
-        contract_level = None
-        overclaim = None
-        underclaim = None
 
         contract_src: Optional[Dict[str, Any]] = None
         contract_src_loc: Optional[str] = None
@@ -657,6 +654,10 @@ def _run_intentir_once(
                 lv = str(contract_level)
                 overclaim = LEVEL_ORDER[lv] > LEVEL_ORDER[oracle_level]
                 underclaim = LEVEL_ORDER[lv] < LEVEL_ORDER[oracle_level]
+                if bool(overclaim):
+                    reasons.append(f"overclaim: contract.level={lv} > oracle={oracle_level}")
+                if bool(underclaim):
+                    reasons.append(f"underclaim: contract.level={lv} < oracle={oracle_level}")
                 anchors = evidence.get("anchors") if isinstance(evidence.get("anchors"), dict) else {}
                 if lv == "FULL":
                     if ir_ok and intent is not None:
@@ -669,6 +670,8 @@ def _run_intentir_once(
                 else:
                     consistency_ok = True
                 abstention_ok = (oracle_level == "FULL") or (lv != "FULL")
+                if not abstention_ok:
+                    reasons.append(f"abstention_fail: oracle={oracle_level} but contract.level={lv}")
                 assumption_precision_ok, ap_errs = _assumption_precision(contract_src, oracle_gaps)
                 reasons.extend(ap_errs)
 
@@ -687,8 +690,12 @@ def _run_intentir_once(
                 "ok": ok,
                 "ir_ok": ir_ok,
                 "contract_ok": contract_ok,
+                "consistency_ok": consistency_ok,
+                "abstention_ok": abstention_ok,
+                "assumption_precision_ok": assumption_precision_ok,
                 "contract_level": contract_level,
                 "oracle_level": oracle_level,
+                "oracle_gaps": list(oracle_gaps),
                 "overclaim": overclaim,
                 "underclaim": underclaim,
                 "reasons": list(reasons[:12]),
@@ -851,11 +858,17 @@ def _run_linalg_once(
                 lv = str(contract_level)
                 overclaim = LEVEL_ORDER[lv] > LEVEL_ORDER[oracle_level]
                 underclaim = LEVEL_ORDER[lv] < LEVEL_ORDER[oracle_level]
+                if bool(overclaim):
+                    reasons.append(f"overclaim: contract.level={lv} > oracle={oracle_level}")
+                if bool(underclaim):
+                    reasons.append(f"underclaim: contract.level={lv} < oracle={oracle_level}")
                 anchors = evidence.get("anchors") if isinstance(evidence.get("anchors"), dict) else {}
                 anchor_errs = _anchor_errors_linalg(mlir, lv, anchors)
                 reasons.extend(anchor_errs)
                 consistency_ok = (not anchor_errs) if lv == "FULL" else True
                 abstention_ok = (oracle_level == "FULL") or (lv != "FULL")
+                if not abstention_ok:
+                    reasons.append(f"abstention_fail: oracle={oracle_level} but contract.level={lv}")
                 assumption_precision_ok, ap_errs = _assumption_precision(contract, oracle_gaps)
                 reasons.extend(ap_errs)
         else:
@@ -876,8 +889,12 @@ def _run_linalg_once(
                 "ok": ok,
                 "ir_ok": ir_ok,
                 "contract_ok": contract_ok,
+                "consistency_ok": consistency_ok,
+                "abstention_ok": abstention_ok,
+                "assumption_precision_ok": assumption_precision_ok,
                 "contract_level": contract_level,
                 "oracle_level": oracle_level,
+                "oracle_gaps": list(oracle_gaps),
                 "overclaim": overclaim,
                 "underclaim": underclaim,
                 "reasons": list(reasons[:12]),
