@@ -48,6 +48,41 @@ def _latest_file(dir_path: Path, pattern: str) -> Path | None:
     return cand[-1]
 
 
+def _latest_e6_2_coverage(e6_dir: Path) -> Path | None:
+    """
+    Prefer a *full* E6.2 coverage run for paper exports.
+
+    E6 directories often contain many debug/smoke/subset runs; picking by mtime
+    alone is brittle and can accidentally export a partial run as the paper
+    result.
+    """
+    cand = [p for p in e6_dir.glob("e6_2_contract_calibration*.json") if p.is_file()]
+    if not cand:
+        return None
+    cand.sort(key=lambda p: (p.stat().st_mtime, str(p)))
+    best: Path | None = None
+    best_n = -1
+    for p in cand:
+        try:
+            obj = _load_json(p)
+        except Exception:
+            continue
+        if str(obj.get("experiment") or "") != "E6_2_contract_calibration":
+            continue
+        if str(obj.get("suite") or "") != "coverage":
+            continue
+        n = len(list(obj.get("results") or []))
+        # Full CUDA coverage with (full,no_mask,no_anchors) and (intentir,linalg)
+        # is typically 32 * 3 * 2 = 192 samples. Use a loose threshold to avoid
+        # exporting tiny subset/debug runs.
+        if n < 150:
+            continue
+        if n > best_n:
+            best = p
+            best_n = n
+    return best or cand[-1]
+
+
 def _geom_mean(xs: list[float]) -> float | None:
     xs = [float(x) for x in xs if isinstance(x, (int, float)) and float(x) > 0]
     if not xs:
@@ -549,7 +584,7 @@ def main() -> None:
 
     # E6: IR suitability for LLM lifting under uncertainty.
     # Prefer the newer E6.2 contract-calibration experiment (fairer than E6.1).
-    e6_src = _latest_file(e6_dir, "e6_2_contract_calibration*.json") or _latest_file(e6_dir, "e6_ir_usability*.json")
+    e6_src = _latest_e6_2_coverage(e6_dir) or _latest_file(e6_dir, "e6_ir_usability*.json")
     e6_obj = _load_json(e6_src) if (e6_src and e6_src.exists()) else {}
     e6_summary = e6_obj.get("summary")
     if str(e6_obj.get("experiment") or "").startswith("E6_2_contract_calibration"):
