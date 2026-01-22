@@ -77,7 +77,8 @@ def _latest_e6_2_coverage(e6_dir: Path) -> Path | None:
         # exporting tiny subset/debug runs.
         if n < 150:
             continue
-        if n > best_n:
+        # Prefer the largest run; break ties by recency (cand is sorted by mtime).
+        if n > best_n or (n == best_n):
             best = p
             best_n = n
     return best or cand[-1]
