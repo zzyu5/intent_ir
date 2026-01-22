@@ -48,7 +48,7 @@ from intent_ir.ir.ir_types import IntentFunction  # noqa: E402
 from intent_ir.llm import DEFAULT_MODEL, LLMClientError, chat_completion, parse_json_block, strip_code_fence  # noqa: E402
 from intent_ir.parser import LLMJsonParseError, parse_candidate_json  # noqa: E402
 from pipeline.interfaces import KernelArtifactBundle, KernelDescriptor  # noqa: E402
-from verify.ir_formats import validate_mlir_linalg_text_lenient  # noqa: E402
+from verify.ir_formats import validate_mlir_linalg_text_contract_grade, validate_mlir_linalg_text_lenient  # noqa: E402
 
 
 LEVEL_ORDER: dict[str, int] = {"OUT_OF_SCOPE": 0, "PARTIAL": 1, "FULL": 2}
@@ -256,14 +256,18 @@ def _validate_contract_obj(obj: Any) -> List[str]:
         return ["contract.level=FULL requires empty assumptions"]
     if lvl == "PARTIAL" and not assumptions:
         return ["contract.level=PARTIAL requires non-empty assumptions"]
+    if lvl == "OUT_OF_SCOPE" and not assumptions:
+        return ["contract.level=OUT_OF_SCOPE requires non-empty assumptions"]
     gaps = obj.get("evidence_gaps")
     if gaps is None:
         return ["contract.evidence_gaps missing"]
     if not isinstance(gaps, list) or not all(isinstance(x, str) for x in gaps):
         return ["contract.evidence_gaps must be a list of strings"]
     claims = obj.get("claims")
-    if claims is not None and not isinstance(claims, dict):
-        return ["contract.claims must be an object if provided"]
+    if claims is None:
+        return ["contract.claims missing"]
+    if not isinstance(claims, dict):
+        return ["contract.claims must be an object"]
     return []
 
 
@@ -318,17 +322,96 @@ def _anchor_errors_linalg(mlir_text: str, claimed_level: str, anchors: Dict[str,
         return []
     t = str(mlir_text)
     errs: List[str] = []
+
+    def _has_reduction_generic(*, min_ins: int) -> bool:
+        for m in re.finditer(r"linalg\.generic\b", t):
+            win = t[m.start() : min(len(t), m.start() + 6000)]
+            if '"reduction"' not in win:
+                continue
+            mm = re.search(r"ins\((.*?)\)\s*outs\(", win, re.S)
+            if not mm:
+                continue
+            n_ins = len(re.findall(r"%[A-Za-z_][A-Za-z0-9_]*", mm.group(1)))
+            if n_ins >= int(min_ins):
+                return True
+        return False
+
     if bool(anchors.get("has_dot")):
-        if "linalg.matmul" not in t and "matmul" not in t:
-            errs.append("missing matmul anchor for evidence.has_dot")
+        has_matmul = "linalg.matmul" in t
+        has_matmul_like_generic = _has_reduction_generic(min_ins=2)
+        if not (has_matmul or has_matmul_like_generic):
+            errs.append("missing matmul anchor for evidence.has_dot (need linalg.matmul or reduction linalg.generic with >=2 inputs)")
     if bool(anchors.get("has_reduce")):
-        # Be lenient: accept either explicit iterator_types reduction or a `reduce` token.
-        has_reduce = ('"reduction"' in t) or ("reduce" in t)
+        has_reduce = _has_reduction_generic(min_ins=1) or ("linalg.reduce" in t)
         if not has_reduce:
-            errs.append("missing reduction anchor for evidence.has_reduce")
+            errs.append('missing reduction anchor for evidence.has_reduce (need linalg.generic with "reduction" iterator_types)')
     if not bool(anchors.get("has_dot")) and not bool(anchors.get("has_reduce")):
         if "linalg." not in t:
             errs.append("missing any linalg.* op under FULL claim")
+    return errs
+
+
+def _binding_errors_intentir(intent: IntentFunction, claimed_level: str, anchors: Dict[str, Any], contract: Dict[str, Any]) -> List[str]:
+    """
+    Contract↔IR binding checks (representation-sensitive) for FULL claims.
+
+    The goal is to stress the *coordination burden*:
+      - IntentIR embeds the contract inside the same structured object.
+      - Linalg uses a sidecar contract; binding is easier to drift.
+    """
+    if str(claimed_level) != "FULL":
+        return []
+    claims = contract.get("claims")
+    if not isinstance(claims, dict):
+        return ["contract.claims missing or not an object under FULL claim"]
+
+    ops = list(intent.ops or [])
+    errs: List[str] = []
+    if bool(anchors.get("has_dot")):
+        w = claims.get("dot_witness")
+        if not isinstance(w, str) or not w.strip():
+            errs.append("missing contract.claims.dot_witness for evidence.has_dot")
+        else:
+            if not any(str(op.op) == "matmul" and str(op.output) == str(w) for op in ops):
+                errs.append("contract.claims.dot_witness not bound to any matmul op output")
+
+    if bool(anchors.get("has_reduce")):
+        w = claims.get("reduce_witness")
+        if not isinstance(w, str) or not w.strip():
+            errs.append("missing contract.claims.reduce_witness for evidence.has_reduce")
+        else:
+            if not any((str(op.op).startswith("reduce_") or str(op.op) == "softmax") and str(op.output) == str(w) for op in ops):
+                errs.append("contract.claims.reduce_witness not bound to any reduce_* (or softmax) op output")
+    return errs
+
+
+def _binding_errors_linalg(mlir_text: str, claimed_level: str, anchors: Dict[str, Any], contract: Dict[str, Any]) -> List[str]:
+    if str(claimed_level) != "FULL":
+        return []
+    claims = contract.get("claims")
+    if not isinstance(claims, dict):
+        return ["contract.claims missing or not an object under FULL claim"]
+
+    t = str(mlir_text)
+    errs: List[str] = []
+
+    def _check_ssa_witness(key: str, allow_ops: tuple[str, ...]) -> None:
+        w = claims.get(key)
+        if not isinstance(w, str) or not w.strip():
+            errs.append(f"missing contract.claims.{key} under FULL claim")
+            return
+        w2 = str(w).strip()
+        if not re.fullmatch(r"%[A-Za-z_][A-Za-z0-9_]*", w2):
+            errs.append(f"contract.claims.{key} must be an SSA name like %0/%x (got={w2!r})")
+            return
+        allow_pat = "|".join([re.escape(x) for x in allow_ops])
+        if not re.search(rf"(^|\n)\s*{re.escape(w2)}\s*=\s*linalg\.({allow_pat})\b", t, re.M):
+            errs.append(f"contract.claims.{key} not bound to any linalg.{allow_pat} result SSA")
+
+    if bool(anchors.get("has_dot")):
+        _check_ssa_witness("dot_witness", ("matmul", "generic"))
+    if bool(anchors.get("has_reduce")):
+        _check_ssa_witness("reduce_witness", ("generic",))
     return errs
 
 
@@ -350,10 +433,14 @@ def _messages_for_intentir(*, desc: KernelDescriptor, evidence: Dict[str, Any], 
             "- Embed contract at top-level key `contract` (an object). Do NOT put contract under meta.*.",
             "",
             "Contract schema (contract):",
-            "- Required keys: schema_version (string), level (FULL/PARTIAL/OUT_OF_SCOPE), assumptions (list of strings), evidence_gaps (list of strings)",
+            "- Required keys: schema_version (string), level (FULL/PARTIAL/OUT_OF_SCOPE), assumptions (list of strings), evidence_gaps (list of strings), claims (object)",
             "- level=FULL => assumptions MUST be empty.",
             "- level=PARTIAL => assumptions MUST be non-empty.",
             "- level=OUT_OF_SCOPE => include a short assumption explaining why.",
+            "",
+            "Contract↔IR binding (IMPORTANT for level=FULL):",
+            "- If EVIDENCE.anchors.has_dot=true: set contract.claims.dot_witness to the output name of the matmul op.",
+            "- If EVIDENCE.anchors.has_reduce=true: set contract.claims.reduce_witness to the output name of the reduce_* (or softmax) op.",
             "",
             "Minimal example (shape symbols are allowed):",
             "{",
@@ -406,18 +493,23 @@ def _messages_for_linalg(*, desc: KernelDescriptor, evidence: Dict[str, Any], fe
             "- Output plain text only (no markdown fences).",
             "- First output the MLIR module text.",
             "- Then output a marker line: CONTRACT_JSON:",
-            "- After CONTRACT_JSON:, output STRICT JSON for the contract object (no extra keys).",
+            "- After CONTRACT_JSON:, output STRICT JSON for the contract object.",
             "- The MLIR MUST contain at least one linalg.* op (prefer linalg.generic or linalg.matmul).",
             "",
             "Contract JSON schema:",
-            "- Required keys: schema_version (string), level (FULL/PARTIAL/OUT_OF_SCOPE), assumptions (list of strings), evidence_gaps (list of strings)",
+            "- Required keys: schema_version (string), level (FULL/PARTIAL/OUT_OF_SCOPE), assumptions (list of strings), evidence_gaps (list of strings), claims (object)",
             "- level=FULL => assumptions MUST be empty.",
             "- level=PARTIAL => assumptions MUST be non-empty.",
             "",
+            "Contract↔IR binding (IMPORTANT for level=FULL):",
+            "- If EVIDENCE.anchors.has_dot=true: set contract.claims.dot_witness to the SSA name (e.g., %0) of the linalg.matmul (or matmul-like linalg.generic) result.",
+            "- If EVIDENCE.anchors.has_reduce=true: set contract.claims.reduce_witness to the SSA name (e.g., %1) of a reduction linalg.generic result.",
+            "",
             "Minimal MLIR skeleton (you may simplify types/dims):",
+            "#map0 = affine_map<(i,j) -> (i,j)>",
             "module {",
-            "  func.func @kernel(%arg0: tensor<?x?xf32>) -> tensor<?x?xf32> {",
-            "    %0 = linalg.generic ins(%arg0 : tensor<?x?xf32>) outs(%arg0 : tensor<?x?xf32>) {",
+            "  func.func @kernel(%arg0: tensor<?x?xf32>, %out: tensor<?x?xf32>) -> tensor<?x?xf32> {",
+            '    %0 = linalg.generic {indexing_maps = [#map0, #map0], iterator_types = ["parallel","parallel"]} ins(%arg0 : tensor<?x?xf32>) outs(%out : tensor<?x?xf32>) {',
             '      ^bb0(%a: f32, %b: f32):',
             "        linalg.yield %a : f32",
             "    } -> tensor<?x?xf32>",
@@ -494,6 +586,7 @@ class SampleResult:
     ir_ok: bool
     contract_ok: bool
     consistency_ok: bool
+    binding_ok: bool
     abstention_ok: bool
     assumption_precision_ok: bool
     reasons: List[str]
@@ -514,6 +607,7 @@ class SampleResult:
             "ir_ok": self.ir_ok,
             "contract_ok": self.contract_ok,
             "consistency_ok": self.consistency_ok,
+            "binding_ok": self.binding_ok,
             "abstention_ok": self.abstention_ok,
             "assumption_precision_ok": self.assumption_precision_ok,
             "reasons": list(self.reasons),
@@ -592,6 +686,7 @@ def _run_intentir_once(
         ir_ok = False
         contract_ok = False
         consistency_ok = False
+        binding_ok = False
         abstention_ok = False
         assumption_precision_ok = False
         contract_level = None
@@ -662,13 +757,18 @@ def _run_intentir_once(
                 if lv == "FULL":
                     if ir_ok and intent is not None:
                         anchor_errs = _anchor_errors_intentir(intent, lv, anchors)
+                        bind_errs = _binding_errors_intentir(intent, lv, anchors, contract_src)
                         reasons.extend(anchor_errs)
+                        reasons.extend(bind_errs)
                         consistency_ok = not anchor_errs
+                        binding_ok = not bind_errs
                     else:
                         consistency_ok = False
+                        binding_ok = False
                         reasons.append("FULL contract but IntentIR failed to validate")
                 else:
                     consistency_ok = True
+                    binding_ok = True
                 abstention_ok = (oracle_level == "FULL") or (lv != "FULL")
                 if not abstention_ok:
                     reasons.append(f"abstention_fail: oracle={oracle_level} but contract.level={lv}")
@@ -681,6 +781,7 @@ def _run_intentir_once(
             and abstention_ok
             and (not bool(overclaim))
             and consistency_ok
+            and (binding_ok if needs_ir else True)
             and assumption_precision_ok
             and ((ir_ok) if needs_ir else True)
         )
@@ -691,6 +792,7 @@ def _run_intentir_once(
                 "ir_ok": ir_ok,
                 "contract_ok": contract_ok,
                 "consistency_ok": consistency_ok,
+                "binding_ok": binding_ok,
                 "abstention_ok": abstention_ok,
                 "assumption_precision_ok": assumption_precision_ok,
                 "contract_level": contract_level,
@@ -719,6 +821,7 @@ def _run_intentir_once(
                     ir_ok=ir_ok,
                     contract_ok=contract_ok,
                     consistency_ok=consistency_ok,
+                    binding_ok=binding_ok,
                     abstention_ok=abstention_ok,
                     assumption_precision_ok=assumption_precision_ok,
                     reasons=[],
@@ -758,6 +861,7 @@ def _run_intentir_once(
             ir_ok=bool(last.get("ir_ok")) if isinstance(last, dict) else False,
             contract_ok=bool(last.get("contract_ok")) if isinstance(last, dict) else False,
             consistency_ok=bool(last.get("consistency_ok")) if isinstance(last, dict) else False,
+            binding_ok=bool(last.get("binding_ok")) if isinstance(last, dict) else False,
             abstention_ok=bool(last.get("abstention_ok")) if isinstance(last, dict) else False,
             assumption_precision_ok=bool(last.get("assumption_precision_ok")) if isinstance(last, dict) else False,
             reasons=list(last.get("reasons") or []) if isinstance(last, dict) else ["no attempts"],
@@ -833,21 +937,16 @@ def _run_linalg_once(
         ir_ok = False
         contract_ok = False
         consistency_ok = False
+        binding_ok = False
         abstention_ok = False
         assumption_precision_ok = False
+        contract_level = None
+        overclaim = None
+        underclaim = None
 
         mlir, contract, split_errs = _split_linalg_and_contract(raw)
         if split_errs:
             reasons.extend(split_errs)
-
-        if mlir.strip():
-            mlir_errs = validate_mlir_linalg_text_lenient(mlir)
-            if mlir_errs:
-                reasons.extend(list(mlir_errs[:6]))
-            else:
-                ir_ok = True
-        else:
-            reasons.append("empty MLIR text")
 
         if isinstance(contract, dict):
             contract_level = str(contract.get("level")) if isinstance(contract.get("level"), str) else None
@@ -864,8 +963,11 @@ def _run_linalg_once(
                     reasons.append(f"underclaim: contract.level={lv} < oracle={oracle_level}")
                 anchors = evidence.get("anchors") if isinstance(evidence.get("anchors"), dict) else {}
                 anchor_errs = _anchor_errors_linalg(mlir, lv, anchors)
+                bind_errs = _binding_errors_linalg(mlir, lv, anchors, contract)
                 reasons.extend(anchor_errs)
+                reasons.extend(bind_errs)
                 consistency_ok = (not anchor_errs) if lv == "FULL" else True
+                binding_ok = (not bind_errs) if lv == "FULL" else True
                 abstention_ok = (oracle_level == "FULL") or (lv != "FULL")
                 if not abstention_ok:
                     reasons.append(f"abstention_fail: oracle={oracle_level} but contract.level={lv}")
@@ -874,12 +976,25 @@ def _run_linalg_once(
         else:
             reasons.append("missing contract object")
 
+        if mlir.strip():
+            if str(contract_level) == "FULL":
+                mlir_errs = validate_mlir_linalg_text_contract_grade(mlir, io_spec=desc.io_spec)
+            else:
+                mlir_errs = validate_mlir_linalg_text_lenient(mlir)
+            if mlir_errs:
+                reasons.extend(list(mlir_errs[:6]))
+            else:
+                ir_ok = True
+        else:
+            reasons.append("empty MLIR text")
+
         needs_ir = bool(contract_level == "FULL")
         ok = bool(
             contract_ok
             and abstention_ok
             and (not bool(overclaim))
             and consistency_ok
+            and (binding_ok if needs_ir else True)
             and assumption_precision_ok
             and ((ir_ok) if needs_ir else True)
         )
@@ -890,6 +1005,7 @@ def _run_linalg_once(
                 "ir_ok": ir_ok,
                 "contract_ok": contract_ok,
                 "consistency_ok": consistency_ok,
+                "binding_ok": binding_ok,
                 "abstention_ok": abstention_ok,
                 "assumption_precision_ok": assumption_precision_ok,
                 "contract_level": contract_level,
@@ -918,6 +1034,7 @@ def _run_linalg_once(
                     ir_ok=ir_ok,
                     contract_ok=contract_ok,
                     consistency_ok=consistency_ok,
+                    binding_ok=binding_ok,
                     abstention_ok=abstention_ok,
                     assumption_precision_ok=assumption_precision_ok,
                     reasons=[],
@@ -957,6 +1074,7 @@ def _run_linalg_once(
             ir_ok=bool(last.get("ir_ok")) if isinstance(last, dict) else False,
             contract_ok=bool(last.get("contract_ok")) if isinstance(last, dict) else False,
             consistency_ok=bool(last.get("consistency_ok")) if isinstance(last, dict) else False,
+            binding_ok=bool(last.get("binding_ok")) if isinstance(last, dict) else False,
             abstention_ok=bool(last.get("abstention_ok")) if isinstance(last, dict) else False,
             assumption_precision_ok=bool(last.get("assumption_precision_ok")) if isinstance(last, dict) else False,
             reasons=list(last.get("reasons") or []) if isinstance(last, dict) else ["no attempts"],
@@ -984,12 +1102,13 @@ def _summarize(results: List[SampleResult]) -> Dict[str, Any]:
         ok = sum(1 for x in items if x.ok)
         over = sum(1 for x in items if x.overclaim is True)
         under = sum(1 for x in items if x.underclaim is True)
+        bind_ok = sum(1 for x in items if x.binding_ok)
         full = sum(1 for x in items if x.contract_level == "FULL")
         full_false = sum(
             1
             for x in items
             if x.contract_level == "FULL"
-            and (x.overclaim is True or (not x.consistency_ok) or (not x.ir_ok) or (not x.contract_ok))
+            and (x.overclaim is True or (not x.consistency_ok) or (not x.binding_ok) or (not x.ir_ok) or (not x.contract_ok))
         )
         partial = sum(1 for x in items if x.contract_level == "PARTIAL")
         abst_ok = sum(1 for x in items if x.abstention_ok)
@@ -1002,6 +1121,8 @@ def _summarize(results: List[SampleResult]) -> Dict[str, Any]:
             "overclaim_rate": (float(over) / float(n)) if n else None,
             "underclaim": int(under),
             "underclaim_rate": (float(under) / float(n)) if n else None,
+            "binding_ok": int(bind_ok),
+            "binding_ok_rate": (float(bind_ok) / float(n)) if n else None,
             "full_claims": int(full),
             "full_false_accept": int(full_false),
             "full_false_accept_rate": (float(full_false) / float(full)) if full else None,
@@ -1095,6 +1216,7 @@ def main() -> None:
                         ir_ok=bool(it.get("ir_ok")),
                         contract_ok=bool(it.get("contract_ok")),
                         consistency_ok=bool(it.get("consistency_ok")),
+                        binding_ok=bool(it.get("binding_ok")) if it.get("binding_ok") is not None else False,
                         abstention_ok=bool(it.get("abstention_ok")),
                         assumption_precision_ok=bool(it.get("assumption_precision_ok")),
                         reasons=list(it.get("reasons") or []),

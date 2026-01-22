@@ -101,6 +101,7 @@ def _e6cc_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     ok = int(sum(1 for r in rows if bool(r.get("ok"))))
     over = int(sum(1 for r in rows if bool(r.get("overclaim"))))
     under = int(sum(1 for r in rows if bool(r.get("underclaim"))))
+    bind_ok = int(sum(1 for r in rows if bool(r.get("binding_ok"))))
     full = int(sum(1 for r in rows if str(r.get("contract_level")) == "FULL"))
     partial = int(sum(1 for r in rows if str(r.get("contract_level")) == "PARTIAL"))
     oos = int(sum(1 for r in rows if str(r.get("contract_level")) == "OUT_OF_SCOPE"))
@@ -127,6 +128,8 @@ def _e6cc_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "overclaim_rate": _rate(over, n),
         "underclaim": under,
         "underclaim_rate": _rate(under, n),
+        "binding_ok": bind_ok,
+        "binding_ok_rate": _rate(bind_ok, n),
         "full_claims": full,
         "partial_claims": partial,
         "oos_claims": oos,

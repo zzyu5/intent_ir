@@ -302,6 +302,123 @@ def validate_mlir_linalg_text_lenient(text: str) -> List[str]:
     return errs
 
 
+def _extract_affine_map_defs(text: str) -> dict[str, tuple[int, int]]:
+    """
+    Extract simple `#mapX = affine_map<(...) -> (...)>` definitions.
+
+    This is *not* a full MLIR parser; it's a heuristic sufficient for experiments.
+    """
+    defs: dict[str, tuple[int, int]] = {}
+    t = str(text)
+    for m in re.finditer(r"(#map[0-9]+)\s*=\s*affine_map<\(([^)]*)\)\s*->\s*\(([^)]*)\)>", t):
+        name = str(m.group(1))
+        dom = [x.strip() for x in str(m.group(2)).split(",") if x.strip()]
+        rng = [x.strip() for x in str(m.group(3)).split(",") if x.strip()]
+        defs[name] = (int(len(dom)), int(len(rng)))
+    return defs
+
+
+def validate_mlir_linalg_text_contract_grade(text: str, *, io_spec: Any | None = None) -> List[str]:
+    """
+    Contract-grade (but still lightweight) MLIR(Linalg) checks used by E6.2.
+
+    Design goals:
+      - Stricter than `validate_mlir_linalg_text_lenient` (must be actionable).
+      - Less opinionated than `validate_mlir_linalg_text` (allow `#map0` refs).
+      - Deterministic; no dependency on a full MLIR toolchain.
+    """
+    t = strip_code_fence(str(text or "")).strip()
+    if not t:
+        return ["empty output"]
+
+    errs: List[str] = []
+    errs += _balanced_delims(t)
+
+    if "module" not in t:
+        errs.append("missing 'module'")
+    if "func.func" not in t and "func @" not in t:
+        errs.append("missing 'func.func' or 'func @'")
+    if "linalg." not in t:
+        errs.append("missing any 'linalg.' op")
+
+    bad_markers = ["<TODO", "TODO", "…", "...", "PLACEHOLDER", "fill_me", "TBD"]
+    if any(x in t for x in bad_markers):
+        errs.append("contains placeholder markers")
+    if "```" in t:
+        errs.append("contains markdown code fences")
+
+    # Signature ranks should cover io_spec ranks (when available).
+    exp_ranks = _io_spec_tensor_ranks(io_spec)
+    if exp_ranks:
+        got_ranks = _extract_tensor_type_ranks_from_mlir(t)
+        if len(got_ranks) < len(exp_ranks):
+            errs.append(f"tensor type count mismatch: got={len(got_ranks)} expected_at_least={len(exp_ranks)}")
+
+    # For generic ops, require actionable structural attributes.
+    map_defs = _extract_affine_map_defs(t)
+    stmts = _iter_linalg_generic_windows(t)
+    if not stmts:
+        # `linalg.matmul` is acceptable as a minimal anchor; don't force generic.
+        if "linalg.matmul" not in t:
+            errs.append("missing any 'linalg.generic' or 'linalg.matmul' op")
+        return errs
+
+    for idx, stmt in enumerate(stmts):
+        prefix = f"linalg.generic[{idx}] "
+        if "indexing_maps" not in stmt:
+            errs.append(prefix + "missing indexing_maps attribute")
+            continue
+        if "iterator_types" not in stmt:
+            errs.append(prefix + "missing iterator_types attribute")
+            continue
+        if "linalg.yield" not in stmt:
+            errs.append(prefix + "missing linalg.yield")
+
+        n_ins, n_outs = _count_linalg_operands_in_sig(stmt)
+        n_operands = int(n_ins + n_outs)
+        if n_operands <= 0:
+            errs.append(prefix + "cannot determine ins/outs operand count")
+            continue
+
+        m_maps = re.search(r"indexing_maps\s*=\s*\[(.*?)\]", stmt, re.S)
+        if not m_maps:
+            errs.append(prefix + "cannot parse indexing_maps=[...] list")
+            continue
+        maps_blob = m_maps.group(1)
+        inline_maps = _extract_inline_affine_maps(maps_blob)
+        ref_maps = [str(x) for x in re.findall(r"#map[0-9]+", maps_blob)]
+        n_maps = int(len(inline_maps) + len(ref_maps))
+        if n_maps != n_operands:
+            errs.append(prefix + f"indexing_maps count mismatch: got={n_maps} expected={n_operands} (ins={n_ins}, outs={n_outs})")
+
+        m_it = re.search(r"iterator_types\s*=\s*\[(.*?)\]", stmt, re.S)
+        if not m_it:
+            errs.append(prefix + "cannot parse iterator_types=[...] list")
+            continue
+        iters = _extract_iterator_types(m_it.group(1))
+        if not iters:
+            errs.append(prefix + "iterator_types list empty or missing known iterator strings")
+            continue
+
+        # Domain-rank agreement check (best-effort).
+        dom_ranks: List[int] = [int(d) for (d, _u) in inline_maps]
+        for name in ref_maps:
+            if name not in map_defs:
+                errs.append(prefix + f"missing affine_map definition for {name}")
+                continue
+            dom_ranks.append(int(map_defs[name][0]))
+
+        if dom_ranks:
+            if len(set(dom_ranks)) != 1:
+                errs.append(prefix + f"affine_map domain ranks disagree: {sorted(set(dom_ranks))}")
+            else:
+                dom_rank = int(dom_ranks[0])
+                if int(len(iters)) != int(dom_rank):
+                    errs.append(prefix + f"iterator_types length mismatch: got={len(iters)} expected={dom_rank} (from affine_map domain)")
+
+    return errs
+
+
 @dataclass(frozen=True)
 class TileDslValidation:
     ok: bool
@@ -370,4 +487,4 @@ def validate_tile_dsl_json(obj: Any, *, io_spec: Any | None = None) -> List[str]
     return errs
 
 
-__all__ = ["validate_mlir_linalg_text", "validate_tile_dsl_json"]
+__all__ = ["validate_mlir_linalg_text", "validate_mlir_linalg_text_contract_grade", "validate_tile_dsl_json"]
