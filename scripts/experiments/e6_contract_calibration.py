@@ -308,8 +308,13 @@ def _anchor_errors_intentir(intent: IntentFunction, claimed_level: str, anchors:
     errs: List[str] = []
     if bool(anchors.get("has_dot")) and "matmul" not in ops:
         errs.append("missing matmul anchor for evidence.has_dot")
-    if bool(anchors.get("has_reduce")) and not (any(o.startswith("reduce_") for o in ops) or "softmax" in ops):
-        errs.append("missing reduce_* (or softmax) for evidence.has_reduce")
+    if bool(anchors.get("has_reduce")):
+        # Treat matmul as a reduction only when has_dot is also true (GEMM-like).
+        has_reduce_like = any(o.startswith("reduce_") for o in ops) or ("softmax" in ops)
+        if bool(anchors.get("has_dot")):
+            has_reduce_like = bool(has_reduce_like or ("matmul" in ops))
+        if not has_reduce_like:
+            errs.append("missing reduce_* (or softmax) for evidence.has_reduce")
     # If evidence provides neither dot nor reduce, still require non-empty semantics.
     if not bool(anchors.get("has_dot")) and not bool(anchors.get("has_reduce")):
         if not ops:
@@ -342,7 +347,8 @@ def _anchor_errors_linalg(mlir_text: str, claimed_level: str, anchors: Dict[str,
         if not (has_matmul or has_matmul_like_generic):
             errs.append("missing matmul anchor for evidence.has_dot (need linalg.matmul or reduction linalg.generic with >=2 inputs)")
     if bool(anchors.get("has_reduce")):
-        has_reduce = _has_reduction_generic(min_ins=1) or ("linalg.reduce" in t)
+        # Accept matmul as a reduction anchor (GEMM-like kernels).
+        has_reduce = _has_reduction_generic(min_ins=1) or ("linalg.reduce" in t) or ("linalg.matmul" in t)
         if not has_reduce:
             errs.append('missing reduction anchor for evidence.has_reduce (need linalg.generic with "reduction" iterator_types)')
     if not bool(anchors.get("has_dot")) and not bool(anchors.get("has_reduce")):
@@ -380,7 +386,15 @@ def _binding_errors_intentir(intent: IntentFunction, claimed_level: str, anchors
         if not isinstance(w, str) or not w.strip():
             errs.append("missing contract.claims.reduce_witness for evidence.has_reduce")
         else:
-            if not any((str(op.op).startswith("reduce_") or str(op.op) == "softmax") and str(op.output) == str(w) for op in ops):
+            allow_reduce_ops = ("reduce_", "softmax")
+            ok = any(
+                (str(op.op).startswith(allow_reduce_ops[0]) or str(op.op) == allow_reduce_ops[1]) and str(op.output) == str(w)
+                for op in ops
+            )
+            # GEMM-like: allow reduce_witness to bind to matmul output (matmul is a reduction over K).
+            if not ok and bool(anchors.get("has_dot")):
+                ok = any(str(op.op) == "matmul" and str(op.output) == str(w) for op in ops)
+            if not ok:
                 errs.append("contract.claims.reduce_witness not bound to any reduce_* (or softmax) op output")
     return errs
 
@@ -411,7 +425,9 @@ def _binding_errors_linalg(mlir_text: str, claimed_level: str, anchors: Dict[str
     if bool(anchors.get("has_dot")):
         _check_ssa_witness("dot_witness", ("matmul", "generic"))
     if bool(anchors.get("has_reduce")):
-        _check_ssa_witness("reduce_witness", ("generic",))
+        # Allow reduce witness to bind to matmul result for GEMM-like kernels.
+        allow = ("generic", "matmul") if bool(anchors.get("has_dot")) else ("generic",)
+        _check_ssa_witness("reduce_witness", allow)
     return errs
 
 
@@ -426,10 +442,12 @@ def _messages_for_intentir(*, desc: KernelDescriptor, evidence: Dict[str, Any], 
             "- The JSON MUST be a valid IntentIR function object with keys: name, tensors, ops, outputs, contract.",
             "- ops MUST be a list of objects; each op MUST have: op (string), inputs (list[str]), output (string), optional attrs (object).",
             "- Use high-level IntentIR ops (matmul, reduce_*, softmax, exp, add/sub/mul/div, ne/lt/le/gt/ge/and/or, rsqrt, where, broadcast_in_dim, gather, reshape, const).",
+            "- Macro ops are allowed when appropriate (e.g., upsample_bicubic2d_aa) and will be expanded later.",
             "- Do NOT emit low-level pseudo-ops like load/store/ptr/arithmetic SSA.",
             "- Do NOT use op name 'compare' (use ne/lt/le/gt/ge instead).",
             "- Use `const` to model scalar literals (e.g., 0.0) as SSA tensors when needed for comparisons.",
-            "- Prefer reshape/transpose/broadcast_in_dim for layout changes; avoid gather unless you also create explicit index tensors (e.g., via iota).",
+            "- Prefer reshape/transpose/broadcast_in_dim for layout changes.",
+            "- IMPORTANT: Do NOT use gather unless you also create explicit index tensors (e.g., via iota). If you need upsample/resize semantics, prefer the macro op upsample_bicubic2d_aa instead of ad-hoc gather chains.",
             "- Embed contract at top-level key `contract` (an object). Do NOT put contract under meta.*.",
             "",
             "Contract schema (contract):",
