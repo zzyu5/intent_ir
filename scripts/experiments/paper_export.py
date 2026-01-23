@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -89,6 +90,63 @@ def _geom_mean(xs: list[float]) -> float | None:
     if not xs:
         return None
     return math.exp(sum(math.log(x) for x in xs) / float(len(xs)))
+
+
+def _parse_ai_bench_report_t1_t16(path: Path) -> dict[str, dict[str, float]]:
+    """
+    Parse AI-Benchmark's markdown summary and extract per-kernel total times for 1T/16T.
+
+    We intentionally parse the "性能排行榜（按 16 线程加速比）" table, which contains one
+    row per kernel with columns "1线程时间" and "16线程时间".
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return {}
+
+    out: dict[str, dict[str, float]] = {}
+    for line in text.splitlines():
+        # Example:
+        # | 🥇 1 | **matmul** | **24.97x** | 2.149s | 0.086s | 最佳扩展性 |
+        m = re.match(
+            r"^\|\s*[^|]*\|\s*\*\*(?P<name>[A-Za-z0-9_]+)\*\*\s*\|\s*\*\*?[0-9]*\.?[0-9]+x\*\*?\s*\|\s*(?P<t1>[0-9]*\.?[0-9]+)s\s*\|\s*(?P<t16>[0-9]*\.?[0-9]+)s\s*\|",
+            line.strip(),
+        )
+        if not m:
+            continue
+        name = str(m.group("name"))
+        try:
+            t1 = float(m.group("t1"))
+            t16 = float(m.group("t16"))
+        except Exception:
+            continue
+        out[name] = {"t1_total_s": t1, "t16_total_s": t16}
+    return out
+
+
+def _extract_intentir_bench_seconds_per_iter(remote: Any) -> float | None:
+    """
+    Extract seconds-per-iter from an rvv_remote_run bench-only stdout blob:
+      INTENTIR_BENCH {"ns_per_iter": ...}
+    """
+    if not isinstance(remote, dict):
+        return None
+    stdout = remote.get("stdout")
+    if not isinstance(stdout, str) or not stdout:
+        return None
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("INTENTIR_BENCH "):
+            continue
+        payload = line[len("INTENTIR_BENCH ") :].strip()
+        try:
+            obj = json.loads(payload)
+        except Exception:
+            continue
+        ns = obj.get("ns_per_iter")
+        if isinstance(ns, (int, float)) and float(ns) > 0:
+            return float(ns) / 1e9
+    return None
 
 
 def _e6cc_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -478,50 +536,122 @@ def main() -> None:
         },
     )
 
-    # E5.1: external baseline comparison.
-    e5_1_src = _latest_file(e5_dir, "e5_1_external_ai_benchmark_baseline16_ours16*.json")
-    e5_1_obj = _load_json(e5_1_src) if (e5_1_src and e5_1_src.exists()) else {}
-    e5_1_speedups: list[float] = []
-    e5_1_min = None
-    e5_1_max = None
-    e5_1_slower = 0
-    for it in list(e5_1_obj.get("kernels") or []):
-        if not isinstance(it, dict):
-            continue
-        sp = it.get("speedup_ours_over_baseline")
-        if not isinstance(sp, (int, float)) or float(sp) <= 0:
-            continue
-        sp = float(sp)
-        e5_1_speedups.append(sp)
-        if e5_1_min is None or sp < e5_1_min[1]:
-            e5_1_min = (str(it.get("baseline_name") or it.get("kernel") or ""), sp)
-        if e5_1_max is None or sp > e5_1_max[1]:
-            e5_1_max = (str(it.get("baseline_name") or it.get("kernel") or ""), sp)
-        if sp < 1.0:
-            e5_1_slower += 1
+    # E5.1: external baseline comparison (AI-Benchmark, 8 kernels).
+    #
+    # Paper needs both single-thread and multi-thread views. We therefore prefer
+    # the "experiment_a_*" artifacts, which contain our remote bench-only runs
+    # for omp_threads=1 and omp_threads=16.
+    e5_1_mt_src = _latest_file(e5_dir, "experiment_a_baseline16_ours16_v*.json") or _latest_file(e5_dir, "experiment_a_baseline16_ours16.json")
+    e5_1_st_src = _latest_file(e5_dir, "experiment_a_baseline16_ours1_v*.json") or _latest_file(e5_dir, "experiment_a_baseline16_ours1.json")
+    # Fallback for older runs (only 16T).
+    e5_1_old_src = _latest_file(e5_dir, "e5_1_external_ai_benchmark_baseline16_ours16*.json")
+
+    e5_1_mt_obj = _load_json(e5_1_mt_src) if (e5_1_mt_src and e5_1_mt_src.exists()) else {}
+    e5_1_st_obj = _load_json(e5_1_st_src) if (e5_1_st_src and e5_1_st_src.exists()) else {}
+    e5_1_old_obj = _load_json(e5_1_old_src) if (e5_1_old_src and e5_1_old_src.exists()) else {}
+
+    # Resolve baseline report (to extract both 1T and 16T totals).
+    baseline_source = None
+    for obj in [e5_1_mt_obj, e5_1_st_obj, e5_1_old_obj]:
+        b = obj.get("baseline")
+        if isinstance(b, dict) and isinstance(b.get("source"), str) and b.get("source"):
+            baseline_source = Path(str(b.get("source")))
+            break
+    if baseline_source is None:
+        baseline_source = ROOT / "experiment" / "AI-Benchmark" / "COMPLETE_PERFORMANCE_SUMMARY.md"
+    ai_bench_times = _parse_ai_bench_report_t1_t16(baseline_source) if baseline_source.exists() else {}
+
+    def _ours_s_per_iter_by_name(obj: dict[str, Any]) -> dict[str, float]:
+        out: dict[str, float] = {}
+        for it in list(obj.get("kernels") or []):
+            if not isinstance(it, dict):
+                continue
+            name = str(it.get("baseline_name") or it.get("kernel") or "")
+            ours = it.get("ours")
+            remote = (ours or {}).get("remote") if isinstance(ours, dict) else None
+            s = _extract_intentir_bench_seconds_per_iter(remote)
+            if isinstance(s, float) and s > 0:
+                out[name] = float(s)
+        return out
+
+    def _baseline_run_count_by_name(obj: dict[str, Any]) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for it in list(obj.get("kernels") or []):
+            if not isinstance(it, dict):
+                continue
+            name = str(it.get("baseline_name") or it.get("kernel") or "")
+            b = it.get("baseline")
+            rc = (b or {}).get("run_count") if isinstance(b, dict) else None
+            if isinstance(rc, int) and rc > 0:
+                out[name] = int(rc)
+        return out
+
+    ours_t1 = _ours_s_per_iter_by_name(e5_1_st_obj)
+    ours_t16 = _ours_s_per_iter_by_name(e5_1_mt_obj or e5_1_old_obj)
+    run_counts = _baseline_run_count_by_name(e5_1_mt_obj or e5_1_old_obj or e5_1_st_obj)
+
+    per_kernel: list[dict[str, Any]] = []
+    speedups_t1: list[float] = []
+    speedups_t16: list[float] = []
+    slower_t1 = 0
+    slower_t16 = 0
+
+    names = sorted(set(run_counts.keys()) | set(ours_t1.keys()) | set(ours_t16.keys()))
+    for name in names:
+        rc = run_counts.get(name)
+        bt = ai_bench_times.get(name, {}) if isinstance(ai_bench_times, dict) else {}
+        b1_total = bt.get("t1_total_s")
+        b16_total = bt.get("t16_total_s")
+
+        b1 = (float(b1_total) / float(rc)) if isinstance(b1_total, (int, float)) and isinstance(rc, int) and rc > 0 else None
+        b16 = (float(b16_total) / float(rc)) if isinstance(b16_total, (int, float)) and isinstance(rc, int) and rc > 0 else None
+
+        o1 = ours_t1.get(name)
+        o16 = ours_t16.get(name)
+
+        sp1 = (float(b1) / float(o1)) if isinstance(b1, (int, float)) and isinstance(o1, (int, float)) and o1 > 0 else None
+        sp16 = (float(b16) / float(o16)) if isinstance(b16, (int, float)) and isinstance(o16, (int, float)) and o16 > 0 else None
+
+        if isinstance(sp1, float) and sp1 > 0:
+            speedups_t1.append(float(sp1))
+            if sp1 < 1.0:
+                slower_t1 += 1
+        if isinstance(sp16, float) and sp16 > 0:
+            speedups_t16.append(float(sp16))
+            if sp16 < 1.0:
+                slower_t16 += 1
+
+        per_kernel.append(
+            {
+                "name": name,
+                "run_count": rc,
+                "baseline_seconds_per_iter_t1": b1,
+                "baseline_seconds_per_iter_t16": b16,
+                "ours_seconds_per_iter_t1": float(o1) if isinstance(o1, (int, float)) else None,
+                "ours_seconds_per_iter_t16": float(o16) if isinstance(o16, (int, float)) else None,
+                "speedup_ours_over_baseline_t1": sp1,
+                "speedup_ours_over_baseline_t16": sp16,
+            }
+        )
+
     _write_json(
         paths.e5_1,
         {
             "experiment": "E5_1_external_baseline",
             "git_head": head,
-            "source": str(e5_1_src) if e5_1_src else None,
-            "baseline": e5_1_obj.get("baseline"),
-            "ours": e5_1_obj.get("ours"),
-            "summary": {
-                "n": int(len(e5_1_speedups)),
-                "geom_speedup_ours_over_baseline": _geom_mean(e5_1_speedups),
-                "slower_count": int(e5_1_slower),
-                "min": e5_1_min,
-                "max": e5_1_max,
+            "sources": {
+                "ours_t1": str(e5_1_st_src) if e5_1_st_src else None,
+                "ours_t16": str(e5_1_mt_src) if e5_1_mt_src else (str(e5_1_old_src) if e5_1_old_src else None),
+                "baseline_report": str(baseline_source) if baseline_source else None,
             },
-            "per_kernel": [
-                {
-                    "name": str(it.get("baseline_name") or it.get("kernel") or ""),
-                    "speedup_ours_over_baseline": it.get("speedup_ours_over_baseline"),
-                }
-                for it in list(e5_1_obj.get("kernels") or [])
-                if isinstance(it, dict)
-            ],
+            "summary": {
+                "n": int(len(per_kernel)),
+                "geom_speedup_ours_over_baseline_t1": _geom_mean(speedups_t1),
+                "geom_speedup_ours_over_baseline_t16": _geom_mean(speedups_t16),
+                "slower_count_t1": int(slower_t1),
+                "slower_count_t16": int(slower_t16),
+            },
+            "per_kernel": per_kernel,
         },
     )
 

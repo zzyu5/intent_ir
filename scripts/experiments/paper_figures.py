@@ -135,7 +135,9 @@ def fig_e1e3_recoverability(e1: dict[str, Any], e1e3: dict[str, Any], out: Path)
     one_calls = [float(one[fe]["llm_cost"]["api_calls_avg"]) for fe in frontends]
     fb_calls = [float(fb[fe]["llm_cost"]["api_calls_avg"]) for fe in frontends]
 
-    fig, axes = plt.subplots(1, 3, figsize=(7.2, 2.3), constrained_layout=True)
+    # Column-friendly layout (stacked panels) so the figure can be placed close
+    # to its discussion without relying on 2-column floats.
+    fig, axes = plt.subplots(3, 1, figsize=(3.55, 5.15), constrained_layout=True)
 
     _dumbbell(
         axes[0],
@@ -182,7 +184,7 @@ def fig_e1e3_recoverability(e1: dict[str, Any], e1e3: dict[str, Any], out: Path)
     axes[2].set_xlabel("calls")
     _panel_label(axes[2], "(c)")
 
-    fig.suptitle("Semantic recovery and bounded repair (100 kernels)", y=1.05, fontsize=10)
+    fig.suptitle("Semantic recovery and bounded repair (100 kernels)", y=1.02, fontsize=10)
     _save_fig(fig, out / "e1e3_recoverability.pdf")
 
 
@@ -261,7 +263,7 @@ def fig_e4_consistency(e4: dict[str, Any], out: Path) -> None:
 
 
 def fig_e5_2_retune_vs_freeze(e5_2: dict[str, Any], out: Path) -> None:
-    fig, ax = plt.subplots(figsize=(3.5, 2.6), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(3.6, 2.7), constrained_layout=True)
 
     # Retune vs freeze (paired) by anchor tier: box + points.
     rows = [r for r in e5_2.get("per_kernel") or [] if isinstance(r, dict)]
@@ -287,29 +289,122 @@ def fig_e5_2_retune_vs_freeze(e5_2: dict[str, Any], out: Path) -> None:
     ax.axhline(1.0, color="0.25", linewidth=0.8, linestyle="--", alpha=0.7)
     ax.set_title("Retune / Freeze (paired)")
     ax.set_xlabel("anchor tier")
-    ax.set_ylabel("speedup")
-    ax.set_ylim(0.95, 4.6)
+    ax.set_ylabel("speedup (log scale)")
+    ax.set_yscale("log")
+    # Log scale makes near-1.0 improvements visible (most kernels are in [1.0, 1.1]).
+    lo = min(v for _, v in data) if data else 1.0
+    hi = max(v for _, v in data) if data else 1.0
+    ax.set_ylim(max(0.98, lo * 0.98), hi * 1.08)
     ax.grid(True, axis="y", linestyle="--", linewidth=0.5, alpha=0.35)
     _save_fig(fig, out / "e5_2_retune_vs_freeze.pdf")
 
 
 def fig_e5_1_external_baseline(e5_1: dict[str, Any], out: Path) -> None:
-    # External baseline speedups (AI-Bench8) sorted + geomean line.
-    fig, ax = plt.subplots(figsize=(3.5, 2.6), constrained_layout=True)
-    rows = list(e5_1.get("per_kernel") or [])
-    rows.sort(key=lambda r: float(r["speedup_ours_over_baseline"]))
-    names = [str(r["name"]) for r in rows]
-    vals = [float(r["speedup_ours_over_baseline"]) for r in rows]
-    ax.barh(list(range(len(names))), vals, color=sns.color_palette("colorblind")[2])
-    ax.set_yticks(list(range(len(names))), names)
+    # External baseline speedups (AI-Bench8), shown for both 1-thread and 16-thread runs.
+    # Use a dumbbell plot per kernel to avoid heavy overlapping bars.
+    fig, ax = plt.subplots(figsize=(3.6, 2.7), constrained_layout=True)
+
+    rows = [r for r in list(e5_1.get("per_kernel") or []) if isinstance(r, dict)]
+    data = []
+    for r in rows:
+        s1 = r.get("speedup_ours_over_baseline_t1")
+        s16 = r.get("speedup_ours_over_baseline_t16")
+        if not (isinstance(s1, (int, float)) and isinstance(s16, (int, float))):
+            continue
+        if not (float(s1) > 0.0 and float(s16) > 0.0 and math.isfinite(float(s1)) and math.isfinite(float(s16))):
+            continue
+        data.append((str(r.get("name") or ""), float(s1), float(s16)))
+
+    # Sort by 16T speedup (paper narrative focuses on multi-thread throughput).
+    data.sort(key=lambda x: x[2])
+    names = [n for n, _, _ in data]
+    s1s = [a for _, a, _ in data]
+    s16s = [b for _, _, b in data]
+    y = np.arange(len(names))
+
+    pal = sns.color_palette("colorblind")
+    c1 = pal[0]
+    c16 = pal[2]
+
+    for i in range(len(names)):
+        ax.plot([s1s[i], s16s[i]], [y[i], y[i]], color="0.7", lw=1.0, zorder=1)
+    ax.scatter(s1s, y, s=26, color=c1, label="1 thread", zorder=3)
+    ax.scatter(s16s, y, s=26, color=c16, label="16 threads", zorder=3)
+
+    ax.set_yticks(y, names)
+    ax.invert_yaxis()
     ax.axvline(1.0, color="0.25", linewidth=0.8, linestyle="--", alpha=0.7)
-    gm = float(e5_1["summary"]["geom_speedup_ours_over_baseline"])
-    ax.axvline(gm, color=sns.color_palette("colorblind")[3], linewidth=1.2, linestyle="-", alpha=0.9)
-    ax.text(gm, -0.6, f"geomean={gm:.2f}×", ha="left", va="center", fontsize=7, color=sns.color_palette("colorblind")[3])
+    # Geomean markers for quick reading (paper narrative uses both).
+    gm1 = (e5_1.get("summary") or {}).get("geom_speedup_ours_over_baseline_t1")
+    gm16 = (e5_1.get("summary") or {}).get("geom_speedup_ours_over_baseline_t16")
+    if isinstance(gm1, (int, float)) and float(gm1) > 0:
+        ax.axvline(float(gm1), color=c1, linewidth=1.1, linestyle="-", alpha=0.8)
+        ax.text(float(gm1), -0.6, f"gmean(1T)={float(gm1):.2f}×", ha="left", va="center", fontsize=7, color=c1)
+    if isinstance(gm16, (int, float)) and float(gm16) > 0:
+        ax.axvline(float(gm16), color=c16, linewidth=1.1, linestyle="-", alpha=0.8)
+        ax.text(float(gm16), -0.2, f"gmean(16T)={float(gm16):.2f}×", ha="left", va="center", fontsize=7, color=c16)
+    ax.set_xscale("log")
+    ax.set_xlabel("speedup (log scale)")
     ax.set_title("External baseline (AI-Bench8)")
-    ax.set_xlabel("speedup")
     ax.grid(True, axis="x", linestyle="--", linewidth=0.5, alpha=0.35)
+    ax.legend(frameon=False, loc="lower right")
     _save_fig(fig, out / "e5_1_external_baseline.pdf")
+
+
+def _write_dataset_table_tex(e1e3: dict[str, Any], out_tables: Path) -> None:
+    _ensure_dir(out_tables)
+    # Use one-shot's tier classification as the "dataset composition" view.
+    # Feedback summaries may be overridden by per-frontend reruns (e.g., CUDA fixes),
+    # which can introduce minor tier-count drift in aggregated summaries.
+    os = (e1e3.get("summary") or {}).get("one_shot") or {}
+    by_fe = os.get("by_frontend") if isinstance(os, dict) else None
+    if not isinstance(by_fe, dict):
+        return
+
+    frontends = ["triton", "tilelang", "cuda"]
+    tiers = ["A_dot", "B_reduce", "C_copy"]
+    tot_n = 0
+    tot_by_tier = {t: 0 for t in tiers}
+
+    rows = []
+    for fe in frontends:
+        s = by_fe.get(fe)
+        if not isinstance(s, dict):
+            continue
+        n = int(s.get("n") or 0)
+        tot_n += n
+        t = s.get("tiers") if isinstance(s.get("tiers"), dict) else {}
+        a = int((t.get("A_dot") or {}).get("n") or 0)
+        b = int((t.get("B_reduce") or {}).get("n") or 0)
+        c = int((t.get("C_copy") or {}).get("n") or 0)
+        tot_by_tier["A_dot"] += a
+        tot_by_tier["B_reduce"] += b
+        tot_by_tier["C_copy"] += c
+        rows.append((fe.upper(), n, a, b, c))
+
+    tex = []
+    tex.append("% Auto-generated by scripts/experiments/paper_figures.py")
+    tex.append("\\begin{table}[H]")
+    tex.append("\\centering")
+    tex.append("\\small")
+    tex.append("\\begin{tabular}{lrrrr}")
+    tex.append("\\toprule")
+    tex.append("Frontend & Total & A\\_dot & B\\_reduce & C\\_copy \\\\")
+    tex.append("\\midrule")
+    for fe, n, a, b, c in rows:
+        tex.append(f"{fe} & {n:d} & {a:d} & {b:d} & {c:d} \\\\")
+    tex.append("\\midrule")
+    tex.append(f"ALL & {tot_n:d} & {tot_by_tier['A_dot']:d} & {tot_by_tier['B_reduce']:d} & {tot_by_tier['C_copy']:d} \\\\")
+    tex.append("\\bottomrule")
+    tex.append("\\end{tabular}")
+    tex.append(
+        "\\caption{Kernel suite composition (100 kernels). A\\_dot: GEMM/dot-like; B\\_reduce: softmax/norm/reduction; C\\_copy: data movement (e.g., transpose/gather).}"
+    )
+    tex.append("\\label{tab:kernel_suite}")
+    tex.append("\\end{table}")
+    tex.append("")
+
+    (out_tables / "kernel_suite.tex").write_text("\n".join(tex), encoding="utf-8")
 
 
 def fig_e6_contract_calibration(e6: dict[str, Any], out: Path) -> None:
@@ -409,7 +504,10 @@ def _write_tables_tex(e1: dict[str, Any], e1e3: dict[str, Any], e2: dict[str, An
     tex.append(f"Mutation kill-rate (full system) & {e2_full:.3f} \\\\")
     tex.append(f"Cross-frontend structural consistency & {float(e4['summary']['intent_structural_ok_rate']):.3f} \\\\")
     tex.append(f"Retune/freeze geomean speedup (paired) & {e5_2_geo:.3f} \\\\")
-    tex.append(f"External baseline geomean speedup (AI-Bench8) & {float(e5_1['summary']['geom_speedup_ours_over_baseline']):.3f} \\\\")
+    # External baseline: report 16-thread geomean (primary) and keep 1-thread in the JSON for the paper narrative.
+    e5_1_gm16 = e5_1.get("summary", {}).get("geom_speedup_ours_over_baseline_t16")
+    if isinstance(e5_1_gm16, (int, float)):
+        tex.append(f"External baseline geomean speedup (AI-Bench8, 16T) & {float(e5_1_gm16):.3f} \\\\")
     tex.append(f"Contract calibration ok\\_rate (IntentIR vs Linalg) & {float(e6_int_full['ok_rate']):.3f} vs {float(e6_lin_full['ok_rate']):.3f} \\\\")
     tex.append(f"Contract calibration FULL false-accept (IntentIR vs Linalg) & {float(e6_int_full['full_false_accept_rate']):.3f} vs {float(e6_lin_full['full_false_accept_rate']):.3f} \\\\")
     tex.append("\\bottomrule")
@@ -420,6 +518,7 @@ def _write_tables_tex(e1: dict[str, Any], e1e3: dict[str, Any], e2: dict[str, An
     tex.append("")
 
     (out_tables / "headline_metrics.tex").write_text("\n".join(tex), encoding="utf-8")
+    _write_dataset_table_tex(e1e3, out_tables)
 
 
 def main() -> None:
