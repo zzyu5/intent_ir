@@ -20,6 +20,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.patches import Patch  # noqa: E402
 import numpy as np  # noqa: E402
 import seaborn as sns  # noqa: E402
 
@@ -105,6 +106,53 @@ def _panel_label(ax: plt.Axes, label: str) -> None:
         ha="left",
     )
 
+def _direct_labels_right(
+    ax: plt.Axes,
+    *,
+    x: float,
+    items: list[tuple[float, str, str]],
+    dx: float = 0.07,
+    min_dy: float = 0.03,
+) -> None:
+    """
+    Place text labels at the right edge with light leader lines, avoiding overlap.
+
+    items: [(y, label, color), ...] for points at (x, y).
+    """
+    if not items:
+        return
+    items_sorted = sorted(items, key=lambda t: float(t[0]))
+    ys = [float(y) for y, _, _ in items_sorted]
+    y_min, y_max = ax.get_ylim()
+
+    # Greedy non-overlap: push labels upward to maintain min separation.
+    y_lab = ys[:]
+    for i in range(1, len(y_lab)):
+        if y_lab[i] - y_lab[i - 1] < min_dy:
+            y_lab[i] = y_lab[i - 1] + min_dy
+    # If we overflow, shift everything down.
+    overflow = y_lab[-1] - y_max
+    if overflow > 0:
+        y_lab = [y - overflow for y in y_lab]
+    # Clamp to lower bound.
+    under = y_min - y_lab[0]
+    if under > 0:
+        y_lab = [y + under for y in y_lab]
+
+    for (y0, text, color), yl in zip(items_sorted, y_lab, strict=True):
+        ax.annotate(
+            text,
+            xy=(x, float(y0)),
+            xytext=(x + dx, float(yl)),
+            textcoords="data",
+            ha="left",
+            va="center",
+            fontsize=7,
+            color=color,
+            arrowprops=dict(arrowstyle="-", color=color, lw=0.6, alpha=0.8),
+            clip_on=False,
+        )
+
 
 def _geom_mean(xs: Iterable[float]) -> float | None:
     vals = [float(x) for x in xs if isinstance(x, (int, float)) and float(x) > 0.0 and math.isfinite(float(x))]
@@ -151,39 +199,49 @@ def fig_e1e3_recoverability(e1: dict[str, Any], e1e3: dict[str, Any], out: Path)
                 ok += float(st.get("ok") or 0)
         return (ok / n) if n > 0 else 0.0
 
-    fig, axes = plt.subplots(2, 1, figsize=(3.55, 3.55), constrained_layout=True)
+    fig, axes = plt.subplots(2, 1, figsize=(3.55, 3.35), constrained_layout=True)
 
-    # (a) Validated recoverability (OK rate) under one-shot vs feedback.
+    # (a) Validated recoverability (OK rate): rule-only vs one-shot vs feedback.
     ax = axes[0]
-    x = np.arange(2)
-    xt = ["one-shot", "feedback"]
+    x = np.arange(3)
+    xt = ["rule-only", "one-shot", "feedback"]
+    marker = {"triton": "o", "tilelang": "s", "cuda": "o", "all": "D"}
+    ls = {"triton": "-", "tilelang": "-", "cuda": "-", "all": "-"}
     for fe in frontends:
+        # No per-frontend rule-only stats in the paper JSON; start the line at one-shot.
+        xs = np.array([1, 2])
         ys = [float(one[fe]["ok_rate"]), float(fb[fe]["ok_rate"])]
         ax.plot(
-            x,
+            xs,
             ys,
-            marker="o",
-            markersize=3.6,
-            linewidth=1.35,
+            marker=marker.get(fe, "o"),
+            markersize=3.8,
+            linewidth=1.5,
+            linestyle=ls.get(fe, "-"),
             color=fe_color[fe],
-            label=fe_label.get(fe, fe),
+            label="_nolegend_",
         )
-    ax.plot(
-        x,
-        [_overall_ok_rate(one), _overall_ok_rate(fb)],
-        marker="D",
-        markersize=3.4,
-        linewidth=1.6,
-        color=fe_color["all"],
-        label="All (weighted)",
-    )
+    all_ys = [float((e1.get("summary") or {}).get("ok_rate") or 0.0), _overall_ok_rate(one), _overall_ok_rate(fb)]
+    ax.plot(x, all_ys, marker=marker["all"], markersize=3.8, linewidth=1.8, color=fe_color["all"], label="_nolegend_")
     ax.set_xticks(x, xt)
     ax.set_ylim(0.6, 1.02)
     ax.set_ylabel("OK rate")
     ax.set_title("Validated recoverability")
-    ax.legend(frameon=False, ncol=2, loc="lower right")
     ax.grid(True, axis="y", linestyle="--", linewidth=0.5, alpha=0.35)
     _panel_label(ax, "(a)")
+    ax.set_xlim(-0.05, 2.05)
+    _direct_labels_right(
+        ax,
+        x=2.0,
+        items=[
+            (float(fb["cuda"]["ok_rate"]), "CUDA", fe_color["cuda"]),
+            (float(fb["triton"]["ok_rate"]), "Triton", fe_color["triton"]),
+            (float(fb["tilelang"]["ok_rate"]), "TileLang", fe_color["tilelang"]),
+            (float(all_ys[2]), "All", fe_color["all"]),
+        ],
+        dx=0.08,
+        min_dy=0.02,
+    )
 
     # (b) Semantic-class accuracy (rule-only vs LLM one-shot vs LLM+feedback).
     ax = axes[1]
@@ -194,22 +252,23 @@ def fig_e1e3_recoverability(e1: dict[str, Any], e1e3: dict[str, Any], out: Path)
         ax.plot(
             x,
             ys,
-            marker="o",
-            markersize=3.6,
-            linewidth=1.35,
+            marker=marker.get(fe, "o"),
+            markersize=3.8,
+            linewidth=1.5,
             color=fe_color[fe],
             label="_nolegend_",
         )
+    all2 = [
+        _overall_acc(e1_acc, kind="e1"),
+        _overall_acc(one_acc, kind="e1e3"),
+        _overall_acc(fb_acc, kind="e1e3"),
+    ]
     ax.plot(
         x,
-        [
-            _overall_acc(e1_acc, kind="e1"),
-            _overall_acc(one_acc, kind="e1e3"),
-            _overall_acc(fb_acc, kind="e1e3"),
-        ],
-        marker="D",
-        markersize=3.4,
-        linewidth=1.6,
+        all2,
+        marker=marker["all"],
+        markersize=3.8,
+        linewidth=1.8,
         color=fe_color["all"],
         label="_nolegend_",
     )
@@ -219,8 +278,21 @@ def fig_e1e3_recoverability(e1: dict[str, Any], e1e3: dict[str, Any], out: Path)
     ax.set_title("Semantic-class accuracy (labeled subset)")
     ax.grid(True, axis="y", linestyle="--", linewidth=0.5, alpha=0.35)
     _panel_label(ax, "(b)")
+    ax.set_xlim(-0.05, 2.05)
+    _direct_labels_right(
+        ax,
+        x=2.0,
+        items=[
+            (float(fb_acc["cuda"]["semantic_class"]["acc"]), "CUDA", fe_color["cuda"]),
+            (float(fb_acc["triton"]["semantic_class"]["acc"]), "Triton", fe_color["triton"]),
+            (float(fb_acc["tilelang"]["semantic_class"]["acc"]), "TileLang", fe_color["tilelang"]),
+            (float(all2[-1]), "All", fe_color["all"]),
+        ],
+        dx=0.08,
+        min_dy=0.03,
+    )
 
-    fig.suptitle("Semantic recovery and bounded repair (100 kernels)", y=1.02, fontsize=10)
+    # No global legend: direct labeling avoids overlap at single-column width.
     _save_fig(fig, out / "e1e3_recoverability.pdf")
 
 
@@ -253,11 +325,25 @@ def fig_e2_trust_ablation(e2: dict[str, Any], out: Path) -> None:
         ax.bar(x + (i - 1) * w, ys, width=w, color=mode_color[m], label=mode_label[m])
 
     ax.set_xticks(x, [fe_label[fe] for fe in xs])
-    ax.set_ylim(0.45, 1.01)
+    ax.set_ylim(0.5, 1.01)
     ax.set_ylabel("mutation-kill rate")
     ax.set_title("Trustworthiness ablation (higher is better)")
     ax.legend(frameon=False, ncol=3, loc="lower center", bbox_to_anchor=(0.5, -0.26))
     ax.grid(True, axis="y", linestyle="--", linewidth=0.5, alpha=0.35)
+    # Light value labels (avoid overlap by keeping them small).
+    for b in ax.patches:
+        h = float(getattr(b, "get_height")())
+        if h <= 0:
+            continue
+        ax.text(
+            b.get_x() + b.get_width() / 2.0,
+            h + 0.008,
+            f"{h*100:.0f}%",
+            ha="center",
+            va="bottom",
+            fontsize=7,
+            color="0.25",
+        )
     _save_fig(fig, out / "e2_trust_ablation.pdf")
 
 
@@ -267,24 +353,50 @@ def fig_e4_consistency(e4: dict[str, Any], out: Path) -> None:
     exact = [float(s["intent_ok_rate"]), float(s["expanded_ok_rate"])]
     structural = [float(s["intent_structural_ok_rate"]), float(s["expanded_structural_ok_rate"])]
     roles = [float(s["axis_roles_recall_intent_avg"]), float(s["axis_roles_recall_expanded_avg"])]
+    reasons_int = (s.get("top_reasons_intent") or {}) if isinstance(s.get("top_reasons_intent"), dict) else {}
+    reasons_exp = (s.get("top_reasons_expanded") or {}) if isinstance(s.get("top_reasons_expanded"), dict) else {}
 
-    fig, axes = plt.subplots(2, 1, figsize=(3.55, 3.1), constrained_layout=True)
+    fig, axes = plt.subplots(2, 1, figsize=(3.55, 3.25), constrained_layout=True)
 
-    # Left: structural + axis roles (both near 1.0) as a clean dot plot.
+    # (a) Drift sources: why exact match is low even when structure/roles are perfect.
     ax = axes[0]
-    y = np.arange(len(reps))
-    ax.scatter(structural, y - 0.12, s=28, color=sns.color_palette("colorblind")[0], label="structural")
-    ax.scatter(roles, y + 0.12, s=28, color=sns.color_palette("colorblind")[2], label="axis-role recall")
-    ax.set_yticks(y, reps)
-    ax.set_xlim(0.9, 1.01)
-    ax.set_title("Robustness (near-1.0 metrics)")
-    ax.set_xlabel("rate")
+    # Pick a small set of top reasons (shared between intent/expanded).
+    keys = sorted(set(reasons_int) | set(reasons_exp), key=lambda k: max(int(reasons_int.get(k, 0)), int(reasons_exp.get(k, 0))), reverse=True)
+    keys = keys[:4]
+
+    def _pretty(k: str) -> str:
+        k = str(k)
+        k = k.replace("tilelang:", "")
+        k = k.replace("_mismatch", "")
+        k = k.replace("_", " ")
+        return k
+
+    y = np.arange(len(keys))
+    intent_vals = [int(reasons_int.get(k, 0)) for k in keys]
+    expanded_vals = [int(reasons_exp.get(k, 0)) for k in keys]
+    pal = sns.color_palette("colorblind")
+    ax.barh(y - 0.18, intent_vals, height=0.34, color=pal[0], label="IntentIR")
+    ax.barh(y + 0.18, expanded_vals, height=0.34, color=pal[2], label="Expanded")
+    ax.set_yticks(y, [_pretty(k) for k in keys])
+    ax.invert_yaxis()
+    ax.set_xlabel("count (out of 30 pairs)")
+    ax.set_title("Benign drift sources (exact mismatches)")
     ax.grid(True, axis="x", linestyle="--", linewidth=0.5, alpha=0.35)
     ax.grid(False, axis="y")
     ax.legend(frameon=False, loc="lower right")
+    # Inline note: these two metrics are effectively perfect on this suite.
+    ax.text(
+        0.02,
+        1.02,
+        f"structural={structural[0]:.2f}/{structural[1]:.2f}, axis-roles={roles[0]:.2f}/{roles[1]:.2f}",
+        transform=ax.transAxes,
+        fontsize=7,
+        color="0.25",
+        va="bottom",
+    )
     _panel_label(ax, "(a)")
 
-    # Right: exact match needs a zoomed axis.
+    # (b) Exact match (zoomed).
     ax = axes[1]
     ax.bar(reps, [v * 100 for v in exact], color=sns.color_palette("colorblind")[3])
     for i, v in enumerate(exact):
@@ -346,7 +458,24 @@ def fig_e5_2_retune_vs_freeze(e5_2: dict[str, Any], out: Path) -> None:
 
     lo = min(v for _, v in data) if data else 1.0
     hi = max(v for _, v in data) if data else 1.0
-    ax.set_xlim(max(0.98, lo * 0.98), hi * 1.12)
+    # Avoid the single extreme outlier making the plot unreadably sparse.
+    x_max = 2.0
+    ax.set_xlim(max(0.98, lo * 0.98), min(hi * 1.12, x_max))
+    if hi > x_max:
+        # Annotate the clipped outlier(s) on the right edge with the true max.
+        ticks = {t.get_text(): float(pos) for t, pos in zip(ax.get_yticklabels(), ax.get_yticks(), strict=True)}
+        tier_max, val_max = max(data, key=lambda kv: kv[1])
+        y0 = ticks.get(tier_max)
+        if y0 is not None:
+            ax.annotate(
+                f"max={val_max:.2f}×",
+                xy=(x_max, y0),
+                xytext=(x_max * 0.92, y0 - 0.25),
+                textcoords="data",
+                fontsize=7,
+                color="0.25",
+                arrowprops=dict(arrowstyle="->", color="0.35", lw=0.8),
+            )
     ax.grid(True, axis="x", linestyle="--", linewidth=0.5, alpha=0.35)
     ax.grid(False, axis="y")
     _save_fig(fig, out / "e5_2_retune_vs_freeze.pdf")
@@ -380,7 +509,7 @@ def fig_e5_1_external_baseline(e5_1: dict[str, Any], out: Path) -> None:
     c_base = pal[7]
     c_ours = pal[0]
 
-    fig, axes = plt.subplots(2, 1, figsize=(3.55, 3.4), constrained_layout=True)
+    fig, axes = plt.subplots(2, 1, figsize=(3.55, 3.3), constrained_layout=True, sharex=True)
 
     def _panel(ax: plt.Axes, title: str, base: list[float], ours: list[float], *, show_legend: bool) -> None:
         ax.plot(x, base, marker="o", markersize=3.6, linewidth=1.35, color=c_base, label="AI-Benchmark")
@@ -390,7 +519,8 @@ def fig_e5_1_external_baseline(e5_1: dict[str, Any], out: Path) -> None:
         ax.set_yscale("log")
         ax.grid(True, axis="y", linestyle="--", linewidth=0.5, alpha=0.35)
         ax.grid(False, axis="x")
-        ax.set_xticks(x, names)
+        ax.set_xticks(x)
+        ax.tick_params(axis="x", pad=1)
         if show_legend:
             ax.legend(frameon=False, ncol=2, loc="lower right")
 
@@ -398,6 +528,9 @@ def fig_e5_1_external_baseline(e5_1: dict[str, Any], out: Path) -> None:
     _panel_label(axes[0], "(a)")
     _panel(axes[1], "16 threads", base_t16, ours_t16, show_legend=False)
     _panel_label(axes[1], "(b)")
+    # Show x labels only on the bottom panel.
+    axes[0].tick_params(labelbottom=False)
+    axes[1].set_xticklabels(names, rotation=35, ha="right", fontsize=6.8)
 
     fig.suptitle("External baseline throughput (AI-Bench8)", y=1.02, fontsize=10)
     _save_fig(fig, out / "e5_1_external_baseline.pdf")
@@ -469,12 +602,31 @@ def fig_e6_contract_calibration(e6: dict[str, Any], out: Path) -> None:
     ablations = ["full", "no_mask", "no_anchors"]
     ab_label = {"full": "full evidence", "no_mask": "no mask", "no_anchors": "no anchors"}
 
-    # Single-column figure with two panels:
-    # (a) Contract distribution (abstention under weaker evidence)
-    # (b) Calibration under FULL claims (false-accept among FULL)
-    fig, axes = plt.subplots(2, 1, figsize=(3.55, 3.55), constrained_layout=True)
+    # Single-column figure with three panels:
+    # (a) IntentIR contract distribution under evidence ablation
+    # (b) Linalg contract distribution under evidence ablation
+    # (c) Calibration under FULL claims (false-accept among FULL)
+    fig, axes = plt.subplots(3, 1, figsize=(3.55, 4.35), constrained_layout=True)
 
-    # (a) Contract level distribution under evidence ablation.
+    def _stacked(ax: plt.Axes, rep: str) -> None:
+        x = np.arange(len(ablations))
+        bottoms = np.zeros(len(ablations))
+        for lvl in levels:
+            vals = []
+            for ab in ablations:
+                m = ps["by_rep_ablation"][rep][ab]
+                n = float(m["n"] or 0)
+                c = float((m.get("contract_levels") or {}).get(lvl, 0) or 0)
+                vals.append((c / n) if n > 0 else 0.0)
+            ax.bar(x, vals, bottom=bottoms, color=lvl_color[lvl], edgecolor="0.25", linewidth=0.4, label=lvl_label[lvl])
+            bottoms = bottoms + np.array(vals)
+        ax.set_xticks(x, [ab_label[a] for a in ablations])
+        ax.set_ylim(0.0, 1.02)
+        ax.set_ylabel("fraction")
+        ax.grid(True, axis="y", linestyle="--", linewidth=0.5, alpha=0.35)
+        ax.set_title(rep_label[rep])
+
+    # (a) IntentIR distribution.
     ax = axes[0]
     levels = ["FULL", "PARTIAL", "OUT_OF_SCOPE"]
     lvl_label = {"FULL": "FULL", "PARTIAL": "PARTIAL", "OUT_OF_SCOPE": "OOS"}
@@ -483,32 +635,17 @@ def fig_e6_contract_calibration(e6: dict[str, Any], out: Path) -> None:
         "PARTIAL": sns.color_palette("colorblind")[0],
         "OUT_OF_SCOPE": "0.75",
     }
-
-    x_labels = [f"{ab_label[ab]}\n{rep_label[rep]}" for ab in ablations for rep in reps]
-    x = np.arange(len(x_labels))
-    bottoms = np.zeros(len(x_labels))
-    for lvl in levels:
-        vals = []
-        for ab in ablations:
-            for rep in reps:
-                m = ps["by_rep_ablation"][rep][ab]
-                n = float(m["n"] or 0)
-                c = float((m.get("contract_levels") or {}).get(lvl, 0) or 0)
-                vals.append((c / n) if n > 0 else 0.0)
-        ax.bar(x, vals, bottom=bottoms, color=lvl_color[lvl], label=lvl_label[lvl])
-        bottoms = bottoms + np.array(vals)
-
-    ax.set_xticks(x, x_labels)
-    ax.tick_params(axis="x", labelrotation=0)
-    ax.set_ylim(0.0, 1.02)
-    ax.set_ylabel("fraction")
-    ax.set_title("Contract distribution under evidence ablation")
-    ax.grid(True, axis="y", linestyle="--", linewidth=0.5, alpha=0.35)
-    ax.legend(frameon=False, ncol=3, loc="lower center", bbox_to_anchor=(0.5, -0.32))
+    _stacked(ax, "intentir")
+    ax.legend(frameon=False, ncol=3, loc="upper left")
     _panel_label(ax, "(a)")
 
-    # (b) Calibration under FULL claims (full evidence).
+    # (b) Linalg distribution.
     ax = axes[1]
+    _stacked(ax, "linalg")
+    _panel_label(ax, "(b)")
+
+    # (c) Calibration under FULL claims (full evidence).
+    ax = axes[2]
     m_int = ps["by_rep_ablation"]["intentir"]["full"]
     m_lin = ps["by_rep_ablation"]["linalg"]["full"]
     vals = {
@@ -534,7 +671,7 @@ def fig_e6_contract_calibration(e6: dict[str, Any], out: Path) -> None:
             fontsize=7,
             color="0.25",
         )
-    _panel_label(ax, "(b)")
+    _panel_label(ax, "(c)")
 
     fig.suptitle("IR + sidecar contract calibration (CUDA)", y=1.02, fontsize=10)
     _save_fig(fig, out / "e6_contract_calibration.pdf")
