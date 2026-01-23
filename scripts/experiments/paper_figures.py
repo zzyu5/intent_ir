@@ -715,18 +715,20 @@ def _write_tables_tex(e1: dict[str, Any], e1e3: dict[str, Any], e2: dict[str, An
     tex.append("\\toprule")
     tex.append("Metric & Value \\\\")
     tex.append("\\midrule")
-    tex.append(f"Rule-only baseline OK rate & {float(e1['summary']['ok_rate']):.3f} \\\\")
-    tex.append("LLM+feedback success rate (all kernels) & 1.000 \\\\")
+    tex.append(f"Rule-only validation pass rate & {float(e1['summary']['ok_rate']):.3f} \\\\")
+    tex.append("LLM+feedback validation pass rate (all kernels) & 1.000 \\\\")
     tex.append(f"LLM+feedback semantic-class accuracy (labeled) & {e3_acc_fb:.3f} \\\\")
     tex.append(f"Mutation kill-rate (diff-only) & {e2_diff:.3f} \\\\")
     tex.append(f"Mutation kill-rate (full system) & {e2_full:.3f} \\\\")
-    tex.append(f"Cross-frontend structural consistency & {float(e4['summary']['intent_structural_ok_rate']):.3f} \\\\")
+    tex.append(f"Cross-frontend structural match rate & {float(e4['summary']['intent_structural_ok_rate']):.3f} \\\\")
     tex.append(f"Retune/freeze geomean speedup (paired) & {e5_2_geo:.3f} \\\\")
     # External baseline: report 16-thread geomean (primary) and keep 1-thread in the JSON for the paper narrative.
     e5_1_gm16 = e5_1.get("summary", {}).get("geom_speedup_ours_over_baseline_t16")
     if isinstance(e5_1_gm16, (int, float)):
         tex.append(f"External baseline geomean speedup (AI-Bench8, 16T) & {float(e5_1_gm16):.3f} \\\\")
-    tex.append(f"Contract calibration ok\\_rate (IntentIR vs Linalg) & {float(e6_int_full['ok_rate']):.3f} vs {float(e6_lin_full['ok_rate']):.3f} \\\\")
+    tex.append(
+        f"Contract calibration validation pass rate (IntentIR vs Linalg) & {float(e6_int_full['ok_rate']):.3f} vs {float(e6_lin_full['ok_rate']):.3f} \\\\"
+    )
     tex.append(f"Contract calibration FULL false-accept (IntentIR vs Linalg) & {float(e6_int_full['full_false_accept_rate']):.3f} vs {float(e6_lin_full['full_false_accept_rate']):.3f} \\\\")
     tex.append("\\bottomrule")
     tex.append("\\end{tabular}")
