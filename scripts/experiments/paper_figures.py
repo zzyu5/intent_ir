@@ -114,94 +114,123 @@ def _geom_mean(xs: Iterable[float]) -> float | None:
 
 
 def fig_e1e3_recoverability(e1: dict[str, Any], e1e3: dict[str, Any], out: Path) -> None:
+    # Paper-friendly line charts (avoid dumbbells): show the step-up from one-shot to
+    # bounded repair, and show how semantic-class accuracy improves over rule-only.
     frontends = list(e1e3.get("frontends") or ["triton", "tilelang", "cuda"])
     one = e1e3["summary"]["one_shot"]["by_frontend"]
     fb = e1e3["summary"]["feedback"]["by_frontend"]
 
-    labels = [f.upper() for f in frontends]
+    fe_label = {"triton": "Triton", "tilelang": "TileLang", "cuda": "CUDA"}
+    pal = sns.color_palette("colorblind")
+    fe_color = {"triton": pal[0], "tilelang": pal[2], "cuda": pal[3], "all": "black"}
 
-    one_ok = [float(one[fe]["ok_rate"]) for fe in frontends]
-    fb_ok = [float(fb[fe]["ok_rate"]) for fe in frontends]
+    def _overall_ok_rate(v: dict[str, Any]) -> float:
+        n = 0.0
+        ok = 0.0
+        for fe in frontends:
+            n += float(v[fe]["n"])
+            ok += float(v[fe]["ok"])
+        return (ok / n) if n > 0 else 0.0
 
-    # Semantic-class label accuracy (rule-only vs one_shot vs feedback).
+    # Semantic-class label accuracy (rule-only vs one-shot vs feedback).
     e1_acc = e1["label_eval"]["semantic_class_acc_by_frontend"]
     one_acc = e1e3["label_eval"]["one_shot"]["by_frontend"]
     fb_acc = e1e3["label_eval"]["feedback"]["by_frontend"]
-    rule_acc = [float(e1_acc[fe]["acc"]) for fe in frontends]
-    one_sem = [float(one_acc[fe]["semantic_class"]["acc"]) for fe in frontends]
-    fb_sem = [float(fb_acc[fe]["semantic_class"]["acc"]) for fe in frontends]
 
-    # LLM cost: avg API calls per kernel.
-    one_calls = [float(one[fe]["llm_cost"]["api_calls_avg"]) for fe in frontends]
-    fb_calls = [float(fb[fe]["llm_cost"]["api_calls_avg"]) for fe in frontends]
+    def _overall_acc(acc_by_fe: dict[str, Any], *, kind: str) -> float:
+        n = 0.0
+        ok = 0.0
+        for fe in frontends:
+            if kind == "e1":
+                st = acc_by_fe.get(fe) or {}
+                n += float(st.get("n") or 0)
+                ok += float(st.get("ok") or 0)
+            else:
+                st = (acc_by_fe.get(fe) or {}).get("semantic_class") or {}
+                n += float(st.get("n") or 0)
+                ok += float(st.get("ok") or 0)
+        return (ok / n) if n > 0 else 0.0
 
-    # Column-friendly layout (stacked panels) so the figure can be placed close
-    # to its discussion without relying on 2-column floats.
-    fig, axes = plt.subplots(3, 1, figsize=(3.55, 5.15), constrained_layout=True)
+    fig, axes = plt.subplots(2, 1, figsize=(3.55, 3.55), constrained_layout=True)
 
-    _dumbbell(
-        axes[0],
-        labels,
-        one_ok,
-        fb_ok,
-        left_label="one-shot",
-        right_label="feedback",
-        title="Recoverability (OK rate)",
-        xlim=(0.6, 1.02),
-        annotate_delta=True,
+    # (a) Validated recoverability (OK rate) under one-shot vs feedback.
+    ax = axes[0]
+    x = np.arange(2)
+    xt = ["one-shot", "feedback"]
+    for fe in frontends:
+        ys = [float(one[fe]["ok_rate"]), float(fb[fe]["ok_rate"])]
+        ax.plot(
+            x,
+            ys,
+            marker="o",
+            markersize=3.6,
+            linewidth=1.35,
+            color=fe_color[fe],
+            label=fe_label.get(fe, fe),
+        )
+    ax.plot(
+        x,
+        [_overall_ok_rate(one), _overall_ok_rate(fb)],
+        marker="D",
+        markersize=3.4,
+        linewidth=1.6,
+        color=fe_color["all"],
+        label="All (weighted)",
     )
-    axes[0].set_xlabel("OK rate")
-    _panel_label(axes[0], "(a)")
+    ax.set_xticks(x, xt)
+    ax.set_ylim(0.6, 1.02)
+    ax.set_ylabel("OK rate")
+    ax.set_title("Validated recoverability")
+    ax.legend(frameon=False, ncol=2, loc="lower right")
+    ax.grid(True, axis="y", linestyle="--", linewidth=0.5, alpha=0.35)
+    _panel_label(ax, "(a)")
 
-    # Accuracy panel: three markers per frontend, no heavy bars.
-    y = np.arange(len(labels))
-    offsets = {"rule-only": -0.16, "one-shot": 0.0, "feedback": 0.16}
-    palette = sns.color_palette("colorblind")
-    axes[1].scatter(rule_acc, y + offsets["rule-only"], s=26, color=palette[3], label="rule-only", zorder=3)
-    axes[1].scatter(one_sem, y + offsets["one-shot"], s=26, color=palette[0], label="one-shot", zorder=3)
-    axes[1].scatter(fb_sem, y + offsets["feedback"], s=26, color=palette[2], label="feedback", zorder=3)
-    axes[1].set_yticks(y, labels)
-    axes[1].invert_yaxis()
-    axes[1].set_xlim(0.0, 1.02)
-    axes[1].set_title("Semantic-class accuracy")
-    axes[1].set_xlabel("accuracy")
-    axes[1].grid(True, axis="x", linestyle="--", linewidth=0.5, alpha=0.35)
-    axes[1].grid(False, axis="y")
-    axes[1].legend(frameon=False, loc="lower right")
-    _panel_label(axes[1], "(b)")
-
-    _dumbbell(
-        axes[2],
-        labels,
-        one_calls,
-        fb_calls,
-        left_label="one-shot",
-        right_label="feedback",
-        title="LLM cost (API calls / kernel)",
-        xlim=(0.9, 1.15),
-        annotate_delta=False,
+    # (b) Semantic-class accuracy (rule-only vs LLM one-shot vs LLM+feedback).
+    ax = axes[1]
+    x = np.arange(3)
+    xt = ["rule-only", "one-shot", "feedback"]
+    for fe in frontends:
+        ys = [float(e1_acc[fe]["acc"]), float(one_acc[fe]["semantic_class"]["acc"]), float(fb_acc[fe]["semantic_class"]["acc"])]
+        ax.plot(
+            x,
+            ys,
+            marker="o",
+            markersize=3.6,
+            linewidth=1.35,
+            color=fe_color[fe],
+            label="_nolegend_",
+        )
+    ax.plot(
+        x,
+        [
+            _overall_acc(e1_acc, kind="e1"),
+            _overall_acc(one_acc, kind="e1e3"),
+            _overall_acc(fb_acc, kind="e1e3"),
+        ],
+        marker="D",
+        markersize=3.4,
+        linewidth=1.6,
+        color=fe_color["all"],
+        label="_nolegend_",
     )
-    axes[2].set_xlabel("calls")
-    _panel_label(axes[2], "(c)")
+    ax.set_xticks(x, xt)
+    ax.set_ylim(0.2, 1.02)
+    ax.set_ylabel("accuracy")
+    ax.set_title("Semantic-class accuracy (labeled subset)")
+    ax.grid(True, axis="y", linestyle="--", linewidth=0.5, alpha=0.35)
+    _panel_label(ax, "(b)")
 
     fig.suptitle("Semantic recovery and bounded repair (100 kernels)", y=1.02, fontsize=10)
     _save_fig(fig, out / "e1e3_recoverability.pdf")
 
 
 def fig_e2_trust_ablation(e2: dict[str, Any], out: Path) -> None:
+    # Avoid crowded lines: grouped bars (diff-only / generic / full) per frontend.
     frontends = ["triton", "tilelang", "cuda"]
+    fe_label = {"triton": "Triton", "tilelang": "TileLang", "cuda": "CUDA", "all": "All"}
     modes = ["diff_only", "generic", "full"]
-    x = np.arange(len(modes))
+    mode_label = {"diff_only": "diff-only", "generic": "generic", "full": "full"}
 
-    # Per-frontend curves.
-    fig, ax = plt.subplots(figsize=(6.8, 2.4), constrained_layout=True)
-    pal = sns.color_palette("colorblind")
-    fe_color = {"triton": pal[0], "tilelang": pal[2], "cuda": pal[3]}
-    for fe in frontends:
-        ys = [float(e2["by_frontend"][fe]["summary"]["aggregate"][m]["kill_rate"]) for m in modes]
-        ax.plot(x, ys, marker="o", markersize=3.5, linewidth=1.2, label=fe.upper(), color=fe_color[fe])
-
-    # Overall (weighted) curve.
     def _overall(m: str) -> float:
         total = 0.0
         killed = 0.0
@@ -209,35 +238,43 @@ def fig_e2_trust_ablation(e2: dict[str, Any], out: Path) -> None:
             agg = e2["by_frontend"][fe]["summary"]["aggregate"][m]
             total += float(agg["total"])
             killed += float(agg["killed"])
-        return killed / total if total > 0 else 0.0
+        return (killed / total) if total > 0 else 0.0
 
-    overall = [_overall(m) for m in modes]
-    ax.plot(x, overall, marker="D", markersize=3.5, linewidth=1.6, label="ALL (weighted)", color="black")
+    xs = frontends + ["all"]
+    x = np.arange(len(xs))
 
-    ax.set_xticks(x, ["diff-only", "generic", "full"])
+    fig, ax = plt.subplots(figsize=(3.55, 2.6), constrained_layout=True)
+    pal = sns.color_palette("colorblind")
+    mode_color = {"diff_only": pal[7], "generic": pal[0], "full": pal[2]}
+
+    w = 0.22
+    for i, m in enumerate(modes):
+        ys = [float(e2["by_frontend"][fe]["summary"]["aggregate"][m]["kill_rate"]) for fe in frontends] + [_overall(m)]
+        ax.bar(x + (i - 1) * w, ys, width=w, color=mode_color[m], label=mode_label[m])
+
+    ax.set_xticks(x, [fe_label[fe] for fe in xs])
     ax.set_ylim(0.45, 1.01)
-    ax.set_ylabel("kill rate")
-    ax.set_title("Trustworthiness ablation (mutation-kill rate)")
-    ax.legend(frameon=False, ncol=2, loc="lower right")
+    ax.set_ylabel("mutation-kill rate")
+    ax.set_title("Trustworthiness ablation (higher is better)")
+    ax.legend(frameon=False, ncol=3, loc="lower center", bbox_to_anchor=(0.5, -0.26))
     ax.grid(True, axis="y", linestyle="--", linewidth=0.5, alpha=0.35)
-    _panel_label(ax, "(a)")
     _save_fig(fig, out / "e2_trust_ablation.pdf")
 
 
 def fig_e4_consistency(e4: dict[str, Any], out: Path) -> None:
     s = e4["summary"]
-    reps = ["intent", "expanded"]
+    reps = ["IntentIR", "Expanded primitives"]
     exact = [float(s["intent_ok_rate"]), float(s["expanded_ok_rate"])]
     structural = [float(s["intent_structural_ok_rate"]), float(s["expanded_structural_ok_rate"])]
     roles = [float(s["axis_roles_recall_intent_avg"]), float(s["axis_roles_recall_expanded_avg"])]
 
-    fig, axes = plt.subplots(1, 2, figsize=(7.0, 2.3), constrained_layout=True)
+    fig, axes = plt.subplots(2, 1, figsize=(3.55, 3.1), constrained_layout=True)
 
     # Left: structural + axis roles (both near 1.0) as a clean dot plot.
     ax = axes[0]
     y = np.arange(len(reps))
     ax.scatter(structural, y - 0.12, s=28, color=sns.color_palette("colorblind")[0], label="structural")
-    ax.scatter(roles, y + 0.12, s=28, color=sns.color_palette("colorblind")[2], label="axis_roles recall")
+    ax.scatter(roles, y + 0.12, s=28, color=sns.color_palette("colorblind")[2], label="axis-role recall")
     ax.set_yticks(y, reps)
     ax.set_xlim(0.9, 1.01)
     ax.set_title("Robustness (near-1.0 metrics)")
@@ -258,96 +295,111 @@ def fig_e4_consistency(e4: dict[str, Any], out: Path) -> None:
     ax.grid(True, axis="y", linestyle="--", linewidth=0.5, alpha=0.35)
     _panel_label(ax, "(b)")
 
-    fig.suptitle("Cross-frontend consistency (Triton vs TileLang, n=30)", y=1.05, fontsize=10)
+    fig.suptitle("Cross-frontend consistency (Triton vs TileLang, n=30)", y=1.02, fontsize=10)
     _save_fig(fig, out / "e4_consistency.pdf")
 
 
 def fig_e5_2_retune_vs_freeze(e5_2: dict[str, Any], out: Path) -> None:
-    fig, ax = plt.subplots(figsize=(3.6, 2.7), constrained_layout=True)
+    # Horizontal layout improves readability at single-column width.
+    fig, ax = plt.subplots(figsize=(3.55, 2.6), constrained_layout=True)
 
-    # Retune vs freeze (paired) by anchor tier: box + points.
     rows = [r for r in e5_2.get("per_kernel") or [] if isinstance(r, dict)]
-    data = []
+    data: list[tuple[str, float]] = []
     for r in rows:
         s = r.get("speedup_paired")
         if not isinstance(s, (int, float)) or not (float(s) > 0.0 and math.isfinite(float(s))):
             continue
         data.append((str(r.get("anchor_tier") or "D_none"), float(s)))
     order = [t for t in ["A_dot", "B_reduce", "C_copy", "D_none"] if any(tt == t for tt, _ in data)]
+
     df = {"tier": [t for t, _ in data], "speedup": [v for _, v in data]}
-    sns.boxplot(ax=ax, x=df["tier"], y=df["speedup"], order=order, color=sns.color_palette("colorblind")[0], fliersize=0)
+    sns.boxplot(
+        ax=ax,
+        y=df["tier"],
+        x=df["speedup"],
+        order=order,
+        color=sns.color_palette("colorblind")[0],
+        fliersize=0,
+        linewidth=0.9,
+    )
     sns.stripplot(
         ax=ax,
-        x=df["tier"],
-        y=df["speedup"],
+        y=df["tier"],
+        x=df["speedup"],
         order=order,
         color="black",
         alpha=0.45,
         size=2.5,
         jitter=0.18,
     )
-    ax.axhline(1.0, color="0.25", linewidth=0.8, linestyle="--", alpha=0.7)
-    ax.set_title("Retune / Freeze (paired)")
-    ax.set_xlabel("anchor tier")
-    ax.set_ylabel("speedup (log scale)")
-    ax.set_yscale("log")
-    # Log scale makes near-1.0 improvements visible (most kernels are in [1.0, 1.1]).
+    ax.axvline(1.0, color="0.25", linewidth=0.8, linestyle="--", alpha=0.7)
+
+    gm = float(e5_2.get("summary", {}).get("geom_speedup_paired") or 1.0)
+    if gm and gm > 0:
+        ax.axvline(gm, color=sns.color_palette("colorblind")[2], linewidth=1.1, alpha=0.8)
+        ax.text(gm, -0.55, f"gmean={gm:.2f}×", ha="left", va="center", fontsize=7, color=sns.color_palette("colorblind")[2])
+
+    ax.set_title("Retune vs Freeze (paired)")
+    ax.set_xlabel("speedup (log scale)")
+    ax.set_ylabel("anchor tier")
+    ax.set_xscale("log")
+
     lo = min(v for _, v in data) if data else 1.0
     hi = max(v for _, v in data) if data else 1.0
-    ax.set_ylim(max(0.98, lo * 0.98), hi * 1.08)
-    ax.grid(True, axis="y", linestyle="--", linewidth=0.5, alpha=0.35)
+    ax.set_xlim(max(0.98, lo * 0.98), hi * 1.12)
+    ax.grid(True, axis="x", linestyle="--", linewidth=0.5, alpha=0.35)
+    ax.grid(False, axis="y")
     _save_fig(fig, out / "e5_2_retune_vs_freeze.pdf")
 
 
 def fig_e5_1_external_baseline(e5_1: dict[str, Any], out: Path) -> None:
-    # External baseline speedups (AI-Bench8), shown for both 1-thread and 16-thread runs.
-    # Use a dumbbell plot per kernel to avoid heavy overlapping bars.
-    fig, ax = plt.subplots(figsize=(3.6, 2.7), constrained_layout=True)
-
+    # External baseline: compare *absolute throughput* (not speedup) for 1T and 16T.
     rows = [r for r in list(e5_1.get("per_kernel") or []) if isinstance(r, dict)]
-    data = []
-    for r in rows:
-        s1 = r.get("speedup_ours_over_baseline_t1")
-        s16 = r.get("speedup_ours_over_baseline_t16")
-        if not (isinstance(s1, (int, float)) and isinstance(s16, (int, float))):
-            continue
-        if not (float(s1) > 0.0 and float(s16) > 0.0 and math.isfinite(float(s1)) and math.isfinite(float(s16))):
-            continue
-        data.append((str(r.get("name") or ""), float(s1), float(s16)))
 
-    # Sort by 16T speedup (paper narrative focuses on multi-thread throughput).
-    data.sort(key=lambda x: x[2])
-    names = [n for n, _, _ in data]
-    s1s = [a for _, a, _ in data]
-    s16s = [b for _, _, b in data]
-    y = np.arange(len(names))
+    data: list[tuple[str, float, float, float, float]] = []
+    for r in rows:
+        name = str(r.get("name") or "")
+        bt1 = r.get("baseline_seconds_per_iter_t1")
+        bt16 = r.get("baseline_seconds_per_iter_t16")
+        ot1 = r.get("ours_seconds_per_iter_t1")
+        ot16 = r.get("ours_seconds_per_iter_t16")
+        if not all(isinstance(x, (int, float)) and float(x) > 0.0 and math.isfinite(float(x)) for x in [bt1, bt16, ot1, ot16]):
+            continue
+        data.append((name, float(bt1), float(ot1), float(bt16), float(ot16)))
+
+    # Keep the suite order (8 kernels) for easy cross-checking with AI-Benchmark reports.
+    names = [n for n, *_ in data]
+    x = np.arange(len(names))
+
+    base_t1 = [1.0 / bt1 for _, bt1, _, _, _ in data]
+    ours_t1 = [1.0 / ot1 for _, _, ot1, _, _ in data]
+    base_t16 = [1.0 / bt16 for _, _, _, bt16, _ in data]
+    ours_t16 = [1.0 / ot16 for _, _, _, _, ot16 in data]
 
     pal = sns.color_palette("colorblind")
-    c1 = pal[0]
-    c16 = pal[2]
+    c_base = pal[7]
+    c_ours = pal[0]
 
-    for i in range(len(names)):
-        ax.plot([s1s[i], s16s[i]], [y[i], y[i]], color="0.7", lw=1.0, zorder=1)
-    ax.scatter(s1s, y, s=26, color=c1, label="1 thread", zorder=3)
-    ax.scatter(s16s, y, s=26, color=c16, label="16 threads", zorder=3)
+    fig, axes = plt.subplots(2, 1, figsize=(3.55, 3.4), constrained_layout=True)
 
-    ax.set_yticks(y, names)
-    ax.invert_yaxis()
-    ax.axvline(1.0, color="0.25", linewidth=0.8, linestyle="--", alpha=0.7)
-    # Geomean markers for quick reading (paper narrative uses both).
-    gm1 = (e5_1.get("summary") or {}).get("geom_speedup_ours_over_baseline_t1")
-    gm16 = (e5_1.get("summary") or {}).get("geom_speedup_ours_over_baseline_t16")
-    if isinstance(gm1, (int, float)) and float(gm1) > 0:
-        ax.axvline(float(gm1), color=c1, linewidth=1.1, linestyle="-", alpha=0.8)
-        ax.text(float(gm1), -0.6, f"gmean(1T)={float(gm1):.2f}×", ha="left", va="center", fontsize=7, color=c1)
-    if isinstance(gm16, (int, float)) and float(gm16) > 0:
-        ax.axvline(float(gm16), color=c16, linewidth=1.1, linestyle="-", alpha=0.8)
-        ax.text(float(gm16), -0.2, f"gmean(16T)={float(gm16):.2f}×", ha="left", va="center", fontsize=7, color=c16)
-    ax.set_xscale("log")
-    ax.set_xlabel("speedup (log scale)")
-    ax.set_title("External baseline (AI-Bench8)")
-    ax.grid(True, axis="x", linestyle="--", linewidth=0.5, alpha=0.35)
-    ax.legend(frameon=False, loc="lower right")
+    def _panel(ax: plt.Axes, title: str, base: list[float], ours: list[float], *, show_legend: bool) -> None:
+        ax.plot(x, base, marker="o", markersize=3.6, linewidth=1.35, color=c_base, label="AI-Benchmark")
+        ax.plot(x, ours, marker="o", markersize=3.6, linewidth=1.35, color=c_ours, label="IntentIR")
+        ax.set_title(title)
+        ax.set_ylabel("throughput (iters/s)")
+        ax.set_yscale("log")
+        ax.grid(True, axis="y", linestyle="--", linewidth=0.5, alpha=0.35)
+        ax.grid(False, axis="x")
+        ax.set_xticks(x, names)
+        if show_legend:
+            ax.legend(frameon=False, ncol=2, loc="lower right")
+
+    _panel(axes[0], "Single-thread", base_t1, ours_t1, show_legend=True)
+    _panel_label(axes[0], "(a)")
+    _panel(axes[1], "16 threads", base_t16, ours_t16, show_legend=False)
+    _panel_label(axes[1], "(b)")
+
+    fig.suptitle("External baseline throughput (AI-Bench8)", y=1.02, fontsize=10)
     _save_fig(fig, out / "e5_1_external_baseline.pdf")
 
 
@@ -410,52 +462,81 @@ def _write_dataset_table_tex(e1e3: dict[str, Any], out_tables: Path) -> None:
 def fig_e6_contract_calibration(e6: dict[str, Any], out: Path) -> None:
     ps = e6["summary"]["paper_summary"]
     reps = ["intentir", "linalg"]
-    ablations = ["full", "no_mask", "no_anchors"]
     rep_label = {"intentir": "IntentIR", "linalg": "Linalg"}
-    ab_label = {"full": "full", "no_mask": "no mask", "no_anchors": "no anchors"}
-    pal = {"intentir": sns.color_palette("colorblind")[0], "linalg": sns.color_palette("colorblind")[3]}
+    rep_color = {"intentir": sns.color_palette("colorblind")[0], "linalg": sns.color_palette("colorblind")[3]}
 
-    fig, axes = plt.subplots(1, 3, figsize=(7.2, 2.4), constrained_layout=True)
+    # Narrative-friendly order (what information we remove).
+    ablations = ["full", "no_mask", "no_anchors"]
+    ab_label = {"full": "full evidence", "no_mask": "no mask", "no_anchors": "no anchors"}
 
-    # (a) ok_rate across ablations
+    # Single-column figure with two panels:
+    # (a) Contract distribution (abstention under weaker evidence)
+    # (b) Calibration under FULL claims (false-accept among FULL)
+    fig, axes = plt.subplots(2, 1, figsize=(3.55, 3.55), constrained_layout=True)
+
+    # (a) Contract level distribution under evidence ablation.
     ax = axes[0]
-    x = np.arange(len(ablations))
-    w = 0.35
-    for j, rep in enumerate(reps):
-        vals = [float(ps["by_rep_ablation"][rep][ab]["ok_rate"]) for ab in ablations]
-        ax.bar(x + (j - 0.5) * w, vals, width=w, label=rep_label[rep], color=pal[rep])
-    ax.set_xticks(x, [ab_label[a] for a in ablations], rotation=0)
-    ax.set_ylim(0.6, 1.02)
-    ax.set_title("ok\\_rate")
+    levels = ["FULL", "PARTIAL", "OUT_OF_SCOPE"]
+    lvl_label = {"FULL": "FULL", "PARTIAL": "PARTIAL", "OUT_OF_SCOPE": "OOS"}
+    lvl_color = {
+        "FULL": sns.color_palette("colorblind")[2],
+        "PARTIAL": sns.color_palette("colorblind")[0],
+        "OUT_OF_SCOPE": "0.75",
+    }
+
+    x_labels = [f"{ab_label[ab]}\n{rep_label[rep]}" for ab in ablations for rep in reps]
+    x = np.arange(len(x_labels))
+    bottoms = np.zeros(len(x_labels))
+    for lvl in levels:
+        vals = []
+        for ab in ablations:
+            for rep in reps:
+                m = ps["by_rep_ablation"][rep][ab]
+                n = float(m["n"] or 0)
+                c = float((m.get("contract_levels") or {}).get(lvl, 0) or 0)
+                vals.append((c / n) if n > 0 else 0.0)
+        ax.bar(x, vals, bottom=bottoms, color=lvl_color[lvl], label=lvl_label[lvl])
+        bottoms = bottoms + np.array(vals)
+
+    ax.set_xticks(x, x_labels)
+    ax.tick_params(axis="x", labelrotation=0)
+    ax.set_ylim(0.0, 1.02)
+    ax.set_ylabel("fraction")
+    ax.set_title("Contract distribution under evidence ablation")
     ax.grid(True, axis="y", linestyle="--", linewidth=0.5, alpha=0.35)
+    ax.legend(frameon=False, ncol=3, loc="lower center", bbox_to_anchor=(0.5, -0.32))
     _panel_label(ax, "(a)")
 
-    # (b) binding_ok_rate across ablations
+    # (b) Calibration under FULL claims (full evidence).
     ax = axes[1]
-    for j, rep in enumerate(reps):
-        vals = [float(ps["by_rep_ablation"][rep][ab]["binding_ok_rate"]) for ab in ablations]
-        ax.bar(x + (j - 0.5) * w, vals, width=w, label=rep_label[rep], color=pal[rep])
-    ax.set_xticks(x, [ab_label[a] for a in ablations], rotation=0)
-    ax.set_ylim(0.6, 1.02)
-    ax.set_title("binding\\_ok\\_rate")
-    ax.grid(True, axis="y", linestyle="--", linewidth=0.5, alpha=0.35)
-    _panel_label(ax, "(b)")
-
-    # (c) FULL false-accept (only meaningful under full evidence)
-    ax = axes[2]
     m_int = ps["by_rep_ablation"]["intentir"]["full"]
     m_lin = ps["by_rep_ablation"]["linalg"]["full"]
-    vals = [float(m_int["full_false_accept_rate"] or 0.0), float(m_lin["full_false_accept_rate"] or 0.0)]
-    ax.bar(["IntentIR", "Linalg"], vals, color=[pal["intentir"], pal["linalg"]])
-    for i, v in enumerate(vals):
-        ax.text(i, v + 0.02, f"{v:.2f}", ha="center", va="bottom", fontsize=7, color="0.25")
-    ax.set_ylim(0.0, 0.4)
-    ax.set_title("FULL false-accept (full)")
+    vals = {
+        "intentir": float(m_int.get("full_false_accept_rate") or 0.0),
+        "linalg": float(m_lin.get("full_false_accept_rate") or 0.0),
+    }
+    ax.bar([rep_label[r] for r in reps], [vals[r] for r in reps], color=[rep_color[r] for r in reps])
+    ax.set_ylim(0.0, max(0.35, max(vals.values()) * 1.15))
+    ax.set_ylabel("false-accept among FULL")
+    ax.set_title("Calibration under FULL claims (full evidence)")
     ax.grid(True, axis="y", linestyle="--", linewidth=0.5, alpha=0.35)
-    _panel_label(ax, "(c)")
+    for i, r in enumerate(reps):
+        m = ps["by_rep_ablation"][r]["full"]
+        n_full = int(m.get("full_claims") or 0)
+        ok_rate = float(m.get("ok_rate") or 0.0)
+        bind = float(m.get("binding_ok_rate") or 0.0)
+        ax.text(
+            i,
+            vals[r] + 0.012,
+            f"{vals[r]:.2f}\nFULL={n_full}\nok={ok_rate:.2f}\nbind={bind:.2f}",
+            ha="center",
+            va="bottom",
+            fontsize=7,
+            color="0.25",
+        )
+    _panel_label(ax, "(b)")
 
-    axes[1].legend(frameon=False, loc="lower right")
-    fig.suptitle("IR + sidecar contract calibration (CUDA)", y=1.05, fontsize=10)
+    fig.suptitle("IR + sidecar contract calibration (CUDA)", y=1.02, fontsize=10)
     _save_fig(fig, out / "e6_contract_calibration.pdf")
 
 
