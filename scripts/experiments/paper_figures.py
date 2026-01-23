@@ -172,10 +172,11 @@ def fig_e1e3_recoverability(e1: dict[str, Any], e1e3: dict[str, Any], out: Path)
     stage_color = {"rule_only": "0.65", "one_shot": pal[0], "feedback": pal[2]}
 
     # (a) Recoverability: show one-shot vs feedback per frontend.
-    # Note: rule-only only has an *overall* OK rate (not per-frontend), so we
-    # visualize it as a single baseline marker on the "All" bucket to avoid
-    # implying per-frontend numbers.
-    rule_ok = float((e1.get("summary") or {}).get("ok_rate") or 0.0)
+    #
+    # We intentionally do NOT plot the rule-only "recoverability pass rate":
+    # rule-only provides only an overall number (95/100), which is easy to
+    # confuse with semantic accuracy (~29%). We report it in the paper text
+    # instead to keep the figure unambiguous.
     ok_one = [float(one[fe]["ok_rate"]) for fe in frontends] + [_overall_ok_rate(one)]
     ok_fb = [float(fb[fe]["ok_rate"]) for fe in frontends] + [_overall_ok_rate(fb)]
 
@@ -192,11 +193,9 @@ def fig_e1e3_recoverability(e1: dict[str, Any], e1e3: dict[str, Any], out: Path)
     w = 0.34
     ax.bar(x - w / 2, ok_one, width=w, color=stage_color["one_shot"])
     ax.bar(x + w / 2, ok_fb, width=w, color=stage_color["feedback"])
-    all_i = len(reps) - 1
-    ax.scatter([all_i], [rule_ok], marker="D", s=20, color="0.35", zorder=5)
     ax.set_xticks(x, [fe_label[r] for r in reps])
     ax.set_ylim(0.6, 1.02)
-    ax.set_ylabel("OK rate")
+    ax.set_ylabel("pass rate")
     ax.set_title("Validated recoverability")
     ax.grid(True, axis="y", linestyle="--", linewidth=0.5, alpha=0.35)
     ax.grid(False, axis="x")
@@ -230,12 +229,11 @@ def fig_e1e3_recoverability(e1: dict[str, Any], e1e3: dict[str, Any], out: Path)
 
     # One clean legend for the whole figure (color blocks), outside the axes.
     handles = [
-        Patch(facecolor=stage_color["rule_only"], edgecolor="none", label="rule-only (class acc)"),
         Patch(facecolor=stage_color["one_shot"], edgecolor="none", label="one-shot"),
         Patch(facecolor=stage_color["feedback"], edgecolor="none", label="feedback"),
-        Line2D([0], [0], marker="D", color="0.35", linestyle="None", markersize=5, label=f"rule-only baseline (recoverability, All={rule_ok:.2f})"),
+        Patch(facecolor=stage_color["rule_only"], edgecolor="none", label="rule-only (semantic acc; panel b)"),
     ]
-    fig.legend(handles=handles, frameon=False, loc="upper center", bbox_to_anchor=(0.5, 0.985), ncol=2, columnspacing=1.2, handlelength=1.6)
+    fig.legend(handles=handles, frameon=False, loc="upper center", bbox_to_anchor=(0.5, 0.985), ncol=3, columnspacing=1.2, handlelength=1.6)
 
     _save_fig(fig, out / "e1e3_recoverability.pdf")
 
@@ -458,9 +456,9 @@ def fig_e5_2_retune_vs_freeze(e5_2: dict[str, Any], out: Path) -> None:
 
 
 def fig_e5_1_external_baseline(e5_1: dict[str, Any], out: Path) -> None:
-    # External baseline: use *speedup* on the y-axis (clear comparison), and
-    # annotate each bar with the achieved throughput (iters/s) so the plot
-    # still communicates absolute performance.
+    # External baseline: plot absolute throughput (iters/s) for baseline vs ours,
+    # and annotate each kernel with the speedup ratio. This makes both
+    # performance and speedup easy to read in a single-column figure.
     rows = [r for r in list(e5_1.get("per_kernel") or []) if isinstance(r, dict)]
 
     data: list[tuple[str, float, float, float, float]] = []
@@ -492,19 +490,20 @@ def fig_e5_1_external_baseline(e5_1: dict[str, Any], out: Path) -> None:
     fig, axes = plt.subplots(2, 1, figsize=(3.55, 3.60), constrained_layout=False, sharex=True)
     fig.subplots_adjust(top=0.88, hspace=0.55)
 
-    def _panel(ax: plt.Axes, title: str, sp: list[float], ours_tp: list[float]) -> None:
-        ax.bar(x, sp, width=0.55, color=c_ours, alpha=0.95)
-        ax.axhline(1.0, color="0.35", linestyle="--", linewidth=1.0)
+    def _panel(ax: plt.Axes, title: str, base: list[float], ours: list[float], sp: list[float]) -> None:
+        w = 0.36
+        ax.bar(x - w / 2, base, width=w, color=c_base, alpha=0.95, label="AI-Benchmark")
+        ax.bar(x + w / 2, ours, width=w, color=c_ours, alpha=0.95, label="IntentIR")
         ax.set_title(title)
-        ax.set_ylabel("speedup (×)")
+        ax.set_ylabel("throughput (iters/s)")
         ax.grid(True, axis="y", linestyle="--", linewidth=0.5, alpha=0.35)
         ax.grid(False, axis="x")
-        y_max = max(2.0, max(sp, default=1.0) * 1.18)
-        ax.set_ylim(0.0, y_max)
-        # Annotate each bar with throughput (ours) to keep a sense of absolute performance.
-        for i, (s, tp) in enumerate(zip(sp, ours_tp, strict=True)):
-            ax.text(i, min(y_max - 0.02, s + 0.06), f"{tp:.0f}", ha="center", va="bottom", fontsize=7, color="0.25")
-        # (We describe the labels in the figure caption to avoid clutter.)
+        y_max = max(max(base, default=0.0), max(ours, default=0.0)) * 1.22
+        ax.set_ylim(0.0, max(1.0, y_max))
+        ax.ticklabel_format(style="plain", axis="y")
+        # Annotate speedup above the "ours" bar for each kernel.
+        for i, (s, v) in enumerate(zip(sp, ours, strict=True)):
+            ax.text(i + w / 2, v + y_max * 0.03, f"{s:.1f}×", ha="center", va="bottom", fontsize=7, color="0.25")
 
     gm1 = e5_1.get("summary", {}).get("geom_speedup_ours_over_baseline_t1")
     gm16 = e5_1.get("summary", {}).get("geom_speedup_ours_over_baseline_t16")
@@ -515,21 +514,19 @@ def fig_e5_1_external_baseline(e5_1: dict[str, Any], out: Path) -> None:
     if isinstance(gm16, (int, float)) and math.isfinite(float(gm16)):
         t16_title += f" (gmean={float(gm16):.2f}×)"
 
-    _panel(axes[0], t1_title, sp_t1, ours_t1)
+    _panel(axes[0], t1_title, base_t1, ours_t1, sp_t1)
     _panel_label(axes[0], "(a)")
-    _panel(axes[1], t16_title, sp_t16, ours_t16)
+    _panel(axes[1], t16_title, base_t16, ours_t16, sp_t16)
     _panel_label(axes[1], "(b)")
 
-    # Figure-level note: bar = speedup, label = throughput (ours).
-    handles = [
-        Patch(facecolor=c_ours, edgecolor="none", label="Speedup (IntentIR / AI-Benchmark)"),
-        Line2D([0], [0], color="0.35", linestyle="--", linewidth=1.0, label="Parity (1.0×)"),
-    ]
+    # One compact legend for the whole figure (above both panels).
+    handles = [Patch(facecolor=c_base, edgecolor="none", label="AI-Benchmark"), Patch(facecolor=c_ours, edgecolor="none", label="IntentIR")]
     fig.legend(handles=handles, frameon=False, loc="upper center", bbox_to_anchor=(0.5, 0.99), ncol=2, columnspacing=1.2, handlelength=2.0)
 
     axes[0].tick_params(labelbottom=False)
     axes[1].set_xticks(x)
     axes[1].set_xticklabels(names, rotation=28, ha="right", fontsize=7)
+    axes[1].set_xlabel("kernel")
 
     fig.suptitle("External baseline vs IntentIR (AI-Bench8)", y=1.02, fontsize=10)
     _save_fig(fig, out / "e5_1_external_baseline.pdf")
@@ -606,7 +603,8 @@ def fig_e6_contract_calibration(e6: dict[str, Any], out: Path) -> None:
     # (a) Contract distribution (IntentIR vs Linalg) under evidence ablation
     # (b) Calibration under FULL claims (false-accept among FULL) + context (ok_rate, #FULL)
     fig, axes = plt.subplots(2, 1, figsize=(3.55, 4.15), constrained_layout=False)
-    fig.subplots_adjust(top=0.86, hspace=0.70)
+    # Add extra left margin so y-axis labels never clip in single-column figures.
+    fig.subplots_adjust(top=0.86, left=0.20, hspace=0.70)
 
     levels = ["FULL", "PARTIAL", "OUT_OF_SCOPE"]
     lvl_label = {"FULL": "FULL", "PARTIAL": "PARTIAL", "OUT_OF_SCOPE": "OOS"}
@@ -642,7 +640,7 @@ def fig_e6_contract_calibration(e6: dict[str, Any], out: Path) -> None:
 
     ax.set_xticks(x, [ab_label[a] for a in ablations])
     ax.set_ylim(0.0, 1.02)
-    ax.set_ylabel("fraction")
+    ax.set_ylabel("fraction of kernels")
     ax.set_title("Contract distribution under evidence ablation")
     ax.grid(True, axis="y", linestyle="--", linewidth=0.5, alpha=0.35)
     ax.grid(False, axis="x")
@@ -657,7 +655,7 @@ def fig_e6_contract_calibration(e6: dict[str, Any], out: Path) -> None:
     bars = ax.bar(xs, [vals[r] for r in reps], color=[rep_color[r] for r in reps], width=0.55)
     ax.set_xticks(xs, [rep_label[r] for r in reps])
     ax.set_ylim(0.0, max(0.40, max(vals.values()) * 1.65))
-    ax.set_ylabel("false-accept among FULL")
+    ax.set_ylabel("false-accept rate (FULL claims)")
     ax.set_title("Calibration under FULL claims (full evidence)")
     ax.grid(True, axis="y", linestyle="--", linewidth=0.5, alpha=0.35)
     ax.grid(False, axis="x")
