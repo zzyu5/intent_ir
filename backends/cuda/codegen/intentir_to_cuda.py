@@ -654,15 +654,26 @@ def _kernel_rope_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLo
     if (D & 1) != 0:
         raise CudaLoweringError("rope expects even HEAD_DIM")
     half = D // 2
-    total_pairs = SEQ * B * H * half
 
+    # Use a 3D launch like Triton: grid = (HEAD_NUM, BATCH_NUM, SEQ_LEN).
+    # For CUDA, prefer a larger block to improve latency hiding (half can be 512).
+    # Vectorize by 4/2 when HEAD_DIM is divisible by 8/4 (so half is divisible by 4/2).
     sched = intent.schedule or ScheduleSketch()
-    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=256)
+    hinted = _resolve_schedule_int(sched.tile_n, bindings, default=0)
+    if 0 < hinted <= 1024:
+        block_x = hinted
+    elif (half & 3) == 0:
+        half4 = half // 4
+        block_x = 256 if half4 >= 256 else max(32, 1 << int(half4 - 1).bit_length())
+    elif (half & 1) == 0:
+        half2 = half // 2
+        block_x = 256 if half2 >= 256 else max(32, 1 << int(half2 - 1).bit_length())
+    else:
+        block_x = 256 if half >= 256 else max(32, 1 << int(half - 1).bit_length())
     if block_x <= 0:
         block_x = 256
     if block_x > 1024:
         block_x = 1024
-    grid_x = (total_pairs + block_x - 1) // block_x
 
     if not intent.ops or intent.ops[0].op != "rope":
         raise CudaLoweringError("rope lowering expects a single rope op")
@@ -687,31 +698,88 @@ def _kernel_rope_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLo
         return ""
 
     cuda_src = f"""
+__device__ __forceinline__ float intentir_ldg_f32(const float* p) {{
+#if __CUDA_ARCH__ >= 350
+  return __ldg(p);
+#else
+  return *p;
+#endif
+}}
+
 extern "C" __global__ void {intent.name}(
-    const float* {in_name}, const float* {cos_name}, const float* {sin_name}, float* {out_name},
+    const float* __restrict__ {in_name}, const float* __restrict__ {cos_name}, const float* __restrict__ {sin_name}, float* __restrict__ {out_name},
     {_dim_param("SEQ_LEN")}, {_dim_param("BATCH_NUM")}, {_dim_param("HEAD_NUM")}, {_dim_param("HEAD_DIM")}) {{
   {_dim_load("SEQ_LEN")}
   {_dim_load("BATCH_NUM")}
   {_dim_load("HEAD_NUM")}
   {_dim_load("HEAD_DIM")}
+  const int pid_head = (int)blockIdx.x;
+  const int pid_batch = (int)blockIdx.y;
+  const int pid_seq = (int)blockIdx.z;
+  if (pid_head >= HEAD_NUM || pid_batch >= BATCH_NUM || pid_seq >= SEQ_LEN) return;
   const int half = (int)(HEAD_DIM >> 1);
-  const int64_t total = (int64_t)SEQ_LEN * (int64_t)BATCH_NUM * (int64_t)HEAD_NUM * (int64_t)half;
-  const int64_t t = (int64_t)blockIdx.x * (int64_t)blockDim.x + (int64_t)threadIdx.x;
-  if (t >= total) return;
-  int j = (int)(t % (int64_t)half);
-  int64_t tmp = t / (int64_t)half;
-  int h = (int)(tmp % (int64_t)HEAD_NUM);
-  tmp /= (int64_t)HEAD_NUM;
-  int b = (int)(tmp % (int64_t)BATCH_NUM);
-  int s = (int)(tmp / (int64_t)BATCH_NUM);
-  const size_t base = (((size_t)s * (size_t)BATCH_NUM + (size_t)b) * (size_t)HEAD_NUM + (size_t)h) * (size_t)HEAD_DIM;
-  const size_t cb = (size_t)s * (size_t)half + (size_t)j;
-  float c = {cos_name}[cb];
-  float s0 = {sin_name}[cb];
-  float x1 = {in_name}[base + (size_t)j];
-  float x2 = {in_name}[base + (size_t)half + (size_t)j];
-  {out_name}[base + (size_t)j] = x1 * c - x2 * s0;
-  {out_name}[base + (size_t)half + (size_t)j] = x1 * s0 + x2 * c;
+  const size_t base = (((size_t)pid_seq * (size_t)BATCH_NUM + (size_t)pid_batch) * (size_t)HEAD_NUM + (size_t)pid_head) * (size_t)HEAD_DIM;
+  const size_t cb0 = (size_t)pid_seq * (size_t)half;
+
+  if ((half & 3) == 0) {{
+    const int half4 = (int)(half >> 2);  // # of float4 packs
+    const float4* __restrict__ cos4 = (const float4* __restrict__)({cos_name} + cb0);
+    const float4* __restrict__ sin4 = (const float4* __restrict__)({sin_name} + cb0);
+    const float4* __restrict__ x14 = (const float4* __restrict__)({in_name} + base);
+    const float4* __restrict__ x24 = (const float4* __restrict__)({in_name} + base + (size_t)half);
+    float4* __restrict__ y14 = (float4* __restrict__)({out_name} + base);
+    float4* __restrict__ y24 = (float4* __restrict__)({out_name} + base + (size_t)half);
+    for (int j4 = (int)threadIdx.x; j4 < half4; j4 += (int)blockDim.x) {{
+      const float4 c4 = cos4[j4];
+      const float4 s4 = sin4[j4];
+      const float4 a = x14[j4];
+      const float4 b = x24[j4];
+      float4 y1;
+      float4 y2;
+      y1.x = fmaf(-b.x, s4.x, a.x * c4.x);
+      y1.y = fmaf(-b.y, s4.y, a.y * c4.y);
+      y1.z = fmaf(-b.z, s4.z, a.z * c4.z);
+      y1.w = fmaf(-b.w, s4.w, a.w * c4.w);
+      y2.x = fmaf(a.x, s4.x, b.x * c4.x);
+      y2.y = fmaf(a.y, s4.y, b.y * c4.y);
+      y2.z = fmaf(a.z, s4.z, b.z * c4.z);
+      y2.w = fmaf(a.w, s4.w, b.w * c4.w);
+      y14[j4] = y1;
+      y24[j4] = y2;
+    }}
+  }} else if ((half & 1) == 0) {{
+    const int half2 = (int)(half >> 1);  // # of float2 packs
+    const float2* __restrict__ cos2 = (const float2* __restrict__)({cos_name} + cb0);
+    const float2* __restrict__ sin2 = (const float2* __restrict__)({sin_name} + cb0);
+    const float2* __restrict__ x12 = (const float2* __restrict__)({in_name} + base);
+    const float2* __restrict__ x22 = (const float2* __restrict__)({in_name} + base + (size_t)half);
+    float2* __restrict__ y12 = (float2* __restrict__)({out_name} + base);
+    float2* __restrict__ y22 = (float2* __restrict__)({out_name} + base + (size_t)half);
+    for (int j2 = (int)threadIdx.x; j2 < half2; j2 += (int)blockDim.x) {{
+      const float2 c2 = cos2[j2];
+      const float2 s2 = sin2[j2];
+      const float2 a = x12[j2];
+      const float2 b = x22[j2];
+      float2 y1;
+      float2 y2;
+      y1.x = fmaf(-b.x, s2.x, a.x * c2.x);
+      y1.y = fmaf(-b.y, s2.y, a.y * c2.y);
+      y2.x = fmaf(a.x, s2.x, b.x * c2.x);
+      y2.y = fmaf(a.y, s2.y, b.y * c2.y);
+      y12[j2] = y1;
+      y22[j2] = y2;
+    }}
+  }} else {{
+    for (int j = (int)threadIdx.x; j < half; j += (int)blockDim.x) {{
+      const size_t cb = cb0 + (size_t)j;
+      const float c = intentir_ldg_f32(&{cos_name}[cb]);
+      const float s0 = intentir_ldg_f32(&{sin_name}[cb]);
+      const float x1 = intentir_ldg_f32(&{in_name}[base + (size_t)j]);
+      const float x2 = intentir_ldg_f32(&{in_name}[base + (size_t)half + (size_t)j]);
+      {out_name}[base + (size_t)j] = fmaf(-x2, s0, x1 * c);
+      {out_name}[base + (size_t)half + (size_t)j] = fmaf(x1, s0, x2 * c);
+    }}
+  }}
 }}
 """.lstrip()
 
@@ -735,7 +803,7 @@ extern "C" __global__ void {intent.name}(
             bindings.setdefault(str(cos_shape[1]), half)
     except Exception:
         bindings.setdefault("HEAD_DIM_DIV_2", half)
-    launch = CudaLaunch(grid=(grid_x, 1, 1), block=(block_x, 1, 1), shared_mem=0)
+    launch = CudaLaunch(grid=(H, B, SEQ), block=(block_x, 1, 1), shared_mem=0)
     return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=bindings)
 
 
