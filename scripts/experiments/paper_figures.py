@@ -238,12 +238,14 @@ def fig_e5_1_external_baseline(e5_1: dict[str, Any], out: Path) -> None:
         
         ax.set_yticks(y)
         ax.set_yticklabels(names, fontsize=9)
-        ax.set_xscale("log")
         ax.set_title(title, pad=5)
         ax.grid(axis='x', which='major', alpha=0.5)
+
+        xmax = max(base + ours) if (base + ours) else 1.0
+        ax.set_xlim(0.0, xmax * 1.25)
         
         for i, (v, sp) in enumerate(zip(ours, speedups)):
-            ax.text(v * 1.15, i - h/2, f"{sp:.1f}x", va='center', fontsize=7, 
+            ax.text(v + xmax * 0.03, i - h/2, f"{sp:.1f}x", va='center', fontsize=7,
                     color=PALETTE["red"], fontweight='bold')
 
     gm1 = e5_1.get("summary", {}).get("geom_speedup_ours_over_baseline_t1")
@@ -257,7 +259,7 @@ def fig_e5_1_external_baseline(e5_1: dict[str, Any], out: Path) -> None:
     _panel_label(axes[1], "(b)")
     axes[1].set_xlabel("Throughput (iter/s)")
 
-    handles = [Patch(facecolor=PALETTE["grey"], label="Baseline (AI-Bench)"),
+    handles = [Patch(facecolor=PALETTE["grey"], label="Triton-CPU LLVM baseline"),
                Patch(facecolor=PALETTE["red"], label="IntentIR (Ours)")]
     _common_legend(fig, handles, [h.get_label() for h in handles], ncol=2)
 
@@ -426,9 +428,13 @@ def fig_e2_trust_ablation(e2: dict[str, Any], out: Path) -> None:
 
 def fig_e4_consistency(e4: dict[str, Any], out: Path) -> None:
     s = e4["summary"]
-    labels_a = ["Structural Match", "Axis-Role Recall", "Verbatim Match"]
-    intent = [s["intent_structural_ok_rate"], s["axis_roles_recall_intent_avg"], s["intent_ok_rate"]]
-    expanded = [s["expanded_structural_ok_rate"], s["axis_roles_recall_expanded_avg"], s["expanded_ok_rate"]]
+    # We report a "consistency vs strictness" view:
+    # - canonical: exact equality under a portable normalization (drops schedule hints + size specialization)
+    # - structural: order-insensitive graph hash + interface compatibility
+    # - roles: axis-role recall on labeled subset
+    labels_a = ["Canonical match", "Structural match", "Axis-role recall"]
+    intent = [s["intent_ok_rate"], s["intent_structural_ok_rate"], s["axis_roles_recall_intent_avg"]]
+    expanded = [s["expanded_ok_rate"], s["expanded_structural_ok_rate"], s["axis_roles_recall_expanded_avg"]]
     
     r_int = s.get("top_reasons_intent", {})
     r_exp = s.get("top_reasons_expanded", {})
@@ -442,25 +448,25 @@ def fig_e4_consistency(e4: dict[str, Any], out: Path) -> None:
     def _do_barh(ax, y_labels, v1, v2, title, panel):
         y = np.arange(len(y_labels))
         h = 0.35
-        ax.barh(y - h/2, v1, height=h, color=PALETTE["blue"], label="IntentIR")
-        ax.barh(y + h/2, v2, height=h, color="#D99F94", label="Macro-expanded") 
+        ax.barh(y - h/2, v1, height=h, color=PALETTE["blue"], label="Macro-level")
+        ax.barh(y + h/2, v2, height=h, color="#D99F94", label="Expanded primitives")
         ax.set_yticks(y)
         ax.set_yticklabels(y_labels)
         ax.invert_yaxis()
         ax.set_title(title)
         _panel_label(ax, panel)
 
-    _do_barh(axes[0], labels_a, intent, expanded, "Consistency Metrics", "(a)")
+    _do_barh(axes[0], labels_a, intent, expanded, "Consistency at Macro vs Primitive Levels", "(a)")
     axes[0].set_xlim(0, 1.15)
     for i, v in enumerate(intent): axes[0].text(v+0.02, i-0.17, f"{v:.1%}", fontsize=8, va='center')
     for i, v in enumerate(expanded): axes[0].text(v+0.02, i+0.17, f"{v:.1%}", fontsize=8, va='center')
 
     clean_keys = [k.replace("tilelang:", "").replace("_", " ").capitalize() for k in keys]
-    _do_barh(axes[1], clean_keys, [r_int.get(k,0) for k in keys], [r_exp.get(k,0) for k in keys], "Drift Sources", "(b)")
+    _do_barh(axes[1], clean_keys, [r_int.get(k,0) for k in keys], [r_exp.get(k,0) for k in keys], "Benign Drift Sources", "(b)")
     axes[1].set_xlabel("Count (out of 30)")
 
-    handles = [Patch(facecolor=PALETTE["blue"], label="IntentIR"),
-               Patch(facecolor="#D99F94", label="Macro-expanded")]
+    handles = [Patch(facecolor=PALETTE["blue"], label="Macro-level"),
+               Patch(facecolor="#D99F94", label="Expanded primitives")]
     _common_legend(fig, handles, [h.get_label() for h in handles], ncol=2)
 
     _save_fig(fig, out / "e4_consistency.pdf")

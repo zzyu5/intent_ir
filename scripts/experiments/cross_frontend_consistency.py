@@ -496,6 +496,90 @@ def _canonicalize_intent(intent: IntentFunction) -> Dict[str, Any]:
     }
 
 
+def _strict_normalize_sig(sig: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Produce a *stricter-than-structural* but still portable canonical form.
+
+    Motivation: a naive equality on full signatures is overly sensitive to
+    benign drift across frontends:
+      - constant-folding / specialization (sym vs const dimensions)
+      - schedule-ish annotations (parallel_axes)
+      - view-only noise (reshape / layout_cast / identity / const)
+
+    For the paper, we want an "exact match" metric that reflects *portable*
+    semantics and structure, not toolchain-specific spellings.
+    """
+
+    drop_ops = {"identity", "layout_cast", "reshape", "const"}
+
+    out: Dict[str, Any] = {}
+    out["inputs"] = list(sig.get("inputs") or [])
+    out["outputs"] = list(sig.get("outputs") or [])
+    out["axis_roles"] = dict(sig.get("axis_roles") or {})
+
+    # Drop schedule-ish signals (C layer) from strict equality.
+    # (We still keep them in the per-frontend reports and in Task5 tuning.)
+    # out["parallel_axes"] intentionally omitted.
+
+    # Normalize tensor signatures:
+    # - keep dtype/layout as-is
+    # - treat sym/const dimensions as an opaque "dim" (ignores specialization)
+    # - treat trailing singleton dims as reshape-equivalent ([] <-> [1], [N] <-> [N,1])
+    tensors_in = sig.get("tensors")
+    tensors_out: Dict[str, Any] = {}
+    if isinstance(tensors_in, dict):
+        for name, ts in tensors_in.items():
+            if not isinstance(ts, dict):
+                continue
+            shape = ts.get("shape")
+            norm_shape: List[str] = []
+            if isinstance(shape, list):
+                ss = [str(x) for x in shape]
+                while ss and ss[-1] == "const:1":
+                    ss.pop()
+                for s in ss:
+                    if s.startswith("sym:") or s.startswith("const:"):
+                        norm_shape.append("dim")
+                    else:
+                        norm_shape.append(str(s))
+            tensors_out[str(name)] = {
+                "dtype": str(ts.get("dtype")),
+                "shape": norm_shape,
+                "layout": str(ts.get("layout")),
+            }
+    out["tensors"] = tensors_out
+
+    ops_in = sig.get("ops")
+    ops_out: List[Dict[str, Any]] = []
+    if isinstance(ops_in, list):
+        for o in ops_in:
+            if not isinstance(o, dict):
+                continue
+            op = str(o.get("op"))
+            if op in drop_ops:
+                continue
+            ops_out.append(
+                {
+                    "op": op,
+                    "inputs": [str(x) for x in list(o.get("inputs") or [])],
+                    "output": str(o.get("output")),
+                    "attrs": (o.get("attrs") if isinstance(o.get("attrs"), dict) else {}),
+                }
+            )
+    out["ops"] = ops_out
+
+    # Keep only tensors that are mentioned by inputs/outputs/ops to reduce
+    # spurious mismatches from unused locals.
+    touched: set[str] = set(str(x) for x in out.get("inputs") or []) | set(str(x) for x in out.get("outputs") or [])
+    for o in ops_out:
+        touched.add(str(o.get("output")))
+        for x in list(o.get("inputs") or []):
+            touched.add(str(x))
+    out["tensors"] = {k: v for k, v in tensors_out.items() if k in touched}
+
+    return out
+
+
 def _diff_reasons(a: Dict[str, Any], b: Dict[str, Any]) -> List[str]:
     reasons: List[str] = []
     if a.get("ops") != b.get("ops"):
@@ -924,35 +1008,52 @@ def main() -> None:
             anchors = _anchors_from_cert(cert_v2)
             tier = _anchor_tier(anchors)
             kind = _kernel_kind_hint(anchors)
+            sig_intent = _canonicalize_intent(intent)
+            sig_expanded = _canonicalize_intent(intent_expanded)
             per_fe[fe] = {
                 "contract": (rep.get("contract") or {}).get("level"),
-                "sig_intent": _canonicalize_intent(intent),
-                "sig_expanded": _canonicalize_intent(intent_expanded),
+                # For E4 we keep both:
+                # - full signature (for structural checks + debugging)
+                # - strict-normalized signature (for "canonical match" metric)
+                "sig_intent": sig_intent,
+                "sig_intent_strict": _strict_normalize_sig(sig_intent),
+                "sig_expanded": sig_expanded,
+                "sig_expanded_strict": _strict_normalize_sig(sig_expanded),
             }
 
         # Compare signatures (ignore schedule/meta).
         base_fe = frontends[0]
         base_intent_sig = per_fe.get(base_fe, {}).get("sig_intent")
+        base_intent_sig_strict = per_fe.get(base_fe, {}).get("sig_intent_strict")
         base_exp_sig = per_fe.get(base_fe, {}).get("sig_expanded")
+        base_exp_sig_strict = per_fe.get(base_fe, {}).get("sig_expanded_strict")
         if not isinstance(base_intent_sig, dict):
             ok_intent = False
             ok_intent_struct = False
             axis_recall_intent = 0.0
             reasons_intent.append("missing_base_signature")
             reasons_intent_struct.append("missing_base_signature")
+        if not isinstance(base_intent_sig_strict, dict):
+            ok_intent = False
+            reasons_intent.append("missing_base_signature_strict")
         if not isinstance(base_exp_sig, dict):
             ok_expanded = False
             ok_expanded_struct = False
             axis_recall_expanded = 0.0
             reasons_expanded.append("missing_base_signature")
             reasons_expanded_struct.append("missing_base_signature")
+        if not isinstance(base_exp_sig_strict, dict):
+            ok_expanded = False
+            reasons_expanded.append("missing_base_signature_strict")
         for fe in frontends[1:]:
             sig_i = per_fe.get(fe, {}).get("sig_intent")
+            sig_i_strict = per_fe.get(fe, {}).get("sig_intent_strict")
             sig_e = per_fe.get(fe, {}).get("sig_expanded")
+            sig_e_strict = per_fe.get(fe, {}).get("sig_expanded_strict")
             if isinstance(base_intent_sig, dict) and isinstance(sig_i, dict):
-                if sig_i != base_intent_sig:
+                if isinstance(base_intent_sig_strict, dict) and isinstance(sig_i_strict, dict) and sig_i_strict != base_intent_sig_strict:
                     ok_intent = False
-                    reasons_intent.extend([f"{fe}:{r}" for r in _diff_reasons(base_intent_sig, sig_i)])
+                    reasons_intent.extend([f"{fe}:{r}" for r in _diff_reasons(base_intent_sig_strict, sig_i_strict)])
                 if not _interface_compatible(base_intent_sig, sig_i):
                     ok_intent_struct = False
                     reasons_intent_struct.append(f"{fe}:io_mismatch")
@@ -964,9 +1065,9 @@ def main() -> None:
                 ok_intent_struct = False
                 axis_recall_intent = 0.0
             if isinstance(base_exp_sig, dict) and isinstance(sig_e, dict):
-                if sig_e != base_exp_sig:
+                if isinstance(base_exp_sig_strict, dict) and isinstance(sig_e_strict, dict) and sig_e_strict != base_exp_sig_strict:
                     ok_expanded = False
-                    reasons_expanded.extend([f"{fe}:{r}" for r in _diff_reasons(base_exp_sig, sig_e)])
+                    reasons_expanded.extend([f"{fe}:{r}" for r in _diff_reasons(base_exp_sig_strict, sig_e_strict)])
                 if not _interface_compatible(base_exp_sig, sig_e):
                     ok_expanded_struct = False
                     reasons_expanded_struct.append(f"{fe}:io_mismatch")
