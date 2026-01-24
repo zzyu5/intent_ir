@@ -139,18 +139,30 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
     block_y = _resolve_schedule_int(sched.tile_m, bindings, default=16)  # rows
     block_x = _resolve_schedule_int(sched.tile_n, bindings, default=16)  # cols
     block_k = _resolve_schedule_int(sched.tile_k, bindings, default=16)  # reduction tile
-    # Clamp to CUDA limits (1024 threads per block).
+    # Clamp to sane defaults.
     if block_x <= 0:
         block_x = 16
     if block_y <= 0:
         block_y = 16
     if block_k <= 0:
         block_k = 16
-    if block_x * block_y > 1024:
-        # Prefer keeping X dimension; shrink Y.
-        block_y = max(1, 1024 // max(1, block_x))
-    # Ensure BLOCK_K fits the 2D block shape for the cooperative load.
-    block_k = max(1, min(block_k, block_x, block_y))
+    # Keep X reasonably small (threads along X). If schedule asks for huge tiles,
+    # prefer more blocks than a mega-block (better occupancy for small GEMMs).
+    if block_x > 64:
+        block_x = 64
+    # Prefer WMMA TF32 on modern GPUs when explicitly enabled and shapes are friendly.
+    # NOTE: TF32 changes numerical semantics vs full f32, so it must be opt-in.
+    allow_tf32 = bool(int(bindings.get("ALLOW_TF32", 0))) or bool(op.attrs.get("allow_tf32", False))
+    use_wmma = allow_tf32 and (M % 16 == 0) and (N % 16 == 0) and (K % 8 == 0)
+
+    # Use a fixed thread-y tile and let each thread compute multiple rows
+    # for the fallback (non-WMMA) kernel.
+    thread_m = min(16, block_y)
+    if block_x * thread_m > 1024:
+        thread_m = max(1, 1024 // max(1, block_x))
+    # Ensure BLOCK_K fits both X and the thread-y loader.
+    block_k = max(1, min(block_k, block_x, thread_m))
+    rows_per_thread = max(1, (block_y + thread_m - 1) // thread_m)
 
     grid_x = (N + block_x - 1) // block_x
     grid_y = (M + block_y - 1) // block_y
@@ -168,9 +180,60 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
     n_load = f"const int N = {str(N_dim)}_ptr ? {str(N_dim)}_ptr[0] : 0;" if n_is_tensor else ""
     k_load = f"const int K = {str(K_dim)}_ptr ? {str(K_dim)}_ptr[0] : 0;" if k_is_tensor else ""
 
-    cuda_src = f"""
+    if use_wmma:
+        # 2x2 warp tiles -> 32x32 output per block.
+        wmma_warps_m = 2
+        wmma_warps_n = 2
+        wmma_tile_m = 16 * wmma_warps_m
+        wmma_tile_n = 16 * wmma_warps_n
+        wmma_grid_x = (N + wmma_tile_n - 1) // wmma_tile_n
+        wmma_grid_y = (M + wmma_tile_m - 1) // wmma_tile_m
+        cuda_src = f"""
+#include <mma.h>
+using namespace nvcuda::wmma;
+
 extern "C" __global__ void {intent.name}(
-    const float* A, const float* B, float* C,
+    const float* __restrict__ A, const float* __restrict__ B, float* __restrict__ C,
+    {m_param}, {n_param}, {k_param}) {{
+  {m_load}
+  {n_load}
+  {k_load}
+
+  // Assumes M,N are multiples of 16 and K is a multiple of 8 (enforced by host-side lowering).
+  constexpr int WARPS_M = {wmma_warps_m};
+  constexpr int WARPS_N = {wmma_warps_n};
+  constexpr int TILE_M = 16 * WARPS_M;
+  constexpr int TILE_N = 16 * WARPS_N;
+
+  const int warp = (int)(threadIdx.x >> 5);  // 0..(WARPS_M*WARPS_N-1)
+  const int warp_m = warp >> 1;             // WARPS_M=2
+  const int warp_n = warp & 1;              // WARPS_N=2
+
+  const int tile_m = (int)blockIdx.y * WARPS_M + warp_m;
+  const int tile_n = (int)blockIdx.x * WARPS_N + warp_n;
+  const int row = tile_m * 16;
+  const int col = tile_n * 16;
+  if (row >= M || col >= N) return;
+
+  fragment<accumulator, 16, 16, 8, float> acc;
+  fill_fragment(acc, 0.0f);
+
+  #pragma unroll 4
+  for (int k0 = 0; k0 < K; k0 += 8) {{
+    fragment<matrix_a, 16, 16, 8, precision::tf32, row_major> a_frag;
+    fragment<matrix_b, 16, 16, 8, precision::tf32, row_major> b_frag;
+    load_matrix_sync(a_frag, A + (size_t)row * (size_t)K + (size_t)k0, (unsigned)K);
+    load_matrix_sync(b_frag, B + (size_t)k0 * (size_t)N + (size_t)col, (unsigned)N);
+    mma_sync(acc, a_frag, b_frag, acc);
+  }}
+  store_matrix_sync(C + (size_t)row * (size_t)N + (size_t)col, acc, (unsigned)N, mem_row_major);
+}}
+""".lstrip()
+        launch = CudaLaunch(grid=(wmma_grid_x, wmma_grid_y, 1), block=(32 * wmma_warps_m * wmma_warps_n, 1, 1), shared_mem=0)
+    else:
+        cuda_src = f"""
+extern "C" __global__ void {intent.name}(
+    const float* __restrict__ A, const float* __restrict__ B, float* __restrict__ C,
     {m_param}, {n_param}, {k_param}) {{
   {m_load}
   {n_load}
@@ -178,33 +241,56 @@ extern "C" __global__ void {intent.name}(
   constexpr int BLOCK_M = {block_y};
   constexpr int BLOCK_N = {block_x};
   constexpr int BLOCK_K = {block_k};
+  constexpr int THREAD_M = {thread_m};
+  constexpr int ROWS_PER_THREAD = {rows_per_thread};
   __shared__ float As[BLOCK_M][BLOCK_K];
   __shared__ float Bs[BLOCK_K][BLOCK_N];
 
-  const int col = (int)(blockIdx.x * BLOCK_N + (int)threadIdx.x);
-  const int row = (int)(blockIdx.y * BLOCK_M + (int)threadIdx.y);
+  const int tx = (int)threadIdx.x;
+  const int ty = (int)threadIdx.y;
+  const int col = (int)(blockIdx.x * BLOCK_N + tx);
+  const int block_row = (int)(blockIdx.y * BLOCK_M);
+  const int row0 = block_row + ty;
 
-  float acc = 0.0f;
+  float acc[ROWS_PER_THREAD];
+  #pragma unroll
+  for (int i = 0; i < ROWS_PER_THREAD; ++i) acc[i] = 0.0f;
   for (int kt = 0; kt < K; kt += BLOCK_K) {{
     // Cooperative load (guarded).
-    if (row < M && ((int)threadIdx.x) < BLOCK_K && (kt + (int)threadIdx.x) < K) {{
-      As[(int)threadIdx.y][(int)threadIdx.x] = A[row * K + (kt + (int)threadIdx.x)];
-    }} else if (((int)threadIdx.x) < BLOCK_K) {{
-      As[(int)threadIdx.y][(int)threadIdx.x] = 0.0f;
+    if (tx < BLOCK_K) {{
+      #pragma unroll
+      for (int i = 0; i < ROWS_PER_THREAD; ++i) {{
+        const int r = ty + i * THREAD_M;
+        if (r < BLOCK_M) {{
+          const int row = block_row + r;
+          if (row < M && (kt + tx) < K) As[r][tx] = A[row * K + (kt + tx)];
+          else As[r][tx] = 0.0f;
+        }}
+      }}
     }}
-    if (((int)threadIdx.y) < BLOCK_K && col < N && (kt + (int)threadIdx.y) < K) {{
-      Bs[(int)threadIdx.y][(int)threadIdx.x] = B[(kt + (int)threadIdx.y) * N + col];
-    }} else if (((int)threadIdx.y) < BLOCK_K) {{
-      Bs[(int)threadIdx.y][(int)threadIdx.x] = 0.0f;
+    if (ty < BLOCK_K) {{
+      if (col < N && (kt + ty) < K) Bs[ty][tx] = B[(kt + ty) * N + col];
+      else Bs[ty][tx] = 0.0f;
     }}
     __syncthreads();
     #pragma unroll
     for (int k0 = 0; k0 < BLOCK_K; ++k0) {{
-      acc += As[(int)threadIdx.y][k0] * Bs[k0][(int)threadIdx.x];
+      const float b0 = Bs[k0][tx];
+      #pragma unroll
+      for (int i = 0; i < ROWS_PER_THREAD; ++i) {{
+        const int r = ty + i * THREAD_M;
+        if (r < BLOCK_M) acc[i] = fmaf(As[r][k0], b0, acc[i]);
+      }}
     }}
     __syncthreads();
   }}
-  if (row < M && col < N) C[row * N + col] = acc;
+  if (col < N) {{
+    #pragma unroll
+    for (int i = 0; i < ROWS_PER_THREAD; ++i) {{
+      const int row = row0 + i * THREAD_M;
+      if (row < M) C[row * N + col] = acc[i];
+    }}
+  }}
 }}
 """.lstrip()
 
@@ -231,7 +317,8 @@ extern "C" __global__ void {intent.name}(
         arg_names.append(str(K_dim))
 
     io_spec = _io_spec_from_args(intent, tensor_args=tensor_args, scalar_args=scalar_args, arg_names=arg_names)
-    launch = CudaLaunch(grid=(grid_x, grid_y, 1), block=(block_x, block_y, 1), shared_mem=0)
+    if not use_wmma:
+        launch = CudaLaunch(grid=(grid_x, grid_y, 1), block=(block_x, thread_m, 1), shared_mem=0)
     return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[c], bindings=dict(bindings))
 
 
@@ -668,22 +755,26 @@ def _kernel_resize_bilinear2x_i8(intent: IntentFunction, bindings: Dict[str, int
     OW = _as_int(bindings.get("OW", 2 * W), name="OW")
     if OH != 2 * H or OW != 2 * W:
         raise CudaLoweringError("resize MVP supports only 2x upsample")
+    # This kernel models the AI-Bench resize: 2x bilinear with fixed-point `hw_fl=7`.
+    # The IntentIR already carries `hw_fl` as an attribute, not a runtime scalar.
     hw_fl = 7
     try:
         hw_fl = int(op.attrs.get("hw_fl", 7))
     except Exception:
         hw_fl = 7
-    if hw_fl <= 0:
-        hw_fl = 7
-    total = C * OH * OW
+    if hw_fl != 7:
+        raise CudaLoweringError("resize MVP expects hw_fl=7")
 
+    # Prefer the Triton constexpr BLOCK_W when available.
     sched = intent.schedule or ScheduleSketch()
-    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=256)
-    if block_x <= 0:
-        block_x = 256
-    if block_x > 1024:
-        block_x = 1024
-    grid_x = (total + block_x - 1) // block_x
+    block_w = _as_int(bindings.get("BLOCK_W", 128), name="BLOCK_W")
+    hinted = _resolve_schedule_int(sched.tile_n, bindings, default=block_w)
+    block_w = hinted if 0 < hinted <= 1024 else block_w
+    if block_w <= 0:
+        block_w = 128
+    if block_w > 1024:
+        block_w = 1024
+    grid_w = (OW + block_w - 1) // block_w
 
     c_is_tensor = _is_scalar_tensor(intent, "C", dtype="i32")
     h_is_tensor = _is_scalar_tensor(intent, "H", dtype="i32")
@@ -698,56 +789,50 @@ def _kernel_resize_bilinear2x_i8(intent: IntentFunction, bindings: Dict[str, int
 
     cuda_src = f"""
 #include <stdint.h>
-extern "C" __global__ void {intent.name}(const int8_t* {src_name}, int8_t* {out_name}, {c_param}, {h_param}, {w_param}, int hw_fl) {{
+extern "C" __global__ void {intent.name}(const int8_t* __restrict__ {src_name}, int8_t* __restrict__ {out_name}, {c_param}, {h_param}, {w_param}) {{
   {c_load}
   {h_load}
   {w_load}
   const int OH = H * 2;
   const int OW = W * 2;
-  const int64_t total = (int64_t)C * (int64_t)OH * (int64_t)OW;
-  const int64_t tid = (int64_t)blockIdx.x * (int64_t)blockDim.x + (int64_t)threadIdx.x;
-  if (tid >= total) return;
-  const int w_idx = (int)(tid % (int64_t)OW);
-  int64_t tmp = tid / (int64_t)OW;
-  const int h_idx = (int)(tmp % (int64_t)OH);
-  const int c = (int)(tmp / (int64_t)OH);
 
-  const int factor = 1 << hw_fl;
-  const int input_y = h_idx << (hw_fl - 1);
-  const int y0 = input_y >> hw_fl;
-  const int h1 = input_y - (y0 << hw_fl);
-  const int h0 = factor - h1;
-  int y1 = y0 + 1;
-  if (y1 >= H) y1 = H - 1;
+  const int h_idx = (int)blockIdx.y;
+  const int c = (int)blockIdx.z;
+  const int w_idx = (int)blockIdx.x * (int)blockDim.x + (int)threadIdx.x;
+  if (c >= C || h_idx >= OH || w_idx >= OW) return;
 
-  const int input_x = w_idx << (hw_fl - 1);
-  const int x0 = input_x >> hw_fl;
-  const int w1 = input_x - (x0 << hw_fl);
-  const int w0 = factor - w1;
-  int x1 = x0 + 1;
-  if (x1 >= W) x1 = W - 1;
+  // 2x bilinear with fixed-point hw_fl=7 has a regular structure:
+  // x0 = floor(w/2), y0 = floor(h/2). Odd positions average neighbors.
+  const int x0 = w_idx >> 1;
+  const int y0 = h_idx >> 1;
+  const int x1 = (x0 + 1 < W) ? (x0 + 1) : (W - 1);
+  const int y1 = (y0 + 1 < H) ? (y0 + 1) : (H - 1);
 
   const int64_t src_hw = (int64_t)H * (int64_t)W;
   const int64_t dst_hw = (int64_t)OH * (int64_t)OW;
   const int64_t src_base = (int64_t)c * src_hw;
-  const int64_t src_row0 = src_base + (int64_t)y0 * (int64_t)W;
-  const int64_t src_row1 = src_base + (int64_t)y1 * (int64_t)W;
+  const int64_t dst_base = (int64_t)c * dst_hw + (int64_t)h_idx * (int64_t)OW;
 
-  const int16_t y0x0 = (int16_t){src_name}[src_row0 + x0];
-  const int16_t y0x1 = (int16_t){src_name}[src_row0 + x1];
-  const int16_t y1x0 = (int16_t){src_name}[src_row1 + x0];
-  const int16_t y1x1 = (int16_t){src_name}[src_row1 + x1];
-  const int32_t sum1 = (((int32_t)y0x0 * (int32_t)w0) + ((int32_t)y0x1 * (int32_t)w1)) >> hw_fl;
-  const int32_t sum2 = (((int32_t)y1x0 * (int32_t)w0) + ((int32_t)y1x1 * (int32_t)w1)) >> hw_fl;
-  const int32_t sum = (((sum1 * (int32_t)h0) + (sum2 * (int32_t)h1)) >> hw_fl);
+  const int64_t row0 = src_base + (int64_t)y0 * (int64_t)W;
+  const int64_t row1 = src_base + (int64_t)y1 * (int64_t)W;
 
-  {out_name}[(size_t)tid] = (int8_t)sum;
+  const int16_t a = (int16_t){src_name}[row0 + x0];
+  const int16_t b = (int16_t){src_name}[row0 + x1];
+  const int16_t c0 = (int16_t){src_name}[row1 + x0];
+  const int16_t d = (int16_t){src_name}[row1 + x1];
+
+  const int x_odd = (w_idx & 1);
+  const int y_odd = (h_idx & 1);
+  const int32_t sum1 = x_odd ? (((int32_t)a + (int32_t)b) >> 1) : (int32_t)a;
+  const int32_t sum2 = x_odd ? (((int32_t)c0 + (int32_t)d) >> 1) : (int32_t)c0;
+  const int32_t outv = y_odd ? ((sum1 + sum2) >> 1) : sum1;
+  {out_name}[dst_base + (int64_t)w_idx] = (int8_t)outv;
 }}
 """.lstrip()
 
     # Allow scalar-tensor dims if present (AI-Bench uses scalar tensors for C/H/W).
     tensor_args = [src_name, out_name]
-    scalar_args: Dict[str, str] = {"hw_fl": "i32"}
+    scalar_args: Dict[str, str] = {}
     arg_names = [src_name, out_name]
     for dim_name in ["C", "H", "W"]:
         if _is_scalar_tensor(intent, dim_name, dtype="i32"):
@@ -756,14 +841,12 @@ extern "C" __global__ void {intent.name}(const int8_t* {src_name}, int8_t* {out_
         else:
             scalar_args[dim_name] = "i32"
             arg_names.append(dim_name)
-    arg_names.append("hw_fl")
 
     io_spec = _io_spec_from_args(intent, tensor_args=tensor_args, scalar_args=scalar_args, arg_names=arg_names)
     bindings = dict(bindings)
     bindings.setdefault("OH", OH)
     bindings.setdefault("OW", OW)
-    launch = CudaLaunch(grid=(grid_x, 1, 1), block=(block_x, 1, 1), shared_mem=0)
-    bindings.setdefault("hw_fl", hw_fl)
+    launch = CudaLaunch(grid=(grid_w, OH, C), block=(block_w, 1, 1), shared_mem=0)
     return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=bindings)
 
 

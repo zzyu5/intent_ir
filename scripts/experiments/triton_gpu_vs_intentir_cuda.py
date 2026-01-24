@@ -477,6 +477,9 @@ def main() -> None:
             # Build bindings: real shapes + descriptor constexpr (e.g., BLOCK_M/BLOCK_N).
             bindings: Dict[str, Any] = dict(AI_BENCH_SHAPES.get(k, {}))
             bindings.update(_descriptor_constexpr(report))
+            # For fair comparison, allow TF32 on matmul (Triton tl.dot uses TF32 on modern GPUs).
+            if k == "ai_bench_matmul":
+                bindings.setdefault("ALLOW_TF32", 1)
 
             intent = IntentFunction.from_json_dict(report["intent"])
             lowered = lower_intent_to_cuda_kernel(intent, shape_bindings=bindings)
