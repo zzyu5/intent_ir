@@ -313,13 +313,26 @@ def run_cuda_kernel_io(
                     outputs_torch[name] = t
                     args.append(t)
                 else:
-                    if name not in inputs_np:
-                        raise CudaRuntimeError(f"missing input {name} for CUDA baseline; have keys={sorted(inputs_np.keys())}")
-                    arr = np.asarray(inputs_np[name])
-                    t = torch.from_numpy(arr).to(device=device)
-                    if t.dtype != _dtype_to_torch(dt):
-                        t = t.to(dtype=_dtype_to_torch(dt))
-                    args.append(t.contiguous())
+                    if name in inputs_np:
+                        arr = np.asarray(inputs_np[name])
+                        t = torch.from_numpy(arr).to(device=device)
+                        if t.dtype != _dtype_to_torch(dt):
+                            t = t.to(dtype=_dtype_to_torch(dt))
+                        args.append(t.contiguous())
+                    else:
+                        # Convenience: scalar-tensors (shape=[]) can be materialized from bindings.
+                        # This matches the IntentIR convention of modeling scalar params as 0-d tensors.
+                        if shape_tpl == [] and name in bindings:
+                            val = bindings[name]
+                            if dt == "f32":
+                                t = torch.tensor(float(val), device=device, dtype=torch.float32)
+                            else:
+                                t = torch.tensor(int(val), device=device, dtype=_dtype_to_torch(dt))
+                            args.append(t)
+                        else:
+                            raise CudaRuntimeError(
+                                f"missing input {name} for CUDA baseline; have keys={sorted(inputs_np.keys())}"
+                            )
             elif name in scalars:
                 if name not in bindings:
                     raise CudaRuntimeError(f"missing scalar binding {name}; have {sorted(bindings.keys())}")
