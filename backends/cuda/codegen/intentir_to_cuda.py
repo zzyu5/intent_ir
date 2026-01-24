@@ -322,25 +322,24 @@ def _kernel_softmax_2d_last_f32(intent: IntentFunction, bindings: Dict[str, int]
     R = _resolve_dim_int(R_dim, bindings, name="R")
     C = _resolve_dim_int(C_dim, bindings, name="C")
 
-    # Default block size: next pow2(C) capped at 1024 (match Triton ref).
+    # Thread block size heuristic:
+    # - Triton uses BLOCK_SIZE=next_pow2(C) for reductions, which can be 1024 even for C~800.
+    # - On CUDA, a smaller thread count (e.g., 256) with strided loops tends to reduce overhead
+    #   vs launching a full 1024-thread block with many idle lanes.
     def _next_pow2(x: int) -> int:
         if x <= 1:
             return 1
         return 1 << (int(x - 1).bit_length())
 
-    default_block = min(1024, _next_pow2(C))
     sched = intent.schedule or ScheduleSketch()
-    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=default_block)
+    # Prefer at most 256 threads for this reduction kernel, unless a smaller schedule hint is provided.
+    default_block = min(256, _next_pow2(C))
+    hinted = _resolve_schedule_int(sched.tile_n, bindings, default=default_block)
+    block_x = hinted if hinted <= 256 else default_block
     if block_x <= 0:
         block_x = default_block
     if block_x > 1024:
         block_x = 1024
-
-    # Require power-of-two for the simple shared-memory reduction.
-    if (block_x & (block_x - 1)) != 0:
-        # Round down to nearest power-of-two.
-        b = 1 << (int(block_x).bit_length() - 1)
-        block_x = max(1, min(1024, b))
 
     r_is_tensor = _is_scalar_tensor(intent, str(R_dim), dtype="i32")
     c_is_tensor = _is_scalar_tensor(intent, str(C_dim), dtype="i32")
@@ -351,41 +350,42 @@ def _kernel_softmax_2d_last_f32(intent: IntentFunction, bindings: Dict[str, int]
 
     cuda_src = f"""
 #include <math.h>
+#include <cub/block/block_reduce.cuh>
 
 extern "C" __global__ void {intent.name}(const float* {in_name}, float* {out_name}, {r_param}, {c_param}) {{
   {r_load}
   {c_load}
   const int r = (int)blockIdx.x;
   if (r >= R) return;
-  // Shared reductions (blockDim.x must equal the compiled BLOCK_SIZE).
-  __shared__ float smem[1024];
+  // CUB reductions (fewer syncs than manual tree reductions).
+  constexpr int BLOCK_THREADS = {block_x};
+  using BlockReduce = cub::BlockReduce<float, BLOCK_THREADS>;
+  __shared__ typename BlockReduce::TempStorage temp_storage;
+  __shared__ float shared_max;
+  __shared__ float shared_sum;
+
   float tmax = -INFINITY;
-  for (int c = (int)threadIdx.x; c < C; c += (int)blockDim.x) {{
+  for (int c = (int)threadIdx.x; c < C; c += BLOCK_THREADS) {{
     float v = {in_name}[r * C + c];
     tmax = fmaxf(tmax, v);
   }}
-  smem[threadIdx.x] = tmax;
+  float mx0 = BlockReduce(temp_storage).Reduce(tmax, cub::Max());
+  if ((int)threadIdx.x == 0) shared_max = mx0;
   __syncthreads();
-  for (int off = ((int)blockDim.x >> 1); off > 0; off >>= 1) {{
-    if ((int)threadIdx.x < off) smem[threadIdx.x] = fmaxf(smem[threadIdx.x], smem[threadIdx.x + off]);
-    __syncthreads();
-  }}
-  const float mx = smem[0];
+  const float mx = shared_max;
 
   float tsum = 0.0f;
-  for (int c = (int)threadIdx.x; c < C; c += (int)blockDim.x) {{
-    float e = expf({in_name}[r * C + c] - mx);
+  for (int c = (int)threadIdx.x; c < C; c += BLOCK_THREADS) {{
+    float e = __expf({in_name}[r * C + c] - mx);
     {out_name}[r * C + c] = e;
     tsum += e;
   }}
-  smem[threadIdx.x] = tsum;
+  __syncthreads();  // reuse temp_storage
+  float sum0 = BlockReduce(temp_storage).Reduce(tsum, cub::Sum());
+  if ((int)threadIdx.x == 0) shared_sum = sum0;
   __syncthreads();
-  for (int off = ((int)blockDim.x >> 1); off > 0; off >>= 1) {{
-    if ((int)threadIdx.x < off) smem[threadIdx.x] += smem[threadIdx.x + off];
-    __syncthreads();
-  }}
-  const float inv = 1.0f / smem[0];
-  for (int c = (int)threadIdx.x; c < C; c += (int)blockDim.x) {{
+  const float inv = __fdividef(1.0f, shared_sum);
+  for (int c = (int)threadIdx.x; c < C; c += BLOCK_THREADS) {{
     {out_name}[r * C + c] *= inv;
   }}
 }}

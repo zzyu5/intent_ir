@@ -94,6 +94,16 @@ def _bench_cuda(fn: Callable[[], None], *, warmup: int, iters: int) -> float:
     return (ms * 1e6) / float(iters)  # ns/iter
 
 
+def _bench_cuda_repeated(fn: Callable[[], None], *, warmup: int, iters: int, repeats: int) -> tuple[float, list[float]]:
+    rs = max(1, int(repeats))
+    times: list[float] = []
+    for _ in range(rs):
+        times.append(_bench_cuda(fn, warmup=int(warmup), iters=int(iters)))
+    times_sorted = sorted(times)
+    median = times_sorted[len(times_sorted) // 2]
+    return median, times
+
+
 def _ensure_artifact(kernel_name: str, *, refresh: bool, cases_limit: int) -> Path:
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     report_path = ARTIFACT_DIR / f"{kernel_name}.json"
@@ -430,6 +440,7 @@ def main() -> None:
     ap.add_argument("--cases-limit", type=int, default=1, help="Pipeline cases_limit when refreshing artifacts.")
     ap.add_argument("--warmup", type=int, default=20, help="Warmup iterations (excluded from timing).")
     ap.add_argument("--iters", type=int, default=200, help="Benchmark iterations (timed).")
+    ap.add_argument("--repeats", type=int, default=5, help="Repeat measurements and report median ns/iter.")
     ap.add_argument("--seed", type=int, default=0, help="Seed for input generation.")
     ap.add_argument("--device", type=str, default="cuda", help="Device string (default: cuda).")
     ap.add_argument("--out", type=Path, default=OUT_DEFAULT, help="Output JSON path.")
@@ -445,6 +456,7 @@ def main() -> None:
         "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
         "warmup": int(args.warmup),
         "iters": int(args.iters),
+        "repeats": int(args.repeats),
         "seed": int(args.seed),
         "kernels": wanted,
     }
@@ -487,16 +499,22 @@ def main() -> None:
 
             triton_run = _make_triton_runner(k, AI_BENCH_SHAPES.get(k, {}), str(args.device))
 
-            ours_ns = _bench_cuda(ours_run, warmup=int(args.warmup), iters=int(args.iters))
-            triton_ns = _bench_cuda(triton_run, warmup=int(args.warmup), iters=int(args.iters))
+            ours_ns, ours_reps = _bench_cuda_repeated(ours_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats))
+            triton_ns, triton_reps = _bench_cuda_repeated(
+                triton_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
+            )
 
             speedup = float(triton_ns) / float(ours_ns) if ours_ns > 0 else 0.0
             results.append(
                 {
                     "kernel": k,
                     "status": "OK",
-                    "ours": {"ns_per_iter": ours_ns, "launch": {"grid": list(lowered.launch.grid), "block": list(lowered.launch.block)}},
-                    "triton": {"ns_per_iter": triton_ns},
+                    "ours": {
+                        "ns_per_iter": ours_ns,
+                        "ns_per_iter_repeats": ours_reps,
+                        "launch": {"grid": list(lowered.launch.grid), "block": list(lowered.launch.block)},
+                    },
+                    "triton": {"ns_per_iter": triton_ns, "ns_per_iter_repeats": triton_reps},
                     "speedup_ours_over_triton": speedup,
                 }
             )
@@ -522,4 +540,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
