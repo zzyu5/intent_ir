@@ -138,14 +138,19 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
     sched = intent.schedule or ScheduleSketch()
     block_y = _resolve_schedule_int(sched.tile_m, bindings, default=16)  # rows
     block_x = _resolve_schedule_int(sched.tile_n, bindings, default=16)  # cols
+    block_k = _resolve_schedule_int(sched.tile_k, bindings, default=16)  # reduction tile
     # Clamp to CUDA limits (1024 threads per block).
     if block_x <= 0:
         block_x = 16
     if block_y <= 0:
         block_y = 16
+    if block_k <= 0:
+        block_k = 16
     if block_x * block_y > 1024:
         # Prefer keeping X dimension; shrink Y.
         block_y = max(1, 1024 // max(1, block_x))
+    # Ensure BLOCK_K fits the 2D block shape for the cooperative load.
+    block_k = max(1, min(block_k, block_x, block_y))
 
     grid_x = (N + block_x - 1) // block_x
     grid_y = (M + block_y - 1) // block_y
@@ -170,15 +175,36 @@ extern "C" __global__ void {intent.name}(
   {m_load}
   {n_load}
   {k_load}
-  int col = (int)(blockIdx.x * blockDim.x + threadIdx.x);
-  int row = (int)(blockIdx.y * blockDim.y + threadIdx.y);
-  if (row >= M || col >= N) return;
+  constexpr int BLOCK_M = {block_y};
+  constexpr int BLOCK_N = {block_x};
+  constexpr int BLOCK_K = {block_k};
+  __shared__ float As[BLOCK_M][BLOCK_K];
+  __shared__ float Bs[BLOCK_K][BLOCK_N];
+
+  const int col = (int)(blockIdx.x * BLOCK_N + (int)threadIdx.x);
+  const int row = (int)(blockIdx.y * BLOCK_M + (int)threadIdx.y);
+
   float acc = 0.0f;
-  const int a_base = row * K;
-  for (int k = 0; k < K; ++k) {{
-    acc += A[a_base + k] * B[k * N + col];
+  for (int kt = 0; kt < K; kt += BLOCK_K) {{
+    // Cooperative load (guarded).
+    if (row < M && ((int)threadIdx.x) < BLOCK_K && (kt + (int)threadIdx.x) < K) {{
+      As[(int)threadIdx.y][(int)threadIdx.x] = A[row * K + (kt + (int)threadIdx.x)];
+    }} else if (((int)threadIdx.x) < BLOCK_K) {{
+      As[(int)threadIdx.y][(int)threadIdx.x] = 0.0f;
+    }}
+    if (((int)threadIdx.y) < BLOCK_K && col < N && (kt + (int)threadIdx.y) < K) {{
+      Bs[(int)threadIdx.y][(int)threadIdx.x] = B[(kt + (int)threadIdx.y) * N + col];
+    }} else if (((int)threadIdx.y) < BLOCK_K) {{
+      Bs[(int)threadIdx.y][(int)threadIdx.x] = 0.0f;
+    }}
+    __syncthreads();
+    #pragma unroll
+    for (int k0 = 0; k0 < BLOCK_K; ++k0) {{
+      acc += As[(int)threadIdx.y][k0] * Bs[k0][(int)threadIdx.x];
+    }}
+    __syncthreads();
   }}
-  C[row * N + col] = acc;
+  if (row < M && col < N) C[row * N + col] = acc;
 }}
 """.lstrip()
 
