@@ -9,8 +9,11 @@ only torch+nvcc (CuPy/cuda-python not required).
 from __future__ import annotations
 
 import hashlib
+import os
+import sys
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple
 
 import numpy as np
@@ -76,6 +79,8 @@ def _dtype_to_torch(dt: str):
         return torch.float32
     if s == "i8":
         return torch.int8
+    if s == "i16":
+        return torch.int16
     if s == "i32":
         return torch.int32
     if s == "i64":
@@ -95,6 +100,8 @@ def _c_type(dt: str) -> str:
         return "float"
     if s == "i8":
         return "int8_t"
+    if s == "i16":
+        return "int16_t"
     if s == "i32":
         return "int"
     if s == "i64":
@@ -108,6 +115,25 @@ def _c_type(dt: str) -> str:
 
 def _hash_src(text: str) -> str:
     return hashlib.sha256(str(text).encode("utf-8")).hexdigest()[:16]
+
+
+def _default_torch_ext_root() -> Path:
+    """
+    Default Torch extension build root under the repo.
+
+    Some sandboxed environments forbid writing to `~/.cache/torch_extensions`.
+    Keeping build outputs under `artifacts/` also makes runs reproducible.
+    """
+    root = Path(__file__).resolve().parents[2]
+    py_tag = f"py{sys.version_info.major}{sys.version_info.minor}"
+    return root / "artifacts" / "torch_extensions" / py_tag
+
+
+def _torch_ext_build_dir(name: str) -> Path:
+    base = os.getenv("INTENTIR_TORCH_EXT_DIR")
+    if base:
+        return Path(base) / str(name)
+    return _default_torch_ext_root() / str(name)
 
 
 def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, Any]) -> str:
@@ -140,6 +166,8 @@ def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, 
                 checks.append(f"TORCH_CHECK({name}.scalar_type() == at::kByte, \"{name} must be uint8\");")
             elif dt == "i8":
                 checks.append(f"TORCH_CHECK({name}.scalar_type() == at::kChar, \"{name} must be int8\");")
+            elif dt == "i16":
+                checks.append(f"TORCH_CHECK({name}.scalar_type() == at::kShort, \"{name} must be int16\");")
             elif dt == "i32":
                 checks.append(f"TORCH_CHECK({name}.scalar_type() == at::kInt, \"{name} must be int32\");")
             elif dt == "i64":
@@ -150,8 +178,13 @@ def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, 
             ptr_decls.append(f"auto {name}_ptr = ({cty}*){name}.data_ptr();")
             call_args.append(f"{name}_ptr")
         elif name in scalars:
-            sig_args.append(f"int64_t {name}")
-            call_args.append(f"({ _c_type(str(scalars[name])) }){name}")
+            dt = str(scalars[name])
+            if dt == "f32":
+                sig_args.append(f"double {name}")
+                call_args.append(f"(float){name}")
+            else:
+                sig_args.append(f"int64_t {name}")
+                call_args.append(f"({ _c_type(dt) }){name}")
         else:
             # Unknown arg: treat as int64 scalar.
             sig_args.append(f"int64_t {name}")
@@ -197,6 +230,8 @@ def _load_ext_cached(name: str, cuda_src: str, extra_cuda_cflags: Tuple[str, ...
     torch = _torch()
     from torch.utils.cpp_extension import load_inline  # noqa: PLC0415
 
+    build_dir = _torch_ext_build_dir(name)
+    build_dir.mkdir(parents=True, exist_ok=True)
     return load_inline(
         name=name,
         cpp_sources="",
@@ -205,6 +240,7 @@ def _load_ext_cached(name: str, cuda_src: str, extra_cuda_cflags: Tuple[str, ...
         with_cuda=True,
         extra_cuda_cflags=["--std=c++17", *list(extra_cuda_cflags)],
         extra_cflags=["-std=c++17"],
+        build_directory=str(build_dir),
         verbose=False,
     )
 
@@ -232,7 +268,7 @@ def run_cuda_kernel_io(
     cuda_src: str,
     io_spec: Dict[str, Any],
     launch: CudaLaunch,
-    bindings: Dict[str, int],
+    bindings: Dict[str, Any],
     inputs_np: Dict[str, np.ndarray],
     output_names: Iterable[str],
     device: str = "cuda",
@@ -287,7 +323,11 @@ def run_cuda_kernel_io(
             elif name in scalars:
                 if name not in bindings:
                     raise CudaRuntimeError(f"missing scalar binding {name}; have {sorted(bindings.keys())}")
-                args.append(int(bindings[name]))
+                dt = str(scalars[name])
+                if dt == "f32":
+                    args.append(float(bindings[name]))
+                else:
+                    args.append(int(bindings[name]))
             else:
                 if name not in bindings:
                     raise CudaRuntimeError(f"missing binding for unknown arg {name}")
