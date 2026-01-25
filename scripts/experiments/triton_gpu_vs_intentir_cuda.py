@@ -19,7 +19,7 @@ import json
 import math
 import sys
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Tuple, Union
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -247,16 +247,30 @@ def _prep_args_for_cuda_ext(
     return args, outputs
 
 
-def _make_triton_runner(kernel: str, shapes: Mapping[str, Any], device: str) -> Callable[[], None]:
+def _scalar(v: Union[int, float, torch.Tensor]) -> Union[int, float]:
+    if isinstance(v, torch.Tensor):
+        if v.numel() != 1:
+            raise ValueError("expected scalar tensor")
+        return v.detach().item()
+    return v
+
+
+def _make_triton_runner_from_shared_args(
+    kernel: str,
+    arg_map: Mapping[str, Any],
+    triton_outputs: Mapping[str, torch.Tensor],
+) -> Callable[[], None]:
     import triton  # noqa: PLC0415
 
     if kernel == "ai_bench_matmul":
         from kernels.triton.ops.ai_bench_matmul import ai_bench_matmul_kernel  # noqa: PLC0415
 
-        M, N, K = int(shapes["M"]), int(shapes["N"]), int(shapes["K"])
-        a = torch.randn((M, K), device=device, dtype=torch.float32)
-        b = torch.randn((K, N), device=device, dtype=torch.float32)
-        c = torch.empty((M, N), device=device, dtype=torch.float32)
+        a = arg_map["a"]
+        b = arg_map["b"]
+        c = triton_outputs["c"]
+        M = int(_scalar(arg_map["M"]))
+        N = int(_scalar(arg_map["N"]))
+        K = int(_scalar(arg_map["K"]))
         grid = lambda meta: (triton.cdiv(M, meta["BLOCK_M"]) * triton.cdiv(N, meta["BLOCK_N"]),)
 
         def run() -> None:
@@ -283,11 +297,11 @@ def _make_triton_runner(kernel: str, shapes: Mapping[str, Any], device: str) -> 
     if kernel == "ai_bench_dropout":
         from kernels.triton.ops.ai_bench_dropout import ai_bench_dropout_kernel  # noqa: PLC0415
 
-        n = int(shapes["n_elements"])
-        p = float(shapes.get("p", 0.5))
-        seed = int(shapes.get("seed", 123))
-        x = torch.randn((n,), device=device, dtype=torch.float32)
-        y = torch.empty_like(x)
+        x = arg_map["X"]
+        y = triton_outputs["Out"]
+        n = int(_scalar(arg_map.get("n_elements", int(x.numel()))))
+        p = float(_scalar(arg_map["p"]))
+        seed = int(_scalar(arg_map["seed"]))
         block = 256
         grid = lambda meta: (triton.cdiv(n, meta["BLOCK_SIZE"]),)
 
@@ -299,9 +313,10 @@ def _make_triton_runner(kernel: str, shapes: Mapping[str, Any], device: str) -> 
     if kernel == "ai_bench_softmax":
         from kernels.triton.ops.ai_bench_softmax import ai_bench_softmax_kernel  # noqa: PLC0415
 
-        R, C = int(shapes["R"]), int(shapes["C"])
-        x = torch.randn((R, C), device=device, dtype=torch.float32)
-        y = torch.empty_like(x)
+        x = arg_map["in_ptr"]
+        y = triton_outputs["out_ptr"]
+        R = int(_scalar(arg_map["R"]))
+        C = int(_scalar(arg_map["C"]))
         block = 1 << (int(C) - 1).bit_length()
         if block > 1024:
             block = 1024
@@ -314,14 +329,15 @@ def _make_triton_runner(kernel: str, shapes: Mapping[str, Any], device: str) -> 
     if kernel == "ai_bench_layernorm":
         from kernels.triton.ops.ai_bench_layernorm import ai_bench_layernorm_fwd_kernel  # noqa: PLC0415
 
-        M, N = int(shapes["M"]), int(shapes["N"])
-        eps = float(shapes.get("eps", 1e-5))
-        x = torch.randn((M, N), device=device, dtype=torch.float32)
-        w = torch.randn((N,), device=device, dtype=torch.float32)
-        b = torch.randn((N,), device=device, dtype=torch.float32)
-        y = torch.empty_like(x)
-        mean = torch.empty((M,), device=device, dtype=torch.float32)
-        rstd = torch.empty((M,), device=device, dtype=torch.float32)
+        x = arg_map["X"]
+        w = arg_map["W"]
+        b = arg_map["B"]
+        y = triton_outputs["Y"]
+        mean = triton_outputs["Mean"]
+        rstd = triton_outputs["Rstd"]
+        M = int(_scalar(arg_map["M"]))
+        N = int(_scalar(arg_map["N"]))
+        eps = float(_scalar(arg_map.get("eps", 1e-5)))
         block = 16
 
         def run() -> None:
@@ -332,17 +348,14 @@ def _make_triton_runner(kernel: str, shapes: Mapping[str, Any], device: str) -> 
     if kernel == "ai_bench_correlation":
         from kernels.triton.ops.ai_bench_correlation import ai_bench_correlation_kernel  # noqa: PLC0415
 
-        out_channel = int(shapes["out_channel"])
-        in_channel = int(shapes["in_channel"])
-        height = int(shapes["height"])
-        width = int(shapes["width"])
-        out_shift = int(shapes.get("out_shift", 0))
-        in_size = int(in_channel) * int(height) * int(width)
-        vals0 = (torch.arange(in_size, device=device) % 16).to(torch.int8)
-        vals1 = (torch.arange(in_size, device=device) % 35).to(torch.int8)
-        src0 = vals0.reshape((in_channel, height, width))
-        src1 = vals1.reshape((in_channel, height, width))
-        out = torch.empty((out_channel, height, width), device=device, dtype=torch.int8)
+        src0 = arg_map["src0"]
+        src1 = arg_map["src1"]
+        out = triton_outputs["out"]
+        out_channel = int(_scalar(arg_map["out_channel"]))
+        in_channel = int(_scalar(arg_map["in_channel"]))
+        height = int(_scalar(arg_map["height"]))
+        width = int(_scalar(arg_map["width"]))
+        out_shift = int(_scalar(arg_map.get("out_shift", 0)))
         block_h, block_w, block_ic = 1, 8, 64
         grid = lambda meta: (
             triton.cdiv(width, meta["BLOCK_W"]),
@@ -370,11 +383,11 @@ def _make_triton_runner(kernel: str, shapes: Mapping[str, Any], device: str) -> 
     if kernel == "ai_bench_resize":
         from kernels.triton.ops.ai_bench_resize import ai_bench_resize_kernel  # noqa: PLC0415
 
-        C, H, W = int(shapes["C"]), int(shapes["H"]), int(shapes["W"])
-        in_size = int(C) * int(H) * int(W)
-        vals = (torch.arange(in_size, device=device) % 17).to(torch.int8)
-        src = vals.reshape((C, H, W))
-        out = torch.empty((C, 2 * H, 2 * W), device=device, dtype=torch.int8)
+        src = arg_map["src"]
+        out = triton_outputs["out"]
+        C = int(_scalar(arg_map["C"]))
+        H = int(_scalar(arg_map["H"]))
+        W = int(_scalar(arg_map["W"]))
         block_w = 128
         grid = lambda meta: (
             2 * H,
@@ -390,15 +403,14 @@ def _make_triton_runner(kernel: str, shapes: Mapping[str, Any], device: str) -> 
     if kernel == "ai_bench_rope":
         from kernels.triton.ops.ai_bench_rope import ai_bench_rope_fwd_kernel  # noqa: PLC0415
 
-        seq_len = int(shapes["SEQ_LEN"])
-        batch_num = int(shapes["BATCH_NUM"])
-        head_num = int(shapes["HEAD_NUM"])
-        head_dim = int(shapes["HEAD_DIM"])
-        assert head_dim % 2 == 0
-        x = torch.randn((seq_len, batch_num, head_num, head_dim), device=device, dtype=torch.float32)
-        out = torch.empty_like(x)
-        cos = torch.randn((seq_len, head_dim // 2), device=device, dtype=torch.float32)
-        sin = torch.randn((seq_len, head_dim // 2), device=device, dtype=torch.float32)
+        x = arg_map["input"]
+        cos = arg_map["cos"]
+        sin = arg_map["sin"]
+        out = triton_outputs["output"]
+        seq_len = int(_scalar(arg_map["SEQ_LEN"]))
+        batch_num = int(_scalar(arg_map["BATCH_NUM"]))
+        head_num = int(_scalar(arg_map["HEAD_NUM"]))
+        head_dim = int(_scalar(arg_map["HEAD_DIM"]))
         grid = (head_num, batch_num, seq_len)
         block = 32
 
@@ -410,12 +422,12 @@ def _make_triton_runner(kernel: str, shapes: Mapping[str, Any], device: str) -> 
     if kernel == "ai_bench_warp":
         from kernels.triton.ops.ai_bench_warp import ai_bench_warp_kernel  # noqa: PLC0415
 
-        C, H, W = int(shapes["C"]), int(shapes["H"]), int(shapes["W"])
-        in_size = int(C) * int(H) * int(W)
-        vals = (torch.arange(in_size, device=device) % 17).to(torch.int8)
-        src = vals.reshape((C, H, W))
-        offset = torch.zeros((H, W), device=device, dtype=torch.int16)
-        out = torch.empty((C, H, W), device=device, dtype=torch.int8)
+        src = arg_map["src"]
+        offset = arg_map["offset"]
+        out = triton_outputs["out"]
+        C = int(_scalar(arg_map.get("C", int(src.shape[0]))))
+        H = int(_scalar(arg_map.get("H", int(src.shape[1]))))
+        W = int(_scalar(arg_map.get("W", int(src.shape[2]))))
         block_w = 128
         grid = lambda meta: (
             H,
@@ -429,6 +441,43 @@ def _make_triton_runner(kernel: str, shapes: Mapping[str, Any], device: str) -> 
         return run
 
     raise KeyError(f"unsupported triton benchmark kernel: {kernel}")
+
+
+def _check_outputs_close(
+    *,
+    kernel: str,
+    ours: Mapping[str, torch.Tensor],
+    triton: Mapping[str, torch.Tensor],
+    allow_tf32: bool,
+) -> None:
+    for name, a in ours.items():
+        if name not in triton:
+            raise AssertionError(f"{kernel}: missing triton output buffer: {name}")
+        b = triton[name]
+        if tuple(a.shape) != tuple(b.shape):
+            raise AssertionError(f"{kernel}: output shape mismatch for {name}: ours={tuple(a.shape)} triton={tuple(b.shape)}")
+        if a.dtype != b.dtype:
+            raise AssertionError(f"{kernel}: output dtype mismatch for {name}: ours={a.dtype} triton={b.dtype}")
+
+        if a.dtype in (torch.float16, torch.bfloat16, torch.float32, torch.float64):
+            if allow_tf32:
+                atol, rtol = 1e-1, 1e-2
+            elif a.dtype == torch.float16:
+                atol, rtol = 3e-3, 3e-3
+            else:
+                atol, rtol = 1e-3, 1e-3
+            if not torch.allclose(a, b, atol=atol, rtol=rtol):
+                diff = (a - b).abs()
+                max_abs = float(diff.max().item())
+                denom = b.abs().max().item()
+                max_rel = float(max_abs / (float(denom) + 1e-8))
+                raise AssertionError(
+                    f"{kernel}: output mismatch for {name} (atol={atol}, rtol={rtol}): max_abs={max_abs:.3e} max_rel={max_rel:.3e}"
+                )
+        else:
+            if not torch.equal(a, b):
+                neq = int((a != b).sum().item())
+                raise AssertionError(f"{kernel}: output mismatch for {name}: {neq} elements differ")
 
 
 def main() -> None:
@@ -487,7 +536,7 @@ def main() -> None:
             # Compile CUDA extension once (excluded from timing).
             mod = compile_cuda_extension(kernel_name=lowered.kernel_name, cuda_src=lowered.cuda_src, io_spec=lowered.io_spec)
 
-            ours_args, _ = _prep_args_for_cuda_ext(
+            ours_args, ours_outputs = _prep_args_for_cuda_ext(
                 kernel=k,
                 io_spec=lowered.io_spec,
                 bindings=lowered.bindings,
@@ -500,7 +549,16 @@ def main() -> None:
             def ours_run() -> None:
                 mod.launch(*ours_args)
 
-            triton_run = _make_triton_runner(k, AI_BENCH_SHAPES.get(k, {}), str(args.device))
+            arg_names = lowered.io_spec.get("arg_names") if isinstance(lowered.io_spec, dict) else None
+            arg_names = [str(x) for x in (arg_names or [])]
+            arg_map = {name: ours_args[i] for i, name in enumerate(arg_names)}
+            triton_outputs = {name: torch.empty_like(t) for name, t in ours_outputs.items()}
+            triton_run = _make_triton_runner_from_shared_args(k, arg_map, triton_outputs)
+
+            ours_run()
+            triton_run()
+            torch.cuda.synchronize()
+            _check_outputs_close(kernel=k, ours=ours_outputs, triton=triton_outputs, allow_tf32=(k == "ai_bench_matmul"))
 
             ours_ns, ours_reps = _bench_cuda_repeated(ours_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats))
             triton_ns, triton_reps = _bench_cuda_repeated(
