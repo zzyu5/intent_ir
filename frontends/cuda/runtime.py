@@ -87,7 +87,7 @@ def _dtype_to_torch(dt: str):
         return torch.int64
     if s == "u8":
         return torch.uint8
-    if s == "bool":
+    if s in {"bool", "i1"}:
         return torch.bool
     raise CudaRuntimeError(f"unsupported dtype for CUDA runtime: {dt}")
 
@@ -108,7 +108,7 @@ def _c_type(dt: str) -> str:
         return "int64_t"
     if s == "u8":
         return "uint8_t"
-    if s == "bool":
+    if s in {"bool", "i1"}:
         return "bool"
     raise CudaRuntimeError(f"unsupported dtype for CUDA runtime: {dt}")
 
@@ -134,6 +134,41 @@ def _torch_ext_build_dir(name: str) -> Path:
     if base:
         return Path(base) / str(name)
     return _default_torch_ext_root() / str(name)
+
+
+def _intentir_cuda_include_dirs() -> list[str]:
+    """
+    Include directories for IntentIR-generated CUDA kernels.
+
+    This lets kernels `#include` our small runtime headers (e.g., Philox RNG)
+    without embedding them as giant strings in each generated kernel.
+    """
+    root = Path(__file__).resolve().parents[2]
+    dirs: list[Path] = [
+        root / "backends" / "cuda" / "runtime",
+    ]
+    out: list[str] = []
+    for d in dirs:
+        if d.is_dir():
+            out.append(str(d))
+    return out
+
+
+def _intentir_cuda_runtime_hash_payload() -> str:
+    """
+    Content hash payload for runtime headers included by generated kernels.
+
+    `load_inline` caches build products by module name; to ensure rebuilds when
+    a header changes, we incorporate the header text into our module hash.
+    """
+    root = Path(__file__).resolve().parents[2]
+    hdr = root / "backends" / "cuda" / "runtime" / "intentir_cuda_ops.cuh"
+    try:
+        if hdr.is_file():
+            return hdr.read_text(encoding="utf-8")
+    except Exception:
+        return ""
+    return ""
 
 
 def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, Any]) -> str:
@@ -172,7 +207,7 @@ def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, 
                 checks.append(f"TORCH_CHECK({name}.scalar_type() == at::kInt, \"{name} must be int32\");")
             elif dt == "i64":
                 checks.append(f"TORCH_CHECK({name}.scalar_type() == at::kLong, \"{name} must be int64\");")
-            elif dt == "bool":
+            elif dt in {"bool", "i1"}:
                 checks.append(f"TORCH_CHECK({name}.scalar_type() == at::kBool, \"{name} must be bool\");")
             cty = _c_type(dt)
             ptr_decls.append(f"auto {name}_ptr = ({cty}*){name}.data_ptr();")
@@ -214,7 +249,9 @@ def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, 
 static void launch({", ".join(sig_args)}) {{
   {" ".join(checks)}
   {" ".join(ptr_decls)}
-  cudaStream_t stream = at::cuda::getDefaultCUDAStream().stream();
+  // Respect the current PyTorch CUDA stream (required for correct stream semantics,
+  // and for features like CUDA Graph capture).
+  cudaStream_t stream = at::cuda::getCurrentCUDAStream().stream();
   {kernel_name}<<<{dim}, {bdim}, (size_t)shared_mem, stream>>>({", ".join(call_args)});
 }}
 
@@ -239,7 +276,8 @@ def _load_ext_cached(name: str, cuda_src: str, extra_cuda_cflags: Tuple[str, ...
         functions=None,
         with_cuda=True,
         extra_cuda_cflags=["--std=c++17", *list(extra_cuda_cflags)],
-        extra_cflags=["-std=c++17"],
+        extra_cflags=["-std=c++17", "-O3"],
+        extra_include_paths=_intentir_cuda_include_dirs(),
         build_directory=str(build_dir),
         verbose=False,
     )
@@ -255,8 +293,17 @@ def compile_cuda_extension(
     """
     Compile (or load from cache) a tiny Torch extension that exposes `launch(...)`.
     """
-    flags = tuple(str(x) for x in (extra_cuda_cflags or []) if str(x).strip())
-    h = _hash_src(cuda_src + "\nFLAGS:" + " ".join(flags))
+    # Default to optimized builds. Torch's extension build defaults can vary across
+    # environments; being explicit avoids accidental -O0 device code in benchmarks.
+    flags_list = ["-O3"]
+    for x in (extra_cuda_cflags or []):
+        s = str(x).strip()
+        if s:
+            flags_list.append(s)
+    # De-duplicate while preserving order.
+    seen: set[str] = set()
+    flags: tuple[str, ...] = tuple(s for s in flags_list if not (s in seen or seen.add(s)))
+    h = _hash_src(cuda_src + "\nRUNTIME:" + _intentir_cuda_runtime_hash_payload() + "\nFLAGS:" + " ".join(flags))
     mod_name = f"intentir_cuda_{kernel_name}_{h}"
     full_src = _build_extension_src(cuda_src, kernel_name=kernel_name, io_spec=io_spec)
     return _load_ext_cached(mod_name, full_src, flags)

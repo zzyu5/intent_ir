@@ -186,7 +186,7 @@ def _prep_inputs_torch(
             return torch.randint(-(2**31), 2**31 - 1, shape, device=device, dtype=torch.int32)
         if dt == "i64":
             return torch.randint(-(2**31), 2**31 - 1, shape, device=device, dtype=torch.int64)
-        if dt == "bool":
+        if dt in {"bool", "i1"}:
             return torch.randint(0, 2, shape, device=device, dtype=torch.bool)
         raise RuntimeError(f"unsupported dtype for input alloc: {dt}")
 
@@ -198,7 +198,24 @@ def _prep_inputs_torch(
             dt = str(spec.get("dtype") or "f32")
             shape = _shape_of(name)
             if name in out_set:
-                t = torch.empty(shape, device=device, dtype=getattr(torch, {"f32": "float32", "f16": "float16", "i8": "int8", "i16": "int16", "i32": "int32", "i64": "int64", "u8": "uint8", "bool": "bool"}[dt]))
+                t = torch.empty(
+                    shape,
+                    device=device,
+                    dtype=getattr(
+                        torch,
+                        {
+                            "f32": "float32",
+                            "f16": "float16",
+                            "i8": "int8",
+                            "i16": "int16",
+                            "i32": "int32",
+                            "i64": "int64",
+                            "u8": "uint8",
+                            "bool": "bool",
+                            "i1": "bool",
+                        }[dt],
+                    ),
+                )
                 outputs[name] = t
                 args.append(t)
             else:

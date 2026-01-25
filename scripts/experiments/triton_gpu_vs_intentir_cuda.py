@@ -104,6 +104,45 @@ def _bench_cuda_repeated(fn: Callable[[], None], *, warmup: int, iters: int, rep
     return median, times
 
 
+def _bench_cuda_graph_repeated(fn: Callable[[], None], *, warmup: int, iters: int, repeats: int) -> tuple[float, list[float]]:
+    """
+    Benchmark via CUDA Graph replay to reduce Python launch overhead.
+
+    This is important for very small kernels where Python submission latency can
+    dominate the event window and inflate/deflate speedups unfairly.
+    """
+    torch.cuda.synchronize()
+    fn()
+    torch.cuda.synchronize()
+    for _ in range(int(warmup)):
+        fn()
+    torch.cuda.synchronize()
+
+    g = torch.cuda.CUDAGraph()
+    try:
+        with torch.cuda.graph(g):
+            for _ in range(int(iters)):
+                fn()
+        torch.cuda.synchronize()
+    except Exception as e:
+        raise RuntimeError(f"cuda graph capture failed: {type(e).__name__}: {e}") from e
+
+    rs = max(1, int(repeats))
+    times: list[float] = []
+    for _ in range(rs):
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
+        g.replay()
+        end.record()
+        torch.cuda.synchronize()
+        ms = float(start.elapsed_time(end))
+        times.append((ms * 1e6) / float(iters))
+    times_sorted = sorted(times)
+    median = times_sorted[len(times_sorted) // 2]
+    return median, times
+
+
 def _ensure_artifact(kernel_name: str, *, refresh: bool, cases_limit: int) -> Path:
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     report_path = ARTIFACT_DIR / f"{kernel_name}.json"
@@ -181,6 +220,7 @@ def _prep_args_for_cuda_ext(
             "i64": torch.int64,
             "u8": torch.uint8,
             "bool": torch.bool,
+            "i1": torch.bool,
         }[dt]
 
     def _alloc_input(name: str, dt: str, shape: Tuple[int, ...]) -> Any:
@@ -209,7 +249,7 @@ def _prep_args_for_cuda_ext(
             return torch.randint(-(2**31), 2**31 - 1, shape, device=device, dtype=torch.int32)
         if dt == "i64":
             return torch.randint(-(2**31), 2**31 - 1, shape, device=device, dtype=torch.int64)
-        if dt == "bool":
+        if dt in {"bool", "i1"}:
             return torch.randint(0, 2, shape, device=device, dtype=torch.bool)
         raise RuntimeError(f"unsupported dtype for input alloc: {dt}")
 
@@ -490,9 +530,22 @@ def main() -> None:
     ap.add_argument("--warmup", type=int, default=20, help="Warmup iterations (excluded from timing).")
     ap.add_argument("--iters", type=int, default=200, help="Benchmark iterations (timed).")
     ap.add_argument("--repeats", type=int, default=5, help="Repeat measurements and report median ns/iter.")
+    ap.add_argument(
+        "--bench-mode",
+        type=str,
+        default="event",
+        choices=["event", "graph"],
+        help="Benchmark mode: 'event' (default) or 'graph' (CUDA Graph replay; less Python overhead).",
+    )
     ap.add_argument("--seed", type=int, default=0, help="Seed for input generation.")
     ap.add_argument("--device", type=str, default="cuda", help="Device string (default: cuda).")
     ap.add_argument("--out", type=Path, default=OUT_DEFAULT, help="Output JSON path.")
+    ap.add_argument(
+        "--bind",
+        action="append",
+        default=[],
+        help="Override shape bindings as KEY=VAL (repeatable). VAL parsed as int/float/str.",
+    )
     args = ap.parse_args()
 
     wanted = list(args.kernel or []) or list(AI_BENCH_KERNELS)
@@ -506,6 +559,7 @@ def main() -> None:
         "warmup": int(args.warmup),
         "iters": int(args.iters),
         "repeats": int(args.repeats),
+        "bench_mode": str(args.bench_mode),
         "seed": int(args.seed),
         "kernels": wanted,
     }
@@ -526,6 +580,24 @@ def main() -> None:
             # Build bindings: real shapes + descriptor constexpr (e.g., BLOCK_M/BLOCK_N).
             bindings: Dict[str, Any] = dict(AI_BENCH_SHAPES.get(k, {}))
             bindings.update(_descriptor_constexpr(report))
+            # Optional overrides for quick tuning experiments.
+            for item in list(args.bind or []):
+                if "=" not in str(item):
+                    continue
+                key, raw = str(item).split("=", 1)
+                key = key.strip()
+                raw = raw.strip()
+                if not key:
+                    continue
+                val: Any = raw
+                try:
+                    val = int(raw, 0)
+                except Exception:
+                    try:
+                        val = float(raw)
+                    except Exception:
+                        val = raw
+                bindings[key] = val
             # For fair comparison, allow TF32 on matmul (Triton tl.dot uses TF32 on modern GPUs).
             if k == "ai_bench_matmul":
                 bindings.setdefault("ALLOW_TF32", 1)
@@ -560,10 +632,29 @@ def main() -> None:
             torch.cuda.synchronize()
             _check_outputs_close(kernel=k, ours=ours_outputs, triton=triton_outputs, allow_tf32=(k == "ai_bench_matmul"))
 
-            ours_ns, ours_reps = _bench_cuda_repeated(ours_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats))
-            triton_ns, triton_reps = _bench_cuda_repeated(
-                triton_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
-            )
+            if str(args.bench_mode) == "graph":
+                try:
+                    ours_ns, ours_reps = _bench_cuda_graph_repeated(
+                        ours_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
+                    )
+                    triton_ns, triton_reps = _bench_cuda_graph_repeated(
+                        triton_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
+                    )
+                except Exception as e:
+                    _log(f"  WARN: bench_mode=graph failed ({type(e).__name__}: {e}); falling back to event mode")
+                    ours_ns, ours_reps = _bench_cuda_repeated(
+                        ours_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
+                    )
+                    triton_ns, triton_reps = _bench_cuda_repeated(
+                        triton_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
+                    )
+            else:
+                ours_ns, ours_reps = _bench_cuda_repeated(
+                    ours_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
+                )
+                triton_ns, triton_reps = _bench_cuda_repeated(
+                    triton_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
+                )
 
             speedup = float(triton_ns) / float(ours_ns) if ours_ns > 0 else 0.0
             results.append(
