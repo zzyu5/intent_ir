@@ -30,10 +30,11 @@ __device__ __forceinline__ float intentir_ldg_f32(const float* p) { return inten
 
 __device__ __forceinline__ void intentir_cp_async_16(void* smem_dst, const void* gmem_src) {
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
-  // Cache at all levels (ca). Empirically this works well for our small GEMMs
-  // and avoids pathological regressions on some shapes.
+  // Cache global (cg): bypass L1 and cache in L2.
+  // For GEMM-style streaming loads this often reduces L1 thrash and can improve
+  // overlap with tensor-core compute.
   const unsigned int smem = __cvta_generic_to_shared(smem_dst);
-  asm volatile("cp.async.ca.shared.global [%0], [%1], 16;\n" : : "r"(smem), "l"(gmem_src) : "memory");
+  asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\n" : : "r"(smem), "l"(gmem_src) : "memory");
 #else
   // Fallback: synchronous copy (16 bytes).
   *reinterpret_cast<float4*>(smem_dst) = *reinterpret_cast<const float4*>(gmem_src);
