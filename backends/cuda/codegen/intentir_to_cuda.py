@@ -1158,8 +1158,16 @@ def _kernel_softmax_2d_last_f32(intent: IntentFunction, bindings: Dict[str, int]
         block_threads = min_threads
     ept = max(1, (C + block_threads - 1) // block_threads)
 
+    specialize_dims = bool(int(bindings.get("CUDA_SPECIALIZE_DIMS", 0) or 0))
     r_is_tensor = _is_scalar_tensor(intent, str(R_dim), dtype="i32")
     c_is_tensor = _is_scalar_tensor(intent, str(C_dim), dtype="i32")
+    # If the row/col dims are modeled as scalar tensors but we have concrete
+    # bindings (and are specializing dims), pass them as by-value scalars to
+    # avoid extra global loads.
+    if specialize_dims and r_is_tensor and (str(R_dim) in bindings):
+        r_is_tensor = False
+    if specialize_dims and c_is_tensor and (str(C_dim) in bindings):
+        c_is_tensor = False
     r_param = f"const int* {str(R_dim)}_ptr" if r_is_tensor else "int R"
     c_param = f"const int* {str(C_dim)}_ptr" if c_is_tensor else "int C"
     r_load = f"const int R = {str(R_dim)}_ptr ? {str(R_dim)}_ptr[0] : 0;" if r_is_tensor else ""
