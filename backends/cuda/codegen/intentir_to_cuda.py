@@ -2058,32 +2058,11 @@ def _kernel_warp_q8_8_i8_i16(intent: IntentFunction, bindings: Dict[str, int]) -
     grid_w = (W + block_w - 1) // block_w
 
     cuda_src = f"""
-#include <stdint.h>
-extern "C" __global__ void {intent.name}(const int8_t* {src_name}, const int16_t* {offset_name}, int8_t* {out_name}, int C, int H, int W) {{
+#include "kernels/warp.cuh"
+
+extern "C" __global__ void {intent.name}(const int8_t* __restrict__ {src_name}, const int16_t* __restrict__ {offset_name}, int8_t* __restrict__ {out_name}, int C, int H, int W) {{
   constexpr int BLOCK_W = {block_w};
-  const int h = (int)blockIdx.y;
-  const int c = (int)blockIdx.z;
-  const int w = (int)blockIdx.x * BLOCK_W + (int)threadIdx.x;
-  if (h >= H || c >= C || w >= W) return;
-  const int64_t hw = (int64_t)H * (int64_t)W;
-  const int64_t row_base = (int64_t)c * hw + (int64_t)h * (int64_t)W;
-  const int64_t off_base = (int64_t)h * (int64_t)W;
-  const int16_t ov = {offset_name}[off_base + w];
-  const int8_t offset_int = (int8_t)(ov >> 8);
-  const int8_t offset_frac = (int8_t)(((int16_t)(ov << 8)) >> 8);
-  const int8_t indvar = (int8_t)w;
-  const int8_t right_i8 = (int8_t)(indvar - offset_int);
-  const int8_t left_i8 = (int8_t)(right_i8 - 1);
-  const int right = (int)right_i8;
-  const int left = (int)left_i8;
-  int8_t right_val = 0;
-  int8_t left_val = 0;
-  if (right >= 0 && right < W) right_val = {src_name}[row_base + (int64_t)right];
-  if (left >= 0 && left < W) left_val = {src_name}[row_base + (int64_t)left];
-  int16_t outv = (int16_t)((int16_t)right_val << 8);
-  outv = (int16_t)(outv + (int16_t)((int16_t)(left_val - right_val) * (int16_t)offset_frac));
-  outv = (int16_t)(outv >> 8);
-  {out_name}[row_base + w] = (int8_t)outv;
+  intentir_cuda::warp_q8_8_i8_i16<BLOCK_W>({src_name}, {offset_name}, {out_name}, C, H, W);
 }}
 """.lstrip()
 
