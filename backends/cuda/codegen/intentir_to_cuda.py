@@ -1085,6 +1085,7 @@ extern "C" __global__ void {intent.name}(
       }}
       __syncthreads();
 
+      #pragma unroll
       for (int stage = 0; stage < num_tiles; ++stage) {{
         const int buf = stage % PIPE_STAGES;
 
