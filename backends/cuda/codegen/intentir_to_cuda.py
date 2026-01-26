@@ -2171,41 +2171,20 @@ def _kernel_correlation_i8(intent: IntentFunction, bindings: Dict[str, int]) -> 
     sh_load = "const int out_shift = out_shift_ptr ? out_shift_ptr[0] : 0;" if sh_is_tensor else ""
 
     cuda_src = f"""
-#include <stdint.h>
+#include "kernels/correlation.cuh"
+
 extern "C" __global__ void {intent.name}(
-    const int8_t* {src0_name}, const int8_t* {src1_name}, int8_t* {out_name},
+    const int8_t* __restrict__ {src0_name},
+    const int8_t* __restrict__ {src1_name},
+    int8_t* __restrict__ {out_name},
     {oc_param}, {ic_param}, {h_param}, {w_param}, {sh_param}) {{
   {oc_load}
   {ic_load}
   {h_load}
   {w_load}
   {sh_load}
-  const int64_t hw = (int64_t)height * (int64_t)width;
-  const int64_t total = (int64_t)out_channel * hw;
-  const int64_t tid = (int64_t)blockIdx.x * (int64_t)blockDim.x + (int64_t)threadIdx.x;
-  if (tid >= total) return;
-  const int oc = (int)(tid / hw);
-  const int64_t rem = tid - (int64_t)oc * hw;
-  const int h = (int)(rem / (int64_t)width);
-  const int w = (int)(rem - (int64_t)h * (int64_t)width);
-
-  int sh = out_shift;
-  if (sh < 0) sh = 0;
-  if (sh > 30) sh = 30;
-
-  if (oc >= width || w < oc) {{
-    out[(size_t)tid] = 0;
-    return;
-  }}
-
-  int32_t acc = 0;
-  const int64_t off0 = (int64_t)h * (int64_t)width + (int64_t)w;
-  const int64_t off1 = (int64_t)h * (int64_t)width + (int64_t)(w - oc);
-  for (int k = 0; k < in_channel; ++k) {{
-    const int64_t base = (int64_t)k * hw;
-    acc += (int32_t){src0_name}[base + off0] * (int32_t){src1_name}[base + off1];
-  }}
-  {out_name}[(size_t)tid] = (int8_t)(acc >> sh);
+  constexpr int BLOCK_THREADS = {block_x};
+  intentir_cuda::correlation_i8<BLOCK_THREADS>({src0_name}, {src1_name}, {out_name}, out_channel, in_channel, height, width, out_shift);
 }}
 """.lstrip()
 
