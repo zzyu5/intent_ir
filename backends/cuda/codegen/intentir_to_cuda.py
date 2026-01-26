@@ -733,6 +733,16 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
         wmma_tile_n = 16 * wmma_warps_n * wmma_frag_n
         wmma_grid_x = (N + wmma_tile_n - 1) // wmma_tile_n
         wmma_grid_y = (M + wmma_tile_m - 1) // wmma_tile_m
+        # cp.async cache policy heuristics:
+        # - A tile is reused across WARPS_N warps.
+        # - B tile is reused across WARPS_M warps.
+        # Prefer caching the more-reused operand in L1, and streaming the other.
+        wmma_cp_a_policy = str(bindings.get("WMMA_CP_A_POLICY", "") or "").strip().lower()
+        wmma_cp_b_policy = str(bindings.get("WMMA_CP_B_POLICY", "") or "").strip().lower()
+        if wmma_cp_a_policy not in {"ca", "cg"}:
+            wmma_cp_a_policy = "ca" if wmma_warps_n >= wmma_warps_m else "cg"
+        if wmma_cp_b_policy not in {"ca", "cg"}:
+            wmma_cp_b_policy = "ca" if wmma_warps_m > wmma_warps_n else "cg"
         # Whether to use cp.async fast-path. For smaller STAGE_K, we use a
         # synchronous vectorized copy fast-path instead (no cp.async) because it
         # uses less shared memory and avoids cp.async edge cases.
@@ -880,8 +890,8 @@ __device__ __forceinline__ void intentir_cp_async_tile_f32(
     const int kk = off - r * STAGE_K;
     const int gr = row0 + r;
     const int gk = k_base + kk;
-    // A tile is reused across WARPS_N warps; prefer caching at all levels.
-    intentir_cp_async_ca_16(As + (size_t)buf * (size_t)(TILE_M * AS_LD) + (size_t)r * (size_t)AS_LD + (size_t)kk,
+    // A tile is reused across WARPS_N warps; cache when WARPS_N dominates.
+    intentir_cp_async_{wmma_cp_a_policy}_16(As + (size_t)buf * (size_t)(TILE_M * AS_LD) + (size_t)r * (size_t)AS_LD + (size_t)kk,
                          A + (size_t)gr * (size_t)K + (size_t)gk);
   }}
   #pragma unroll
@@ -891,8 +901,8 @@ __device__ __forceinline__ void intentir_cp_async_tile_f32(
     const int n = off - kk * TILE_N;
     const int gn = col0 + n;
     const int gk = k_base + kk;
-    // B tile is typically streaming; prefer bypassing L1 to reduce thrash.
-    intentir_cp_async_cg_16(Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk * (size_t)BS_LD + (size_t)n,
+    // B tile is reused across WARPS_M warps; cache when WARPS_M dominates.
+    intentir_cp_async_{wmma_cp_b_policy}_16(Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk * (size_t)BS_LD + (size_t)n,
                          B + (size_t)gk * (size_t)N + (size_t)gn);
   }}
 #else
