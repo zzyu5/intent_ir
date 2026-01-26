@@ -16,22 +16,23 @@ __device__ __forceinline__ void dropout_f32(
   static_assert(EPT > 0 && EPT <= 8, "dropout_f32 supports EPT in [1,8]");
   static_assert(N_ROUNDS > 0 && N_ROUNDS <= 10, "dropout_f32 supports N_ROUNDS in [1,10]");
   const int tid = (int)threadIdx.x;
-  const int64_t base = (int64_t)blockIdx.x * (int64_t)blockDim.x * (int64_t)EPT + (int64_t)tid;
+  const int64_t stride = (int64_t)blockDim.x;
+  const int64_t base = (int64_t)blockIdx.x * stride * (int64_t)EPT + (int64_t)tid;
   const uint64_t seed = (uint64_t)seed_u32;
 
   if (p <= 0.0f) {
+    int64_t i = base;
     #pragma unroll
-    for (int e = 0; e < EPT; ++e) {
-      const int64_t i = base + (int64_t)e * (int64_t)blockDim.x;
+    for (int e = 0; e < EPT; ++e, i += stride) {
       if (i >= n_elements) break;
       Y[i] = intentir_ldg_f32(X + i);
     }
     return;
   }
   if (p >= 1.0f) {
+    int64_t i = base;
     #pragma unroll
-    for (int e = 0; e < EPT; ++e) {
-      const int64_t i = base + (int64_t)e * (int64_t)blockDim.x;
+    for (int e = 0; e < EPT; ++e, i += stride) {
       if (i >= n_elements) break;
       Y[i] = 0.0f;
     }
@@ -39,9 +40,9 @@ __device__ __forceinline__ void dropout_f32(
   }
 
   const float inv_keep = __fdividef(1.0f, (1.0f - p));
+  int64_t i = base;
   #pragma unroll
-  for (int e = 0; e < EPT; ++e) {
-    const int64_t i = base + (int64_t)e * (int64_t)blockDim.x;
+  for (int e = 0; e < EPT; ++e, i += stride) {
     if (i >= n_elements) break;
     const float x = intentir_ldg_f32(X + i);
     const uint32_t ctr = (uint32_t)i;
