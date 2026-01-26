@@ -907,7 +907,55 @@ __device__ __forceinline__ void intentir_cp_async_tile_f32(
   (void)K;
   (void)N;
 #endif
-}}
+	}}
+
+	__device__ __forceinline__ void intentir_mma_tf32_m16n16k8_rr(
+	    fragment<accumulator, 16, 16, 8, float>& acc,
+	    const fragment<matrix_a, 16, 16, 8, precision::tf32, row_major>& a_frag,
+	    const fragment<matrix_b, 16, 16, 8, precision::tf32, row_major>& b_frag) {{
+	#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
+	  const int a0 = __float_as_int(a_frag.x[0]);
+	  const int a1 = __float_as_int(a_frag.x[1]);
+	  const int a2 = __float_as_int(a_frag.x[2]);
+	  const int a3 = __float_as_int(a_frag.x[3]);
+	  const int b0 = __float_as_int(b_frag.x[0]);
+	  const int b1 = __float_as_int(b_frag.x[1]);
+	  const int b2 = __float_as_int(b_frag.x[2]);
+	  const int b3 = __float_as_int(b_frag.x[3]);
+
+	  float d0 = acc.x[0];
+	  float d1 = acc.x[1];
+	  float d2 = acc.x[2];
+	  float d3 = acc.x[3];
+	  float d4 = acc.x[4];
+	  float d5 = acc.x[5];
+	  float d6 = acc.x[6];
+	  float d7 = acc.x[7];
+
+	  // Compute the 16x16 accumulator as two 16x8 MMA operations in N.
+	  asm volatile(
+	      "mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 "
+	      "{{%0, %1, %2, %3}}, {{%4, %5, %6, %7}}, {{%8, %9}}, {{%0, %1, %2, %3}};\\n"
+	      : "+f"(d0), "+f"(d1), "+f"(d2), "+f"(d3)
+	      : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
+	  asm volatile(
+	      "mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 "
+	      "{{%0, %1, %2, %3}}, {{%4, %5, %6, %7}}, {{%8, %9}}, {{%0, %1, %2, %3}};\\n"
+	      : "+f"(d4), "+f"(d5), "+f"(d6), "+f"(d7)
+	      : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b2), "r"(b3));
+
+	  acc.x[0] = d0;
+	  acc.x[1] = d1;
+	  acc.x[2] = d2;
+	  acc.x[3] = d3;
+	  acc.x[4] = d4;
+	  acc.x[5] = d5;
+	  acc.x[6] = d6;
+	  acc.x[7] = d7;
+	#else
+	  mma_sync(acc, a_frag, b_frag, acc);
+	#endif
+	}}
 
 extern "C" __global__ void {intent.name}(
     const float* __restrict__ A, const float* __restrict__ B, float* __restrict__ C,
@@ -985,16 +1033,16 @@ extern "C" __global__ void {intent.name}(
         load_matrix_sync(a_frag,
                          As + (size_t)buf * (size_t)(TILE_M * AS_LD) + (size_t)(warp_m * 16) * (size_t)AS_LD + (size_t)kk0,
                          AS_LD);
-        load_matrix_sync(b_frag,
-                         Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16),
-                         BS_LD);
-        mma_sync(acc0, a_frag, b_frag, acc0);
-#if {wmma_frag_n} > 1
-        load_matrix_sync(b_frag,
-                         Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16),
-                         BS_LD);
-        mma_sync(acc1, a_frag, b_frag, acc1);
-#endif
+	        load_matrix_sync(b_frag,
+	                         Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16),
+	                         BS_LD);
+	        intentir_mma_tf32_m16n16k8_rr(acc0, a_frag, b_frag);
+	#if {wmma_frag_n} > 1
+	        load_matrix_sync(b_frag,
+	                         Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16),
+	                         BS_LD);
+	        intentir_mma_tf32_m16n16k8_rr(acc1, a_frag, b_frag);
+	#endif
       }}
 
       if (next_k0 < K) {{
@@ -1033,16 +1081,16 @@ extern "C" __global__ void {intent.name}(
         load_matrix_sync(a_frag,
                          As + (size_t)buf * (size_t)(TILE_M * AS_LD) + (size_t)(warp_m * 16) * (size_t)AS_LD + (size_t)kk0,
                          AS_LD);
-        load_matrix_sync(b_frag,
-                         Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16),
-                         BS_LD);
-        mma_sync(acc0, a_frag, b_frag, acc0);
-#if {wmma_frag_n} > 1
-        load_matrix_sync(b_frag,
-                         Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16),
-                         BS_LD);
-        mma_sync(acc1, a_frag, b_frag, acc1);
-#endif
+	        load_matrix_sync(b_frag,
+	                         Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16),
+	                         BS_LD);
+	        intentir_mma_tf32_m16n16k8_rr(acc0, a_frag, b_frag);
+	#if {wmma_frag_n} > 1
+	        load_matrix_sync(b_frag,
+	                         Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16),
+	                         BS_LD);
+	        intentir_mma_tf32_m16n16k8_rr(acc1, a_frag, b_frag);
+	#endif
       }}
 
       // Ensure the next stage is ready before advancing.
@@ -1091,16 +1139,16 @@ extern "C" __global__ void {intent.name}(
         load_matrix_sync(a_frag,
                          As + (size_t)(warp_m * 16) * (size_t)AS_LD + (size_t)kk0,
                          AS_LD);
-        load_matrix_sync(b_frag,
-                         Bs + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16),
-                         BS_LD);
-        mma_sync(acc0, a_frag, b_frag, acc0);
-#if {wmma_frag_n} > 1
-        load_matrix_sync(b_frag,
-                         Bs + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16),
-                         BS_LD);
-        mma_sync(acc1, a_frag, b_frag, acc1);
-#endif
+	        load_matrix_sync(b_frag,
+	                         Bs + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16),
+	                         BS_LD);
+	        intentir_mma_tf32_m16n16k8_rr(acc0, a_frag, b_frag);
+	#if {wmma_frag_n} > 1
+	        load_matrix_sync(b_frag,
+	                         Bs + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16),
+	                         BS_LD);
+	        intentir_mma_tf32_m16n16k8_rr(acc1, a_frag, b_frag);
+	#endif
       }}
       __syncthreads();
     }}
@@ -1138,16 +1186,16 @@ extern "C" __global__ void {intent.name}(
         load_matrix_sync(a_frag,
                          As + (size_t)(warp_m * 16) * (size_t)AS_LD + (size_t)kk0,
                          AS_LD);
-        load_matrix_sync(b_frag,
-                         Bs + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16),
-                         BS_LD);
-        mma_sync(acc0, a_frag, b_frag, acc0);
-#if {wmma_frag_n} > 1
-        load_matrix_sync(b_frag,
-                         Bs + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16),
-                         BS_LD);
-        mma_sync(acc1, a_frag, b_frag, acc1);
-#endif
+	        load_matrix_sync(b_frag,
+	                         Bs + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16),
+	                         BS_LD);
+	        intentir_mma_tf32_m16n16k8_rr(acc0, a_frag, b_frag);
+	#if {wmma_frag_n} > 1
+	        load_matrix_sync(b_frag,
+	                         Bs + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16),
+	                         BS_LD);
+	        intentir_mma_tf32_m16n16k8_rr(acc1, a_frag, b_frag);
+	#endif
       }}
       __syncthreads();
     }}
@@ -1196,12 +1244,12 @@ extern "C" __global__ void {intent.name}(
       load_matrix_sync(b_frag,
                        Bs + (size_t)0 * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16),
                        BS_LD);
-      mma_sync(acc0, a_frag, b_frag, acc0);
+      intentir_mma_tf32_m16n16k8_rr(acc0, a_frag, b_frag);
 #if {wmma_frag_n} > 1
       load_matrix_sync(b_frag,
                        Bs + (size_t)0 * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16),
                        BS_LD);
-      mma_sync(acc1, a_frag, b_frag, acc1);
+      intentir_mma_tf32_m16n16k8_rr(acc1, a_frag, b_frag);
 #endif
     }}
     __syncthreads();
