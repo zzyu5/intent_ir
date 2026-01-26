@@ -151,6 +151,7 @@ __device__ __forceinline__ uint32_t intentir_philox_randint_u32(uint64_t seed, u
 __device__ __forceinline__ float intentir_uint_to_uniform_float_u32(uint32_t x) {
   // Uniform float in [0, 1). Mirrors the "signed int then abs-ish" mapping used by RVV runtime.
   int32_t xi = (int32_t)x;
-  if (xi < 0) xi = ~xi;  // -x-1
+  // Branchless: if sign bit set, invert (~x); else keep x.
+  xi ^= (xi >> 31);
   return (float)xi * 4.6566127342e-10f;
 }
