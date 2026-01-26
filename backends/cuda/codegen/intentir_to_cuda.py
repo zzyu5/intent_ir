@@ -993,6 +993,10 @@ def _kernel_dropout_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cud
 
     # Default to 10 Philox rounds (matches Triton reference).
     rounds = int(op.attrs.get("n_rounds") or 10)
+    if rounds <= 0:
+        rounds = 10
+    if rounds > 10:
+        rounds = 10
 
     # Use descriptor-like block size if present.
     sched = intent.schedule or ScheduleSketch()
@@ -1016,47 +1020,12 @@ def _kernel_dropout_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cud
     grid_x = (n + (block_x * ept) - 1) // (block_x * ept)
 
     cuda_src = f"""
-#include <stdint.h>
-#include <math.h>
-#include "intentir_cuda_ops.cuh"
+#include "kernels/dropout.cuh"
 
 extern "C" __global__ void {intent.name}(const float* X, const float* p_ptr, const int* seed_ptr, float* Y, int64_t n_elements) {{
   constexpr int EPT = {ept};
-  const int tid = (int)threadIdx.x;
-  // Strided EPT mapping keeps each iteration's global loads fully coalesced:
-  // for a fixed `e`, threads in a warp access consecutive indices.
-  const int64_t base = (int64_t)blockIdx.x * (int64_t)blockDim.x * (int64_t)EPT + (int64_t)tid;
-  // Loading these scalars per-thread avoids an unconditional __syncthreads().
-  const float p = p_ptr ? p_ptr[0] : 0.0f;
-  const uint64_t seed = (uint64_t)(seed_ptr ? (uint32_t)seed_ptr[0] : 0u);
-  if (p <= 0.0f) {{
-    #pragma unroll
-    for (int e = 0; e < EPT; ++e) {{
-      const int64_t i = base + (int64_t)e * (int64_t)blockDim.x;
-      if (i >= n_elements) break;
-      Y[i] = intentir_ldg_f32(X + i);
-    }}
-    return;
-  }}
-  if (p >= 1.0f) {{
-    #pragma unroll
-    for (int e = 0; e < EPT; ++e) {{
-      const int64_t i = base + (int64_t)e * (int64_t)blockDim.x;
-      if (i >= n_elements) break;
-      Y[i] = 0.0f;
-    }}
-    return;
-  }}
-  const float inv_keep = __fdividef(1.0f, (1.0f - p));
-  #pragma unroll
-  for (int e = 0; e < EPT; ++e) {{
-    const int64_t i = base + (int64_t)e * (int64_t)blockDim.x;
-    if (i >= n_elements) break;
-    const float x = intentir_ldg_f32(X + i);
-    const uint32_t ctr = (uint32_t)i;
-    const float r = intentir_uint_to_uniform_float_u32(intentir_philox_randint_u32(seed, ctr, {rounds}));
-    Y[i] = (r > p) ? (x * inv_keep) : 0.0f;
-  }}
+  constexpr int N_ROUNDS = {rounds};
+  intentir_cuda::dropout_f32<EPT, N_ROUNDS>(X, p_ptr, seed_ptr, Y, n_elements);
 }}
 """.lstrip()
 
