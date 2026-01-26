@@ -753,7 +753,6 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
         # Pipeline stages (shared-memory buffers).
         # - With cp.async we support 2-stage (double buffer) and 3-stage buffering.
         # - Without cp.async we use a single buffer (stages=1) to keep shared memory low.
-        pipe_override = "WMMA_PIPE_STAGES" in bindings
         wmma_pipe_stages = int(bindings.get("WMMA_PIPE_STAGES", 0) or 0)
         if not wmma_use_cp_async:
             wmma_pipe_stages = 1
@@ -815,7 +814,10 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
         # re-enable triple buffering after STAGE_K clamping; if that still doesn't fit,
         # fall back to the (correct but slower) synchronous path.
         wmma_force_sync = False
-        if wmma_pipe_stages == 2 and (not pipe_override):
+        # NOTE: PIPE_STAGES==2 is not validated for correctness yet; prefer
+        # triple-buffering when possible, otherwise fall back to a synchronous
+        # path to preserve correctness.
+        if wmma_pipe_stages == 2:
             bytes3 = _wmma_smem_bytes(wmma_tile_m, wmma_tile_n, wmma_stage_k, 3)
             if bytes3 <= max_smem_optin:
                 wmma_pipe_stages = 3

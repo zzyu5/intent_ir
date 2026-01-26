@@ -33,7 +33,7 @@ __device__ __forceinline__ void intentir_cp_async_16(void* smem_dst, const void*
   // Cache at all levels (ca). Empirically this works well for our small GEMMs
   // and avoids pathological regressions on some shapes.
   const unsigned int smem = __cvta_generic_to_shared(smem_dst);
-  asm volatile("cp.async.ca.shared.global [%0], [%1], 16;\n" : : "r"(smem), "l"(gmem_src));
+  asm volatile("cp.async.ca.shared.global [%0], [%1], 16;\n" : : "r"(smem), "l"(gmem_src) : "memory");
 #else
   // Fallback: synchronous copy (16 bytes).
   *reinterpret_cast<float4*>(smem_dst) = *reinterpret_cast<const float4*>(gmem_src);
@@ -42,7 +42,7 @@ __device__ __forceinline__ void intentir_cp_async_16(void* smem_dst, const void*
 
 __device__ __forceinline__ void intentir_cp_async_commit() {
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
-  asm volatile("cp.async.commit_group;\n" : :);
+  asm volatile("cp.async.commit_group;\n" : : : "memory");
 #endif
 }
 
@@ -52,14 +52,14 @@ __device__ __forceinline__ void intentir_cp_async_wait_group();
 template <>
 __device__ __forceinline__ void intentir_cp_async_wait_group<0>() {
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
-  asm volatile("cp.async.wait_group 0;\n" : :);
+  asm volatile("cp.async.wait_group 0;\n" : : : "memory");
 #endif
 }
 
 template <>
 __device__ __forceinline__ void intentir_cp_async_wait_group<1>() {
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
-  asm volatile("cp.async.wait_group 1;\n" : :);
+  asm volatile("cp.async.wait_group 1;\n" : : : "memory");
 #endif
 }
 
