@@ -9,17 +9,15 @@ namespace intentir_cuda {
 template <int EPT, int N_ROUNDS>
 __device__ __forceinline__ void dropout_f32(
     const float* __restrict__ X,
-    const float* p_ptr,
-    const int* seed_ptr,
+    float p,
+    uint32_t seed_u32,
     float* __restrict__ Y,
     int64_t n_elements) {
   static_assert(EPT > 0 && EPT <= 8, "dropout_f32 supports EPT in [1,8]");
   static_assert(N_ROUNDS > 0 && N_ROUNDS <= 10, "dropout_f32 supports N_ROUNDS in [1,10]");
   const int tid = (int)threadIdx.x;
   const int64_t base = (int64_t)blockIdx.x * (int64_t)blockDim.x * (int64_t)EPT + (int64_t)tid;
-  // Loading these scalars per-thread avoids an unconditional __syncthreads().
-  const float p = p_ptr ? p_ptr[0] : 0.0f;
-  const uint64_t seed = (uint64_t)(seed_ptr ? (uint32_t)seed_ptr[0] : 0u);
+  const uint64_t seed = (uint64_t)seed_u32;
 
   if (p <= 0.0f) {
     #pragma unroll
@@ -52,5 +50,16 @@ __device__ __forceinline__ void dropout_f32(
   }
 }
 
-}  // namespace intentir_cuda
+template <int EPT, int N_ROUNDS>
+__device__ __forceinline__ void dropout_f32(
+    const float* __restrict__ X,
+    const float* p_ptr,
+    const int* seed_ptr,
+    float* __restrict__ Y,
+    int64_t n_elements) {
+  const float p = p_ptr ? p_ptr[0] : 0.0f;
+  const uint32_t seed_u32 = (uint32_t)(seed_ptr ? seed_ptr[0] : 0);
+  dropout_f32<EPT, N_ROUNDS>(X, p, seed_u32, Y, n_elements);
+}
 
+}  // namespace intentir_cuda

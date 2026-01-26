@@ -1019,7 +1019,26 @@ def _kernel_dropout_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cud
 
     grid_x = (n + (block_x * ept) - 1) // (block_x * ept)
 
-    cuda_src = f"""
+    p_is_scalar = _is_scalar_tensor(intent, str(p_name), dtype="f32")
+    seed_is_scalar = _is_scalar_tensor(intent, str(seed_name), dtype="i32")
+    if p_is_scalar and seed_is_scalar:
+        cuda_src = f"""
+#include "kernels/dropout.cuh"
+
+extern "C" __global__ void {intent.name}(const float* X, float p, int seed, float* Y, int64_t n_elements) {{
+  constexpr int EPT = {ept};
+  constexpr int N_ROUNDS = {rounds};
+  intentir_cuda::dropout_f32<EPT, N_ROUNDS>(X, p, (uint32_t)seed, Y, n_elements);
+}}
+""".lstrip()
+        io_spec = _io_spec_from_args(
+            intent,
+            tensor_args=[X, Y],
+            scalar_args={str(p_name): "f32", str(seed_name): "i32", "n_elements": "i64"},
+            arg_names=[X, str(p_name), str(seed_name), Y, "n_elements"],
+        )
+    else:
+        cuda_src = f"""
 #include "kernels/dropout.cuh"
 
 extern "C" __global__ void {intent.name}(const float* X, const float* p_ptr, const int* seed_ptr, float* Y, int64_t n_elements) {{
@@ -1028,13 +1047,12 @@ extern "C" __global__ void {intent.name}(const float* X, const float* p_ptr, con
   intentir_cuda::dropout_f32<EPT, N_ROUNDS>(X, p_ptr, seed_ptr, Y, n_elements);
 }}
 """.lstrip()
-
-    io_spec = _io_spec_from_args(
-        intent,
-        tensor_args=[X, p_name, seed_name, Y],
-        scalar_args={"n_elements": "i64"},
-        arg_names=[X, p_name, seed_name, Y, "n_elements"],
-    )
+        io_spec = _io_spec_from_args(
+            intent,
+            tensor_args=[X, p_name, seed_name, Y],
+            scalar_args={"n_elements": "i64"},
+            arg_names=[X, p_name, seed_name, Y, "n_elements"],
+        )
     launch = CudaLaunch(grid=(grid_x, 1, 1), block=(block_x, 1, 1), shared_mem=0)
     out_bindings: Dict[str, int] = dict(bindings)
     out_bindings.setdefault("n_elements", n)
