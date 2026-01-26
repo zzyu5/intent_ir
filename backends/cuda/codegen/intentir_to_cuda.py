@@ -880,7 +880,8 @@ __device__ __forceinline__ void intentir_cp_async_tile_f32(
     const int kk = off - r * STAGE_K;
     const int gr = row0 + r;
     const int gk = k_base + kk;
-    intentir_cp_async_16(As + (size_t)buf * (size_t)(TILE_M * AS_LD) + (size_t)r * (size_t)AS_LD + (size_t)kk,
+    // A tile is reused across WARPS_N warps; prefer caching at all levels.
+    intentir_cp_async_ca_16(As + (size_t)buf * (size_t)(TILE_M * AS_LD) + (size_t)r * (size_t)AS_LD + (size_t)kk,
                          A + (size_t)gr * (size_t)K + (size_t)gk);
   }}
   #pragma unroll
@@ -890,7 +891,8 @@ __device__ __forceinline__ void intentir_cp_async_tile_f32(
     const int n = off - kk * TILE_N;
     const int gn = col0 + n;
     const int gk = k_base + kk;
-    intentir_cp_async_16(Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk * (size_t)BS_LD + (size_t)n,
+    // B tile is typically streaming; prefer bypassing L1 to reduce thrash.
+    intentir_cp_async_cg_16(Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk * (size_t)BS_LD + (size_t)n,
                          B + (size_t)gk * (size_t)N + (size_t)gn);
   }}
 #else

@@ -28,17 +28,28 @@ __device__ __forceinline__ float intentir_ldg_f32(const float* p) { return inten
 // generated matmul kernels. For older GPUs, we fall back to a normal load/store.
 // -----------------------------------------------------------------------------
 
-__device__ __forceinline__ void intentir_cp_async_16(void* smem_dst, const void* gmem_src) {
+__device__ __forceinline__ void intentir_cp_async_ca_16(void* smem_dst, const void* gmem_src) {
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
-  // Cache global (cg): bypass L1 and cache in L2.
-  // For GEMM-style streaming loads this often reduces L1 thrash and can improve
-  // overlap with tensor-core compute.
   const unsigned int smem = __cvta_generic_to_shared(smem_dst);
-  asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\n" : : "r"(smem), "l"(gmem_src) : "memory");
+  asm volatile("cp.async.ca.shared.global [%0], [%1], 16;\n" : : "r"(smem), "l"(gmem_src) : "memory");
 #else
   // Fallback: synchronous copy (16 bytes).
   *reinterpret_cast<float4*>(smem_dst) = *reinterpret_cast<const float4*>(gmem_src);
 #endif
+}
+
+__device__ __forceinline__ void intentir_cp_async_cg_16(void* smem_dst, const void* gmem_src) {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
+  const unsigned int smem = __cvta_generic_to_shared(smem_dst);
+  asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\n" : : "r"(smem), "l"(gmem_src) : "memory");
+#else
+  *reinterpret_cast<float4*>(smem_dst) = *reinterpret_cast<const float4*>(gmem_src);
+#endif
+}
+
+// Default policy: bypass L1 to reduce thrash for streaming tiles.
+__device__ __forceinline__ void intentir_cp_async_16(void* smem_dst, const void* gmem_src) {
+  intentir_cp_async_cg_16(smem_dst, gmem_src);
 }
 
 __device__ __forceinline__ void intentir_cp_async_commit() {
