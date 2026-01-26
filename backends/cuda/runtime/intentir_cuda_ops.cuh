@@ -46,9 +46,26 @@ __device__ __forceinline__ void intentir_cp_async_commit() {
 #endif
 }
 
-__device__ __forceinline__ void intentir_cp_async_wait_all() {
+template <int N>
+__device__ __forceinline__ void intentir_cp_async_wait_group();
+
+template <>
+__device__ __forceinline__ void intentir_cp_async_wait_group<0>() {
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
   asm volatile("cp.async.wait_group 0;\n" : :);
+#endif
+}
+
+template <>
+__device__ __forceinline__ void intentir_cp_async_wait_group<1>() {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
+  asm volatile("cp.async.wait_group 1;\n" : :);
+#endif
+}
+
+__device__ __forceinline__ void intentir_cp_async_wait_all() {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
+  intentir_cp_async_wait_group<0>();
 #endif
 }
 

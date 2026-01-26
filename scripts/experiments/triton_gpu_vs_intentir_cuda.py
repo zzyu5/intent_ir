@@ -600,6 +600,9 @@ def main() -> None:
             # Build bindings: real shapes + descriptor constexpr (e.g., BLOCK_M/BLOCK_N).
             bindings: Dict[str, Any] = dict(AI_BENCH_SHAPES.get(k, {}))
             bindings.update(_descriptor_constexpr(report))
+            # Performance experiment: specialize resolved dims as compile-time constants
+            # to reduce overhead and let nvcc aggressively optimize/unroll.
+            bindings.setdefault("CUDA_SPECIALIZE_DIMS", 1)
             # Optional overrides for quick tuning experiments.
             for item in list(args.bind or []):
                 if "=" not in str(item):

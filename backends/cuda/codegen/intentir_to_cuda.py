@@ -592,6 +592,11 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
     m_is_tensor = _is_scalar_tensor(intent, str(M_dim), dtype="i32")
     n_is_tensor = _is_scalar_tensor(intent, str(N_dim), dtype="i32")
     k_is_tensor = _is_scalar_tensor(intent, str(K_dim), dtype="i32")
+    # Optional specialization: treat resolved dims as compile-time constants.
+    # This is useful for performance experiments (fixed shapes) because it:
+    #   - removes scalar-tensor loads,
+    #   - enables more constant propagation/unrolling in the CUDA compiler.
+    specialize_dims = bool(int(bindings.get("CUDA_SPECIALIZE_DIMS", 0) or 0))
 
     m_param = f"const int* {str(M_dim)}_ptr" if m_is_tensor else "int M_in"
     n_param = f"const int* {str(N_dim)}_ptr" if n_is_tensor else "int N_in"
@@ -600,10 +605,26 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
     m_init = f"({str(M_dim)}_ptr ? {str(M_dim)}_ptr[0] : 0)" if m_is_tensor else "M_in"
     n_init = f"({str(N_dim)}_ptr ? {str(N_dim)}_ptr[0] : 0)" if n_is_tensor else "N_in"
     k_init = f"({str(K_dim)}_ptr ? {str(K_dim)}_ptr[0] : 0)" if k_is_tensor else "K_in"
-    # Load scalar-tensor dims once per block (avoids redundant global loads).
-    # For plain scalar parameters, avoid shared memory + __syncthreads() overhead.
-    if m_is_tensor or n_is_tensor or k_is_tensor:
+    if specialize_dims:
+        # Keep the same kernel signature for the runtime, but use compile-time
+        # constants in the kernel body. The unused parameters are intentionally
+        # ignored (nvcc may warn, but compilation succeeds).
+        m_unused = f"{str(M_dim)}_ptr" if m_is_tensor else "M_in"
+        n_unused = f"{str(N_dim)}_ptr" if n_is_tensor else "N_in"
+        k_unused = f"{str(K_dim)}_ptr" if k_is_tensor else "K_in"
         mnk_load = f"""
+  (void){m_unused};
+  (void){n_unused};
+  (void){k_unused};
+  constexpr int M = {int(M)};
+  constexpr int N = {int(N)};
+  constexpr int K = {int(K)};
+""".rstrip()
+    else:
+        # Load scalar-tensor dims once per CTA (avoids redundant global loads).
+        # For our GEMM kernels this also helps keep fast-path predicates consistent.
+        if m_is_tensor or n_is_tensor or k_is_tensor:
+            mnk_load = f"""
   __shared__ int intentir_M;
   __shared__ int intentir_N;
   __shared__ int intentir_K;
@@ -617,8 +638,8 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
   const int N = intentir_N;
   const int K = intentir_K;
 """.rstrip()
-    else:
-        mnk_load = """
+        else:
+            mnk_load = """
   const int M = M_in;
   const int N = N_in;
   const int K = K_in;
@@ -645,9 +666,11 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
             # Triton schedules in our suite often use small BLOCK_N (e.g., 16) for tl.dot.
             # In CUDA, widening N tiles reduces launch overhead and improves B reuse within a block.
             if wmma_warps_n <= 1:
-                if N >= 512:
-                    wmma_warps_n = 8
-                elif N >= 256:
+                # Heuristic default for N-tiling:
+                # - For N>=256, 4 warps in N (TILE_N=64) is a good baseline on modern GPUs.
+                # - Wider tiles (e.g., 8 warps, TILE_N=128) can reduce redundancy but may
+                #   underutilize the GPU for our medium-sized GEMMs.
+                if N >= 256:
                     wmma_warps_n = 4
                 elif N >= 64:
                     wmma_warps_n = 2
@@ -663,17 +686,10 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
         # (especially on large GPUs), under-utilizing the device. Prefer smaller tiles unless
         # the user explicitly overrides the WMMA warp shape.
         if not warps_m_override and M <= 256:
-            wmma_warps_m = min(wmma_warps_m, 2)
-        if not warps_n_override and (M <= 256 and N <= 512 and K <= 256):
-            # For AI-Bench matmul-like shapes (e.g., 256x512x256), a wider N tile
-            # often improves reuse/throughput on modern GPUs, even if it reduces
-            # the number of CTAs. Keep this bounded and only take it when it
-            # preserves the aligned fast-path (N divisible by TILE_N).
-            #
-            # This is intentionally conservative: other shapes still default to a
-            # smaller N tile to avoid under-utilizing the GPU.
-            allow_wider_n = (N >= 512) and ((N % 64) == 0)
-            wmma_warps_n = min(wmma_warps_n, 4 if allow_wider_n else 2)
+            # For the medium GEMMs in our benchmark suite (e.g., 256x512x256),
+            # using only 1 warp in M (TILE_M=16) increases B load redundancy and
+            # tends to lose more than it gains from higher CTA counts.
+            wmma_warps_m = max(wmma_warps_m, 2)
 
         # Optional register tiling in N: each warp computes FRAG_N adjacent 16x16 output fragments.
         # This can reduce warps/block (launch overhead) but increases register pressure; keep it opt-in.
@@ -699,8 +715,9 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
 
         wmma_stage_k = int(bindings.get("WMMA_STAGE_K", 0) or 0)
         if wmma_stage_k <= 0:
-            # Empirically, larger K-stages improve performance for AI-Bench matmul (K=256)
-            # by reducing pipeline overhead and increasing arithmetic intensity per stage.
+            # Default K-stage for WMMA:
+            # - Use 64 for larger reductions (reduces pipeline/sync overhead).
+            # - Fall back to 32 for smaller K or when shapes are tiny.
             wmma_stage_k = 64 if K >= 256 else 32
         if wmma_stage_k not in (8, 16, 32, 64, 128):
             wmma_stage_k = 32
@@ -716,8 +733,40 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
         wmma_tile_n = 16 * wmma_warps_n * wmma_frag_n
         wmma_grid_x = (N + wmma_tile_n - 1) // wmma_tile_n
         wmma_grid_y = (M + wmma_tile_m - 1) // wmma_tile_m
+        # Whether to use cp.async fast-path. For smaller STAGE_K, we use a
+        # synchronous vectorized copy fast-path instead (no cp.async) because it
+        # uses less shared memory and avoids cp.async edge cases.
+        # IMPORTANT: do NOT use `or -1` here; callers may explicitly pass 0 to
+        # disable cp.async. (Python treats 0 as falsy.)
+        use_cp_async_raw = bindings.get("WMMA_USE_CP_ASYNC", -1)
+        try:
+            use_cp_async_raw = int(use_cp_async_raw)
+        except Exception:
+            use_cp_async_raw = -1
+        if int(use_cp_async_raw) < 0:
+            # Prefer cp.async on Ampere+ by default. The generated kernel includes a
+            # synchronous vector-copy fallback for pre-Ampere architectures.
+            wmma_use_cp_async = True
+        else:
+            wmma_use_cp_async = bool(int(use_cp_async_raw))
+
+        # Pipeline stages (shared-memory buffers).
+        # - With cp.async we support 2-stage (double buffer) and 3-stage buffering.
+        # - Without cp.async we use a single buffer (stages=1) to keep shared memory low.
+        pipe_override = "WMMA_PIPE_STAGES" in bindings
+        wmma_pipe_stages = int(bindings.get("WMMA_PIPE_STAGES", 0) or 0)
+        if not wmma_use_cp_async:
+            wmma_pipe_stages = 1
+        else:
+            if wmma_pipe_stages <= 0:
+                # Our cp.async pipeline is validated for triple buffering.
+                wmma_pipe_stages = 3
+            if wmma_pipe_stages not in (2, 3):
+                wmma_pipe_stages = 3
         # Use dynamic shared memory for the A/B staging buffers so we can opt into
         # >48KiB shared memory on modern GPUs (required for larger STAGE_K).
+        # Default padding reduces shared-memory bank conflicts for WMMA tiles.
+        # Can be overridden via bindings when doing autotune sweeps.
         wmma_as_pad = int(bindings.get("WMMA_AS_PAD", 8) or 0)
         wmma_bs_pad = int(bindings.get("WMMA_BS_PAD", 8) or 0)
         # Keep padding small; it exists to reduce shared-memory bank conflicts.
@@ -740,12 +789,16 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
             # CUDA_MAX_SMEM_OPTIN if needed.
             max_smem_optin = 96 * 1024
 
-        def _wmma_smem_bytes(tile_m: int, tile_n: int, stage_k: int) -> int:
+        def _wmma_smem_bytes(tile_m: int, tile_n: int, stage_k: int, pipe_stages: int) -> int:
             as_ld = stage_k + wmma_as_pad
             bs_ld = tile_n + wmma_bs_pad
-            return 4 * (2 * tile_m * as_ld + 2 * stage_k * bs_ld)
+            return 4 * (pipe_stages * tile_m * as_ld + pipe_stages * stage_k * bs_ld)
 
-        shared_bytes = _wmma_smem_bytes(wmma_tile_m, wmma_tile_n, wmma_stage_k)
+        shared_bytes = _wmma_smem_bytes(wmma_tile_m, wmma_tile_n, wmma_stage_k, wmma_pipe_stages)
+        # If 3-stage buffering doesn't fit, fall back to double buffering.
+        if wmma_pipe_stages > 2 and shared_bytes > max_smem_optin:
+            wmma_pipe_stages = 2
+            shared_bytes = _wmma_smem_bytes(wmma_tile_m, wmma_tile_n, wmma_stage_k, wmma_pipe_stages)
         # Clamp the K-stage if shared memory exceeds our opt-in budget.
         if shared_bytes > max_smem_optin:
             for cand in (64, 32, 16, 8):
@@ -753,13 +806,43 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
                     continue
                 if (K % cand) != 0:
                     continue
-                if _wmma_smem_bytes(wmma_tile_m, wmma_tile_n, cand) <= max_smem_optin:
+                if _wmma_smem_bytes(wmma_tile_m, wmma_tile_n, cand, wmma_pipe_stages) <= max_smem_optin:
                     wmma_stage_k = cand
-                    shared_bytes = _wmma_smem_bytes(wmma_tile_m, wmma_tile_n, wmma_stage_k)
+                    shared_bytes = _wmma_smem_bytes(wmma_tile_m, wmma_tile_n, wmma_stage_k, wmma_pipe_stages)
                     break
+        # NOTE: our cp.async pipeline implementation is only validated for PIPE_STAGES==3.
+        # If we ended up at PIPE_STAGES==2 due to shared-memory pressure, first try to
+        # re-enable triple buffering after STAGE_K clamping; if that still doesn't fit,
+        # fall back to the (correct but slower) synchronous path.
+        wmma_force_sync = False
+        if wmma_pipe_stages == 2 and (not pipe_override):
+            bytes3 = _wmma_smem_bytes(wmma_tile_m, wmma_tile_n, wmma_stage_k, 3)
+            if bytes3 <= max_smem_optin:
+                wmma_pipe_stages = 3
+                shared_bytes = bytes3
+            else:
+                wmma_force_sync = True
+                wmma_pipe_stages = 1
+                shared_bytes = _wmma_smem_bytes(wmma_tile_m, wmma_tile_n, wmma_stage_k, wmma_pipe_stages)
 
         # Round up to 16B for alignment.
         shared_bytes = ((shared_bytes + 15) // 16) * 16
+        wmma_disable_fastpath = wmma_force_sync or bool(int(bindings.get("WMMA_DISABLE_FASTPATH", 0) or 0))
+        specialize_full_tile = (
+            specialize_dims
+            and (M % wmma_tile_m == 0)
+            and (N % wmma_tile_n == 0)
+            and (K % wmma_stage_k == 0)
+            and ((K & 3) == 0)
+            and ((N & 3) == 0)
+            and (not wmma_disable_fastpath)
+        )
+        bounds_guard = "" if specialize_full_tile else "if (row0 >= M || col0 >= N) return;"
+        full_tile_expr = (
+            "true"
+            if specialize_full_tile
+            else f"(row0 + TILE_M <= M) && (col0 + TILE_N <= N) && ((K % STAGE_K) == 0) && ((K & 3) == 0) && ((N & 3) == 0) && ({0 if wmma_disable_fastpath else 1} != 0)"
+        )
         cuda_src = f"""
 #include <mma.h>
 #include "intentir_cuda_ops.cuh"
@@ -843,10 +926,11 @@ extern "C" __global__ void {intent.name}(
 
   // WARPS_M * WARPS_N warps compute a TILE_M x TILE_N output tile.
   // Stage A/B tiles into shared memory. For the fast-path, we use cp.async with
-  // double buffering to overlap global->shared copies with MMA compute.
+  // pipelined buffering to overlap global->shared copies with MMA compute.
   extern __shared__ __align__(16) float intentir_smem[];
   float* __restrict__ As = intentir_smem;
-  float* __restrict__ Bs = intentir_smem + (size_t)2 * (size_t)TILE_M * (size_t)AS_LD;
+  constexpr int PIPE_STAGES = {wmma_pipe_stages};
+  float* __restrict__ Bs = intentir_smem + (size_t)PIPE_STAGES * (size_t)TILE_M * (size_t)AS_LD;
 
   const int warp = (int)(threadIdx.x >> 5);  // 0..(WARPS_M*WARPS_N-1)
   const int warp_m = warp / WARPS_N;
@@ -854,11 +938,11 @@ extern "C" __global__ void {intent.name}(
 
   const int row0 = (int)blockIdx.y * TILE_M;
   const int col0 = (int)blockIdx.x * TILE_N;
-  if (row0 >= M || col0 >= N) return;
+  {bounds_guard}
   // Fast-path condition: this CTA is fully inside bounds and K tiles exactly.
-  // This is a *per-CTA* check (not a whole-tensor divisibility check) so that
-  // non-divisible shapes can still take the fast path for interior tiles.
-  const bool full_tile = (row0 + TILE_M <= M) && (col0 + TILE_N <= N) && ((K % STAGE_K) == 0);
+  // When CUDA_SPECIALIZE_DIMS is enabled and the shape is divisible, we
+  // constant-fold this to `true` to compile out the guarded fallback path.
+  const bool full_tile = {full_tile_expr};
 
   fragment<accumulator, 16, 16, 8, float> acc0;
   fill_fragment(acc0, 0.0f);
@@ -867,17 +951,22 @@ extern "C" __global__ void {intent.name}(
   fill_fragment(acc1, 0.0f);
 #endif
 
-#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
   if (full_tile) {{
-    // Fast path: use cp.async double-buffering (Ampere+).
+    fragment<matrix_a, 16, 16, 8, precision::tf32, row_major> a_frag;
+    fragment<matrix_b, 16, 16, 8, precision::tf32, row_major> b_frag;
+    // Fast path:
+    //   - cp.async pipelining on Ampere+ (when enabled)
+    //   - otherwise, synchronous float4 vectorized copies (still no bounds checks)
+#if {1 if wmma_use_cp_async else 0}
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
+    // cp.async pipelining (Ampere+). Use 2-stage (double-buffer) or 3-stage buffering.
+#if PIPE_STAGES == 2
     // Prefetch stage 0.
     intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(0, 0, A, B, As, Bs, row0, col0, K, N);
     intentir_cp_async_commit();
     intentir_cp_async_wait_all();
     __syncthreads();
 
-    fragment<matrix_a, 16, 16, 8, precision::tf32, row_major> a_frag;
-    fragment<matrix_b, 16, 16, 8, precision::tf32, row_major> b_frag;
     int buf = 0;
     for (int k0 = 0; k0 < K; k0 += STAGE_K) {{
       const int next_k0 = k0 + STAGE_K;
@@ -910,6 +999,155 @@ extern "C" __global__ void {intent.name}(
       }}
       buf = next_buf;
     }}
+#else
+    // Triple-buffering. Prefetch stages 0 and 1, then keep one stage in flight
+    // while computing on the current stage.
+    const int num_tiles = K / STAGE_K;
+    intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(0, 0, A, B, As, Bs, row0, col0, K, N);
+    intentir_cp_async_commit();
+    if (num_tiles > 1) {{
+      intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(1, STAGE_K, A, B, As, Bs, row0, col0, K, N);
+      intentir_cp_async_commit();
+    }}
+    // Wait until stage 0 is ready (leave stage 1 possibly in flight).
+    intentir_cp_async_wait_group<1>();
+    __syncthreads();
+
+    for (int stage = 0; stage < num_tiles; ++stage) {{
+      const int buf = stage % PIPE_STAGES;
+      // Prefetch stage+2 (if any) to overlap with compute on `buf`.
+      const int pf_stage = stage + 2;
+      if (pf_stage < num_tiles) {{
+        const int pf_buf = pf_stage % PIPE_STAGES;
+        intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(
+            pf_buf, pf_stage * STAGE_K, A, B, As, Bs, row0, col0, K, N);
+        intentir_cp_async_commit();
+      }}
+
+      #pragma unroll
+      for (int kk0 = 0; kk0 < STAGE_K; kk0 += 8) {{
+        load_matrix_sync(a_frag,
+                         As + (size_t)buf * (size_t)(TILE_M * AS_LD) + (size_t)(warp_m * 16) * (size_t)AS_LD + (size_t)kk0,
+                         AS_LD);
+        load_matrix_sync(b_frag,
+                         Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16),
+                         BS_LD);
+        mma_sync(acc0, a_frag, b_frag, acc0);
+#if {wmma_frag_n} > 1
+        load_matrix_sync(b_frag,
+                         Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16),
+                         BS_LD);
+        mma_sync(acc1, a_frag, b_frag, acc1);
+#endif
+      }}
+
+      // Ensure the next stage is ready before advancing.
+      if (stage + 1 < num_tiles) {{
+        if (stage + 2 < num_tiles) {{
+          // Leave one stage in flight.
+          intentir_cp_async_wait_group<1>();
+        }} else {{
+          // Drain the pipeline for the tail.
+          intentir_cp_async_wait_group<0>();
+        }}
+        __syncthreads();
+      }}
+    }}
+#endif
+#else
+    // Pre-Ampere fallback for the "cp.async" build: use synchronous vector copies.
+    constexpr int VEC = 4;
+    constexpr int A_EL = TILE_M * STAGE_K;
+    constexpr int B_EL = STAGE_K * TILE_N;
+    constexpr int A_V = A_EL / VEC;
+    constexpr int B_V = B_EL / VEC;
+    const int tid = (int)threadIdx.x;
+    for (int k0 = 0; k0 < K; k0 += STAGE_K) {{
+      for (int idx = tid; idx < A_V; idx += (int)blockDim.x) {{
+        const int off = idx * VEC;
+        const int r = off / STAGE_K;
+        const int kk = off - r * STAGE_K;
+        const int gr = row0 + r;
+        const int gk = k0 + kk;
+        *reinterpret_cast<float4*>(As + (size_t)r * (size_t)AS_LD + (size_t)kk) =
+            *reinterpret_cast<const float4*>(A + (size_t)gr * (size_t)K + (size_t)gk);
+      }}
+      for (int bidx = tid; bidx < B_V; bidx += (int)blockDim.x) {{
+        const int off = bidx * VEC;
+        const int kk = off / TILE_N;
+        const int n = off - kk * TILE_N;
+        const int gn = col0 + n;
+        const int gk = k0 + kk;
+        *reinterpret_cast<float4*>(Bs + (size_t)kk * (size_t)BS_LD + (size_t)n) =
+            *reinterpret_cast<const float4*>(B + (size_t)gk * (size_t)N + (size_t)gn);
+      }}
+      __syncthreads();
+      #pragma unroll
+      for (int kk0 = 0; kk0 < STAGE_K; kk0 += 8) {{
+        load_matrix_sync(a_frag,
+                         As + (size_t)(warp_m * 16) * (size_t)AS_LD + (size_t)kk0,
+                         AS_LD);
+        load_matrix_sync(b_frag,
+                         Bs + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16),
+                         BS_LD);
+        mma_sync(acc0, a_frag, b_frag, acc0);
+#if {wmma_frag_n} > 1
+        load_matrix_sync(b_frag,
+                         Bs + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16),
+                         BS_LD);
+        mma_sync(acc1, a_frag, b_frag, acc1);
+#endif
+      }}
+      __syncthreads();
+    }}
+#endif  // __CUDA_ARCH__ >= 800
+#else
+    // Synchronous float4 vectorized copies (no cp.async).
+    constexpr int VEC = 4;
+    constexpr int A_EL = TILE_M * STAGE_K;
+    constexpr int B_EL = STAGE_K * TILE_N;
+    constexpr int A_V = A_EL / VEC;
+    constexpr int B_V = B_EL / VEC;
+    const int tid = (int)threadIdx.x;
+    for (int k0 = 0; k0 < K; k0 += STAGE_K) {{
+      for (int idx = tid; idx < A_V; idx += (int)blockDim.x) {{
+        const int off = idx * VEC;
+        const int r = off / STAGE_K;
+        const int kk = off - r * STAGE_K;
+        const int gr = row0 + r;
+        const int gk = k0 + kk;
+        *reinterpret_cast<float4*>(As + (size_t)r * (size_t)AS_LD + (size_t)kk) =
+            *reinterpret_cast<const float4*>(A + (size_t)gr * (size_t)K + (size_t)gk);
+      }}
+      for (int bidx = tid; bidx < B_V; bidx += (int)blockDim.x) {{
+        const int off = bidx * VEC;
+        const int kk = off / TILE_N;
+        const int n = off - kk * TILE_N;
+        const int gn = col0 + n;
+        const int gk = k0 + kk;
+        *reinterpret_cast<float4*>(Bs + (size_t)kk * (size_t)BS_LD + (size_t)n) =
+            *reinterpret_cast<const float4*>(B + (size_t)gk * (size_t)N + (size_t)gn);
+      }}
+      __syncthreads();
+      #pragma unroll
+      for (int kk0 = 0; kk0 < STAGE_K; kk0 += 8) {{
+        load_matrix_sync(a_frag,
+                         As + (size_t)(warp_m * 16) * (size_t)AS_LD + (size_t)kk0,
+                         AS_LD);
+        load_matrix_sync(b_frag,
+                         Bs + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16),
+                         BS_LD);
+        mma_sync(acc0, a_frag, b_frag, acc0);
+#if {wmma_frag_n} > 1
+        load_matrix_sync(b_frag,
+                         Bs + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16),
+                         BS_LD);
+        mma_sync(acc1, a_frag, b_frag, acc1);
+#endif
+      }}
+      __syncthreads();
+    }}
+#endif
 
     const int out_r = row0 + warp_m * 16;
     const int out_c0 = col0 + (warp_n * FRAG_N + 0) * 16;
@@ -920,7 +1158,6 @@ extern "C" __global__ void {intent.name}(
 #endif
     return;
   }}
-#endif
 
   // Fallback: guarded synchronous loads (keeps correctness for non-multiple shapes).
   fragment<matrix_a, 16, 16, 8, precision::tf32, row_major> a_frag;
@@ -979,11 +1216,7 @@ extern "C" __global__ void {intent.name}(
 #endif
 }}
 """.lstrip()
-        launch = CudaLaunch(
-            grid=(wmma_grid_x, wmma_grid_y, 1),
-            block=(32 * wmma_warps_m * wmma_warps_n, 1, 1),
-            shared_mem=int(shared_bytes),
-        )
+        launch = CudaLaunch(grid=(wmma_grid_x, wmma_grid_y, 1), block=(32 * wmma_warps_m * wmma_warps_n, 1, 1), shared_mem=int(shared_bytes))
     else:
         cuda_src = f"""
 extern "C" __global__ void {intent.name}(
