@@ -1268,49 +1268,20 @@ def _kernel_layernorm_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -
         block_x = max(1, min(1024, b))
 
     cuda_src = f"""
-#include <math.h>
+#include "kernels/layernorm.cuh"
 
 extern "C" __global__ void {intent.name}(
-    const float* {X_name}, float* {Y_name}, const float* {W_name}, const float* {B_name}, float* {Mean_name}, float* {Rstd_name},
-    int M, int N, float eps) {{
-  const int m = (int)blockIdx.x;
-  if (m >= M) return;
-  __shared__ float smem[1024];
-  float tsum = 0.0f;
-  const float* xrow = {X_name} + (size_t)m * (size_t)N;
-  for (int n = (int)threadIdx.x; n < N; n += (int)blockDim.x) {{
-    tsum += xrow[n];
-  }}
-  smem[threadIdx.x] = tsum;
-  __syncthreads();
-  for (int off = ((int)blockDim.x >> 1); off > 0; off >>= 1) {{
-    if ((int)threadIdx.x < off) smem[threadIdx.x] += smem[threadIdx.x + off];
-    __syncthreads();
-  }}
-  const float mean = smem[0] / (float)N;
-
-  float tsq = 0.0f;
-  for (int n = (int)threadIdx.x; n < N; n += (int)blockDim.x) {{
-    float c = xrow[n] - mean;
-    tsq += c * c;
-  }}
-  smem[threadIdx.x] = tsq;
-  __syncthreads();
-  for (int off = ((int)blockDim.x >> 1); off > 0; off >>= 1) {{
-    if ((int)threadIdx.x < off) smem[threadIdx.x] += smem[threadIdx.x + off];
-    __syncthreads();
-  }}
-  const float var = smem[0] / (float)N;
-  const float rstd = rsqrtf(var + eps);
-  if ((int)threadIdx.x == 0) {{
-    {Mean_name}[m] = mean;
-    {Rstd_name}[m] = rstd;
-  }}
-  float* yrow = {Y_name} + (size_t)m * (size_t)N;
-  for (int n = (int)threadIdx.x; n < N; n += (int)blockDim.x) {{
-    float c = xrow[n] - mean;
-    yrow[n] = (c * rstd) * {W_name}[n] + {B_name}[n];
-  }}
+    const float* __restrict__ {X_name},
+    float* __restrict__ {Y_name},
+    const float* __restrict__ {W_name},
+    const float* __restrict__ {B_name},
+    float* __restrict__ {Mean_name},
+    float* __restrict__ {Rstd_name},
+    int M,
+    int N,
+    float eps) {{
+  constexpr int BLOCK_THREADS = {block_x};
+  intentir_cuda::layernorm_2d_f32<BLOCK_THREADS>({X_name}, {Y_name}, {W_name}, {B_name}, {Mean_name}, {Rstd_name}, M, N, eps);
 }}
 """.lstrip()
 
