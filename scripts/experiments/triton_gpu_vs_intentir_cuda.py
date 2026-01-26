@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Tuple, Union
@@ -539,6 +540,12 @@ def main() -> None:
     )
     ap.add_argument("--seed", type=int, default=0, help="Seed for input generation.")
     ap.add_argument("--device", type=str, default="cuda", help="Device string (default: cuda).")
+    ap.add_argument(
+        "--fast-math",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Compile IntentIR CUDA kernels with --use_fast_math (default: enabled).",
+    )
     ap.add_argument("--out", type=Path, default=OUT_DEFAULT, help="Output JSON path.")
     ap.add_argument(
         "--bind",
@@ -548,6 +555,17 @@ def main() -> None:
     )
     args = ap.parse_args()
 
+    # This experiment compares *kernel runtime*; enabling fast-math for our kernels
+    # makes the comparison fairer because Triton GPU kernels typically use fast math
+    # for transcendental ops as well (e.g., exp in softmax).
+    os.environ["INTENTIR_CUDA_USE_FAST_MATH"] = "1" if bool(args.fast_math) else "0"
+    if not os.getenv("TORCH_CUDA_ARCH_LIST"):
+        try:
+            major, minor = torch.cuda.get_device_capability()
+            os.environ["TORCH_CUDA_ARCH_LIST"] = f"{major}.{minor}"
+        except Exception:
+            pass
+
     wanted = list(args.kernel or []) or list(AI_BENCH_KERNELS)
 
     meta = {
@@ -556,6 +574,8 @@ def main() -> None:
         "triton": None,
         "device": str(args.device),
         "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+        "intentir_cuda_fast_math": bool(args.fast_math),
+        "torch_cuda_arch_list": os.getenv("TORCH_CUDA_ARCH_LIST"),
         "warmup": int(args.warmup),
         "iters": int(args.iters),
         "repeats": int(args.repeats),

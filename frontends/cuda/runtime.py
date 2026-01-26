@@ -252,6 +252,18 @@ static void launch({", ".join(sig_args)}) {{
   // Respect the current PyTorch CUDA stream (required for correct stream semantics,
   // and for features like CUDA Graph capture).
   cudaStream_t stream = at::cuda::getCurrentCUDAStream().stream();
+  // Some high-performance kernels may opt into >48KiB shared memory (e.g., for
+  // multi-stage tensor-core pipelines). CUDA requires setting a per-kernel
+  // attribute to enable larger dynamic shared memory on GPUs that support it.
+  static const void* intentir_last_kernel = nullptr;
+  static int intentir_last_smem = -1;
+  const void* intentir_kernel_ptr = (const void*){kernel_name};
+  if (shared_mem >= 49152 && (intentir_last_kernel != intentir_kernel_ptr || intentir_last_smem != (int)shared_mem)) {{
+    cudaError_t err = cudaFuncSetAttribute(intentir_kernel_ptr, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)shared_mem);
+    TORCH_CHECK(err == cudaSuccess, "cudaFuncSetAttribute(MaxDynamicSharedMemorySize) failed: ", cudaGetErrorString(err));
+    intentir_last_kernel = intentir_kernel_ptr;
+    intentir_last_smem = (int)shared_mem;
+  }}
   {kernel_name}<<<{dim}, {bdim}, (size_t)shared_mem, stream>>>({", ".join(call_args)});
 }}
 
@@ -266,6 +278,16 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {{
 def _load_ext_cached(name: str, cuda_src: str, extra_cuda_cflags: Tuple[str, ...]) -> Any:
     torch = _torch()
     from torch.utils.cpp_extension import load_inline  # noqa: PLC0415
+
+    # Avoid compiling fatbins for unrelated GPU architectures by default.
+    # This speeds up iteration (and prevents confusing "hangs" during nvcc builds)
+    # while still allowing users to override explicitly via env var.
+    if not os.getenv("TORCH_CUDA_ARCH_LIST"):
+        try:
+            major, minor = torch.cuda.get_device_capability()
+            os.environ["TORCH_CUDA_ARCH_LIST"] = f"{major}.{minor}"
+        except Exception:
+            pass
 
     build_dir = _torch_ext_build_dir(name)
     build_dir.mkdir(parents=True, exist_ok=True)
@@ -296,6 +318,9 @@ def compile_cuda_extension(
     # Default to optimized builds. Torch's extension build defaults can vary across
     # environments; being explicit avoids accidental -O0 device code in benchmarks.
     flags_list = ["-O3"]
+    raw_fast_math = os.getenv("INTENTIR_CUDA_USE_FAST_MATH", "0").strip().lower()
+    if raw_fast_math in {"1", "true", "yes", "y"}:
+        flags_list.append("--use_fast_math")
     for x in (extra_cuda_cflags or []):
         s = str(x).strip()
         if s:

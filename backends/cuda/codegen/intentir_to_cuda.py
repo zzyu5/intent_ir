@@ -601,7 +601,9 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
     n_init = f"({str(N_dim)}_ptr ? {str(N_dim)}_ptr[0] : 0)" if n_is_tensor else "N_in"
     k_init = f"({str(K_dim)}_ptr ? {str(K_dim)}_ptr[0] : 0)" if k_is_tensor else "K_in"
     # Load scalar-tensor dims once per block (avoids redundant global loads).
-    mnk_load = f"""
+    # For plain scalar parameters, avoid shared memory + __syncthreads() overhead.
+    if m_is_tensor or n_is_tensor or k_is_tensor:
+        mnk_load = f"""
   __shared__ int intentir_M;
   __shared__ int intentir_N;
   __shared__ int intentir_K;
@@ -614,6 +616,12 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
   const int M = intentir_M;
   const int N = intentir_N;
   const int K = intentir_K;
+""".rstrip()
+    else:
+        mnk_load = """
+  const int M = M_in;
+  const int N = N_in;
+  const int K = K_in;
 """.rstrip()
 
     m_load = mnk_load
@@ -657,7 +665,15 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
         if not warps_m_override and M <= 256:
             wmma_warps_m = min(wmma_warps_m, 2)
         if not warps_n_override and (M <= 256 and N <= 512 and K <= 256):
-            wmma_warps_n = min(wmma_warps_n, 2)
+            # For AI-Bench matmul-like shapes (e.g., 256x512x256), a wider N tile
+            # often improves reuse/throughput on modern GPUs, even if it reduces
+            # the number of CTAs. Keep this bounded and only take it when it
+            # preserves the aligned fast-path (N divisible by TILE_N).
+            #
+            # This is intentionally conservative: other shapes still default to a
+            # smaller N tile to avoid under-utilizing the GPU.
+            allow_wider_n = (N >= 512) and ((N % 64) == 0)
+            wmma_warps_n = min(wmma_warps_n, 4 if allow_wider_n else 2)
 
         # Optional register tiling in N: each warp computes FRAG_N adjacent 16x16 output fragments.
         # This can reduce warps/block (launch overhead) but increases register pressure; keep it opt-in.
@@ -695,20 +711,55 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
             wmma_stage_k = 16
         if (K % wmma_stage_k) != 0:
             wmma_stage_k = 8
-        # Guard against static shared-memory overflow (PyTorch NVCC builds typically use
-        # a 48KiB static shared limit unless explicitly configured). If a large STAGE_K
-        # would exceed that, fall back to 64.
-        if wmma_stage_k >= 128:
-            tile_m_tmp = 16 * wmma_warps_m
-            tile_n_tmp = 16 * wmma_warps_n * wmma_frag_n
-            shared_bytes = 2 * tile_m_tmp * wmma_stage_k * 4 + 2 * wmma_stage_k * tile_n_tmp * 4
-            if shared_bytes > 48 * 1024:
-                wmma_stage_k = 64
 
         wmma_tile_m = 16 * wmma_warps_m
         wmma_tile_n = 16 * wmma_warps_n * wmma_frag_n
         wmma_grid_x = (N + wmma_tile_n - 1) // wmma_tile_n
         wmma_grid_y = (M + wmma_tile_m - 1) // wmma_tile_m
+        # Use dynamic shared memory for the A/B staging buffers so we can opt into
+        # >48KiB shared memory on modern GPUs (required for larger STAGE_K).
+        wmma_as_pad = int(bindings.get("WMMA_AS_PAD", 8) or 0)
+        wmma_bs_pad = int(bindings.get("WMMA_BS_PAD", 8) or 0)
+        # Keep padding small; it exists to reduce shared-memory bank conflicts.
+        if wmma_as_pad < 0:
+            wmma_as_pad = 0
+        if wmma_bs_pad < 0:
+            wmma_bs_pad = 0
+        if wmma_as_pad > 32:
+            wmma_as_pad = 32
+        if wmma_bs_pad > 32:
+            wmma_bs_pad = 32
+        # Ensure 16B alignment for float4 copies: leading dims must be multiples of 4.
+        if (wmma_as_pad % 4) != 0:
+            wmma_as_pad = int((wmma_as_pad // 4) * 4)
+        if (wmma_bs_pad % 4) != 0:
+            wmma_bs_pad = int((wmma_bs_pad // 4) * 4)
+        max_smem_optin = int(bindings.get("CUDA_MAX_SMEM_OPTIN", 0) or 0)
+        if max_smem_optin <= 0:
+            # Safe default across recent NVIDIA architectures; can be overridden by
+            # CUDA_MAX_SMEM_OPTIN if needed.
+            max_smem_optin = 96 * 1024
+
+        def _wmma_smem_bytes(tile_m: int, tile_n: int, stage_k: int) -> int:
+            as_ld = stage_k + wmma_as_pad
+            bs_ld = tile_n + wmma_bs_pad
+            return 4 * (2 * tile_m * as_ld + 2 * stage_k * bs_ld)
+
+        shared_bytes = _wmma_smem_bytes(wmma_tile_m, wmma_tile_n, wmma_stage_k)
+        # Clamp the K-stage if shared memory exceeds our opt-in budget.
+        if shared_bytes > max_smem_optin:
+            for cand in (64, 32, 16, 8):
+                if cand >= wmma_stage_k:
+                    continue
+                if (K % cand) != 0:
+                    continue
+                if _wmma_smem_bytes(wmma_tile_m, wmma_tile_n, cand) <= max_smem_optin:
+                    wmma_stage_k = cand
+                    shared_bytes = _wmma_smem_bytes(wmma_tile_m, wmma_tile_n, wmma_stage_k)
+                    break
+
+        # Round up to 16B for alignment.
+        shared_bytes = ((shared_bytes + 15) // 16) * 16
         cuda_src = f"""
 #include <mma.h>
 #include "intentir_cuda_ops.cuh"
@@ -735,28 +786,27 @@ __device__ __forceinline__ void intentir_cp_async_tile_f32(
   constexpr int A_EL = TILE_M * STAGE_K;
   constexpr int B_EL = STAGE_K * TILE_N;
   constexpr int A_V = A_EL / VEC;
-  constexpr int TOTAL_V = A_V + (B_EL / VEC);
+  constexpr int B_V = B_EL / VEC;
   const int tid = (int)threadIdx.x;
   #pragma unroll
-  for (int idx = tid; idx < TOTAL_V; idx += (int)blockDim.x) {{
-    if (idx < A_V) {{
-      const int off = idx * VEC;
-      const int r = off / STAGE_K;
-      const int kk = off - r * STAGE_K;
-      const int gr = row0 + r;
-      const int gk = k_base + kk;
-      intentir_cp_async_16(As + (size_t)buf * (size_t)(TILE_M * AS_LD) + (size_t)r * (size_t)AS_LD + (size_t)kk,
-                           A + (size_t)gr * (size_t)K + (size_t)gk);
-    }} else {{
-      const int bidx = idx - A_V;
-      const int off = bidx * VEC;
-      const int kk = off / TILE_N;
-      const int n = off - kk * TILE_N;
-      const int gn = col0 + n;
-      const int gk = k_base + kk;
-      intentir_cp_async_16(Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk * (size_t)BS_LD + (size_t)n,
-                           B + (size_t)gk * (size_t)N + (size_t)gn);
-    }}
+  for (int idx = tid; idx < A_V; idx += (int)blockDim.x) {{
+    const int off = idx * VEC;
+    const int r = off / STAGE_K;
+    const int kk = off - r * STAGE_K;
+    const int gr = row0 + r;
+    const int gk = k_base + kk;
+    intentir_cp_async_16(As + (size_t)buf * (size_t)(TILE_M * AS_LD) + (size_t)r * (size_t)AS_LD + (size_t)kk,
+                         A + (size_t)gr * (size_t)K + (size_t)gk);
+  }}
+  #pragma unroll
+  for (int bidx = tid; bidx < B_V; bidx += (int)blockDim.x) {{
+    const int off = bidx * VEC;
+    const int kk = off / TILE_N;
+    const int n = off - kk * TILE_N;
+    const int gn = col0 + n;
+    const int gk = k_base + kk;
+    intentir_cp_async_16(Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk * (size_t)BS_LD + (size_t)n,
+                         B + (size_t)gk * (size_t)N + (size_t)gn);
   }}
 #else
   (void)buf;
@@ -786,16 +836,17 @@ extern "C" __global__ void {intent.name}(
   constexpr int TILE_M = 16 * WARPS_M;
   constexpr int TILE_N = 16 * WARPS_N * FRAG_N;
   constexpr int STAGE_K = {wmma_stage_k};
-  constexpr int AS_PAD = 8;
-  constexpr int BS_PAD = 8;
+  constexpr int AS_PAD = {wmma_as_pad};
+  constexpr int BS_PAD = {wmma_bs_pad};
   constexpr int AS_LD = STAGE_K + AS_PAD;
   constexpr int BS_LD = TILE_N + BS_PAD;
 
   // WARPS_M * WARPS_N warps compute a TILE_M x TILE_N output tile.
   // Stage A/B tiles into shared memory. For the fast-path, we use cp.async with
   // double buffering to overlap global->shared copies with MMA compute.
-  __shared__ __align__(16) float As[2][TILE_M][AS_LD];
-  __shared__ __align__(16) float Bs[2][STAGE_K][BS_LD];
+  extern __shared__ __align__(16) float intentir_smem[];
+  float* __restrict__ As = intentir_smem;
+  float* __restrict__ Bs = intentir_smem + (size_t)2 * (size_t)TILE_M * (size_t)AS_LD;
 
   const int warp = (int)(threadIdx.x >> 5);  // 0..(WARPS_M*WARPS_N-1)
   const int warp_m = warp / WARPS_N;
@@ -804,7 +855,10 @@ extern "C" __global__ void {intent.name}(
   const int row0 = (int)blockIdx.y * TILE_M;
   const int col0 = (int)blockIdx.x * TILE_N;
   if (row0 >= M || col0 >= N) return;
-  const bool aligned = ((M % TILE_M) == 0) && ((N % TILE_N) == 0) && ((K % STAGE_K) == 0);
+  // Fast-path condition: this CTA is fully inside bounds and K tiles exactly.
+  // This is a *per-CTA* check (not a whole-tensor divisibility check) so that
+  // non-divisible shapes can still take the fast path for interior tiles.
+  const bool full_tile = (row0 + TILE_M <= M) && (col0 + TILE_N <= N) && ((K % STAGE_K) == 0);
 
   fragment<accumulator, 16, 16, 8, float> acc0;
   fill_fragment(acc0, 0.0f);
@@ -814,10 +868,10 @@ extern "C" __global__ void {intent.name}(
 #endif
 
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
-  if (aligned) {{
+  if (full_tile) {{
     // Fast path: use cp.async double-buffering (Ampere+).
     // Prefetch stage 0.
-    intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(0, 0, A, B, (float*)As, (float*)Bs, row0, col0, K, N);
+    intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(0, 0, A, B, As, Bs, row0, col0, K, N);
     intentir_cp_async_commit();
     intentir_cp_async_wait_all();
     __syncthreads();
@@ -829,17 +883,23 @@ extern "C" __global__ void {intent.name}(
       const int next_k0 = k0 + STAGE_K;
       const int next_buf = buf ^ 1;
       if (next_k0 < K) {{
-        intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(next_buf, next_k0, A, B, (float*)As, (float*)Bs, row0, col0, K, N);
+        intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(next_buf, next_k0, A, B, As, Bs, row0, col0, K, N);
         intentir_cp_async_commit();
       }}
 
       #pragma unroll
       for (int kk0 = 0; kk0 < STAGE_K; kk0 += 8) {{
-        load_matrix_sync(a_frag, &As[buf][warp_m * 16][kk0], AS_LD);
-        load_matrix_sync(b_frag, &Bs[buf][kk0][(warp_n * FRAG_N + 0) * 16], BS_LD);
+        load_matrix_sync(a_frag,
+                         As + (size_t)buf * (size_t)(TILE_M * AS_LD) + (size_t)(warp_m * 16) * (size_t)AS_LD + (size_t)kk0,
+                         AS_LD);
+        load_matrix_sync(b_frag,
+                         Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16),
+                         BS_LD);
         mma_sync(acc0, a_frag, b_frag, acc0);
 #if {wmma_frag_n} > 1
-        load_matrix_sync(b_frag, &Bs[buf][kk0][(warp_n * FRAG_N + 1) * 16], BS_LD);
+        load_matrix_sync(b_frag,
+                         Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16),
+                         BS_LD);
         mma_sync(acc1, a_frag, b_frag, acc1);
 #endif
       }}
@@ -874,24 +934,32 @@ extern "C" __global__ void {intent.name}(
         const int kk = idx - r * STAGE_K;
         const int gr = row0 + r;
         const int gk = k0 + kk;
-        As[0][r][kk] = (gr < M && gk < K) ? intentir_ldg_f32(A + (size_t)gr * (size_t)K + (size_t)gk) : 0.0f;
+        As[(size_t)0 * (size_t)(TILE_M * AS_LD) + (size_t)r * (size_t)AS_LD + (size_t)kk] =
+            (gr < M && gk < K) ? intentir_ldg_f32(A + (size_t)gr * (size_t)K + (size_t)gk) : 0.0f;
       }} else {{
         const int bidx = idx - TILE_M * STAGE_K;
         const int kk = bidx / TILE_N;
         const int n = bidx - kk * TILE_N;
         const int gn = col0 + n;
         const int gk = k0 + kk;
-        Bs[0][kk][n] = (gn < N && gk < K) ? intentir_ldg_f32(B + (size_t)gk * (size_t)N + (size_t)gn) : 0.0f;
+        Bs[(size_t)0 * (size_t)(STAGE_K * BS_LD) + (size_t)kk * (size_t)BS_LD + (size_t)n] =
+            (gn < N && gk < K) ? intentir_ldg_f32(B + (size_t)gk * (size_t)N + (size_t)gn) : 0.0f;
       }}
     }}
     __syncthreads();
     #pragma unroll
     for (int kk0 = 0; kk0 < STAGE_K; kk0 += 8) {{
-      load_matrix_sync(a_frag, &As[0][warp_m * 16][kk0], AS_LD);
-      load_matrix_sync(b_frag, &Bs[0][kk0][(warp_n * FRAG_N + 0) * 16], BS_LD);
+      load_matrix_sync(a_frag,
+                       As + (size_t)0 * (size_t)(TILE_M * AS_LD) + (size_t)(warp_m * 16) * (size_t)AS_LD + (size_t)kk0,
+                       AS_LD);
+      load_matrix_sync(b_frag,
+                       Bs + (size_t)0 * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16),
+                       BS_LD);
       mma_sync(acc0, a_frag, b_frag, acc0);
 #if {wmma_frag_n} > 1
-      load_matrix_sync(b_frag, &Bs[0][kk0][(warp_n * FRAG_N + 1) * 16], BS_LD);
+      load_matrix_sync(b_frag,
+                       Bs + (size_t)0 * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16),
+                       BS_LD);
       mma_sync(acc1, a_frag, b_frag, acc1);
 #endif
     }}
@@ -911,7 +979,11 @@ extern "C" __global__ void {intent.name}(
 #endif
 }}
 """.lstrip()
-        launch = CudaLaunch(grid=(wmma_grid_x, wmma_grid_y, 1), block=(32 * wmma_warps_m * wmma_warps_n, 1, 1), shared_mem=0)
+        launch = CudaLaunch(
+            grid=(wmma_grid_x, wmma_grid_y, 1),
+            block=(32 * wmma_warps_m * wmma_warps_n, 1, 1),
+            shared_mem=int(shared_bytes),
+        )
     else:
         cuda_src = f"""
 extern "C" __global__ void {intent.name}(
@@ -1026,7 +1098,11 @@ def _kernel_dropout_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cud
         block_x = 1024
 
     # Process multiple elements per thread to amortize Philox cost.
-    ept = int(op.attrs.get("elements_per_thread") or bindings.get("DROPOUT_EPT") or 4)
+    #
+    # AI-Bench dropout is bandwidth + RNG bound; using a larger EPT reduces launch
+    # overhead and improves global memory coalescing when we map each thread to a
+    # contiguous EPT segment.
+    ept = int(op.attrs.get("elements_per_thread") or bindings.get("DROPOUT_EPT") or 8)
     if ept <= 0:
         ept = 1
     if ept > 8:
@@ -1042,16 +1118,12 @@ def _kernel_dropout_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cud
 extern "C" __global__ void {intent.name}(const float* X, const float* p_ptr, const int* seed_ptr, float* Y, int64_t n_elements) {{
   constexpr int EPT = {ept};
   const int tid = (int)threadIdx.x;
+  // Strided EPT mapping keeps each iteration's global loads fully coalesced:
+  // for a fixed `e`, threads in a warp access consecutive indices.
   const int64_t base = (int64_t)blockIdx.x * (int64_t)blockDim.x * (int64_t)EPT + (int64_t)tid;
-  __shared__ float p_shared;
-  __shared__ uint32_t seed_shared;
-  if ((int)threadIdx.x == 0) {{
-    p_shared = p_ptr ? p_ptr[0] : 0.0f;
-    seed_shared = seed_ptr ? (uint32_t)seed_ptr[0] : 0u;
-  }}
-  __syncthreads();
-  const float p = p_shared;
-  const uint64_t seed = (uint64_t)seed_shared;
+  // Loading these scalars per-thread avoids an unconditional __syncthreads().
+  const float p = p_ptr ? p_ptr[0] : 0.0f;
+  const uint64_t seed = (uint64_t)(seed_ptr ? (uint32_t)seed_ptr[0] : 0u);
   if (p <= 0.0f) {{
     #pragma unroll
     for (int e = 0; e < EPT; ++e) {{
@@ -1177,11 +1249,17 @@ def _kernel_softmax_2d_last_f32(intent: IntentFunction, bindings: Dict[str, int]
             block_threads = int(((block_threads + 31) // 32) * 32)
         if block_threads > 1024:
             block_threads = 1024
-    # We keep exp values in registers (expv[EPT]), so enforce a small EPT to avoid
-    # excessive register pressure. If the user requests too few threads (which
-    # would require EPT>8 and break correctness), bump threads up to the minimum
-    # that still covers the whole row with EPT<=8.
-    min_threads = max(32, (C + 8 - 1) // 8)
+    # We keep exp values in registers (expv[EPT]). Larger EPT increases register
+    # pressure, but in practice softmax rows are small (<=1024) and fewer threads
+    # can reduce reduction/sync overhead. Allow EPT up to 16 by default.
+    max_ept = int(bindings.get("SOFTMAX_MAX_EPT") or 16)
+    if max_ept < 4:
+        max_ept = 4
+    if max_ept > 16:
+        max_ept = 16
+    # If the user requests too few threads (which would require EPT>max_ept),
+    # bump threads up to the minimum that still covers the whole row.
+    min_threads = max(32, (C + max_ept - 1) // max_ept)
     if (min_threads % 32) != 0:
         min_threads = int(((min_threads + 31) // 32) * 32)
     if block_threads < min_threads:
@@ -1248,18 +1326,19 @@ extern "C" __global__ void {intent.name}(const float* {in_name}, float* {out_nam
   {c_load}
   const int r = (int)blockIdx.x;
   if (r >= R) return;
+  const float* __restrict__ in_row = {in_name} + (size_t)r * (size_t)C;
+  float* __restrict__ out_row = {out_name} + (size_t)r * (size_t)C;
+  const int tid = (int)threadIdx.x;
   constexpr int BLOCK_THREADS = {block_threads};
   constexpr int EPT = {ept};
 
   float tmax = -INFINITY;
   float expv[EPT];
-  int idx[EPT];
   #pragma unroll
   for (int i = 0; i < EPT; ++i) {{
-    const int c = (int)threadIdx.x + i * BLOCK_THREADS;
-    idx[i] = c;
+    const int c = tid + i * BLOCK_THREADS;
     float v = -INFINITY;
-    if (c < C) v = intentir_ldg_f32({in_name} + (size_t)r * (size_t)C + (size_t)c);
+    if (c < C) v = intentir_ldg_f32(in_row + (size_t)c);
     expv[i] = v;
     tmax = fmaxf(tmax, v);
   }}
@@ -1268,7 +1347,7 @@ extern "C" __global__ void {intent.name}(const float* {in_name}, float* {out_nam
   float tsum = 0.0f;
   #pragma unroll
   for (int i = 0; i < EPT; ++i) {{
-    const int c = (int)threadIdx.x + i * BLOCK_THREADS;
+    const int c = tid + i * BLOCK_THREADS;
     float e = 0.0f;
     if (c < C) {{
       e = __expf(expv[i] - mx);
@@ -1280,9 +1359,9 @@ extern "C" __global__ void {intent.name}(const float* {in_name}, float* {out_nam
   const float inv = __fdividef(1.0f, sum);
   #pragma unroll
   for (int i = 0; i < EPT; ++i) {{
-    const int c = idx[i];
+    const int c = tid + i * BLOCK_THREADS;
     if (c < C) {{
-      {out_name}[(size_t)r * (size_t)C + (size_t)c] = expv[i] * inv;
+      out_row[(size_t)c] = expv[i] * inv;
     }}
   }}
 }}
@@ -2119,7 +2198,9 @@ def _kernel_resize_bilinear2x_i8(intent: IntentFunction, bindings: Dict[str, int
         block_w = 128
     if block_w > 1024:
         block_w = 1024
-    grid_w = (OW + block_w - 1) // block_w
+    # We map one thread to one input-x (x0) and write two output pixels (2x upsample),
+    # which reduces global loads and launch overhead compared to 1 thread per output pixel.
+    grid_w = (W + block_w - 1) // block_w
 
     c_is_tensor = _is_scalar_tensor(intent, "C", dtype="i32")
     h_is_tensor = _is_scalar_tensor(intent, "H", dtype="i32")
@@ -2143,12 +2224,8 @@ extern "C" __global__ void {intent.name}(const int8_t* __restrict__ {src_name}, 
 
   const int h_idx = (int)blockIdx.y;
   const int c = (int)blockIdx.z;
-  const int w_idx = (int)blockIdx.x * (int)blockDim.x + (int)threadIdx.x;
-  if (c >= C || h_idx >= OH || w_idx >= OW) return;
-
-  // 2x bilinear with fixed-point hw_fl=7 has a regular structure:
-  // x0 = floor(w/2), y0 = floor(h/2). Odd positions average neighbors.
-  const int x0 = w_idx >> 1;
+  const int x0 = (int)blockIdx.x * (int)blockDim.x + (int)threadIdx.x;
+  if (c >= C || h_idx >= OH || x0 >= W) return;
   const int y0 = h_idx >> 1;
   const int x1 = (x0 + 1 < W) ? (x0 + 1) : (W - 1);
   const int y1 = (y0 + 1 < H) ? (y0 + 1) : (H - 1);
@@ -2166,12 +2243,18 @@ extern "C" __global__ void {intent.name}(const int8_t* __restrict__ {src_name}, 
   const int16_t c0 = (int16_t){src_name}[row1 + x0];
   const int16_t d = (int16_t){src_name}[row1 + x1];
 
-  const int x_odd = (w_idx & 1);
+  // Compute 2 output pixels: w=2*x0 (even) and w=2*x0+1 (odd).
   const int y_odd = (h_idx & 1);
-  const int32_t sum1 = x_odd ? (((int32_t)a + (int32_t)b) >> 1) : (int32_t)a;
-  const int32_t sum2 = x_odd ? (((int32_t)c0 + (int32_t)d) >> 1) : (int32_t)c0;
-  const int32_t outv = y_odd ? ((sum1 + sum2) >> 1) : sum1;
-  {out_name}[dst_base + (int64_t)w_idx] = (int8_t)outv;
+  const int32_t sum1_even = (int32_t)a;
+  const int32_t sum2_even = (int32_t)c0;
+  const int32_t sum1_odd = (((int32_t)a + (int32_t)b) >> 1);
+  const int32_t sum2_odd = (((int32_t)c0 + (int32_t)d) >> 1);
+  const int32_t out_even = y_odd ? ((sum1_even + sum2_even) >> 1) : sum1_even;
+  const int32_t out_odd = y_odd ? ((sum1_odd + sum2_odd) >> 1) : sum1_odd;
+  const int w_even = x0 << 1;
+  const int w_odd = w_even + 1;
+  {out_name}[dst_base + (int64_t)w_even] = (int8_t)out_even;
+  {out_name}[dst_base + (int64_t)w_odd] = (int8_t)out_odd;
 }}
 """.lstrip()
 

@@ -30,7 +30,8 @@ __device__ __forceinline__ float intentir_ldg_f32(const float* p) { return inten
 
 __device__ __forceinline__ void intentir_cp_async_16(void* smem_dst, const void* gmem_src) {
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
-  // Cache at all levels (ca). Size is 16 bytes.
+  // Cache at all levels (ca). Empirically this works well for our small GEMMs
+  // and avoids pathological regressions on some shapes.
   const unsigned int smem = __cvta_generic_to_shared(smem_dst);
   asm volatile("cp.async.ca.shared.global [%0], [%1], 16;\n" : : "r"(smem), "l"(gmem_src));
 #else
