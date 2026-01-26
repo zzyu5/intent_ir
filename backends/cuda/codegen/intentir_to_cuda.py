@@ -1021,76 +1021,29 @@ extern "C" __global__ void {intent.name}(
     //   - otherwise, synchronous float4 vectorized copies (still no bounds checks)
 #if {1 if wmma_use_cp_async else 0}
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
-    // cp.async pipelining (Ampere+). Use 2-stage (double-buffer) or 3-stage buffering.
-#if PIPE_STAGES == 2
-    // Prefetch stage 0.
-    intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(0, 0, A, B, As, Bs, row0, col0, K, N);
-    intentir_cp_async_commit();
-    intentir_cp_async_wait_all();
-    __syncthreads();
-
-    int buf = 0;
-    for (int k0 = 0; k0 < K; k0 += STAGE_K) {{
-      const int next_k0 = k0 + STAGE_K;
-      const int next_buf = buf ^ 1;
-      if (next_k0 < K) {{
-        intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(next_buf, next_k0, A, B, As, Bs, row0, col0, K, N);
-        intentir_cp_async_commit();
-      }}
-
-      #pragma unroll
-      for (int kk0 = 0; kk0 < STAGE_K; kk0 += 8) {{
-        load_matrix_sync(a_frag,
-                         As + (size_t)buf * (size_t)(TILE_M * AS_LD) + (size_t)(warp_m * 16) * (size_t)AS_LD + (size_t)kk0,
-                         AS_LD);
-	        load_matrix_sync(b_frag,
-	                         Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16),
-	                         BS_LD);
-	        intentir_mma_tf32_m16n16k8_rr(acc0, a_frag, b_frag);
-	#if {wmma_frag_n} > 1
-	        load_matrix_sync(b_frag,
-	                         Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16),
-	                         BS_LD);
-	        intentir_mma_tf32_m16n16k8_rr(acc1, a_frag, b_frag);
-	#endif
-      }}
-
-      if (next_k0 < K) {{
-        intentir_cp_async_wait_all();
-        __syncthreads();
-      }}
-      buf = next_buf;
-    }}
-#else
-    // Triple-buffering. Prefetch stages 0 and 1, then keep one stage in flight
-    // while computing on the current stage.
-    const int num_tiles = K / STAGE_K;
-    intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(0, 0, A, B, As, Bs, row0, col0, K, N);
-    intentir_cp_async_commit();
-    if (num_tiles > 1) {{
-      intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(1, STAGE_K, A, B, As, Bs, row0, col0, K, N);
+    // cp.async pipelining (Ampere+). PIPE_STAGES is constexpr, so this compiles down to
+    // a single buffering strategy without runtime overhead.
+    if (PIPE_STAGES == 2) {{
+      // Prefetch stage 0.
+      intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(0, 0, A, B, As, Bs, row0, col0, K, N);
       intentir_cp_async_commit();
-    }}
-    // Wait until stage 0 is ready (leave stage 1 possibly in flight).
-    intentir_cp_async_wait_group<1>();
-    __syncthreads();
+      intentir_cp_async_wait_all();
+      __syncthreads();
 
-    for (int stage = 0; stage < num_tiles; ++stage) {{
-      const int buf = stage % PIPE_STAGES;
-      // Prefetch stage+2 (if any) to overlap with compute on `buf`.
-      const int pf_stage = stage + 2;
-      if (pf_stage < num_tiles) {{
-        const int pf_buf = pf_stage % PIPE_STAGES;
-        intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(
-            pf_buf, pf_stage * STAGE_K, A, B, As, Bs, row0, col0, K, N);
-        intentir_cp_async_commit();
-      }}
+      int buf = 0;
+      for (int k0 = 0; k0 < K; k0 += STAGE_K) {{
+        const int next_k0 = k0 + STAGE_K;
+        const int next_buf = buf ^ 1;
+        if (next_k0 < K) {{
+          intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(next_buf, next_k0, A, B, As, Bs, row0, col0, K, N);
+          intentir_cp_async_commit();
+        }}
 
-      #pragma unroll
-      for (int kk0 = 0; kk0 < STAGE_K; kk0 += 8) {{
-        load_matrix_sync(a_frag,
-                         As + (size_t)buf * (size_t)(TILE_M * AS_LD) + (size_t)(warp_m * 16) * (size_t)AS_LD + (size_t)kk0,
-                         AS_LD);
+        #pragma unroll
+        for (int kk0 = 0; kk0 < STAGE_K; kk0 += 8) {{
+          load_matrix_sync(a_frag,
+                           As + (size_t)buf * (size_t)(TILE_M * AS_LD) + (size_t)(warp_m * 16) * (size_t)AS_LD + (size_t)kk0,
+                           AS_LD);
 	        load_matrix_sync(b_frag,
 	                         Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16),
 	                         BS_LD);
@@ -1101,21 +1054,82 @@ extern "C" __global__ void {intent.name}(
 	                         BS_LD);
 	        intentir_mma_tf32_m16n16k8_rr(acc1, a_frag, b_frag);
 	#endif
-      }}
-
-      // Ensure the next stage is ready before advancing.
-      if (stage + 1 < num_tiles) {{
-        if (stage + 2 < num_tiles) {{
-          // Leave one stage in flight.
-          intentir_cp_async_wait_group<1>();
-        }} else {{
-          // Drain the pipeline for the tail.
-          intentir_cp_async_wait_group<0>();
         }}
-        __syncthreads();
+
+        if (next_k0 < K) {{
+          intentir_cp_async_wait_all();
+          __syncthreads();
+        }}
+        buf = next_buf;
+      }}
+    }} else {{
+      // Triple-buffering. Prefetch stages 0..2, then keep two stages in flight.
+      const int num_tiles = K / STAGE_K;
+      intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(0, 0, A, B, As, Bs, row0, col0, K, N);
+      intentir_cp_async_commit();
+      if (num_tiles > 1) {{
+        intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(1, STAGE_K, A, B, As, Bs, row0, col0, K, N);
+        intentir_cp_async_commit();
+      }}
+      if (num_tiles > 2) {{
+        intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(2, 2 * STAGE_K, A, B, As, Bs, row0, col0, K, N);
+        intentir_cp_async_commit();
+      }}
+      // Wait until stage 0 is ready (leave up to 2 stages in flight).
+      if (num_tiles > 2) {{
+        intentir_cp_async_wait_group<2>();
+      }} else if (num_tiles > 1) {{
+        intentir_cp_async_wait_group<1>();
+      }} else {{
+        intentir_cp_async_wait_group<0>();
+      }}
+      __syncthreads();
+
+      for (int stage = 0; stage < num_tiles; ++stage) {{
+        const int buf = stage % PIPE_STAGES;
+
+        #pragma unroll
+        for (int kk0 = 0; kk0 < STAGE_K; kk0 += 8) {{
+          load_matrix_sync(a_frag,
+                           As + (size_t)buf * (size_t)(TILE_M * AS_LD) + (size_t)(warp_m * 16) * (size_t)AS_LD + (size_t)kk0,
+                           AS_LD);
+	        load_matrix_sync(b_frag,
+	                         Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16),
+	                         BS_LD);
+	        intentir_mma_tf32_m16n16k8_rr(acc0, a_frag, b_frag);
+	#if {wmma_frag_n} > 1
+	        load_matrix_sync(b_frag,
+	                         Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16),
+	                         BS_LD);
+	        intentir_mma_tf32_m16n16k8_rr(acc1, a_frag, b_frag);
+	#endif
+        }}
+
+        // Prefetch stage+3 (if any) after consuming the current buffer.
+        const int pf_stage = stage + PIPE_STAGES;
+        if (pf_stage < num_tiles) {{
+          intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(
+              buf, pf_stage * STAGE_K, A, B, As, Bs, row0, col0, K, N);
+          intentir_cp_async_commit();
+        }}
+
+        // Ensure the next stage is ready before advancing.
+        if (stage + 1 < num_tiles) {{
+          const int tail = num_tiles - (stage + 2);
+          if (tail >= 2) {{
+            // Leave two stages in flight.
+            intentir_cp_async_wait_group<2>();
+          }} else if (tail == 1) {{
+            // Leave one stage in flight.
+            intentir_cp_async_wait_group<1>();
+          }} else {{
+            // Drain the pipeline for the tail.
+            intentir_cp_async_wait_group<0>();
+          }}
+          __syncthreads();
+        }}
       }}
     }}
-#endif
 #else
     // Pre-Ampere fallback for the "cp.async" build: use synchronous vector copies.
     constexpr int VEC = 4;
