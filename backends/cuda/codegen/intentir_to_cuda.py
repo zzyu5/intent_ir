@@ -1394,7 +1394,7 @@ def _kernel_rope_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLo
     iters = max(1, (packs + block_x - 1) // block_x)
 
     cuda_src = f"""
-#include "intentir_cuda_ops.cuh"
+#include "kernels/rope.cuh"
 
 extern "C" __global__ void {intent.name}(
     const float* __restrict__ {in_name}, const float* __restrict__ {cos_name}, const float* __restrict__ {sin_name}, float* __restrict__ {out_name},
@@ -1406,176 +1406,10 @@ extern "C" __global__ void {intent.name}(
   constexpr int HEADS_PER_BLOCK = {heads_per_block};
   constexpr int ROPE_VEC = {rope_vec};
   constexpr int BLOCK_X = {block_x};
-  const int pid_head_group = (int)blockIdx.x;
-  const int pid_batch = (int)blockIdx.y;
-  const int pid_seq = (int)blockIdx.z;
-  // Grid is chosen from bindings; for the canonical mapping (HEADS_PER_BLOCK=1),
-  // (pid_seq, pid_batch, pid_head) are always in range, so these checks are redundant.
-  // Keep them only for non-canonical head grouping.
-  if constexpr (HEADS_PER_BLOCK != 1) {{
-    if (pid_batch >= BATCH_NUM || pid_seq >= SEQ_LEN) return;
-  }}
-  const int half = (int)(HEAD_DIM >> 1);
-  const int head0 = pid_head_group * HEADS_PER_BLOCK;
-  if constexpr (HEADS_PER_BLOCK != 1) {{
-    if (head0 >= HEAD_NUM) return;
-  }}
-
+  constexpr int ITERS = {iters};
   using idx_t = {idx_t};
-  const idx_t base0 = (idx_t)(((idx_t)pid_seq * (idx_t)BATCH_NUM + (idx_t)pid_batch) * (idx_t)HEAD_NUM) * (idx_t)HEAD_DIM;
-  const idx_t cb0 = (idx_t)pid_seq * (idx_t)half;
-  const int tid = (int)threadIdx.x;
-
-  if constexpr (ROPE_VEC == 4) {{
-    const int half4 = (int)(half >> 2);  // # of float4 packs
-    const float4* __restrict__ cos4 = (const float4* __restrict__)({cos_name} + cb0);
-    const float4* __restrict__ sin4 = (const float4* __restrict__)({sin_name} + cb0);
-    if constexpr (HEADS_PER_BLOCK == 1) {{
-      const int head = head0;
-      const idx_t base = base0 + (idx_t)head * (idx_t)HEAD_DIM;
-      const float4* __restrict__ x14 = (const float4* __restrict__)({in_name} + base);
-      const float4* __restrict__ x24 = (const float4* __restrict__)({in_name} + base + (idx_t)half);
-      float4* __restrict__ y14 = (float4* __restrict__)({out_name} + base);
-      float4* __restrict__ y24 = (float4* __restrict__)({out_name} + base + (idx_t)half);
-      #pragma unroll
-      for (int k = 0; k < {iters}; ++k) {{
-        const int j4 = tid + k * BLOCK_X;
-        if (j4 >= half4) break;
-        const float4 c4 = cos4[j4];
-        const float4 s4 = sin4[j4];
-        const float4 a = x14[j4];
-        const float4 b = x24[j4];
-        float4 y1;
-        float4 y2;
-        y1.x = __fmaf_rn(-b.x, s4.x, a.x * c4.x);
-        y1.y = __fmaf_rn(-b.y, s4.y, a.y * c4.y);
-        y1.z = __fmaf_rn(-b.z, s4.z, a.z * c4.z);
-        y1.w = __fmaf_rn(-b.w, s4.w, a.w * c4.w);
-        y2.x = __fmaf_rn(a.x, s4.x, b.x * c4.x);
-        y2.y = __fmaf_rn(a.y, s4.y, b.y * c4.y);
-        y2.z = __fmaf_rn(a.z, s4.z, b.z * c4.z);
-        y2.w = __fmaf_rn(a.w, s4.w, b.w * c4.w);
-        y14[j4] = y1;
-        y24[j4] = y2;
-      }}
-    }} else {{
-      for (int j4 = tid; j4 < half4; j4 += BLOCK_X) {{
-        const float4 c4 = cos4[j4];
-        const float4 s4 = sin4[j4];
-        #pragma unroll
-        for (int gh = 0; gh < HEADS_PER_BLOCK; ++gh) {{
-          const int head = head0 + gh;
-          if (head >= HEAD_NUM) break;
-          const idx_t base = base0 + (idx_t)head * (idx_t)HEAD_DIM;
-          const float4* __restrict__ x14 = (const float4* __restrict__)({in_name} + base);
-          const float4* __restrict__ x24 = (const float4* __restrict__)({in_name} + base + (idx_t)half);
-          float4* __restrict__ y14 = (float4* __restrict__)({out_name} + base);
-          float4* __restrict__ y24 = (float4* __restrict__)({out_name} + base + (idx_t)half);
-          const float4 a = x14[j4];
-          const float4 b = x24[j4];
-          float4 y1;
-          float4 y2;
-          y1.x = __fmaf_rn(-b.x, s4.x, a.x * c4.x);
-          y1.y = __fmaf_rn(-b.y, s4.y, a.y * c4.y);
-          y1.z = __fmaf_rn(-b.z, s4.z, a.z * c4.z);
-          y1.w = __fmaf_rn(-b.w, s4.w, a.w * c4.w);
-          y2.x = __fmaf_rn(a.x, s4.x, b.x * c4.x);
-          y2.y = __fmaf_rn(a.y, s4.y, b.y * c4.y);
-          y2.z = __fmaf_rn(a.z, s4.z, b.z * c4.z);
-          y2.w = __fmaf_rn(a.w, s4.w, b.w * c4.w);
-          y14[j4] = y1;
-          y24[j4] = y2;
-        }}
-      }}
-    }}
-  }} else if constexpr (ROPE_VEC == 2) {{
-    const int half2 = (int)(half >> 1);  // # of float2 packs
-    const float2* __restrict__ cos2 = (const float2* __restrict__)({cos_name} + cb0);
-    const float2* __restrict__ sin2 = (const float2* __restrict__)({sin_name} + cb0);
-    if constexpr (HEADS_PER_BLOCK == 1) {{
-      const int head = head0;
-      const idx_t base = base0 + (idx_t)head * (idx_t)HEAD_DIM;
-      const float2* __restrict__ x12 = (const float2* __restrict__)({in_name} + base);
-      const float2* __restrict__ x22 = (const float2* __restrict__)({in_name} + base + (idx_t)half);
-      float2* __restrict__ y12 = (float2* __restrict__)({out_name} + base);
-      float2* __restrict__ y22 = (float2* __restrict__)({out_name} + base + (idx_t)half);
-      #pragma unroll
-      for (int k = 0; k < {iters}; ++k) {{
-        const int j2 = tid + k * BLOCK_X;
-        if (j2 >= half2) break;
-        const float2 c2 = cos2[j2];
-        const float2 s2 = sin2[j2];
-        const float2 a = x12[j2];
-        const float2 b = x22[j2];
-        float2 y1;
-        float2 y2;
-        y1.x = __fmaf_rn(-b.x, s2.x, a.x * c2.x);
-        y1.y = __fmaf_rn(-b.y, s2.y, a.y * c2.y);
-        y2.x = __fmaf_rn(a.x, s2.x, b.x * c2.x);
-        y2.y = __fmaf_rn(a.y, s2.y, b.y * c2.y);
-        y12[j2] = y1;
-        y22[j2] = y2;
-      }}
-    }} else {{
-      for (int j2 = tid; j2 < half2; j2 += BLOCK_X) {{
-        const float2 c2 = cos2[j2];
-        const float2 s2 = sin2[j2];
-        #pragma unroll
-        for (int gh = 0; gh < HEADS_PER_BLOCK; ++gh) {{
-          const int head = head0 + gh;
-          if (head >= HEAD_NUM) break;
-          const idx_t base = base0 + (idx_t)head * (idx_t)HEAD_DIM;
-          const float2* __restrict__ x12 = (const float2* __restrict__)({in_name} + base);
-          const float2* __restrict__ x22 = (const float2* __restrict__)({in_name} + base + (idx_t)half);
-          float2* __restrict__ y12 = (float2* __restrict__)({out_name} + base);
-          float2* __restrict__ y22 = (float2* __restrict__)({out_name} + base + (idx_t)half);
-          const float2 a = x12[j2];
-          const float2 b = x22[j2];
-          float2 y1;
-          float2 y2;
-          y1.x = __fmaf_rn(-b.x, s2.x, a.x * c2.x);
-          y1.y = __fmaf_rn(-b.y, s2.y, a.y * c2.y);
-          y2.x = __fmaf_rn(a.x, s2.x, b.x * c2.x);
-          y2.y = __fmaf_rn(a.y, s2.y, b.y * c2.y);
-          y12[j2] = y1;
-          y22[j2] = y2;
-        }}
-      }}
-    }}
-  }} else {{
-    if constexpr (HEADS_PER_BLOCK == 1) {{
-      const int head = head0;
-      const idx_t base = base0 + (idx_t)head * (idx_t)HEAD_DIM;
-      #pragma unroll
-      for (int k = 0; k < {iters}; ++k) {{
-        const int j = tid + k * BLOCK_X;
-        if (j >= half) break;
-        const idx_t cb = cb0 + (idx_t)j;
-        const float c = intentir_ldg_f32(&{cos_name}[cb]);
-        const float s0 = intentir_ldg_f32(&{sin_name}[cb]);
-        const float x1 = intentir_ldg_f32(&{in_name}[base + (idx_t)j]);
-        const float x2 = intentir_ldg_f32(&{in_name}[base + (idx_t)half + (idx_t)j]);
-        {out_name}[base + (idx_t)j] = __fmaf_rn(-x2, s0, x1 * c);
-        {out_name}[base + (idx_t)half + (idx_t)j] = __fmaf_rn(x1, s0, x2 * c);
-      }}
-    }} else {{
-      for (int j = tid; j < half; j += BLOCK_X) {{
-        const idx_t cb = cb0 + (idx_t)j;
-        const float c = intentir_ldg_f32(&{cos_name}[cb]);
-        const float s0 = intentir_ldg_f32(&{sin_name}[cb]);
-        #pragma unroll
-        for (int gh = 0; gh < HEADS_PER_BLOCK; ++gh) {{
-          const int head = head0 + gh;
-          if (head >= HEAD_NUM) break;
-          const idx_t base = base0 + (idx_t)head * (idx_t)HEAD_DIM;
-          const float x1 = intentir_ldg_f32(&{in_name}[base + (idx_t)j]);
-          const float x2 = intentir_ldg_f32(&{in_name}[base + (idx_t)half + (idx_t)j]);
-          {out_name}[base + (idx_t)j] = __fmaf_rn(-x2, s0, x1 * c);
-          {out_name}[base + (idx_t)half + (idx_t)j] = __fmaf_rn(x1, s0, x2 * c);
-        }}
-      }}
-    }}
-  }}
+  intentir_cuda::rope_f32<HEADS_PER_BLOCK, ROPE_VEC, BLOCK_X, ITERS, idx_t>(
+      {in_name}, {cos_name}, {sin_name}, {out_name}, SEQ_LEN, BATCH_NUM, HEAD_NUM, HEAD_DIM);
 }}
 """.lstrip()
 
