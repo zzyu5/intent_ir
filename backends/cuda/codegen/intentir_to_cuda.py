@@ -1023,29 +1023,18 @@ extern "C" __global__ void {intent.name}(
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
     // cp.async pipelining (Ampere+). Use 2-stage (double-buffer) or 3-stage buffering.
 #if PIPE_STAGES == 2
-    // Double-buffering. Prefetch stages 0 and 1, then keep one stage in flight.
-    const int num_tiles = K / STAGE_K;
+    // Prefetch stage 0.
     intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(0, 0, A, B, As, Bs, row0, col0, K, N);
     intentir_cp_async_commit();
-    if (num_tiles > 1) {{
-      intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(1, STAGE_K, A, B, As, Bs, row0, col0, K, N);
-      intentir_cp_async_commit();
-    }}
-    if (num_tiles > 1) {{
-      intentir_cp_async_wait_group<1>();
-    }} else {{
-      intentir_cp_async_wait_group<0>();
-    }}
+    intentir_cp_async_wait_all();
     __syncthreads();
 
-    for (int stage = 0; stage < num_tiles; ++stage) {{
-      const int buf = stage & 1;
-      // Prefetch stage+2 (if any) to overlap with compute on `buf`.
-      const int pf_stage = stage + 2;
-      if (pf_stage < num_tiles) {{
-        const int pf_buf = pf_stage & 1;
-        intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(
-            pf_buf, pf_stage * STAGE_K, A, B, As, Bs, row0, col0, K, N);
+    int buf = 0;
+    for (int k0 = 0; k0 < K; k0 += STAGE_K) {{
+      const int next_k0 = k0 + STAGE_K;
+      const int next_buf = buf ^ 1;
+      if (next_k0 < K) {{
+        intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(next_buf, next_k0, A, B, As, Bs, row0, col0, K, N);
         intentir_cp_async_commit();
       }}
 
@@ -1066,21 +1055,15 @@ extern "C" __global__ void {intent.name}(
 	#endif
       }}
 
-      // Ensure the next stage is ready before advancing.
-      if (stage + 1 < num_tiles) {{
-        const int tail = num_tiles - (stage + 2);
-        if (tail >= 1) {{
-          // Leave one stage in flight.
-          intentir_cp_async_wait_group<1>();
-        }} else {{
-          // Drain the pipeline for the tail.
-          intentir_cp_async_wait_group<0>();
-        }}
+      if (next_k0 < K) {{
+        intentir_cp_async_wait_all();
         __syncthreads();
       }}
+      buf = next_buf;
     }}
 #else
-    // Triple-buffering. Prefetch stages 0..2, then keep up to 2 stages in flight.
+    // Triple-buffering. Prefetch stages 0 and 1, then keep one stage in flight
+    // while computing on the current stage.
     const int num_tiles = K / STAGE_K;
     intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(0, 0, A, B, As, Bs, row0, col0, K, N);
     intentir_cp_async_commit();
@@ -1088,24 +1071,14 @@ extern "C" __global__ void {intent.name}(
       intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(1, STAGE_K, A, B, As, Bs, row0, col0, K, N);
       intentir_cp_async_commit();
     }}
-    if (num_tiles > 2) {{
-      intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(2, 2 * STAGE_K, A, B, As, Bs, row0, col0, K, N);
-      intentir_cp_async_commit();
-    }}
-    // Wait until stage 0 is ready (leave later stages possibly in flight).
-    if (num_tiles <= 1) {{
-      intentir_cp_async_wait_group<0>();
-    }} else if (num_tiles == 2) {{
-      intentir_cp_async_wait_group<1>();
-    }} else {{
-      intentir_cp_async_wait_group<2>();
-    }}
+    // Wait until stage 0 is ready (leave stage 1 possibly in flight).
+    intentir_cp_async_wait_group<1>();
     __syncthreads();
 
     for (int stage = 0; stage < num_tiles; ++stage) {{
       const int buf = stage % PIPE_STAGES;
-      // Prefetch stage+3 (if any) to overlap with compute on `buf`.
-      const int pf_stage = stage + 3;
+      // Prefetch stage+2 (if any) to overlap with compute on `buf`.
+      const int pf_stage = stage + 2;
       if (pf_stage < num_tiles) {{
         const int pf_buf = pf_stage % PIPE_STAGES;
         intentir_cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD>(
@@ -1132,16 +1105,12 @@ extern "C" __global__ void {intent.name}(
 
       // Ensure the next stage is ready before advancing.
       if (stage + 1 < num_tiles) {{
-        const int tail = num_tiles - (stage + 2);
-        if (tail <= 0) {{
-          // Drain the pipeline for the tail.
-          intentir_cp_async_wait_group<0>();
-        }} else if (tail == 1) {{
+        if (stage + 2 < num_tiles) {{
           // Leave one stage in flight.
           intentir_cp_async_wait_group<1>();
         }} else {{
-          // Leave two stages in flight.
-          intentir_cp_async_wait_group<2>();
+          // Drain the pipeline for the tail.
+          intentir_cp_async_wait_group<0>();
         }}
         __syncthreads();
       }}
