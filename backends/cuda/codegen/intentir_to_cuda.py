@@ -2003,47 +2003,14 @@ def _kernel_resize_bilinear2x_i8(intent: IntentFunction, bindings: Dict[str, int
     w_load = "const int W = W_ptr ? W_ptr[0] : 0;" if w_is_tensor else ""
 
     cuda_src = f"""
-#include <stdint.h>
+#include "kernels/resize.cuh"
+
 extern "C" __global__ void {intent.name}(const int8_t* __restrict__ {src_name}, int8_t* __restrict__ {out_name}, {c_param}, {h_param}, {w_param}) {{
   {c_load}
   {h_load}
   {w_load}
-  const int OH = H * 2;
-  const int OW = W * 2;
-
-  const int h_idx = (int)blockIdx.y;
-  const int c = (int)blockIdx.z;
-  const int x0 = (int)blockIdx.x * (int)blockDim.x + (int)threadIdx.x;
-  if (c >= C || h_idx >= OH || x0 >= W) return;
-  const int y0 = h_idx >> 1;
-  const int x1 = (x0 + 1 < W) ? (x0 + 1) : (W - 1);
-  const int y1 = (y0 + 1 < H) ? (y0 + 1) : (H - 1);
-
-  const int64_t src_hw = (int64_t)H * (int64_t)W;
-  const int64_t dst_hw = (int64_t)OH * (int64_t)OW;
-  const int64_t src_base = (int64_t)c * src_hw;
-  const int64_t dst_base = (int64_t)c * dst_hw + (int64_t)h_idx * (int64_t)OW;
-
-  const int64_t row0 = src_base + (int64_t)y0 * (int64_t)W;
-  const int64_t row1 = src_base + (int64_t)y1 * (int64_t)W;
-
-  const int16_t a = (int16_t){src_name}[row0 + x0];
-  const int16_t b = (int16_t){src_name}[row0 + x1];
-  const int16_t c0 = (int16_t){src_name}[row1 + x0];
-  const int16_t d = (int16_t){src_name}[row1 + x1];
-
-  // Compute 2 output pixels: w=2*x0 (even) and w=2*x0+1 (odd).
-  const int y_odd = (h_idx & 1);
-  const int32_t sum1_even = (int32_t)a;
-  const int32_t sum2_even = (int32_t)c0;
-  const int32_t sum1_odd = (((int32_t)a + (int32_t)b) >> 1);
-  const int32_t sum2_odd = (((int32_t)c0 + (int32_t)d) >> 1);
-  const int32_t out_even = y_odd ? ((sum1_even + sum2_even) >> 1) : sum1_even;
-  const int32_t out_odd = y_odd ? ((sum1_odd + sum2_odd) >> 1) : sum1_odd;
-  const int w_even = x0 << 1;
-  const int w_odd = w_even + 1;
-  {out_name}[dst_base + (int64_t)w_even] = (int8_t)out_even;
-  {out_name}[dst_base + (int64_t)w_odd] = (int8_t)out_odd;
+  constexpr int BLOCK_W = {block_w};
+  intentir_cuda::resize_bilinear2x_i8<BLOCK_W>({src_name}, {out_name}, C, H, W);
 }}
 """.lstrip()
 
