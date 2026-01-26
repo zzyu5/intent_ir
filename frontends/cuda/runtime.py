@@ -162,10 +162,22 @@ def _intentir_cuda_runtime_hash_payload() -> str:
     a header changes, we incorporate the header text into our module hash.
     """
     root = Path(__file__).resolve().parents[2]
-    hdr = root / "backends" / "cuda" / "runtime" / "intentir_cuda_ops.cuh"
+    rt = root / "backends" / "cuda" / "runtime"
     try:
-        if hdr.is_file():
-            return hdr.read_text(encoding="utf-8")
+        if rt.is_dir():
+            parts: list[str] = []
+            for p in sorted(rt.rglob("*.cuh")):
+                try:
+                    rel = p.relative_to(root)
+                except Exception:
+                    rel = p
+                try:
+                    text = p.read_text(encoding="utf-8")
+                except Exception:
+                    continue
+                parts.append(f"\n// FILE: {rel}\n{text}")
+            if parts:
+                return "\n".join(parts)
     except Exception:
         return ""
     return ""
