@@ -408,6 +408,91 @@ json emit_correlation(const Intent& intent, const json& bindings) {
   return out;
 }
 
+json emit_resize_bilinear2x_i8(const Intent& intent, const json& bindings) {
+  if (!(intent.ops.size() == 1 && intent.ops[0].op == "resize")) fail("resize lowering expects a single resize op");
+  const Op& op = intent.ops[0];
+  if (op.inputs.size() != 1) fail("resize expects 1 input");
+  const std::string src_name = op.inputs[0];
+  const std::string out_name = op.output;
+
+  const int64_t C = binding_int(bindings, "C").value_or(-1);
+  const int64_t H = binding_int(bindings, "H").value_or(-1);
+  const int64_t W = binding_int(bindings, "W").value_or(-1);
+  if (C <= 0 || H <= 0 || W <= 0) fail("resize missing/invalid bindings: C/H/W");
+  const int64_t OH = binding_int(bindings, "OH").value_or(2 * H);
+  const int64_t OW = binding_int(bindings, "OW").value_or(2 * W);
+  if (OH != 2 * H || OW != 2 * W) fail("resize MVP supports only 2x upsample");
+
+  int hw_fl = 7;
+  if (op.attrs.is_object()) {
+    auto it = op.attrs.find("hw_fl");
+    if (it != op.attrs.end()) {
+      if (it->is_number_integer()) hw_fl = it->get<int>();
+      else if (it->is_number()) hw_fl = static_cast<int>(it->get<double>());
+    }
+  }
+  if (hw_fl != 7) fail("resize MVP expects hw_fl=7");
+
+  int64_t block_w = binding_int(bindings, "BLOCK_W").value_or(128);
+  const int64_t hinted = resolve_schedule_int(intent, bindings, "tile_n", block_w);
+  if (0 < hinted && hinted <= 1024) block_w = hinted;
+  if (block_w <= 0) block_w = 128;
+  if (block_w > 1024) block_w = 1024;
+  const int64_t grid_w = (W + block_w - 1) / block_w;
+
+  const bool c_is_tensor = is_scalar_tensor(intent, "C", "i32");
+  const bool h_is_tensor = is_scalar_tensor(intent, "H", "i32");
+  const bool w_is_tensor = is_scalar_tensor(intent, "W", "i32");
+
+  const std::string c_param = c_is_tensor ? "const int* C_ptr" : "int C";
+  const std::string h_param = h_is_tensor ? "const int* H_ptr" : "int H";
+  const std::string w_param = w_is_tensor ? "const int* W_ptr" : "int W";
+  const std::string c_load = c_is_tensor ? "const int C = C_ptr ? C_ptr[0] : 0;" : "";
+  const std::string h_load = h_is_tensor ? "const int H = H_ptr ? H_ptr[0] : 0;" : "";
+  const std::string w_load = w_is_tensor ? "const int W = W_ptr ? W_ptr[0] : 0;" : "";
+
+  std::ostringstream cuda_ss;
+  CodeWriter w(cuda_ss);
+  w.line("#include \"kernels/resize.cuh\"");
+  w.blank();
+  w.line("extern \"C\" __global__ void " + intent.name + "(const int8_t* __restrict__ " + src_name + ", int8_t* __restrict__ " + out_name +
+         ", " + c_param + ", " + h_param + ", " + w_param + ") {");
+  w.indent();
+  if (!c_load.empty()) w.line(c_load);
+  if (!h_load.empty()) w.line(h_load);
+  if (!w_load.empty()) w.line(w_load);
+  w.line("constexpr int BLOCK_W = " + std::to_string(block_w) + ";");
+  w.line("intentir_cuda::resize_bilinear2x_i8<BLOCK_W>(" + src_name + ", " + out_name + ", C, H, W);");
+  w.dedent();
+  w.line("}");
+
+  std::vector<std::string> tensor_args = {src_name, out_name};
+  std::unordered_map<std::string, std::string> scalar_args;
+  std::vector<std::string> arg_names = {src_name, out_name};
+  for (const auto& dim_name : {"C", "H", "W"}) {
+    if (is_scalar_tensor(intent, dim_name, "i32")) {
+      tensor_args.push_back(dim_name);
+      arg_names.push_back(dim_name);
+    } else {
+      scalar_args.emplace(dim_name, "i32");
+      arg_names.push_back(dim_name);
+    }
+  }
+
+  json out_bindings = bindings;
+  if (!out_bindings.contains("OH")) out_bindings["OH"] = OH;
+  if (!out_bindings.contains("OW")) out_bindings["OW"] = OW;
+
+  json out;
+  out["kernel_name"] = intent.name;
+  out["cuda_src"] = cuda_ss.str();
+  out["io_spec"] = io_spec_from_args(intent, tensor_args, scalar_args, arg_names);
+  out["launch"] = {{"grid", {grid_w, OH, C}}, {"block", {block_w, 1, 1}}, {"shared_mem", 0}};
+  out["output_names"] = {out_name};
+  out["bindings"] = out_bindings;
+  return out;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -449,8 +534,13 @@ int main(int argc, char** argv) {
       std::cout << out.dump() << "\n";
       return 0;
     }
+    if (intent.ops.size() == 1 && intent.ops[0].op == "resize") {
+      json out = emit_resize_bilinear2x_i8(intent, bindings_json);
+      std::cout << out.dump() << "\n";
+      return 0;
+    }
 
-    fail("unsupported intent for cuda cpp codegen (supported: dropout, warp, correlation)");
+    fail("unsupported intent for cuda cpp codegen (supported: dropout, warp, correlation, resize)");
   } catch (const std::exception& e) {
     std::cerr << "intentir_cuda_codegen error: " << e.what() << "\\n";
     return 3;
