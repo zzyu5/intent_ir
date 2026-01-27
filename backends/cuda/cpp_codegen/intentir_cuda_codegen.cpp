@@ -307,6 +307,372 @@ json emit_dropout(const Intent& intent, const json& bindings) {
   return out;
 }
 
+json emit_matmul_f32(const Intent& intent, const json& bindings) {
+  if (!(intent.ops.size() == 1 && intent.ops[0].op == "matmul")) fail("matmul lowering expects a single matmul op");
+  const Op& op = intent.ops[0];
+  if (op.inputs.size() != 2) fail("matmul expects 2 inputs");
+  const std::string a = op.inputs[0];
+  const std::string b = op.inputs[1];
+  const std::string c = op.output;
+
+  auto a_it = intent.tensors.find(a);
+  auto b_it = intent.tensors.find(b);
+  if (a_it == intent.tensors.end() || b_it == intent.tensors.end()) fail("matmul missing A/B tensors in intent.tensors");
+  if (a_it->second.shape.size() != 2 || b_it->second.shape.size() != 2) fail("matmul expects rank-2 inputs");
+
+  const json M_dim = a_it->second.shape[0];
+  const json K_dim = a_it->second.shape[1];
+  const json K2_dim = b_it->second.shape[0];
+  const json N_dim = b_it->second.shape[1];
+  if (dim_str(K_dim) != dim_str(K2_dim)) fail("matmul K mismatch between A and B");
+
+  auto M_opt = resolve_dim_token(M_dim, bindings);
+  auto N_opt = resolve_dim_token(N_dim, bindings);
+  auto K_opt = resolve_dim_token(K_dim, bindings);
+  if (!M_opt.has_value() || !N_opt.has_value() || !K_opt.has_value()) fail("matmul missing bindings for M/N/K");
+  const int64_t M = *M_opt;
+  const int64_t N = *N_opt;
+  const int64_t K = *K_opt;
+
+  int64_t block_y = resolve_schedule_int(intent, bindings, "tile_m", 16);
+  int64_t block_x = resolve_schedule_int(intent, bindings, "tile_n", 16);
+  int64_t block_k = resolve_schedule_int(intent, bindings, "tile_k", 16);
+  if (block_x <= 0) block_x = 16;
+  if (block_y <= 0) block_y = 16;
+  if (block_k <= 0) block_k = 16;
+  if (block_x > 64) block_x = 64;
+
+  bool allow_tf32 = binding_int(bindings, "ALLOW_TF32").value_or(0) != 0;
+  if (op.attrs.is_object()) {
+    auto it = op.attrs.find("allow_tf32");
+    if (it != op.attrs.end()) {
+      if (it->is_boolean()) allow_tf32 = allow_tf32 || it->get<bool>();
+      else if (it->is_number_integer()) allow_tf32 = allow_tf32 || (it->get<int64_t>() != 0);
+      else if (it->is_number()) allow_tf32 = allow_tf32 || (it->get<double>() != 0.0);
+    }
+  }
+  const bool use_wmma = allow_tf32 && ((M % 16) == 0) && ((N % 16) == 0) && ((K % 8) == 0);
+
+  int64_t thread_m = std::min<int64_t>(16, block_y);
+  if (block_x * thread_m > 1024) thread_m = std::max<int64_t>(1, 1024 / std::max<int64_t>(1, block_x));
+  block_k = std::max<int64_t>(1, std::min<int64_t>(block_k, std::min<int64_t>(block_x, thread_m)));
+  const int64_t rows_per_thread = std::max<int64_t>(1, (block_y + thread_m - 1) / thread_m);
+
+  const int64_t grid_x = (N + block_x - 1) / block_x;
+  const int64_t grid_y = (M + block_y - 1) / block_y;
+
+  const std::string M_name = dim_str(M_dim);
+  const std::string N_name = dim_str(N_dim);
+  const std::string K_name = dim_str(K_dim);
+  const bool m_is_tensor = is_scalar_tensor(intent, M_name, "i32");
+  const bool n_is_tensor = is_scalar_tensor(intent, N_name, "i32");
+  const bool k_is_tensor = is_scalar_tensor(intent, K_name, "i32");
+
+  const bool specialize_dims = binding_int(bindings, "CUDA_SPECIALIZE_DIMS").value_or(0) != 0;
+
+  const std::string m_param = m_is_tensor ? ("const int* " + M_name + "_ptr") : "int M_in";
+  const std::string n_param = n_is_tensor ? ("const int* " + N_name + "_ptr") : "int N_in";
+  const std::string k_param = k_is_tensor ? ("const int* " + K_name + "_ptr") : "int K_in";
+
+  const std::string m_init = m_is_tensor ? ("(" + M_name + "_ptr ? " + M_name + "_ptr[0] : 0)") : "M_in";
+  const std::string n_init = n_is_tensor ? ("(" + N_name + "_ptr ? " + N_name + "_ptr[0] : 0)") : "N_in";
+  const std::string k_init = k_is_tensor ? ("(" + K_name + "_ptr ? " + K_name + "_ptr[0] : 0)") : "K_in";
+
+  std::string mnk_load;
+  if (specialize_dims) {
+    const std::string m_unused = m_is_tensor ? (M_name + "_ptr") : "M_in";
+    const std::string n_unused = n_is_tensor ? (N_name + "_ptr") : "N_in";
+    const std::string k_unused = k_is_tensor ? (K_name + "_ptr") : "K_in";
+    std::ostringstream ss;
+    CodeWriter w(ss);
+    w.line("(void)" + m_unused + ";");
+    w.line("(void)" + n_unused + ";");
+    w.line("(void)" + k_unused + ";");
+    w.line("constexpr int M = " + std::to_string(M) + ";");
+    w.line("constexpr int N = " + std::to_string(N) + ";");
+    w.line("constexpr int K = " + std::to_string(K) + ";");
+    mnk_load = ss.str();
+  } else {
+    if (m_is_tensor || n_is_tensor || k_is_tensor) {
+      std::ostringstream ss;
+      CodeWriter w(ss);
+      w.line("__shared__ int intentir_M;");
+      w.line("__shared__ int intentir_N;");
+      w.line("__shared__ int intentir_K;");
+      w.line("if ((int)threadIdx.x == 0 && (int)threadIdx.y == 0 && (int)threadIdx.z == 0) {");
+      w.indent();
+      w.line("intentir_M = " + m_init + ";");
+      w.line("intentir_N = " + n_init + ";");
+      w.line("intentir_K = " + k_init + ";");
+      w.dedent();
+      w.line("}");
+      w.line("__syncthreads();");
+      w.line("const int M = intentir_M;");
+      w.line("const int N = intentir_N;");
+      w.line("const int K = intentir_K;");
+      mnk_load = ss.str();
+    } else {
+      std::ostringstream ss;
+      CodeWriter w(ss);
+      w.line("const int M = M_in;");
+      w.line("const int N = N_in;");
+      w.line("const int K = K_in;");
+      mnk_load = ss.str();
+    }
+  }
+
+  std::ostringstream cuda_ss;
+  CodeWriter w(cuda_ss);
+  json launch;
+  int64_t shared_mem = 0;
+
+  if (use_wmma) {
+    int64_t wmma_warps_m = binding_int(bindings, "WMMA_WARPS_M").value_or(0);
+    int64_t wmma_warps_n = binding_int(bindings, "WMMA_WARPS_N").value_or(0);
+    const bool warps_m_override = wmma_warps_m > 0;
+    const bool warps_n_override = wmma_warps_n > 0;
+    (void)warps_n_override;
+    int64_t wmma_frag_n = binding_int(bindings, "WMMA_FRAG_N").value_or(1);
+
+    if (wmma_warps_m <= 0 || wmma_warps_n <= 0) {
+      wmma_warps_m = std::max<int64_t>(1, std::min<int64_t>(4, block_y / 16));
+      wmma_warps_n = std::max<int64_t>(1, std::min<int64_t>(8, block_x / 16));
+      if (wmma_warps_n <= 1) {
+        if (N >= 256)
+          wmma_warps_n = 4;
+        else if (N >= 64)
+          wmma_warps_n = 2;
+      }
+      if ((block_y % 16) != 0) wmma_warps_m = (M >= 64) ? 4 : 2;
+      if ((block_x % 16) != 0) wmma_warps_n = (N >= 32) ? 2 : 1;
+    }
+    wmma_warps_m = std::max<int64_t>(1, std::min<int64_t>(4, wmma_warps_m));
+    wmma_warps_n = std::max<int64_t>(1, std::min<int64_t>(8, wmma_warps_n));
+    if (!warps_m_override && M <= 256) wmma_warps_m = std::max<int64_t>(wmma_warps_m, 2);
+
+    if (wmma_frag_n <= 0) wmma_frag_n = 1;
+    if (!(wmma_frag_n == 1 || wmma_frag_n == 2)) wmma_frag_n = 1;
+    if ((wmma_warps_n % wmma_frag_n) != 0) wmma_frag_n = 1;
+    wmma_warps_n = std::max<int64_t>(1, wmma_warps_n / wmma_frag_n);
+
+    while ((wmma_warps_m * wmma_warps_n) > 16) {
+      if (wmma_warps_n > 1)
+        wmma_warps_n -= 1;
+      else if (wmma_warps_m > 1)
+        wmma_warps_m -= 1;
+      else
+        break;
+    }
+    if (!warps_m_override && M <= 256 && wmma_warps_m > 2) wmma_warps_m = 2;
+
+    int64_t wmma_stage_k = binding_int(bindings, "WMMA_STAGE_K").value_or(0);
+    if (wmma_stage_k <= 0) wmma_stage_k = (K >= 256) ? 64 : 32;
+    if (!(wmma_stage_k == 8 || wmma_stage_k == 16 || wmma_stage_k == 32 || wmma_stage_k == 64 || wmma_stage_k == 128)) wmma_stage_k = 32;
+    if ((wmma_stage_k % 8) != 0 || (wmma_stage_k % 4) != 0) wmma_stage_k = 32;
+    if ((K % wmma_stage_k) != 0) wmma_stage_k = 16;
+    if ((K % wmma_stage_k) != 0) wmma_stage_k = 8;
+
+    const int64_t wmma_tile_m = 16 * wmma_warps_m;
+    const int64_t wmma_tile_n = 16 * wmma_warps_n * wmma_frag_n;
+    const int64_t wmma_grid_x = (N + wmma_tile_n - 1) / wmma_tile_n;
+    const int64_t wmma_grid_y = (M + wmma_tile_m - 1) / wmma_tile_m;
+
+    auto policy_norm = [&](const char* key) -> std::string {
+      if (!bindings.is_object()) return "";
+      auto it = bindings.find(key);
+      if (it == bindings.end()) return "";
+      if (!it->is_string()) return "";
+      std::string s = ascii_lower(it->get<std::string>());
+      if (s == "ca" || s == "cg") return s;
+      return "";
+    };
+    std::string wmma_cp_a_policy = policy_norm("WMMA_CP_A_POLICY");
+    std::string wmma_cp_b_policy = policy_norm("WMMA_CP_B_POLICY");
+    if (wmma_cp_a_policy.empty()) wmma_cp_a_policy = (wmma_warps_n >= wmma_warps_m) ? "ca" : "cg";
+    if (wmma_cp_b_policy.empty()) wmma_cp_b_policy = (wmma_warps_m > wmma_warps_n) ? "ca" : "cg";
+
+    int64_t use_cp_async_raw = -1;
+    if (auto v = binding_int(bindings, "WMMA_USE_CP_ASYNC")) use_cp_async_raw = *v;
+    const bool wmma_use_cp_async = (use_cp_async_raw < 0) ? true : (use_cp_async_raw != 0);
+
+    int64_t wmma_pipe_stages = binding_int(bindings, "WMMA_PIPE_STAGES").value_or(0);
+    if (!wmma_use_cp_async) {
+      wmma_pipe_stages = 1;
+    } else {
+      if (wmma_pipe_stages <= 0) wmma_pipe_stages = 3;
+      if (!(wmma_pipe_stages == 2 || wmma_pipe_stages == 3)) wmma_pipe_stages = 3;
+    }
+
+    int64_t wmma_as_pad = binding_int(bindings, "WMMA_AS_PAD").value_or(8);
+    int64_t wmma_bs_pad = binding_int(bindings, "WMMA_BS_PAD").value_or(8);
+    if (wmma_as_pad < 0) wmma_as_pad = 0;
+    if (wmma_bs_pad < 0) wmma_bs_pad = 0;
+    if (wmma_as_pad > 32) wmma_as_pad = 32;
+    if (wmma_bs_pad > 32) wmma_bs_pad = 32;
+    if ((wmma_as_pad % 4) != 0) wmma_as_pad = (wmma_as_pad / 4) * 4;
+    if ((wmma_bs_pad % 4) != 0) wmma_bs_pad = (wmma_bs_pad / 4) * 4;
+
+    int64_t max_smem_optin = binding_int(bindings, "CUDA_MAX_SMEM_OPTIN").value_or(0);
+    if (max_smem_optin <= 0) max_smem_optin = 96 * 1024;
+
+    auto wmma_smem_bytes = [&](int64_t stage_k, int64_t pipe_stages) -> int64_t {
+      const int64_t as_ld = stage_k + wmma_as_pad;
+      const int64_t bs_ld = wmma_tile_n + wmma_bs_pad;
+      return 4LL * (pipe_stages * wmma_tile_m * as_ld + pipe_stages * stage_k * bs_ld);
+    };
+
+    int64_t shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
+    if (wmma_pipe_stages > 2 && shared_bytes > max_smem_optin) {
+      wmma_pipe_stages = 2;
+      shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
+    }
+    if (shared_bytes > max_smem_optin) {
+      for (int64_t cand : {int64_t(64), int64_t(32), int64_t(16), int64_t(8)}) {
+        if (cand >= wmma_stage_k) continue;
+        if ((K % cand) != 0) continue;
+        if (wmma_smem_bytes(cand, wmma_pipe_stages) <= max_smem_optin) {
+          wmma_stage_k = cand;
+          shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
+          break;
+        }
+      }
+    }
+
+    bool wmma_force_sync = false;
+    if (wmma_pipe_stages == 2) {
+      const int64_t bytes3 = wmma_smem_bytes(wmma_stage_k, 3);
+      if (bytes3 <= max_smem_optin) {
+        wmma_pipe_stages = 3;
+        shared_bytes = bytes3;
+      } else {
+        wmma_force_sync = true;
+        wmma_pipe_stages = 1;
+        shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
+      }
+    }
+
+    shared_bytes = ((shared_bytes + 15) / 16) * 16;
+    const bool wmma_disable_fastpath = wmma_force_sync || (binding_int(bindings, "WMMA_DISABLE_FASTPATH").value_or(0) != 0);
+    const bool specialize_full_tile = specialize_dims && ((M % wmma_tile_m) == 0) && ((N % wmma_tile_n) == 0) && ((K % wmma_stage_k) == 0) &&
+                                      ((K & 3) == 0) && ((N & 3) == 0) && (!wmma_disable_fastpath);
+
+    const std::string wmma_cp_a_enum = (wmma_cp_a_policy == "ca") ? "intentir_cuda::CpAsyncPolicy::CA" : "intentir_cuda::CpAsyncPolicy::CG";
+    const std::string wmma_cp_b_enum = (wmma_cp_b_policy == "ca") ? "intentir_cuda::CpAsyncPolicy::CA" : "intentir_cuda::CpAsyncPolicy::CG";
+    const std::string use_cp_async_const = wmma_use_cp_async ? "true" : "false";
+    const std::string enable_fastpath_const = wmma_disable_fastpath ? "false" : "true";
+    const std::string specialize_full_tile_const = specialize_full_tile ? "true" : "false";
+
+    w.line("#include \"kernels/wmma_matmul.cuh\"");
+    w.blank();
+    w.line("extern \"C\" __global__ void " + intent.name + "(");
+    w.indent();
+    w.line("const float* __restrict__ A, const float* __restrict__ B, float* __restrict__ C,");
+    w.line(m_param + ", " + n_param + ", " + k_param + ") {");
+    w.dedent();
+    w.indent();
+    {
+      std::istringstream mnk_ss(mnk_load);
+      for (std::string line; std::getline(mnk_ss, line);) {
+        if (!line.empty()) w.line(line);
+      }
+    }
+    w.blank();
+    w.line("constexpr int WARPS_M = " + std::to_string(wmma_warps_m) + ";");
+    w.line("constexpr int WARPS_N = " + std::to_string(wmma_warps_n) + ";");
+    w.line("constexpr int FRAG_N = " + std::to_string(wmma_frag_n) + ";");
+    w.line("constexpr int STAGE_K = " + std::to_string(wmma_stage_k) + ";");
+    w.line("constexpr int AS_PAD = " + std::to_string(wmma_as_pad) + ";");
+    w.line("constexpr int BS_PAD = " + std::to_string(wmma_bs_pad) + ";");
+    w.line("constexpr int PIPE_STAGES = " + std::to_string(wmma_pipe_stages) + ";");
+    w.blank();
+    w.line("intentir_cuda::wmma_matmul_f32_tf32<");
+    w.indent();
+    w.line("WARPS_M,");
+    w.line("WARPS_N,");
+    w.line("FRAG_N,");
+    w.line("STAGE_K,");
+    w.line("AS_PAD,");
+    w.line("BS_PAD,");
+    w.line("PIPE_STAGES,");
+    w.line(use_cp_async_const + ",");
+    w.line(wmma_cp_a_enum + ",");
+    w.line(wmma_cp_b_enum + ",");
+    w.line(enable_fastpath_const + ",");
+    w.line(specialize_full_tile_const + ">(A, B, C, M, N, K);");
+    w.dedent();
+    w.dedent();
+    w.line("}");
+
+    launch = {{"grid", {wmma_grid_x, wmma_grid_y, 1}},
+              {"block", {32 * wmma_warps_m * wmma_warps_n, 1, 1}},
+              {"shared_mem", shared_bytes}};
+    shared_mem = shared_bytes;
+  } else {
+    w.line("#include \"kernels/matmul_fallback.cuh\"");
+    w.blank();
+    w.line("extern \"C\" __global__ void " + intent.name + "(");
+    w.indent();
+    w.line("const float* __restrict__ A, const float* __restrict__ B, float* __restrict__ C,");
+    w.line(m_param + ", " + n_param + ", " + k_param + ") {");
+    w.dedent();
+    w.indent();
+    {
+      std::istringstream mnk_ss(mnk_load);
+      for (std::string line; std::getline(mnk_ss, line);) {
+        if (!line.empty()) w.line(line);
+      }
+    }
+    w.line("constexpr int BLOCK_M = " + std::to_string(block_y) + ";");
+    w.line("constexpr int BLOCK_N = " + std::to_string(block_x) + ";");
+    w.line("constexpr int BLOCK_K = " + std::to_string(block_k) + ";");
+    w.line("constexpr int THREAD_M = " + std::to_string(thread_m) + ";");
+    w.line("constexpr int ROWS_PER_THREAD = " + std::to_string(rows_per_thread) + ";");
+    w.line("__shared__ float As[BLOCK_M * BLOCK_K];");
+    w.line("__shared__ float Bs[BLOCK_K * BLOCK_N];");
+    w.line("intentir_cuda::matmul_f32_fallback<BLOCK_M, BLOCK_N, BLOCK_K, THREAD_M, ROWS_PER_THREAD>(A, B, C, M, N, K, As, Bs);");
+    w.dedent();
+    w.line("}");
+
+    launch = {{"grid", {grid_x, grid_y, 1}}, {"block", {block_x, thread_m, 1}}, {"shared_mem", 0}};
+    shared_mem = 0;
+  }
+
+  std::vector<std::string> tensor_args = {a, b, c};
+  std::unordered_map<std::string, std::string> scalar_args;
+  std::vector<std::string> arg_names = {a, b, c};
+  if (m_is_tensor) {
+    tensor_args.push_back(M_name);
+    arg_names.push_back(M_name);
+  } else {
+    scalar_args.emplace(M_name, "i32");
+    arg_names.push_back(M_name);
+  }
+  if (n_is_tensor) {
+    tensor_args.push_back(N_name);
+    arg_names.push_back(N_name);
+  } else {
+    scalar_args.emplace(N_name, "i32");
+    arg_names.push_back(N_name);
+  }
+  if (k_is_tensor) {
+    tensor_args.push_back(K_name);
+    arg_names.push_back(K_name);
+  } else {
+    scalar_args.emplace(K_name, "i32");
+    arg_names.push_back(K_name);
+  }
+
+  json out;
+  out["kernel_name"] = intent.name;
+  out["cuda_src"] = cuda_ss.str();
+  out["io_spec"] = io_spec_from_args(intent, tensor_args, scalar_args, arg_names);
+  out["launch"] = launch;
+  out["output_names"] = {c};
+  out["bindings"] = bindings;
+  (void)shared_mem;
+  return out;
+}
+
 json emit_warp(const Intent& intent, const json& bindings) {
   if (!(intent.ops.size() == 1 && intent.ops[0].op == "warp")) fail("warp lowering expects a single warp op");
   const Op& op = intent.ops[0];
@@ -941,6 +1307,11 @@ int main(int argc, char** argv) {
     json bindings_json = read_json_file(bindings_path);
     if (!bindings_json.is_object()) fail("bindings must be object");
 
+    if (intent.ops.size() == 1 && intent.ops[0].op == "matmul") {
+      json out = emit_matmul_f32(intent, bindings_json);
+      std::cout << out.dump() << "\n";
+      return 0;
+    }
     if (intent.ops.size() == 1 && intent.ops[0].op == "dropout") {
       json out = emit_dropout(intent, bindings_json);
       std::cout << out.dump() << "\n";
@@ -1001,7 +1372,7 @@ int main(int argc, char** argv) {
       }
     }
 
-    fail("unsupported intent for cuda cpp codegen (supported: dropout, warp, correlation, resize, rope, softmax, layernorm)");
+    fail("unsupported intent for cuda cpp codegen (supported: matmul, dropout, warp, correlation, resize, rope, softmax, layernorm)");
   } catch (const std::exception& e) {
     std::cerr << "intentir_cuda_codegen error: " << e.what() << "\\n";
     return 3;
