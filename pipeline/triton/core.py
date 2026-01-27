@@ -140,6 +140,43 @@ def _ensure_schedule(intent, *, kernel_name: str, triton_src: str) -> None:
         )
 
 
+def _attach_access_witness_meta(intent, *, cert_v2: SemanticCertificateV2 | None, canonical_shapes: Dict[str, int] | None) -> None:
+    """
+    Attach a compact access witness summary to `intent.meta`.
+
+    This is derived from CertificateV2 CanonicalEvidence (not raw source code),
+    so it is safe to consume for evidence-guided tuning/codegen.
+    """
+    if cert_v2 is None:
+        return
+    try:
+        from frontends.common.access_witness import build_stride_summary  # noqa: PLC0415
+
+        shape_bindings: Dict[str, int] = {}
+        for k, v in (canonical_shapes or {}).items():
+            if isinstance(k, str) and isinstance(v, (int, float)):
+                shape_bindings[str(k)] = int(v)
+
+        ss = build_stride_summary(cert_v2.to_json_dict(), shape_bindings=shape_bindings)
+        if ss is None:
+            return
+        j = ss.to_json_dict()
+        tp = j.get("tensor_penalty") if isinstance(j.get("tensor_penalty"), dict) else {}
+        top = sorted(((str(k), float(v)) for k, v in tp.items()), key=lambda kv: kv[1], reverse=True)[:8]
+        meta = dict(getattr(intent, "meta", {}) or {})
+        meta["access_witness"] = {
+            "dominant_axis": j.get("dominant_axis"),
+            "dominant_range": j.get("dominant_range"),
+            "dominant_range_len": j.get("dominant_range_len"),
+            "has_contiguous_range": bool(j.get("has_contiguous_range")),
+            "tensor_penalty_top": top,
+            "notes": list(j.get("notes") or []) if isinstance(j.get("notes"), list) else [],
+        }
+        intent.meta = meta
+    except Exception:
+        return
+
+
 def make_cases(
     spec: KernelSpec,
     intent: CandidateIntent,
@@ -2417,9 +2454,11 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
             (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
     # Ensure schedule is attached even if the LLM emits only partial schedule fields.
     _ensure_schedule(cand.intent, kernel_name=spec.name, triton_src=src)
+    _attach_access_witness_meta(cand.intent, cert_v2=cert_v2, canonical_shapes=dict(spec.canonical_shapes))
     report["intent"] = cand.intent.to_json_dict()
     if cand_expanded is not None:
         _ensure_schedule(cand_expanded.intent, kernel_name=spec.name, triton_src=src)
+        _attach_access_witness_meta(cand_expanded.intent, cert_v2=cert_v2, canonical_shapes=dict(spec.canonical_shapes))
     report["intent_expanded"] = (cand_expanded.intent.to_json_dict() if cand_expanded is not None else None)
 
     # 4) Static validation (Intent vs certificate), if TTIR certificate exists.

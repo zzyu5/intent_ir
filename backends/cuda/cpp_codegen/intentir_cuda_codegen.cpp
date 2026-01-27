@@ -38,6 +38,7 @@ struct Intent {
   std::vector<Op> ops;
   std::vector<std::string> outputs;
   json schedule;  // optional ScheduleSketch (tile/vec hints), may be null/object
+  json meta;      // optional metadata (evidence / frontend hints), may be null/object
 };
 
 [[noreturn]] void fail(const std::string& msg) { throw std::runtime_error(msg); }
@@ -112,6 +113,7 @@ Intent parse_intent(const json& j) {
   for (const auto& x : outs_json) out.outputs.push_back(x.get<std::string>());
 
   out.schedule = j.value("schedule", json());
+  out.meta = j.value("meta", json::object());
   return out;
 }
 
