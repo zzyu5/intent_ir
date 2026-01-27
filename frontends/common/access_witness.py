@@ -177,8 +177,8 @@ class EvidenceStrideSummary:
         }
 
 
-_PRED_LT_RE = re.compile(r"\\b(r\\d+)\\b\\s*<\\s*\\b([A-Za-z_][A-Za-z0-9_]*)\\b")
-_PRED_GT_RE = re.compile(r"\\b([A-Za-z_][A-Za-z0-9_]*)\\b\\s*>\\s*\\b(r\\d+)\\b")
+_PRED_LT_RE = re.compile(r"\b(r\d+)\b\s*<\s*\b([A-Za-z_][A-Za-z0-9_]*)\b")
+_PRED_GT_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b\s*>\s*\b(r\d+)\b")
 
 
 def _axis_bindings_from_predicate(clauses: List[str]) -> Dict[str, str]:
