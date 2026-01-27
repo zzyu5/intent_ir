@@ -2054,8 +2054,12 @@ def lower_intent_to_cuda_kernel(
                 memory_hint=dict(schedule_override.get("memory_hint") or {}),
             )
 
-    raw_codegen = os.getenv("INTENTIR_CUDA_CODEGEN", "").strip().lower()
-    use_cpp_codegen = raw_codegen in {"1", "true", "yes", "y", "cpp", "c++"}
+    # Default to the C++ codegen tool (real backend feel). Set INTENTIR_CUDA_CODEGEN=py
+    # to force the legacy Python codegen, or INTENTIR_CUDA_CODEGEN_STRICT=1 to
+    # disable fallback.
+    raw_codegen = os.getenv("INTENTIR_CUDA_CODEGEN", "cpp").strip().lower()
+    force_python_codegen = raw_codegen in {"0", "false", "no", "n", "py", "python"}
+    use_cpp_codegen = not force_python_codegen
     strict_cpp = os.getenv("INTENTIR_CUDA_CODEGEN_STRICT", "0").strip().lower() in {"1", "true", "yes", "y"}
     if use_cpp_codegen:
         try:
