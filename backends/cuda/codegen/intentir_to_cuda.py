@@ -1005,6 +1005,22 @@ def _kernel_dropout_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cud
         block_x = 256
     if block_x > 1024:
         block_x = 1024
+    respect_schedule = bool(int(bindings.get("CUDA_RESPECT_SCHEDULE", 0) or 0))
+    # Optional explicit override for backend tuning.
+    tuned_block = bindings.get("DROPOUT_THREADS")
+    if isinstance(tuned_block, int) and 0 < tuned_block <= 1024:
+        block_x = int(tuned_block)
+    elif not respect_schedule:
+        # Backend heuristic: ignore small frontend defaults (often 32) and pick a
+        # more throughput-oriented block size for large vectors.
+        block_x = 128 if n >= (1 << 20) else 256
+    # Keep block size warp-aligned.
+    if block_x < 32:
+        block_x = 32
+    if (block_x % 32) != 0:
+        block_x = int(((block_x + 31) // 32) * 32)
+    if block_x > 1024:
+        block_x = 1024
 
     # Process multiple elements per thread to amortize Philox cost.
     #
@@ -2011,6 +2027,14 @@ def lower_intent_to_cuda_kernel(
         except Exception:
             continue
         bindings[key] = int(fv) if float(fv).is_integer() else float(fv)
+
+    # When a caller provides an explicit schedule override (e.g., freeze/retune
+    # experiments), treat the schedule as authoritative. Otherwise, treat the
+    # recovered schedule as a hint and allow backend heuristics to override it.
+    if schedule_override is not None:
+        bindings.setdefault("CUDA_RESPECT_SCHEDULE", 1)
+    else:
+        bindings.setdefault("CUDA_RESPECT_SCHEDULE", 0)
 
     # Allow caller overrides for schedule knobs (used by tuning / freeze-vs-retune).
     if schedule_override is not None:
