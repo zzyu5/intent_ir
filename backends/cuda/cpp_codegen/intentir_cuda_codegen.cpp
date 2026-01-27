@@ -2025,20 +2025,31 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
   if (specialize_dims && r_is_tensor && bindings.contains(R_name)) r_is_tensor = false;
   if (specialize_dims && c_is_tensor && bindings.contains(C_name)) c_is_tensor = false;
 
-  const std::string r_param = r_is_tensor ? ("const int* " + R_name + "_ptr") : "int R";
-  const std::string c_param = c_is_tensor ? ("const int* " + C_name + "_ptr") : "int C";
-  const std::string r_load = r_is_tensor ? ("const int R = " + R_name + "_ptr ? " + R_name + "_ptr[0] : 0;") : "";
-  const std::string c_load = c_is_tensor ? ("const int C = " + C_name + "_ptr ? " + C_name + "_ptr[0] : 0;") : "";
+  const std::string r_param = r_is_tensor ? ("const int* " + R_name + "_ptr") : ("int " + R_name + "_in");
+  const std::string c_param = c_is_tensor ? ("const int* " + C_name + "_ptr") : ("int " + C_name + "_in");
+  const std::string r_load = r_is_tensor ? ("const int R = " + R_name + "_ptr ? " + R_name + "_ptr[0] : 0;")
+                                         : ("const int R = " + R_name + "_in;");
+  const std::string c_load = c_is_tensor ? ("const int C = " + C_name + "_ptr ? " + C_name + "_ptr[0] : 0;")
+                                         : ("const int C = " + C_name + "_in;");
+  const std::string r_unused = std::string("(void)") + (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) + ";";
+  const std::string c_unused = std::string("(void)") + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ";";
 
   std::ostringstream cuda_ss;
   CodeWriter w(cuda_ss);
   w.line("#include \"kernels/softmax.cuh\"");
   w.blank();
-  w.line("extern \"C\" __global__ void " + intent.name + "(const float* __restrict__ " + in_name + ", float* __restrict__ " + out_name + ", " +
-         r_param + ", " + c_param + ") {");
+  w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_threads) + ") void " + intent.name +
+         "(const float* __restrict__ " + in_name + ", float* __restrict__ " + out_name + ", " + r_param + ", " + c_param + ") {");
   w.indent();
-  if (!r_load.empty()) w.line(r_load);
-  if (!c_load.empty()) w.line(c_load);
+  if (specialize_dims) {
+    w.line(r_unused);
+    w.line(c_unused);
+    w.line("constexpr int R = " + std::to_string(R) + ";");
+    w.line("constexpr int C = " + std::to_string(C) + ";");
+  } else {
+    w.line(r_load);
+    w.line(c_load);
+  }
   w.line("constexpr int BLOCK_THREADS = " + std::to_string(block_threads) + ";");
   w.line("constexpr int EPT = " + std::to_string(ept) + ";");
   w.line("intentir_cuda::softmax_2d_last_f32<BLOCK_THREADS, EPT>(" + in_name + ", " + out_name + ", R, C);");
