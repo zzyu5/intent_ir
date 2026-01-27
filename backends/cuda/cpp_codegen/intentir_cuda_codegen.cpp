@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -142,6 +144,100 @@ std::string dim_str(const json& tok) {
   if (tok.is_number_integer()) return std::to_string(tok.get<int64_t>());
   if (tok.is_number()) return std::to_string(static_cast<int64_t>(tok.get<double>()));
   return tok.dump();
+}
+
+std::string c_ident(std::string_view name) {
+  std::string out;
+  out.reserve(name.size() + 1);
+  for (char ch : name) {
+    const bool ok = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || (ch == '_');
+    out.push_back(ok ? ch : '_');
+  }
+  if (out.empty()) return "v";
+  if ((out[0] >= '0' && out[0] <= '9') || out[0] == '_') out.insert(out.begin(), 'v');
+  return out;
+}
+
+std::string c_type_for_dtype(const std::string& dt) {
+  if (dt == "f32") return "float";
+  if (dt == "i32") return "int";
+  if (dt == "i64") return "int64_t";
+  if (dt == "u8") return "uint8_t";
+  if (dt == "i8") return "int8_t";
+  if (dt == "i16") return "int16_t";
+  if (dt == "bool" || dt == "i1") return "bool";
+  fail("unsupported dtype for CUDA elementwise: " + dt);
+}
+
+std::string c_scalar_literal(const std::string& dt, const json& value) {
+  if (dt == "bool" || dt == "i1") {
+    int64_t v = 0;
+    if (value.is_boolean()) v = value.get<bool>() ? 1 : 0;
+    else if (value.is_number_integer()) v = value.get<int64_t>();
+    else if (value.is_number()) v = static_cast<int64_t>(value.get<double>());
+    else if (value.is_string()) {
+      try {
+        v = static_cast<int64_t>(std::stod(value.get<std::string>()));
+      } catch (...) {
+        v = 0;
+      }
+    }
+    return (v != 0) ? "true" : "false";
+  }
+  if (dt == "i32") {
+    int64_t v = 0;
+    if (value.is_number_integer()) v = value.get<int64_t>();
+    else if (value.is_number()) v = static_cast<int64_t>(value.get<double>());
+    else if (value.is_string()) {
+      try {
+        v = static_cast<int64_t>(std::stod(value.get<std::string>()));
+      } catch (...) {
+        v = 0;
+      }
+    }
+    return std::to_string(static_cast<int>(v));
+  }
+  if (dt == "i64") {
+    int64_t v = 0;
+    if (value.is_number_integer()) v = value.get<int64_t>();
+    else if (value.is_number()) v = static_cast<int64_t>(value.get<double>());
+    else if (value.is_string()) {
+      try {
+        v = static_cast<int64_t>(std::stod(value.get<std::string>()));
+      } catch (...) {
+        v = 0;
+      }
+    }
+    return std::to_string(static_cast<long long>(v)) + "LL";
+  }
+  if (dt == "f32") {
+    double v = 0.0;
+    if (value.is_number()) v = value.get<double>();
+    else if (value.is_number_integer()) v = static_cast<double>(value.get<int64_t>());
+    else if (value.is_string()) {
+      try {
+        v = std::stod(value.get<std::string>());
+      } catch (...) {
+        v = 0.0;
+      }
+    }
+    return c_float(v);
+  }
+  if (dt == "f16") {
+    // Minimal support; avoid f16 elementwise for now.
+    double v = 0.0;
+    if (value.is_number()) v = value.get<double>();
+    else if (value.is_number_integer()) v = static_cast<double>(value.get<int64_t>());
+    else if (value.is_string()) {
+      try {
+        v = std::stod(value.get<std::string>());
+      } catch (...) {
+        v = 0.0;
+      }
+    }
+    return "__float2half(" + c_float(v) + ")";
+  }
+  fail("unsupported const dtype for CUDA elementwise: " + dt);
 }
 
 std::optional<int64_t> binding_int(const json& bindings, const std::string& key) {
@@ -1481,6 +1577,369 @@ json emit_gather2d_f32(const Intent& intent, const json& bindings) {
   return out;
 }
 
+std::string emit_broadcast_index_expr(int out_rank, const std::vector<json>& in_shape, const std::vector<std::string>& out_idxs,
+                                      const std::unordered_map<std::string, std::string>& dim_expr) {
+  const int in_rank = static_cast<int>(in_shape.size());
+  if (in_rank == 0) return "0";
+  if (in_rank > out_rank) fail("broadcast: in_rank > out_rank");
+  const int shift = out_rank - in_rank;
+
+  std::vector<std::string> in_sizes;
+  in_sizes.reserve(in_rank);
+  for (const auto& d : in_shape) {
+    if (d.is_number_integer()) {
+      in_sizes.push_back(std::to_string(d.get<int64_t>()));
+    } else if (d.is_number()) {
+      in_sizes.push_back(std::to_string(static_cast<int64_t>(d.get<double>())));
+    } else if (d.is_string()) {
+      const std::string sym = d.get<std::string>();
+      auto it = dim_expr.find(sym);
+      if (it == dim_expr.end()) fail("broadcast missing dim binding: " + sym);
+      in_sizes.push_back(it->second);
+    } else {
+      fail("broadcast invalid dim token");
+    }
+  }
+
+  std::vector<std::string> strides;
+  strides.reserve(in_rank);
+  for (int j = 0; j < in_rank; ++j) {
+    if (j == in_rank - 1) {
+      strides.push_back("1");
+    } else {
+      std::string expr;
+      for (int k = j + 1; k < in_rank; ++k) {
+        if (!expr.empty()) expr += " * ";
+        expr += "(int64_t)" + in_sizes[k];
+      }
+      strides.push_back(expr.empty() ? "1" : expr);
+    }
+  }
+
+  std::vector<std::string> terms;
+  for (int j = 0; j < in_rank; ++j) {
+    const int out_k = j + shift;
+    const std::string& idx = out_idxs[out_k];
+    const std::string& size_expr = in_sizes[j];
+    if (size_expr == "1") continue;
+    terms.push_back("((int64_t)" + idx + ") * (" + strides[j] + ")");
+  }
+  if (terms.empty()) return "0";
+  std::string out;
+  for (size_t i = 0; i < terms.size(); ++i) {
+    if (i) out += " + ";
+    out += terms[i];
+  }
+  return out;
+}
+
+json emit_fused_elementwise(const Intent& intent, const json& bindings) {
+  if (intent.outputs.size() != 1) fail("elementwise lowering requires a single output");
+  const std::string out_name = intent.outputs[0];
+  auto out_it = intent.tensors.find(out_name);
+  if (out_it == intent.tensors.end()) fail("elementwise lowering: missing output tensor in intent.tensors");
+
+  const Tensor& out_t = out_it->second;
+  const int out_rank = static_cast<int>(out_t.shape.size());
+  if (out_rank > 4) fail("elementwise lowering supports rank<=4");
+
+  std::unordered_map<std::string, bool> produced;
+  for (const auto& op : intent.ops) produced[op.output] = true;
+
+  std::unordered_map<std::string, bool> outs;
+  outs[out_name] = true;
+
+  std::unordered_map<std::string, bool> used_tensors;
+  used_tensors[out_name] = true;
+  for (const auto& op : intent.ops) {
+    for (const auto& inp : op.inputs) {
+      if (intent.tensors.find(inp) != intent.tensors.end()) used_tensors[inp] = true;
+    }
+    if (intent.tensors.find(op.output) != intent.tensors.end()) used_tensors[op.output] = true;
+  }
+
+  std::unordered_map<std::string, bool> dim_syms_map;
+  for (const auto& kv : used_tensors) {
+    auto it = intent.tensors.find(kv.first);
+    if (it == intent.tensors.end()) continue;
+    for (const auto& d : it->second.shape) {
+      if (d.is_string()) dim_syms_map[d.get<std::string>()] = true;
+    }
+  }
+  std::vector<std::string> dim_syms;
+  dim_syms.reserve(dim_syms_map.size());
+  for (const auto& kv : dim_syms_map) dim_syms.push_back(kv.first);
+  std::sort(dim_syms.begin(), dim_syms.end());
+
+  std::vector<std::string> tensor_dim_args;
+  std::unordered_map<std::string, std::string> scalar_args;
+  std::vector<std::string> dim_param;
+  std::vector<std::string> dim_load;
+  std::unordered_map<std::string, std::string> dim_expr;
+  for (const auto& sym : dim_syms) {
+    if (is_scalar_tensor(intent, sym, "i32")) {
+      tensor_dim_args.push_back(sym);
+      dim_param.push_back("const int* " + sym + "_ptr");
+      dim_load.push_back("const int " + sym + " = " + sym + "_ptr ? " + sym + "_ptr[0] : 0;");
+      dim_expr[sym] = sym;
+    } else {
+      scalar_args[sym] = "i32";
+      dim_param.push_back("int " + sym);
+      dim_expr[sym] = sym;
+    }
+  }
+
+  std::vector<std::string> external_inputs;
+  for (const auto& op : intent.ops) {
+    for (const auto& inp : op.inputs) {
+      if (intent.tensors.find(inp) == intent.tensors.end()) continue;
+      if (produced.find(inp) != produced.end()) continue;
+      if (outs.find(inp) != outs.end()) continue;
+      if (is_scalar_tensor(intent, inp, "i32") && dim_syms_map.find(inp) != dim_syms_map.end()) continue;
+      bool seen = false;
+      for (const auto& x : external_inputs)
+        if (x == inp) seen = true;
+      if (!seen) external_inputs.push_back(inp);
+    }
+  }
+
+  std::vector<std::string> tensor_args;
+  tensor_args.reserve(external_inputs.size() + 1 + tensor_dim_args.size());
+  for (const auto& x : external_inputs) tensor_args.push_back(x);
+  tensor_args.push_back(out_name);
+  for (const auto& x : tensor_dim_args) tensor_args.push_back(x);
+
+  int64_t block_x = resolve_schedule_int(intent, bindings, "tile_n", 256);
+  if (block_x <= 0) block_x = 256;
+  if (block_x < 32) block_x = 32;
+  if (block_x > 1024) block_x = 1024;
+
+  std::vector<std::string> out_dims_expr;
+  out_dims_expr.reserve(out_rank);
+  for (const auto& d : out_t.shape) {
+    if (d.is_number_integer()) out_dims_expr.push_back(std::to_string(d.get<int64_t>()));
+    else if (d.is_number()) out_dims_expr.push_back(std::to_string(static_cast<int64_t>(d.get<double>())));
+    else if (d.is_string()) out_dims_expr.push_back(d.get<std::string>());
+    else fail("elementwise: invalid out shape dim");
+  }
+
+  std::vector<std::string> idx_vars;
+  std::vector<std::string> idx_code;
+  if (out_rank == 0) {
+  } else if (out_rank == 1) {
+    idx_vars = {"i0"};
+    idx_code.push_back("const int64_t i0 = tid;");
+  } else if (out_rank == 2) {
+    idx_vars = {"i0", "i1"};
+    const std::string d1 = out_dims_expr[1].size() && std::isdigit((unsigned char)out_dims_expr[1][0]) ? out_dims_expr[1] : dim_expr.at(out_dims_expr[1]);
+    idx_code.push_back("const int64_t i0 = tid / (int64_t)(" + d1 + ");");
+    idx_code.push_back("const int64_t i1 = tid - i0 * (int64_t)(" + d1 + ");");
+  } else if (out_rank == 3) {
+    idx_vars = {"i0", "i1", "i2"};
+    const std::string d1 = out_dims_expr[1].size() && std::isdigit((unsigned char)out_dims_expr[1][0]) ? out_dims_expr[1] : dim_expr.at(out_dims_expr[1]);
+    const std::string d2 = out_dims_expr[2].size() && std::isdigit((unsigned char)out_dims_expr[2][0]) ? out_dims_expr[2] : dim_expr.at(out_dims_expr[2]);
+    idx_code.push_back("const int64_t i0 = tid / ((int64_t)(" + d1 + ") * (int64_t)(" + d2 + "));");
+    idx_code.push_back("const int64_t rem = tid - i0 * ((int64_t)(" + d1 + ") * (int64_t)(" + d2 + "));");
+    idx_code.push_back("const int64_t i1 = rem / (int64_t)(" + d2 + ");");
+    idx_code.push_back("const int64_t i2 = rem - i1 * (int64_t)(" + d2 + ");");
+  } else {
+    idx_vars = {"i0", "i1", "i2", "i3"};
+    const std::string d1 = out_dims_expr[1].size() && std::isdigit((unsigned char)out_dims_expr[1][0]) ? out_dims_expr[1] : dim_expr.at(out_dims_expr[1]);
+    const std::string d2 = out_dims_expr[2].size() && std::isdigit((unsigned char)out_dims_expr[2][0]) ? out_dims_expr[2] : dim_expr.at(out_dims_expr[2]);
+    const std::string d3 = out_dims_expr[3].size() && std::isdigit((unsigned char)out_dims_expr[3][0]) ? out_dims_expr[3] : dim_expr.at(out_dims_expr[3]);
+    idx_code.push_back("const int64_t i0 = tid / ((int64_t)(" + d1 + ") * (int64_t)(" + d2 + ") * (int64_t)(" + d3 + "));");
+    idx_code.push_back("const int64_t rem0 = tid - i0 * ((int64_t)(" + d1 + ") * (int64_t)(" + d2 + ") * (int64_t)(" + d3 + "));");
+    idx_code.push_back("const int64_t i1 = rem0 / ((int64_t)(" + d2 + ") * (int64_t)(" + d3 + "));");
+    idx_code.push_back("const int64_t rem1 = rem0 - i1 * ((int64_t)(" + d2 + ") * (int64_t)(" + d3 + "));");
+    idx_code.push_back("const int64_t i2 = rem1 / (int64_t)(" + d3 + ");");
+    idx_code.push_back("const int64_t i3 = rem1 - i2 * (int64_t)(" + d3 + ");");
+  }
+
+  std::unordered_map<std::string, std::string> value_expr;
+  std::unordered_map<std::string, std::string> value_type;
+
+  auto load_tensor = [&](const std::string& name) -> std::string {
+    auto it = intent.tensors.find(name);
+    if (it == intent.tensors.end()) fail("elementwise: unknown tensor " + name);
+    const Tensor& t = it->second;
+    const std::string idx_expr = emit_broadcast_index_expr(out_rank, t.shape, idx_vars, dim_expr);
+    return name + "[(size_t)(" + idx_expr + ")]";
+  };
+  auto val = [&](const std::string& name) -> std::string {
+    auto it = value_expr.find(name);
+    if (it != value_expr.end()) return it->second;
+    if (dim_syms_map.find(name) != dim_syms_map.end() && is_scalar_tensor(intent, name, "i32")) return name;
+    if (intent.tensors.find(name) == intent.tensors.end()) fail("elementwise: unknown value " + name);
+    return load_tensor(name);
+  };
+
+  std::vector<std::string> code_lines;
+  for (const auto& op : intent.ops) {
+    const std::string opname = op.op;
+    const std::string outn = op.output;
+    auto outt_it = intent.tensors.find(outn);
+    if (outt_it == intent.tensors.end()) fail("elementwise: op output missing from tensors: " + outn);
+    const std::string out_dt = outt_it->second.dtype;
+    const std::string cty = c_type_for_dtype(out_dt);
+
+    auto emit_assign = [&](const std::string& expr) {
+      const std::string vname = "v_" + c_ident(outn);
+      code_lines.push_back(cty + " " + vname + " = " + expr + ";");
+      value_expr[outn] = vname;
+      value_type[outn] = out_dt;
+    };
+
+    if (opname == "const") {
+      json v = op.attrs.is_object() ? op.attrs.value("value", json(0)) : json(0);
+      emit_assign(c_scalar_literal(out_dt, v));
+    } else if (opname == "identity") {
+      if (op.inputs.size() != 1) fail("identity expects 1 input");
+      emit_assign(val(op.inputs[0]));
+    } else if (opname == "broadcast_in_dim") {
+      if (op.inputs.size() != 1) fail("broadcast_in_dim expects 1 input");
+      emit_assign(val(op.inputs[0]));
+    } else if (opname == "cast") {
+      if (op.inputs.size() != 1) fail("cast expects 1 input");
+      emit_assign("(" + cty + ")(" + val(op.inputs[0]) + ")");
+    } else if (opname == "where") {
+      if (op.inputs.size() != 3) fail("where expects 3 inputs (cond, x, y)");
+      emit_assign("(" + val(op.inputs[0]) + " ? " + val(op.inputs[1]) + " : " + val(op.inputs[2]) + ")");
+    } else if (opname == "not") {
+      if (op.inputs.size() != 1) fail("not expects 1 input");
+      emit_assign("(!" + val(op.inputs[0]) + ")");
+    } else if (opname == "and" || opname == "or") {
+      if (op.inputs.size() != 2) fail(opname + " expects 2 inputs");
+      const std::string op2 = (opname == "and") ? "&&" : "||";
+      emit_assign("(" + val(op.inputs[0]) + " " + op2 + " " + val(op.inputs[1]) + ")");
+    } else if (opname == "add" || opname == "sub" || opname == "mul" || opname == "div" || opname == "max" || opname == "min") {
+      if (op.inputs.size() != 2) fail(opname + " expects 2 inputs");
+      const std::string a = val(op.inputs[0]);
+      const std::string b = val(op.inputs[1]);
+      if (opname == "add")
+        emit_assign("(" + a + " + " + b + ")");
+      else if (opname == "sub")
+        emit_assign("(" + a + " - " + b + ")");
+      else if (opname == "mul")
+        emit_assign("(" + a + " * " + b + ")");
+      else if (opname == "div")
+        emit_assign("(" + a + " / " + b + ")");
+      else if (opname == "max")
+        emit_assign("fmaxf(" + a + ", " + b + ")");
+      else
+        emit_assign("fminf(" + a + ", " + b + ")");
+    } else if (opname == "relu") {
+      if (op.inputs.size() != 1) fail("relu expects 1 input");
+      emit_assign("fmaxf(" + val(op.inputs[0]) + ", 0.0f)");
+    } else if (opname == "abs") {
+      if (op.inputs.size() != 1) fail("abs expects 1 input");
+      emit_assign("fabsf(" + val(op.inputs[0]) + ")");
+    } else if (opname == "exp") {
+      if (op.inputs.size() != 1) fail("exp expects 1 input");
+      emit_assign("__expf(" + val(op.inputs[0]) + ")");
+    } else if (opname == "floor") {
+      if (op.inputs.size() != 1) fail("floor expects 1 input");
+      emit_assign("floorf(" + val(op.inputs[0]) + ")");
+    } else if (opname == "rsqrt") {
+      if (op.inputs.size() != 1) fail("rsqrt expects 1 input");
+      emit_assign("rsqrtf(" + val(op.inputs[0]) + ")");
+    } else if (opname == "ne" || opname == "lt" || opname == "le" || opname == "gt" || opname == "ge") {
+      if (op.inputs.size() != 2) fail(opname + " expects 2 inputs");
+      std::string cmp;
+      if (opname == "ne") cmp = "!=";
+      else if (opname == "lt")
+        cmp = "<";
+      else if (opname == "le")
+        cmp = "<=";
+      else if (opname == "gt")
+        cmp = ">";
+      else
+        cmp = ">=";
+      emit_assign("(" + val(op.inputs[0]) + " " + cmp + " " + val(op.inputs[1]) + ")");
+    } else {
+      fail("elementwise lowering unsupported op: " + opname);
+    }
+  }
+
+  if (value_expr.find(out_name) == value_expr.end()) fail("elementwise lowering did not produce the output value");
+  const std::string out_var = value_expr.at(out_name);
+  const std::string out_cty = c_type_for_dtype(out_t.dtype);
+
+  std::string total_expr;
+  if (out_rank == 0) {
+    total_expr = "1";
+  } else {
+    for (int i = 0; i < out_rank; ++i) {
+      const auto& d = out_t.shape[i];
+      std::string part;
+      if (d.is_number_integer())
+        part = "(int64_t)" + std::to_string(d.get<int64_t>());
+      else if (d.is_number())
+        part = "(int64_t)" + std::to_string(static_cast<int64_t>(d.get<double>()));
+      else if (d.is_string())
+        part = "(int64_t)" + dim_expr.at(d.get<std::string>());
+      else
+        fail("elementwise: invalid out dim");
+      if (!total_expr.empty()) total_expr += " * ";
+      total_expr += part;
+    }
+    if (total_expr.empty()) total_expr = "1";
+  }
+
+  std::ostringstream cuda_ss;
+  CodeWriter w(cuda_ss);
+  w.line("#include <math.h>");
+  w.line("#include <stdint.h>");
+  w.blank();
+  w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_x) + ") void " + intent.name + "(");
+  w.indent();
+  std::vector<std::string> params;
+  for (const auto& n : external_inputs) {
+    const auto it = intent.tensors.find(n);
+    if (it == intent.tensors.end()) fail("elementwise: missing tensor for param " + n);
+    params.push_back("const " + c_type_for_dtype(it->second.dtype) + "* __restrict__ " + n);
+  }
+  params.push_back(c_type_for_dtype(out_t.dtype) + "* __restrict__ " + out_name);
+  for (const auto& p : dim_param) params.push_back(p);
+  for (size_t i = 0; i < params.size(); ++i) {
+    const std::string comma = (i + 1 < params.size()) ? "," : "";
+    w.line(params[i] + comma);
+  }
+  w.dedent();
+  w.line(") {");
+  w.indent();
+  for (const auto& dl : dim_load) w.line(dl);
+  w.line("const int64_t tid = (int64_t)blockIdx.x * (int64_t)blockDim.x + (int64_t)threadIdx.x;");
+  w.line("const int64_t total = " + total_expr + ";");
+  w.line("if (tid >= total) return;");
+  for (const auto& l : idx_code) w.line(l);
+  for (const auto& l : code_lines) w.line(l);
+  w.line(out_name + "[(size_t)tid] = (" + out_cty + ")" + out_var + ";");
+  w.dedent();
+  w.line("}");
+
+  std::vector<std::string> arg_names;
+  for (const auto& x : external_inputs) arg_names.push_back(x);
+  arg_names.push_back(out_name);
+  for (const auto& sym : dim_syms) arg_names.push_back(sym);
+
+  int64_t total = 1;
+  for (const auto& d : out_t.shape) {
+    auto v = resolve_dim_token(d, bindings);
+    if (!v.has_value()) fail("elementwise missing binding for out dim");
+    total *= *v;
+  }
+  const int64_t grid_x = (total + block_x - 1) / block_x;
+
+  json out;
+  out["kernel_name"] = intent.name;
+  out["cuda_src"] = cuda_ss.str();
+  out["io_spec"] = io_spec_from_args(intent, tensor_args, scalar_args, arg_names);
+  out["launch"] = {{"grid", {grid_x, 1, 1}}, {"block", {block_x, 1, 1}}, {"shared_mem", 0}};
+  out["output_names"] = {out_name};
+  out["bindings"] = bindings;
+  return out;
+}
+
 json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
   const std::string out_name = !intent.outputs.empty() ? intent.outputs[0] : std::string("out");
 
@@ -1852,8 +2311,52 @@ int main(int argc, char** argv) {
         return 0;
       }
     }
+    {
+      auto is_elem_op = [](const std::string& op) -> bool {
+        static const std::unordered_map<std::string, bool> k = {
+            {"const", true},
+            {"identity", true},
+            {"broadcast_in_dim", true},
+            {"cast", true},
+            {"add", true},
+            {"sub", true},
+            {"mul", true},
+            {"div", true},
+            {"max", true},
+            {"min", true},
+            {"relu", true},
+            {"abs", true},
+            {"exp", true},
+            {"floor", true},
+            {"rsqrt", true},
+            {"ne", true},
+            {"lt", true},
+            {"le", true},
+            {"gt", true},
+            {"ge", true},
+            {"and", true},
+            {"or", true},
+            {"not", true},
+            {"where", true},
+        };
+        return k.find(op) != k.end();
+      };
+      bool all_elem = !intent.ops.empty();
+      for (const auto& op : intent.ops) {
+        if (!is_elem_op(op.op)) {
+          all_elem = false;
+          break;
+        }
+      }
+      if (all_elem) {
+        json out = emit_fused_elementwise(intent, bindings_json);
+        std::cout << out.dump() << "\n";
+        return 0;
+      }
+    }
 
-    fail("unsupported intent for cuda cpp codegen (supported: matmul, dropout, softmax, layernorm, correlation, resize, rope, warp, transpose, reduce_sum, reduce_max, any_dim, gather)");
+    fail(
+        "unsupported intent for cuda cpp codegen (supported: matmul, dropout, softmax, layernorm, correlation, resize, rope, warp, transpose, reduce_sum, reduce_max, any_dim, gather, fused_elementwise)");
   } catch (const std::exception& e) {
     std::cerr << "intentir_cuda_codegen error: " << e.what() << "\\n";
     return 3;
