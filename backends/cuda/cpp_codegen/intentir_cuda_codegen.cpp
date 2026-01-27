@@ -43,6 +43,41 @@ struct Intent {
 
 [[noreturn]] void fail(const std::string& msg) { throw std::runtime_error(msg); }
 
+struct AccessWitnessMeta {
+  std::string dominant_axis;
+  int64_t dominant_range_len = 0;
+  bool has_contiguous_range = false;
+};
+
+std::optional<AccessWitnessMeta> access_witness_meta(const Intent& intent) {
+  if (!intent.meta.is_object()) return std::nullopt;
+  auto it = intent.meta.find("access_witness");
+  if (it == intent.meta.end() || !it->is_object()) return std::nullopt;
+  const json& aw = *it;
+
+  AccessWitnessMeta out;
+  auto ax = aw.find("dominant_axis");
+  if (ax != aw.end() && ax->is_string()) out.dominant_axis = ax->get<std::string>();
+  auto ln = aw.find("dominant_range_len");
+  if (ln != aw.end()) {
+    if (ln->is_number_integer())
+      out.dominant_range_len = ln->get<int64_t>();
+    else if (ln->is_number())
+      out.dominant_range_len = static_cast<int64_t>(ln->get<double>());
+  }
+  auto cr = aw.find("has_contiguous_range");
+  if (cr != aw.end()) {
+    if (cr->is_boolean()) out.has_contiguous_range = cr->get<bool>();
+    else if (cr->is_number_integer())
+      out.has_contiguous_range = (cr->get<int64_t>() != 0);
+    else if (cr->is_number())
+      out.has_contiguous_range = (cr->get<double>() != 0.0);
+  }
+
+  if (out.dominant_axis.empty() && out.dominant_range_len <= 0 && !out.has_contiguous_range) return std::nullopt;
+  return out;
+}
+
 std::string c_float(double x) {
   if (std::isnan(x)) return "NAN";
   if (std::isinf(x)) return x > 0 ? "INFINITY" : "(-INFINITY)";
@@ -1277,6 +1312,20 @@ int64_t _pow2_block(int64_t x) {
   return x;
 }
 
+int64_t _threads_from_contiguous_range(int64_t range_len, int64_t fallback) {
+  if (range_len <= 0) return fallback;
+  int64_t t = fallback;
+  if (range_len >= 1024)
+    t = 256;
+  else if (range_len >= 512)
+    t = 128;
+  else if (range_len >= 128)
+    t = 64;
+  t = std::max<int64_t>(32, std::min<int64_t>(1024, t));
+  if ((t % 32) != 0) t = ((t + 31) / 32) * 32;
+  return t;
+}
+
 json emit_reduce_sum_2d_axis1_f32(const Intent& intent, const json& bindings) {
   if (!(intent.ops.size() == 1 && intent.ops[0].op == "reduce_sum")) fail("reduce_sum lowering expects a single reduce_sum op");
   const Op& op = intent.ops[0];
@@ -2002,6 +2051,16 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
     if (hinted_threads && 0 < hinted_threads && hinted_threads <= 1024) block_threads = hinted_threads;
   }
   if (block_threads <= 0) block_threads = (C >= 128) ? 128 : 64;
+  // Evidence-guided hint: if the access witness identifies a contiguous dominant axis that
+  // matches the reduction axis, prefer a thread count sized to that contiguous range.
+  if (!respect_schedule && !binding_int(bindings, "SOFTMAX_THREADS")) {
+    if (auto aw = access_witness_meta(intent)) {
+      if (aw->has_contiguous_range && !aw->dominant_axis.empty() && aw->dominant_axis == dim_str(C_dim)) {
+        const int64_t eff_len = (aw->dominant_range_len > 0) ? std::min<int64_t>(C, aw->dominant_range_len) : C;
+        block_threads = _threads_from_contiguous_range(eff_len, block_threads);
+      }
+    }
+  }
   if (block_threads < 32) block_threads = 32;
   if ((block_threads % 32) != 0) block_threads = ((block_threads + 31) / 32) * 32;
   if (block_threads > 1024) block_threads = 1024;
@@ -2184,6 +2243,15 @@ json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
     // Heuristic default: favor more threads for wide reductions, but avoid very
     // large blocks that can hurt occupancy.
     block_x = (N >= 2048) ? 128 : 64;
+    // Evidence-guided hint: if the access witness identifies a contiguous dominant axis
+    // that matches the reduction axis, size threads to cover that range efficiently.
+    if (!respect_schedule) {
+      if (auto aw = access_witness_meta(intent)) {
+        if (aw->has_contiguous_range && !aw->dominant_axis.empty() && aw->dominant_axis == dim_str(x_it->second.shape[1])) {
+          block_x = _threads_from_contiguous_range(aw->dominant_range_len, block_x);
+        }
+      }
+    }
   }
   if (block_x < 32) block_x = 32;
   if (block_x > 1024) block_x = 1024;
