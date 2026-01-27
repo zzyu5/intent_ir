@@ -778,13 +778,11 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
         pipe_stages_raw = bindings.get("WMMA_PIPE_STAGES", 0)
         wmma_pipe_stages = int(pipe_stages_raw or 0)
         pipe_stages_override = ("WMMA_PIPE_STAGES" in bindings) and (wmma_pipe_stages > 0)
-        num_tiles = int(K // wmma_stage_k) if int(wmma_stage_k) > 0 else 0
-        prefer_two_stage = (not pipe_stages_override) and (num_tiles > 0) and (num_tiles <= 4)
         if not wmma_use_cp_async:
             wmma_pipe_stages = 1
         else:
             if wmma_pipe_stages <= 0:
-                wmma_pipe_stages = 2 if prefer_two_stage else 3
+                wmma_pipe_stages = 3
             if wmma_pipe_stages not in (2, 3):
                 wmma_pipe_stages = 3
         # Use dynamic shared memory for the A/B staging buffers so we can opt into
@@ -834,10 +832,8 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
                     wmma_stage_k = cand
                     shared_bytes = _wmma_smem_bytes(wmma_tile_m, wmma_tile_n, wmma_stage_k, wmma_pipe_stages)
                     break
-        num_tiles = int(K // wmma_stage_k) if int(wmma_stage_k) > 0 else 0
-        prefer_two_stage = (not pipe_stages_override) and (num_tiles > 0) and (num_tiles <= 4)
         wmma_force_sync = False
-        if (not pipe_stages_override) and (not prefer_two_stage) and wmma_pipe_stages == 2:
+        if (not pipe_stages_override) and wmma_pipe_stages == 2:
             bytes3 = _wmma_smem_bytes(wmma_tile_m, wmma_tile_n, wmma_stage_k, 3)
             if bytes3 <= max_smem_optin:
                 wmma_pipe_stages = 3

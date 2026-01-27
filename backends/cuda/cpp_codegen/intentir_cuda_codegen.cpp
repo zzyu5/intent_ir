@@ -688,9 +688,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     if (!wmma_use_cp_async) {
       wmma_pipe_stages = 1;
     } else {
-      const int64_t num_tiles = (wmma_stage_k > 0) ? (K / wmma_stage_k) : 0;
-      const bool prefer_two_stage = (!pipe_stages_override && num_tiles > 0 && num_tiles <= 4);
-      if (wmma_pipe_stages <= 0) wmma_pipe_stages = prefer_two_stage ? 2 : 3;
+      if (wmma_pipe_stages <= 0) wmma_pipe_stages = 3;
       if (!(wmma_pipe_stages == 2 || wmma_pipe_stages == 3)) wmma_pipe_stages = 3;
     }
 
@@ -730,9 +728,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     }
 
     bool wmma_force_sync = false;
-    const int64_t num_tiles = (wmma_stage_k > 0) ? (K / wmma_stage_k) : 0;
-    const bool prefer_two_stage = (!pipe_stages_override && num_tiles > 0 && num_tiles <= 4);
-    if (!pipe_stages_override && !prefer_two_stage && wmma_pipe_stages == 2) {
+    if (!pipe_stages_override && wmma_pipe_stages == 2) {
       const int64_t bytes3 = wmma_smem_bytes(wmma_stage_k, 3);
       if (bytes3 <= max_smem_optin) {
         wmma_pipe_stages = 3;
