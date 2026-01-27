@@ -222,64 +222,61 @@ __device__ __forceinline__ void wmma_matmul_f32_tf32(
           buf = next_buf;
         }
       } else {
+        static_assert(PIPE_STAGES == 3, "PIPE_STAGES must be 3 for this pipeline path");
         const int num_tiles = K / STAGE_K;
+
+        // Prime the pipeline with the first (PIPE_STAGES - 1) tiles. Tile `t` is stored in
+        // buffer `(t % PIPE_STAGES)`.
         cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD, CP_A_POLICY, CP_B_POLICY>(0, 0, A, B, As, Bs, row0, col0, K, N);
         intentir_cp_async_commit();
         if (num_tiles > 1) {
           cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD, CP_A_POLICY, CP_B_POLICY>(1, STAGE_K, A, B, As, Bs, row0, col0, K, N);
           intentir_cp_async_commit();
         }
-        if (num_tiles > 2) {
-          cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD, CP_A_POLICY, CP_B_POLICY>(
-              2, 2 * STAGE_K, A, B, As, Bs, row0, col0, K, N);
-          intentir_cp_async_commit();
-        }
 
-        if (num_tiles > 2) {
-          intentir_cp_async_wait_group<2>();
-        } else if (num_tiles > 1) {
+        // Ensure tile0 is ready before the first load_matrix_sync. If we prefetched tile1,
+        // keep it in-flight (wait_group<1>); otherwise wait for all.
+        if (num_tiles > 1) {
           intentir_cp_async_wait_group<1>();
         } else {
           intentir_cp_async_wait_group<0>();
         }
         __syncthreads();
 
-        #pragma unroll
-        for (int stage = 0; stage < num_tiles; ++stage) {
-          const int buf = stage % PIPE_STAGES;
+        for (int tile = 0; tile < num_tiles; ++tile) {
+          const int read_buf = tile % PIPE_STAGES;
+          const int pf_tile = tile + (PIPE_STAGES - 1);  // overlap: prefetch two tiles ahead
+          const int pf_buf = pf_tile % PIPE_STAGES;
+          if (pf_tile < num_tiles) {
+            cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD, CP_A_POLICY, CP_B_POLICY>(
+                pf_buf, pf_tile * STAGE_K, A, B, As, Bs, row0, col0, K, N);
+            intentir_cp_async_commit();
+          }
 
           #pragma unroll
           for (int kk0 = 0; kk0 < STAGE_K; kk0 += 8) {
             load_matrix_sync(
                 a_frag,
-                As + (size_t)buf * (size_t)(TILE_M * AS_LD) + (size_t)(warp_m * 16) * (size_t)AS_LD + (size_t)kk0,
+                As + (size_t)read_buf * (size_t)(TILE_M * AS_LD) + (size_t)(warp_m * 16) * (size_t)AS_LD + (size_t)kk0,
                 AS_LD);
             load_matrix_sync(
                 b_frag,
-                Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16),
+                Bs + (size_t)read_buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16),
                 BS_LD);
             mma_tf32_m16n16k8_rr(acc0, a_frag, b_frag);
             if constexpr (FRAG_N > 1) {
               load_matrix_sync(
                   b_frag,
-                  Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16),
+                  Bs + (size_t)read_buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16),
                   BS_LD);
               mma_tf32_m16n16k8_rr(acc1, a_frag, b_frag);
             }
           }
 
-          const int pf_stage = stage + PIPE_STAGES;
-          if (pf_stage < num_tiles) {
-            cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD, CP_A_POLICY, CP_B_POLICY>(
-                buf, pf_stage * STAGE_K, A, B, As, Bs, row0, col0, K, N);
-            intentir_cp_async_commit();
-          }
-
-          if (stage + 1 < num_tiles) {
-            const int tail = num_tiles - (stage + 2);
-            if (tail >= 2) {
-              intentir_cp_async_wait_group<2>();
-            } else if (tail == 1) {
+          if (tile + 1 < num_tiles) {
+            // Next tile is `tile+1`. If there is also a tile `tile+2` in flight, keep one group
+            // outstanding (wait_group<1>) to overlap; otherwise drain fully so the next buffer is ready.
+            if (tile + 2 < num_tiles) {
               intentir_cp_async_wait_group<1>();
             } else {
               intentir_cp_async_wait_group<0>();
@@ -438,4 +435,3 @@ __device__ __forceinline__ void wmma_matmul_f32_tf32(
 }
 
 }  // namespace intentir_cuda
-
