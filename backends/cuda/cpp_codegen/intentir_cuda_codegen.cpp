@@ -277,6 +277,53 @@ json emit_dropout(const Intent& intent, const json& bindings) {
   return out;
 }
 
+json emit_warp(const Intent& intent, const json& bindings) {
+  if (!(intent.ops.size() == 1 && intent.ops[0].op == "warp")) fail("warp lowering expects a single warp op");
+  const Op& op = intent.ops[0];
+  if (op.inputs.size() != 2) fail("warp expects 2 inputs (src, offset)");
+  const std::string src_name = op.inputs[0];
+  const std::string offset_name = op.inputs[1];
+  const std::string out_name = op.output;
+
+  const int64_t C = binding_int(bindings, "C").value_or(-1);
+  const int64_t H = binding_int(bindings, "H").value_or(-1);
+  const int64_t W = binding_int(bindings, "W").value_or(-1);
+  if (C <= 0 || H <= 0 || W <= 0) fail("warp missing/invalid bindings: C/H/W");
+
+  int64_t block_w = binding_int(bindings, "BLOCK_W").value_or(128);
+  const int64_t hinted = resolve_schedule_int(intent, bindings, "tile_n", block_w);
+  if (0 < hinted && hinted <= 1024) block_w = hinted;
+  if (block_w <= 0) block_w = 128;
+  if (block_w > 1024) block_w = 1024;
+  const int64_t grid_w = (W + block_w - 1) / block_w;
+
+  std::ostringstream cuda_ss;
+  CodeWriter w(cuda_ss);
+  w.line("#include \"kernels/warp.cuh\"");
+  w.blank();
+  w.line("extern \"C\" __global__ void " + intent.name +
+         "(const int8_t* __restrict__ " + src_name + ", const int16_t* __restrict__ " + offset_name + ", int8_t* __restrict__ " + out_name +
+         ", int C, int H, int W) {");
+  w.indent();
+  w.line("constexpr int BLOCK_W = " + std::to_string(block_w) + ";");
+  w.line("intentir_cuda::warp_q8_8_i8_i16<BLOCK_W>(" + src_name + ", " + offset_name + ", " + out_name + ", C, H, W);");
+  w.dedent();
+  w.line("}");
+
+  json out;
+  out["kernel_name"] = intent.name;
+  out["cuda_src"] = cuda_ss.str();
+  out["io_spec"] = io_spec_from_args(
+      intent,
+      /*tensor_args=*/{src_name, offset_name, out_name},
+      /*scalar_args=*/{{"C", "i32"}, {"H", "i32"}, {"W", "i32"}},
+      /*arg_names=*/{src_name, offset_name, out_name, "C", "H", "W"});
+  out["launch"] = {{"grid", {grid_w, H, C}}, {"block", {block_w, 1, 1}}, {"shared_mem", 0}};
+  out["output_names"] = {out_name};
+  out["bindings"] = bindings;
+  return out;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -308,8 +355,13 @@ int main(int argc, char** argv) {
       std::cout << out.dump() << "\n";
       return 0;
     }
+    if (intent.ops.size() == 1 && intent.ops[0].op == "warp") {
+      json out = emit_warp(intent, bindings_json);
+      std::cout << out.dump() << "\n";
+      return 0;
+    }
 
-    fail("unsupported intent for cuda cpp codegen (supported: dropout)");
+    fail("unsupported intent for cuda cpp codegen (supported: dropout, warp)");
   } catch (const std::exception& e) {
     std::cerr << "intentir_cuda_codegen error: " << e.what() << "\\n";
     return 3;
