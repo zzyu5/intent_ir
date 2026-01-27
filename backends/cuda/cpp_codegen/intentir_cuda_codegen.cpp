@@ -1016,6 +1016,8 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
   if ((D & 1) != 0) fail("rope expects even HEAD_DIM");
   const int64_t half = D / 2;
 
+  const bool specialize_dims = binding_int(bindings, "CUDA_SPECIALIZE_DIMS").value_or(0) != 0;
+
   int64_t heads_per_block = binding_int(bindings, "ROPE_HEADS_PER_BLOCK").value_or(1);
   if (heads_per_block <= 0) heads_per_block = 1;
   if (heads_per_block > 16) heads_per_block = 16;
@@ -1058,11 +1060,16 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
   const bool d_is_tensor = is_scalar_tensor(intent, "HEAD_DIM", "i32");
 
   auto dim_param = [&](const char* name, bool is_tensor) -> std::string {
-    return is_tensor ? std::string("const int* ") + name + "_ptr" : std::string("int ") + name;
+    return is_tensor ? (std::string("const int* ") + name + "_ptr") : (std::string("int ") + name + "_in");
   };
   auto dim_load = [&](const char* name, bool is_tensor) -> std::string {
-    if (!is_tensor) return "";
-    return std::string("const int ") + name + " = " + name + "_ptr ? " + name + "_ptr[0] : 0;";
+    if (is_tensor) {
+      return std::string("const int ") + name + " = " + name + "_ptr ? " + name + "_ptr[0] : 0;";
+    }
+    return std::string("const int ") + name + " = " + name + "_in;";
+  };
+  auto dim_unused = [&](const char* name, bool is_tensor) -> std::string {
+    return std::string("(void)") + (is_tensor ? (std::string(name) + "_ptr") : (std::string(name) + "_in")) + ";";
   };
 
   const int64_t iters = std::max<int64_t>(1, (packs + block_x - 1) / block_x);
@@ -1071,7 +1078,7 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
   CodeWriter w(cuda_ss);
   w.line("#include \"kernels/rope.cuh\"");
   w.blank();
-  w.line("extern \"C\" __global__ void " + intent.name + "(");
+  w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_x) + ") void " + intent.name + "(");
   w.indent();
   w.line("const float* __restrict__ " + in_name + ", const float* __restrict__ " + cos_name + ", const float* __restrict__ " + sin_name +
          ", float* __restrict__ " + out_name + ",");
@@ -1079,14 +1086,21 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
          dim_param("HEAD_DIM", d_is_tensor) + ") {");
   w.dedent();
   w.indent();
-  const std::string seq_load = dim_load("SEQ_LEN", seq_is_tensor);
-  const std::string b_load = dim_load("BATCH_NUM", b_is_tensor);
-  const std::string h_load = dim_load("HEAD_NUM", h_is_tensor);
-  const std::string d_load = dim_load("HEAD_DIM", d_is_tensor);
-  if (!seq_load.empty()) w.line(seq_load);
-  if (!b_load.empty()) w.line(b_load);
-  if (!h_load.empty()) w.line(h_load);
-  if (!d_load.empty()) w.line(d_load);
+  if (specialize_dims) {
+    w.line(dim_unused("SEQ_LEN", seq_is_tensor));
+    w.line(dim_unused("BATCH_NUM", b_is_tensor));
+    w.line(dim_unused("HEAD_NUM", h_is_tensor));
+    w.line(dim_unused("HEAD_DIM", d_is_tensor));
+    w.line("constexpr int SEQ_LEN = " + std::to_string(SEQ) + ";");
+    w.line("constexpr int BATCH_NUM = " + std::to_string(B) + ";");
+    w.line("constexpr int HEAD_NUM = " + std::to_string(H) + ";");
+    w.line("constexpr int HEAD_DIM = " + std::to_string(D) + ";");
+  } else {
+    w.line(dim_load("SEQ_LEN", seq_is_tensor));
+    w.line(dim_load("BATCH_NUM", b_is_tensor));
+    w.line(dim_load("HEAD_NUM", h_is_tensor));
+    w.line(dim_load("HEAD_DIM", d_is_tensor));
+  }
   w.line("constexpr int HEADS_PER_BLOCK = " + std::to_string(heads_per_block) + ";");
   w.line("constexpr int ROPE_VEC = " + std::to_string(rope_vec) + ";");
   w.line("constexpr int BLOCK_X = " + std::to_string(block_x) + ";");
