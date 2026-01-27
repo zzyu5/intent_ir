@@ -39,6 +39,13 @@ struct Intent {
 
 [[noreturn]] void fail(const std::string& msg) { throw std::runtime_error(msg); }
 
+std::string ascii_lower(std::string s) {
+  for (auto& ch : s) {
+    if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
+  }
+  return s;
+}
+
 json read_json_file(const std::string& path) {
   std::ifstream f(path);
   if (!f) fail("failed to open: " + path);
@@ -98,6 +105,29 @@ bool is_digits(const std::string& s) {
     if (c < '0' || c > '9') return false;
   }
   return true;
+}
+
+std::optional<double> binding_double(const json& bindings, const std::string& key) {
+  if (!bindings.is_object()) return std::nullopt;
+  auto it = bindings.find(key);
+  if (it == bindings.end()) return std::nullopt;
+  if (it->is_number()) return it->get<double>();
+  if (it->is_number_integer()) return static_cast<double>(it->get<int64_t>());
+  if (it->is_string()) {
+    try {
+      return std::stod(it->get<std::string>());
+    } catch (...) {
+      return std::nullopt;
+    }
+  }
+  return std::nullopt;
+}
+
+std::string dim_str(const json& tok) {
+  if (tok.is_string()) return tok.get<std::string>();
+  if (tok.is_number_integer()) return std::to_string(tok.get<int64_t>());
+  if (tok.is_number()) return std::to_string(static_cast<int64_t>(tok.get<double>()));
+  return tok.dump();
 }
 
 std::optional<int64_t> binding_int(const json& bindings, const std::string& key) {
@@ -629,6 +659,262 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
   return out;
 }
 
+json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
+  const std::string out_name = !intent.outputs.empty() ? intent.outputs[0] : std::string("out");
+
+  std::string in_name;
+  for (const auto& op : intent.ops) {
+    if (op.op == "reduce_max" && !op.inputs.empty()) {
+      in_name = op.inputs[0];
+      break;
+    }
+  }
+  if (in_name.empty()) {
+    std::unordered_map<std::string, bool> produced;
+    for (const auto& op : intent.ops) produced[op.output] = true;
+    for (const auto& kv : intent.tensors) {
+      const std::string& tn = kv.first;
+      const Tensor& tt = kv.second;
+      if (tn == out_name) continue;
+      if (produced.find(tn) != produced.end()) continue;
+      if (tt.dtype == "f32" && tt.shape.size() == 2) {
+        in_name = tn;
+        break;
+      }
+    }
+  }
+  if (in_name.empty()) fail("softmax lowering failed to identify input tensor");
+
+  auto it = intent.tensors.find(in_name);
+  if (it == intent.tensors.end()) fail("softmax missing input tensor in intent.tensors: " + in_name);
+  if (it->second.shape.size() != 2) fail("softmax expects rank-2 input");
+  const json R_dim = it->second.shape[0];
+  const json C_dim = it->second.shape[1];
+  auto R_opt = resolve_dim_token(R_dim, bindings);
+  auto C_opt = resolve_dim_token(C_dim, bindings);
+  if (!R_opt.has_value() || !C_opt.has_value()) fail("softmax missing bindings for R/C");
+  const int64_t R = *R_opt;
+  const int64_t C = *C_opt;
+  if (C > 1024) fail("softmax MVP supports only C<=1024");
+
+  int64_t block_threads = 0;
+  const int64_t hinted_threads = resolve_schedule_int(intent, bindings, "tile_m", 0);
+  if (hinted_threads && 0 < hinted_threads && hinted_threads <= 1024) block_threads = hinted_threads;
+  if (block_threads <= 0) block_threads = (C >= 128) ? 128 : 64;
+  if (block_threads < 32) block_threads = 32;
+  if ((block_threads % 32) != 0) block_threads = ((block_threads + 31) / 32) * 32;
+  if (block_threads > 1024) block_threads = 1024;
+
+  if (auto tuned = binding_int(bindings, "SOFTMAX_THREADS")) {
+    if (0 < *tuned && *tuned <= 1024) {
+      block_threads = *tuned;
+      if (block_threads < 32) block_threads = 32;
+      if ((block_threads % 32) != 0) block_threads = ((block_threads + 31) / 32) * 32;
+      if (block_threads > 1024) block_threads = 1024;
+    }
+  }
+
+  int64_t max_ept = binding_int(bindings, "SOFTMAX_MAX_EPT").value_or(16);
+  if (max_ept < 4) max_ept = 4;
+  if (max_ept > 16) max_ept = 16;
+  int64_t min_threads = std::max<int64_t>(32, (C + max_ept - 1) / max_ept);
+  if ((min_threads % 32) != 0) min_threads = ((min_threads + 31) / 32) * 32;
+  if (block_threads < min_threads) block_threads = min_threads;
+  const int64_t ept = std::max<int64_t>(1, (C + block_threads - 1) / block_threads);
+
+  const bool specialize_dims = binding_int(bindings, "CUDA_SPECIALIZE_DIMS").value_or(0) != 0;
+  const std::string R_name = dim_str(R_dim);
+  const std::string C_name = dim_str(C_dim);
+  bool r_is_tensor = is_scalar_tensor(intent, R_name, "i32");
+  bool c_is_tensor = is_scalar_tensor(intent, C_name, "i32");
+  if (specialize_dims && r_is_tensor && bindings.contains(R_name)) r_is_tensor = false;
+  if (specialize_dims && c_is_tensor && bindings.contains(C_name)) c_is_tensor = false;
+
+  const std::string r_param = r_is_tensor ? ("const int* " + R_name + "_ptr") : "int R";
+  const std::string c_param = c_is_tensor ? ("const int* " + C_name + "_ptr") : "int C";
+  const std::string r_load = r_is_tensor ? ("const int R = " + R_name + "_ptr ? " + R_name + "_ptr[0] : 0;") : "";
+  const std::string c_load = c_is_tensor ? ("const int C = " + C_name + "_ptr ? " + C_name + "_ptr[0] : 0;") : "";
+
+  std::ostringstream cuda_ss;
+  CodeWriter w(cuda_ss);
+  w.line("#include \"kernels/softmax.cuh\"");
+  w.blank();
+  w.line("extern \"C\" __global__ void " + intent.name + "(const float* __restrict__ " + in_name + ", float* __restrict__ " + out_name + ", " +
+         r_param + ", " + c_param + ") {");
+  w.indent();
+  if (!r_load.empty()) w.line(r_load);
+  if (!c_load.empty()) w.line(c_load);
+  w.line("constexpr int BLOCK_THREADS = " + std::to_string(block_threads) + ";");
+  w.line("constexpr int EPT = " + std::to_string(ept) + ";");
+  w.line("intentir_cuda::softmax_2d_last_f32<BLOCK_THREADS, EPT>(" + in_name + ", " + out_name + ", R, C);");
+  w.dedent();
+  w.line("}");
+
+  std::vector<std::string> tensor_args = {in_name, out_name};
+  std::unordered_map<std::string, std::string> scalar_args;
+  std::vector<std::string> arg_names = {in_name, out_name};
+  if (r_is_tensor) {
+    tensor_args.push_back(R_name);
+    arg_names.push_back(R_name);
+  } else {
+    scalar_args.emplace(R_name, "i32");
+    arg_names.push_back(R_name);
+  }
+  if (c_is_tensor) {
+    tensor_args.push_back(C_name);
+    arg_names.push_back(C_name);
+  } else {
+    scalar_args.emplace(C_name, "i32");
+    arg_names.push_back(C_name);
+  }
+
+  json out;
+  out["kernel_name"] = intent.name;
+  out["cuda_src"] = cuda_ss.str();
+  out["io_spec"] = io_spec_from_args(intent, tensor_args, scalar_args, arg_names);
+  out["launch"] = {{"grid", {R, 1, 1}}, {"block", {block_threads, 1, 1}}, {"shared_mem", 0}};
+  out["output_names"] = {out_name};
+  out["bindings"] = bindings;
+  return out;
+}
+
+json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
+  std::unordered_map<std::string, bool> produced;
+  for (const auto& op : intent.ops) produced[op.output] = true;
+  std::unordered_map<std::string, bool> outs;
+  for (const auto& n : intent.outputs) outs[n] = true;
+
+  std::vector<std::string> inputs;
+  for (const auto& kv : intent.tensors) {
+    const std::string& name = kv.first;
+    if (produced.find(name) != produced.end()) continue;
+    if (outs.find(name) != outs.end()) continue;
+    inputs.push_back(name);
+  }
+
+  std::string X_name;
+  for (const auto& n : inputs) {
+    if (n == "X") {
+      X_name = n;
+      break;
+    }
+  }
+  if (X_name.empty()) {
+    for (const auto& n : inputs) {
+      const Tensor& t = intent.tensors.at(n);
+      if (t.dtype == "f32" && t.shape.size() == 2) {
+        X_name = n;
+        break;
+      }
+    }
+  }
+  if (X_name.empty()) fail("layernorm lowering cannot find input X");
+
+  std::string W_name;
+  std::string B_name;
+  for (const auto& n : inputs) {
+    if (n == "W") W_name = n;
+    if (n == "B") B_name = n;
+  }
+  if (W_name.empty() || B_name.empty()) {
+    std::vector<std::string> rank1;
+    for (const auto& n : inputs) {
+      const Tensor& t = intent.tensors.at(n);
+      if (t.dtype == "f32" && t.shape.size() == 1) rank1.push_back(n);
+    }
+    if (W_name.empty() && !rank1.empty()) W_name = rank1[0];
+    if (B_name.empty() && rank1.size() > 1) B_name = rank1[1];
+  }
+  if (W_name.empty() || B_name.empty()) fail("layernorm lowering cannot find W/B inputs");
+
+  if (intent.outputs.size() != 3) fail("layernorm lowering expects 3 outputs (Y, Mean, Rstd)");
+  const std::string Y_name = intent.outputs[0];
+  const std::string Mean_name = intent.outputs[1];
+  const std::string Rstd_name = intent.outputs[2];
+
+  auto x_it = intent.tensors.find(X_name);
+  if (x_it == intent.tensors.end()) fail("layernorm missing X tensor in intent.tensors");
+  if (x_it->second.shape.size() != 2) fail("layernorm expects rank-2 X");
+  auto M_opt = resolve_dim_token(x_it->second.shape[0], bindings);
+  auto N_opt = resolve_dim_token(x_it->second.shape[1], bindings);
+  if (!M_opt.has_value() || !N_opt.has_value()) fail("layernorm missing bindings for M/N");
+  const int64_t M = *M_opt;
+  const int64_t N = *N_opt;
+  (void)N;
+
+  std::optional<double> eps;
+  for (const auto& op : intent.ops) {
+    if (op.op == "const" && op.output == "eps" && op.attrs.is_object()) {
+      auto it = op.attrs.find("value");
+      if (it != op.attrs.end() && it->is_number()) eps = it->get<double>();
+      else if (it != op.attrs.end() && it->is_string()) {
+        try {
+          eps = std::stod(it->get<std::string>());
+        } catch (...) {
+          eps = std::nullopt;
+        }
+      }
+      break;
+    }
+  }
+  if (!eps.has_value()) eps = binding_double(bindings, "eps").value_or(1e-5);
+
+  int64_t block_x = resolve_schedule_int(intent, bindings, "tile_n", 256);
+  if (block_x <= 0) block_x = 256;
+  if (block_x > 1024) block_x = 1024;
+  auto is_pow2 = [](int64_t x) -> bool { return x > 0 && ((x & (x - 1)) == 0); };
+  auto floor_pow2 = [](int64_t x) -> int64_t {
+    if (x <= 1) return 1;
+    int64_t p = 1;
+    while ((p << 1) <= x) p <<= 1;
+    return p;
+  };
+  if (!is_pow2(block_x)) {
+    block_x = floor_pow2(block_x);
+    if (block_x < 1) block_x = 1;
+    if (block_x > 1024) block_x = 1024;
+  }
+
+  std::ostringstream cuda_ss;
+  CodeWriter w(cuda_ss);
+  w.line("#include \"kernels/layernorm.cuh\"");
+  w.blank();
+  w.line("extern \"C\" __global__ void " + intent.name + "(");
+  w.indent();
+  w.line("const float* __restrict__ " + X_name + ",");
+  w.line("float* __restrict__ " + Y_name + ",");
+  w.line("const float* __restrict__ " + W_name + ",");
+  w.line("const float* __restrict__ " + B_name + ",");
+  w.line("float* __restrict__ " + Mean_name + ",");
+  w.line("float* __restrict__ " + Rstd_name + ",");
+  w.line("int M,");
+  w.line("int N,");
+  w.line("float eps) {");
+  w.dedent();
+  w.indent();
+  w.line("constexpr int BLOCK_THREADS = " + std::to_string(block_x) + ";");
+  w.line("intentir_cuda::layernorm_2d_f32<BLOCK_THREADS>(" + X_name + ", " + Y_name + ", " + W_name + ", " + B_name + ", " + Mean_name + ", " +
+         Rstd_name + ", M, N, eps);");
+  w.dedent();
+  w.line("}");
+
+  json out_bindings = bindings;
+  if (!out_bindings.contains("eps")) out_bindings["eps"] = *eps;
+
+  json out;
+  out["kernel_name"] = intent.name;
+  out["cuda_src"] = cuda_ss.str();
+  out["io_spec"] = io_spec_from_args(
+      intent,
+      /*tensor_args=*/{X_name, Y_name, W_name, B_name, Mean_name, Rstd_name},
+      /*scalar_args=*/{{"M", "i32"}, {"N", "i32"}, {"eps", "f32"}},
+      /*arg_names=*/{X_name, Y_name, W_name, B_name, Mean_name, Rstd_name, "M", "N", "eps"});
+  out["launch"] = {{"grid", {M, 1, 1}}, {"block", {block_x, 1, 1}}, {"shared_mem", 0}};
+  out["output_names"] = {Y_name, Mean_name, Rstd_name};
+  out["bindings"] = out_bindings;
+  return out;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -681,7 +967,41 @@ int main(int argc, char** argv) {
       return 0;
     }
 
-    fail("unsupported intent for cuda cpp codegen (supported: dropout, warp, correlation, resize, rope)");
+    // Pattern-based kernels.
+    {
+      bool hasY = false, hasMean = false, hasRstd = false;
+      for (const auto& o : intent.outputs) {
+        if (o == "Y") hasY = true;
+        if (o == "Mean") hasMean = true;
+        if (o == "Rstd") hasRstd = true;
+      }
+      if (hasY && hasMean && hasRstd) {
+        json out = emit_layernorm_2d_f32(intent, bindings_json);
+        std::cout << out.dump() << "\n";
+        return 0;
+      }
+    }
+    {
+      const std::string nm = ascii_lower(intent.name);
+      bool is_softmax = (nm.find("softmax") != std::string::npos);
+      if (!is_softmax) {
+        bool has_reduce_max = false, has_reduce_sum = false, has_exp = false, has_div = false;
+        for (const auto& op : intent.ops) {
+          if (op.op == "reduce_max") has_reduce_max = true;
+          if (op.op == "reduce_sum") has_reduce_sum = true;
+          if (op.op == "exp") has_exp = true;
+          if (op.op == "div") has_div = true;
+        }
+        is_softmax = has_reduce_max && has_reduce_sum && has_exp && has_div;
+      }
+      if (is_softmax) {
+        json out = emit_softmax_2d_last_f32(intent, bindings_json);
+        std::cout << out.dump() << "\n";
+        return 0;
+      }
+    }
+
+    fail("unsupported intent for cuda cpp codegen (supported: dropout, warp, correlation, resize, rope, softmax, layernorm)");
   } catch (const std::exception& e) {
     std::cerr << "intentir_cuda_codegen error: " << e.what() << "\\n";
     return 3;
