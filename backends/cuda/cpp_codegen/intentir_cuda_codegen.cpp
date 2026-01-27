@@ -755,16 +755,42 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     w.line("#include \"kernels/wmma_matmul.cuh\"");
     w.blank();
     struct WmmaVariant {
+      int64_t warps_m;
+      int64_t warps_n;
+      int64_t frag_m;
+      int64_t frag_n;
       int64_t stage_k;
       int64_t pipe_stages;
       bool use_cp_async;
       int64_t shared_bytes;
+      int64_t threads;
       std::string suffix;
     };
 
     const bool enable_host_dispatch = specialize_dims && (!m_is_tensor) && (!n_is_tensor) && (!k_is_tensor);
-    const int64_t default_threads = 32 * wmma_warps_m * wmma_warps_n;
-    auto make_variant = [&](int64_t stage_k, int64_t pipe_stages, bool use_cp_async, const char* suffix) -> std::optional<WmmaVariant> {
+    const int64_t base_threads = 32 * wmma_warps_m * wmma_warps_n;
+    const int64_t tile_warps_m = wmma_warps_m * wmma_frag_m;
+    const int64_t tile_warps_n = wmma_warps_n * wmma_frag_n;
+
+    auto make_variant = [&](int64_t warps_m,
+                            int64_t warps_n,
+                            int64_t frag_m,
+                            int64_t frag_n,
+                            int64_t stage_k,
+                            int64_t pipe_stages,
+                            bool use_cp_async,
+                            const std::string& suffix) -> std::optional<WmmaVariant> {
+      if (warps_m <= 0 || warps_n <= 0) return std::nullopt;
+      if (frag_m <= 0 || frag_n <= 0) return std::nullopt;
+      if (!(frag_m == 1 || frag_m == 2)) return std::nullopt;
+      if (!(frag_n == 1 || frag_n == 2)) return std::nullopt;
+      // Keep tile shape constant; we only trade warps for per-warp fragments.
+      if ((warps_m * frag_m) != tile_warps_m) return std::nullopt;
+      if ((warps_n * frag_n) != tile_warps_n) return std::nullopt;
+      if (warps_m > 4 || warps_n > 8) return std::nullopt;
+      if ((warps_m * warps_n) > 16) return std::nullopt;
+      const int64_t threads = 32 * warps_m * warps_n;
+      if (threads <= 0 || threads > 1024) return std::nullopt;
       if (stage_k <= 0) return std::nullopt;
       if ((stage_k % 8) != 0) return std::nullopt;
       if ((K % stage_k) != 0) return std::nullopt;
@@ -775,13 +801,13 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       }
       const int64_t smem = wmma_smem_bytes(stage_k, pipe_stages);
       if (smem > max_smem_optin) return std::nullopt;
-      WmmaVariant v{stage_k, pipe_stages, use_cp_async, smem, std::string(suffix)};
+      WmmaVariant v{warps_m, warps_n, frag_m, frag_n, stage_k, pipe_stages, use_cp_async, smem, threads, suffix};
       return v;
     };
 
     if (!enable_host_dispatch) {
       // Single-kernel codegen path.
-      w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(default_threads) + ") void " + intent.name + "(");
+      w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(base_threads) + ") void " + intent.name + "(");
       w.indent();
       w.line("const float* __restrict__ A, const float* __restrict__ B, float* __restrict__ C,");
       w.line(m_param + ", " + n_param + ", " + k_param + ") {");
@@ -826,30 +852,66 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       host_launch = true;
       // Multi-version codegen + host dispatcher (paper-friendly: evidence-guided small search).
       std::vector<WmmaVariant> variants;
-      auto add_variant = [&](int64_t stage_k, int64_t pipe_stages, bool use_cp_async, const char* suffix) {
-        auto v = make_variant(stage_k, pipe_stages, use_cp_async, suffix);
+      auto add_variant = [&](int64_t warps_m,
+                             int64_t warps_n,
+                             int64_t frag_m,
+                             int64_t frag_n,
+                             int64_t stage_k,
+                             int64_t pipe_stages,
+                             bool use_cp_async,
+                             const std::string& suffix) {
+        auto v = make_variant(warps_m, warps_n, frag_m, frag_n, stage_k, pipe_stages, use_cp_async, suffix);
         if (!v.has_value()) return;
         for (const auto& existing : variants) {
-          if (existing.stage_k == v->stage_k && existing.pipe_stages == v->pipe_stages && existing.use_cp_async == v->use_cp_async) return;
+          if (existing.warps_m == v->warps_m && existing.warps_n == v->warps_n && existing.frag_m == v->frag_m && existing.frag_n == v->frag_n &&
+              existing.stage_k == v->stage_k && existing.pipe_stages == v->pipe_stages && existing.use_cp_async == v->use_cp_async)
+            return;
         }
         variants.push_back(*v);
       };
 
-      if (wmma_use_cp_async) {
-        add_variant(wmma_stage_k, wmma_pipe_stages, /*use_cp_async=*/true, "v0");
-        add_variant(wmma_stage_k, 3, /*use_cp_async=*/true, "p3");
-        add_variant(wmma_stage_k, 2, /*use_cp_async=*/true, "p2");
-        if (K >= 128 && (K % 128) == 0) {
-          add_variant(128, 3, /*use_cp_async=*/true, "k128_p3");
-          add_variant(128, 2, /*use_cp_async=*/true, "k128_p2");
+      struct WmmaGeom {
+        int64_t warps_m;
+        int64_t warps_n;
+        int64_t frag_m;
+        int64_t frag_n;
+        std::string tag;
+      };
+      std::vector<WmmaGeom> geoms;
+      auto add_geom = [&](int64_t frag_m, int64_t frag_n, const char* tag) {
+        if (frag_m <= 0 || frag_n <= 0) return;
+        if ((tile_warps_m % frag_m) != 0) return;
+        if ((tile_warps_n % frag_n) != 0) return;
+        const int64_t warps_m = tile_warps_m / frag_m;
+        const int64_t warps_n = tile_warps_n / frag_n;
+        if (warps_m <= 0 || warps_n <= 0) return;
+        if (warps_m > 4 || warps_n > 8) return;
+        if ((warps_m * warps_n) > 16) return;
+        geoms.push_back(WmmaGeom{warps_m, warps_n, frag_m, frag_n, std::string(tag)});
+      };
+      add_geom(1, 1, "fm1_fn1");
+      add_geom(2, 1, "fm2_fn1");
+      add_geom(1, 2, "fm1_fn2");
+      add_geom(2, 2, "fm2_fn2");
+      if (geoms.empty()) geoms.push_back(WmmaGeom{wmma_warps_m, wmma_warps_n, wmma_frag_m, wmma_frag_n, "base"});
+
+      for (const auto& g : geoms) {
+        if (wmma_use_cp_async) {
+          add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, wmma_pipe_stages, /*use_cp_async=*/true, g.tag + "_v0");
+          add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 3, /*use_cp_async=*/true, g.tag + "_p3");
+          add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 2, /*use_cp_async=*/true, g.tag + "_p2");
+          if (K >= 128 && (K % 128) == 0) {
+            add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 3, /*use_cp_async=*/true, g.tag + "_k128_p3");
+            add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 2, /*use_cp_async=*/true, g.tag + "_k128_p2");
+          }
         }
+        add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 1, /*use_cp_async=*/false, g.tag + "_sync");
       }
-      add_variant(wmma_stage_k, 1, /*use_cp_async=*/false, "sync");
-      if (variants.empty()) add_variant(wmma_stage_k, 1, /*use_cp_async=*/false, "fallback");
+      if (variants.empty()) add_variant(wmma_warps_m, wmma_warps_n, wmma_frag_m, wmma_frag_n, wmma_stage_k, 1, /*use_cp_async=*/false, "fallback");
 
       for (const auto& v : variants) {
         const std::string kname = intent.name + "__" + v.suffix;
-        w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(default_threads) + ") void " + kname + "(");
+        w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(v.threads) + ") void " + kname + "(");
         w.indent();
         w.line("const float* __restrict__ A, const float* __restrict__ B, float* __restrict__ C,");
         w.line(m_param + ", " + n_param + ", " + k_param + ") {");
@@ -862,10 +924,10 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
           }
         }
         w.blank();
-        w.line("constexpr int WARPS_M = " + std::to_string(wmma_warps_m) + ";");
-        w.line("constexpr int WARPS_N = " + std::to_string(wmma_warps_n) + ";");
-        w.line("constexpr int FRAG_M = " + std::to_string(wmma_frag_m) + ";");
-        w.line("constexpr int FRAG_N = " + std::to_string(wmma_frag_n) + ";");
+        w.line("constexpr int WARPS_M = " + std::to_string(v.warps_m) + ";");
+        w.line("constexpr int WARPS_N = " + std::to_string(v.warps_n) + ";");
+        w.line("constexpr int FRAG_M = " + std::to_string(v.frag_m) + ";");
+        w.line("constexpr int FRAG_N = " + std::to_string(v.frag_n) + ";");
         w.line("constexpr int STAGE_K = " + std::to_string(v.stage_k) + ";");
         w.line("constexpr int AS_PAD = " + std::to_string(wmma_as_pad) + ";");
         w.line("constexpr int BS_PAD = " + std::to_string(wmma_bs_pad) + ";");
@@ -916,7 +978,6 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       w.line("constexpr int TILE_M = " + std::to_string(16 * wmma_warps_m * wmma_frag_m) + ";");
       w.line("constexpr int TILE_N = " + std::to_string(16 * wmma_warps_n * wmma_frag_n) + ";");
       w.line("dim3 g((unsigned)((N + TILE_N - 1) / TILE_N), (unsigned)((M + TILE_M - 1) / TILE_M), 1u);");
-      w.line("dim3 b((unsigned)" + std::to_string(default_threads) + ", 1u, 1u);");
 
       w.line("static int intentir_selected = -1;");
       w.line("static int intentir_smem_cached = -1;");
@@ -938,6 +999,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         w.line("{");
         w.indent();
         w.line("const int smem = (int)" + std::to_string(smem_v) + ";");
+        w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
         w.line("const void* kptr = (const void*)" + kname + ";");
         w.line("if (smem >= 49152 && (intentir_kernel_cached != kptr || intentir_smem_cached != smem)) {");
         w.indent();
@@ -980,6 +1042,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         w.line("case " + std::to_string(vi) + ": {");
         w.indent();
         w.line("const int smem = (int)" + std::to_string(smem_v) + ";");
+        w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
         w.line("const void* kptr = (const void*)" + kname + ";");
         w.line("if (smem >= 49152 && (intentir_kernel_cached != kptr || intentir_smem_cached != smem)) {");
         w.indent();
@@ -998,6 +1061,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       const std::string kname0 = intent.name + "__" + variants[0].suffix;
       const int64_t smem0 = ((variants[0].shared_bytes + 15) / 16) * 16;
       w.line("const int smem = (int)" + std::to_string(smem0) + ";");
+      w.line("dim3 b((unsigned)" + std::to_string(variants[0].threads) + ", 1u, 1u);");
       w.line("const void* kptr = (const void*)" + kname0 + ";");
       w.line("if (smem >= 49152 && (intentir_kernel_cached != kptr || intentir_smem_cached != smem)) {");
       w.indent();
