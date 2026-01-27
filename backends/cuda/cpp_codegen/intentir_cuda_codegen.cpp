@@ -324,6 +324,90 @@ json emit_warp(const Intent& intent, const json& bindings) {
   return out;
 }
 
+json emit_correlation(const Intent& intent, const json& bindings) {
+  if (!(intent.ops.size() == 1 && intent.ops[0].op == "correlation")) fail("correlation lowering expects a single correlation op");
+  const Op& op = intent.ops[0];
+  if (op.inputs.size() != 3) fail("correlation expects 3 inputs (src0, src1, out_shift)");
+  const std::string src0_name = op.inputs[0];
+  const std::string src1_name = op.inputs[1];
+  const std::string out_name = op.output;
+
+  const int64_t OC = binding_int(bindings, "out_channel").value_or(-1);
+  const int64_t IC = binding_int(bindings, "in_channel").value_or(-1);
+  const int64_t H = binding_int(bindings, "height").value_or(-1);
+  const int64_t W = binding_int(bindings, "width").value_or(-1);
+  if (OC <= 0 || IC <= 0 || H <= 0 || W <= 0) fail("correlation missing/invalid bindings: out_channel/in_channel/height/width");
+  const int64_t total = OC * H * W;
+
+  int64_t block_x = resolve_schedule_int(intent, bindings, "tile_n", 128);
+  if (block_x <= 0) block_x = 128;
+  if (block_x > 1024) block_x = 1024;
+  const int64_t grid_x = (total + block_x - 1) / block_x;
+
+  const bool oc_is_tensor = is_scalar_tensor(intent, "out_channel", "i32");
+  const bool ic_is_tensor = is_scalar_tensor(intent, "in_channel", "i32");
+  const bool h_is_tensor = is_scalar_tensor(intent, "height", "i32");
+  const bool w_is_tensor = is_scalar_tensor(intent, "width", "i32");
+  const bool sh_is_tensor = is_scalar_tensor(intent, "out_shift", "i32");
+
+  const std::string oc_param = oc_is_tensor ? "const int* out_channel_ptr" : "int out_channel";
+  const std::string ic_param = ic_is_tensor ? "const int* in_channel_ptr" : "int in_channel";
+  const std::string h_param = h_is_tensor ? "const int* height_ptr" : "int height";
+  const std::string w_param = w_is_tensor ? "const int* width_ptr" : "int width";
+  const std::string sh_param = sh_is_tensor ? "const int* out_shift_ptr" : "int out_shift";
+
+  const std::string oc_load = oc_is_tensor ? "const int out_channel = out_channel_ptr ? out_channel_ptr[0] : 0;" : "";
+  const std::string ic_load = ic_is_tensor ? "const int in_channel = in_channel_ptr ? in_channel_ptr[0] : 0;" : "";
+  const std::string h_load = h_is_tensor ? "const int height = height_ptr ? height_ptr[0] : 0;" : "";
+  const std::string w_load = w_is_tensor ? "const int width = width_ptr ? width_ptr[0] : 0;" : "";
+  const std::string sh_load = sh_is_tensor ? "const int out_shift = out_shift_ptr ? out_shift_ptr[0] : 0;" : "";
+
+  std::ostringstream cuda_ss;
+  CodeWriter w(cuda_ss);
+  w.line("#include \"kernels/correlation.cuh\"");
+  w.blank();
+  w.line("extern \"C\" __global__ void " + intent.name + "(");
+  w.indent();
+  w.line("const int8_t* __restrict__ " + src0_name + ",");
+  w.line("const int8_t* __restrict__ " + src1_name + ",");
+  w.line("int8_t* __restrict__ " + out_name + ",");
+  w.line(oc_param + ", " + ic_param + ", " + h_param + ", " + w_param + ", " + sh_param + ") {");
+  w.dedent();
+  w.indent();
+  if (!oc_load.empty()) w.line(oc_load);
+  if (!ic_load.empty()) w.line(ic_load);
+  if (!h_load.empty()) w.line(h_load);
+  if (!w_load.empty()) w.line(w_load);
+  if (!sh_load.empty()) w.line(sh_load);
+  w.line("constexpr int BLOCK_THREADS = " + std::to_string(block_x) + ";");
+  w.line("intentir_cuda::correlation_i8<BLOCK_THREADS>(" + src0_name + ", " + src1_name + ", " + out_name +
+         ", out_channel, in_channel, height, width, out_shift);");
+  w.dedent();
+  w.line("}");
+
+  std::vector<std::string> tensor_args = {src0_name, src1_name, out_name};
+  std::unordered_map<std::string, std::string> scalar_args;
+  std::vector<std::string> arg_names = {src0_name, src1_name, out_name};
+  for (const auto& dim_name : {"out_channel", "in_channel", "height", "width", "out_shift"}) {
+    if (is_scalar_tensor(intent, dim_name, "i32")) {
+      tensor_args.push_back(dim_name);
+      arg_names.push_back(dim_name);
+    } else {
+      scalar_args.emplace(dim_name, "i32");
+      arg_names.push_back(dim_name);
+    }
+  }
+
+  json out;
+  out["kernel_name"] = intent.name;
+  out["cuda_src"] = cuda_ss.str();
+  out["io_spec"] = io_spec_from_args(intent, tensor_args, scalar_args, arg_names);
+  out["launch"] = {{"grid", {grid_x, 1, 1}}, {"block", {block_x, 1, 1}}, {"shared_mem", 0}};
+  out["output_names"] = {out_name};
+  out["bindings"] = bindings;
+  return out;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -360,8 +444,13 @@ int main(int argc, char** argv) {
       std::cout << out.dump() << "\n";
       return 0;
     }
+    if (intent.ops.size() == 1 && intent.ops[0].op == "correlation") {
+      json out = emit_correlation(intent, bindings_json);
+      std::cout << out.dump() << "\n";
+      return 0;
+    }
 
-    fail("unsupported intent for cuda cpp codegen (supported: dropout, warp)");
+    fail("unsupported intent for cuda cpp codegen (supported: dropout, warp, correlation)");
   } catch (const std::exception& e) {
     std::cerr << "intentir_cuda_codegen error: " << e.what() << "\\n";
     return 3;
