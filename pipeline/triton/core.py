@@ -164,6 +164,27 @@ def _attach_access_witness_meta(intent, *, cert_v2: SemanticCertificateV2 | None
         tp = j.get("tensor_penalty") if isinstance(j.get("tensor_penalty"), dict) else {}
         top = sorted(((str(k), float(v)) for k, v in tp.items()), key=lambda kv: kv[1], reverse=True)[:8]
         meta = dict(getattr(intent, "meta", {}) or {})
+        # Contract V2 summary (obligation-driven) can drive safe fastpath decisions.
+        try:
+            contract = (getattr(cert_v2, "meta", {}) or {}).get("contract")
+            if isinstance(contract, dict):
+                meta["contract_v2"] = {
+                    "level": str(contract.get("level") or ""),
+                    "reasons": list(contract.get("reasons") or []) if isinstance(contract.get("reasons"), list) else [],
+                    "assumptions": list(contract.get("assumptions") or []) if isinstance(contract.get("assumptions"), list) else [],
+                }
+        except Exception:
+            pass
+        # Schedule-hint V2: drift-allowed tuning priors (tile_hints, symbol domains).
+        try:
+            sh = getattr(cert_v2, "schedule_hints", {}) or {}
+            if isinstance(sh, dict):
+                meta["schedule_hints_v2"] = {
+                    "tile_hints": list(sh.get("tile_hints") or []) if isinstance(sh.get("tile_hints"), list) else [],
+                    "symbol_ranges": dict(sh.get("symbol_ranges") or {}) if isinstance(sh.get("symbol_ranges"), dict) else {},
+                }
+        except Exception:
+            pass
         meta["access_witness"] = {
             "dominant_axis": j.get("dominant_axis"),
             "dominant_range": j.get("dominant_range"),
