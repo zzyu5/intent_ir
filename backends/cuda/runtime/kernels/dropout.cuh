@@ -6,7 +6,7 @@
 
 namespace intentir_cuda {
 
-template <int EPT, int N_ROUNDS>
+template <int EPT, int N_ROUNDS, bool FULL_TILE>
 __device__ __forceinline__ void dropout_f32(
     const float* __restrict__ X,
     float p,
@@ -24,7 +24,9 @@ __device__ __forceinline__ void dropout_f32(
     int64_t i = base;
     #pragma unroll
     for (int e = 0; e < EPT; ++e, i += stride) {
-      if (i >= n_elements) break;
+      if constexpr (!FULL_TILE) {
+        if (i >= n_elements) break;
+      }
       Y[i] = intentir_ldg_f32(X + i);
     }
     return;
@@ -33,7 +35,9 @@ __device__ __forceinline__ void dropout_f32(
     int64_t i = base;
     #pragma unroll
     for (int e = 0; e < EPT; ++e, i += stride) {
-      if (i >= n_elements) break;
+      if constexpr (!FULL_TILE) {
+        if (i >= n_elements) break;
+      }
       Y[i] = 0.0f;
     }
     return;
@@ -43,7 +47,9 @@ __device__ __forceinline__ void dropout_f32(
   int64_t i = base;
   #pragma unroll
   for (int e = 0; e < EPT; ++e, i += stride) {
-    if (i >= n_elements) break;
+    if constexpr (!FULL_TILE) {
+      if (i >= n_elements) break;
+    }
     const float x = intentir_ldg_f32(X + i);
     const uint32_t ctr = (uint32_t)i;
     const float r = intentir_uint_to_uniform_float_u32(intentir_philox_randint_u32_rounds<N_ROUNDS>(seed, ctr));
@@ -51,7 +57,7 @@ __device__ __forceinline__ void dropout_f32(
   }
 }
 
-template <int EPT, int N_ROUNDS>
+template <int EPT, int N_ROUNDS, bool FULL_TILE>
 __device__ __forceinline__ void dropout_f32(
     const float* __restrict__ X,
     const float* p_ptr,
@@ -60,7 +66,7 @@ __device__ __forceinline__ void dropout_f32(
     int64_t n_elements) {
   const float p = p_ptr ? p_ptr[0] : 0.0f;
   const uint32_t seed_u32 = (uint32_t)(seed_ptr ? seed_ptr[0] : 0);
-  dropout_f32<EPT, N_ROUNDS>(X, p, seed_u32, Y, n_elements);
+  dropout_f32<EPT, N_ROUNDS, FULL_TILE>(X, p, seed_u32, Y, n_elements);
 }
 
 }  // namespace intentir_cuda

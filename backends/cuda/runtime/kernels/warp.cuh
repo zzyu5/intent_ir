@@ -5,7 +5,7 @@
 
 namespace intentir_cuda {
 
-template <int BLOCK_W>
+template <int BLOCK_W, bool FULL_W>
 __device__ __forceinline__ void warp_q8_8_i8_i16(
     const int8_t* __restrict__ src,
     const int16_t* __restrict__ offset,
@@ -18,7 +18,12 @@ __device__ __forceinline__ void warp_q8_8_i8_i16(
   const int h = (int)blockIdx.y;
   const int c = (int)blockIdx.z;
   const int w = (int)blockIdx.x * BLOCK_W + (int)threadIdx.x;
-  if (h >= H || c >= C || w >= W) return;
+  // `h` and `c` are in-bounds by construction (grid.y = H, grid.z = C).
+  (void)H;
+  (void)C;
+  if constexpr (!FULL_W) {
+    if (w >= W) return;
+  }
   const int64_t hw = (int64_t)H * (int64_t)W;
   const int64_t row_base = (int64_t)c * hw + (int64_t)h * (int64_t)W;
   const int64_t off_base = (int64_t)h * (int64_t)W;
@@ -41,4 +46,3 @@ __device__ __forceinline__ void warp_q8_8_i8_i16(
 }
 
 }  // namespace intentir_cuda
-

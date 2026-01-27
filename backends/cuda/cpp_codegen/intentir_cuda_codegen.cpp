@@ -400,6 +400,8 @@ json emit_dropout(const Intent& intent, const json& bindings) {
   const int64_t denom = block_x * static_cast<int64_t>(ept);
   const int64_t grid_x = (n + denom - 1) / denom;
 
+  const bool specialize_dims = binding_int(bindings, "CUDA_SPECIALIZE_DIMS").value_or(0) != 0;
+
   const bool p_is_scalar = is_scalar_tensor(intent, p_name, "f32");
   const bool seed_is_scalar = is_scalar_tensor(intent, seed_name, "i32");
 
@@ -409,20 +411,54 @@ json emit_dropout(const Intent& intent, const json& bindings) {
   w.blank();
   if (p_is_scalar && seed_is_scalar) {
     w.line("extern \"C\" __global__ void " + intent.name +
-           "(const float* X, float p, int seed, float* Y, int64_t n_elements) {");
+           "(const float* X, float p, int seed, float* Y, int64_t n_elements_in) {");
     w.indent();
+    if (specialize_dims) {
+      w.line("(void)n_elements_in;");
+      w.line("constexpr int64_t n_elements = " + std::to_string(n) + "LL;");
+    } else {
+      w.line("const int64_t n_elements = n_elements_in;");
+    }
+    w.line("constexpr int BLOCK_THREADS = " + std::to_string(block_x) + ";");
     w.line("constexpr int EPT = " + std::to_string(ept) + ";");
     w.line("constexpr int N_ROUNDS = " + std::to_string(rounds) + ";");
-    w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS>(X, p, (uint32_t)seed, Y, n_elements);");
+    w.line("const int64_t tile = (int64_t)BLOCK_THREADS * (int64_t)EPT;");
+    w.line("const bool full_tile = (tile > 0) ? ((n_elements % tile) == 0) : false;");
+    w.line("if (full_tile) {");
+    w.indent();
+    w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p, (uint32_t)seed, Y, n_elements);");
+    w.dedent();
+    w.line("} else {");
+    w.indent();
+    w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, false>(X, p, (uint32_t)seed, Y, n_elements);");
+    w.dedent();
+    w.line("}");
     w.dedent();
     w.line("}");
   } else {
     w.line("extern \"C\" __global__ void " + intent.name +
-           "(const float* X, const float* p_ptr, const int* seed_ptr, float* Y, int64_t n_elements) {");
+           "(const float* X, const float* p_ptr, const int* seed_ptr, float* Y, int64_t n_elements_in) {");
     w.indent();
+    if (specialize_dims) {
+      w.line("(void)n_elements_in;");
+      w.line("constexpr int64_t n_elements = " + std::to_string(n) + "LL;");
+    } else {
+      w.line("const int64_t n_elements = n_elements_in;");
+    }
+    w.line("constexpr int BLOCK_THREADS = " + std::to_string(block_x) + ";");
     w.line("constexpr int EPT = " + std::to_string(ept) + ";");
     w.line("constexpr int N_ROUNDS = " + std::to_string(rounds) + ";");
-    w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS>(X, p_ptr, seed_ptr, Y, n_elements);");
+    w.line("const int64_t tile = (int64_t)BLOCK_THREADS * (int64_t)EPT;");
+    w.line("const bool full_tile = (tile > 0) ? ((n_elements % tile) == 0) : false;");
+    w.line("if (full_tile) {");
+    w.indent();
+    w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p_ptr, seed_ptr, Y, n_elements);");
+    w.dedent();
+    w.line("} else {");
+    w.indent();
+    w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, false>(X, p_ptr, seed_ptr, Y, n_elements);");
+    w.dedent();
+    w.line("}");
     w.dedent();
     w.line("}");
   }
@@ -578,21 +614,18 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     int64_t wmma_warps_n = binding_int(bindings, "WMMA_WARPS_N").value_or(0);
     const bool warps_m_override = wmma_warps_m > 0;
     const bool warps_n_override = wmma_warps_n > 0;
-    (void)warps_n_override;
     int64_t wmma_frag_n = binding_int(bindings, "WMMA_FRAG_N").value_or(1);
 
-    if (wmma_warps_m <= 0 || wmma_warps_n <= 0) {
-      wmma_warps_m = std::max<int64_t>(1, std::min<int64_t>(4, block_y / 16));
-      wmma_warps_n = std::max<int64_t>(1, std::min<int64_t>(8, block_x / 16));
-      if (wmma_warps_n <= 1) {
-        if (N >= 256)
-          wmma_warps_n = 4;
-        else if (N >= 64)
-          wmma_warps_n = 2;
-      }
-      if ((block_y % 16) != 0) wmma_warps_m = (M >= 64) ? 4 : 2;
-      if ((block_x % 16) != 0) wmma_warps_n = (N >= 32) ? 2 : 1;
+    if (wmma_warps_m <= 0) wmma_warps_m = std::max<int64_t>(1, std::min<int64_t>(4, block_y / 16));
+    if (wmma_warps_n <= 0) wmma_warps_n = std::max<int64_t>(1, std::min<int64_t>(8, block_x / 16));
+    if (!warps_n_override && wmma_warps_n <= 1) {
+      if (N >= 256)
+        wmma_warps_n = 4;
+      else if (N >= 64)
+        wmma_warps_n = 2;
     }
+    if (!warps_m_override && (block_y % 16) != 0) wmma_warps_m = (M >= 64) ? 4 : 2;
+    if (!warps_n_override && (block_x % 16) != 0) wmma_warps_n = (N >= 32) ? 2 : 1;
     wmma_warps_m = std::max<int64_t>(1, std::min<int64_t>(4, wmma_warps_m));
     wmma_warps_n = std::max<int64_t>(1, std::min<int64_t>(8, wmma_warps_n));
     if (!warps_m_override && M <= 256) wmma_warps_m = std::max<int64_t>(wmma_warps_m, 2);
@@ -642,7 +675,9 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     if (auto v = binding_int(bindings, "WMMA_USE_CP_ASYNC")) use_cp_async_raw = *v;
     const bool wmma_use_cp_async = (use_cp_async_raw < 0) ? true : (use_cp_async_raw != 0);
 
-    int64_t wmma_pipe_stages = binding_int(bindings, "WMMA_PIPE_STAGES").value_or(0);
+    auto wmma_pipe_opt = binding_int(bindings, "WMMA_PIPE_STAGES");
+    const bool pipe_stages_override = wmma_pipe_opt.has_value() && (*wmma_pipe_opt > 0);
+    int64_t wmma_pipe_stages = wmma_pipe_opt.value_or(0);
     if (!wmma_use_cp_async) {
       wmma_pipe_stages = 1;
     } else {
@@ -686,16 +721,17 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     }
 
     bool wmma_force_sync = false;
-    if (wmma_pipe_stages == 2) {
+    if (!pipe_stages_override && wmma_pipe_stages == 2) {
       const int64_t bytes3 = wmma_smem_bytes(wmma_stage_k, 3);
       if (bytes3 <= max_smem_optin) {
         wmma_pipe_stages = 3;
         shared_bytes = bytes3;
-      } else {
-        wmma_force_sync = true;
-        wmma_pipe_stages = 1;
-        shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
       }
+    }
+    if (shared_bytes > max_smem_optin) {
+      wmma_force_sync = true;
+      wmma_pipe_stages = 1;
+      shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
     }
 
     shared_bytes = ((shared_bytes + 15) / 16) * 16;
@@ -833,6 +869,8 @@ json emit_warp(const Intent& intent, const json& bindings) {
   const int64_t W = binding_int(bindings, "W").value_or(-1);
   if (C <= 0 || H <= 0 || W <= 0) fail("warp missing/invalid bindings: C/H/W");
 
+  const bool specialize_dims = binding_int(bindings, "CUDA_SPECIALIZE_DIMS").value_or(0) != 0;
+
   int64_t block_w = binding_int(bindings, "BLOCK_W").value_or(128);
   const int64_t hinted = resolve_schedule_int(intent, bindings, "tile_n", block_w);
   if (0 < hinted && hinted <= 1024) block_w = hinted;
@@ -846,10 +884,31 @@ json emit_warp(const Intent& intent, const json& bindings) {
   w.blank();
   w.line("extern \"C\" __global__ void " + intent.name +
          "(const int8_t* __restrict__ " + src_name + ", const int16_t* __restrict__ " + offset_name + ", int8_t* __restrict__ " + out_name +
-         ", int C, int H, int W) {");
+         ", int C_in, int H_in, int W_in) {");
   w.indent();
   w.line("constexpr int BLOCK_W = " + std::to_string(block_w) + ";");
-  w.line("intentir_cuda::warp_q8_8_i8_i16<BLOCK_W>(" + src_name + ", " + offset_name + ", " + out_name + ", C, H, W);");
+  if (specialize_dims) {
+    w.line("(void)C_in;");
+    w.line("(void)H_in;");
+    w.line("(void)W_in;");
+    w.line("constexpr int C = " + std::to_string(C) + ";");
+    w.line("constexpr int H = " + std::to_string(H) + ";");
+    w.line("constexpr int W = " + std::to_string(W) + ";");
+  } else {
+    w.line("const int C = C_in;");
+    w.line("const int H = H_in;");
+    w.line("const int W = W_in;");
+  }
+  w.line("const bool full_w = ((W % BLOCK_W) == 0);");
+  w.line("if (full_w) {");
+  w.indent();
+  w.line("intentir_cuda::warp_q8_8_i8_i16<BLOCK_W, true>(" + src_name + ", " + offset_name + ", " + out_name + ", C, H, W);");
+  w.dedent();
+  w.line("} else {");
+  w.indent();
+  w.line("intentir_cuda::warp_q8_8_i8_i16<BLOCK_W, false>(" + src_name + ", " + offset_name + ", " + out_name + ", C, H, W);");
+  w.dedent();
+  w.line("}");
   w.dedent();
   w.line("}");
 

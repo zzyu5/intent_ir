@@ -1036,16 +1036,30 @@ def _kernel_dropout_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cud
 
     grid_x = (n + (block_x * ept) - 1) // (block_x * ept)
 
+    specialize_dims = bool(int(bindings.get("CUDA_SPECIALIZE_DIMS", 0) or 0))
     p_is_scalar = _is_scalar_tensor(intent, str(p_name), dtype="f32")
     seed_is_scalar = _is_scalar_tensor(intent, str(seed_name), dtype="i32")
+    n_decl = (
+        f"(void)n_elements_in;\n  constexpr int64_t n_elements = {int(n)}LL;"
+        if specialize_dims
+        else "const int64_t n_elements = n_elements_in;"
+    )
     if p_is_scalar and seed_is_scalar:
         cuda_src = f"""
 #include "kernels/dropout.cuh"
 
-extern "C" __global__ void {intent.name}(const float* X, float p, int seed, float* Y, int64_t n_elements) {{
+extern "C" __global__ void {intent.name}(const float* X, float p, int seed, float* Y, int64_t n_elements_in) {{
+  {n_decl}
+  constexpr int BLOCK_THREADS = {block_x};
   constexpr int EPT = {ept};
   constexpr int N_ROUNDS = {rounds};
-  intentir_cuda::dropout_f32<EPT, N_ROUNDS>(X, p, (uint32_t)seed, Y, n_elements);
+  const int64_t tile = (int64_t)BLOCK_THREADS * (int64_t)EPT;
+  const bool full_tile = (tile > 0) ? ((n_elements % tile) == 0) : false;
+  if (full_tile) {{
+    intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p, (uint32_t)seed, Y, n_elements);
+  }} else {{
+    intentir_cuda::dropout_f32<EPT, N_ROUNDS, false>(X, p, (uint32_t)seed, Y, n_elements);
+  }}
 }}
 """.lstrip()
         io_spec = _io_spec_from_args(
@@ -1058,10 +1072,18 @@ extern "C" __global__ void {intent.name}(const float* X, float p, int seed, floa
         cuda_src = f"""
 #include "kernels/dropout.cuh"
 
-extern "C" __global__ void {intent.name}(const float* X, const float* p_ptr, const int* seed_ptr, float* Y, int64_t n_elements) {{
+extern "C" __global__ void {intent.name}(const float* X, const float* p_ptr, const int* seed_ptr, float* Y, int64_t n_elements_in) {{
+  {n_decl}
+  constexpr int BLOCK_THREADS = {block_x};
   constexpr int EPT = {ept};
   constexpr int N_ROUNDS = {rounds};
-  intentir_cuda::dropout_f32<EPT, N_ROUNDS>(X, p_ptr, seed_ptr, Y, n_elements);
+  const int64_t tile = (int64_t)BLOCK_THREADS * (int64_t)EPT;
+  const bool full_tile = (tile > 0) ? ((n_elements % tile) == 0) : false;
+  if (full_tile) {{
+    intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p_ptr, seed_ptr, Y, n_elements);
+  }} else {{
+    intentir_cuda::dropout_f32<EPT, N_ROUNDS, false>(X, p_ptr, seed_ptr, Y, n_elements);
+  }}
 }}
 """.lstrip()
         io_spec = _io_spec_from_args(
@@ -1908,12 +1930,25 @@ def _kernel_warp_q8_8_i8_i16(intent: IntentFunction, bindings: Dict[str, int]) -
         block_w = 1024
     grid_w = (W + block_w - 1) // block_w
 
+    specialize_dims = bool(int(bindings.get("CUDA_SPECIALIZE_DIMS", 0) or 0))
+    dim_decl = (
+        f"(void)C_in; (void)H_in; (void)W_in;\n  constexpr int C = {int(C)};\n  constexpr int H = {int(H)};\n  constexpr int W = {int(W)};"
+        if specialize_dims
+        else "const int C = C_in;\n  const int H = H_in;\n  const int W = W_in;"
+    )
+
     cuda_src = f"""
 #include "kernels/warp.cuh"
 
-extern "C" __global__ void {intent.name}(const int8_t* __restrict__ {src_name}, const int16_t* __restrict__ {offset_name}, int8_t* __restrict__ {out_name}, int C, int H, int W) {{
+extern "C" __global__ void {intent.name}(const int8_t* __restrict__ {src_name}, const int16_t* __restrict__ {offset_name}, int8_t* __restrict__ {out_name}, int C_in, int H_in, int W_in) {{
   constexpr int BLOCK_W = {block_w};
-  intentir_cuda::warp_q8_8_i8_i16<BLOCK_W>({src_name}, {offset_name}, {out_name}, C, H, W);
+  {dim_decl}
+  const bool full_w = ((W % BLOCK_W) == 0);
+  if (full_w) {{
+    intentir_cuda::warp_q8_8_i8_i16<BLOCK_W, true>({src_name}, {offset_name}, {out_name}, C, H, W);
+  }} else {{
+    intentir_cuda::warp_q8_8_i8_i16<BLOCK_W, false>({src_name}, {offset_name}, {out_name}, C, H, W);
+  }}
 }}
 """.lstrip()
 
