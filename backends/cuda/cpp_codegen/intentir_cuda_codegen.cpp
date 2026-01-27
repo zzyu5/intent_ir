@@ -493,6 +493,142 @@ json emit_resize_bilinear2x_i8(const Intent& intent, const json& bindings) {
   return out;
 }
 
+json emit_rope_f32(const Intent& intent, const json& bindings) {
+  if (!(intent.ops.size() == 1 && intent.ops[0].op == "rope")) fail("rope lowering expects a single rope op");
+  const Op& op = intent.ops[0];
+  if (op.inputs.size() != 3) fail("rope expects 3 inputs (input, cos, sin)");
+  const std::string in_name = op.inputs[0];
+  const std::string cos_name = op.inputs[1];
+  const std::string sin_name = op.inputs[2];
+  const std::string out_name = op.output;
+
+  const int64_t SEQ = binding_int(bindings, "SEQ_LEN").value_or(-1);
+  const int64_t B = binding_int(bindings, "BATCH_NUM").value_or(-1);
+  const int64_t H = binding_int(bindings, "HEAD_NUM").value_or(-1);
+  const int64_t D = binding_int(bindings, "HEAD_DIM").value_or(-1);
+  if (SEQ <= 0 || B <= 0 || H <= 0 || D <= 0) fail("rope missing/invalid bindings: SEQ_LEN/BATCH_NUM/HEAD_NUM/HEAD_DIM");
+  if ((D & 1) != 0) fail("rope expects even HEAD_DIM");
+  const int64_t half = D / 2;
+
+  int64_t heads_per_block = binding_int(bindings, "ROPE_HEADS_PER_BLOCK").value_or(1);
+  if (heads_per_block <= 0) heads_per_block = 1;
+  if (heads_per_block > 16) heads_per_block = 16;
+  if (heads_per_block > H) heads_per_block = H;
+
+  int64_t rope_vec = binding_int(bindings, "ROPE_VEC").value_or(4);
+  if (!(rope_vec == 1 || rope_vec == 2 || rope_vec == 4)) rope_vec = 4;
+  if (rope_vec == 4 && (half & 3) != 0) rope_vec = ((half & 1) == 0) ? 2 : 1;
+  if (rope_vec == 2 && (half & 1) != 0) rope_vec = 1;
+
+  int64_t packs = half;
+  if (rope_vec == 4) packs = half / 4;
+  else if (rope_vec == 2) packs = half / 2;
+
+  auto next_pow2 = [](int64_t x) -> int64_t {
+    if (x <= 1) return 1;
+    int64_t p = 1;
+    while (p < x) p <<= 1;
+    return p;
+  };
+
+  int64_t block_x = binding_int(bindings, "ROPE_THREADS").value_or(0);
+  if (block_x <= 0) {
+    const int64_t target = std::max<int64_t>(1, packs / 4);
+    block_x = next_pow2(target);
+    if (block_x < 32) block_x = 32;
+    if (block_x > 256) block_x = 256;
+  }
+  if (block_x < 32) block_x = 32;
+  if ((block_x % 32) != 0) block_x = ((block_x + 31) / 32) * 32;
+  if (block_x > 1024) block_x = 1024;
+
+  const int64_t total_elems = SEQ * B * H * D;
+  const bool use_i32 = total_elems <= ((1LL << 31) - 1);
+  const std::string idx_t = use_i32 ? "int" : "size_t";
+
+  const bool seq_is_tensor = is_scalar_tensor(intent, "SEQ_LEN", "i32");
+  const bool b_is_tensor = is_scalar_tensor(intent, "BATCH_NUM", "i32");
+  const bool h_is_tensor = is_scalar_tensor(intent, "HEAD_NUM", "i32");
+  const bool d_is_tensor = is_scalar_tensor(intent, "HEAD_DIM", "i32");
+
+  auto dim_param = [&](const char* name, bool is_tensor) -> std::string {
+    return is_tensor ? std::string("const int* ") + name + "_ptr" : std::string("int ") + name;
+  };
+  auto dim_load = [&](const char* name, bool is_tensor) -> std::string {
+    if (!is_tensor) return "";
+    return std::string("const int ") + name + " = " + name + "_ptr ? " + name + "_ptr[0] : 0;";
+  };
+
+  const int64_t iters = std::max<int64_t>(1, (packs + block_x - 1) / block_x);
+
+  std::ostringstream cuda_ss;
+  CodeWriter w(cuda_ss);
+  w.line("#include \"kernels/rope.cuh\"");
+  w.blank();
+  w.line("extern \"C\" __global__ void " + intent.name + "(");
+  w.indent();
+  w.line("const float* __restrict__ " + in_name + ", const float* __restrict__ " + cos_name + ", const float* __restrict__ " + sin_name +
+         ", float* __restrict__ " + out_name + ",");
+  w.line(dim_param("SEQ_LEN", seq_is_tensor) + ", " + dim_param("BATCH_NUM", b_is_tensor) + ", " + dim_param("HEAD_NUM", h_is_tensor) + ", " +
+         dim_param("HEAD_DIM", d_is_tensor) + ") {");
+  w.dedent();
+  w.indent();
+  const std::string seq_load = dim_load("SEQ_LEN", seq_is_tensor);
+  const std::string b_load = dim_load("BATCH_NUM", b_is_tensor);
+  const std::string h_load = dim_load("HEAD_NUM", h_is_tensor);
+  const std::string d_load = dim_load("HEAD_DIM", d_is_tensor);
+  if (!seq_load.empty()) w.line(seq_load);
+  if (!b_load.empty()) w.line(b_load);
+  if (!h_load.empty()) w.line(h_load);
+  if (!d_load.empty()) w.line(d_load);
+  w.line("constexpr int HEADS_PER_BLOCK = " + std::to_string(heads_per_block) + ";");
+  w.line("constexpr int ROPE_VEC = " + std::to_string(rope_vec) + ";");
+  w.line("constexpr int BLOCK_X = " + std::to_string(block_x) + ";");
+  w.line("constexpr int ITERS = " + std::to_string(iters) + ";");
+  w.line("using idx_t = " + idx_t + ";");
+  w.line("intentir_cuda::rope_f32<HEADS_PER_BLOCK, ROPE_VEC, BLOCK_X, ITERS, idx_t>(" + in_name + ", " + cos_name + ", " + sin_name + ", " +
+         out_name + ", SEQ_LEN, BATCH_NUM, HEAD_NUM, HEAD_DIM);");
+  w.dedent();
+  w.line("}");
+
+  std::vector<std::string> tensor_args = {in_name, cos_name, sin_name, out_name};
+  std::unordered_map<std::string, std::string> scalar_args;
+  std::vector<std::string> arg_names = {in_name, cos_name, sin_name, out_name};
+  for (const auto& dim_name : {"SEQ_LEN", "BATCH_NUM", "HEAD_NUM", "HEAD_DIM"}) {
+    if (is_scalar_tensor(intent, dim_name, "i32")) {
+      tensor_args.push_back(dim_name);
+      arg_names.push_back(dim_name);
+    } else {
+      scalar_args.emplace(dim_name, "i32");
+      arg_names.push_back(dim_name);
+    }
+  }
+
+  json out_bindings = bindings;
+  try {
+    auto it = intent.tensors.find(cos_name);
+    if (it != intent.tensors.end() && it->second.shape.size() >= 2 && it->second.shape[1].is_string()) {
+      const std::string sym = it->second.shape[1].get<std::string>();
+      if (!sym.empty()) out_bindings.emplace(sym, half);
+    } else {
+      out_bindings.emplace("HEAD_DIM_DIV_2", half);
+    }
+  } catch (...) {
+    out_bindings.emplace("HEAD_DIM_DIV_2", half);
+  }
+
+  const int64_t grid_x = (H + heads_per_block - 1) / heads_per_block;
+
+  json out;
+  out["kernel_name"] = intent.name;
+  out["cuda_src"] = cuda_ss.str();
+  out["io_spec"] = io_spec_from_args(intent, tensor_args, scalar_args, arg_names);
+  out["launch"] = {{"grid", {grid_x, B, SEQ}}, {"block", {block_x, 1, 1}}, {"shared_mem", 0}};
+  out["output_names"] = {out_name};
+  out["bindings"] = out_bindings;
+  return out;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -539,8 +675,13 @@ int main(int argc, char** argv) {
       std::cout << out.dump() << "\n";
       return 0;
     }
+    if (intent.ops.size() == 1 && intent.ops[0].op == "rope") {
+      json out = emit_rope_f32(intent, bindings_json);
+      std::cout << out.dump() << "\n";
+      return 0;
+    }
 
-    fail("unsupported intent for cuda cpp codegen (supported: dropout, warp, correlation, resize)");
+    fail("unsupported intent for cuda cpp codegen (supported: dropout, warp, correlation, resize, rope)");
   } catch (const std::exception& e) {
     std::cerr << "intentir_cuda_codegen error: " << e.what() << "\\n";
     return 3;
