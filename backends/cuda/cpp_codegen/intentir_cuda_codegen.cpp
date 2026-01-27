@@ -1992,9 +1992,13 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
   const int64_t C = *C_opt;
   if (C > 1024) fail("softmax MVP supports only C<=1024");
 
+  const bool respect_schedule = binding_int(bindings, "CUDA_RESPECT_SCHEDULE").value_or(0) != 0;
+
   int64_t block_threads = 0;
-  const int64_t hinted_threads = resolve_schedule_int(intent, bindings, "tile_m", 0);
-  if (hinted_threads && 0 < hinted_threads && hinted_threads <= 1024) block_threads = hinted_threads;
+  if (respect_schedule) {
+    const int64_t hinted_threads = resolve_schedule_int(intent, bindings, "tile_n", 0);
+    if (hinted_threads && 0 < hinted_threads && hinted_threads <= 1024) block_threads = hinted_threads;
+  }
   if (block_threads <= 0) block_threads = (C >= 128) ? 128 : 64;
   if (block_threads < 32) block_threads = 32;
   if ((block_threads % 32) != 0) block_threads = ((block_threads + 31) / 32) * 32;
@@ -2165,8 +2169,21 @@ json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
   }
   if (!eps.has_value()) eps = binding_double(bindings, "eps").value_or(1e-5);
 
-  int64_t block_x = resolve_schedule_int(intent, bindings, "tile_n", 256);
-  if (block_x <= 0) block_x = 256;
+  const bool respect_schedule = binding_int(bindings, "CUDA_RESPECT_SCHEDULE").value_or(0) != 0;
+
+  int64_t block_x = 0;
+  if (auto tuned = binding_int(bindings, "LAYERNORM_THREADS")) {
+    if (0 < *tuned && *tuned <= 1024) block_x = *tuned;
+  }
+  if (block_x <= 0 && respect_schedule) {
+    block_x = resolve_schedule_int(intent, bindings, "tile_n", 0);
+  }
+  if (block_x <= 0) {
+    // Heuristic default: favor more threads for wide reductions, but avoid very
+    // large blocks that can hurt occupancy.
+    block_x = (N >= 2048) ? 128 : 64;
+  }
+  if (block_x < 32) block_x = 32;
   if (block_x > 1024) block_x = 1024;
   auto is_pow2 = [](int64_t x) -> bool { return x > 0 && ((x & (x - 1)) == 0); };
   auto floor_pow2 = [](int64_t x) -> int64_t {
