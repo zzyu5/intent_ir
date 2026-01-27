@@ -614,6 +614,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     int64_t wmma_warps_n = binding_int(bindings, "WMMA_WARPS_N").value_or(0);
     const bool warps_m_override = wmma_warps_m > 0;
     const bool warps_n_override = wmma_warps_n > 0;
+    int64_t wmma_frag_m = binding_int(bindings, "WMMA_FRAG_M").value_or(1);
     int64_t wmma_frag_n = binding_int(bindings, "WMMA_FRAG_N").value_or(1);
 
     if (wmma_warps_m <= 0) wmma_warps_m = std::max<int64_t>(1, std::min<int64_t>(4, block_y / 16));
@@ -629,6 +630,11 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     wmma_warps_m = std::max<int64_t>(1, std::min<int64_t>(4, wmma_warps_m));
     wmma_warps_n = std::max<int64_t>(1, std::min<int64_t>(8, wmma_warps_n));
     if (!warps_m_override && M <= 256) wmma_warps_m = std::max<int64_t>(wmma_warps_m, 2);
+
+    if (wmma_frag_m <= 0) wmma_frag_m = 1;
+    if (!(wmma_frag_m == 1 || wmma_frag_m == 2)) wmma_frag_m = 1;
+    if ((wmma_warps_m % wmma_frag_m) != 0) wmma_frag_m = 1;
+    wmma_warps_m = std::max<int64_t>(1, wmma_warps_m / wmma_frag_m);
 
     if (wmma_frag_n <= 0) wmma_frag_n = 1;
     if (!(wmma_frag_n == 1 || wmma_frag_n == 2)) wmma_frag_n = 1;
@@ -652,7 +658,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     if ((K % wmma_stage_k) != 0) wmma_stage_k = 16;
     if ((K % wmma_stage_k) != 0) wmma_stage_k = 8;
 
-    const int64_t wmma_tile_m = 16 * wmma_warps_m;
+    const int64_t wmma_tile_m = 16 * wmma_warps_m * wmma_frag_m;
     const int64_t wmma_tile_n = 16 * wmma_warps_n * wmma_frag_n;
     const int64_t wmma_grid_x = (N + wmma_tile_n - 1) / wmma_tile_n;
     const int64_t wmma_grid_y = (M + wmma_tile_m - 1) / wmma_tile_m;
@@ -681,7 +687,9 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     if (!wmma_use_cp_async) {
       wmma_pipe_stages = 1;
     } else {
-      if (wmma_pipe_stages <= 0) wmma_pipe_stages = 3;
+      const int64_t num_tiles = (wmma_stage_k > 0) ? (K / wmma_stage_k) : 0;
+      const bool prefer_two_stage = (!pipe_stages_override && num_tiles > 0 && num_tiles <= 4);
+      if (wmma_pipe_stages <= 0) wmma_pipe_stages = prefer_two_stage ? 2 : 3;
       if (!(wmma_pipe_stages == 2 || wmma_pipe_stages == 3)) wmma_pipe_stages = 3;
     }
 
@@ -721,7 +729,9 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     }
 
     bool wmma_force_sync = false;
-    if (!pipe_stages_override && wmma_pipe_stages == 2) {
+    const int64_t num_tiles = (wmma_stage_k > 0) ? (K / wmma_stage_k) : 0;
+    const bool prefer_two_stage = (!pipe_stages_override && num_tiles > 0 && num_tiles <= 4);
+    if (!pipe_stages_override && !prefer_two_stage && wmma_pipe_stages == 2) {
       const int64_t bytes3 = wmma_smem_bytes(wmma_stage_k, 3);
       if (bytes3 <= max_smem_optin) {
         wmma_pipe_stages = 3;
@@ -762,6 +772,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     w.blank();
     w.line("constexpr int WARPS_M = " + std::to_string(wmma_warps_m) + ";");
     w.line("constexpr int WARPS_N = " + std::to_string(wmma_warps_n) + ";");
+    w.line("constexpr int FRAG_M = " + std::to_string(wmma_frag_m) + ";");
     w.line("constexpr int FRAG_N = " + std::to_string(wmma_frag_n) + ";");
     w.line("constexpr int STAGE_K = " + std::to_string(wmma_stage_k) + ";");
     w.line("constexpr int AS_PAD = " + std::to_string(wmma_as_pad) + ";");
@@ -772,6 +783,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     w.indent();
     w.line("WARPS_M,");
     w.line("WARPS_N,");
+    w.line("FRAG_M,");
     w.line("FRAG_N,");
     w.line("STAGE_K,");
     w.line("AS_PAD,");

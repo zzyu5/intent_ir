@@ -124,6 +124,7 @@ __device__ __forceinline__ void mma_tf32_m16n16k8_rr(
 template <
     int WARPS_M,
     int WARPS_N,
+    int FRAG_M,
     int FRAG_N,
     int STAGE_K,
     int AS_PAD,
@@ -142,7 +143,7 @@ __device__ __forceinline__ void wmma_matmul_f32_tf32(
     int N,
     int K) {
   using namespace nvcuda::wmma;
-  constexpr int TILE_M = 16 * WARPS_M;
+  constexpr int TILE_M = 16 * WARPS_M * FRAG_M;
   constexpr int TILE_N = 16 * WARPS_N * FRAG_N;
   constexpr int AS_LD = STAGE_K + AS_PAD;
   constexpr int BS_LD = TILE_N + BS_PAD;
@@ -166,16 +167,18 @@ __device__ __forceinline__ void wmma_matmul_f32_tf32(
                              : (ENABLE_FASTPATH && (row0 + TILE_M <= M) && (col0 + TILE_N <= N) && ((K % STAGE_K) == 0) &&
                                 ((K & 3) == 0) && ((N & 3) == 0));
 
-  fragment<accumulator, 16, 16, 8, float> acc0;
-  fill_fragment(acc0, 0.0f);
-  fragment<accumulator, 16, 16, 8, float> acc1;
-  if constexpr (FRAG_N > 1) {
-    fill_fragment(acc1, 0.0f);
+  fragment<accumulator, 16, 16, 8, float> acc[FRAG_M][FRAG_N];
+  #pragma unroll
+  for (int fm = 0; fm < FRAG_M; ++fm) {
+    #pragma unroll
+    for (int fn = 0; fn < FRAG_N; ++fn) {
+      fill_fragment(acc[fm][fn], 0.0f);
+    }
   }
 
   if (full_tile) {
     fragment<matrix_a, 16, 16, 8, precision::tf32, row_major> a_frag;
-    fragment<matrix_b, 16, 16, 8, precision::tf32, row_major> b_frag;
+    fragment<matrix_b, 16, 16, 8, precision::tf32, row_major> b_frag[FRAG_N];
 
     if constexpr (USE_CP_ASYNC) {
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
@@ -197,21 +200,23 @@ __device__ __forceinline__ void wmma_matmul_f32_tf32(
 
           #pragma unroll
           for (int kk0 = 0; kk0 < STAGE_K; kk0 += 8) {
-            load_matrix_sync(
-                a_frag,
-                As + (size_t)buf * (size_t)(TILE_M * AS_LD) + (size_t)(warp_m * 16) * (size_t)AS_LD + (size_t)kk0,
-                AS_LD);
-            load_matrix_sync(
-                b_frag,
-                Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16),
-                BS_LD);
-            mma_tf32_m16n16k8_rr(acc0, a_frag, b_frag);
-            if constexpr (FRAG_N > 1) {
+            #pragma unroll
+            for (int fn = 0; fn < FRAG_N; ++fn) {
               load_matrix_sync(
-                  b_frag,
-                  Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16),
+                  b_frag[fn],
+                  Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + fn) * 16),
                   BS_LD);
-              mma_tf32_m16n16k8_rr(acc1, a_frag, b_frag);
+            }
+            #pragma unroll
+            for (int fm = 0; fm < FRAG_M; ++fm) {
+              load_matrix_sync(
+                  a_frag,
+                  As + (size_t)buf * (size_t)(TILE_M * AS_LD) + (size_t)((warp_m * FRAG_M + fm) * 16) * (size_t)AS_LD + (size_t)kk0,
+                  AS_LD);
+              #pragma unroll
+              for (int fn = 0; fn < FRAG_N; ++fn) {
+                mma_tf32_m16n16k8_rr(acc[fm][fn], a_frag, b_frag[fn]);
+              }
             }
           }
 
@@ -255,21 +260,23 @@ __device__ __forceinline__ void wmma_matmul_f32_tf32(
 
           #pragma unroll
           for (int kk0 = 0; kk0 < STAGE_K; kk0 += 8) {
-            load_matrix_sync(
-                a_frag,
-                As + (size_t)read_buf * (size_t)(TILE_M * AS_LD) + (size_t)(warp_m * 16) * (size_t)AS_LD + (size_t)kk0,
-                AS_LD);
-            load_matrix_sync(
-                b_frag,
-                Bs + (size_t)read_buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16),
-                BS_LD);
-            mma_tf32_m16n16k8_rr(acc0, a_frag, b_frag);
-            if constexpr (FRAG_N > 1) {
+            #pragma unroll
+            for (int fn = 0; fn < FRAG_N; ++fn) {
               load_matrix_sync(
-                  b_frag,
-                  Bs + (size_t)read_buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16),
+                  b_frag[fn],
+                  Bs + (size_t)read_buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + fn) * 16),
                   BS_LD);
-              mma_tf32_m16n16k8_rr(acc1, a_frag, b_frag);
+            }
+            #pragma unroll
+            for (int fm = 0; fm < FRAG_M; ++fm) {
+              load_matrix_sync(
+                  a_frag,
+                  As + (size_t)read_buf * (size_t)(TILE_M * AS_LD) + (size_t)((warp_m * FRAG_M + fm) * 16) * (size_t)AS_LD + (size_t)kk0,
+                  AS_LD);
+              #pragma unroll
+              for (int fn = 0; fn < FRAG_N; ++fn) {
+                mma_tf32_m16n16k8_rr(acc[fm][fn], a_frag, b_frag[fn]);
+              }
             }
           }
 
@@ -314,12 +321,17 @@ __device__ __forceinline__ void wmma_matmul_f32_tf32(
         __syncthreads();
         #pragma unroll
         for (int kk0 = 0; kk0 < STAGE_K; kk0 += 8) {
-          load_matrix_sync(a_frag, As + (size_t)(warp_m * 16) * (size_t)AS_LD + (size_t)kk0, AS_LD);
-          load_matrix_sync(b_frag, Bs + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16), BS_LD);
-          mma_tf32_m16n16k8_rr(acc0, a_frag, b_frag);
-          if constexpr (FRAG_N > 1) {
-            load_matrix_sync(b_frag, Bs + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16), BS_LD);
-            mma_tf32_m16n16k8_rr(acc1, a_frag, b_frag);
+          #pragma unroll
+          for (int fn = 0; fn < FRAG_N; ++fn) {
+            load_matrix_sync(b_frag[fn], Bs + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + fn) * 16), BS_LD);
+          }
+          #pragma unroll
+          for (int fm = 0; fm < FRAG_M; ++fm) {
+            load_matrix_sync(a_frag, As + (size_t)((warp_m * FRAG_M + fm) * 16) * (size_t)AS_LD + (size_t)kk0, AS_LD);
+            #pragma unroll
+            for (int fn = 0; fn < FRAG_N; ++fn) {
+              mma_tf32_m16n16k8_rr(acc[fm][fn], a_frag, b_frag[fn]);
+            }
           }
         }
         __syncthreads();
@@ -354,31 +366,38 @@ __device__ __forceinline__ void wmma_matmul_f32_tf32(
         __syncthreads();
         #pragma unroll
         for (int kk0 = 0; kk0 < STAGE_K; kk0 += 8) {
-          load_matrix_sync(a_frag, As + (size_t)(warp_m * 16) * (size_t)AS_LD + (size_t)kk0, AS_LD);
-          load_matrix_sync(b_frag, Bs + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16), BS_LD);
-          mma_tf32_m16n16k8_rr(acc0, a_frag, b_frag);
-          if constexpr (FRAG_N > 1) {
-            load_matrix_sync(b_frag, Bs + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16), BS_LD);
-            mma_tf32_m16n16k8_rr(acc1, a_frag, b_frag);
+          #pragma unroll
+          for (int fn = 0; fn < FRAG_N; ++fn) {
+            load_matrix_sync(b_frag[fn], Bs + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + fn) * 16), BS_LD);
+          }
+          #pragma unroll
+          for (int fm = 0; fm < FRAG_M; ++fm) {
+            load_matrix_sync(a_frag, As + (size_t)((warp_m * FRAG_M + fm) * 16) * (size_t)AS_LD + (size_t)kk0, AS_LD);
+            #pragma unroll
+            for (int fn = 0; fn < FRAG_N; ++fn) {
+              mma_tf32_m16n16k8_rr(acc[fm][fn], a_frag, b_frag[fn]);
+            }
           }
         }
         __syncthreads();
       }
     }
 
-    const int out_r = row0 + warp_m * 16;
-    const int out_c0 = col0 + (warp_n * FRAG_N + 0) * 16;
-    store_matrix_sync(C + (size_t)out_r * (size_t)N + (size_t)out_c0, acc0, (unsigned)N, mem_row_major);
-    if constexpr (FRAG_N > 1) {
-      const int out_c1 = col0 + (warp_n * FRAG_N + 1) * 16;
-      store_matrix_sync(C + (size_t)out_r * (size_t)N + (size_t)out_c1, acc1, (unsigned)N, mem_row_major);
+    #pragma unroll
+    for (int fm = 0; fm < FRAG_M; ++fm) {
+      const int out_r = row0 + (warp_m * FRAG_M + fm) * 16;
+      #pragma unroll
+      for (int fn = 0; fn < FRAG_N; ++fn) {
+        const int out_c = col0 + (warp_n * FRAG_N + fn) * 16;
+        store_matrix_sync(C + (size_t)out_r * (size_t)N + (size_t)out_c, acc[fm][fn], (unsigned)N, mem_row_major);
+      }
     }
     return;
   }
 
   if constexpr (!SPECIALIZE_FULL_TILE) {
     fragment<matrix_a, 16, 16, 8, precision::tf32, row_major> a_frag;
-    fragment<matrix_b, 16, 16, 8, precision::tf32, row_major> b_frag;
+    fragment<matrix_b, 16, 16, 8, precision::tf32, row_major> b_frag[FRAG_N];
     for (int k0 = 0; k0 < K; k0 += STAGE_K) {
       const int tid = (int)threadIdx.x;
       const int total = TILE_M * STAGE_K + STAGE_K * TILE_N;
@@ -403,32 +422,37 @@ __device__ __forceinline__ void wmma_matmul_f32_tf32(
       __syncthreads();
       #pragma unroll
       for (int kk0 = 0; kk0 < STAGE_K; kk0 += 8) {
-        load_matrix_sync(a_frag, As + (size_t)0 * (size_t)(TILE_M * AS_LD) + (size_t)(warp_m * 16) * (size_t)AS_LD + (size_t)kk0, AS_LD);
-        load_matrix_sync(
-            b_frag,
-            Bs + (size_t)0 * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 0) * 16),
-            BS_LD);
-        mma_tf32_m16n16k8_rr(acc0, a_frag, b_frag);
-        if constexpr (FRAG_N > 1) {
+        #pragma unroll
+        for (int fn = 0; fn < FRAG_N; ++fn) {
           load_matrix_sync(
-              b_frag,
-              Bs + (size_t)0 * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + 1) * 16),
+              b_frag[fn],
+              Bs + (size_t)0 * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + fn) * 16),
               BS_LD);
-          mma_tf32_m16n16k8_rr(acc1, a_frag, b_frag);
+        }
+        #pragma unroll
+        for (int fm = 0; fm < FRAG_M; ++fm) {
+          load_matrix_sync(
+              a_frag,
+              As + (size_t)0 * (size_t)(TILE_M * AS_LD) + (size_t)((warp_m * FRAG_M + fm) * 16) * (size_t)AS_LD + (size_t)kk0,
+              AS_LD);
+          #pragma unroll
+          for (int fn = 0; fn < FRAG_N; ++fn) {
+            mma_tf32_m16n16k8_rr(acc[fm][fn], a_frag, b_frag[fn]);
+          }
         }
       }
       __syncthreads();
     }
 
-    const int out_r = row0 + warp_m * 16;
-    const int out_c0 = col0 + (warp_n * FRAG_N + 0) * 16;
-    if (out_r < M && out_c0 < N) {
-      store_matrix_sync(C + (size_t)out_r * (size_t)N + (size_t)out_c0, acc0, (unsigned)N, mem_row_major);
-    }
-    if constexpr (FRAG_N > 1) {
-      const int out_c1 = col0 + (warp_n * FRAG_N + 1) * 16;
-      if (out_r < M && out_c1 < N) {
-        store_matrix_sync(C + (size_t)out_r * (size_t)N + (size_t)out_c1, acc1, (unsigned)N, mem_row_major);
+    #pragma unroll
+    for (int fm = 0; fm < FRAG_M; ++fm) {
+      const int out_r = row0 + (warp_m * FRAG_M + fm) * 16;
+      #pragma unroll
+      for (int fn = 0; fn < FRAG_N; ++fn) {
+        const int out_c = col0 + (warp_n * FRAG_N + fn) * 16;
+        if (out_r < M && out_c < N) {
+          store_matrix_sync(C + (size_t)out_r * (size_t)N + (size_t)out_c, acc[fm][fn], (unsigned)N, mem_row_major);
+        }
       }
     }
   }

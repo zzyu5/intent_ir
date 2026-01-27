@@ -660,6 +660,7 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
         wmma_warps_n = int(bindings.get("WMMA_WARPS_N", 0) or 0)
         warps_m_override = wmma_warps_m > 0
         warps_n_override = wmma_warps_n > 0
+        wmma_frag_m = int(bindings.get("WMMA_FRAG_M", 1) or 0)
         wmma_frag_n = int(bindings.get("WMMA_FRAG_N", 1) or 0)
         if wmma_warps_m <= 0 or wmma_warps_n <= 0:
             wmma_warps_m = max(1, min(4, int(block_y) // 16))
@@ -691,6 +692,16 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
             # using only 1 warp in M (TILE_M=16) increases B load redundancy and
             # tends to lose more than it gains from higher CTA counts.
             wmma_warps_m = max(wmma_warps_m, 2)
+
+        # Optional register tiling in M: each warp computes FRAG_M adjacent 16x16 output fragments.
+        # This can reduce warps/block (sync/launch overhead) but increases register pressure; keep it opt-in.
+        if wmma_frag_m <= 0:
+            wmma_frag_m = 1
+        if wmma_frag_m not in (1, 2):
+            wmma_frag_m = 1
+        if (wmma_warps_m % wmma_frag_m) != 0:
+            wmma_frag_m = 1
+        wmma_warps_m = max(1, wmma_warps_m // wmma_frag_m)
 
         # Optional register tiling in N: each warp computes FRAG_N adjacent 16x16 output fragments.
         # This can reduce warps/block (launch overhead) but increases register pressure; keep it opt-in.
@@ -730,7 +741,7 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
         if (K % wmma_stage_k) != 0:
             wmma_stage_k = 8
 
-        wmma_tile_m = 16 * wmma_warps_m
+        wmma_tile_m = 16 * wmma_warps_m * wmma_frag_m
         wmma_tile_n = 16 * wmma_warps_n * wmma_frag_n
         wmma_grid_x = (N + wmma_tile_n - 1) // wmma_tile_n
         wmma_grid_y = (M + wmma_tile_m - 1) // wmma_tile_m
@@ -764,13 +775,16 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
         # Pipeline stages (shared-memory buffers).
         # - With cp.async we support 2-stage (double buffer) and 3-stage buffering.
         # - Without cp.async we use a single buffer (stages=1) to keep shared memory low.
-        wmma_pipe_stages = int(bindings.get("WMMA_PIPE_STAGES", 0) or 0)
+        pipe_stages_raw = bindings.get("WMMA_PIPE_STAGES", 0)
+        wmma_pipe_stages = int(pipe_stages_raw or 0)
+        pipe_stages_override = ("WMMA_PIPE_STAGES" in bindings) and (wmma_pipe_stages > 0)
+        num_tiles = int(K // wmma_stage_k) if int(wmma_stage_k) > 0 else 0
+        prefer_two_stage = (not pipe_stages_override) and (num_tiles > 0) and (num_tiles <= 4)
         if not wmma_use_cp_async:
             wmma_pipe_stages = 1
         else:
             if wmma_pipe_stages <= 0:
-                # Our cp.async pipeline is validated for triple buffering.
-                wmma_pipe_stages = 3
+                wmma_pipe_stages = 2 if prefer_two_stage else 3
             if wmma_pipe_stages not in (2, 3):
                 wmma_pipe_stages = 3
         # Use dynamic shared memory for the A/B staging buffers so we can opt into
@@ -820,23 +834,14 @@ def _kernel_matmul_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cuda
                     wmma_stage_k = cand
                     shared_bytes = _wmma_smem_bytes(wmma_tile_m, wmma_tile_n, wmma_stage_k, wmma_pipe_stages)
                     break
-        # NOTE: our cp.async pipeline implementation is only validated for PIPE_STAGES==3.
-        # If we ended up at PIPE_STAGES==2 due to shared-memory pressure, first try to
-        # re-enable triple buffering after STAGE_K clamping; if that still doesn't fit,
-        # fall back to the (correct but slower) synchronous path.
+        num_tiles = int(K // wmma_stage_k) if int(wmma_stage_k) > 0 else 0
+        prefer_two_stage = (not pipe_stages_override) and (num_tiles > 0) and (num_tiles <= 4)
         wmma_force_sync = False
-        # NOTE: PIPE_STAGES==2 is not validated for correctness yet; prefer
-        # triple-buffering when possible, otherwise fall back to a synchronous
-        # path to preserve correctness.
-        if wmma_pipe_stages == 2:
+        if (not pipe_stages_override) and (not prefer_two_stage) and wmma_pipe_stages == 2:
             bytes3 = _wmma_smem_bytes(wmma_tile_m, wmma_tile_n, wmma_stage_k, 3)
             if bytes3 <= max_smem_optin:
                 wmma_pipe_stages = 3
                 shared_bytes = bytes3
-            else:
-                wmma_force_sync = True
-                wmma_pipe_stages = 1
-                shared_bytes = _wmma_smem_bytes(wmma_tile_m, wmma_tile_n, wmma_stage_k, wmma_pipe_stages)
 
         # Round up to 16B for alignment.
         shared_bytes = ((shared_bytes + 15) // 16) * 16
@@ -865,22 +870,24 @@ extern "C" __global__ void {intent.name}(
   {n_load}
   {k_load}
 
-  // Assumes M,N are multiples of 16 and K is a multiple of 8 (enforced by host-side lowering).
-  constexpr int WARPS_M = {wmma_warps_m};
-  constexpr int WARPS_N = {wmma_warps_n};
-  constexpr int FRAG_N = {wmma_frag_n};
-  constexpr int STAGE_K = {wmma_stage_k};
-  constexpr int AS_PAD = {wmma_as_pad};
-  constexpr int BS_PAD = {wmma_bs_pad};
-  constexpr int PIPE_STAGES = {wmma_pipe_stages};
+	  // Assumes M,N are multiples of 16 and K is a multiple of 8 (enforced by host-side lowering).
+	  constexpr int WARPS_M = {wmma_warps_m};
+	  constexpr int WARPS_N = {wmma_warps_n};
+	  constexpr int FRAG_M = {wmma_frag_m};
+	  constexpr int FRAG_N = {wmma_frag_n};
+	  constexpr int STAGE_K = {wmma_stage_k};
+	  constexpr int AS_PAD = {wmma_as_pad};
+	  constexpr int BS_PAD = {wmma_bs_pad};
+	  constexpr int PIPE_STAGES = {wmma_pipe_stages};
 
-  intentir_cuda::wmma_matmul_f32_tf32<
-      WARPS_M,
-      WARPS_N,
-      FRAG_N,
-      STAGE_K,
-      AS_PAD,
-      BS_PAD,
+	  intentir_cuda::wmma_matmul_f32_tf32<
+	      WARPS_M,
+	      WARPS_N,
+	      FRAG_M,
+	      FRAG_N,
+	      STAGE_K,
+	      AS_PAD,
+	      BS_PAD,
       PIPE_STAGES,
       {use_cp_async_const},
       {wmma_cp_a_enum},
