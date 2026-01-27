@@ -674,7 +674,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
 
     w.line("#include \"kernels/wmma_matmul.cuh\"");
     w.blank();
-    w.line("extern \"C\" __global__ void " + intent.name + "(");
+    w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(32 * wmma_warps_m * wmma_warps_n) + ") void " + intent.name + "(");
     w.indent();
     w.line("const float* __restrict__ A, const float* __restrict__ B, float* __restrict__ C,");
     w.line(m_param + ", " + n_param + ", " + k_param + ") {");
