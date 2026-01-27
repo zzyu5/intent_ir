@@ -188,6 +188,7 @@ def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, 
     arg_names = [str(x) for x in arg_names]
     tensors = io_spec.get("tensors") if isinstance(io_spec.get("tensors"), dict) else {}
     scalars = io_spec.get("scalars") if isinstance(io_spec.get("scalars"), dict) else {}
+    use_host_launch = bool(io_spec.get("host_launch"))
 
     # Build launch() signature: tensors as torch::Tensor, scalars as int64_t.
     sig_args: list[str] = []
@@ -249,6 +250,28 @@ def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, 
     dim = "dim3((unsigned)grid_x,(unsigned)grid_y,(unsigned)grid_z)"
     bdim = "dim3((unsigned)block_x,(unsigned)block_y,(unsigned)block_z)"
 
+    host_decl = ""
+    host_call = ""
+    if use_host_launch:
+        host_param_types: list[str] = []
+        for name in arg_names:
+            if name in tensors:
+                spec = tensors[name] if isinstance(tensors.get(name), dict) else {}
+                dt = str(spec.get("dtype") or "f32")
+                host_param_types.append(f"{_c_type(dt)}*")
+            elif name in scalars:
+                dt = str(scalars[name])
+                if dt == "f32":
+                    host_param_types.append("float")
+                else:
+                    host_param_types.append(_c_type(dt))
+            else:
+                host_param_types.append("int64_t")
+        host_decl = (
+            f'extern "C" void {kernel_name}_host_launch({", ".join([*host_param_types, "int64_t", "int64_t", "int64_t", "int64_t", "int64_t", "int64_t", "int64_t", "cudaStream_t"])});'
+        )
+        host_call = f"{kernel_name}_host_launch({', '.join([*call_args, 'grid_x', 'grid_y', 'grid_z', 'block_x', 'block_y', 'block_z', 'shared_mem', 'stream'])});"
+
     src = f"""
 #include <torch/extension.h>
 #include <ATen/cuda/CUDAContext.h>
@@ -264,6 +287,11 @@ static void launch({", ".join(sig_args)}) {{
   // Respect the current PyTorch CUDA stream (required for correct stream semantics,
   // and for features like CUDA Graph capture).
   cudaStream_t stream = at::cuda::getCurrentCUDAStream().stream();
+  {host_decl}
+  if ({'true' if use_host_launch else 'false'}) {{
+    {host_call}
+    return;
+  }}
   // Some high-performance kernels may opt into >48KiB shared memory (e.g., for
   // multi-stage tensor-core pipelines). CUDA requires setting a per-kernel
   // attribute to enable larger dynamic shared memory on GPUs that support it.

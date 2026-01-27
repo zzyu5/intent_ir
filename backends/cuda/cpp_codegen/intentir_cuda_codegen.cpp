@@ -608,6 +608,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
   CodeWriter w(cuda_ss);
   json launch;
   int64_t shared_mem = 0;
+  bool host_launch = false;
 
   if (use_wmma) {
     int64_t wmma_warps_m = binding_int(bindings, "WMMA_WARPS_M").value_or(0);
@@ -757,46 +758,267 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
 
     w.line("#include \"kernels/wmma_matmul.cuh\"");
     w.blank();
-    w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(32 * wmma_warps_m * wmma_warps_n) + ") void " + intent.name + "(");
-    w.indent();
-    w.line("const float* __restrict__ A, const float* __restrict__ B, float* __restrict__ C,");
-    w.line(m_param + ", " + n_param + ", " + k_param + ") {");
-    w.dedent();
-    w.indent();
-    {
-      std::istringstream mnk_ss(mnk_load);
-      for (std::string line; std::getline(mnk_ss, line);) {
-        if (!line.empty()) w.line(line);
+    struct WmmaVariant {
+      int64_t stage_k;
+      int64_t pipe_stages;
+      bool use_cp_async;
+      int64_t shared_bytes;
+      std::string suffix;
+    };
+
+    const bool enable_host_dispatch = specialize_dims && (!m_is_tensor) && (!n_is_tensor) && (!k_is_tensor);
+    const int64_t default_threads = 32 * wmma_warps_m * wmma_warps_n;
+    auto make_variant = [&](int64_t stage_k, int64_t pipe_stages, bool use_cp_async, const char* suffix) -> std::optional<WmmaVariant> {
+      if (stage_k <= 0) return std::nullopt;
+      if ((stage_k % 8) != 0) return std::nullopt;
+      if ((K % stage_k) != 0) return std::nullopt;
+      if (use_cp_async) {
+        if (!(pipe_stages == 1 || pipe_stages == 2 || pipe_stages == 3)) return std::nullopt;
+      } else {
+        pipe_stages = 1;
       }
+      const int64_t smem = wmma_smem_bytes(stage_k, pipe_stages);
+      if (smem > max_smem_optin) return std::nullopt;
+      WmmaVariant v{stage_k, pipe_stages, use_cp_async, smem, std::string(suffix)};
+      return v;
+    };
+
+    if (!enable_host_dispatch) {
+      // Single-kernel codegen path.
+      w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(default_threads) + ") void " + intent.name + "(");
+      w.indent();
+      w.line("const float* __restrict__ A, const float* __restrict__ B, float* __restrict__ C,");
+      w.line(m_param + ", " + n_param + ", " + k_param + ") {");
+      w.dedent();
+      w.indent();
+      {
+        std::istringstream mnk_ss(mnk_load);
+        for (std::string line; std::getline(mnk_ss, line);) {
+          if (!line.empty()) w.line(line);
+        }
+      }
+      w.blank();
+      w.line("constexpr int WARPS_M = " + std::to_string(wmma_warps_m) + ";");
+      w.line("constexpr int WARPS_N = " + std::to_string(wmma_warps_n) + ";");
+      w.line("constexpr int FRAG_M = " + std::to_string(wmma_frag_m) + ";");
+      w.line("constexpr int FRAG_N = " + std::to_string(wmma_frag_n) + ";");
+      w.line("constexpr int STAGE_K = " + std::to_string(wmma_stage_k) + ";");
+      w.line("constexpr int AS_PAD = " + std::to_string(wmma_as_pad) + ";");
+      w.line("constexpr int BS_PAD = " + std::to_string(wmma_bs_pad) + ";");
+      w.line("constexpr int PIPE_STAGES = " + std::to_string(wmma_pipe_stages) + ";");
+      w.blank();
+      w.line("intentir_cuda::wmma_matmul_f32_tf32<");
+      w.indent();
+      w.line("WARPS_M,");
+      w.line("WARPS_N,");
+      w.line("FRAG_M,");
+      w.line("FRAG_N,");
+      w.line("STAGE_K,");
+      w.line("AS_PAD,");
+      w.line("BS_PAD,");
+      w.line("PIPE_STAGES,");
+      w.line(use_cp_async_const + ",");
+      w.line(wmma_cp_a_enum + ",");
+      w.line(wmma_cp_b_enum + ",");
+      w.line(enable_fastpath_const + ",");
+      w.line(specialize_full_tile_const + ">(A, B, C, M, N, K);");
+      w.dedent();
+      w.dedent();
+      w.line("}");
+      w.blank();
+    } else {
+      host_launch = true;
+      // Multi-version codegen + host dispatcher (paper-friendly: evidence-guided small search).
+      std::vector<WmmaVariant> variants;
+      auto add_variant = [&](int64_t stage_k, int64_t pipe_stages, bool use_cp_async, const char* suffix) {
+        auto v = make_variant(stage_k, pipe_stages, use_cp_async, suffix);
+        if (!v.has_value()) return;
+        for (const auto& existing : variants) {
+          if (existing.stage_k == v->stage_k && existing.pipe_stages == v->pipe_stages && existing.use_cp_async == v->use_cp_async) return;
+        }
+        variants.push_back(*v);
+      };
+
+      if (wmma_use_cp_async) {
+        add_variant(wmma_stage_k, wmma_pipe_stages, /*use_cp_async=*/true, "v0");
+        add_variant(wmma_stage_k, 3, /*use_cp_async=*/true, "p3");
+        add_variant(wmma_stage_k, 2, /*use_cp_async=*/true, "p2");
+        if (K >= 128 && (K % 128) == 0) {
+          add_variant(128, 3, /*use_cp_async=*/true, "k128_p3");
+          add_variant(128, 2, /*use_cp_async=*/true, "k128_p2");
+        }
+      }
+      add_variant(wmma_stage_k, 1, /*use_cp_async=*/false, "sync");
+      if (variants.empty()) add_variant(wmma_stage_k, 1, /*use_cp_async=*/false, "fallback");
+
+      for (const auto& v : variants) {
+        const std::string kname = intent.name + "__" + v.suffix;
+        w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(default_threads) + ") void " + kname + "(");
+        w.indent();
+        w.line("const float* __restrict__ A, const float* __restrict__ B, float* __restrict__ C,");
+        w.line(m_param + ", " + n_param + ", " + k_param + ") {");
+        w.dedent();
+        w.indent();
+        {
+          std::istringstream mnk_ss(mnk_load);
+          for (std::string line; std::getline(mnk_ss, line);) {
+            if (!line.empty()) w.line(line);
+          }
+        }
+        w.blank();
+        w.line("constexpr int WARPS_M = " + std::to_string(wmma_warps_m) + ";");
+        w.line("constexpr int WARPS_N = " + std::to_string(wmma_warps_n) + ";");
+        w.line("constexpr int FRAG_M = " + std::to_string(wmma_frag_m) + ";");
+        w.line("constexpr int FRAG_N = " + std::to_string(wmma_frag_n) + ";");
+        w.line("constexpr int STAGE_K = " + std::to_string(v.stage_k) + ";");
+        w.line("constexpr int AS_PAD = " + std::to_string(wmma_as_pad) + ";");
+        w.line("constexpr int BS_PAD = " + std::to_string(wmma_bs_pad) + ";");
+        w.line("constexpr int PIPE_STAGES = " + std::to_string(v.pipe_stages) + ";");
+        w.blank();
+        const std::string use_cp_async_v = v.use_cp_async ? "true" : "false";
+        w.line("intentir_cuda::wmma_matmul_f32_tf32<");
+        w.indent();
+        w.line("WARPS_M,");
+        w.line("WARPS_N,");
+        w.line("FRAG_M,");
+        w.line("FRAG_N,");
+        w.line("STAGE_K,");
+        w.line("AS_PAD,");
+        w.line("BS_PAD,");
+        w.line("PIPE_STAGES,");
+        w.line(use_cp_async_v + ",");
+        w.line(wmma_cp_a_enum + ",");
+        w.line(wmma_cp_b_enum + ",");
+        w.line(enable_fastpath_const + ",");
+        w.line(specialize_full_tile_const + ">(A, B, C, M, N, K);");
+        w.dedent();
+        w.dedent();
+        w.line("}");
+        w.blank();
+      }
+
+      w.line("extern \"C\" void " + intent.name + "_host_launch(");
+      w.indent();
+      w.line("float* A, float* B, float* C,");
+      w.line("int M_in, int N_in, int K_in,");
+      w.line("int64_t grid_x, int64_t grid_y, int64_t grid_z,");
+      w.line("int64_t block_x, int64_t block_y, int64_t block_z,");
+      w.line("int64_t shared_mem, cudaStream_t stream) {");
+      w.dedent();
+      w.indent();
+      w.line("(void)grid_x;");
+      w.line("(void)grid_y;");
+      w.line("(void)grid_z;");
+      w.line("(void)block_x;");
+      w.line("(void)block_y;");
+      w.line("(void)block_z;");
+      w.line("(void)shared_mem;");
+
+      w.line("const int M = M_in;");
+      w.line("const int N = N_in;");
+      w.line("const int K = K_in;");
+      w.line("constexpr int TILE_M = " + std::to_string(16 * wmma_warps_m * wmma_frag_m) + ";");
+      w.line("constexpr int TILE_N = " + std::to_string(16 * wmma_warps_n * wmma_frag_n) + ";");
+      w.line("dim3 g((unsigned)((N + TILE_N - 1) / TILE_N), (unsigned)((M + TILE_M - 1) / TILE_M), 1u);");
+      w.line("dim3 b((unsigned)" + std::to_string(default_threads) + ", 1u, 1u);");
+
+      w.line("static int intentir_selected = -1;");
+      w.line("static int intentir_smem_cached = -1;");
+      w.line("static const void* intentir_kernel_cached = nullptr;");
+      w.line("if (intentir_selected < 0) {");
+      w.indent();
+      w.line("cudaEvent_t start = nullptr;");
+      w.line("cudaEvent_t end = nullptr;");
+      w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
+      w.line("float best_ms = 1e30f;");
+      w.line("int best_i = 0;");
+      w.line("const int warm = 2;");
+      w.line("const int iters = 20;");
+      for (size_t vi = 0; vi < variants.size(); ++vi) {
+        const auto& v = variants[vi];
+        const std::string kname = intent.name + "__" + v.suffix;
+        const int64_t smem_v = ((v.shared_bytes + 15) / 16) * 16;
+        w.line("{");
+        w.indent();
+        w.line("const int smem = (int)" + std::to_string(smem_v) + ";");
+        w.line("const void* kptr = (const void*)" + kname + ";");
+        w.line("if (smem >= 49152 && (intentir_kernel_cached != kptr || intentir_smem_cached != smem)) {");
+        w.indent();
+        w.line("TORCH_CHECK(cudaFuncSetAttribute(kptr, cudaFuncAttributeMaxDynamicSharedMemorySize, smem) == cudaSuccess);");
+        w.line("intentir_kernel_cached = kptr;");
+        w.line("intentir_smem_cached = smem;");
+        w.dedent();
+        w.line("}");
+        w.line("for (int i = 0; i < warm; ++i) {");
+        w.indent();
+        w.line(kname + "<<<g, b, (size_t)smem, stream>>>((const float*)A, (const float*)B, (float*)C, M_in, N_in, K_in);");
+        w.dedent();
+        w.line("}");
+        w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
+        w.line("for (int i = 0; i < iters; ++i) {");
+        w.indent();
+        w.line(kname + "<<<g, b, (size_t)smem, stream>>>((const float*)A, (const float*)B, (float*)C, M_in, N_in, K_in);");
+        w.dedent();
+        w.line("}");
+        w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
+        w.line("float ms = 0.0f;");
+        w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
+        w.line("ms = ms / (float)iters;");
+        w.line("if (ms < best_ms) { best_ms = ms; best_i = " + std::to_string(vi) + "; }");
+        w.dedent();
+        w.line("}");
+      }
+      w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
+      w.line("intentir_selected = best_i;");
+      w.dedent();
+      w.line("}");
+
+      w.line("switch (intentir_selected) {");
+      for (size_t vi = 0; vi < variants.size(); ++vi) {
+        const auto& v = variants[vi];
+        const std::string kname = intent.name + "__" + v.suffix;
+        const int64_t smem_v = ((v.shared_bytes + 15) / 16) * 16;
+        w.line("case " + std::to_string(vi) + ": {");
+        w.indent();
+        w.line("const int smem = (int)" + std::to_string(smem_v) + ";");
+        w.line("const void* kptr = (const void*)" + kname + ";");
+        w.line("if (smem >= 49152 && (intentir_kernel_cached != kptr || intentir_smem_cached != smem)) {");
+        w.indent();
+        w.line("TORCH_CHECK(cudaFuncSetAttribute(kptr, cudaFuncAttributeMaxDynamicSharedMemorySize, smem) == cudaSuccess);");
+        w.line("intentir_kernel_cached = kptr;");
+        w.line("intentir_smem_cached = smem;");
+        w.dedent();
+        w.line("}");
+        w.line(kname + "<<<g, b, (size_t)smem, stream>>>((const float*)A, (const float*)B, (float*)C, M_in, N_in, K_in);");
+        w.line("break;");
+        w.dedent();
+        w.line("}");
+      }
+      w.line("default: {");
+      w.indent();
+      const std::string kname0 = intent.name + "__" + variants[0].suffix;
+      const int64_t smem0 = ((variants[0].shared_bytes + 15) / 16) * 16;
+      w.line("const int smem = (int)" + std::to_string(smem0) + ";");
+      w.line("const void* kptr = (const void*)" + kname0 + ";");
+      w.line("if (smem >= 49152 && (intentir_kernel_cached != kptr || intentir_smem_cached != smem)) {");
+      w.indent();
+      w.line("TORCH_CHECK(cudaFuncSetAttribute(kptr, cudaFuncAttributeMaxDynamicSharedMemorySize, smem) == cudaSuccess);");
+      w.line("intentir_kernel_cached = kptr;");
+      w.line("intentir_smem_cached = smem;");
+      w.dedent();
+      w.line("}");
+      w.line(kname0 + "<<<g, b, (size_t)smem, stream>>>((const float*)A, (const float*)B, (float*)C, M_in, N_in, K_in);");
+      w.dedent();
+      w.line("break;");
+      w.dedent();
+      w.line("}");
+      w.line("}");
+      w.dedent();
+      w.line("}");
     }
-    w.blank();
-    w.line("constexpr int WARPS_M = " + std::to_string(wmma_warps_m) + ";");
-    w.line("constexpr int WARPS_N = " + std::to_string(wmma_warps_n) + ";");
-    w.line("constexpr int FRAG_M = " + std::to_string(wmma_frag_m) + ";");
-    w.line("constexpr int FRAG_N = " + std::to_string(wmma_frag_n) + ";");
-    w.line("constexpr int STAGE_K = " + std::to_string(wmma_stage_k) + ";");
-    w.line("constexpr int AS_PAD = " + std::to_string(wmma_as_pad) + ";");
-    w.line("constexpr int BS_PAD = " + std::to_string(wmma_bs_pad) + ";");
-    w.line("constexpr int PIPE_STAGES = " + std::to_string(wmma_pipe_stages) + ";");
-    w.blank();
-    w.line("intentir_cuda::wmma_matmul_f32_tf32<");
-    w.indent();
-    w.line("WARPS_M,");
-    w.line("WARPS_N,");
-    w.line("FRAG_M,");
-    w.line("FRAG_N,");
-    w.line("STAGE_K,");
-    w.line("AS_PAD,");
-    w.line("BS_PAD,");
-    w.line("PIPE_STAGES,");
-    w.line(use_cp_async_const + ",");
-    w.line(wmma_cp_a_enum + ",");
-    w.line(wmma_cp_b_enum + ",");
-    w.line(enable_fastpath_const + ",");
-    w.line(specialize_full_tile_const + ">(A, B, C, M, N, K);");
-    w.dedent();
-    w.dedent();
-    w.line("}");
 
     launch = {{"grid", {wmma_grid_x, wmma_grid_y, 1}},
               {"block", {32 * wmma_warps_m * wmma_warps_n, 1, 1}},
@@ -860,7 +1082,9 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
   json out;
   out["kernel_name"] = intent.name;
   out["cuda_src"] = cuda_ss.str();
-  out["io_spec"] = io_spec_from_args(intent, tensor_args, scalar_args, arg_names);
+  json io_spec = io_spec_from_args(intent, tensor_args, scalar_args, arg_names);
+  if (host_launch) io_spec["host_launch"] = true;
+  out["io_spec"] = io_spec;
   out["launch"] = launch;
   out["output_names"] = {c};
   out["bindings"] = bindings;
