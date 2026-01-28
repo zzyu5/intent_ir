@@ -268,6 +268,7 @@ def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, 
     tensors = io_spec.get("tensors") if isinstance(io_spec.get("tensors"), dict) else {}
     scalars = io_spec.get("scalars") if isinstance(io_spec.get("scalars"), dict) else {}
     use_host_launch = bool(io_spec.get("host_launch"))
+    has_selected_api = ("intentir_cuda_selected_variant" in cuda_src) and ("intentir_cuda_selected_tag" in cuda_src)
 
     # Build launch() signature: tensors as torch::Tensor, scalars as int64_t.
     sig_args: list[str] = []
@@ -376,7 +377,6 @@ def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, 
   {kernel_name}<<<{dim}, {bdim}, (size_t)shared_mem, stream>>>({", ".join(call_args)});
 """.rstrip()
 
-    has_selected_api = ("intentir_cuda_selected_variant" in cuda_src) and ("intentir_cuda_selected_tag" in cuda_src)
     selected_api = ""
     if has_selected_api:
         selected_api = """
