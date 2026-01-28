@@ -136,6 +136,72 @@ def _torch_ext_build_dir(name: str) -> Path:
     return _default_torch_ext_root() / str(name)
 
 
+def _maybe_set_cuda_home_for_hopper() -> None:
+    """
+    Best-effort fix for H100-class GPUs where `nvcc` on PATH is too old (e.g., CUDA 11.x),
+    but a newer toolkit is installed under `/usr/local/cuda-*`.
+
+    PyTorch's extension builder shells out to `nvcc`; if it picks an old one, builds fail with:
+      `nvcc fatal: Unsupported gpu architecture 'compute_90'`.
+    """
+    if os.getenv("CUDA_HOME") or os.getenv("CUDA_PATH") or os.getenv("CUDACXX"):
+        return
+    if os.name != "posix":
+        return
+    torch = _torch()
+    try:
+        major, _minor = torch.cuda.get_device_capability()
+    except Exception:
+        return
+    if int(major) < 9:
+        return
+
+    cuda_root = Path("/usr/local")
+    if not cuda_root.is_dir():
+        return
+
+    def _parse_cuda_ver(p: Path) -> tuple[int, int] | None:
+        name = p.name
+        if name == "cuda":
+            return None
+        if not name.startswith("cuda-"):
+            return None
+        raw = name[len("cuda-") :]
+        parts = raw.split(".")
+        try:
+            major_v = int(parts[0])
+            minor_v = int(parts[1]) if len(parts) > 1 else 0
+        except Exception:
+            return None
+        return (major_v, minor_v)
+
+    candidates: list[tuple[tuple[int, int], Path]] = []
+    for p in cuda_root.glob("cuda-*"):
+        nvcc = p / "bin" / "nvcc"
+        ver = _parse_cuda_ver(p)
+        if ver is None or not nvcc.is_file():
+            continue
+        candidates.append((ver, p))
+
+    # Also consider `/usr/local/cuda` (often a symlink to the active toolkit).
+    cuda_symlink = cuda_root / "cuda"
+    if cuda_symlink.is_dir() and (cuda_symlink / "bin" / "nvcc").is_file():
+        # Give it a lower priority unless it points to a versioned dir.
+        candidates.append(((0, 0), cuda_symlink))
+
+    if not candidates:
+        return
+
+    # Pick the highest versioned toolkit; fall back to `/usr/local/cuda` if no version parsed.
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    chosen = candidates[0][1]
+    os.environ["CUDA_HOME"] = str(chosen)
+    os.environ["CUDACXX"] = str(chosen / "bin" / "nvcc")
+    cuda_bin = str(chosen / "bin")
+    if cuda_bin not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = cuda_bin + os.pathsep + os.environ.get("PATH", "")
+
+
 def _intentir_cuda_include_dirs() -> list[str]:
     """
     Include directories for IntentIR-generated CUDA kernels.
@@ -344,6 +410,8 @@ def _load_ext_cached(name: str, cuda_src: str, extra_cuda_cflags: Tuple[str, ...
             os.environ["TORCH_CUDA_ARCH_LIST"] = f"{major}.{minor}"
         except Exception:
             pass
+
+    _maybe_set_cuda_home_for_hopper()
 
     build_dir = _torch_ext_build_dir(name)
     build_dir.mkdir(parents=True, exist_ok=True)
