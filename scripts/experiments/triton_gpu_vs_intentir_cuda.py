@@ -549,7 +549,13 @@ def main() -> None:
     ap.add_argument(
         "--ablation",
         action="store_true",
-        help="Run evidence ablation: compare evidence-gated specialization vs contract_v2 forced OUT_OF_SCOPE.",
+        help="Run evidence ablation: compare evidence-gated specialization vs selected evidence-off modes.",
+    )
+    ap.add_argument(
+        "--ablation-modes",
+        type=str,
+        default="evidence_on,contract_off",
+        help="Comma-separated modes for --ablation. Supported: evidence_on, dispatch_off, contract_off. Default: evidence_on,contract_off.",
     )
     ap.add_argument("--out", type=Path, default=OUT_DEFAULT, help="Output JSON path.")
     ap.add_argument(
@@ -589,9 +595,15 @@ def main() -> None:
         "kernels": wanted,
     }
     if bool(args.ablation):
+        modes = [m.strip() for m in str(args.ablation_modes).split(",") if m.strip()]
+        bad = [m for m in modes if m not in {"evidence_on", "dispatch_off", "contract_off"}]
+        if bad:
+            raise SystemExit(f"--ablation-modes has unknown entries: {bad}")
+        if not modes:
+            raise SystemExit("--ablation-modes must not be empty when --ablation is set")
         meta["ablation"] = {
             "enabled": True,
-            "modes": ["evidence_on", "contract_off"],
+            "modes": modes,
             "contract_off_level": "OUT_OF_SCOPE",
         }
     try:
@@ -761,10 +773,20 @@ def main() -> None:
             torch.cuda.synchronize()
             _check_outputs_close(kernel=k, ours=ours_outputs0, triton=triton_outputs, allow_tf32=(k == "ai_bench_matmul"))
 
+            # Evidence-off (ablation): disable host-dispatch while keeping evidence/specialization on.
+            ours_dispatch_off_rec: dict[str, Any] | None = None
+            ours_dispatch_off_run: Callable[[], None] | None = None
+            if bool(args.ablation) and "dispatch_off" in (meta.get("ablation") or {}).get("modes", []):
+                bnd2 = dict(bindings)
+                bnd2["CUDA_HOST_DISPATCH"] = 0
+                ours_dispatch_off_rec, ours_dispatch_off_run, ours_disp_ctx = _run_ours(intent_json, bnd2)
+                ours_outputs_disp = ours_disp_ctx["outputs"]
+                _check_outputs_close(kernel=k, ours=ours_outputs_disp, triton=triton_outputs, allow_tf32=(k == "ai_bench_matmul"))
+
             # Evidence-off (ablation): force contract_v2 to OUT_OF_SCOPE and re-lower.
             ours_contract_off_rec: dict[str, Any] | None = None
             ours_contract_off_run: Callable[[], None] | None = None
-            if bool(args.ablation):
+            if bool(args.ablation) and "contract_off" in (meta.get("ablation") or {}).get("modes", []):
                 intent_off = _intent_with_contract_level(intent_json, "OUT_OF_SCOPE")
                 ours_contract_off_rec, ours_contract_off_run, ours_off_ctx = _run_ours(intent_off, dict(bindings))
                 ours_outputs_off = ours_off_ctx["outputs"]
@@ -776,6 +798,12 @@ def main() -> None:
                     triton_ns, triton_reps = _bench_cuda_graph_repeated(
                         triton_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
                     )
+                    ours_dispatch_off_ns = None
+                    ours_dispatch_off_reps: list[float] | None = None
+                    if bool(args.ablation) and ours_dispatch_off_run is not None:
+                        ours_dispatch_off_ns, ours_dispatch_off_reps = _bench_cuda_graph_repeated(
+                            ours_dispatch_off_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
+                        )
                     ours_contract_off_ns = None
                     ours_contract_off_reps: list[float] | None = None
                     if bool(args.ablation) and ours_contract_off_run is not None:
@@ -788,6 +816,12 @@ def main() -> None:
                     triton_ns, triton_reps = _bench_cuda_repeated(
                         triton_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
                     )
+                    ours_dispatch_off_ns = None
+                    ours_dispatch_off_reps = None
+                    if bool(args.ablation) and ours_dispatch_off_run is not None:
+                        ours_dispatch_off_ns, ours_dispatch_off_reps = _bench_cuda_repeated(
+                            ours_dispatch_off_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
+                        )
                     ours_contract_off_ns = None
                     ours_contract_off_reps = None
                     if bool(args.ablation) and ours_contract_off_run is not None:
@@ -799,6 +833,12 @@ def main() -> None:
                 triton_ns, triton_reps = _bench_cuda_repeated(
                     triton_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
                 )
+                ours_dispatch_off_ns = None
+                ours_dispatch_off_reps = None
+                if bool(args.ablation) and ours_dispatch_off_run is not None:
+                    ours_dispatch_off_ns, ours_dispatch_off_reps = _bench_cuda_repeated(
+                        ours_dispatch_off_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
+                    )
                 ours_contract_off_ns = None
                 ours_contract_off_reps = None
                 if bool(args.ablation) and ours_contract_off_run is not None:
@@ -808,11 +848,19 @@ def main() -> None:
 
             ours_rec["ns_per_iter"] = ours_ns
             ours_rec["ns_per_iter_repeats"] = ours_reps
+            if ours_dispatch_off_rec is not None:
+                ours_dispatch_off_rec["ns_per_iter"] = ours_dispatch_off_ns
+                ours_dispatch_off_rec["ns_per_iter_repeats"] = ours_dispatch_off_reps
             if ours_contract_off_rec is not None:
                 ours_contract_off_rec["ns_per_iter"] = ours_contract_off_ns
                 ours_contract_off_rec["ns_per_iter_repeats"] = ours_contract_off_reps
 
             speedup = float(triton_ns) / float(ours_ns) if ours_ns > 0 else 0.0
+            speedup_dispatch_off = None
+            slowdown_dispatch_off = None
+            if bool(args.ablation) and ours_dispatch_off_ns is not None and ours_dispatch_off_ns > 0:
+                speedup_dispatch_off = float(triton_ns) / float(ours_dispatch_off_ns)
+                slowdown_dispatch_off = float(ours_dispatch_off_ns) / float(ours_ns) if ours_ns > 0 else None
             speedup_contract_off = None
             speedup_gain = None
             if bool(args.ablation) and ours_contract_off_ns is not None and ours_contract_off_ns > 0:
@@ -826,10 +874,13 @@ def main() -> None:
                         "contract_v2_level": intent_contract_v2_level,
                     },
                     "ours": ours_rec,
+                    "ours_dispatch_off": ours_dispatch_off_rec,
                     "ours_contract_off": ours_contract_off_rec,
                     "triton": {"ns_per_iter": triton_ns, "ns_per_iter_repeats": triton_reps},
                     "speedup_ours_over_triton": speedup,
+                    "speedup_ours_dispatch_off_over_triton": speedup_dispatch_off,
                     "speedup_ours_contract_off_over_triton": speedup_contract_off,
+                    "slowdown_dispatch_off_over_ours": slowdown_dispatch_off,
                     "slowdown_contract_off_over_ours": speedup_gain,
                 }
             )
@@ -839,6 +890,11 @@ def main() -> None:
             _log(f"  FAIL: {type(e).__name__}: {e}")
 
     ok_rates = [r["speedup_ours_over_triton"] for r in results if r.get("status") == "OK"]
+    ok_rates_dispatch_off = [
+        r["speedup_ours_dispatch_off_over_triton"]
+        for r in results
+        if r.get("status") == "OK" and isinstance(r.get("speedup_ours_dispatch_off_over_triton"), (int, float))
+    ]
     ok_rates_contract_off = [
         r["speedup_ours_contract_off_over_triton"]
         for r in results
@@ -848,6 +904,7 @@ def main() -> None:
         "ok": sum(1 for r in results if r.get("status") == "OK"),
         "total": len(results),
         "geom_speedup_ours_over_triton": _geom_mean(ok_rates),
+        "geom_speedup_ours_dispatch_off_over_triton": _geom_mean(ok_rates_dispatch_off) if ok_rates_dispatch_off else None,
         "geom_speedup_ours_contract_off_over_triton": _geom_mean(ok_rates_contract_off) if ok_rates_contract_off else None,
         "min_speedup": min(ok_rates) if ok_rates else None,
         "max_speedup": max(ok_rates) if ok_rates else None,
