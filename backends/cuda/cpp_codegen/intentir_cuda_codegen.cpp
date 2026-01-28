@@ -3496,6 +3496,8 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 
   std::ostringstream cuda_ss;
   CodeWriter w(cuda_ss);
+  w.line("#include <cstdlib>");
+  w.line("#include <cstdio>");
   w.line("#include \"kernels/softmax.cuh\"");
   w.blank();
   const bool enable_host_dispatch = (!respect_schedule) && specialize_dims;
@@ -3616,6 +3618,13 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	    add_warp4_variant(8, "warp4_w8");
 	    if (variants.empty()) add_block_pair(block_threads, "fallback");
 
+	    w.line("static const char* intentir_softmax_variant_tags[] = {");
+	    w.indent();
+	    for (const auto& v : variants) w.line("\"" + v.suffix + "\",");
+	    w.dedent();
+	    w.line("};");
+	    w.blank();
+
 	    for (const auto& v : variants) {
 	      const std::string kname = intent.name + "__" + v.suffix;
 	      w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(v.threads) + ") void " + kname +
@@ -3667,8 +3676,9 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
     w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
     w.line("float best_ms = 1e30f;");
     w.line("int best_i = 0;");
-	    w.line("const int warm = 2;");
-	    w.line("const int iters = 20;");
+	    w.line("const int warm = 5;");
+	    w.line("const int iters = 100;");
+	    w.line("const int reps = 3;");
 	    for (size_t i = 0; i < variants.size(); ++i) {
 	      const auto& v = variants[i];
 	      const std::string kname = intent.name + "__" + v.suffix;
@@ -3677,22 +3687,36 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      w.line("dim3 g((unsigned)((R + " + std::to_string(v.rows_per_block) + " - 1) / " + std::to_string(v.rows_per_block) +
 	             "), 1u, 1u);");
 	      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+	      w.line("float m0 = 0.0f, m1 = 0.0f, m2 = 0.0f;");
+	      w.line("for (int rep = 0; rep < reps; ++rep) {");
+	      w.indent();
 	      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " +
 	             (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) + ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
 	      w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
-      w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " +
-             (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) + ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
-      w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
-      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
-      w.line("float ms = 0.0f;");
-      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
-      w.line("if (ms < best_ms) { best_ms = ms; best_i = " + std::to_string(i) + "; }");
+	      w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " +
+	             (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) + ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
+	      w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
+	      w.line("float ms = 0.0f;");
+	      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
+	      w.line("if (rep == 0) m0 = ms; else if (rep == 1) m1 = ms; else m2 = ms;");
+	      w.dedent();
+	      w.line("}");
+	      w.line("const float mn = fminf(m0, fminf(m1, m2));");
+	      w.line("const float mx = fmaxf(m0, fmaxf(m1, m2));");
+	      w.line("const float med = (m0 + m1 + m2) - mn - mx;");
+	      w.line("if (med < best_ms) { best_ms = med; best_i = " + std::to_string(i) + "; }");
       w.dedent();
       w.line("}");
     }
     w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
     w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
     w.line("intentir_selected = best_i;");
+    w.line("if (const char* dbg = std::getenv(\"INTENTIR_CUDA_SOFTMAX_DISPATCH_DEBUG\")) {");
+    w.indent();
+    w.line("if (dbg[0]) std::fprintf(stderr, \"[intentir][softmax] selected=%d tag=%s best_ms=%f (warm=%d iters=%d reps=%d)\\n\", intentir_selected, intentir_softmax_variant_tags[intentir_selected], (double)best_ms, warm, iters, reps);");
+    w.dedent();
+    w.line("}");
 	    w.dedent();
 	    w.line("}");
 	    w.line("switch (intentir_selected) {");
