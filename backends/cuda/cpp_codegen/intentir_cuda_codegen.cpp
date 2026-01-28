@@ -3521,21 +3521,25 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	    std::vector<SoftmaxVariant> variants;
 	    auto norm_threads = [](int64_t t) -> int64_t {
 	      if (t < 32) t = 32;
-      if (t > 1024) t = 1024;
+	      if (t > 1024) t = 1024;
       if ((t % 32) != 0) t = ((t + 31) / 32) * 32;
       if (t > 1024) t = 1024;
 	      return t;
 	    };
-	    auto add_strided_variant = [&](int64_t threads, const std::string& tag) {
+	    auto add_strided_variant_with_ept = [&](int64_t threads, int64_t vept, const std::string& tag) {
 	      threads = norm_threads(threads);
 	      if (threads <= 0) return;
-	      const int64_t vept = std::max<int64_t>(1, (C + threads - 1) / threads);
 	      if (vept <= 0 || vept > 32) return;
 	      if (vept > max_ept) return;
 	      for (const auto& v : variants) {
-	        if (!v.warp4 && !v.vec4 && v.threads == threads) return;
+	        if (!v.warp4 && !v.vec4 && v.threads == threads && v.ept == vept) return;
 	      }
 	      variants.push_back(SoftmaxVariant{threads, vept, 0, 1, false, false, tag});
+	    };
+
+	    auto add_strided_variant = [&](int64_t threads, const std::string& tag) {
+	      const int64_t vept = std::max<int64_t>(1, (C + threads - 1) / threads);
+	      add_strided_variant_with_ept(threads, vept, tag);
 	    };
 
 	    auto add_vec4_variant = [&](int64_t threads, const std::string& tag) {
@@ -3552,6 +3556,20 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	    auto add_block_pair = [&](int64_t threads, const std::string& tag) {
 	      add_strided_variant(threads, tag);
 	      add_vec4_variant(threads, "vec4_" + tag);
+	    };
+
+	    int64_t block_elems = resolve_schedule_int(intent, bindings, "tile_n", 0);
+	    if (!(block_elems > 0 && block_elems <= 1024)) {
+	      block_elems = 1;
+	      while (block_elems < C) block_elems <<= 1;
+	      if (block_elems > 1024) block_elems = 1024;
+	    }
+	    auto add_strided_pow2_variant = [&](int64_t threads, const std::string& tag) {
+	      threads = norm_threads(threads);
+	      if (threads <= 0) return;
+	      if ((block_elems % threads) != 0) return;
+	      const int64_t vept = block_elems / threads;
+	      add_strided_variant_with_ept(threads, vept, tag);
 	    };
 
 	    auto add_warp4_variant = [&](int64_t warps_per_block, const std::string& tag) {
@@ -3577,6 +3595,10 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      const int64_t t = norm_threads((C + ept_target - 1) / ept_target);
 	      add_block_pair(t, "ept" + std::to_string(ept_target));
 	    }
+	    // Pow2-ish variant: match Triton's power-of-two reduction width when possible.
+	    add_strided_pow2_variant(64, "pow2_t64");
+	    add_strided_pow2_variant(128, "pow2_t128");
+	    add_strided_pow2_variant(256, "pow2_t256");
 	    // Warp-specialized vectorized variant (SM80+ friendly, avoids block-wide sync).
 	    add_warp4_variant(4, "warp4_w4");
 	    add_warp4_variant(8, "warp4_w8");
