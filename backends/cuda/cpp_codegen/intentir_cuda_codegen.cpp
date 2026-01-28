@@ -1069,9 +1069,12 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       int64_t warps_n;
       int64_t frag_m;
       int64_t frag_n;
+      int64_t tile_m;
+      int64_t tile_n;
       int64_t stage_k;
       int64_t pipe_stages;
       bool use_cp_async;
+      bool specialize_full_tile;
       int64_t shared_bytes;
       int64_t threads;
       std::string suffix;
@@ -1094,13 +1097,12 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       if (frag_m <= 0 || frag_n <= 0) return std::nullopt;
       if (!(frag_m == 1 || frag_m == 2)) return std::nullopt;
       if (!(frag_n == 1 || frag_n == 2)) return std::nullopt;
-      // Keep tile shape constant; we only trade warps for per-warp fragments.
-      if ((warps_m * frag_m) != tile_warps_m) return std::nullopt;
-      if ((warps_n * frag_n) != tile_warps_n) return std::nullopt;
       if (warps_m > 4 || warps_n > 8) return std::nullopt;
       if ((warps_m * warps_n) > 16) return std::nullopt;
       const int64_t threads = 32 * warps_m * warps_n;
       if (threads <= 0 || threads > 1024) return std::nullopt;
+      const int64_t tile_m = 16 * warps_m * frag_m;
+      const int64_t tile_n = 16 * warps_n * frag_n;
       if (stage_k <= 0) return std::nullopt;
       if ((stage_k % 8) != 0) return std::nullopt;
       if ((K % stage_k) != 0) return std::nullopt;
@@ -1109,9 +1111,13 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       } else {
         pipe_stages = 1;
       }
-      const int64_t smem = wmma_smem_bytes(stage_k, pipe_stages);
+      const int64_t as_ld = stage_k + wmma_as_pad;
+      const int64_t bs_ld = tile_n + wmma_bs_pad;
+      const int64_t smem = 4LL * (pipe_stages * tile_m * as_ld + pipe_stages * stage_k * bs_ld);
       if (smem > max_smem_optin) return std::nullopt;
-      WmmaVariant v{warps_m, warps_n, frag_m, frag_n, stage_k, pipe_stages, use_cp_async, smem, threads, suffix};
+      const bool specialize_full_tile_v = specialize_dims && ((M % tile_m) == 0) && ((N % tile_n) == 0) && ((K % stage_k) == 0) && ((K & 3) == 0) &&
+                                          ((N & 3) == 0) && (!wmma_disable_fastpath);
+      WmmaVariant v{warps_m, warps_n, frag_m, frag_n, tile_m, tile_n, stage_k, pipe_stages, use_cp_async, specialize_full_tile_v, smem, threads, suffix};
       return v;
     };
 
@@ -1185,10 +1191,16 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         int64_t warps_n;
         int64_t frag_m;
         int64_t frag_n;
+        bool is_base_tile;
         std::string tag;
       };
       std::vector<WmmaGeom> geoms;
-      auto add_geom = [&](int64_t frag_m, int64_t frag_n, const char* tag) {
+      auto add_geom = [&](int64_t tile_warps_m,
+                          int64_t tile_warps_n,
+                          int64_t frag_m,
+                          int64_t frag_n,
+                          bool is_base_tile,
+                          const std::string& tag) {
         if (frag_m <= 0 || frag_n <= 0) return;
         if ((tile_warps_m % frag_m) != 0) return;
         if ((tile_warps_n % frag_n) != 0) return;
@@ -1197,23 +1209,49 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         if (warps_m <= 0 || warps_n <= 0) return;
         if (warps_m > 4 || warps_n > 8) return;
         if ((warps_m * warps_n) > 16) return;
-        geoms.push_back(WmmaGeom{warps_m, warps_n, frag_m, frag_n, std::string(tag)});
+        for (const auto& g : geoms) {
+          if (g.warps_m == warps_m && g.warps_n == warps_n && g.frag_m == frag_m && g.frag_n == frag_n) return;
+        }
+        geoms.push_back(WmmaGeom{warps_m, warps_n, frag_m, frag_n, is_base_tile, tag});
       };
-      add_geom(1, 1, "fm1_fn1");
-      add_geom(2, 1, "fm2_fn1");
-      add_geom(1, 2, "fm1_fn2");
-      add_geom(2, 2, "fm2_fn2");
-      if (geoms.empty()) geoms.push_back(WmmaGeom{wmma_warps_m, wmma_warps_n, wmma_frag_m, wmma_frag_n, "base"});
+
+      const int64_t base_tw_m = tile_warps_m;
+      const int64_t base_tw_n = tile_warps_n;
+      auto tile_tag = [&](int64_t tw_m, int64_t tw_n) -> std::string {
+        std::ostringstream ss;
+        ss << "tm" << (16 * tw_m) << "_tn" << (16 * tw_n);
+        return ss.str();
+      };
+
+      const std::string base_tile_tag = tile_tag(base_tw_m, base_tw_n);
+      add_geom(base_tw_m, base_tw_n, 1, 1, /*is_base_tile=*/true, base_tile_tag + "_fm1_fn1");
+      add_geom(base_tw_m, base_tw_n, 2, 1, /*is_base_tile=*/true, base_tile_tag + "_fm2_fn1");
+      add_geom(base_tw_m, base_tw_n, 1, 2, /*is_base_tile=*/true, base_tile_tag + "_fm1_fn2");
+      add_geom(base_tw_m, base_tw_n, 2, 2, /*is_base_tile=*/true, base_tile_tag + "_fm2_fn2");
+
+      auto add_tile_variant = [&](int64_t tw_m, int64_t tw_n) {
+        if (tw_m <= 0 || tw_n <= 0) return;
+        if (tw_m == base_tw_m && tw_n == base_tw_n) return;
+        add_geom(tw_m, tw_n, 1, 1, /*is_base_tile=*/false, tile_tag(tw_m, tw_n) + "_fm1_fn1");
+      };
+      if (base_tw_m > 1) add_tile_variant(base_tw_m / 2, base_tw_n);
+      if (base_tw_n > 1) add_tile_variant(base_tw_m, base_tw_n / 2);
+      if (base_tw_m > 1 && base_tw_n > 1) add_tile_variant(base_tw_m / 2, base_tw_n / 2);
+      if (geoms.empty()) geoms.push_back(WmmaGeom{wmma_warps_m, wmma_warps_n, wmma_frag_m, wmma_frag_n, true, "base"});
 
       for (const auto& g : geoms) {
         if (wmma_use_cp_async) {
           add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, wmma_pipe_stages, /*use_cp_async=*/true,
                       g.tag + "_p" + std::to_string(wmma_pipe_stages));
-          add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 3, /*use_cp_async=*/true, g.tag + "_p3");
-          add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 2, /*use_cp_async=*/true, g.tag + "_p2");
-          if (K >= 128 && (K % 128) == 0) {
-            add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 3, /*use_cp_async=*/true, g.tag + "_k128_p3");
-            add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 2, /*use_cp_async=*/true, g.tag + "_k128_p2");
+          if (g.is_base_tile) {
+            add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 3, /*use_cp_async=*/true, g.tag + "_p3");
+            add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 2, /*use_cp_async=*/true, g.tag + "_p2");
+            if (K >= 128 && (K % 128) == 0) {
+              add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 3, /*use_cp_async=*/true, g.tag + "_k128_p3");
+              add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 2, /*use_cp_async=*/true, g.tag + "_k128_p2");
+            }
+          } else {
+            if (wmma_pipe_stages == 3) add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 2, /*use_cp_async=*/true, g.tag + "_p2");
           }
         }
         add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 1, /*use_cp_async=*/false, g.tag + "_sync");
@@ -1252,6 +1290,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         w.line("constexpr int PIPE_STAGES = " + std::to_string(v.pipe_stages) + ";");
         w.blank();
         const std::string use_cp_async_v = v.use_cp_async ? "true" : "false";
+        const std::string specialize_full_tile_v = v.specialize_full_tile ? "true" : "false";
         w.line("intentir_cuda::wmma_matmul_f32_tf32<");
         w.indent();
         w.line("WARPS_M,");
@@ -1266,7 +1305,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         w.line(wmma_cp_a_enum + ",");
         w.line(wmma_cp_b_enum + ",");
         w.line(enable_fastpath_const + ",");
-        w.line(specialize_full_tile_const + ">(A, B, C, M, N, K);");
+        w.line(specialize_full_tile_v + ">(A, B, C, M, N, K);");
         w.dedent();
         w.dedent();
         w.line("}");
@@ -1293,9 +1332,6 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       w.line("const int M = M_in;");
       w.line("const int N = N_in;");
       w.line("const int K = K_in;");
-      w.line("constexpr int TILE_M = " + std::to_string(16 * wmma_warps_m * wmma_frag_m) + ";");
-      w.line("constexpr int TILE_N = " + std::to_string(16 * wmma_warps_n * wmma_frag_n) + ";");
-      w.line("dim3 g((unsigned)((N + TILE_N - 1) / TILE_N), (unsigned)((M + TILE_M - 1) / TILE_M), 1u);");
 
       int fallback_i = 0;
       if (!variants.empty()) {
@@ -1354,6 +1390,8 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         w.indent();
         w.line("intentir_found = true;");
         w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+        w.line("dim3 g((unsigned)((N + " + std::to_string(v.tile_n) + " - 1) / " + std::to_string(v.tile_n) + "), "
+               "(unsigned)((M + " + std::to_string(v.tile_m) + " - 1) / " + std::to_string(v.tile_m) + "), 1u);");
         w.line("const void* kptr = (const void*)" + kname + ";");
         w.line("if (smem >= 49152 && (intentir_kernel_cached != kptr || intentir_smem_cached != smem)) {");
         w.indent();
@@ -1418,6 +1456,8 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         w.line("intentir_cuda_selected_variant_tag = \"" + v.suffix + "\";");
         w.line("const int smem = (int)" + std::to_string(smem_v) + ";");
         w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+        w.line("dim3 g((unsigned)((N + " + std::to_string(v.tile_n) + " - 1) / " + std::to_string(v.tile_n) + "), "
+               "(unsigned)((M + " + std::to_string(v.tile_m) + " - 1) / " + std::to_string(v.tile_m) + "), 1u);");
         w.line("const void* kptr = (const void*)" + kname + ";");
         w.line("if (smem >= 49152 && (intentir_kernel_cached != kptr || intentir_smem_cached != smem)) {");
         w.indent();
@@ -1439,6 +1479,8 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       w.line("intentir_cuda_selected_variant_tag = \"" + variants[0].suffix + "\";");
       w.line("const int smem = (int)" + std::to_string(smem0) + ";");
       w.line("dim3 b((unsigned)" + std::to_string(variants[0].threads) + ", 1u, 1u);");
+      w.line("dim3 g((unsigned)((N + " + std::to_string(variants[0].tile_n) + " - 1) / " + std::to_string(variants[0].tile_n) + "), "
+             "(unsigned)((M + " + std::to_string(variants[0].tile_m) + " - 1) / " + std::to_string(variants[0].tile_m) + "), 1u);");
       w.line("const void* kptr = (const void*)" + kname0 + ";");
       w.line("if (smem >= 49152 && (intentir_kernel_cached != kptr || intentir_smem_cached != smem)) {");
       w.indent();
