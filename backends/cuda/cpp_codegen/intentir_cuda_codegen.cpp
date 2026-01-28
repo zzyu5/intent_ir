@@ -2376,6 +2376,7 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
   std::ostringstream cuda_ss;
   CodeWriter w(cuda_ss);
   w.line("#include \"kernels/rope.cuh\"");
+  w.line("#include <math.h>");
   w.blank();
   emit_selected_api(w);
   const std::string seq_arg = seq_is_tensor ? "SEQ_LEN_ptr" : "SEQ_LEN_in";
@@ -2577,7 +2578,8 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
     w.line("float best_ms = 1e30f;");
     w.line("int best_i = 0;");
     w.line("const int warm = 1;");
-    w.line("const int iters = 5;");
+    w.line("const int iters = 10;");
+    w.line("const int reps = 3;");
     for (size_t i = 0; i < variants.size(); ++i) {
       const auto& v = variants[i];
       const std::string kname = intent.name + "__" + v.suffix;
@@ -2585,6 +2587,9 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
       w.indent();
       w.line("dim3 b((unsigned)" + std::to_string(v.block_x) + ", 1u, 1u);");
       w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", (unsigned)BATCH_NUM, (unsigned)SEQ_LEN);");
+      w.line("float m0 = 0.0f, m1 = 0.0f, m2 = 0.0f;");
+      w.line("for (int rep = 0; rep < reps; ++rep) {");
+      w.indent();
       w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + cos_name + ", " + sin_name + ", " + out_name +
              ", " + seq_arg + ", " + b_arg + ", " + h_arg + ", " + d_arg + ");");
       w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
@@ -2594,7 +2599,14 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
       w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
       w.line("float ms = 0.0f;");
       w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
-      w.line("if (ms < best_ms) { best_ms = ms; best_i = " + std::to_string(i) + "; }");
+      w.line("ms = ms / (float)iters;");
+      w.line("if (rep == 0) m0 = ms; else if (rep == 1) m1 = ms; else m2 = ms;");
+      w.dedent();
+      w.line("}");
+      w.line("const float mn = fminf(m0, fminf(m1, m2));");
+      w.line("const float mx = fmaxf(m0, fmaxf(m1, m2));");
+      w.line("const float med = (m0 + m1 + m2) - mn - mx;");
+      w.line("if (med < best_ms) { best_ms = med; best_i = " + std::to_string(i) + "; }");
       w.dedent();
       w.line("}");
     }
