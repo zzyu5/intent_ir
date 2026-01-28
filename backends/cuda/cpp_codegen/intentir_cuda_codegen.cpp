@@ -1185,7 +1185,8 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
 
       for (const auto& g : geoms) {
         if (wmma_use_cp_async) {
-          add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, wmma_pipe_stages, /*use_cp_async=*/true, g.tag + "_v0");
+          add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, wmma_pipe_stages, /*use_cp_async=*/true,
+                      g.tag + "_p" + std::to_string(wmma_pipe_stages));
           add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 3, /*use_cp_async=*/true, g.tag + "_p3");
           add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 2, /*use_cp_async=*/true, g.tag + "_p2");
           if (K >= 128 && (K % 128) == 0) {
