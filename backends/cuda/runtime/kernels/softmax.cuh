@@ -89,12 +89,10 @@ __device__ __forceinline__ void softmax_2d_last_f32(const float* __restrict__ in
   #pragma unroll
   for (int i = 0; i < EPT; ++i) {
     const int c = tid + i * BLOCK_THREADS;
-    float e = 0.0f;
-    if (c < C) {
-      e = __expf(expv[i] - mx);
-      tsum += e;
-    }
+    (void)c;
+    const float e = __expf(expv[i] - mx);
     expv[i] = e;
+    tsum += e;
   }
   const float sum = block_allreduce_sum<BLOCK_THREADS>(tsum);
   const float inv = __fdividef(1.0f, sum);
