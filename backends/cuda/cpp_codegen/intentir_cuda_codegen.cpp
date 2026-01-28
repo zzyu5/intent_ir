@@ -2797,23 +2797,159 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
   CodeWriter w(cuda_ss);
   w.line("#include \"kernels/softmax.cuh\"");
   w.blank();
-  w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_threads) + ") void " + intent.name +
-         "(const float* __restrict__ " + in_name + ", float* __restrict__ " + out_name + ", " + r_param + ", " + c_param + ") {");
-  w.indent();
-  if (specialize_dims) {
+  const bool enable_host_dispatch = (!respect_schedule) && specialize_dims;
+  bool host_launch = false;
+
+  if (!enable_host_dispatch) {
+    w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_threads) + ") void " + intent.name +
+           "(const float* __restrict__ " + in_name + ", float* __restrict__ " + out_name + ", " + r_param + ", " + c_param + ") {");
+    w.indent();
+    if (specialize_dims) {
+      w.line(r_unused);
+      w.line(c_unused);
+      w.line("constexpr int R = " + std::to_string(R) + ";");
+      w.line("constexpr int C = " + std::to_string(C) + ";");
+    } else {
+      w.line(r_load);
+      w.line(c_load);
+    }
+    w.line("constexpr int BLOCK_THREADS = " + std::to_string(block_threads) + ";");
+    w.line("constexpr int EPT = " + std::to_string(ept) + ";");
+    w.line("intentir_cuda::softmax_2d_last_f32<BLOCK_THREADS, EPT>(" + in_name + ", " + out_name + ", R, C);");
+    w.dedent();
+    w.line("}");
+  } else {
+    host_launch = true;
+    struct SoftmaxVariant {
+      int64_t threads;
+      int64_t ept;
+      std::string suffix;
+    };
+    std::vector<SoftmaxVariant> variants;
+    auto norm_threads = [](int64_t t) -> int64_t {
+      if (t < 32) t = 32;
+      if (t > 1024) t = 1024;
+      if ((t % 32) != 0) t = ((t + 31) / 32) * 32;
+      if (t > 1024) t = 1024;
+      return t;
+    };
+    auto add_variant = [&](int64_t threads, const std::string& tag) {
+      threads = norm_threads(threads);
+      if (threads <= 0) return;
+      const int64_t vept = std::max<int64_t>(1, (C + threads - 1) / threads);
+      if (vept <= 0 || vept > 32) return;
+      if (vept > max_ept) return;
+      for (const auto& v : variants) {
+        if (v.threads == threads) return;
+      }
+      variants.push_back(SoftmaxVariant{threads, vept, tag});
+    };
+
+    // Evidence-guided tiny candidate set: seed + a few standard warp-aligned sizes.
+    add_variant(block_threads, "seed");
+    add_variant(64, "t64");
+    add_variant(128, "t128");
+    add_variant(256, "t256");
+    add_variant(512, "t512");
+    if (variants.empty()) add_variant(block_threads, "fallback");
+
+    for (const auto& v : variants) {
+      const std::string kname = intent.name + "__" + v.suffix;
+      w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(v.threads) + ") void " + kname +
+             "(const float* __restrict__ " + in_name + ", float* __restrict__ " + out_name + ", " + r_param + ", " + c_param + ") {");
+      w.indent();
+      w.line(r_unused);
+      w.line(c_unused);
+      w.line("constexpr int R = " + std::to_string(R) + ";");
+      w.line("constexpr int C = " + std::to_string(C) + ";");
+      w.line("constexpr int BLOCK_THREADS = " + std::to_string(v.threads) + ";");
+      w.line("constexpr int EPT = " + std::to_string(v.ept) + ";");
+      w.line("intentir_cuda::softmax_2d_last_f32<BLOCK_THREADS, EPT>(" + in_name + ", " + out_name + ", R, C);");
+      w.dedent();
+      w.line("}");
+      w.blank();
+    }
+
+    // Host dispatcher: pick the best variant once (evidence-guided, small search space).
+    w.line("extern \"C\" void " + intent.name + "_host_launch(");
+    w.indent();
+    w.line("float* " + in_name + ", float* " + out_name + ", " + r_param + ", " + c_param + ",");
+    w.line("int64_t grid_x, int64_t grid_y, int64_t grid_z,");
+    w.line("int64_t block_x, int64_t block_y, int64_t block_z,");
+    w.line("int64_t shared_mem, cudaStream_t stream) {");
+    w.dedent();
+    w.indent();
+    w.line("(void)grid_x; (void)grid_y; (void)grid_z;");
+    w.line("(void)block_x; (void)block_y; (void)block_z;");
+    w.line("(void)shared_mem;");
     w.line(r_unused);
     w.line(c_unused);
     w.line("constexpr int R = " + std::to_string(R) + ";");
     w.line("constexpr int C = " + std::to_string(C) + ";");
-  } else {
-    w.line(r_load);
-    w.line(c_load);
+    w.line("static int intentir_selected = -1;");
+    w.line("if (intentir_selected < 0) {");
+    w.indent();
+    w.line("cudaEvent_t start = nullptr;");
+    w.line("cudaEvent_t end = nullptr;");
+    w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
+    w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
+    w.line("float best_ms = 1e30f;");
+    w.line("int best_i = 0;");
+    w.line("const int warm = 2;");
+    w.line("const int iters = 20;");
+    w.line("dim3 g((unsigned)R, 1u, 1u);");
+    for (size_t i = 0; i < variants.size(); ++i) {
+      const auto& v = variants[i];
+      const std::string kname = intent.name + "__" + v.suffix;
+      w.line("{");
+      w.indent();
+      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " +
+             (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) + ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
+      w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
+      w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " +
+             (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) + ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
+      w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
+      w.line("float ms = 0.0f;");
+      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
+      w.line("if (ms < best_ms) { best_ms = ms; best_i = " + std::to_string(i) + "; }");
+      w.dedent();
+      w.line("}");
+    }
+    w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
+    w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
+    w.line("intentir_selected = best_i;");
+    w.dedent();
+    w.line("}");
+    w.line("dim3 g((unsigned)R, 1u, 1u);");
+    w.line("switch (intentir_selected) {");
+    for (size_t i = 0; i < variants.size(); ++i) {
+      const auto& v = variants[i];
+      const std::string kname = intent.name + "__" + v.suffix;
+      w.line("case " + std::to_string(i) + ": {");
+      w.indent();
+      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+      w.line(kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " + (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) +
+             ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
+      w.line("break;");
+      w.dedent();
+      w.line("}");
+    }
+    w.line("default: {");
+    w.indent();
+    const auto& v0 = variants.front();
+    const std::string k0 = intent.name + "__" + v0.suffix;
+    w.line("dim3 b((unsigned)" + std::to_string(v0.threads) + ", 1u, 1u);");
+    w.line(k0 + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " + (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) +
+           ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
+    w.line("break;");
+    w.dedent();
+    w.line("}");
+    w.line("}");
+    w.dedent();
+    w.line("}");
   }
-  w.line("constexpr int BLOCK_THREADS = " + std::to_string(block_threads) + ";");
-  w.line("constexpr int EPT = " + std::to_string(ept) + ";");
-  w.line("intentir_cuda::softmax_2d_last_f32<BLOCK_THREADS, EPT>(" + in_name + ", " + out_name + ", R, C);");
-  w.dedent();
-  w.line("}");
 
   std::vector<std::string> tensor_args = {in_name, out_name};
   std::unordered_map<std::string, std::string> scalar_args;
@@ -2837,6 +2973,7 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
   out["kernel_name"] = intent.name;
   out["cuda_src"] = cuda_ss.str();
   out["io_spec"] = io_spec_from_args(intent, tensor_args, scalar_args, arg_names);
+  if (host_launch) out["io_spec"]["host_launch"] = true;
   out["launch"] = {{"grid", {R, 1, 1}}, {"block", {block_threads, 1, 1}}, {"shared_mem", 0}};
   out["output_names"] = {out_name};
   out["bindings"] = bindings;
