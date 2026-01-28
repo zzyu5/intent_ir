@@ -290,6 +290,51 @@ std::optional<int64_t> binding_int(const json& bindings, const std::string& key)
   return std::nullopt;
 }
 
+std::optional<int64_t> json_int64(const json& v) {
+  if (v.is_number_integer()) return v.get<int64_t>();
+  if (v.is_number()) return static_cast<int64_t>(v.get<double>());
+  if (v.is_string()) {
+    const std::string s = v.get<std::string>();
+    if (is_digits(s)) return std::stoll(s);
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string> contract_level_v2(const Intent& intent) {
+  if (!intent.meta.is_object()) return std::nullopt;
+  auto it = intent.meta.find("contract_v2");
+  if (it == intent.meta.end() || !it->is_object()) return std::nullopt;
+  const json& c = *it;
+  auto lv = c.find("level");
+  if (lv != c.end() && lv->is_string()) return lv->get<std::string>();
+  return std::nullopt;
+}
+
+bool bindings_match_canonical_shapes(const Intent& intent, const json& bindings) {
+  if (!intent.meta.is_object() || !bindings.is_object()) return false;
+  auto it = intent.meta.find("canonical_shapes");
+  if (it == intent.meta.end() || !it->is_object()) return false;
+  const json& cs = *it;
+  bool has_any = false;
+  for (auto kv = cs.begin(); kv != cs.end(); ++kv) {
+    has_any = true;
+    const std::string key = kv.key();
+    auto canon = json_int64(kv.value());
+    if (!canon.has_value()) return false;
+    auto actual = binding_int(bindings, key);
+    if (!actual.has_value() || *actual != *canon) return false;
+  }
+  return has_any;
+}
+
+bool want_specialize_dims(const Intent& intent, const json& bindings) {
+  if (binding_int(bindings, "CUDA_SPECIALIZE_DIMS").value_or(0) != 0) return true;
+  if (binding_int(bindings, "CUDA_AUTO_SPECIALIZE_DIMS").value_or(1) == 0) return false;
+  if (!bindings_match_canonical_shapes(intent, bindings)) return false;
+  if (contract_level_v2(intent).value_or("PARTIAL") == "OUT_OF_SCOPE") return false;
+  return true;
+}
+
 std::optional<int64_t> resolve_dim_token(const json& tok, const json& bindings) {
   if (tok.is_number_integer()) return tok.get<int64_t>();
   if (tok.is_number()) return static_cast<int64_t>(tok.get<double>());
@@ -400,7 +445,7 @@ json emit_dropout(const Intent& intent, const json& bindings) {
   const int64_t denom = block_x * static_cast<int64_t>(ept);
   const int64_t grid_x = (n + denom - 1) / denom;
 
-  const bool specialize_dims = binding_int(bindings, "CUDA_SPECIALIZE_DIMS").value_or(0) != 0;
+  const bool specialize_dims = want_specialize_dims(intent, bindings);
 
   const bool p_is_scalar = is_scalar_tensor(intent, p_name, "f32");
   const bool seed_is_scalar = is_scalar_tensor(intent, seed_name, "i32");
@@ -551,7 +596,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
   const bool n_is_tensor = is_scalar_tensor(intent, N_name, "i32");
   const bool k_is_tensor = is_scalar_tensor(intent, K_name, "i32");
 
-  const bool specialize_dims = binding_int(bindings, "CUDA_SPECIALIZE_DIMS").value_or(0) != 0;
+  const bool specialize_dims = want_specialize_dims(intent, bindings);
 
   const std::string m_param = m_is_tensor ? ("const int* " + M_name + "_ptr") : "int M_in";
   const std::string n_param = n_is_tensor ? ("const int* " + N_name + "_ptr") : "int N_in";
@@ -1165,7 +1210,7 @@ json emit_warp(const Intent& intent, const json& bindings) {
   const int64_t W = binding_int(bindings, "W").value_or(-1);
   if (C <= 0 || H <= 0 || W <= 0) fail("warp missing/invalid bindings: C/H/W");
 
-  const bool specialize_dims = binding_int(bindings, "CUDA_SPECIALIZE_DIMS").value_or(0) != 0;
+  const bool specialize_dims = want_specialize_dims(intent, bindings);
 
   int64_t block_w = binding_int(bindings, "BLOCK_W").value_or(128);
   const int64_t hinted = resolve_schedule_int(intent, bindings, "tile_n", block_w);
@@ -1408,7 +1453,7 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
   if ((D & 1) != 0) fail("rope expects even HEAD_DIM");
   const int64_t half = D / 2;
 
-  const bool specialize_dims = binding_int(bindings, "CUDA_SPECIALIZE_DIMS").value_or(0) != 0;
+  const bool specialize_dims = want_specialize_dims(intent, bindings);
 
   int64_t heads_per_block = binding_int(bindings, "ROPE_HEADS_PER_BLOCK").value_or(1);
   if (heads_per_block <= 0) heads_per_block = 1;
@@ -2437,7 +2482,7 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
   if (block_threads < min_threads) block_threads = min_threads;
   const int64_t ept = std::max<int64_t>(1, (C + block_threads - 1) / block_threads);
 
-  const bool specialize_dims = binding_int(bindings, "CUDA_SPECIALIZE_DIMS").value_or(0) != 0;
+  const bool specialize_dims = want_specialize_dims(intent, bindings);
   const std::string R_name = dim_str(R_dim);
   const std::string C_name = dim_str(C_dim);
   bool r_is_tensor = is_scalar_tensor(intent, R_name, "i32");
