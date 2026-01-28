@@ -3099,28 +3099,166 @@ json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
     if (block_x > 1024) block_x = 1024;
   }
 
+  const bool specialize_dims = want_specialize_dims(intent, bindings);
+  const bool enable_host_dispatch = (!respect_schedule) && specialize_dims;
+  bool host_launch = false;
+
   std::ostringstream cuda_ss;
   CodeWriter w(cuda_ss);
   w.line("#include \"kernels/layernorm.cuh\"");
   w.blank();
-  w.line("extern \"C\" __global__ void " + intent.name + "(");
-  w.indent();
-  w.line("const float* __restrict__ " + X_name + ",");
-  w.line("float* __restrict__ " + Y_name + ",");
-  w.line("const float* __restrict__ " + W_name + ",");
-  w.line("const float* __restrict__ " + B_name + ",");
-  w.line("float* __restrict__ " + Mean_name + ",");
-  w.line("float* __restrict__ " + Rstd_name + ",");
-  w.line("int M,");
-  w.line("int N,");
-  w.line("float eps) {");
-  w.dedent();
-  w.indent();
-  w.line("constexpr int BLOCK_THREADS = " + std::to_string(block_x) + ";");
-  w.line("intentir_cuda::layernorm_2d_f32<BLOCK_THREADS>(" + X_name + ", " + Y_name + ", " + W_name + ", " + B_name + ", " + Mean_name + ", " +
-         Rstd_name + ", M, N, eps);");
-  w.dedent();
-  w.line("}");
+  if (!enable_host_dispatch) {
+    w.line("extern \"C\" __global__ void " + intent.name + "(");
+    w.indent();
+    w.line("const float* __restrict__ " + X_name + ",");
+    w.line("float* __restrict__ " + Y_name + ",");
+    w.line("const float* __restrict__ " + W_name + ",");
+    w.line("const float* __restrict__ " + B_name + ",");
+    w.line("float* __restrict__ " + Mean_name + ",");
+    w.line("float* __restrict__ " + Rstd_name + ",");
+    w.line("int M,");
+    w.line("int N,");
+    w.line("float eps) {");
+    w.dedent();
+    w.indent();
+    w.line("constexpr int BLOCK_THREADS = " + std::to_string(block_x) + ";");
+    w.line("intentir_cuda::layernorm_2d_f32<BLOCK_THREADS>(" + X_name + ", " + Y_name + ", " + W_name + ", " + B_name + ", " + Mean_name + ", " +
+           Rstd_name + ", M, N, eps);");
+    w.dedent();
+    w.line("}");
+  } else {
+    host_launch = true;
+    struct LnVariant {
+      int64_t threads;
+      std::string suffix;
+    };
+    std::vector<LnVariant> variants;
+    auto add_variant = [&](int64_t threads, const std::string& tag) {
+      if (threads < 32) threads = 32;
+      if (threads > 1024) threads = 1024;
+      // Keep power-of-two threads for reduction.
+      auto is_pow2 = [](int64_t x) -> bool { return x > 0 && ((x & (x - 1)) == 0); };
+      auto floor_pow2 = [](int64_t x) -> int64_t {
+        if (x <= 1) return 1;
+        int64_t p = 1;
+        while ((p << 1) <= x) p <<= 1;
+        return p;
+      };
+      if (!is_pow2(threads)) threads = floor_pow2(threads);
+      if (threads < 32) threads = 32;
+      if (threads > 1024) threads = 1024;
+      for (const auto& v : variants) {
+        if (v.threads == threads) return;
+      }
+      variants.push_back(LnVariant{threads, tag});
+    };
+
+    add_variant(block_x, "seed");
+    add_variant(64, "t64");
+    add_variant(128, "t128");
+    add_variant(256, "t256");
+    add_variant(512, "t512");
+    if (variants.empty()) add_variant(block_x, "fallback");
+
+    for (const auto& v : variants) {
+      const std::string kname = intent.name + "__" + v.suffix;
+      w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(v.threads) + ") void " + kname + "(");
+      w.indent();
+      w.line("const float* __restrict__ " + X_name + ",");
+      w.line("float* __restrict__ " + Y_name + ",");
+      w.line("const float* __restrict__ " + W_name + ",");
+      w.line("const float* __restrict__ " + B_name + ",");
+      w.line("float* __restrict__ " + Mean_name + ",");
+      w.line("float* __restrict__ " + Rstd_name + ",");
+      w.line("int M,");
+      w.line("int N,");
+      w.line("float eps) {");
+      w.dedent();
+      w.indent();
+      w.line("constexpr int BLOCK_THREADS = " + std::to_string(v.threads) + ";");
+      w.line("intentir_cuda::layernorm_2d_f32<BLOCK_THREADS>(" + X_name + ", " + Y_name + ", " + W_name + ", " + B_name + ", " + Mean_name + ", " +
+             Rstd_name + ", M, N, eps);");
+      w.dedent();
+      w.line("}");
+      w.blank();
+    }
+
+    w.line("extern \"C\" void " + intent.name + "_host_launch(");
+    w.indent();
+    w.line("float* " + X_name + ", float* " + Y_name + ", float* " + W_name + ", float* " + B_name + ", float* " + Mean_name + ", float* " +
+           Rstd_name + ", int M, int N, float eps,");
+    w.line("int64_t grid_x, int64_t grid_y, int64_t grid_z,");
+    w.line("int64_t block_x, int64_t block_y, int64_t block_z,");
+    w.line("int64_t shared_mem, cudaStream_t stream) {");
+    w.dedent();
+    w.indent();
+    w.line("(void)grid_x; (void)grid_y; (void)grid_z;");
+    w.line("(void)block_x; (void)block_y; (void)block_z;");
+    w.line("(void)shared_mem;");
+    w.line("static int intentir_selected = -1;");
+    w.line("if (intentir_selected < 0) {");
+    w.indent();
+    w.line("cudaEvent_t start = nullptr;");
+    w.line("cudaEvent_t end = nullptr;");
+    w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
+    w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
+    w.line("float best_ms = 1e30f;");
+    w.line("int best_i = 0;");
+    w.line("const int warm = 2;");
+    w.line("const int iters = 20;");
+    w.line("dim3 g((unsigned)M, 1u, 1u);");
+    for (size_t i = 0; i < variants.size(); ++i) {
+      const auto& v = variants[i];
+      const std::string kname = intent.name + "__" + v.suffix;
+      w.line("{");
+      w.indent();
+      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(" + X_name + ", " + Y_name + ", " + W_name + ", " + B_name +
+             ", " + Mean_name + ", " + Rstd_name + ", M, N, eps);");
+      w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
+      w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(" + X_name + ", " + Y_name + ", " + W_name + ", " + B_name +
+             ", " + Mean_name + ", " + Rstd_name + ", M, N, eps);");
+      w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
+      w.line("float ms = 0.0f;");
+      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
+      w.line("if (ms < best_ms) { best_ms = ms; best_i = " + std::to_string(i) + "; }");
+      w.dedent();
+      w.line("}");
+    }
+    w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
+    w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
+    w.line("intentir_selected = best_i;");
+    w.dedent();
+    w.line("}");
+    w.line("dim3 g((unsigned)M, 1u, 1u);");
+    w.line("switch (intentir_selected) {");
+    for (size_t i = 0; i < variants.size(); ++i) {
+      const auto& v = variants[i];
+      const std::string kname = intent.name + "__" + v.suffix;
+      w.line("case " + std::to_string(i) + ": {");
+      w.indent();
+      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+      w.line(kname + "<<<g, b, 0, stream>>>(" + X_name + ", " + Y_name + ", " + W_name + ", " + B_name + ", " + Mean_name + ", " + Rstd_name +
+             ", M, N, eps);");
+      w.line("break;");
+      w.dedent();
+      w.line("}");
+    }
+    w.line("default: {");
+    w.indent();
+    const auto& v0 = variants.front();
+    const std::string k0 = intent.name + "__" + v0.suffix;
+    w.line("dim3 b((unsigned)" + std::to_string(v0.threads) + ", 1u, 1u);");
+    w.line(k0 + "<<<g, b, 0, stream>>>(" + X_name + ", " + Y_name + ", " + W_name + ", " + B_name + ", " + Mean_name + ", " + Rstd_name +
+           ", M, N, eps);");
+    w.line("break;");
+    w.dedent();
+    w.line("}");
+    w.line("}");
+    w.dedent();
+    w.line("}");
+  }
 
   json out_bindings = bindings;
   if (!out_bindings.contains("eps")) out_bindings["eps"] = *eps;
@@ -3133,6 +3271,7 @@ json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
       /*tensor_args=*/{X_name, Y_name, W_name, B_name, Mean_name, Rstd_name},
       /*scalar_args=*/{{"M", "i32"}, {"N", "i32"}, {"eps", "f32"}},
       /*arg_names=*/{X_name, Y_name, W_name, B_name, Mean_name, Rstd_name, "M", "N", "eps"});
+  if (host_launch) out["io_spec"]["host_launch"] = true;
   out["launch"] = {{"grid", {M, 1, 1}}, {"block", {block_x, 1, 1}}, {"shared_mem", 0}};
   out["output_names"] = {Y_name, Mean_name, Rstd_name};
   out["bindings"] = out_bindings;
