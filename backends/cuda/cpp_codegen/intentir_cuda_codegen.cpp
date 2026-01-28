@@ -3507,57 +3507,78 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
     w.line("intentir_cuda::softmax_2d_last_f32<BLOCK_THREADS, EPT>(" + in_name + ", " + out_name + ", R, C);");
     w.dedent();
     w.line("}");
-  } else {
-    host_launch = true;
-    struct SoftmaxVariant {
-      int64_t threads;
-      int64_t ept;
-      std::string suffix;
-    };
-    std::vector<SoftmaxVariant> variants;
-    auto norm_threads = [](int64_t t) -> int64_t {
-      if (t < 32) t = 32;
+	  } else {
+	    host_launch = true;
+	    struct SoftmaxVariant {
+	      int64_t threads;
+	      int64_t ept;
+	      int64_t rows_per_block;
+	      bool warp4;
+	      std::string suffix;
+	    };
+	    std::vector<SoftmaxVariant> variants;
+	    auto norm_threads = [](int64_t t) -> int64_t {
+	      if (t < 32) t = 32;
       if (t > 1024) t = 1024;
       if ((t % 32) != 0) t = ((t + 31) / 32) * 32;
       if (t > 1024) t = 1024;
-      return t;
-    };
-    auto add_variant = [&](int64_t threads, const std::string& tag) {
-      threads = norm_threads(threads);
-      if (threads <= 0) return;
-      const int64_t vept = std::max<int64_t>(1, (C + threads - 1) / threads);
-      if (vept <= 0 || vept > 32) return;
-      if (vept > max_ept) return;
-      for (const auto& v : variants) {
-        if (v.threads == threads) return;
-      }
-      variants.push_back(SoftmaxVariant{threads, vept, tag});
-    };
+	      return t;
+	    };
+	    auto add_block_variant = [&](int64_t threads, const std::string& tag) {
+	      threads = norm_threads(threads);
+	      if (threads <= 0) return;
+	      const int64_t vept = std::max<int64_t>(1, (C + threads - 1) / threads);
+	      if (vept <= 0 || vept > 32) return;
+	      if (vept > max_ept) return;
+	      for (const auto& v : variants) {
+	        if (!v.warp4 && v.threads == threads) return;
+	      }
+	      variants.push_back(SoftmaxVariant{threads, vept, 1, false, tag});
+	    };
 
-    // Evidence-guided tiny candidate set: seed + a few standard warp-aligned sizes.
-    add_variant(block_threads, "seed");
-    add_variant(64, "t64");
-    add_variant(128, "t128");
-    add_variant(256, "t256");
-    add_variant(512, "t512");
-    if (variants.empty()) add_variant(block_threads, "fallback");
+	    auto add_warp4_variant = [&](int64_t warps_per_block, const std::string& tag) {
+	      if (warps_per_block <= 0) return;
+	      if (warps_per_block > 8) return;
+	      const int64_t threads = norm_threads(warps_per_block * 32);
+	      if (threads != warps_per_block * 32) return;
+	      for (const auto& v : variants) {
+	        if (v.warp4 && v.rows_per_block == warps_per_block) return;
+	      }
+	      variants.push_back(SoftmaxVariant{threads, 0, warps_per_block, true, tag});
+	    };
 
-    for (const auto& v : variants) {
-      const std::string kname = intent.name + "__" + v.suffix;
-      w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(v.threads) + ") void " + kname +
-             "(const float* __restrict__ " + in_name + ", float* __restrict__ " + out_name + ", " + r_param + ", " + c_param + ") {");
+	    // Evidence-guided tiny candidate set: seed + a few standard warp-aligned sizes.
+	    add_block_variant(block_threads, "seed");
+	    add_block_variant(64, "t64");
+	    add_block_variant(128, "t128");
+	    add_block_variant(256, "t256");
+	    add_block_variant(512, "t512");
+	    // Warp-specialized vectorized variant (SM80+ friendly, avoids block-wide sync).
+	    add_warp4_variant(4, "warp4_w4");
+	    add_warp4_variant(8, "warp4_w8");
+	    if (variants.empty()) add_block_variant(block_threads, "fallback");
+
+	    for (const auto& v : variants) {
+	      const std::string kname = intent.name + "__" + v.suffix;
+	      w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(v.threads) + ") void " + kname +
+	             "(const float* __restrict__ " + in_name + ", float* __restrict__ " + out_name + ", " + r_param + ", " + c_param + ") {");
       w.indent();
       w.line(r_unused);
       w.line(c_unused);
-      w.line("constexpr int R = " + std::to_string(R) + ";");
-      w.line("constexpr int C = " + std::to_string(C) + ";");
-      w.line("constexpr int BLOCK_THREADS = " + std::to_string(v.threads) + ";");
-      w.line("constexpr int EPT = " + std::to_string(v.ept) + ";");
-      w.line("intentir_cuda::softmax_2d_last_f32<BLOCK_THREADS, EPT>(" + in_name + ", " + out_name + ", R, C);");
-      w.dedent();
-      w.line("}");
-      w.blank();
-    }
+	      w.line("constexpr int R = " + std::to_string(R) + ";");
+	      w.line("constexpr int C = " + std::to_string(C) + ";");
+	      if (v.warp4) {
+	        w.line("constexpr int WARPS_PER_BLOCK = " + std::to_string(v.rows_per_block) + ";");
+	        w.line("intentir_cuda::softmax_2d_last_f32_warp4<WARPS_PER_BLOCK>(" + in_name + ", " + out_name + ", R, C);");
+	      } else {
+	        w.line("constexpr int BLOCK_THREADS = " + std::to_string(v.threads) + ";");
+	        w.line("constexpr int EPT = " + std::to_string(v.ept) + ";");
+	        w.line("intentir_cuda::softmax_2d_last_f32<BLOCK_THREADS, EPT>(" + in_name + ", " + out_name + ", R, C);");
+	      }
+	      w.dedent();
+	      w.line("}");
+	      w.blank();
+	    }
 
     // Host dispatcher: pick the best variant once (evidence-guided, small search space).
     w.line("extern \"C\" void " + intent.name + "_host_launch(");
@@ -3584,18 +3605,19 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
     w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
     w.line("float best_ms = 1e30f;");
     w.line("int best_i = 0;");
-    w.line("const int warm = 2;");
-    w.line("const int iters = 20;");
-    w.line("dim3 g((unsigned)R, 1u, 1u);");
-    for (size_t i = 0; i < variants.size(); ++i) {
-      const auto& v = variants[i];
-      const std::string kname = intent.name + "__" + v.suffix;
-      w.line("{");
-      w.indent();
-      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
-      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " +
-             (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) + ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
-      w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
+	    w.line("const int warm = 2;");
+	    w.line("const int iters = 20;");
+	    for (size_t i = 0; i < variants.size(); ++i) {
+	      const auto& v = variants[i];
+	      const std::string kname = intent.name + "__" + v.suffix;
+	      w.line("{");
+	      w.indent();
+	      w.line("dim3 g((unsigned)((R + " + std::to_string(v.rows_per_block) + " - 1) / " + std::to_string(v.rows_per_block) +
+	             "), 1u, 1u);");
+	      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+	      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " +
+	             (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) + ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
+	      w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
       w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " +
              (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) + ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
       w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
@@ -3609,30 +3631,33 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
     w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
     w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
     w.line("intentir_selected = best_i;");
-    w.dedent();
-    w.line("}");
-    w.line("dim3 g((unsigned)R, 1u, 1u);");
-    w.line("switch (intentir_selected) {");
-    for (size_t i = 0; i < variants.size(); ++i) {
-      const auto& v = variants[i];
-      const std::string kname = intent.name + "__" + v.suffix;
-      w.line("case " + std::to_string(i) + ": {");
-      w.indent();
-      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
-      w.line(kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " + (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) +
-             ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
-      w.line("break;");
+	    w.dedent();
+	    w.line("}");
+	    w.line("switch (intentir_selected) {");
+	    for (size_t i = 0; i < variants.size(); ++i) {
+	      const auto& v = variants[i];
+	      const std::string kname = intent.name + "__" + v.suffix;
+	      w.line("case " + std::to_string(i) + ": {");
+	      w.indent();
+	      w.line("dim3 g((unsigned)((R + " + std::to_string(v.rows_per_block) + " - 1) / " + std::to_string(v.rows_per_block) +
+	             "), 1u, 1u);");
+	      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+	      w.line(kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " + (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) +
+	             ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
+	      w.line("break;");
       w.dedent();
       w.line("}");
     }
     w.line("default: {");
-    w.indent();
-    const auto& v0 = variants.front();
-    const std::string k0 = intent.name + "__" + v0.suffix;
-    w.line("dim3 b((unsigned)" + std::to_string(v0.threads) + ", 1u, 1u);");
-    w.line(k0 + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " + (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) +
-           ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
-    w.line("break;");
+	    w.indent();
+	    const auto& v0 = variants.front();
+	    const std::string k0 = intent.name + "__" + v0.suffix;
+	    w.line("dim3 g((unsigned)((R + " + std::to_string(v0.rows_per_block) + " - 1) / " + std::to_string(v0.rows_per_block) +
+	           "), 1u, 1u);");
+	    w.line("dim3 b((unsigned)" + std::to_string(v0.threads) + ", 1u, 1u);");
+	    w.line(k0 + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " + (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) +
+	           ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
+	    w.line("break;");
     w.dedent();
     w.line("}");
     w.line("}");
