@@ -2716,27 +2716,25 @@ json emit_reduce_sum_2d_axis1_f32(const Intent& intent, const json& bindings) {
 
   std::ostringstream cuda_ss;
   CodeWriter w(cuda_ss);
+  w.line("#include <stddef.h>");
   w.line("#include <stdint.h>");
-  w.line("extern \"C\" __global__ void " + intent.name + "(const float* __restrict__ " + inp_name + ", float* __restrict__ " + out_name + ", " +
+  w.line("#include \"intentir_cuda_ops.cuh\"");
+  w.line("#include \"kernels/reduce.cuh\"");
+  w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_x) + ") void " + intent.name +
+         "(const float* __restrict__ " + inp_name + ", float* __restrict__ " + out_name + ", " +
          m_param + ", " + n_param + ") {");
   w.indent();
   if (!m_load.empty()) w.line(m_load);
   if (!n_load.empty()) w.line(n_load);
   w.line("const int m = (int)blockIdx.x;");
   w.line("if (m >= M) return;");
-  w.line("__shared__ float smem[" + std::to_string(block_x) + "];");
   w.line("float acc = 0.0f;");
   w.line("const float* row = " + inp_name + " + (size_t)m * (size_t)N;");
-  w.line("for (int n = (int)threadIdx.x; n < N; n += (int)blockDim.x) acc += row[n];");
-  w.line("smem[(int)threadIdx.x] = acc;");
-  w.line("__syncthreads();");
-  w.line("for (int off = ((int)blockDim.x >> 1); off > 0; off >>= 1) {");
-  w.indent();
-  w.line("if ((int)threadIdx.x < off) smem[(int)threadIdx.x] += smem[(int)threadIdx.x + off];");
-  w.line("__syncthreads();");
-  w.dedent();
-  w.line("}");
-  w.line("if ((int)threadIdx.x == 0) " + out_name + "[m] = smem[0];");
+  w.line("for (int n = (int)threadIdx.x; n < N; n += (int)blockDim.x) acc += intentir_ldg_f32(row + (size_t)n);");
+  w.line("constexpr int BLOCK_THREADS = " + std::to_string(block_x) + ";");
+  w.line("__shared__ intentir_cuda::BlockAllreduceF32<BLOCK_THREADS> red;");
+  w.line("const float sum = intentir_cuda::block_allreduce_sum<BLOCK_THREADS>(acc, &red);");
+  w.line("if ((int)threadIdx.x == 0) " + out_name + "[(size_t)m] = sum;");
   w.dedent();
   w.line("}");
 
@@ -2788,27 +2786,25 @@ json emit_reduce_max_2d_axis1_f32(const Intent& intent, const json& bindings) {
   std::ostringstream cuda_ss;
   CodeWriter w(cuda_ss);
   w.line("#include <math.h>");
+  w.line("#include <stddef.h>");
   w.line("#include <stdint.h>");
-  w.line("extern \"C\" __global__ void " + intent.name + "(const float* __restrict__ " + inp_name + ", float* __restrict__ " + out_name + ", " +
+  w.line("#include \"intentir_cuda_ops.cuh\"");
+  w.line("#include \"kernels/reduce.cuh\"");
+  w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_x) + ") void " + intent.name +
+         "(const float* __restrict__ " + inp_name + ", float* __restrict__ " + out_name + ", " +
          m_param + ", " + n_param + ") {");
   w.indent();
   if (!m_load.empty()) w.line(m_load);
   if (!n_load.empty()) w.line(n_load);
   w.line("const int m = (int)blockIdx.x;");
   w.line("if (m >= M) return;");
-  w.line("__shared__ float smem[" + std::to_string(block_x) + "];");
   w.line("float acc = -INFINITY;");
   w.line("const float* row = " + inp_name + " + (size_t)m * (size_t)N;");
-  w.line("for (int n = (int)threadIdx.x; n < N; n += (int)blockDim.x) acc = fmaxf(acc, row[n]);");
-  w.line("smem[(int)threadIdx.x] = acc;");
-  w.line("__syncthreads();");
-  w.line("for (int off = ((int)blockDim.x >> 1); off > 0; off >>= 1) {");
-  w.indent();
-  w.line("if ((int)threadIdx.x < off) smem[(int)threadIdx.x] = fmaxf(smem[(int)threadIdx.x], smem[(int)threadIdx.x + off]);");
-  w.line("__syncthreads();");
-  w.dedent();
-  w.line("}");
-  w.line("if ((int)threadIdx.x == 0) " + out_name + "[m] = smem[0];");
+  w.line("for (int n = (int)threadIdx.x; n < N; n += (int)blockDim.x) acc = fmaxf(acc, intentir_ldg_f32(row + (size_t)n));");
+  w.line("constexpr int BLOCK_THREADS = " + std::to_string(block_x) + ";");
+  w.line("__shared__ intentir_cuda::BlockAllreduceF32<BLOCK_THREADS> red;");
+  w.line("const float mx = intentir_cuda::block_allreduce_max<BLOCK_THREADS>(acc, &red);");
+  w.line("if ((int)threadIdx.x == 0) " + out_name + "[(size_t)m] = mx;");
   w.dedent();
   w.line("}");
 
