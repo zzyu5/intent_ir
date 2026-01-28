@@ -1027,6 +1027,37 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       w.line("constexpr int TILE_N = " + std::to_string(16 * wmma_warps_n * wmma_frag_n) + ";");
       w.line("dim3 g((unsigned)((N + TILE_N - 1) / TILE_N), (unsigned)((M + TILE_M - 1) / TILE_M), 1u);");
 
+      int fallback_i = 0;
+      if (!variants.empty()) {
+        int64_t best_smem = variants[0].shared_bytes;
+        for (size_t i = 1; i < variants.size(); ++i) {
+          if (variants[i].shared_bytes < best_smem) {
+            best_smem = variants[i].shared_bytes;
+            fallback_i = static_cast<int>(i);
+          }
+        }
+      }
+
+      w.line("static int intentir_max_smem_optin = -1;");
+      w.line("if (intentir_max_smem_optin < 0) {");
+      w.indent();
+      w.line("int dev = 0;");
+      w.line("cudaError_t e0 = cudaGetDevice(&dev);");
+      w.line("if (e0 != cudaSuccess) dev = 0;");
+      w.line("int v = 0;");
+      w.line("cudaError_t e1 = cudaDeviceGetAttribute(&v, cudaDevAttrMaxSharedMemoryPerBlockOptin, dev);");
+      w.line("if (e1 != cudaSuccess || v <= 0) {");
+      w.indent();
+      w.line("(void)cudaGetLastError();");
+      w.line("v = 0;");
+      w.line("cudaError_t e2 = cudaDeviceGetAttribute(&v, cudaDevAttrMaxSharedMemoryPerBlock, dev);");
+      w.line("if (e2 != cudaSuccess || v <= 0) v = 49152;");
+      w.dedent();
+      w.line("}");
+      w.line("intentir_max_smem_optin = v;");
+      w.dedent();
+      w.line("}");
+
       w.line("static int intentir_selected = -1;");
       w.line("static int intentir_smem_cached = -1;");
       w.line("static const void* intentir_kernel_cached = nullptr;");
@@ -1037,7 +1068,8 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
       w.line("float best_ms = 1e30f;");
-      w.line("int best_i = 0;");
+      w.line("int best_i = " + std::to_string(fallback_i) + ";");
+      w.line("bool intentir_found = false;");
       w.line("const int warm = 2;");
       w.line("const int iters = 20;");
       for (size_t vi = 0; vi < variants.size(); ++vi) {
@@ -1047,6 +1079,9 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         w.line("{");
         w.indent();
         w.line("const int smem = (int)" + std::to_string(smem_v) + ";");
+        w.line("if (smem <= intentir_max_smem_optin) {");
+        w.indent();
+        w.line("intentir_found = true;");
         w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
         w.line("const void* kptr = (const void*)" + kname + ";");
         w.line("if (smem >= 49152 && (intentir_kernel_cached != kptr || intentir_smem_cached != smem)) {");
@@ -1075,10 +1110,12 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         w.line("if (ms < best_ms) { best_ms = ms; best_i = " + std::to_string(vi) + "; }");
         w.dedent();
         w.line("}");
+        w.dedent();
+        w.line("}");
       }
       w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
-      w.line("intentir_selected = best_i;");
+      w.line("intentir_selected = intentir_found ? best_i : " + std::to_string(fallback_i) + ";");
       w.dedent();
       w.line("}");
 
