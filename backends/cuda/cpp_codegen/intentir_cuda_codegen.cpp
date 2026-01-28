@@ -580,6 +580,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     }
   }
   const bool use_wmma = allow_tf32 && ((M % 16) == 0) && ((N % 16) == 0) && ((K % 8) == 0);
+  const bool respect_schedule = binding_int(bindings, "CUDA_RESPECT_SCHEDULE").value_or(0) != 0;
 
   int64_t thread_m = std::min<int64_t>(16, block_y);
   if (block_x * thread_m > 1024) thread_m = std::max<int64_t>(1, 1024 / std::max<int64_t>(1, block_x));
@@ -733,6 +734,8 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     if (!wmma_use_cp_async) {
       wmma_pipe_stages = 1;
     } else {
+      const int64_t sched_pipe = (!pipe_stages_override && respect_schedule) ? resolve_schedule_int(intent, bindings, "pipeline_depth", 0) : 0;
+      if (!pipe_stages_override && sched_pipe > 0) wmma_pipe_stages = sched_pipe;
       if (wmma_pipe_stages <= 0) wmma_pipe_stages = 3;
       if (!(wmma_pipe_stages == 2 || wmma_pipe_stages == 3)) wmma_pipe_stages = 3;
     }
@@ -812,7 +815,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       std::string suffix;
     };
 
-    const bool enable_host_dispatch = specialize_dims && (!m_is_tensor) && (!n_is_tensor) && (!k_is_tensor);
+    const bool enable_host_dispatch = (!respect_schedule) && specialize_dims && (!m_is_tensor) && (!n_is_tensor) && (!k_is_tensor);
     const int64_t base_threads = 32 * wmma_warps_m * wmma_warps_n;
     const int64_t tile_warps_m = wmma_warps_m * wmma_frag_m;
     const int64_t tile_warps_n = wmma_warps_n * wmma_frag_n;
@@ -840,7 +843,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       if ((stage_k % 8) != 0) return std::nullopt;
       if ((K % stage_k) != 0) return std::nullopt;
       if (use_cp_async) {
-        if (!(pipe_stages == 1 || pipe_stages == 2 || pipe_stages == 3)) return std::nullopt;
+        if (!(pipe_stages == 2 || pipe_stages == 3)) return std::nullopt;
       } else {
         pipe_stages = 1;
       }
