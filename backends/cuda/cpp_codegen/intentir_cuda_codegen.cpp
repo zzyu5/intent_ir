@@ -2108,6 +2108,8 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
   const int out_rank = static_cast<int>(out_t.shape.size());
   if (out_rank > 4) fail("elementwise lowering supports rank<=4");
 
+  const bool specialize_dims = want_specialize_dims(intent, bindings);
+
   std::unordered_map<std::string, bool> produced;
   for (const auto& op : intent.ops) produced[op.output] = true;
 
@@ -2142,14 +2144,26 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
   std::vector<std::string> dim_load;
   std::unordered_map<std::string, std::string> dim_expr;
   for (const auto& sym : dim_syms) {
+    const auto bound = binding_int(bindings, sym);
     if (is_scalar_tensor(intent, sym, "i32")) {
       tensor_dim_args.push_back(sym);
       dim_param.push_back("const int* " + sym + "_ptr");
-      dim_load.push_back("const int " + sym + " = " + sym + "_ptr ? " + sym + "_ptr[0] : 0;");
+      if (specialize_dims && bound.has_value()) {
+        dim_load.push_back("(void)" + sym + "_ptr;");
+        dim_load.push_back("constexpr int " + sym + " = " + std::to_string(*bound) + ";");
+      } else {
+        dim_load.push_back("const int " + sym + " = " + sym + "_ptr ? " + sym + "_ptr[0] : 0;");
+      }
       dim_expr[sym] = sym;
     } else {
       scalar_args[sym] = "i32";
-      dim_param.push_back("int " + sym);
+      dim_param.push_back("int " + sym + "_in");
+      if (specialize_dims && bound.has_value()) {
+        dim_load.push_back("(void)" + sym + "_in;");
+        dim_load.push_back("constexpr int " + sym + " = " + std::to_string(*bound) + ";");
+      } else {
+        dim_load.push_back("const int " + sym + " = " + sym + "_in;");
+      }
       dim_expr[sym] = sym;
     }
   }
@@ -2350,6 +2364,15 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
     if (total_expr.empty()) total_expr = "1";
   }
 
+  int64_t total = 1;
+  for (const auto& d : out_t.shape) {
+    auto v = resolve_dim_token(d, bindings);
+    if (!v.has_value()) fail("elementwise missing binding for out dim");
+    total *= *v;
+  }
+  const bool full_tile = (block_x > 0) ? ((total % block_x) == 0) : false;
+  const int64_t grid_x = full_tile ? (total / block_x) : ((total + block_x - 1) / block_x);
+
   std::ostringstream cuda_ss;
   CodeWriter w(cuda_ss);
   w.line("#include <math.h>");
@@ -2374,8 +2397,10 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
   w.indent();
   for (const auto& dl : dim_load) w.line(dl);
   w.line("const int64_t tid = (int64_t)blockIdx.x * (int64_t)blockDim.x + (int64_t)threadIdx.x;");
-  w.line("const int64_t total = " + total_expr + ";");
-  w.line("if (tid >= total) return;");
+  if (!full_tile) {
+    w.line("const int64_t total = " + total_expr + ";");
+    w.line("if (tid >= total) return;");
+  }
   for (const auto& l : idx_code) w.line(l);
   for (const auto& l : code_lines) w.line(l);
   w.line(out_name + "[(size_t)tid] = (" + out_cty + ")" + out_var + ";");
@@ -2386,14 +2411,6 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
   for (const auto& x : external_inputs) arg_names.push_back(x);
   arg_names.push_back(out_name);
   for (const auto& sym : dim_syms) arg_names.push_back(sym);
-
-  int64_t total = 1;
-  for (const auto& d : out_t.shape) {
-    auto v = resolve_dim_token(d, bindings);
-    if (!v.has_value()) fail("elementwise missing binding for out dim");
-    total *= *v;
-  }
-  const int64_t grid_x = (total + block_x - 1) / block_x;
 
   json out;
   out["kernel_name"] = intent.name;
