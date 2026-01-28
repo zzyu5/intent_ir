@@ -1581,22 +1581,22 @@ def _kernel_reduce_sum_2d_axis1_f32(intent: IntentFunction, bindings: Dict[str, 
 
     cuda_src = f"""
 #include <stdint.h>
-extern "C" __global__ void {intent.name}(const float* __restrict__ {inp_name}, float* __restrict__ {out_name}, {m_param}, {n_param}) {{
+
+#include "intentir_cuda_ops.cuh"
+#include "kernels/reduce.cuh"
+
+extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(const float* __restrict__ {inp_name}, float* __restrict__ {out_name}, {m_param}, {n_param}) {{
   {m_load}
   {n_load}
   const int m = (int)blockIdx.x;
   if (m >= M) return;
-  __shared__ float smem[{block_x}];
+  constexpr int BLOCK_THREADS = {block_x};
+  __shared__ intentir_cuda::BlockAllreduceF32<BLOCK_THREADS> red;
   float acc = 0.0f;
   const float* row = {inp_name} + (size_t)m * (size_t)N;
-  for (int n = (int)threadIdx.x; n < N; n += (int)blockDim.x) acc += row[n];
-  smem[(int)threadIdx.x] = acc;
-  __syncthreads();
-  for (int off = ((int)blockDim.x >> 1); off > 0; off >>= 1) {{
-    if ((int)threadIdx.x < off) smem[(int)threadIdx.x] += smem[(int)threadIdx.x + off];
-    __syncthreads();
-  }}
-  if ((int)threadIdx.x == 0) {out_name}[m] = smem[0];
+  for (int n = (int)threadIdx.x; n < N; n += (int)blockDim.x) acc += intentir_ldg_f32(row + (size_t)n);
+  const float sum = intentir_cuda::block_allreduce_sum<BLOCK_THREADS>(acc, &red);
+  if ((int)threadIdx.x == 0) {out_name}[m] = sum;
 }}
 """.lstrip()
 
@@ -1651,22 +1651,22 @@ def _kernel_reduce_max_2d_axis1_f32(intent: IntentFunction, bindings: Dict[str, 
     cuda_src = f"""
 #include <math.h>
 #include <stdint.h>
-extern "C" __global__ void {intent.name}(const float* __restrict__ {inp_name}, float* __restrict__ {out_name}, {m_param}, {n_param}) {{
+
+#include "intentir_cuda_ops.cuh"
+#include "kernels/reduce.cuh"
+
+extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(const float* __restrict__ {inp_name}, float* __restrict__ {out_name}, {m_param}, {n_param}) {{
   {m_load}
   {n_load}
   const int m = (int)blockIdx.x;
   if (m >= M) return;
-  __shared__ float smem[{block_x}];
+  constexpr int BLOCK_THREADS = {block_x};
+  __shared__ intentir_cuda::BlockAllreduceF32<BLOCK_THREADS> red;
   float acc = -INFINITY;
   const float* row = {inp_name} + (size_t)m * (size_t)N;
-  for (int n = (int)threadIdx.x; n < N; n += (int)blockDim.x) acc = fmaxf(acc, row[n]);
-  smem[(int)threadIdx.x] = acc;
-  __syncthreads();
-  for (int off = ((int)blockDim.x >> 1); off > 0; off >>= 1) {{
-    if ((int)threadIdx.x < off) smem[(int)threadIdx.x] = fmaxf(smem[(int)threadIdx.x], smem[(int)threadIdx.x + off]);
-    __syncthreads();
-  }}
-  if ((int)threadIdx.x == 0) {out_name}[m] = smem[0];
+  for (int n = (int)threadIdx.x; n < N; n += (int)blockDim.x) acc = fmaxf(acc, intentir_ldg_f32(row + (size_t)n));
+  const float mx = intentir_cuda::block_allreduce_max<BLOCK_THREADS>(acc, &red);
+  if ((int)threadIdx.x == 0) {out_name}[m] = mx;
 }}
 """.lstrip()
 
@@ -1737,22 +1737,22 @@ def _kernel_any_dim_f32_to_i1(intent: IntentFunction, bindings: Dict[str, int]) 
     z_lit = _c_scalar_literal("f32", z)
     cuda_src = f"""
 #include <stdint.h>
-extern "C" __global__ void {intent.name}(const float* __restrict__ {inp_name}, bool* __restrict__ {out_name}, {m_param}, {n_param}) {{
+
+#include "intentir_cuda_ops.cuh"
+#include "kernels/reduce.cuh"
+
+extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(const float* __restrict__ {inp_name}, bool* __restrict__ {out_name}, {m_param}, {n_param}) {{
   {m_load}
   {n_load}
   const int m = (int)blockIdx.x;
   if (m >= M) return;
-  __shared__ int smem[{block_x}];
+  constexpr int BLOCK_THREADS = {block_x};
+  __shared__ intentir_cuda::BlockAllreduceI32<BLOCK_THREADS> red;
   int anyv = 0;
   const float* row = {inp_name} + (size_t)m * (size_t)N;
-  for (int n = (int)threadIdx.x; n < N; n += (int)blockDim.x) anyv |= (row[n] != {z_lit});
-  smem[(int)threadIdx.x] = anyv;
-  __syncthreads();
-  for (int off = ((int)blockDim.x >> 1); off > 0; off >>= 1) {{
-    if ((int)threadIdx.x < off) smem[(int)threadIdx.x] |= smem[(int)threadIdx.x + off];
-    __syncthreads();
-  }}
-  if ((int)threadIdx.x == 0) {out_name}[m] = (smem[0] != 0);
+  for (int n = (int)threadIdx.x; n < N; n += (int)blockDim.x) anyv |= (intentir_ldg_f32(row + (size_t)n) != {z_lit});
+  const int any = intentir_cuda::block_allreduce_max<BLOCK_THREADS>(anyv, &red);
+  if ((int)threadIdx.x == 0) {out_name}[m] = (any != 0);
 }}
 """.lstrip()
 
