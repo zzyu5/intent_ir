@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <math.h>
 
+#include "kernels/reduce.cuh"
+
 namespace intentir_cuda {
 
 template <int BLOCK_THREADS>
@@ -21,32 +23,20 @@ __device__ __forceinline__ void layernorm_2d_f32(
   const int m = (int)blockIdx.x;
   if (m >= M) return;
 
-  __shared__ float smem[BLOCK_THREADS];
+  __shared__ BlockAllreduceF32<BLOCK_THREADS> red;
   float tsum = 0.0f;
   const float* xrow = X + (size_t)m * (size_t)N;
   for (int n = (int)threadIdx.x; n < N; n += BLOCK_THREADS) {
     tsum += xrow[n];
   }
-  smem[threadIdx.x] = tsum;
-  __syncthreads();
-  for (int off = (BLOCK_THREADS >> 1); off > 0; off >>= 1) {
-    if ((int)threadIdx.x < off) smem[threadIdx.x] += smem[threadIdx.x + off];
-    __syncthreads();
-  }
-  const float mean = smem[0] / (float)N;
+  const float mean = block_allreduce_sum<BLOCK_THREADS>(tsum, &red) / (float)N;
 
   float tsq = 0.0f;
   for (int n = (int)threadIdx.x; n < N; n += BLOCK_THREADS) {
     float c = xrow[n] - mean;
     tsq += c * c;
   }
-  smem[threadIdx.x] = tsq;
-  __syncthreads();
-  for (int off = (BLOCK_THREADS >> 1); off > 0; off >>= 1) {
-    if ((int)threadIdx.x < off) smem[threadIdx.x] += smem[threadIdx.x + off];
-    __syncthreads();
-  }
-  const float var = smem[0] / (float)N;
+  const float var = block_allreduce_sum<BLOCK_THREADS>(tsq, &red) / (float)N;
   const float rstd = rsqrtf(var + eps);
   if ((int)threadIdx.x == 0) {
     Mean[m] = mean;
