@@ -105,6 +105,82 @@ __device__ __forceinline__ void softmax_2d_last_f32(const float* __restrict__ in
   }
 }
 
+template <int BLOCK_THREADS, int TILES>
+__device__ __forceinline__ void softmax_2d_last_f32_vec4(const float* __restrict__ inp, float* __restrict__ out, int R, int C) {
+  static_assert(BLOCK_THREADS > 0 && BLOCK_THREADS <= 1024, "softmax vec4 block size must be in (0,1024]");
+  static_assert((BLOCK_THREADS % 32) == 0, "softmax vec4 block must be a multiple of 32 threads");
+  static_assert(TILES > 0 && TILES <= 8, "softmax vec4 supports 1..8 tiles");
+  constexpr int VEC = 4;
+  const int r = (int)blockIdx.x;
+  if (r >= R) return;
+  if (C > 1024) return;
+  const float* __restrict__ in_row = inp + (size_t)r * (size_t)C;
+  float* __restrict__ out_row = out + (size_t)r * (size_t)C;
+  const bool aligned = (((uintptr_t)in_row & 15u) == 0u) && (((uintptr_t)out_row & 15u) == 0u);
+  const int tid = (int)threadIdx.x;
+
+  float4 vals[TILES];
+  float tmax = -INFINITY;
+  #pragma unroll
+  for (int t = 0; t < TILES; ++t) {
+    const int base = t * (BLOCK_THREADS * VEC) + tid * VEC;
+    float4 v;
+    v.x = -INFINITY;
+    v.y = -INFINITY;
+    v.z = -INFINITY;
+    v.w = -INFINITY;
+    if (base < C) {
+      if (aligned && (base + (VEC - 1) < C)) {
+        v = *reinterpret_cast<const float4*>(in_row + (size_t)base);
+      } else {
+        if (base + 0 < C) v.x = intentir_ldg_f32(in_row + (size_t)(base + 0));
+        if (base + 1 < C) v.y = intentir_ldg_f32(in_row + (size_t)(base + 1));
+        if (base + 2 < C) v.z = intentir_ldg_f32(in_row + (size_t)(base + 2));
+        if (base + 3 < C) v.w = intentir_ldg_f32(in_row + (size_t)(base + 3));
+      }
+    }
+    vals[t] = v;
+    tmax = fmaxf(tmax, v.x);
+    tmax = fmaxf(tmax, v.y);
+    tmax = fmaxf(tmax, v.z);
+    tmax = fmaxf(tmax, v.w);
+  }
+  const float mx = block_allreduce_max<BLOCK_THREADS>(tmax);
+
+  float tsum = 0.0f;
+  #pragma unroll
+  for (int t = 0; t < TILES; ++t) {
+    float4 v = vals[t];
+    v.x = __expf(v.x - mx);
+    v.y = __expf(v.y - mx);
+    v.z = __expf(v.z - mx);
+    v.w = __expf(v.w - mx);
+    vals[t] = v;
+    tsum += (v.x + v.y + v.z + v.w);
+  }
+  const float sum = block_allreduce_sum<BLOCK_THREADS>(tsum);
+  const float inv = __fdividef(1.0f, sum);
+
+  #pragma unroll
+  for (int t = 0; t < TILES; ++t) {
+    const int base = t * (BLOCK_THREADS * VEC) + tid * VEC;
+    if (base >= C) continue;
+    float4 v = vals[t];
+    v.x *= inv;
+    v.y *= inv;
+    v.z *= inv;
+    v.w *= inv;
+    if (aligned && (base + (VEC - 1) < C)) {
+      *reinterpret_cast<float4*>(out_row + (size_t)base) = v;
+    } else {
+      if (base + 0 < C) out_row[(size_t)(base + 0)] = v.x;
+      if (base + 1 < C) out_row[(size_t)(base + 1)] = v.y;
+      if (base + 2 < C) out_row[(size_t)(base + 2)] = v.z;
+      if (base + 3 < C) out_row[(size_t)(base + 3)] = v.w;
+    }
+  }
+}
+
 template <int WARPS_PER_BLOCK>
 __device__ __forceinline__ void softmax_2d_last_f32_warp4(const float* __restrict__ inp, float* __restrict__ out, int R, int C) {
   static_assert(WARPS_PER_BLOCK > 0 && WARPS_PER_BLOCK <= 8, "softmax warp4 supports 1..8 warps per block");
