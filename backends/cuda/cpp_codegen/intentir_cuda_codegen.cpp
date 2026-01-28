@@ -335,6 +335,12 @@ bool want_specialize_dims(const Intent& intent, const json& bindings) {
   return true;
 }
 
+bool want_host_dispatch(const json& bindings) {
+  if (binding_int(bindings, "CUDA_DISABLE_HOST_DISPATCH").value_or(0) != 0) return false;
+  if (binding_int(bindings, "CUDA_HOST_DISPATCH").value_or(1) == 0) return false;
+  return true;
+}
+
 std::optional<int64_t> resolve_dim_token(const json& tok, const json& bindings) {
   if (tok.is_number_integer()) return tok.get<int64_t>();
   if (tok.is_number()) return static_cast<int64_t>(tok.get<double>());
@@ -467,7 +473,7 @@ json emit_dropout(const Intent& intent, const json& bindings) {
   w.line("#include \"kernels/dropout.cuh\"");
   w.blank();
   emit_selected_api(w);
-  const bool enable_host_dispatch = (!respect_schedule) && specialize_dims;
+  const bool enable_host_dispatch = want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims;
   bool host_launch = false;
 
   if (enable_host_dispatch) {
@@ -1080,7 +1086,8 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       std::string suffix;
     };
 
-    const bool enable_host_dispatch = (!respect_schedule) && specialize_dims && (!m_is_tensor) && (!n_is_tensor) && (!k_is_tensor);
+    const bool enable_host_dispatch =
+        want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims && (!m_is_tensor) && (!n_is_tensor) && (!k_is_tensor);
     const int64_t base_threads = 32 * wmma_warps_m * wmma_warps_n;
     const int64_t tile_warps_m = wmma_warps_m * wmma_frag_m;
     const int64_t tile_warps_n = wmma_warps_n * wmma_frag_n;
@@ -1586,7 +1593,7 @@ json emit_warp(const Intent& intent, const json& bindings) {
 
   const bool respect_schedule = binding_int(bindings, "CUDA_RESPECT_SCHEDULE").value_or(0) != 0;
   const bool specialize_dims = want_specialize_dims(intent, bindings);
-  const bool enable_host_dispatch = (!respect_schedule) && specialize_dims;
+  const bool enable_host_dispatch = want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims;
   bool host_launch = false;
 
   int64_t block_w = binding_int(bindings, "BLOCK_W").value_or(128);
@@ -1800,7 +1807,7 @@ json emit_correlation(const Intent& intent, const json& bindings) {
 
   const bool respect_schedule = binding_int(bindings, "CUDA_RESPECT_SCHEDULE").value_or(0) != 0;
   const bool specialize_dims = want_specialize_dims(intent, bindings);
-  const bool enable_host_dispatch = (!respect_schedule) && specialize_dims;
+  const bool enable_host_dispatch = want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims;
   bool host_launch = false;
 
   int64_t block_x = resolve_schedule_int(intent, bindings, "tile_n", 128);
@@ -2072,7 +2079,7 @@ json emit_resize_bilinear2x_i8(const Intent& intent, const json& bindings) {
 
   const bool respect_schedule = binding_int(bindings, "CUDA_RESPECT_SCHEDULE").value_or(0) != 0;
   const bool specialize_dims = want_specialize_dims(intent, bindings);
-  const bool enable_host_dispatch = (!respect_schedule) && specialize_dims;
+  const bool enable_host_dispatch = want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims;
   bool host_launch = false;
 
   int hw_fl = 7;
@@ -2307,7 +2314,7 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
 
   const bool respect_schedule = binding_int(bindings, "CUDA_RESPECT_SCHEDULE").value_or(0) != 0;
   const bool specialize_dims = want_specialize_dims(intent, bindings);
-  const bool enable_host_dispatch = (!respect_schedule) && specialize_dims;
+  const bool enable_host_dispatch = want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims;
   bool host_launch = false;
 
   int64_t heads_per_block = binding_int(bindings, "ROPE_HEADS_PER_BLOCK").value_or(1);
@@ -3618,7 +3625,7 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
   w.line("#include \"kernels/softmax.cuh\"");
   w.blank();
   emit_selected_api(w);
-  const bool enable_host_dispatch = (!respect_schedule) && specialize_dims;
+  const bool enable_host_dispatch = want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims;
   bool host_launch = false;
 
   if (!enable_host_dispatch) {
@@ -4022,7 +4029,7 @@ json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
   }
 
   const bool specialize_dims = want_specialize_dims(intent, bindings);
-  const bool enable_host_dispatch = (!respect_schedule) && specialize_dims;
+  const bool enable_host_dispatch = want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims;
   bool host_launch = false;
 
   std::ostringstream cuda_ss;
