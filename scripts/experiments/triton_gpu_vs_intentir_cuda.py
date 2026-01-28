@@ -546,6 +546,11 @@ def main() -> None:
         default=True,
         help="Compile IntentIR CUDA kernels with --use_fast_math (default: enabled).",
     )
+    ap.add_argument(
+        "--ablation",
+        action="store_true",
+        help="Run evidence ablation: compare evidence-gated specialization vs contract_v2 forced OUT_OF_SCOPE.",
+    )
     ap.add_argument("--out", type=Path, default=OUT_DEFAULT, help="Output JSON path.")
     ap.add_argument(
         "--bind",
@@ -583,6 +588,12 @@ def main() -> None:
         "seed": int(args.seed),
         "kernels": wanted,
     }
+    if bool(args.ablation):
+        meta["ablation"] = {
+            "enabled": True,
+            "modes": ["evidence_on", "contract_off"],
+            "contract_off_level": "OUT_OF_SCOPE",
+        }
     try:
         import triton  # noqa: PLC0415
 
@@ -600,9 +611,18 @@ def main() -> None:
             # Build bindings: real shapes + descriptor constexpr (e.g., BLOCK_M/BLOCK_N).
             bindings: Dict[str, Any] = dict(AI_BENCH_SHAPES.get(k, {}))
             bindings.update(_descriptor_constexpr(report))
-            # Performance experiment: specialize resolved dims as compile-time constants
-            # to reduce overhead and let nvcc aggressively optimize/unroll.
-            bindings.setdefault("CUDA_SPECIALIZE_DIMS", 1)
+            # Default (no ablation): force specialize dims for best performance and
+            # to match historical E5 results.
+            #
+            # Ablation mode: rely on evidence-gated auto specialization instead so
+            # contract_v2 can meaningfully disable the fast path.
+            if bool(args.ablation):
+                bindings.setdefault("CUDA_SPECIALIZE_DIMS", 0)
+                bindings.setdefault("CUDA_AUTO_SPECIALIZE_DIMS", 1)
+            else:
+                # Performance experiment: specialize resolved dims as compile-time constants
+                # to reduce overhead and let nvcc aggressively optimize/unroll.
+                bindings.setdefault("CUDA_SPECIALIZE_DIMS", 1)
             # Optional overrides for quick tuning experiments.
             for item in list(args.bind or []):
                 if "=" not in str(item):
@@ -625,84 +645,153 @@ def main() -> None:
             if k == "ai_bench_matmul":
                 bindings.setdefault("ALLOW_TF32", 1)
 
-            intent = IntentFunction.from_json_dict(report["intent"])
-            lowered = lower_intent_to_cuda_kernel(intent, shape_bindings=bindings)
+            def _intent_contract_level(it: Any) -> str | None:
+                try:
+                    if not isinstance(it, dict):
+                        return None
+                    meta_j = it.get("meta")
+                    if not isinstance(meta_j, dict):
+                        return None
+                    cv2 = meta_j.get("contract_v2")
+                    if isinstance(cv2, dict) and isinstance(cv2.get("level"), str):
+                        return str(cv2.get("level"))
+                    return None
+                except Exception:
+                    return None
 
-            # Compile CUDA extension once (excluded from timing).
-            mod = compile_cuda_extension(kernel_name=lowered.kernel_name, cuda_src=lowered.cuda_src, io_spec=lowered.io_spec)
+            def _intent_with_contract_level(it: dict[str, Any], level: str) -> dict[str, Any]:
+                it2: dict[str, Any] = dict(it)
+                meta_j = it2.get("meta")
+                meta2: dict[str, Any] = dict(meta_j) if isinstance(meta_j, dict) else {}
+                cv2 = meta2.get("contract_v2")
+                cv2_2: dict[str, Any] = dict(cv2) if isinstance(cv2, dict) else {}
+                cv2_2["level"] = str(level)
+                meta2["contract_v2"] = cv2_2
+                it2["meta"] = meta2
+                return it2
 
-            ours_args, ours_outputs = _prep_args_for_cuda_ext(
-                kernel=k,
-                io_spec=lowered.io_spec,
-                bindings=lowered.bindings,
-                output_names=lowered.output_names,
-                launch=lowered.launch,
-                device=str(args.device),
-                seed=int(args.seed),
-            )
+            def _run_ours(it_json: dict[str, Any], bnd: dict[str, Any]) -> tuple[dict[str, Any], Callable[[], None], dict[str, Any]]:
+                intent = IntentFunction.from_json_dict(it_json)
+                lowered = lower_intent_to_cuda_kernel(intent, shape_bindings=bnd)
+                mod = compile_cuda_extension(kernel_name=lowered.kernel_name, cuda_src=lowered.cuda_src, io_spec=lowered.io_spec)
+                ours_args, ours_outputs = _prep_args_for_cuda_ext(
+                    kernel=k,
+                    io_spec=lowered.io_spec,
+                    bindings=lowered.bindings,
+                    output_names=lowered.output_names,
+                    launch=lowered.launch,
+                    device=str(args.device),
+                    seed=int(args.seed),
+                )
 
-            def ours_run() -> None:
-                mod.launch(*ours_args)
+                def run() -> None:
+                    mod.launch(*ours_args)
 
-            arg_names = lowered.io_spec.get("arg_names") if isinstance(lowered.io_spec, dict) else None
-            arg_names = [str(x) for x in (arg_names or [])]
-            arg_map = {name: ours_args[i] for i, name in enumerate(arg_names)}
-            triton_outputs = {name: torch.empty_like(t) for name, t in ours_outputs.items()}
-            triton_run = _make_triton_runner_from_shared_args(k, arg_map, triton_outputs)
+                run()
+                torch.cuda.synchronize()
 
-            ours_run()
+                sel_variant: int | None = None
+                sel_tag: str | None = None
+                try:
+                    if hasattr(mod, "selected_variant"):
+                        sel_variant = int(mod.selected_variant())
+                    if hasattr(mod, "selected_tag"):
+                        sel_tag = str(mod.selected_tag())
+                except Exception:
+                    sel_variant = None
+                    sel_tag = None
+
+                rec = {
+                    "ns_per_iter": None,
+                    "ns_per_iter_repeats": None,
+                    "launch": {"grid": list(lowered.launch.grid), "block": list(lowered.launch.block)},
+                    "selected_variant": sel_variant,
+                    "selected_tag": sel_tag,
+                }
+                ctx = {"mod": mod, "outputs": ours_outputs, "lowered": lowered, "args": ours_args}
+                return rec, run, ctx
+
+            intent_json = report.get("intent")
+            if not isinstance(intent_json, dict):
+                raise RuntimeError("report missing intent json")
+
+            intent_contract_v2_level = _intent_contract_level(intent_json)
+
+            # Evidence-on (default): keep the artifact intent.meta (contract_v2 etc).
+            ours_rec, ours_run, ours_ctx = _run_ours(intent_json, dict(bindings))
+
+            # Build Triton runner from the evidence-on shared args.
+            lowered0 = ours_ctx["lowered"]
+            ours_args0 = ours_ctx["args"]
+            ours_outputs0 = ours_ctx["outputs"]
+            arg_names0 = lowered0.io_spec.get("arg_names") if isinstance(lowered0.io_spec, dict) else None
+            arg_names0 = [str(x) for x in (arg_names0 or [])]
+            arg_map0 = {name: ours_args0[i] for i, name in enumerate(arg_names0)}
+            triton_outputs = {name: torch.empty_like(t) for name, t in ours_outputs0.items()}
+            triton_run = _make_triton_runner_from_shared_args(k, arg_map0, triton_outputs)
+
+            # Sanity correctness check for evidence-on.
             triton_run()
             torch.cuda.synchronize()
-            _check_outputs_close(kernel=k, ours=ours_outputs, triton=triton_outputs, allow_tf32=(k == "ai_bench_matmul"))
+            _check_outputs_close(kernel=k, ours=ours_outputs0, triton=triton_outputs, allow_tf32=(k == "ai_bench_matmul"))
 
-            ours_selected_variant: int | None = None
-            ours_selected_tag: str | None = None
-            try:
-                if hasattr(mod, "selected_variant"):
-                    ours_selected_variant = int(mod.selected_variant())
-                if hasattr(mod, "selected_tag"):
-                    ours_selected_tag = str(mod.selected_tag())
-            except Exception:
-                ours_selected_variant = None
-                ours_selected_tag = None
-
-            intent_contract_v2_level: str | None = None
-            try:
-                it = report.get("intent")
-                if isinstance(it, dict):
-                    meta_j = it.get("meta")
-                    if isinstance(meta_j, dict):
-                        cv2 = meta_j.get("contract_v2")
-                        if isinstance(cv2, dict) and isinstance(cv2.get("level"), str):
-                            intent_contract_v2_level = str(cv2.get("level"))
-            except Exception:
-                intent_contract_v2_level = None
+            # Evidence-off (ablation): force contract_v2 to OUT_OF_SCOPE and re-lower.
+            ours_contract_off_rec: dict[str, Any] | None = None
+            ours_contract_off_run: Callable[[], None] | None = None
+            if bool(args.ablation):
+                intent_off = _intent_with_contract_level(intent_json, "OUT_OF_SCOPE")
+                ours_contract_off_rec, ours_contract_off_run, ours_off_ctx = _run_ours(intent_off, dict(bindings))
+                ours_outputs_off = ours_off_ctx["outputs"]
+                _check_outputs_close(kernel=k, ours=ours_outputs_off, triton=triton_outputs, allow_tf32=(k == "ai_bench_matmul"))
 
             if str(args.bench_mode) == "graph":
                 try:
-                    ours_ns, ours_reps = _bench_cuda_graph_repeated(
-                        ours_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
-                    )
+                    ours_ns, ours_reps = _bench_cuda_graph_repeated(ours_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats))
                     triton_ns, triton_reps = _bench_cuda_graph_repeated(
                         triton_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
                     )
+                    ours_contract_off_ns = None
+                    ours_contract_off_reps: list[float] | None = None
+                    if bool(args.ablation) and ours_contract_off_run is not None:
+                        ours_contract_off_ns, ours_contract_off_reps = _bench_cuda_graph_repeated(
+                            ours_contract_off_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
+                        )
                 except Exception as e:
                     _log(f"  WARN: bench_mode=graph failed ({type(e).__name__}: {e}); falling back to event mode")
-                    ours_ns, ours_reps = _bench_cuda_repeated(
-                        ours_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
-                    )
+                    ours_ns, ours_reps = _bench_cuda_repeated(ours_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats))
                     triton_ns, triton_reps = _bench_cuda_repeated(
                         triton_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
                     )
+                    ours_contract_off_ns = None
+                    ours_contract_off_reps = None
+                    if bool(args.ablation) and ours_contract_off_run is not None:
+                        ours_contract_off_ns, ours_contract_off_reps = _bench_cuda_repeated(
+                            ours_contract_off_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
+                        )
             else:
-                ours_ns, ours_reps = _bench_cuda_repeated(
-                    ours_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
-                )
+                ours_ns, ours_reps = _bench_cuda_repeated(ours_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats))
                 triton_ns, triton_reps = _bench_cuda_repeated(
                     triton_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
                 )
+                ours_contract_off_ns = None
+                ours_contract_off_reps = None
+                if bool(args.ablation) and ours_contract_off_run is not None:
+                    ours_contract_off_ns, ours_contract_off_reps = _bench_cuda_repeated(
+                        ours_contract_off_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
+                    )
+
+            ours_rec["ns_per_iter"] = ours_ns
+            ours_rec["ns_per_iter_repeats"] = ours_reps
+            if ours_contract_off_rec is not None:
+                ours_contract_off_rec["ns_per_iter"] = ours_contract_off_ns
+                ours_contract_off_rec["ns_per_iter_repeats"] = ours_contract_off_reps
 
             speedup = float(triton_ns) / float(ours_ns) if ours_ns > 0 else 0.0
+            speedup_contract_off = None
+            speedup_gain = None
+            if bool(args.ablation) and ours_contract_off_ns is not None and ours_contract_off_ns > 0:
+                speedup_contract_off = float(triton_ns) / float(ours_contract_off_ns)
+                speedup_gain = float(ours_contract_off_ns) / float(ours_ns) if ours_ns > 0 else None
             results.append(
                 {
                     "kernel": k,
@@ -710,15 +799,12 @@ def main() -> None:
                     "intent": {
                         "contract_v2_level": intent_contract_v2_level,
                     },
-                    "ours": {
-                        "ns_per_iter": ours_ns,
-                        "ns_per_iter_repeats": ours_reps,
-                        "launch": {"grid": list(lowered.launch.grid), "block": list(lowered.launch.block)},
-                        "selected_variant": ours_selected_variant,
-                        "selected_tag": ours_selected_tag,
-                    },
+                    "ours": ours_rec,
+                    "ours_contract_off": ours_contract_off_rec,
                     "triton": {"ns_per_iter": triton_ns, "ns_per_iter_repeats": triton_reps},
                     "speedup_ours_over_triton": speedup,
+                    "speedup_ours_contract_off_over_triton": speedup_contract_off,
+                    "slowdown_contract_off_over_ours": speedup_gain,
                 }
             )
             _log(f"  ours={ours_ns/1e3:.2f}us  triton={triton_ns/1e3:.2f}us  speedup={speedup:.2f}x")
@@ -727,10 +813,16 @@ def main() -> None:
             _log(f"  FAIL: {type(e).__name__}: {e}")
 
     ok_rates = [r["speedup_ours_over_triton"] for r in results if r.get("status") == "OK"]
+    ok_rates_contract_off = [
+        r["speedup_ours_contract_off_over_triton"]
+        for r in results
+        if r.get("status") == "OK" and isinstance(r.get("speedup_ours_contract_off_over_triton"), (int, float))
+    ]
     summary = {
         "ok": sum(1 for r in results if r.get("status") == "OK"),
         "total": len(results),
         "geom_speedup_ours_over_triton": _geom_mean(ok_rates),
+        "geom_speedup_ours_contract_off_over_triton": _geom_mean(ok_rates_contract_off) if ok_rates_contract_off else None,
         "min_speedup": min(ok_rates) if ok_rates else None,
         "max_speedup": max(ok_rates) if ok_rates else None,
     }
