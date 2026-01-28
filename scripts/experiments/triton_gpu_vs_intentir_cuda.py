@@ -655,6 +655,29 @@ def main() -> None:
             torch.cuda.synchronize()
             _check_outputs_close(kernel=k, ours=ours_outputs, triton=triton_outputs, allow_tf32=(k == "ai_bench_matmul"))
 
+            ours_selected_variant: int | None = None
+            ours_selected_tag: str | None = None
+            try:
+                if hasattr(mod, "selected_variant"):
+                    ours_selected_variant = int(mod.selected_variant())
+                if hasattr(mod, "selected_tag"):
+                    ours_selected_tag = str(mod.selected_tag())
+            except Exception:
+                ours_selected_variant = None
+                ours_selected_tag = None
+
+            intent_contract_v2_level: str | None = None
+            try:
+                it = report.get("intent")
+                if isinstance(it, dict):
+                    meta_j = it.get("meta")
+                    if isinstance(meta_j, dict):
+                        cv2 = meta_j.get("contract_v2")
+                        if isinstance(cv2, dict) and isinstance(cv2.get("level"), str):
+                            intent_contract_v2_level = str(cv2.get("level"))
+            except Exception:
+                intent_contract_v2_level = None
+
             if str(args.bench_mode) == "graph":
                 try:
                     ours_ns, ours_reps = _bench_cuda_graph_repeated(
@@ -684,10 +707,15 @@ def main() -> None:
                 {
                     "kernel": k,
                     "status": "OK",
+                    "intent": {
+                        "contract_v2_level": intent_contract_v2_level,
+                    },
                     "ours": {
                         "ns_per_iter": ours_ns,
                         "ns_per_iter_repeats": ours_reps,
                         "launch": {"grid": list(lowered.launch.grid), "block": list(lowered.launch.block)},
+                        "selected_variant": ours_selected_variant,
+                        "selected_tag": ours_selected_tag,
                     },
                     "triton": {"ns_per_iter": triton_ns, "ns_per_iter_repeats": triton_reps},
                     "speedup_ours_over_triton": speedup,

@@ -388,6 +388,18 @@ json io_spec_from_args(const Intent& intent, const std::vector<std::string>& ten
   return io_spec;
 }
 
+void emit_selected_api(CodeWriter& w) {
+  // Selection introspection (for paper evidence/debug): the generated module can
+  // expose `selected_variant()` / `selected_tag()` to Python.
+  //
+  // Host-dispatch kernels update these; single-kernel paths keep the default.
+  w.line("static int intentir_cuda_selected_variant_idx = -1;");
+  w.line("static const char* intentir_cuda_selected_variant_tag = \"unset\";");
+  w.line("extern \"C\" int intentir_cuda_selected_variant() { return intentir_cuda_selected_variant_idx; }");
+  w.line("extern \"C\" const char* intentir_cuda_selected_tag() { return intentir_cuda_selected_variant_tag; }");
+  w.blank();
+}
+
 json emit_dropout(const Intent& intent, const json& bindings) {
   if (!(intent.ops.size() == 1 && intent.ops[0].op == "dropout")) fail("dropout lowering expects a single dropout op");
   const Op& op = intent.ops[0];
@@ -454,6 +466,7 @@ json emit_dropout(const Intent& intent, const json& bindings) {
   CodeWriter w(cuda_ss);
   w.line("#include \"kernels/dropout.cuh\"");
   w.blank();
+  emit_selected_api(w);
   const bool enable_host_dispatch = (!respect_schedule) && specialize_dims;
   bool host_launch = false;
 
@@ -590,6 +603,8 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         const std::string kname = intent.name + "__" + v.suffix;
         w.line("case " + std::to_string(i) + ": {");
         w.indent();
+        w.line("intentir_cuda_selected_variant_idx = " + std::to_string(i) + ";");
+        w.line("intentir_cuda_selected_variant_tag = \"" + v.suffix + "\";");
         w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
         w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
         w.line(kname + "<<<g, b, 0, stream>>>(X, p, seed, Y, n_elements);");
@@ -601,6 +616,8 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.indent();
       const auto& v0 = variants.empty() ? DropoutVariant{block_x, ept, grid_x, (n % denom) == 0, "fallback"} : variants[0];
       const std::string k0 = intent.name + "__" + v0.suffix;
+      w.line("intentir_cuda_selected_variant_idx = 0;");
+      w.line("intentir_cuda_selected_variant_tag = \"" + v0.suffix + "\";");
       w.line("dim3 b((unsigned)" + std::to_string(v0.threads) + ", 1u, 1u);");
       w.line("dim3 g((unsigned)" + std::to_string(v0.grid_x) + ", 1u, 1u);");
       w.line(k0 + "<<<g, b, 0, stream>>>(X, p, seed, Y, n_elements);");
@@ -664,6 +681,8 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         const std::string kname = intent.name + "__" + v.suffix;
         w.line("case " + std::to_string(i) + ": {");
         w.indent();
+        w.line("intentir_cuda_selected_variant_idx = " + std::to_string(i) + ";");
+        w.line("intentir_cuda_selected_variant_tag = \"" + v.suffix + "\";");
         w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
         w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
         w.line(kname + "<<<g, b, 0, stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
@@ -675,6 +694,8 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.indent();
       const auto& v0 = variants.empty() ? DropoutVariant{block_x, ept, grid_x, (n % denom) == 0, "fallback"} : variants[0];
       const std::string k0 = intent.name + "__" + v0.suffix;
+      w.line("intentir_cuda_selected_variant_idx = 0;");
+      w.line("intentir_cuda_selected_variant_tag = \"" + v0.suffix + "\";");
       w.line("dim3 b((unsigned)" + std::to_string(v0.threads) + ", 1u, 1u);");
       w.line("dim3 g((unsigned)" + std::to_string(v0.grid_x) + ", 1u, 1u);");
       w.line(k0 + "<<<g, b, 0, stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
@@ -1042,6 +1063,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     w.line("#include <cstdio>");
     w.line("#include \"kernels/wmma_matmul.cuh\"");
     w.blank();
+    emit_selected_api(w);
     struct WmmaVariant {
       int64_t warps_m;
       int64_t warps_n;
@@ -1392,6 +1414,8 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         const int64_t smem_v = ((v.shared_bytes + 15) / 16) * 16;
         w.line("case " + std::to_string(vi) + ": {");
         w.indent();
+        w.line("intentir_cuda_selected_variant_idx = " + std::to_string(vi) + ";");
+        w.line("intentir_cuda_selected_variant_tag = \"" + v.suffix + "\";");
         w.line("const int smem = (int)" + std::to_string(smem_v) + ";");
         w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
         w.line("const void* kptr = (const void*)" + kname + ";");
@@ -1411,6 +1435,8 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       w.indent();
       const std::string kname0 = intent.name + "__" + variants[0].suffix;
       const int64_t smem0 = ((variants[0].shared_bytes + 15) / 16) * 16;
+      w.line("intentir_cuda_selected_variant_idx = 0;");
+      w.line("intentir_cuda_selected_variant_tag = \"" + variants[0].suffix + "\";");
       w.line("const int smem = (int)" + std::to_string(smem0) + ";");
       w.line("dim3 b((unsigned)" + std::to_string(variants[0].threads) + ", 1u, 1u);");
       w.line("const void* kptr = (const void*)" + kname0 + ";");
@@ -1437,6 +1463,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
   } else {
     w.line("#include \"kernels/matmul_fallback.cuh\"");
     w.blank();
+    emit_selected_api(w);
     w.line("extern \"C\" __global__ void " + intent.name + "(");
     w.indent();
     w.line("const float* __restrict__ A, const float* __restrict__ B, float* __restrict__ C,");
@@ -1531,6 +1558,7 @@ json emit_warp(const Intent& intent, const json& bindings) {
   CodeWriter w(cuda_ss);
   w.line("#include \"kernels/warp.cuh\"");
   w.blank();
+  emit_selected_api(w);
   if (!enable_host_dispatch) {
     w.line("extern \"C\" __global__ void " + intent.name +
            "(const int8_t* __restrict__ " + src_name + ", const int16_t* __restrict__ " + offset_name + ", int8_t* __restrict__ " +
@@ -1672,6 +1700,8 @@ json emit_warp(const Intent& intent, const json& bindings) {
       const std::string kname = intent.name + "__" + v.suffix;
       w.line("case " + std::to_string(i) + ": {");
       w.indent();
+      w.line("intentir_cuda_selected_variant_idx = " + std::to_string(i) + ";");
+      w.line("intentir_cuda_selected_variant_tag = \"" + v.suffix + "\";");
       w.line("dim3 b((unsigned)" + std::to_string(v.block_w) + ", 1u, 1u);");
       w.line("dim3 g((unsigned)" + std::to_string(v.grid_w) + ", (unsigned)H, (unsigned)C);");
       w.line(kname + "<<<g, b, 0, stream>>>(" + src_name + ", " + offset_name + ", " + out_name + ", C, H, W);");
@@ -1683,6 +1713,8 @@ json emit_warp(const Intent& intent, const json& bindings) {
     w.indent();
     const auto& v0 = variants.front();
     const std::string k0 = intent.name + "__" + v0.suffix;
+    w.line("intentir_cuda_selected_variant_idx = 0;");
+    w.line("intentir_cuda_selected_variant_tag = \"" + v0.suffix + "\";");
     w.line("dim3 b((unsigned)" + std::to_string(v0.block_w) + ", 1u, 1u);");
     w.line("dim3 g((unsigned)" + std::to_string(v0.grid_w) + ", (unsigned)H, (unsigned)C);");
     w.line(k0 + "<<<g, b, 0, stream>>>(" + src_name + ", " + offset_name + ", " + out_name + ", C, H, W);");
@@ -1756,6 +1788,7 @@ json emit_correlation(const Intent& intent, const json& bindings) {
   CodeWriter w(cuda_ss);
   w.line("#include \"kernels/correlation.cuh\"");
   w.blank();
+  emit_selected_api(w);
   auto dim_unused = [](const char* scalar_name, bool is_tensor) -> std::string {
     return std::string("(void)") + (is_tensor ? (std::string(scalar_name) + "_ptr") : std::string(scalar_name)) + ";";
   };
@@ -1928,6 +1961,8 @@ json emit_correlation(const Intent& intent, const json& bindings) {
       const std::string kname = intent.name + "__" + v.suffix;
       w.line("case " + std::to_string(i) + ": {");
       w.indent();
+      w.line("intentir_cuda_selected_variant_idx = " + std::to_string(i) + ";");
+      w.line("intentir_cuda_selected_variant_tag = \"" + v.suffix + "\";");
       w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
       w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
       w.line(kname + "<<<g, b, 0, stream>>>(" + src0_name + ", " + src1_name + ", " + out_name +
@@ -1940,6 +1975,8 @@ json emit_correlation(const Intent& intent, const json& bindings) {
     w.indent();
     const auto& v0 = variants.front();
     const std::string k0 = intent.name + "__" + v0.suffix;
+    w.line("intentir_cuda_selected_variant_idx = 0;");
+    w.line("intentir_cuda_selected_variant_tag = \"" + v0.suffix + "\";");
     w.line("dim3 b((unsigned)" + std::to_string(v0.threads) + ", 1u, 1u);");
     w.line("dim3 g((unsigned)" + std::to_string(v0.grid_x) + ", 1u, 1u);");
     w.line(k0 + "<<<g, b, 0, stream>>>(" + src0_name + ", " + src1_name + ", " + out_name +
@@ -2034,6 +2071,7 @@ json emit_resize_bilinear2x_i8(const Intent& intent, const json& bindings) {
   CodeWriter w(cuda_ss);
   w.line("#include \"kernels/resize.cuh\"");
   w.blank();
+  emit_selected_api(w);
   if (!enable_host_dispatch) {
     w.line("extern \"C\" __global__ void " + intent.name + "(const int8_t* __restrict__ " + src_name + ", int8_t* __restrict__ " + out_name +
            ", " + c_param + ", " + h_param + ", " + w_param + ") {");
@@ -2154,6 +2192,8 @@ json emit_resize_bilinear2x_i8(const Intent& intent, const json& bindings) {
       const std::string kname = intent.name + "__" + v.suffix;
       w.line("case " + std::to_string(i) + ": {");
       w.indent();
+      w.line("intentir_cuda_selected_variant_idx = " + std::to_string(i) + ";");
+      w.line("intentir_cuda_selected_variant_tag = \"" + v.suffix + "\";");
       w.line("dim3 b((unsigned)" + std::to_string(v.block_w) + ", 1u, 1u);");
       w.line("dim3 g((unsigned)" + std::to_string(v.grid_w) + ", (unsigned)OH0, (unsigned)C0);");
       w.line(kname + "<<<g, b, 0, stream>>>(" + src_name + ", " + out_name + ", " + c_arg + ", " + h_arg + ", " + w_arg + ");");
@@ -2165,6 +2205,8 @@ json emit_resize_bilinear2x_i8(const Intent& intent, const json& bindings) {
     w.indent();
     const auto& v0 = variants.front();
     const std::string k0 = intent.name + "__" + v0.suffix;
+    w.line("intentir_cuda_selected_variant_idx = 0;");
+    w.line("intentir_cuda_selected_variant_tag = \"" + v0.suffix + "\";");
     w.line("dim3 b((unsigned)" + std::to_string(v0.block_w) + ", 1u, 1u);");
     w.line("dim3 g((unsigned)" + std::to_string(v0.grid_w) + ", (unsigned)OH0, (unsigned)C0);");
     w.line(k0 + "<<<g, b, 0, stream>>>(" + src_name + ", " + out_name + ", " + c_arg + ", " + h_arg + ", " + w_arg + ");");
@@ -2286,6 +2328,7 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
   CodeWriter w(cuda_ss);
   w.line("#include \"kernels/rope.cuh\"");
   w.blank();
+  emit_selected_api(w);
   const std::string seq_arg = seq_is_tensor ? "SEQ_LEN_ptr" : "SEQ_LEN_in";
   const std::string b_arg = b_is_tensor ? "BATCH_NUM_ptr" : "BATCH_NUM_in";
   const std::string h_arg = h_is_tensor ? "HEAD_NUM_ptr" : "HEAD_NUM_in";
@@ -2517,6 +2560,8 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
       const std::string kname = intent.name + "__" + v.suffix;
       w.line("case " + std::to_string(i) + ": {");
       w.indent();
+      w.line("intentir_cuda_selected_variant_idx = " + std::to_string(i) + ";");
+      w.line("intentir_cuda_selected_variant_tag = \"" + v.suffix + "\";");
       w.line("dim3 b((unsigned)" + std::to_string(v.block_x) + ", 1u, 1u);");
       w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", (unsigned)BATCH_NUM, (unsigned)SEQ_LEN);");
       w.line(kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + cos_name + ", " + sin_name + ", " + out_name + ", " + seq_arg + ", " + b_arg +
@@ -2529,6 +2574,8 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
     w.indent();
     const auto& v0 = variants.front();
     const std::string k0 = intent.name + "__" + v0.suffix;
+    w.line("intentir_cuda_selected_variant_idx = 0;");
+    w.line("intentir_cuda_selected_variant_tag = \"" + v0.suffix + "\";");
     w.line("dim3 b((unsigned)" + std::to_string(v0.block_x) + ", 1u, 1u);");
     w.line("dim3 g((unsigned)" + std::to_string(v0.grid_x) + ", (unsigned)BATCH_NUM, (unsigned)SEQ_LEN);");
     w.line(k0 + "<<<g, b, 0, stream>>>(" + in_name + ", " + cos_name + ", " + sin_name + ", " + out_name + ", " + seq_arg + ", " + b_arg + ", " +
@@ -3528,6 +3575,7 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
   w.line("#include <cstdio>");
   w.line("#include \"kernels/softmax.cuh\"");
   w.blank();
+  emit_selected_api(w);
   const bool enable_host_dispatch = (!respect_schedule) && specialize_dims;
   bool host_launch = false;
 
@@ -3748,27 +3796,31 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	    w.dedent();
 	    w.line("}");
 	    w.line("switch (intentir_selected) {");
-	    for (size_t i = 0; i < variants.size(); ++i) {
-	      const auto& v = variants[i];
-	      const std::string kname = intent.name + "__" + v.suffix;
-	      w.line("case " + std::to_string(i) + ": {");
-	      w.indent();
-	      w.line("dim3 g((unsigned)((R + " + std::to_string(v.rows_per_block) + " - 1) / " + std::to_string(v.rows_per_block) +
-	             "), 1u, 1u);");
-	      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+		    for (size_t i = 0; i < variants.size(); ++i) {
+		      const auto& v = variants[i];
+		      const std::string kname = intent.name + "__" + v.suffix;
+		      w.line("case " + std::to_string(i) + ": {");
+		      w.indent();
+          w.line("intentir_cuda_selected_variant_idx = " + std::to_string(i) + ";");
+          w.line("intentir_cuda_selected_variant_tag = \"" + v.suffix + "\";");
+		      w.line("dim3 g((unsigned)((R + " + std::to_string(v.rows_per_block) + " - 1) / " + std::to_string(v.rows_per_block) +
+		             "), 1u, 1u);");
+		      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
 	      w.line(kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " + (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) +
 	             ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
 	      w.line("break;");
       w.dedent();
       w.line("}");
     }
-    w.line("default: {");
-	    w.indent();
-	    const auto& v0 = variants.front();
-	    const std::string k0 = intent.name + "__" + v0.suffix;
-	    w.line("dim3 g((unsigned)((R + " + std::to_string(v0.rows_per_block) + " - 1) / " + std::to_string(v0.rows_per_block) +
-	           "), 1u, 1u);");
-	    w.line("dim3 b((unsigned)" + std::to_string(v0.threads) + ", 1u, 1u);");
+		    w.line("default: {");
+		    w.indent();
+		    const auto& v0 = variants.front();
+		    const std::string k0 = intent.name + "__" + v0.suffix;
+        w.line("intentir_cuda_selected_variant_idx = 0;");
+        w.line("intentir_cuda_selected_variant_tag = \"" + v0.suffix + "\";");
+		    w.line("dim3 g((unsigned)((R + " + std::to_string(v0.rows_per_block) + " - 1) / " + std::to_string(v0.rows_per_block) +
+		           "), 1u, 1u);");
+		    w.line("dim3 b((unsigned)" + std::to_string(v0.threads) + ", 1u, 1u);");
 	    w.line(k0 + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " + (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) +
 	           ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
 	    w.line("break;");
@@ -3935,6 +3987,7 @@ json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
   CodeWriter w(cuda_ss);
   w.line("#include \"kernels/layernorm.cuh\"");
   w.blank();
+  emit_selected_api(w);
   if (!enable_host_dispatch) {
     w.line("extern \"C\" __global__ void " + intent.name + "(");
     w.indent();
@@ -4066,6 +4119,8 @@ json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
       const std::string kname = intent.name + "__" + v.suffix;
       w.line("case " + std::to_string(i) + ": {");
       w.indent();
+      w.line("intentir_cuda_selected_variant_idx = " + std::to_string(i) + ";");
+      w.line("intentir_cuda_selected_variant_tag = \"" + v.suffix + "\";");
       w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
       w.line(kname + "<<<g, b, 0, stream>>>(" + X_name + ", " + Y_name + ", " + W_name + ", " + B_name + ", " + Mean_name + ", " + Rstd_name +
              ", M, N, eps);");
@@ -4077,6 +4132,8 @@ json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
     w.indent();
     const auto& v0 = variants.front();
     const std::string k0 = intent.name + "__" + v0.suffix;
+    w.line("intentir_cuda_selected_variant_idx = 0;");
+    w.line("intentir_cuda_selected_variant_tag = \"" + v0.suffix + "\";");
     w.line("dim3 b((unsigned)" + std::to_string(v0.threads) + ", 1u, 1u);");
     w.line(k0 + "<<<g, b, 0, stream>>>(" + X_name + ", " + Y_name + ", " + W_name + ", " + B_name + ", " + Mean_name + ", " + Rstd_name +
            ", M, N, eps);");

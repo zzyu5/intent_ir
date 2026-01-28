@@ -295,7 +295,19 @@ def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, 
   {kernel_name}<<<{dim}, {bdim}, (size_t)shared_mem, stream>>>({", ".join(call_args)});
 """.rstrip()
 
+    has_selected_api = ("intentir_cuda_selected_variant" in cuda_src) and ("intentir_cuda_selected_tag" in cuda_src)
+    selected_api = ""
+    if has_selected_api:
+        selected_api = """
+  m.def("selected_variant", []() { return (int64_t)intentir_cuda_selected_variant(); }, "Selected variant index");
+  m.def("selected_tag", []() {
+    const char* s = intentir_cuda_selected_tag();
+    return s ? std::string(s) : std::string();
+  }, "Selected variant tag");
+"""
+
     src = f"""
+#include <string>
 #include <torch/extension.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda.h>
@@ -312,6 +324,7 @@ static void launch({", ".join(sig_args)}) {{
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {{
   m.def("launch", &launch, "Launch CUDA kernel");
+{selected_api.rstrip()}
 }}
 """.lstrip()
     return src
