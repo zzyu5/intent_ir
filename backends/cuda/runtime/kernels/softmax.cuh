@@ -2,6 +2,8 @@
 
 #include <math.h>
 
+#include <cub/block/block_reduce.cuh>
+
 #include "intentir_cuda_ops.cuh"
 
 namespace intentir_cuda {
@@ -32,34 +34,24 @@ __device__ __forceinline__ float warp_allreduce_sum(float v) {
 
 template <int BLOCK_THREADS>
 __device__ __forceinline__ float block_allreduce_max(float v) {
-  __shared__ float shared[32];
-  const int lane = (int)threadIdx.x & 31;
-  const int warp = (int)threadIdx.x >> 5;
-  constexpr int NUM_WARPS = (BLOCK_THREADS + 31) >> 5;
-  v = warp_reduce_max(v);
-  if (lane == 0) shared[warp] = v;
+  using BlockReduce = cub::BlockReduce<float, BLOCK_THREADS>;
+  __shared__ typename BlockReduce::TempStorage temp;
+  __shared__ float out;
+  const float mx = BlockReduce(temp).Reduce(v, cub::Max());
+  if ((int)threadIdx.x == 0) out = mx;
   __syncthreads();
-  v = (warp == 0) ? ((lane < NUM_WARPS) ? shared[lane] : -INFINITY) : -INFINITY;
-  if (warp == 0) v = warp_reduce_max(v);
-  if ((int)threadIdx.x == 0) shared[0] = v;
-  __syncthreads();
-  return shared[0];
+  return out;
 }
 
 template <int BLOCK_THREADS>
 __device__ __forceinline__ float block_allreduce_sum(float v) {
-  __shared__ float shared[32];
-  const int lane = (int)threadIdx.x & 31;
-  const int warp = (int)threadIdx.x >> 5;
-  constexpr int NUM_WARPS = (BLOCK_THREADS + 31) >> 5;
-  v = warp_reduce_sum(v);
-  if (lane == 0) shared[warp] = v;
+  using BlockReduce = cub::BlockReduce<float, BLOCK_THREADS>;
+  __shared__ typename BlockReduce::TempStorage temp;
+  __shared__ float out;
+  const float sum = BlockReduce(temp).Reduce(v, cub::Sum());
+  if ((int)threadIdx.x == 0) out = sum;
   __syncthreads();
-  v = (warp == 0) ? ((lane < NUM_WARPS) ? shared[lane] : 0.0f) : 0.0f;
-  if (warp == 0) v = warp_reduce_sum(v);
-  if ((int)threadIdx.x == 0) shared[0] = v;
-  __syncthreads();
-  return shared[0];
+  return out;
 }
 
 template <int BLOCK_THREADS, int EPT>
