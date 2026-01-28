@@ -1197,28 +1197,9 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       }
       if (variants.empty()) add_variant(wmma_warps_m, wmma_warps_n, wmma_frag_m, wmma_frag_n, wmma_stage_k, 1, /*use_cp_async=*/false, "fallback");
 
-      w.line("struct IntentirMatmulVariantMeta {");
+      w.line("static const char* intentir_matmul_variant_tags[] = {");
       w.indent();
-      w.line("int warps_m;");
-      w.line("int warps_n;");
-      w.line("int frag_m;");
-      w.line("int frag_n;");
-      w.line("int stage_k;");
-      w.line("int pipe_stages;");
-      w.line("int use_cp_async;");
-      w.line("int shared_bytes;");
-      w.line("int threads;");
-      w.line("const char* tag;");
-      w.dedent();
-      w.line("};");
-      w.line("static const IntentirMatmulVariantMeta intentir_matmul_variants[] = {");
-      w.indent();
-      for (const auto& v : variants) {
-        w.line("{" + std::to_string(v.warps_m) + ", " + std::to_string(v.warps_n) + ", " + std::to_string(v.frag_m) + ", " +
-               std::to_string(v.frag_n) + ", " + std::to_string(v.stage_k) + ", " + std::to_string(v.pipe_stages) + ", " +
-               std::string(v.use_cp_async ? "1" : "0") + ", " + std::to_string(v.shared_bytes) + ", " + std::to_string(v.threads) +
-               ", \"" + v.suffix + "\"},");
-      }
+      for (const auto& v : variants) w.line("\"" + v.suffix + "\",");
       w.dedent();
       w.line("};");
       w.blank();
@@ -1336,8 +1317,8 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       w.line("float best_ms = 1e30f;");
       w.line("int best_i = " + std::to_string(fallback_i) + ";");
       w.line("bool intentir_found = false;");
-      w.line("const int warm = 5;");
-      w.line("const int iters = 100;");
+      w.line("const int warm = 3;");
+      w.line("const int iters = 50;");
       w.line("const int reps = 3;");
       for (size_t vi = 0; vi < variants.size(); ++vi) {
         const auto& v = variants[vi];
@@ -1394,15 +1375,10 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       w.line("intentir_selected = intentir_found ? best_i : " + std::to_string(fallback_i) + ";");
       w.line("if (const char* dbg = std::getenv(\"INTENTIR_CUDA_MATMUL_DISPATCH_DEBUG\")) {");
       w.indent();
-      w.line("if (dbg[0]) {");
+      w.line("if (dbg[0]) std::fprintf(stderr, \"[intentir][matmul] selected=%d tag=%s best_ms_per_iter=%f (warm=%d iters=%d reps=%d)\\n\",");
       w.indent();
-      w.line("const auto v = intentir_matmul_variants[intentir_selected];");
-      w.line("std::fprintf(stderr, \"[intentir][matmul] selected=%d tag=%s warps=(%d,%d) frag=(%d,%d) stage_k=%d pipe=%d cp_async=%d smem=%d threads=%d best_ms_per_iter=%f (warm=%d iters=%d reps=%d)\\n\",");
-      w.indent();
-      w.line("intentir_selected, v.tag, v.warps_m, v.warps_n, v.frag_m, v.frag_n, v.stage_k, v.pipe_stages, v.use_cp_async, v.shared_bytes, v.threads, (double)best_ms, warm, iters, reps);");
+      w.line("intentir_selected, intentir_matmul_variant_tags[intentir_selected], (double)best_ms, warm, iters, reps);");
       w.dedent();
-      w.dedent();
-      w.line("}");
       w.dedent();
       w.line("}");
       w.dedent();
@@ -1445,7 +1421,6 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       w.dedent();
       w.line("}");
       w.line(kname0 + "<<<g, b, (size_t)smem, stream>>>((const float*)A, (const float*)B, (float*)C, M_in, N_in, K_in);");
-      w.dedent();
       w.line("break;");
       w.dedent();
       w.line("}");
