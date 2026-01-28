@@ -399,7 +399,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {{
 @lru_cache(maxsize=32)
 def _load_ext_cached(name: str, cuda_src: str, extra_cuda_cflags: Tuple[str, ...]) -> Any:
     torch = _torch()
-    from torch.utils.cpp_extension import is_ninja_available, load_inline  # noqa: PLC0415
 
     # Avoid compiling fatbins for unrelated GPU architectures by default.
     # This speeds up iteration (and prevents confusing "hangs" during nvcc builds)
@@ -412,6 +411,10 @@ def _load_ext_cached(name: str, cuda_src: str, extra_cuda_cflags: Tuple[str, ...
             pass
 
     _maybe_set_cuda_home_for_hopper()
+
+    # Import after `_maybe_set_cuda_home_for_hopper()` so torch's CUDA_HOME detection
+    # (evaluated at module import time) can see the updated environment.
+    from torch.utils.cpp_extension import is_ninja_available, load_inline  # noqa: PLC0415
 
     build_dir = _torch_ext_build_dir(name)
     build_dir.mkdir(parents=True, exist_ok=True)
