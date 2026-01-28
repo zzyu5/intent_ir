@@ -250,7 +250,6 @@ def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, 
     dim = "dim3((unsigned)grid_x,(unsigned)grid_y,(unsigned)grid_z)"
     bdim = "dim3((unsigned)block_x,(unsigned)block_y,(unsigned)block_z)"
 
-    host_decl = ""
     host_call = ""
     if use_host_launch:
         host_param_types: list[str] = []
@@ -267,31 +266,20 @@ def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, 
                     host_param_types.append(_c_type(dt))
             else:
                 host_param_types.append("int64_t")
-        host_decl = (
-            f'extern "C" void {kernel_name}_host_launch({", ".join([*host_param_types, "int64_t", "int64_t", "int64_t", "int64_t", "int64_t", "int64_t", "int64_t", "cudaStream_t"])});'
-        )
         host_call = f"{kernel_name}_host_launch({', '.join([*call_args, 'grid_x', 'grid_y', 'grid_z', 'block_x', 'block_y', 'block_z', 'shared_mem', 'stream'])});"
 
-    src = f"""
-#include <torch/extension.h>
-#include <ATen/cuda/CUDAContext.h>
-#include <cuda.h>
-#include <cuda_runtime.h>
-#include <stdint.h>
-
-{cuda_src}
-
-static void launch({", ".join(sig_args)}) {{
-  {" ".join(checks)}
-  {" ".join(ptr_decls)}
+    if use_host_launch:
+        launch_body = f"""
   // Respect the current PyTorch CUDA stream (required for correct stream semantics,
   // and for features like CUDA Graph capture).
   cudaStream_t stream = at::cuda::getCurrentCUDAStream().stream();
-  {host_decl}
-  if ({'true' if use_host_launch else 'false'}) {{
-    {host_call}
-    return;
-  }}
+  {host_call}
+""".rstrip()
+    else:
+        launch_body = f"""
+  // Respect the current PyTorch CUDA stream (required for correct stream semantics,
+  // and for features like CUDA Graph capture).
+  cudaStream_t stream = at::cuda::getCurrentCUDAStream().stream();
   // Some high-performance kernels may opt into >48KiB shared memory (e.g., for
   // multi-stage tensor-core pipelines). CUDA requires setting a per-kernel
   // attribute to enable larger dynamic shared memory on GPUs that support it.
@@ -305,6 +293,21 @@ static void launch({", ".join(sig_args)}) {{
     intentir_last_smem = (int)shared_mem;
   }}
   {kernel_name}<<<{dim}, {bdim}, (size_t)shared_mem, stream>>>({", ".join(call_args)});
+""".rstrip()
+
+    src = f"""
+#include <torch/extension.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <stdint.h>
+
+{cuda_src}
+
+static void launch({", ".join(sig_args)}) {{
+  {" ".join(checks)}
+  {" ".join(ptr_decls)}
+{launch_body}
 }}
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {{
