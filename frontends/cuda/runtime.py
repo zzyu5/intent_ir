@@ -348,12 +348,18 @@ def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, 
                 host_param_types.append("int64_t")
         host_call = f"{kernel_name}_host_launch({', '.join([*call_args, 'grid_x', 'grid_y', 'grid_z', 'block_x', 'block_y', 'block_z', 'shared_mem', 'stream'])});"
 
+    selected_init = ""
+    if has_selected_api:
+        selected_init = 'intentir_cuda_selected_variant_idx = -1; intentir_cuda_selected_variant_tag = "direct_launch";'
+        if use_host_launch:
+            selected_init = 'intentir_cuda_selected_variant_idx = -1; intentir_cuda_selected_variant_tag = "host_launch";'
+
     if use_host_launch:
         launch_body = f"""
   // Respect the current PyTorch CUDA stream (required for correct stream semantics,
   // and for features like CUDA Graph capture).
   cudaStream_t stream = at::cuda::getCurrentCUDAStream().stream();
-  {"intentir_cuda_selected_variant_idx = -1; intentir_cuda_selected_variant_tag = \"host_launch\";" if has_selected_api else ""}
+  {selected_init}
   {host_call}
 """.rstrip()
     else:
@@ -367,13 +373,13 @@ def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, 
   static const void* intentir_last_kernel = nullptr;
   static int intentir_last_smem = -1;
   const void* intentir_kernel_ptr = (const void*){kernel_name};
-  if (shared_mem >= 49152 && (intentir_last_kernel != intentir_kernel_ptr || intentir_last_smem != (int)shared_mem)) {{
-    cudaError_t err = cudaFuncSetAttribute(intentir_kernel_ptr, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)shared_mem);
-    TORCH_CHECK(err == cudaSuccess, "cudaFuncSetAttribute(MaxDynamicSharedMemorySize) failed: ", cudaGetErrorString(err));
-    intentir_last_kernel = intentir_kernel_ptr;
-    intentir_last_smem = (int)shared_mem;
-  }}
-  {"intentir_cuda_selected_variant_idx = -1; intentir_cuda_selected_variant_tag = \"direct_launch\";" if has_selected_api else ""}
+    if (shared_mem >= 49152 && (intentir_last_kernel != intentir_kernel_ptr || intentir_last_smem != (int)shared_mem)) {{
+      cudaError_t err = cudaFuncSetAttribute(intentir_kernel_ptr, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)shared_mem);
+      TORCH_CHECK(err == cudaSuccess, "cudaFuncSetAttribute(MaxDynamicSharedMemorySize) failed: ", cudaGetErrorString(err));
+      intentir_last_kernel = intentir_kernel_ptr;
+      intentir_last_smem = (int)shared_mem;
+    }}
+  {selected_init}
   {kernel_name}<<<{dim}, {bdim}, (size_t)shared_mem, stream>>>({", ".join(call_args)});
 """.rstrip()
 
