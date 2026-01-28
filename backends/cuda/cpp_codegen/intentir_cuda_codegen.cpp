@@ -726,7 +726,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
 
     int64_t use_cp_async_raw = -1;
     if (auto v = binding_int(bindings, "WMMA_USE_CP_ASYNC")) use_cp_async_raw = *v;
-    const bool wmma_use_cp_async = (use_cp_async_raw < 0) ? true : (use_cp_async_raw != 0);
+    bool wmma_use_cp_async = (use_cp_async_raw < 0) ? true : (use_cp_async_raw != 0);
 
     auto wmma_pipe_opt = binding_int(bindings, "WMMA_PIPE_STAGES");
     const bool pipe_stages_override = wmma_pipe_opt.has_value() && (*wmma_pipe_opt > 0);
@@ -786,12 +786,13 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     }
     if (shared_bytes > max_smem_optin) {
       wmma_force_sync = true;
+      wmma_use_cp_async = false;
       wmma_pipe_stages = 1;
       shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
     }
 
     shared_bytes = ((shared_bytes + 15) / 16) * 16;
-    const bool wmma_disable_fastpath = wmma_force_sync || (binding_int(bindings, "WMMA_DISABLE_FASTPATH").value_or(0) != 0);
+    const bool wmma_disable_fastpath = (binding_int(bindings, "WMMA_DISABLE_FASTPATH").value_or(0) != 0);
     const bool specialize_full_tile = specialize_dims && ((M % wmma_tile_m) == 0) && ((N % wmma_tile_n) == 0) && ((K % wmma_stage_k) == 0) &&
                                       ((K & 3) == 0) && ((N & 3) == 0) && (!wmma_disable_fastpath);
 
