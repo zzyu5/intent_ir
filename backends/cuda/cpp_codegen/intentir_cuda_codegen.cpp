@@ -1037,6 +1037,9 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     const std::string enable_fastpath_const = wmma_disable_fastpath ? "false" : "true";
     const std::string specialize_full_tile_const = specialize_full_tile ? "true" : "false";
 
+    w.line("#include <math.h>");
+    w.line("#include <cstdlib>");
+    w.line("#include <cstdio>");
     w.line("#include \"kernels/wmma_matmul.cuh\"");
     w.blank();
     struct WmmaVariant {
@@ -1194,6 +1197,32 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       }
       if (variants.empty()) add_variant(wmma_warps_m, wmma_warps_n, wmma_frag_m, wmma_frag_n, wmma_stage_k, 1, /*use_cp_async=*/false, "fallback");
 
+      w.line("struct IntentirMatmulVariantMeta {");
+      w.indent();
+      w.line("int warps_m;");
+      w.line("int warps_n;");
+      w.line("int frag_m;");
+      w.line("int frag_n;");
+      w.line("int stage_k;");
+      w.line("int pipe_stages;");
+      w.line("int use_cp_async;");
+      w.line("int shared_bytes;");
+      w.line("int threads;");
+      w.line("const char* tag;");
+      w.dedent();
+      w.line("};");
+      w.line("static const IntentirMatmulVariantMeta intentir_matmul_variants[] = {");
+      w.indent();
+      for (const auto& v : variants) {
+        w.line("{" + std::to_string(v.warps_m) + ", " + std::to_string(v.warps_n) + ", " + std::to_string(v.frag_m) + ", " +
+               std::to_string(v.frag_n) + ", " + std::to_string(v.stage_k) + ", " + std::to_string(v.pipe_stages) + ", " +
+               std::string(v.use_cp_async ? "1" : "0") + ", " + std::to_string(v.shared_bytes) + ", " + std::to_string(v.threads) +
+               ", \"" + v.suffix + "\"},");
+      }
+      w.dedent();
+      w.line("};");
+      w.blank();
+
       for (const auto& v : variants) {
         const std::string kname = intent.name + "__" + v.suffix;
         w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(v.threads) + ") void " + kname + "(");
@@ -1307,8 +1336,9 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       w.line("float best_ms = 1e30f;");
       w.line("int best_i = " + std::to_string(fallback_i) + ";");
       w.line("bool intentir_found = false;");
-      w.line("const int warm = 2;");
-      w.line("const int iters = 20;");
+      w.line("const int warm = 5;");
+      w.line("const int iters = 100;");
+      w.line("const int reps = 3;");
       for (size_t vi = 0; vi < variants.size(); ++vi) {
         const auto& v = variants[vi];
         const std::string kname = intent.name + "__" + v.suffix;
@@ -1328,6 +1358,9 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         w.line("intentir_smem_cached = smem;");
         w.dedent();
         w.line("}");
+        w.line("float m0 = 0.0f, m1 = 0.0f, m2 = 0.0f;");
+        w.line("for (int rep = 0; rep < reps; ++rep) {");
+        w.indent();
         w.line("for (int i = 0; i < warm; ++i) {");
         w.indent();
         w.line(kname + "<<<g, b, (size_t)smem, stream>>>((const float*)A, (const float*)B, (float*)C, M_in, N_in, K_in);");
@@ -1344,7 +1377,13 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         w.line("float ms = 0.0f;");
         w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
         w.line("ms = ms / (float)iters;");
-        w.line("if (ms < best_ms) { best_ms = ms; best_i = " + std::to_string(vi) + "; }");
+        w.line("if (rep == 0) m0 = ms; else if (rep == 1) m1 = ms; else m2 = ms;");
+        w.dedent();
+        w.line("}");
+        w.line("const float mn = fminf(m0, fminf(m1, m2));");
+        w.line("const float mx = fmaxf(m0, fmaxf(m1, m2));");
+        w.line("const float med = (m0 + m1 + m2) - mn - mx;");
+        w.line("if (med < best_ms) { best_ms = med; best_i = " + std::to_string(vi) + "; }");
         w.dedent();
         w.line("}");
         w.dedent();
@@ -1353,6 +1392,19 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
       w.line("intentir_selected = intentir_found ? best_i : " + std::to_string(fallback_i) + ";");
+      w.line("if (const char* dbg = std::getenv(\"INTENTIR_CUDA_MATMUL_DISPATCH_DEBUG\")) {");
+      w.indent();
+      w.line("if (dbg[0]) {");
+      w.indent();
+      w.line("const auto v = intentir_matmul_variants[intentir_selected];");
+      w.line("std::fprintf(stderr, \"[intentir][matmul] selected=%d tag=%s warps=(%d,%d) frag=(%d,%d) stage_k=%d pipe=%d cp_async=%d smem=%d threads=%d best_ms_per_iter=%f (warm=%d iters=%d reps=%d)\\n\",");
+      w.indent();
+      w.line("intentir_selected, v.tag, v.warps_m, v.warps_n, v.frag_m, v.frag_n, v.stage_k, v.pipe_stages, v.use_cp_async, v.shared_bytes, v.threads, (double)best_ms, warm, iters, reps);");
+      w.dedent();
+      w.dedent();
+      w.line("}");
+      w.dedent();
+      w.line("}");
       w.dedent();
       w.line("}");
 
