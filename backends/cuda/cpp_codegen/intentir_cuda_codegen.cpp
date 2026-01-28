@@ -3553,6 +3553,12 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	    add_block_variant(128, "t128");
 	    add_block_variant(256, "t256");
 	    add_block_variant(512, "t512");
+	    // Systematic small search: derive candidate thread counts from the allowed EPT range.
+	    // This often surfaces better middle-ground sizes like 96/160/224 for odd C.
+	    for (int64_t ept_target = 3; ept_target <= max_ept; ++ept_target) {
+	      const int64_t t = norm_threads((C + ept_target - 1) / ept_target);
+	      add_block_variant(t, "ept" + std::to_string(ept_target));
+	    }
 	    // Warp-specialized vectorized variant (SM80+ friendly, avoids block-wide sync).
 	    add_warp4_variant(4, "warp4_w4");
 	    add_warp4_variant(8, "warp4_w8");
