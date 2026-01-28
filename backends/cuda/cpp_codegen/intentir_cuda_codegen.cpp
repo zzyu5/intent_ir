@@ -3426,14 +3426,34 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
   const int64_t C = *C_opt;
   if (C > 1024) fail("softmax MVP supports only C<=1024");
 
-  const bool respect_schedule = binding_int(bindings, "CUDA_RESPECT_SCHEDULE").value_or(0) != 0;
+	  const bool respect_schedule = binding_int(bindings, "CUDA_RESPECT_SCHEDULE").value_or(0) != 0;
 
-  int64_t block_threads = 0;
-  if (respect_schedule) {
-    const int64_t hinted_threads = resolve_schedule_int(intent, bindings, "tile_n", 0);
-    if (hinted_threads && 0 < hinted_threads && hinted_threads <= 1024) block_threads = hinted_threads;
-  }
-  if (block_threads <= 0) block_threads = (C >= 128) ? 128 : 64;
+	  int64_t max_ept = binding_int(bindings, "SOFTMAX_MAX_EPT").value_or(16);
+	  if (max_ept < 4) max_ept = 4;
+	  if (max_ept > 16) max_ept = 16;
+
+	  int64_t block_threads = 0;
+	  int64_t sched_threads = 0;
+	  int64_t ept_override = 0;
+	  if (respect_schedule) {
+	    // NOTE: For softmax, schedule.tile_n usually refers to the reduction width (e.g., Triton BLOCK_SIZE),
+	    // not the CUDA block thread count. Map it into a (threads, EPT) pair instead of blindly using it.
+	    int64_t sched_elems = resolve_schedule_int(intent, bindings, "tile_n", 0);
+	    if (sched_elems > 1024) sched_elems = 1024;
+	    if (sched_elems >= C && sched_elems > 0) {
+	      for (int64_t t : {128, 64, 256, 512}) {
+	        if (t <= 0 || t > 1024) continue;
+	        if ((sched_elems % t) != 0) continue;
+	        const int64_t e = sched_elems / t;
+	        if (e <= 0 || e > max_ept) continue;
+	        block_threads = t;
+	        sched_threads = t;
+	        ept_override = e;
+	        break;
+	      }
+	    }
+	  }
+	  if (block_threads <= 0) block_threads = (C >= 128) ? 128 : 64;
   // Evidence-guided hint: if the access witness identifies a contiguous dominant axis that
   // matches the reduction axis, prefer a thread count sized to that contiguous range.
   if (!respect_schedule && !binding_int(bindings, "SOFTMAX_THREADS")) {
@@ -3448,22 +3468,20 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
   if ((block_threads % 32) != 0) block_threads = ((block_threads + 31) / 32) * 32;
   if (block_threads > 1024) block_threads = 1024;
 
-  if (auto tuned = binding_int(bindings, "SOFTMAX_THREADS")) {
-    if (0 < *tuned && *tuned <= 1024) {
-      block_threads = *tuned;
+	  if (auto tuned = binding_int(bindings, "SOFTMAX_THREADS")) {
+	    if (0 < *tuned && *tuned <= 1024) {
+	      block_threads = *tuned;
       if (block_threads < 32) block_threads = 32;
       if ((block_threads % 32) != 0) block_threads = ((block_threads + 31) / 32) * 32;
       if (block_threads > 1024) block_threads = 1024;
-    }
-  }
+	    }
+	  }
 
-  int64_t max_ept = binding_int(bindings, "SOFTMAX_MAX_EPT").value_or(16);
-  if (max_ept < 4) max_ept = 4;
-  if (max_ept > 16) max_ept = 16;
-  int64_t min_threads = std::max<int64_t>(32, (C + max_ept - 1) / max_ept);
-  if ((min_threads % 32) != 0) min_threads = ((min_threads + 31) / 32) * 32;
-  if (block_threads < min_threads) block_threads = min_threads;
-  const int64_t ept = std::max<int64_t>(1, (C + block_threads - 1) / block_threads);
+	  int64_t min_threads = std::max<int64_t>(32, (C + max_ept - 1) / max_ept);
+	  if ((min_threads % 32) != 0) min_threads = ((min_threads + 31) / 32) * 32;
+	  if (block_threads < min_threads) block_threads = min_threads;
+	  int64_t ept = std::max<int64_t>(1, (C + block_threads - 1) / block_threads);
+	  if (ept_override > 0 && block_threads == sched_threads) ept = ept_override;
 
   const bool specialize_dims = want_specialize_dims(intent, bindings);
   const std::string R_name = dim_str(R_dim);
