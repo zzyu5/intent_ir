@@ -249,6 +249,19 @@ def _intentir_cuda_runtime_hash_payload() -> str:
     return ""
 
 
+def _intentir_cuda_runner_hash_payload() -> str:
+    """
+    Content hash payload for this Python-side CUDA extension runner.
+
+    The module name hash is used for caching build products; include the runner
+    implementation so changes to the generated wrapper code force a rebuild.
+    """
+    try:
+        return Path(__file__).read_text(encoding="utf-8")
+    except Exception:
+        return ""
+
+
 def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, Any]) -> str:
     arg_names = io_spec.get("arg_names") if isinstance(io_spec.get("arg_names"), list) else []
     arg_names = [str(x) for x in arg_names]
@@ -472,7 +485,15 @@ def compile_cuda_extension(
     # De-duplicate while preserving order.
     seen: set[str] = set()
     flags: tuple[str, ...] = tuple(s for s in flags_list if not (s in seen or seen.add(s)))
-    h = _hash_src(cuda_src + "\nRUNTIME:" + _intentir_cuda_runtime_hash_payload() + "\nFLAGS:" + " ".join(flags))
+    h = _hash_src(
+        cuda_src
+        + "\nRUNTIME_HEADERS:"
+        + _intentir_cuda_runtime_hash_payload()
+        + "\nRUNNER_PY:"
+        + _intentir_cuda_runner_hash_payload()
+        + "\nFLAGS:"
+        + " ".join(flags)
+    )
     mod_name = f"intentir_cuda_{kernel_name}_{h}"
     full_src = _build_extension_src(cuda_src, kernel_name=kernel_name, io_spec=io_spec)
     return _load_ext_cached(mod_name, full_src, flags)
