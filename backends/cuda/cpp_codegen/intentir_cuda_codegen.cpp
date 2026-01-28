@@ -454,58 +454,292 @@ json emit_dropout(const Intent& intent, const json& bindings) {
   CodeWriter w(cuda_ss);
   w.line("#include \"kernels/dropout.cuh\"");
   w.blank();
-  if (p_is_scalar && seed_is_scalar) {
-    w.line("extern \"C\" __global__ void " + intent.name +
-           "(const float* X, float p, int seed, float* Y, int64_t n_elements_in) {");
-    w.indent();
-    if (specialize_dims) {
+  const bool enable_host_dispatch = (!respect_schedule) && specialize_dims;
+  bool host_launch = false;
+
+  if (enable_host_dispatch) {
+    host_launch = true;
+    struct DropoutVariant {
+      int64_t threads;
+      int ept;
+      int64_t grid_x;
+      bool full_tile;
+      std::string suffix;
+    };
+    std::vector<DropoutVariant> variants;
+    auto norm_threads = [](int64_t t) -> int64_t {
+      if (t < 32) t = 32;
+      if (t > 1024) t = 1024;
+      if ((t % 32) != 0) t = ((t + 31) / 32) * 32;
+      if (t > 1024) t = 1024;
+      return t;
+    };
+    auto add_variant = [&](int64_t threads, int vept, const std::string& tag) {
+      threads = norm_threads(threads);
+      if (vept <= 0) vept = 1;
+      if (vept > 8) vept = 8;
+      const int64_t tile = threads * (int64_t)vept;
+      if (tile <= 0) return;
+      const int64_t gx = (n + tile - 1) / tile;
+      const bool full = ((n % tile) == 0);
+      for (const auto& e : variants) {
+        if (e.threads == threads && e.ept == vept) return;
+      }
+      variants.push_back(DropoutVariant{threads, vept, gx, full, tag});
+    };
+
+    // Evidence-guided candidate set: schedule/heuristic seed + a tiny neighborhood.
+    add_variant(block_x, ept, "seed");
+    add_variant(128, ept, "t128_seed");
+    add_variant(256, ept, "t256_seed");
+    add_variant(512, ept, "t512_seed");
+    add_variant(block_x, 4, "seed_e4");
+    add_variant(block_x, 8, "seed_e8");
+    add_variant(128, 8, "t128_e8");
+    add_variant(256, 8, "t256_e8");
+    if (variants.empty()) add_variant(block_x, ept, "fallback");
+
+    for (const auto& v : variants) {
+      const std::string kname = intent.name + "__" + v.suffix;
+      if (p_is_scalar && seed_is_scalar) {
+        w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(v.threads) + ") void " + kname +
+               "(const float* X, float p, int seed, float* Y, int64_t n_elements_in) {");
+        w.indent();
+        w.line("(void)n_elements_in;");
+        w.line("constexpr int64_t n_elements = " + std::to_string(n) + "LL;");
+        w.line("constexpr int EPT = " + std::to_string(v.ept) + ";");
+        w.line("constexpr int N_ROUNDS = " + std::to_string(rounds) + ";");
+        if (v.full_tile) {
+          w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p, (uint32_t)seed, Y, n_elements);");
+        } else {
+          w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, false>(X, p, (uint32_t)seed, Y, n_elements);");
+        }
+        w.dedent();
+        w.line("}");
+      } else {
+        w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(v.threads) + ") void " + kname +
+               "(const float* X, const float* p_ptr, const int* seed_ptr, float* Y, int64_t n_elements_in) {");
+        w.indent();
+        w.line("(void)n_elements_in;");
+        w.line("constexpr int64_t n_elements = " + std::to_string(n) + "LL;");
+        w.line("constexpr int EPT = " + std::to_string(v.ept) + ";");
+        w.line("constexpr int N_ROUNDS = " + std::to_string(rounds) + ";");
+        if (v.full_tile) {
+          w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p_ptr, seed_ptr, Y, n_elements);");
+        } else {
+          w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, false>(X, p_ptr, seed_ptr, Y, n_elements);");
+        }
+        w.dedent();
+        w.line("}");
+      }
+      w.blank();
+    }
+
+    // Host dispatcher: pick the best variant once (evidence-guided, small search space).
+    if (p_is_scalar && seed_is_scalar) {
+      w.line("extern \"C\" void " + intent.name + "_host_launch(");
+      w.indent();
+      w.line("float* X, float p, int seed, float* Y, int64_t n_elements_in,");
+      w.line("int64_t grid_x, int64_t grid_y, int64_t grid_z,");
+      w.line("int64_t block_x, int64_t block_y, int64_t block_z,");
+      w.line("int64_t shared_mem, cudaStream_t stream) {");
+      w.dedent();
+      w.indent();
+      w.line("(void)grid_x; (void)grid_y; (void)grid_z;");
+      w.line("(void)block_x; (void)block_y; (void)block_z;");
+      w.line("(void)shared_mem;");
       w.line("(void)n_elements_in;");
       w.line("constexpr int64_t n_elements = " + std::to_string(n) + "LL;");
+      w.line("static int intentir_selected = -1;");
+      w.line("if (intentir_selected < 0) {");
+      w.indent();
+      w.line("cudaEvent_t start = nullptr;");
+      w.line("cudaEvent_t end = nullptr;");
+      w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
+      w.line("float best_ms = 1e30f;");
+      w.line("int best_i = 0;");
+      w.line("const int warm = 2;");
+      w.line("const int iters = 20;");
+      for (size_t i = 0; i < variants.size(); ++i) {
+        const auto& v = variants[i];
+        const std::string kname = intent.name + "__" + v.suffix;
+        w.line("{");
+        w.indent();
+        w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+        w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
+        w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p, seed, Y, n_elements);");
+        w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
+        w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p, seed, Y, n_elements);");
+        w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
+        w.line("float ms = 0.0f;");
+        w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
+        w.line("if (ms < best_ms) { best_ms = ms; best_i = " + std::to_string(i) + "; }");
+        w.dedent();
+        w.line("}");
+      }
+      w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
+      w.line("intentir_selected = best_i;");
+      w.dedent();
+      w.line("}");
+      w.line("switch (intentir_selected) {");
+      for (size_t i = 0; i < variants.size(); ++i) {
+        const auto& v = variants[i];
+        const std::string kname = intent.name + "__" + v.suffix;
+        w.line("case " + std::to_string(i) + ": {");
+        w.indent();
+        w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+        w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
+        w.line(kname + "<<<g, b, 0, stream>>>(X, p, seed, Y, n_elements);");
+        w.line("break;");
+        w.dedent();
+        w.line("}");
+      }
+      w.line("default: {");
+      w.indent();
+      const auto& v0 = variants.empty() ? DropoutVariant{block_x, ept, grid_x, (n % denom) == 0, "fallback"} : variants[0];
+      const std::string k0 = intent.name + "__" + v0.suffix;
+      w.line("dim3 b((unsigned)" + std::to_string(v0.threads) + ", 1u, 1u);");
+      w.line("dim3 g((unsigned)" + std::to_string(v0.grid_x) + ", 1u, 1u);");
+      w.line(k0 + "<<<g, b, 0, stream>>>(X, p, seed, Y, n_elements);");
+      w.line("break;");
+      w.dedent();
+      w.line("}");
+      w.line("}");
+      w.dedent();
+      w.line("}");
     } else {
-      w.line("const int64_t n_elements = n_elements_in;");
+      w.line("extern \"C\" void " + intent.name + "_host_launch(");
+      w.indent();
+      w.line("float* X, float* p_ptr, int* seed_ptr, float* Y, int64_t n_elements_in,");
+      w.line("int64_t grid_x, int64_t grid_y, int64_t grid_z,");
+      w.line("int64_t block_x, int64_t block_y, int64_t block_z,");
+      w.line("int64_t shared_mem, cudaStream_t stream) {");
+      w.dedent();
+      w.indent();
+      w.line("(void)grid_x; (void)grid_y; (void)grid_z;");
+      w.line("(void)block_x; (void)block_y; (void)block_z;");
+      w.line("(void)shared_mem;");
+      w.line("(void)n_elements_in;");
+      w.line("constexpr int64_t n_elements = " + std::to_string(n) + "LL;");
+      w.line("static int intentir_selected = -1;");
+      w.line("if (intentir_selected < 0) {");
+      w.indent();
+      w.line("cudaEvent_t start = nullptr;");
+      w.line("cudaEvent_t end = nullptr;");
+      w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
+      w.line("float best_ms = 1e30f;");
+      w.line("int best_i = 0;");
+      w.line("const int warm = 2;");
+      w.line("const int iters = 20;");
+      for (size_t i = 0; i < variants.size(); ++i) {
+        const auto& v = variants[i];
+        const std::string kname = intent.name + "__" + v.suffix;
+        w.line("{");
+        w.indent();
+        w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+        w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
+        w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
+        w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
+        w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
+        w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
+        w.line("float ms = 0.0f;");
+        w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
+        w.line("if (ms < best_ms) { best_ms = ms; best_i = " + std::to_string(i) + "; }");
+        w.dedent();
+        w.line("}");
+      }
+      w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
+      w.line("intentir_selected = best_i;");
+      w.dedent();
+      w.line("}");
+      w.line("switch (intentir_selected) {");
+      for (size_t i = 0; i < variants.size(); ++i) {
+        const auto& v = variants[i];
+        const std::string kname = intent.name + "__" + v.suffix;
+        w.line("case " + std::to_string(i) + ": {");
+        w.indent();
+        w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+        w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
+        w.line(kname + "<<<g, b, 0, stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
+        w.line("break;");
+        w.dedent();
+        w.line("}");
+      }
+      w.line("default: {");
+      w.indent();
+      const auto& v0 = variants.empty() ? DropoutVariant{block_x, ept, grid_x, (n % denom) == 0, "fallback"} : variants[0];
+      const std::string k0 = intent.name + "__" + v0.suffix;
+      w.line("dim3 b((unsigned)" + std::to_string(v0.threads) + ", 1u, 1u);");
+      w.line("dim3 g((unsigned)" + std::to_string(v0.grid_x) + ", 1u, 1u);");
+      w.line(k0 + "<<<g, b, 0, stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
+      w.line("break;");
+      w.dedent();
+      w.line("}");
+      w.line("}");
+      w.dedent();
+      w.line("}");
     }
-    w.line("constexpr int BLOCK_THREADS = " + std::to_string(block_x) + ";");
-    w.line("constexpr int EPT = " + std::to_string(ept) + ";");
-    w.line("constexpr int N_ROUNDS = " + std::to_string(rounds) + ";");
-    w.line("const int64_t tile = (int64_t)BLOCK_THREADS * (int64_t)EPT;");
-    w.line("const bool full_tile = (tile > 0) ? ((n_elements % tile) == 0) : false;");
-    w.line("if (full_tile) {");
-    w.indent();
-    w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p, (uint32_t)seed, Y, n_elements);");
-    w.dedent();
-    w.line("} else {");
-    w.indent();
-    w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, false>(X, p, (uint32_t)seed, Y, n_elements);");
-    w.dedent();
-    w.line("}");
-    w.dedent();
-    w.line("}");
   } else {
-    w.line("extern \"C\" __global__ void " + intent.name +
-           "(const float* X, const float* p_ptr, const int* seed_ptr, float* Y, int64_t n_elements_in) {");
-    w.indent();
-    if (specialize_dims) {
-      w.line("(void)n_elements_in;");
-      w.line("constexpr int64_t n_elements = " + std::to_string(n) + "LL;");
+    // Single-kernel fallback path (no host dispatcher).
+    if (p_is_scalar && seed_is_scalar) {
+      w.line("extern \"C\" __global__ void " + intent.name +
+             "(const float* X, float p, int seed, float* Y, int64_t n_elements_in) {");
+      w.indent();
+      if (specialize_dims) {
+        w.line("(void)n_elements_in;");
+        w.line("constexpr int64_t n_elements = " + std::to_string(n) + "LL;");
+      } else {
+        w.line("const int64_t n_elements = n_elements_in;");
+      }
+      w.line("constexpr int BLOCK_THREADS = " + std::to_string(block_x) + ";");
+      w.line("constexpr int EPT = " + std::to_string(ept) + ";");
+      w.line("constexpr int N_ROUNDS = " + std::to_string(rounds) + ";");
+      w.line("const int64_t tile = (int64_t)BLOCK_THREADS * (int64_t)EPT;");
+      w.line("const bool full_tile = (tile > 0) ? ((n_elements % tile) == 0) : false;");
+      w.line("if (full_tile) {");
+      w.indent();
+      w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p, (uint32_t)seed, Y, n_elements);");
+      w.dedent();
+      w.line("} else {");
+      w.indent();
+      w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, false>(X, p, (uint32_t)seed, Y, n_elements);");
+      w.dedent();
+      w.line("}");
+      w.dedent();
+      w.line("}");
     } else {
-      w.line("const int64_t n_elements = n_elements_in;");
+      w.line("extern \"C\" __global__ void " + intent.name +
+             "(const float* X, const float* p_ptr, const int* seed_ptr, float* Y, int64_t n_elements_in) {");
+      w.indent();
+      if (specialize_dims) {
+        w.line("(void)n_elements_in;");
+        w.line("constexpr int64_t n_elements = " + std::to_string(n) + "LL;");
+      } else {
+        w.line("const int64_t n_elements = n_elements_in;");
+      }
+      w.line("constexpr int BLOCK_THREADS = " + std::to_string(block_x) + ";");
+      w.line("constexpr int EPT = " + std::to_string(ept) + ";");
+      w.line("constexpr int N_ROUNDS = " + std::to_string(rounds) + ";");
+      w.line("const int64_t tile = (int64_t)BLOCK_THREADS * (int64_t)EPT;");
+      w.line("const bool full_tile = (tile > 0) ? ((n_elements % tile) == 0) : false;");
+      w.line("if (full_tile) {");
+      w.indent();
+      w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p_ptr, seed_ptr, Y, n_elements);");
+      w.dedent();
+      w.line("} else {");
+      w.indent();
+      w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, false>(X, p_ptr, seed_ptr, Y, n_elements);");
+      w.dedent();
+      w.line("}");
+      w.dedent();
+      w.line("}");
     }
-    w.line("constexpr int BLOCK_THREADS = " + std::to_string(block_x) + ";");
-    w.line("constexpr int EPT = " + std::to_string(ept) + ";");
-    w.line("constexpr int N_ROUNDS = " + std::to_string(rounds) + ";");
-    w.line("const int64_t tile = (int64_t)BLOCK_THREADS * (int64_t)EPT;");
-    w.line("const bool full_tile = (tile > 0) ? ((n_elements % tile) == 0) : false;");
-    w.line("if (full_tile) {");
-    w.indent();
-    w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p_ptr, seed_ptr, Y, n_elements);");
-    w.dedent();
-    w.line("} else {");
-    w.indent();
-    w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, false>(X, p_ptr, seed_ptr, Y, n_elements);");
-    w.dedent();
-    w.line("}");
-    w.dedent();
-    w.line("}");
   }
 
   json io_spec;
@@ -527,6 +761,7 @@ json emit_dropout(const Intent& intent, const json& bindings) {
   out["kernel_name"] = intent.name;
   out["cuda_src"] = cuda_ss.str();
   out["io_spec"] = io_spec;
+  if (host_launch) out["io_spec"]["host_launch"] = true;
   out["launch"] = {{"grid", {grid_x, 1, 1}}, {"block", {block_x, 1, 1}}, {"shared_mem", 0}};
   out["output_names"] = {Y};
   json out_bindings = bindings;
