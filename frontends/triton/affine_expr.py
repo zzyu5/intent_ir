@@ -81,6 +81,38 @@ def build_aliases(defs: Dict[str, SSAValueDef]) -> Dict[str, str]:
             if sm and em:
                 aliases[name] = f"range({sm.group(1)},{em.group(1)})"
                 continue
+
+    # Also alias common "pid decomposition" patterns into stable symbols so that downstream
+    # evidence does not depend on transient SSA ids like %3/%4.
+    #
+    # Typical TTIR pattern:
+    #   %0 = tt.get_program_id x
+    #   %3 = arith.divsi %0, %num_pid_n   # pid_m
+    #   %4 = arith.remsi %0, %num_pid_n   # pid_n
+    #
+    # We only key off the numerator being a pid_* alias; the denominator may be complex.
+    pid_axis = {"pid_x": "pid0", "pid_y": "pid1", "pid_z": "pid2"}
+    div_count: Dict[str, int] = {}
+    rem_count: Dict[str, int] = {}
+    for name, d in defs.items():
+        if name in aliases:
+            continue
+        if d.op not in {"arith.divsi", "arith.remsi"} or len(d.operands) < 2:
+            continue
+        num = d.operands[0]
+        num_alias = aliases.get(num)
+        axis = pid_axis.get(num_alias or "")
+        if axis is None:
+            continue
+        if d.op == "arith.divsi":
+            i = div_count.get(axis, 0)
+            div_count[axis] = i + 1
+            aliases[name] = f"{axis}_div{i}"
+        else:
+            i = rem_count.get(axis, 0)
+            rem_count[axis] = i + 1
+            aliases[name] = f"{axis}_rem{i}"
+
     return aliases
 
 
@@ -182,6 +214,39 @@ def affine_from_ssa(
                 ca, va = am
                 cb, vb = bm
                 out = AffineExpr(const=0, coeff={f"mul({va},{vb})": ca * cb})
+            elif am is not None and (not b.non_affine) and _stable_symbol(am[1]):
+                # Distribute a monomial across a (possibly multi-term) affine expression.
+                #
+                # Example TTIR pattern:
+                #   (pid0_div0*64 + r0) * stride_am
+                # becomes:
+                #   64*mul(pid0_div0,stride_am) + 1*mul(r0,stride_am)
+                cm, vm = am
+                coeff: Dict[str, int] = {}
+                # const*vm
+                if b.const != 0:
+                    coeff[vm] = coeff.get(vm, 0) + int(b.const) * int(cm)
+                for v, c in b.coeff.items():
+                    vv = str(v)
+                    if not _stable_symbol(vv):
+                        continue
+                    key = f"mul({vv},{vm})"
+                    coeff[key] = coeff.get(key, 0) + int(c) * int(cm)
+                coeff = {k: v for k, v in coeff.items() if v != 0}
+                out = AffineExpr(const=0, coeff=coeff)
+            elif bm is not None and (not a.non_affine) and _stable_symbol(bm[1]):
+                cm, vm = bm
+                coeff = {}
+                if a.const != 0:
+                    coeff[vm] = coeff.get(vm, 0) + int(a.const) * int(cm)
+                for v, c in a.coeff.items():
+                    vv = str(v)
+                    if not _stable_symbol(vv):
+                        continue
+                    key = f"mul({vv},{vm})"
+                    coeff[key] = coeff.get(key, 0) + int(c) * int(cm)
+                coeff = {k: v for k, v in coeff.items() if v != 0}
+                out = AffineExpr(const=0, coeff=coeff)
             else:
                 out = AffineExpr(non_affine=True)
         memo[name] = out

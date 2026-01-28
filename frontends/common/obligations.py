@@ -46,6 +46,43 @@ class ObligationResult:
 
 
 _ARG_INDEX_RE = re.compile(r"^arg\d+$")
+_PID_DERIVED_RE = re.compile(r"^pid[0-2]_(?:div|rem)\d+$")
+
+
+def _split_top_level_commas(text: str) -> List[str]:
+    parts: List[str] = []
+    depth = 0
+    start = 0
+    for i, ch in enumerate(text):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            parts.append(text[start:i].strip())
+            start = i + 1
+    tail = text[start:].strip()
+    if tail:
+        parts.append(tail)
+    return [p for p in parts if p]
+
+
+def _term_is_allowed(v: str, allowed_syms: Set[str]) -> bool:
+    if v in allowed_syms:
+        return True
+    if _ARG_INDEX_RE.match(v):
+        return True
+    # Stable pid-derived decomposition symbols from some frontends (e.g., Triton):
+    #   pid0_div0, pid0_rem0, ...
+    if _PID_DERIVED_RE.match(v):
+        return True
+    # Product term from TTIR affine recovery (treated as affine over parameters).
+    # Allow only if every factor is itself allowed.
+    if v.startswith("mul(") and v.endswith(")"):
+        inner = v[len("mul(") : -1].strip()
+        factors = _split_top_level_commas(inner)
+        return bool(factors) and all(_term_is_allowed(f, allowed_syms) for f in factors)
+    return False
 
 
 def _extract_canonical_evidence(cert_v2: "SemanticCertificateV2") -> Optional[CanonicalEvidence]:
@@ -181,7 +218,8 @@ def evaluate_obligations(desc: "KernelDescriptor", cert_v2: "SemanticCertificate
     for a in accesses:
         for ix in a.index_exprs:
             for v in (ix.terms or {}).keys():
-                if v not in allowed_syms and not _ARG_INDEX_RE.match(str(v)):
+                vv = str(v)
+                if not _term_is_allowed(vv, allowed_syms):
                     bad_terms.append(str(v))
     if not accesses:
         results.append(ObligationResult(id=O5_NO_DATA_DEPENDENT_ADDRESS, status="UNKNOWN", reason="no accesses extracted"))
