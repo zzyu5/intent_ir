@@ -749,8 +749,9 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     if ((wmma_as_pad % 4) != 0) wmma_as_pad = (wmma_as_pad / 4) * 4;
     if ((wmma_bs_pad % 4) != 0) wmma_bs_pad = (wmma_bs_pad / 4) * 4;
 
+    const bool allow_large_smem_variants = (!respect_schedule) && specialize_dims && (!m_is_tensor) && (!n_is_tensor) && (!k_is_tensor);
     int64_t max_smem_optin = binding_int(bindings, "CUDA_MAX_SMEM_OPTIN").value_or(0);
-    if (max_smem_optin <= 0) max_smem_optin = 96 * 1024;
+    if (max_smem_optin <= 0) max_smem_optin = allow_large_smem_variants ? (256 * 1024) : (96 * 1024);
 
     auto wmma_smem_bytes = [&](int64_t stage_k, int64_t pipe_stages) -> int64_t {
       const int64_t as_ld = stage_k + wmma_as_pad;
