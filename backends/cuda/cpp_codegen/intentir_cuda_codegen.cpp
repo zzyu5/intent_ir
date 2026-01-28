@@ -557,11 +557,11 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.line("cudaEvent_t end = nullptr;");
       w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
-      w.line("float best_ms = 1e30f;");
-      w.line("int best_i = 0;");
-      w.line("const int warm = 2;");
-      w.line("const int iters = 20;");
-      for (size_t i = 0; i < variants.size(); ++i) {
+	    w.line("float best_ms = 1e30f;");
+	    w.line("int best_i = 0;");
+		    w.line("const int warm = 3;");
+		    w.line("const int iters = 50;");
+		    for (size_t i = 0; i < variants.size(); ++i) {
         const auto& v = variants[i];
         const std::string kname = intent.name + "__" + v.suffix;
         w.line("{");
