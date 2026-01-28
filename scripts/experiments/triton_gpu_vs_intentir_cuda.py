@@ -659,6 +659,28 @@ def main() -> None:
                 except Exception:
                     return None
 
+            def _intent_with_canonical_shapes(it: dict[str, Any]) -> dict[str, Any]:
+                # For ablations we want auto-specialization to engage based on "this
+                # benchmark's canonical shapes", even if the artifact didn't record
+                # canonical_shapes. This keeps the comparison focused on contract_v2
+                # gating rather than missing metadata.
+                cs_src = dict(AI_BENCH_SHAPES.get(k, {}))
+                cs: dict[str, int] = {}
+                for kk, vv in cs_src.items():
+                    if isinstance(vv, bool):
+                        cs[str(kk)] = int(vv)
+                    elif isinstance(vv, int):
+                        cs[str(kk)] = int(vv)
+                    elif isinstance(vv, float) and float(vv).is_integer():
+                        cs[str(kk)] = int(vv)
+                it2: dict[str, Any] = dict(it)
+                meta_j = it2.get("meta")
+                meta2: dict[str, Any] = dict(meta_j) if isinstance(meta_j, dict) else {}
+                if cs:
+                    meta2["canonical_shapes"] = cs
+                it2["meta"] = meta2
+                return it2
+
             def _intent_with_contract_level(it: dict[str, Any], level: str) -> dict[str, Any]:
                 it2: dict[str, Any] = dict(it)
                 meta_j = it2.get("meta")
@@ -705,6 +727,7 @@ def main() -> None:
                     "ns_per_iter": None,
                     "ns_per_iter_repeats": None,
                     "launch": {"grid": list(lowered.launch.grid), "block": list(lowered.launch.block)},
+                    "host_launch": bool(lowered.io_spec.get("host_launch")),
                     "selected_variant": sel_variant,
                     "selected_tag": sel_tag,
                 }
@@ -716,6 +739,9 @@ def main() -> None:
                 raise RuntimeError("report missing intent json")
 
             intent_contract_v2_level = _intent_contract_level(intent_json)
+
+            if bool(args.ablation):
+                intent_json = _intent_with_canonical_shapes(intent_json)
 
             # Evidence-on (default): keep the artifact intent.meta (contract_v2 etc).
             ours_rec, ours_run, ours_ctx = _run_ours(intent_json, dict(bindings))

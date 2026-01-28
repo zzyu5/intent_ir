@@ -339,6 +339,7 @@ def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, 
   // Respect the current PyTorch CUDA stream (required for correct stream semantics,
   // and for features like CUDA Graph capture).
   cudaStream_t stream = at::cuda::getCurrentCUDAStream().stream();
+  {"intentir_cuda_selected_variant_idx = -1; intentir_cuda_selected_variant_tag = \"host_launch\";" if has_selected_api else ""}
   {host_call}
 """.rstrip()
     else:
@@ -358,6 +359,7 @@ def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, 
     intentir_last_kernel = intentir_kernel_ptr;
     intentir_last_smem = (int)shared_mem;
   }}
+  {"intentir_cuda_selected_variant_idx = -1; intentir_cuda_selected_variant_tag = \"direct_launch\";" if has_selected_api else ""}
   {kernel_name}<<<{dim}, {bdim}, (size_t)shared_mem, stream>>>({", ".join(call_args)});
 """.rstrip()
 
