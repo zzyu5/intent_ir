@@ -47,6 +47,7 @@ class ObligationResult:
 
 _ARG_INDEX_RE = re.compile(r"^arg\d+$")
 _PID_DERIVED_RE = re.compile(r"^pid[0-2]_(?:div|rem)\d+$")
+_ARG_CONST_ARITH_RE = re.compile(r"^arg\d+(?:(?:\/\/)|%)\d+$")
 
 
 def _split_top_level_commas(text: str) -> List[str]:
@@ -71,6 +72,9 @@ def _term_is_allowed(v: str, allowed_syms: Set[str]) -> bool:
     if v in allowed_syms:
         return True
     if _ARG_INDEX_RE.match(v):
+        return True
+    # Stable derived scalar from args (frontend may materialize as `arg7//2`, `arg7%16`).
+    if _ARG_CONST_ARITH_RE.match(v):
         return True
     # Stable pid-derived decomposition symbols from some frontends (e.g., Triton):
     #   pid0_div0, pid0_rem0, ...
@@ -216,7 +220,17 @@ def evaluate_obligations(desc: "KernelDescriptor", cert_v2: "SemanticCertificate
     # O5: no data-dependent address (MVP: index terms stay within stable symbol set)
     bad_terms: List[str] = []
     for a in accesses:
-        for ix in a.index_exprs:
+        # Prefer flattened address expressions if the certificate provided them.
+        # Some frontends expose "logical indices" in `index_exprs` for O3, while
+        # keeping the real address expression in meta.
+        ix_list = list(a.index_exprs or [])
+        if isinstance(a.meta, dict) and isinstance(a.meta.get("address_index_exprs"), list):
+            try:
+                ix_list = [ix for ix in a.meta.get("address_index_exprs") if isinstance(ix, IndexExpr)]  # type: ignore[misc]
+            except Exception:
+                ix_list = list(a.index_exprs or [])
+
+        for ix in ix_list:
             for v in (ix.terms or {}).keys():
                 vv = str(v)
                 if not _term_is_allowed(vv, allowed_syms):

@@ -368,8 +368,35 @@ def _collect_accesses_canonical(
     }
     mask_witnesses = build_mask_witnesses(ttir, facts)
     mask_predicates: Dict[str, Predicate] = {}
+    # Also extract "logical indices" that appear in mask comparisons, so O3 can
+    # reason about inbounds even when the access address is a flattened offset.
+    # These are a best-effort, conservative witness: they don't replace the
+    # address expression (which we keep in AccessSummary.meta for O5).
+    mask_index_exprs: Dict[str, List[IndexExpr]] = {}
+
+    def _is_shape_like_var(v: str) -> bool:
+        # e.g., M/N/K/R/C and similar shape params.
+        return bool(re.match(r"^[A-Z][A-Z0-9_]*$", str(v)))
+
+    def _is_index_like_var(v: str) -> bool:
+        return bool(re.match(r"^(pid[0-2]|pid[0-2]_(?:div|rem)\d+|r\d+|arg\d+)$", str(v)))
+
+    def _score_index_side(ix: IndexExpr) -> tuple[int, int]:
+        # Prefer expressions that look like indices (pid/r/arg) and avoid shape-like vars.
+        # Tie-break by fewer total terms (more "direct index" than "bound").
+        idx = sum(1 for v in (ix.terms or {}).keys() if _is_index_like_var(str(v)))
+        shp = sum(1 for v in (ix.terms or {}).keys() if _is_shape_like_var(str(v)))
+        return (idx - shp, -len(ix.terms or {}))
+
+    def _add_unique(dst: List[IndexExpr], ix: IndexExpr) -> None:
+        for e in dst:
+            if e == ix:
+                return
+        dst.append(ix)
+
     for mask, w in mask_witnesses.items():
         clauses: List[str] = []
+        idxs: List[IndexExpr] = []
         for c in w.cmps:
             if not c.lhs or not c.rhs:
                 continue
@@ -377,12 +404,25 @@ def _collect_accesses_canonical(
             rhs_aff = affine_from_ssa(c.rhs, defs, aliases=aliases)
             lhs_ix, lhs_unres = _index_expr_from_affine(lhs_aff, symbols)
             rhs_ix, rhs_unres = _index_expr_from_affine(rhs_aff, symbols)
+            if lhs_unres or rhs_unres:
+                # Skip unstable/unresolved clauses; downstream O3 should stay UNKNOWN
+                # rather than relying on a placeholder string that could parse as a
+                # different comparator.
+                continue
             op = kind_to_op.get(c.kind or "", c.kind or "?")
-            lhs_s = _format_index_expr(lhs_ix) if not lhs_unres else "<unresolved>"
-            rhs_s = _format_index_expr(rhs_ix) if not rhs_unres else "<unresolved>"
+            lhs_s = _format_index_expr(lhs_ix)
+            rhs_s = _format_index_expr(rhs_ix)
             clauses.append(f"{lhs_s} {op} {rhs_s}")
+            # Best-effort: pick the side that looks like an index, not a bound.
+            if _score_index_side(lhs_ix) >= _score_index_side(rhs_ix):
+                _add_unique(idxs, lhs_ix)
+            else:
+                _add_unique(idxs, rhs_ix)
         if clauses:
             mask_predicates[mask] = Predicate(clauses=clauses)
+        if idxs:
+            # Deterministic order: sort by IndexExpr sort_key.
+            mask_index_exprs[mask] = sorted(list(idxs), key=lambda x: x.sort_key())
 
     # Pointer groups give element types; fall back to TTIR arg types.
     pointer_groups = build_pointer_groups(ttir, facts)
@@ -422,14 +462,26 @@ def _collect_accesses_canonical(
         meta: Dict[str, Any] = {}
         if unresolved_any:
             meta["unresolved"] = True
+        # Always preserve the flattened address expression for downstream checks
+        # (e.g., O5 no-data-dependent-address).
+        meta["address_index_exprs"] = [ix]
+
+        # If we have a mask witness, also expose the "logical indices" that were
+        # compared in the mask. This enables O3 to match upper-bound clauses.
+        #
+        # NOTE: This is intentionally heuristic: we don't claim the full tensor
+        # rank here, only the indices guarded by the mask.
+        logical_ixs: List[IndexExpr] = []
+        if pred is not None and isinstance(mask, str):
+            logical_ixs = list(mask_index_exprs.get(mask) or [])
 
         accesses.append(
             AccessSummary(
                 kind=site.kind,
                 tensor=tensor,
                 dtype=dtype,
-                rank=1,
-                index_exprs=[ix],
+                rank=int(len(logical_ixs) if logical_ixs else 1),
+                index_exprs=(logical_ixs if logical_ixs else [ix]),
                 predicate=pred,
                 address_space="global",
                 meta=meta,
@@ -460,6 +512,7 @@ def build_certificate_v2(
         "has_atomic": bool(facts.has_atomic),
         "has_barrier": bool(facts.has_barrier),
         "has_async": bool(facts.has_async),
+        "needs_mask": bool(any(s.has_mask for s in (list(facts.load_sites) + list(facts.store_sites)))),
     }
     # NOTE: `schedule_hints` is allowed to drift across compiler versions and must
     # never be part of the golden-locked `semantic_facts`.

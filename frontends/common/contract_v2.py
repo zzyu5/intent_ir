@@ -93,6 +93,8 @@ def evaluate_contract_v2(
 
     # needs_mask: from frontend constraints or extracted predicates
     needs_mask = bool(getattr(constraints, "needs_mask", False)) if constraints is not None else False
+    if bool(anchors.get("needs_mask")):
+        needs_mask = True
     try:
         ce = (cert_v2.semantic_facts or {}).get("canonical_evidence")
         accesses = []

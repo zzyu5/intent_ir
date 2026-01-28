@@ -109,6 +109,7 @@ class O3Report:
 _CMP_RE = re.compile(r"^(?P<lhs>.+?)\s*(?P<op><=|>=|==|!=|<|>)\s*(?P<rhs>.+?)\s*$")
 _ARG_INDEX_RE = re.compile(r"^arg\d+$")
 _R_INDEX_RE = re.compile(r"^r\d+$")
+_PID_DERIVED_RE = re.compile(r"^pid[0-2]_(?:div|rem)\d+$")
 
 
 # -----------------------------
@@ -483,6 +484,11 @@ def _default_domains(
             domains[v] = list(range(0, max_pid + 1))
             lower_bounds[v] = 0
             domain_info[v] = {"source": "pid_default", "start": 0, "end": int(max_pid) + 1}
+            continue
+        if _PID_DERIVED_RE.match(v):
+            domains[v] = list(range(0, max_pid + 1))
+            lower_bounds[v] = 0
+            domain_info[v] = {"source": "pid_derived_default", "start": 0, "end": int(max_pid) + 1, "assumption": "non_negative"}
             continue
         if v in symbol_ranges:
             s = int(symbol_ranges[v].get("start", 0))

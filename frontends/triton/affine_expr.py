@@ -113,6 +113,53 @@ def build_aliases(defs: Dict[str, SSAValueDef]) -> Dict[str, str]:
             rem_count[axis] = i + 1
             aliases[name] = f"{axis}_rem{i}"
 
+    def _const_int(ssa: str) -> Optional[int]:
+        d = defs.get(ssa)
+        if d is None:
+            return None
+        m = INT_CONST_RE.search(d.line)
+        if m:
+            try:
+                return int(m.group(1))
+            except Exception:
+                return None
+        m = INT_DENSE_CONST_RE.search(d.line)
+        if m:
+            try:
+                return int(m.group(1))
+            except Exception:
+                return None
+        return None
+
+    # Canonicalize simple div/rem by constant into an expression-ish alias so that
+    # predicate clauses remain parseable (used by O3).
+    #
+    # Example:
+    #   %3 = arith.divsi %arg7, %c2_i32
+    # becomes:
+    #   aliases[%3] = "arg7//2"
+    for name, d in defs.items():
+        if name in aliases:
+            continue
+        if d.op not in {"arith.divsi", "arith.divui", "arith.remsi", "arith.remui"} or len(d.operands) < 2:
+            continue
+        num, den = d.operands[0], d.operands[1]
+        k = _const_int(den)
+        if k is None or int(k) == 0:
+            continue
+        num_alias = aliases.get(num)
+        if num_alias is None:
+            if num.startswith("%arg"):
+                num_alias = num[1:]  # %arg7 -> arg7
+            elif not num.startswith("%"):
+                num_alias = str(num)
+        if not num_alias:
+            continue
+        if d.op in {"arith.divsi", "arith.divui"}:
+            aliases[name] = f"{num_alias}//{int(k)}"
+        else:
+            aliases[name] = f"{num_alias}%{int(k)}"
+
     return aliases
 
 
