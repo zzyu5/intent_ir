@@ -333,7 +333,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {{
 @lru_cache(maxsize=32)
 def _load_ext_cached(name: str, cuda_src: str, extra_cuda_cflags: Tuple[str, ...]) -> Any:
     torch = _torch()
-    from torch.utils.cpp_extension import load_inline  # noqa: PLC0415
+    from torch.utils.cpp_extension import is_ninja_available, load_inline  # noqa: PLC0415
 
     # Avoid compiling fatbins for unrelated GPU architectures by default.
     # This speeds up iteration (and prevents confusing "hangs" during nvcc builds)
@@ -347,18 +347,33 @@ def _load_ext_cached(name: str, cuda_src: str, extra_cuda_cflags: Tuple[str, ...
 
     build_dir = _torch_ext_build_dir(name)
     build_dir.mkdir(parents=True, exist_ok=True)
-    return load_inline(
-        name=name,
-        cpp_sources="",
-        cuda_sources=cuda_src,
-        functions=None,
-        with_cuda=True,
-        extra_cuda_cflags=["--std=c++17", *list(extra_cuda_cflags)],
-        extra_cflags=["-std=c++17", "-O3"],
-        extra_include_paths=_intentir_cuda_include_dirs(),
-        build_directory=str(build_dir),
-        verbose=False,
-    )
+    # Torch uses Ninja by default; some remote machines (e.g. SSH-only clusters)
+    # may not have it installed. Fall back to the distutils builder if needed.
+    if os.getenv("USE_NINJA") is None and not is_ninja_available():
+        os.environ["USE_NINJA"] = "0"
+
+    def _do_load() -> Any:
+        return load_inline(
+            name=name,
+            cpp_sources="",
+            cuda_sources=cuda_src,
+            functions=None,
+            with_cuda=True,
+            extra_cuda_cflags=["--std=c++17", *list(extra_cuda_cflags)],
+            extra_cflags=["-std=c++17", "-O3"],
+            extra_include_paths=_intentir_cuda_include_dirs(),
+            build_directory=str(build_dir),
+            verbose=False,
+        )
+
+    try:
+        return _do_load()
+    except RuntimeError as e:
+        msg = str(e)
+        if ("Ninja is required" in msg or "ninja" in msg.lower()) and os.getenv("USE_NINJA") != "0":
+            os.environ["USE_NINJA"] = "0"
+            return _do_load()
+        raise
 
 
 def compile_cuda_extension(
