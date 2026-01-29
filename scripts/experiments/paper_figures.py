@@ -638,15 +638,16 @@ def fig_e5_cuda_triton_vs_intentir(
         ax_bot.set_xticklabels(labels, rotation=20, ha="right")
 
         # Annotate very large outliers on the top axis (keeps the plot readable).
-        for i, (_, _, _) in enumerate(series):
-            vals = series_vals[i]
+        # Only label the primary series to avoid overlapping text in grouped bars.
+        if series_vals:
+            vals0 = series_vals[0]
             for j in range(len(kernels)):
-                v = vals[j]
+                v = vals0[j]
                 if not np.isfinite(v) or v <= y_break:
                     continue
                 ax_top.text(
-                    float(x[j] + offsets[i]),
-                    float(v) + 0.02 * float(vmax),
+                    float(x[j] + offsets[0]),
+                    float(v) + 0.25,
                     f"{float(v):.1f}×",
                     ha="center",
                     va="bottom",
