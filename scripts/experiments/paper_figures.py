@@ -705,8 +705,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--paper-json-dir", type=Path, default=ROOT / "artifacts/experiments/paper")
     ap.add_argument("--paper-dir", type=Path, default=ROOT / "doc/paper/my-sigconf-paper")
-    ap.add_argument("--e5-cuda-4080s-quick", type=Path, default=None)
-    ap.add_argument("--e5-cuda-4080s-ablation", type=Path, default=None)
+    ap.add_argument("--e5-cuda-5090d-quick", type=Path, default=None)
+    ap.add_argument("--e5-cuda-5090d-ablation", type=Path, default=None)
     ap.add_argument("--e5-cuda-h100-quick", type=Path, default=None)
     ap.add_argument("--e5-cuda-h100-ablation", type=Path, default=None)
     args = ap.parse_args()
@@ -736,10 +736,10 @@ def main() -> None:
     fig_e5_2_retune_vs_freeze(e5_2, fig_dir)
     fig_e6_contract_calibration(e6, fig_dir)
 
-    # Optional: E5 CUDA GPU figures (H100 + 4080S).
+    # Optional: E5 CUDA GPU figures (H100 + 5090D).
     cuda_dir = ROOT / "artifacts" / "experiments" / "E5"
-    p_4080_q = args.e5_cuda_4080s_quick or _latest_file(cuda_dir, "e5_cuda_4080s*quick*.json")
-    p_4080_a = args.e5_cuda_4080s_ablation or _latest_file(cuda_dir, "e5_cuda_4080s*ablation*.json")
+    p_5090_q = args.e5_cuda_5090d_quick or _latest_file(cuda_dir, "e5_cuda_5090d*quick*.json")
+    p_5090_a = args.e5_cuda_5090d_ablation or _latest_file(cuda_dir, "e5_cuda_5090d*ablation*.json")
     p_h100_q = args.e5_cuda_h100_quick or _latest_file(cuda_dir, "e5_cuda_h100*quick*.json")
     p_h100_a = args.e5_cuda_h100_ablation or _latest_file(cuda_dir, "e5_cuda_h100*ablation*.json")
 
@@ -748,10 +748,10 @@ def main() -> None:
         h100_a = _load_json(p_h100_a) if (p_h100_a and p_h100_a.is_file()) else None
         fig_e5_cuda_triton_vs_intentir(quick=h100_q, ablation=h100_a, out_dir=fig_dir, out_name="e5_cuda_gpu_h100")
 
-    if p_4080_q and p_4080_q.is_file():
-        g4080_q = _load_json(p_4080_q)
-        g4080_a = _load_json(p_4080_a) if (p_4080_a and p_4080_a.is_file()) else None
-        fig_e5_cuda_triton_vs_intentir(quick=g4080_q, ablation=g4080_a, out_dir=fig_dir, out_name="e5_cuda_gpu_4080s")
+    if p_5090_q and p_5090_q.is_file():
+        g5090_q = _load_json(p_5090_q)
+        g5090_a = _load_json(p_5090_a) if (p_5090_a and p_5090_a.is_file()) else None
+        fig_e5_cuda_triton_vs_intentir(quick=g5090_q, ablation=g5090_a, out_dir=fig_dir, out_name="e5_cuda_gpu_5090d")
     
     print(f"Done. Figures written to: {fig_dir}")
 
