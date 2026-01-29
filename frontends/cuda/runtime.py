@@ -330,6 +330,8 @@ def _nvrtc_system_include_dirs() -> list[str]:
             cands.append(sub)
             # Some distros use an arch subdir.
             cands.append(sub / "x86_64-linux-gnu")
+            # Debian/Ubuntu-style multiarch libstdc++ headers.
+            cands.append(Path("/usr/include/x86_64-linux-gnu/c++") / sub.name)
 
     out: list[str] = []
     seen: set[str] = set()
@@ -340,6 +342,17 @@ def _nvrtc_system_include_dirs() -> list[str]:
                 out.append(s)
                 seen.add(s)
     return out
+
+
+def _nvrtc_shim_include_dir() -> str | None:
+    """
+    Extra include directory for NVRTC to paper over distro/header mismatches.
+
+    This is intentionally minimal and only used for the NVRTC fallback path.
+    """
+    root = Path(__file__).resolve().parents[2]
+    d = root / "backends" / "cuda" / "runtime" / "nvrtc_shim"
+    return str(d) if d.is_dir() else None
 
 
 def _nvrtc_compile_ptx(
@@ -386,7 +399,12 @@ def _nvrtc_compile_ptx(
         if f == "--use_fast_math":
             opts.append(b"--use_fast_math")
 
-    for inc in [*_intentir_cuda_include_dirs(), *_nvrtc_cuda_include_dirs(), *_nvrtc_system_include_dirs()]:
+    shim = _nvrtc_shim_include_dir()
+    include_dirs: list[str] = []
+    if shim:
+        include_dirs.append(shim)
+    include_dirs += [*_intentir_cuda_include_dirs(), *_nvrtc_cuda_include_dirs(), *_nvrtc_system_include_dirs()]
+    for inc in include_dirs:
         opts.append(f"--include-path={inc}".encode("utf-8"))
 
     src_bytes = str(cuda_src).encode("utf-8")
