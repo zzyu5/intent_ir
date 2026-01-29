@@ -306,6 +306,42 @@ def _has_working_nvcc() -> bool:
     return shutil.which("nvcc") is not None
 
 
+def _nvrtc_system_include_dirs() -> list[str]:
+    """
+    Host system include paths for NVRTC.
+
+    NVRTC needs access to libc/libstdc++ headers for common includes like
+    <stddef.h>, <stdint.h>, <math.h>, <cstdio>, etc. On driver-only machines
+    these still exist under /usr/include and /usr/include/c++/*.
+    """
+    cands: list[Path] = []
+    for p in (
+        Path("/usr/include"),
+        Path("/usr/local/include"),
+        Path("/usr/include/x86_64-linux-gnu"),
+    ):
+        cands.append(p)
+
+    cxx_root = Path("/usr/include/c++")
+    if cxx_root.is_dir():
+        for sub in sorted(cxx_root.iterdir()):
+            if not sub.is_dir():
+                continue
+            cands.append(sub)
+            # Some distros use an arch subdir.
+            cands.append(sub / "x86_64-linux-gnu")
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for d in cands:
+        if d.is_dir():
+            s = str(d)
+            if s not in seen:
+                out.append(s)
+                seen.add(s)
+    return out
+
+
 def _nvrtc_compile_ptx(
     *,
     cuda_src: str,
@@ -350,7 +386,7 @@ def _nvrtc_compile_ptx(
         if f == "--use_fast_math":
             opts.append(b"--use_fast_math")
 
-    for inc in [*_intentir_cuda_include_dirs(), *_nvrtc_cuda_include_dirs()]:
+    for inc in [*_intentir_cuda_include_dirs(), *_nvrtc_cuda_include_dirs(), *_nvrtc_system_include_dirs()]:
         opts.append(f"--include-path={inc}".encode("utf-8"))
 
     src_bytes = str(cuda_src).encode("utf-8")
