@@ -172,25 +172,21 @@ __device__ __forceinline__ void softmax_2d_last_f32_warp4(const float* __restric
   const float* __restrict__ in_row = inp + (size_t)r * (size_t)C;
   float* __restrict__ out_row = out + (size_t)r * (size_t)C;
 
-  const int prefix_in = (int)(((16u - (unsigned)((uintptr_t)in_row & 15u)) & 15u) >> 2);   // 0..3 floats
-  const int prefix_out = (int)(((16u - (unsigned)((uintptr_t)out_row & 15u)) & 15u) >> 2);  // 0..3 floats
+  const int shift_in = (int)(((16u - (unsigned)((uintptr_t)in_row & 15u)) & 15u) >> 2);   // 0..3 floats
+  const int shift_out = (int)(((16u - (unsigned)((uintptr_t)out_row & 15u)) & 15u) >> 2);  // 0..3 floats
+  const int shift = (shift_in < C) ? shift_in : C;
+  const int len0 = C - shift;  // elements in the aligned suffix [shift, C)
 
   float tmax = -INFINITY;
-  // Prologue: advance to the next 16B boundary so we can use float4 loads for
-  // the bulk of the row even when the row pointer is only 4B-aligned (common
-  // for odd C like 781).
-  if (lane < prefix_in) {
-    const int c = lane;
-    if (c < C) {
-      const float v = intentir_ldg_f32(in_row + (size_t)c);
-      buf[(size_t)c] = v;
-      tmax = fmaxf(tmax, v);
-    }
-  }
+  // Rotate the row by `shift` (0..3) so the bulk begins at a 16B boundary:
+  //   - buf[0..len0)      <- in_row[shift..C)
+  //   - buf[len0..C)      <- in_row[0..shift)
+  // This keeps buf float4-aligned while allowing aligned float4 loads for the bulk.
   #pragma unroll 1
-  for (int base = prefix_in + lane * VEC; base < C; base += 32 * VEC) {
-    if (base + (VEC - 1) < C) {
-      const float4 x = *reinterpret_cast<const float4*>(in_row + (size_t)base);
+  for (int base = lane * VEC; base < len0; base += 32 * VEC) {
+    const int in_base = shift + base;
+    if (base + (VEC - 1) < len0) {
+      const float4 x = *reinterpret_cast<const float4*>(in_row + (size_t)in_base);
       *reinterpret_cast<float4*>(buf + (size_t)base) = x;
       tmax = fmaxf(tmax, x.x);
       tmax = fmaxf(tmax, x.y);
@@ -200,12 +196,21 @@ __device__ __forceinline__ void softmax_2d_last_f32_warp4(const float* __restric
       #pragma unroll
       for (int j = 0; j < VEC; ++j) {
         const int c = base + j;
-        if (c < C) {
-          const float v = intentir_ldg_f32(in_row + (size_t)c);
+        if (c < len0) {
+          const float v = intentir_ldg_f32(in_row + (size_t)(shift + c));
           buf[(size_t)c] = v;
           tmax = fmaxf(tmax, v);
         }
       }
+    }
+  }
+  if (lane < shift) {
+    const int c = lane;
+    const int buf_idx = len0 + c;
+    if (buf_idx < C) {
+      const float v = intentir_ldg_f32(in_row + (size_t)c);
+      buf[(size_t)buf_idx] = v;
+      tmax = fmaxf(tmax, v);
     }
   }
   const float mx = warp_allreduce_max(tmax);
@@ -239,26 +244,44 @@ __device__ __forceinline__ void softmax_2d_last_f32_warp4(const float* __restric
   const float sum = warp_allreduce_sum(tsum);
   const float inv = __fdividef(1.0f, sum);
 
-  // Store: vectorize across the aligned suffix of out_row.
-  if (lane < prefix_out) {
-    const int c = lane;
-    if (c < C) out_row[(size_t)c] = buf[(size_t)c] * inv;
-  }
-  #pragma unroll 1
-  for (int base = prefix_out + lane * VEC; base < C; base += 32 * VEC) {
-    if (base + (VEC - 1) < C) {
-      float4 e = *reinterpret_cast<const float4*>(buf + (size_t)base);
-      e.x *= inv;
-      e.y *= inv;
-      e.z *= inv;
-      e.w *= inv;
-      *reinterpret_cast<float4*>(out_row + (size_t)base) = e;
-    } else {
+  // Store: inverse-rotate back to the original order.
+  if (shift_out == shift) {
+    #pragma unroll 1
+    for (int base = lane * VEC; base < len0; base += 32 * VEC) {
+      const int out_base = shift + base;
+      if (base + (VEC - 1) < len0) {
+        float4 e = *reinterpret_cast<const float4*>(buf + (size_t)base);
+        e.x *= inv;
+        e.y *= inv;
+        e.z *= inv;
+        e.w *= inv;
+        *reinterpret_cast<float4*>(out_row + (size_t)out_base) = e;
+      } else {
+        #pragma unroll
+        for (int j = 0; j < VEC; ++j) {
+          const int c = base + j;
+          if (c < len0) out_row[(size_t)(shift + c)] = buf[(size_t)c] * inv;
+        }
+      }
+    }
+    if (lane < shift) {
+      const int c = lane;
+      const int buf_idx = len0 + c;
+      if (buf_idx < C) out_row[(size_t)c] = buf[(size_t)buf_idx] * inv;
+    }
+  } else {
+    #pragma unroll 1
+    for (int base = lane * VEC; base < len0; base += 32 * VEC) {
       #pragma unroll
       for (int j = 0; j < VEC; ++j) {
         const int c = base + j;
-        if (c < C) out_row[(size_t)c] = buf[(size_t)c] * inv;
+        if (c < len0) out_row[(size_t)(shift + c)] = buf[(size_t)c] * inv;
       }
+    }
+    if (lane < shift) {
+      const int c = lane;
+      const int buf_idx = len0 + c;
+      if (buf_idx < C) out_row[(size_t)c] = buf[(size_t)buf_idx] * inv;
     }
   }
 }
