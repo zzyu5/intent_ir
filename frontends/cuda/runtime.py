@@ -403,11 +403,30 @@ def _nvrtc_compile_ptx(
     include_dirs: list[str] = []
     if shim:
         include_dirs.append(shim)
-    include_dirs += [*_intentir_cuda_include_dirs(), *_nvrtc_cuda_include_dirs(), *_nvrtc_system_include_dirs()]
+    # Avoid adding host system include paths by default: glibc/libstdc++ headers
+    # are not device-annotated and often fail under NVRTC's device compilation
+    # mode. We provide a tiny shim (nvrtc_shim/) for the few std headers we use.
+    include_dirs += [*_intentir_cuda_include_dirs(), *_nvrtc_cuda_include_dirs()]
     for inc in include_dirs:
         opts.append(f"--include-path={inc}".encode("utf-8"))
 
-    src_bytes = str(cuda_src).encode("utf-8")
+    # NVRTC runs in device compilation mode: strip host-only helpers that may be
+    # present in nvcc-built modules (e.g., variant introspection globals).
+    drop_exact = {
+        "#include <cstdlib>",
+        "#include <cstdio>",
+    }
+    out_lines: list[str] = []
+    for line in str(cuda_src).splitlines():
+        s = line.strip()
+        if s in drop_exact:
+            continue
+        if "intentir_cuda_selected_variant" in line or "intentir_cuda_selected_tag" in line:
+            continue
+        if "intentir_cuda_selected_variant_idx" in line or "intentir_cuda_selected_variant_tag" in line:
+            continue
+        out_lines.append(line)
+    src_bytes = ("\n".join(out_lines) + "\n").encode("utf-8")
     name_bytes = str(prog_name).encode("utf-8")
     err, prog = nvrtc.nvrtcCreateProgram(src_bytes, name_bytes, 0, None, None)
     if int(err) != 0:
