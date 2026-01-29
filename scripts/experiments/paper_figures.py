@@ -589,10 +589,11 @@ def fig_e5_cuda_triton_vs_intentir(
     if isinstance(gm, (int, float)):
         title = f"{title} (Geomean: {float(gm):.2f}×)"
 
-    # Figure: vertical bars + broken y-axis (not log) to keep 1× details readable.
+    # Figure: prefer a single axis when the dynamic range is small; fall back to a
+    # broken y-axis (not log) only when outliers would squash 1×-level differences.
     y_break = 1.30
     y_lo = max(0.0, min(0.85, vmin * 0.95))
-    use_broken_axis = vmax > (y_break * 1.20)
+    use_broken_axis = vmax > 2.5
 
     if use_broken_axis:
         fig, (ax_top, ax_bot) = plt.subplots(
@@ -669,7 +670,29 @@ def fig_e5_cuda_triton_vs_intentir(
         ax.set_ylabel("Speedup over Triton (×)")
         ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=20, ha="right")
-        ax.set_ylim(y_lo, max(1.2, vmax * 1.10))
+        y_hi = max(1.2, vmax * 1.10)
+        ax.set_ylim(y_lo, y_hi)
+        # Denser ticks when we're in the "near-1×" regime.
+        if y_hi <= 2.0:
+            ticks = np.arange(max(0.8, y_lo), y_hi + 1e-6, 0.2)
+            ax.set_yticks(ticks)
+
+        # Annotate the primary (quick) series for readability at paper scale.
+        if series_vals:
+            vals0 = series_vals[0]
+            for j in range(len(kernels)):
+                v = vals0[j]
+                if not np.isfinite(v):
+                    continue
+                ax.text(
+                    float(x[j] + offsets[0]),
+                    float(v) + 0.02 * (y_hi - y_lo),
+                    f"{float(v):.2f}×",
+                    ha="center",
+                    va="bottom",
+                    fontsize=8,
+                    color=PALETTE["dark"],
+                )
         _common_legend(fig, *ax.get_legend_handles_labels(), ncol=min(3, n_series), y_pos=0.99)
         _save_fig(fig, out_dir / f"{out_name}.pdf")
 
