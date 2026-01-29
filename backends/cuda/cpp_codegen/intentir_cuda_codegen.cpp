@@ -584,47 +584,33 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.line("cudaEvent_t end = nullptr;");
       w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
-      // Use a slightly longer micro-benchmark window to reduce selection noise.
-      // This runs once per module load, so a few extra ms here is acceptable.
-      w.line("constexpr int warm = 5;");
-      w.line("constexpr int iters = 200;");
+      // Variant selection should be stable: rotate measurement order across a
+      // few repeats to reduce clock/thermal bias and pick the best accumulated
+      // time. This runs once per module load.
+      w.line("constexpr int warm = 3;");
+      w.line("constexpr int iters = 120;");
       w.line("float ms_acc[" + std::to_string(variants.size()) + "] = {0};");
-      // Forward pass then reverse pass to reduce clock/thermal order bias.
-      for (size_t i = 0; i < variants.size(); ++i) {
-        const auto& v = variants[i];
-        const std::string kname = intent.name + "__" + v.suffix;
-        w.line("{");
-        w.indent();
-        w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
-        w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
-        w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p, seed, Y, n_elements);");
-        w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
-        w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p, seed, Y, n_elements);");
-        w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
-        w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
-        w.line("float ms = 0.0f;");
-        w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
-        w.line("ms_acc[" + std::to_string(i) + "] += ms;");
-        w.dedent();
-        w.line("}");
-      }
-      for (size_t ri = variants.size(); ri-- > 0;) {
-        const auto& v = variants[ri];
-        const std::string kname = intent.name + "__" + v.suffix;
-        w.line("{");
-        w.indent();
-        w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
-        w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
-        w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p, seed, Y, n_elements);");
-        w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
-        w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p, seed, Y, n_elements);");
-        w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
-        w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
-        w.line("float ms = 0.0f;");
-        w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
-        w.line("ms_acc[" + std::to_string(ri) + "] += ms;");
-        w.dedent();
-        w.line("}");
+      w.line("constexpr int reps = 3;");
+      for (int rep = 0; rep < 3; ++rep) {
+        for (size_t j = 0; j < variants.size(); ++j) {
+          const size_t i = (j + (size_t)rep) % variants.size();
+          const auto& v = variants[i];
+          const std::string kname = intent.name + "__" + v.suffix;
+          w.line("{");
+          w.indent();
+          w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+          w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
+          w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p, seed, Y, n_elements);");
+          w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
+          w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p, seed, Y, n_elements);");
+          w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
+          w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
+          w.line("float ms = 0.0f;");
+          w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
+          w.line("ms_acc[" + std::to_string(i) + "] += ms;");
+          w.dedent();
+          w.line("}");
+        }
       }
       w.line("float best_ms = 1e30f;");
       w.line("int best_i = 0;");
@@ -690,46 +676,33 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.line("cudaEvent_t end = nullptr;");
       w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
-      // Use a slightly longer micro-benchmark window to reduce selection noise.
-      w.line("constexpr int warm = 4;");
-      w.line("constexpr int iters = 150;");
+      // Variant selection should be stable: rotate measurement order across a
+      // few repeats to reduce clock/thermal bias and pick the best accumulated
+      // time. This runs once per module load.
+      w.line("constexpr int warm = 3;");
+      w.line("constexpr int iters = 100;");
       w.line("float ms_acc[" + std::to_string(variants.size()) + "] = {0};");
-      // Forward pass then reverse pass to reduce clock/thermal order bias.
-      for (size_t i = 0; i < variants.size(); ++i) {
-        const auto& v = variants[i];
-        const std::string kname = intent.name + "__" + v.suffix;
-        w.line("{");
-        w.indent();
-        w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
-        w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
-        w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
-        w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
-        w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
-        w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
-        w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
-        w.line("float ms = 0.0f;");
-        w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
-        w.line("ms_acc[" + std::to_string(i) + "] += ms;");
-        w.dedent();
-        w.line("}");
-      }
-      for (size_t ri = variants.size(); ri-- > 0;) {
-        const auto& v = variants[ri];
-        const std::string kname = intent.name + "__" + v.suffix;
-        w.line("{");
-        w.indent();
-        w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
-        w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
-        w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
-        w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
-        w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
-        w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
-        w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
-        w.line("float ms = 0.0f;");
-        w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
-        w.line("ms_acc[" + std::to_string(ri) + "] += ms;");
-        w.dedent();
-        w.line("}");
+      w.line("constexpr int reps = 3;");
+      for (int rep = 0; rep < 3; ++rep) {
+        for (size_t j = 0; j < variants.size(); ++j) {
+          const size_t i = (j + (size_t)rep) % variants.size();
+          const auto& v = variants[i];
+          const std::string kname = intent.name + "__" + v.suffix;
+          w.line("{");
+          w.indent();
+          w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+          w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
+          w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
+          w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
+          w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
+          w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
+          w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
+          w.line("float ms = 0.0f;");
+          w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
+          w.line("ms_acc[" + std::to_string(i) + "] += ms;");
+          w.dedent();
+          w.line("}");
+        }
       }
       w.line("float best_ms = 1e30f;");
       w.line("int best_i = 0;");
