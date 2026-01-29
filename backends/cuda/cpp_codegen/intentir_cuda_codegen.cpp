@@ -439,7 +439,8 @@ json emit_dropout(const Intent& intent, const json& bindings) {
   if (tuned_block.has_value() && *tuned_block > 0 && *tuned_block <= 1024) {
     block_x = *tuned_block;
   } else if (!respect_schedule) {
-    block_x = (n >= (1LL << 20)) ? 128 : 256;
+    // Throughput-oriented default: prefer more threads for large vectors.
+    block_x = (n >= (1LL << 20)) ? 256 : 128;
   }
   // Keep block size warp-aligned.
   if (block_x < 32) block_x = 32;
@@ -507,15 +508,22 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       variants.push_back(DropoutVariant{threads, vept, gx, full, tag});
     };
 
-    // Evidence-guided candidate set: schedule/heuristic seed + a tiny neighborhood.
+    // Evidence-guided candidate set: keep it small but span a few occupancy
+    // regimes (threads) and ILP levels (elements-per-thread). The dispatcher
+    // microbench picks the best once and caches it.
     add_variant(block_x, ept, "seed");
-    add_variant(128, ept, "t128_seed");
-    add_variant(256, ept, "t256_seed");
-    add_variant(512, ept, "t512_seed");
-    add_variant(block_x, 4, "seed_e4");
-    add_variant(block_x, 8, "seed_e8");
+    add_variant(128, 1, "t128_e1");
+    add_variant(256, 1, "t256_e1");
+    add_variant(512, 1, "t512_e1");
+    add_variant(128, 2, "t128_e2");
+    add_variant(256, 2, "t256_e2");
+    add_variant(512, 2, "t512_e2");
+    add_variant(128, 4, "t128_e4");
+    add_variant(256, 4, "t256_e4");
+    add_variant(512, 4, "t512_e4");
     add_variant(128, 8, "t128_e8");
     add_variant(256, 8, "t256_e8");
+    add_variant(512, 8, "t512_e8");
     if (variants.empty()) add_variant(block_x, ept, "fallback");
 
     for (const auto& v : variants) {

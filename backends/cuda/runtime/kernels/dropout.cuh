@@ -44,6 +44,12 @@ __device__ __forceinline__ void dropout_f32(
   }
 
   const float inv_keep = __fdividef(1.0f, (1.0f - p));
+  // Compare in the integer domain to avoid per-element int->float conversion.
+  // This matches the interpreter mapping:
+  //   xi = (int32_t)u; xi ^= (xi >> 31); r = (float)xi * 2^-31; keep = r > p
+  // Rearranged:
+  //   keep iff xi > p * 2^31
+  const uint32_t keep_thresh = (uint32_t)(p * 2147483648.0f);  // 2^31
   int64_t i = base;
   #pragma unroll
   for (int e = 0; e < EPT; ++e, i += stride) {
@@ -52,8 +58,11 @@ __device__ __forceinline__ void dropout_f32(
     }
     const float x = intentir_ldg_f32(X + i);
     const uint32_t ctr = (uint32_t)i;
-    const float r = intentir_uint_to_uniform_float_u32(intentir_philox_randint_u32_rounds<N_ROUNDS>(seed, ctr));
-    Y[i] = (r > p) ? (x * inv_keep) : 0.0f;
+    const uint32_t rnd_u32 = intentir_philox_randint_u32_rounds<N_ROUNDS>(seed, ctr);
+    int32_t xi = (int32_t)rnd_u32;
+    xi ^= (xi >> 31);
+    const bool keep = ((uint32_t)xi > keep_thresh);
+    Y[i] = keep ? (x * inv_keep) : 0.0f;
   }
 }
 

@@ -1016,8 +1016,8 @@ def _kernel_dropout_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cud
         block_x = int(tuned_block)
     elif not respect_schedule:
         # Backend heuristic: ignore small frontend defaults (often 32) and pick a
-        # more throughput-oriented block size for large vectors.
-        block_x = 128 if n >= (1 << 20) else 256
+        # throughput-oriented block size.
+        block_x = 256 if n >= (1 << 20) else 128
     # Keep block size warp-aligned.
     if block_x < 32:
         block_x = 32
@@ -1026,14 +1026,13 @@ def _kernel_dropout_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cud
     if block_x > 1024:
         block_x = 1024
 
-    # Process multiple elements per thread to amortize Philox cost.
+    # Process multiple elements per thread to trade ILP vs occupancy.
     #
-    # AI-Bench dropout is bandwidth + RNG bound; using a larger EPT reduces launch
-    # overhead and improves global memory coalescing when we map each thread to a
-    # contiguous EPT segment.
-    ept = int(op.attrs.get("elements_per_thread") or bindings.get("DROPOUT_EPT") or 8)
+    # Large vectors on high-end GPUs typically prefer higher occupancy (smaller EPT),
+    # while smaller vectors can benefit from a bit more ILP.
+    ept = int(op.attrs.get("elements_per_thread") or bindings.get("DROPOUT_EPT") or 0)
     if ept <= 0:
-        ept = 1
+        ept = 1 if n >= (1 << 20) else 4
     if ept > 8:
         ept = 8
 
