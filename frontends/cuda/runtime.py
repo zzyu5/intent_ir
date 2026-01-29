@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import sys
 from dataclasses import dataclass
 from functools import lru_cache
@@ -134,6 +135,31 @@ def _torch_ext_build_dir(name: str) -> Path:
     if base:
         return Path(base) / str(name)
     return _default_torch_ext_root() / str(name)
+
+
+def _maybe_add_python_ninja_to_path() -> None:
+    """
+    Best-effort fix for environments where the `ninja` Python package is installed,
+    but the `ninja` executable isn't on PATH (common on SSH clusters).
+    """
+    if shutil.which("ninja"):
+        return
+    try:
+        import ninja  # type: ignore[import-not-found]  # noqa: PLC0415
+
+        bin_dir = getattr(ninja, "BIN_DIR", None)
+        if not bin_dir:
+            return
+        bd = Path(str(bin_dir))
+        if not bd.is_dir():
+            return
+        cur = os.environ.get("PATH", "")
+        parts = [p for p in cur.split(os.pathsep) if p]
+        if str(bd) in parts:
+            return
+        os.environ["PATH"] = str(bd) + os.pathsep + cur
+    except Exception:
+        return
 
 
 def _maybe_set_cuda_home_for_hopper() -> None:
@@ -435,13 +461,14 @@ def _load_ext_cached(name: str, cuda_src: str, extra_cuda_cflags: Tuple[str, ...
 
     # Import after `_maybe_set_cuda_home_for_hopper()` so torch's CUDA_HOME detection
     # (evaluated at module import time) can see the updated environment.
+    _maybe_add_python_ninja_to_path()
     from torch.utils.cpp_extension import is_ninja_available, load_inline  # noqa: PLC0415
 
     build_dir = _torch_ext_build_dir(name)
     build_dir.mkdir(parents=True, exist_ok=True)
     # Torch uses Ninja by default; some remote machines (e.g. SSH-only clusters)
     # may not have it installed. Fall back to the distutils builder if needed.
-    if os.getenv("USE_NINJA") is None and not is_ninja_available():
+    if os.getenv("USE_NINJA") is None and (shutil.which("ninja") is None or not is_ninja_available()):
         os.environ["USE_NINJA"] = "0"
 
     def _do_load() -> Any:
