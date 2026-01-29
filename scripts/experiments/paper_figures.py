@@ -84,6 +84,13 @@ PALETTE = {
 def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
+def _latest_file(dir_path: Path, pattern: str) -> Path | None:
+    cand = [p for p in dir_path.glob(pattern) if p.is_file()]
+    if not cand:
+        return None
+    cand.sort(key=lambda p: (p.stat().st_mtime, str(p)))
+    return cand[-1]
+
 def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
@@ -472,6 +479,133 @@ def fig_e4_consistency(e4: dict[str, Any], out: Path) -> None:
     _save_fig(fig, out / "e4_consistency.pdf")
 
 
+def fig_e5_cuda_triton_vs_intentir(
+    *,
+    quick: dict[str, Any],
+    ablation: dict[str, Any] | None,
+    out_dir: Path,
+    out_name: str,
+) -> None:
+    """
+    E5 CUDA (GPU): Triton vs IntentIR-CUDA (quick), plus ablations if available.
+
+    `quick` is expected to be the default perf run (`--bench-mode graph`, `CUDA_SPECIALIZE_DIMS=1`).
+    `ablation` is expected to come from `--ablation --ablation-modes evidence_on,dispatch_off,contract_off`.
+    """
+
+    order = [
+        "ai_bench_matmul",
+        "ai_bench_dropout",
+        "ai_bench_softmax",
+        "ai_bench_layernorm",
+        "ai_bench_correlation",
+        "ai_bench_resize",
+        "ai_bench_rope",
+        "ai_bench_warp",
+    ]
+    pretty = {
+        "ai_bench_matmul": "MatMul",
+        "ai_bench_dropout": "Dropout",
+        "ai_bench_softmax": "Softmax",
+        "ai_bench_layernorm": "LayerNorm",
+        "ai_bench_correlation": "Correlation",
+        "ai_bench_resize": "Resize",
+        "ai_bench_rope": "RoPE",
+        "ai_bench_warp": "Warp",
+    }
+
+    def _by_kernel(obj: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+        if not isinstance(obj, dict):
+            return {}
+        rows = [r for r in list(obj.get("results") or []) if isinstance(r, dict)]
+        out: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            k = r.get("kernel")
+            if isinstance(k, str) and k:
+                out[k] = r
+        return out
+
+    def _get_speedup(r: dict[str, Any] | None, key: str) -> float | None:
+        if not isinstance(r, dict):
+            return None
+        v = r.get(key)
+        if isinstance(v, (int, float)):
+            vf = float(v)
+            return vf if vf > 0 else None
+        return None
+
+    by_q = _by_kernel(quick)
+    by_a = _by_kernel(ablation)
+
+    kernels = [k for k in order if k in by_q]
+    labels = [pretty.get(k, k) for k in kernels]
+    y = np.arange(len(kernels))
+
+    # Build series (speedup vs Triton, so Triton itself is 1.0×).
+    sp_quick = [_get_speedup(by_q.get(k), "speedup_ours_over_triton") for k in kernels]
+    sp_dispatch_off = [_get_speedup(by_a.get(k), "speedup_ours_dispatch_off_over_triton") for k in kernels]
+    sp_contract_off = [_get_speedup(by_a.get(k), "speedup_ours_contract_off_over_triton") for k in kernels]
+
+    have_dispatch_off = any(v is not None for v in sp_dispatch_off)
+    have_contract_off = any(v is not None for v in sp_contract_off)
+
+    series: list[tuple[str, list[float | None], str]] = [
+        ("Triton (baseline)", [1.0 for _ in kernels], PALETTE["grey"]),
+        ("IntentIR-CUDA (quick)", sp_quick, PALETTE["red"]),
+    ]
+    if have_dispatch_off:
+        series.append(("Dispatch off", sp_dispatch_off, PALETTE["blue"]))
+    if have_contract_off:
+        series.append(("Contract off", sp_contract_off, PALETTE["light_grey"]))
+
+    # Figure
+    fig, ax = plt.subplots(figsize=(4.0, 3.6))
+    plt.subplots_adjust(top=0.80, bottom=0.12, left=0.28)
+
+    h = 0.18
+    n_series = len(series)
+    offsets = (np.arange(n_series) - (n_series - 1) / 2.0) * h
+
+    all_vals: list[float] = []
+    for i, (name, vals_raw, color) in enumerate(series):
+        vals = np.array([float(v) if isinstance(v, (int, float)) else np.nan for v in vals_raw], dtype=np.float64)
+        if np.any(np.isfinite(vals)):
+            all_vals.extend([float(x) for x in vals[np.isfinite(vals)].tolist()])
+        ax.barh(y + offsets[i], vals, height=h * 0.90, color=color, edgecolor="white", linewidth=0.5, label=name)
+
+    ax.axvline(1.0, color=PALETTE["dark"], linestyle="--", linewidth=1.0, alpha=0.8)
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels)
+    ax.invert_yaxis()
+    ax.set_xlabel("Speedup over Triton (×)")
+    ax.grid(axis="x", which="major", alpha=0.5)
+
+    vmax = max(all_vals) if all_vals else 1.0
+    ax.set_xlim(0.0, max(1.2, vmax * 1.15))
+
+    gpu = None
+    try:
+        meta = quick.get("meta") if isinstance(quick.get("meta"), dict) else {}
+        gpu = meta.get("gpu")
+    except Exception:
+        gpu = None
+
+    gm = None
+    try:
+        s = quick.get("summary") if isinstance(quick.get("summary"), dict) else {}
+        gm = s.get("geom_speedup_ours_over_triton")
+    except Exception:
+        gm = None
+
+    title = str(gpu) if isinstance(gpu, str) and gpu else "CUDA GPU"
+    if isinstance(gm, (int, float)):
+        title = f"{title} (Geomean: {float(gm):.2f}×)"
+    ax.set_title(title)
+
+    _common_legend(fig, *ax.get_legend_handles_labels(), ncol=min(4, n_series), y_pos=0.99)
+    _save_fig(fig, out_dir / f"{out_name}.pdf")
+
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -480,6 +614,10 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--paper-json-dir", type=Path, default=ROOT / "artifacts/experiments/paper")
     ap.add_argument("--paper-dir", type=Path, default=ROOT / "doc/paper/my-sigconf-paper")
+    ap.add_argument("--e5-cuda-4080s-quick", type=Path, default=None)
+    ap.add_argument("--e5-cuda-4080s-ablation", type=Path, default=None)
+    ap.add_argument("--e5-cuda-h100-quick", type=Path, default=None)
+    ap.add_argument("--e5-cuda-h100-ablation", type=Path, default=None)
     args = ap.parse_args()
 
     pj = args.paper_json_dir
@@ -506,6 +644,23 @@ def main() -> None:
     fig_e5_1_external_baseline(e5_1, fig_dir)
     fig_e5_2_retune_vs_freeze(e5_2, fig_dir)
     fig_e6_contract_calibration(e6, fig_dir)
+
+    # Optional: E5 CUDA GPU figures (H100 + 4080S).
+    cuda_dir = ROOT / "artifacts" / "experiments" / "E5"
+    p_4080_q = args.e5_cuda_4080s_quick or _latest_file(cuda_dir, "e5_cuda_4080s*quick*.json")
+    p_4080_a = args.e5_cuda_4080s_ablation or _latest_file(cuda_dir, "e5_cuda_4080s*ablation*.json")
+    p_h100_q = args.e5_cuda_h100_quick or _latest_file(cuda_dir, "e5_cuda_h100*quick*.json")
+    p_h100_a = args.e5_cuda_h100_ablation or _latest_file(cuda_dir, "e5_cuda_h100*ablation*.json")
+
+    if p_h100_q and p_h100_q.is_file():
+        h100_q = _load_json(p_h100_q)
+        h100_a = _load_json(p_h100_a) if (p_h100_a and p_h100_a.is_file()) else None
+        fig_e5_cuda_triton_vs_intentir(quick=h100_q, ablation=h100_a, out_dir=fig_dir, out_name="e5_cuda_gpu_h100")
+
+    if p_4080_q and p_4080_q.is_file():
+        g4080_q = _load_json(p_4080_q)
+        g4080_a = _load_json(p_4080_a) if (p_4080_a and p_4080_a.is_file()) else None
+        fig_e5_cuda_triton_vs_intentir(quick=g4080_q, ablation=g4080_a, out_dir=fig_dir, out_name="e5_cuda_gpu_4080s")
     
     print(f"Done. Figures written to: {fig_dir}")
 
