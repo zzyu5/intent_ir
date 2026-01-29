@@ -246,6 +246,262 @@ def _intentir_cuda_include_dirs() -> list[str]:
     return out
 
 
+def _nvrtc_cuda_include_dirs() -> list[str]:
+    """
+    Best-effort CUDA include directories for NVRTC fallback compilation.
+
+    When a machine has an NVIDIA driver but no full CUDA toolkit (no `nvcc`),
+    PyTorch's C++ extension JIT cannot build our kernels. In that case we can
+    compile device code with NVRTC, as long as CUDA headers are available.
+
+    Newer PyTorch wheels often pull CUDA headers via pip packages (e.g.
+    `nvidia-cuda-runtime-cu12`, `nvidia-cuda-nvcc-cu12`). We probe those well-
+    known locations, but keep this function permissive: missing dirs are fine.
+    """
+    try:
+        import importlib.util  # noqa: PLC0415
+    except Exception:
+        return []
+
+    roots: list[Path] = []
+    for mod in ("nvidia.cuda_runtime", "nvidia.cuda_nvcc", "triton"):
+        try:
+            spec = importlib.util.find_spec(mod)
+        except Exception:
+            spec = None
+        if spec is None or not spec.origin:
+            continue
+        p = Path(spec.origin).resolve()
+        # mod is .../site-packages/nvidia/cuda_runtime/__init__.py
+        if p.parent.name in {"cuda_runtime", "cuda_nvcc"}:
+            roots.append(p.parent.parent)  # .../site-packages/nvidia
+        elif p.parent.name == "triton":
+            roots.append(p.parent)  # .../site-packages/triton
+
+    cands: list[Path] = []
+    for r in roots:
+        # pip CUDA headers
+        cands.append(r / "cuda_runtime" / "include")
+        cands.append(r / "cuda_nvcc" / "include")
+        # Triton ships a minimal CUDA header subset (enough for mma.h, fp16/bf16).
+        cands.append(r / "backends" / "nvidia" / "include")
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for d in cands:
+        if d.is_dir():
+            s = str(d)
+            if s not in seen:
+                out.append(s)
+                seen.add(s)
+    return out
+
+
+def _has_working_nvcc() -> bool:
+    cuda_home = os.getenv("CUDA_HOME") or os.getenv("CUDA_PATH") or ""
+    if cuda_home:
+        nvcc = Path(cuda_home) / "bin" / "nvcc"
+        if nvcc.is_file():
+            return True
+    return shutil.which("nvcc") is not None
+
+
+def _nvrtc_compile_ptx(
+    *,
+    cuda_src: str,
+    prog_name: str,
+    extra_cuda_cflags: Tuple[str, ...],
+) -> bytes:
+    """
+    Compile CUDA device code to PTX via NVRTC (no nvcc / CUDA toolkit required).
+
+    This is a fallback for environments where torch's JIT extension build can't
+    find `nvcc` (e.g. driver-only machines).
+    """
+    torch = _torch()
+    if not torch.cuda.is_available():
+        raise CudaRuntimeError("torch.cuda is not available; cannot NVRTC-compile CUDA kernels")
+
+    # Ensure a CUDA context exists before using the driver API.
+    try:
+        torch.empty((1,), device="cuda")
+    except Exception:
+        pass
+
+    try:
+        from cuda import nvrtc  # noqa: PLC0415
+    except Exception as e:
+        raise CudaRuntimeError(
+            "NVRTC fallback requested, but cuda-python (cuda-bindings) is not available. "
+            "Install a CUDA-enabled torch wheel (which typically depends on cuda-bindings), "
+            "or install `cuda-bindings` explicitly."
+        ) from e
+
+    try:
+        major, minor = torch.cuda.get_device_capability()
+    except Exception:
+        major, minor = (0, 0)
+    arch = f"compute_{major}{minor}"
+
+    opts: list[bytes] = [b"--std=c++17", b"-O3", f"--gpu-architecture={arch}".encode("utf-8")]
+    # Translate a small subset of nvcc flags to NVRTC equivalents.
+    for f in extra_cuda_cflags:
+        if f == "--use_fast_math":
+            opts.append(b"--use_fast_math")
+
+    for inc in [*_intentir_cuda_include_dirs(), *_nvrtc_cuda_include_dirs()]:
+        opts.append(f"--include-path={inc}".encode("utf-8"))
+
+    src_bytes = str(cuda_src).encode("utf-8")
+    name_bytes = str(prog_name).encode("utf-8")
+    err, prog = nvrtc.nvrtcCreateProgram(src_bytes, name_bytes, 0, None, None)
+    if int(err) != 0:
+        raise CudaRuntimeError(f"nvrtcCreateProgram failed: {err}")
+
+    (err,) = nvrtc.nvrtcCompileProgram(prog, int(len(opts)), opts)
+    if int(err) != 0:
+        try:
+            err2, log_size = nvrtc.nvrtcGetProgramLogSize(prog)
+            (void_err2,) = (err2,)  # noqa: F841
+            log = bytearray(int(log_size))
+            nvrtc.nvrtcGetProgramLog(prog, log)
+            log_text = bytes(log).decode("utf-8", errors="replace")
+        except Exception:
+            log_text = ""
+        raise CudaRuntimeError(f"NVRTC compile failed ({err}).\n{log_text}")
+
+    err, ptx_size = nvrtc.nvrtcGetPTXSize(prog)
+    if int(err) != 0:
+        raise CudaRuntimeError(f"nvrtcGetPTXSize failed: {err}")
+    ptx_buf = bytearray(int(ptx_size))
+    (err,) = nvrtc.nvrtcGetPTX(prog, ptx_buf)
+    if int(err) != 0:
+        raise CudaRuntimeError(f"nvrtcGetPTX failed: {err}")
+    return bytes(ptx_buf)
+
+
+class _NvrtcCudaModule:
+    def __init__(self, *, kernel_name: str, cuda_src: str, io_spec: Dict[str, Any], extra_cuda_cflags: Tuple[str, ...]) -> None:
+        torch = _torch()
+        if bool(io_spec.get("host_launch")):
+            raise CudaRuntimeError(
+                "NVRTC fallback does not support host-dispatch kernels (io_spec.host_launch=true). "
+                "Re-run with CUDA_HOST_DISPATCH=0 to force direct-launch kernels."
+            )
+
+        # Ensure a CUDA context exists before using the driver API.
+        torch.empty((1,), device="cuda")
+
+        from cuda import cuda  # noqa: PLC0415
+
+        (err,) = cuda.cuInit(0)
+        if int(err) != 0:
+            raise CudaRuntimeError(f"cuInit failed: {err}")
+
+        self._cuda = cuda
+        self._kernel_name = str(kernel_name)
+        self._io_spec = dict(io_spec)
+        self._selected_variant = -1
+        self._selected_tag = "nvrtc_direct"
+
+        ptx = _nvrtc_compile_ptx(cuda_src=cuda_src, prog_name=f"{kernel_name}.cu", extra_cuda_cflags=extra_cuda_cflags)
+        err, mod = cuda.cuModuleLoadData(ptx)
+        if int(err) != 0:
+            raise CudaRuntimeError(f"cuModuleLoadData failed: {err}")
+        err, func = cuda.cuModuleGetFunction(mod, self._kernel_name.encode("utf-8"))
+        if int(err) != 0:
+            raise CudaRuntimeError(f"cuModuleGetFunction({self._kernel_name}) failed: {err}")
+        self._mod = mod
+        self._func = func
+
+        # Cache for dynamic shared memory attribute.
+        self._last_smem: int = -1
+
+    def selected_variant(self) -> int:
+        return int(self._selected_variant)
+
+    def selected_tag(self) -> str:
+        return str(self._selected_tag)
+
+    def launch(self, *args: Any) -> None:
+        import ctypes  # noqa: PLC0415
+
+        torch = _torch()
+        if len(args) < 7:
+            raise CudaRuntimeError("nvrtc module launch: missing launch dims (grid/block/shared_mem)")
+
+        # Split kernel args vs launch dims.
+        grid_x, grid_y, grid_z, block_x, block_y, block_z, shared_mem = (int(x) for x in args[-7:])
+        call_args = list(args[:-7])
+
+        arg_names = self._io_spec.get("arg_names") if isinstance(self._io_spec.get("arg_names"), list) else []
+        arg_names = [str(x) for x in arg_names]
+        tensors = self._io_spec.get("tensors") if isinstance(self._io_spec.get("tensors"), dict) else {}
+        scalars = self._io_spec.get("scalars") if isinstance(self._io_spec.get("scalars"), dict) else {}
+
+        if len(call_args) != len(arg_names):
+            raise CudaRuntimeError(f"nvrtc module launch: expected {len(arg_names)} args, got {len(call_args)}")
+
+        c_values: list[Any] = []
+        for name, v in zip(arg_names, call_args):
+            if name in tensors:
+                if not isinstance(v, torch.Tensor):
+                    raise CudaRuntimeError(f"nvrtc module launch: expected torch.Tensor for {name}")
+                c_values.append(ctypes.c_void_p(int(v.data_ptr())))
+                continue
+            if name in scalars:
+                dt = str(scalars[name])
+                if dt == "f32":
+                    c_values.append(ctypes.c_float(float(v)))
+                elif dt == "i32":
+                    c_values.append(ctypes.c_int(int(v)))
+                elif dt == "i64":
+                    c_values.append(ctypes.c_longlong(int(v)))
+                elif dt in {"bool", "i1"}:
+                    c_values.append(ctypes.c_bool(bool(v)))
+                else:
+                    # Fallback: pass as int64.
+                    c_values.append(ctypes.c_longlong(int(v)))
+                continue
+            # Unknown arg: treat as int64.
+            c_values.append(ctypes.c_longlong(int(v)))
+
+        arg_ptrs = (ctypes.c_void_p * len(c_values))()
+        for i, cv in enumerate(c_values):
+            arg_ptrs[i] = ctypes.cast(ctypes.byref(cv), ctypes.c_void_p)
+
+        # Match the torch extension wrapper behavior: allow larger dynamic shared memory if needed.
+        if shared_mem >= 49152 and self._last_smem != int(shared_mem):
+            try:
+                attr = self._cuda.CUfunction_attribute.CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES
+                (err,) = self._cuda.cuFuncSetAttribute(self._func, attr, int(shared_mem))
+                if int(err) != 0:
+                    raise CudaRuntimeError(f"cuFuncSetAttribute(MAX_DYNAMIC_SHARED_SIZE_BYTES,{shared_mem}) failed: {err}")
+                self._last_smem = int(shared_mem)
+            except Exception:
+                # Best-effort; some drivers may not support this attribute for all kernels.
+                self._last_smem = int(shared_mem)
+
+        stream = int(torch.cuda.current_stream().cuda_stream)
+        err = self._cuda.cuLaunchKernel(
+            self._func,
+            int(grid_x),
+            int(grid_y),
+            int(grid_z),
+            int(block_x),
+            int(block_y),
+            int(block_z),
+            int(shared_mem),
+            int(stream),
+            int(ctypes.addressof(arg_ptrs)),
+            0,
+        )
+        if isinstance(err, tuple):
+            err = err[0]
+        if int(err) != 0:
+            raise CudaRuntimeError(f"cuLaunchKernel failed: {err}")
+
+
 def _intentir_cuda_runtime_hash_payload() -> str:
     """
     Content hash payload for runtime headers included by generated kernels.
@@ -495,6 +751,20 @@ def _load_ext_cached(name: str, cuda_src: str, extra_cuda_cflags: Tuple[str, ...
         raise
 
 
+@lru_cache(maxsize=32)
+def _load_nvrtc_cached(
+    name: str,
+    kernel_name: str,
+    cuda_src: str,
+    io_spec_json: str,
+    extra_cuda_cflags: Tuple[str, ...],
+) -> Any:
+    import json  # noqa: PLC0415
+
+    io_spec = json.loads(io_spec_json)
+    return _NvrtcCudaModule(kernel_name=kernel_name, cuda_src=cuda_src, io_spec=io_spec, extra_cuda_cflags=extra_cuda_cflags)
+
+
 def compile_cuda_extension(
     *,
     kernel_name: str,
@@ -529,7 +799,23 @@ def compile_cuda_extension(
     )
     mod_name = f"intentir_cuda_{kernel_name}_{h}"
     full_src = _build_extension_src(cuda_src, kernel_name=kernel_name, io_spec=io_spec)
-    return _load_ext_cached(mod_name, full_src, flags)
+    try:
+        return _load_ext_cached(mod_name, full_src, flags)
+    except Exception as e:
+        # NVRTC fallback: driver-only machines may have CUDA-capable torch wheels but no toolkit/nvcc.
+        raw = os.getenv("INTENTIR_CUDA_NVRTC_FALLBACK", "1").strip().lower()
+        allow_nvrtc = raw in {"1", "true", "yes", "y"}
+        msg = str(e)
+        if not allow_nvrtc:
+            raise
+        if _has_working_nvcc():
+            raise
+        if "CUDA_HOME" not in msg and "nvcc" not in msg.lower():
+            # Don't mask unrelated failures; only fallback on missing-toolkit symptoms.
+            raise
+        import json  # noqa: PLC0415
+
+        return _load_nvrtc_cached(mod_name, kernel_name, cuda_src, json.dumps(io_spec, sort_keys=True), flags)
 
 
 def run_cuda_kernel_io(
