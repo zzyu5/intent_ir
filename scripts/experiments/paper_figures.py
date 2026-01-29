@@ -539,7 +539,7 @@ def fig_e5_cuda_triton_vs_intentir(
 
     kernels = [k for k in order if k in by_q]
     labels = [pretty.get(k, k) for k in kernels]
-    y = np.arange(len(kernels))
+    x = np.arange(len(kernels))
 
     # Build series (speedup vs Triton, so Triton itself is 1.0×).
     sp_quick = [_get_speedup(by_q.get(k), "speedup_ours_over_triton") for k in kernels]
@@ -549,39 +549,27 @@ def fig_e5_cuda_triton_vs_intentir(
     have_dispatch_off = any(v is not None for v in sp_dispatch_off)
     have_contract_off = any(v is not None for v in sp_contract_off)
 
-    series: list[tuple[str, list[float | None], str]] = [
-        ("Triton (baseline)", [1.0 for _ in kernels], PALETTE["grey"]),
-        ("IntentIR-CUDA (quick)", sp_quick, PALETTE["red"]),
-    ]
+    series: list[tuple[str, list[float | None], str]] = [("IntentIR-CUDA (quick)", sp_quick, PALETTE["red"])]
     if have_dispatch_off:
-        series.append(("Dispatch off", sp_dispatch_off, PALETTE["blue"]))
+        series.append(("Host dispatch off", sp_dispatch_off, PALETTE["blue"]))
     if have_contract_off:
         series.append(("Contract off", sp_contract_off, PALETTE["light_grey"]))
 
-    # Figure
-    fig, ax = plt.subplots(figsize=(4.0, 3.6))
-    plt.subplots_adjust(top=0.80, bottom=0.12, left=0.28)
-
-    h = 0.18
     n_series = len(series)
-    offsets = (np.arange(n_series) - (n_series - 1) / 2.0) * h
+    width = 0.22 if n_series <= 3 else 0.18
+    n_series = len(series)
+    offsets = (np.arange(n_series) - (n_series - 1) / 2.0) * width
 
     all_vals: list[float] = []
-    for i, (name, vals_raw, color) in enumerate(series):
+    series_vals: list[np.ndarray] = []
+    for _, vals_raw, _ in series:
         vals = np.array([float(v) if isinstance(v, (int, float)) else np.nan for v in vals_raw], dtype=np.float64)
+        series_vals.append(vals)
         if np.any(np.isfinite(vals)):
             all_vals.extend([float(x) for x in vals[np.isfinite(vals)].tolist()])
-        ax.barh(y + offsets[i], vals, height=h * 0.90, color=color, edgecolor="white", linewidth=0.5, label=name)
-
-    ax.axvline(1.0, color=PALETTE["dark"], linestyle="--", linewidth=1.0, alpha=0.8)
-    ax.set_yticks(y)
-    ax.set_yticklabels(labels)
-    ax.invert_yaxis()
-    ax.set_xlabel("Speedup over Triton (×)")
-    ax.grid(axis="x", which="major", alpha=0.5)
 
     vmax = max(all_vals) if all_vals else 1.0
-    ax.set_xlim(0.0, max(1.2, vmax * 1.15))
+    vmin = min(all_vals) if all_vals else 1.0
 
     gpu = None
     try:
@@ -600,10 +588,89 @@ def fig_e5_cuda_triton_vs_intentir(
     title = str(gpu) if isinstance(gpu, str) and gpu else "CUDA GPU"
     if isinstance(gm, (int, float)):
         title = f"{title} (Geomean: {float(gm):.2f}×)"
-    ax.set_title(title)
 
-    _common_legend(fig, *ax.get_legend_handles_labels(), ncol=min(4, n_series), y_pos=0.99)
-    _save_fig(fig, out_dir / f"{out_name}.pdf")
+    # Figure: vertical bars + broken y-axis (not log) to keep 1× details readable.
+    y_break = 1.30
+    y_lo = max(0.0, min(0.85, vmin * 0.95))
+    use_broken_axis = vmax > (y_break * 1.20)
+
+    if use_broken_axis:
+        fig, (ax_top, ax_bot) = plt.subplots(
+            2,
+            1,
+            sharex=True,
+            figsize=(6.8, 3.4),
+            gridspec_kw={"height_ratios": [1, 2]},
+        )
+        plt.subplots_adjust(top=0.80, bottom=0.27, left=0.10, right=0.99, hspace=0.05)
+        ax_top.set_title(title)
+
+        for i, (name, _, color) in enumerate(series):
+            vals = series_vals[i]
+            pos = x + offsets[i]
+            ax_bot.bar(pos, vals, width=width * 0.90, color=color, edgecolor="white", linewidth=0.5, label=name)
+            ax_top.bar(pos, vals, width=width * 0.90, color=color, edgecolor="white", linewidth=0.5)
+
+        for ax in (ax_top, ax_bot):
+            ax.axhline(1.0, color=PALETTE["dark"], linestyle="--", linewidth=1.0, alpha=0.8)
+            ax.grid(axis="y", which="major", alpha=0.5)
+
+        ax_bot.set_ylim(y_lo, y_break)
+        ax_top.set_ylim(y_break, max(y_break + 0.05, vmax * 1.10))
+
+        ax_top.spines["bottom"].set_visible(False)
+        ax_bot.spines["top"].set_visible(False)
+        ax_top.tick_params(labeltop=False)
+        ax_bot.xaxis.tick_bottom()
+
+        # Diagonal marks to indicate the axis break.
+        d = 0.008
+        kwargs = dict(transform=ax_top.transAxes, color=PALETTE["dark"], clip_on=False, linewidth=0.9)
+        ax_top.plot((-d, +d), (-d, +d), **kwargs)
+        ax_top.plot((1 - d, 1 + d), (-d, +d), **kwargs)
+        kwargs = dict(transform=ax_bot.transAxes, color=PALETTE["dark"], clip_on=False, linewidth=0.9)
+        ax_bot.plot((-d, +d), (1 - d, 1 + d), **kwargs)
+        ax_bot.plot((1 - d, 1 + d), (1 - d, 1 + d), **kwargs)
+
+        # Labels / ticks.
+        ax_bot.set_ylabel("Speedup over Triton (×)")
+        ax_bot.set_xticks(x)
+        ax_bot.set_xticklabels(labels, rotation=20, ha="right")
+
+        # Annotate very large outliers on the top axis (keeps the plot readable).
+        for i, (_, _, _) in enumerate(series):
+            vals = series_vals[i]
+            for j in range(len(kernels)):
+                v = vals[j]
+                if not np.isfinite(v) or v <= y_break:
+                    continue
+                ax_top.text(
+                    float(x[j] + offsets[i]),
+                    float(v) + 0.02 * float(vmax),
+                    f"{float(v):.1f}×",
+                    ha="center",
+                    va="bottom",
+                    fontsize=8,
+                    color=PALETTE["dark"],
+                )
+
+        _common_legend(fig, *ax_bot.get_legend_handles_labels(), ncol=min(3, n_series), y_pos=0.99)
+        _save_fig(fig, out_dir / f"{out_name}.pdf")
+    else:
+        fig, ax = plt.subplots(figsize=(6.8, 2.6))
+        plt.subplots_adjust(top=0.80, bottom=0.27, left=0.10, right=0.99)
+        ax.set_title(title)
+        for i, (name, _, color) in enumerate(series):
+            vals = series_vals[i]
+            ax.bar(x + offsets[i], vals, width=width * 0.90, color=color, edgecolor="white", linewidth=0.5, label=name)
+        ax.axhline(1.0, color=PALETTE["dark"], linestyle="--", linewidth=1.0, alpha=0.8)
+        ax.grid(axis="y", which="major", alpha=0.5)
+        ax.set_ylabel("Speedup over Triton (×)")
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, rotation=20, ha="right")
+        ax.set_ylim(y_lo, max(1.2, vmax * 1.10))
+        _common_legend(fig, *ax.get_legend_handles_labels(), ncol=min(3, n_series), y_pos=0.99)
+        _save_fig(fig, out_dir / f"{out_name}.pdf")
 
 
 # =============================================================================
