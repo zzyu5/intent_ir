@@ -343,7 +343,8 @@ def _nvrtc_compile_ptx(
         major, minor = (0, 0)
     arch = f"compute_{major}{minor}"
 
-    opts: list[bytes] = [b"--std=c++17", b"-O3", f"--gpu-architecture={arch}".encode("utf-8")]
+    # NVRTC option support varies by version; keep the baseline flags minimal.
+    opts: list[bytes] = [b"--std=c++17", f"--gpu-architecture={arch}".encode("utf-8")]
     # Translate a small subset of nvcc flags to NVRTC equivalents.
     for f in extra_cuda_cflags:
         if f == "--use_fast_math":
