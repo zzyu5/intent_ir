@@ -144,6 +144,70 @@ def _bench_cuda_graph_repeated(fn: Callable[[], None], *, warmup: int, iters: in
     return median, times
 
 
+def _bench_cuda_graph_multi_repeated(
+    fns: dict[str, Callable[[], None]],
+    *,
+    warmup: int,
+    iters: int,
+    repeats: int,
+) -> dict[str, tuple[float, list[float]]]:
+    """
+    Benchmark multiple callables via CUDA Graph replay, measuring them in a rotated
+    order per repeat to reduce systematic order/clock bias in ablation results.
+
+    Returns: name -> (median_ns_per_iter, ns_per_iter_repeats)
+    """
+    if not fns:
+        return {}
+
+    torch.cuda.synchronize()
+
+    graphs: dict[str, torch.cuda.CUDAGraph] = {}
+    for name, fn in fns.items():
+        fn()
+        torch.cuda.synchronize()
+        for _ in range(int(warmup)):
+            fn()
+        torch.cuda.synchronize()
+
+        g = torch.cuda.CUDAGraph()
+        try:
+            with torch.cuda.graph(g):
+                for _ in range(int(iters)):
+                    fn()
+            torch.cuda.synchronize()
+        except Exception as e:
+            raise RuntimeError(f"cuda graph capture failed for {name}: {type(e).__name__}: {e}") from e
+        graphs[name] = g
+
+    names = list(graphs.keys())
+    rs = max(1, int(repeats))
+    times: dict[str, list[float]] = {n: [] for n in names}
+
+    for rep in range(rs):
+        # Deterministic rotation to avoid giving any single variant a consistent
+        # advantage from being measured later (higher clocks) or earlier (cooler GPU).
+        shift = rep % len(names)
+        order = names[shift:] + names[:shift]
+        for n in order:
+            start = torch.cuda.Event(enable_timing=True)
+            end = torch.cuda.Event(enable_timing=True)
+            start.record()
+            graphs[n].replay()
+            end.record()
+            torch.cuda.synchronize()
+            ms = float(start.elapsed_time(end))
+            times[n].append((ms * 1e6) / float(iters))
+
+    out: dict[str, tuple[float, list[float]]] = {}
+    for n in names:
+        ts = times[n]
+        ts_sorted = sorted(ts)
+        median = ts_sorted[len(ts_sorted) // 2]
+        out[n] = (median, ts)
+    return out
+
+
 def _ensure_artifact(kernel_name: str, *, refresh: bool, cases_limit: int) -> Path:
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     report_path = ARTIFACT_DIR / f"{kernel_name}.json"
@@ -791,22 +855,30 @@ def main() -> None:
 
             if str(args.bench_mode) == "graph":
                 try:
-                    ours_ns, ours_reps = _bench_cuda_graph_repeated(ours_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats))
-                    triton_ns, triton_reps = _bench_cuda_graph_repeated(
-                        triton_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
-                    )
-                    ours_dispatch_off_ns = None
-                    ours_dispatch_off_reps: list[float] | None = None
-                    if bool(args.ablation) and ours_dispatch_off_run is not None:
-                        ours_dispatch_off_ns, ours_dispatch_off_reps = _bench_cuda_graph_repeated(
-                            ours_dispatch_off_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
+                    if bool(args.ablation):
+                        fns: dict[str, Callable[[], None]] = {"ours": ours_run, "triton": triton_run}
+                        if ours_dispatch_off_run is not None:
+                            fns["dispatch_off"] = ours_dispatch_off_run
+                        if ours_contract_off_run is not None:
+                            fns["contract_off"] = ours_contract_off_run
+                        multi = _bench_cuda_graph_multi_repeated(
+                            fns, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
                         )
-                    ours_contract_off_ns = None
-                    ours_contract_off_reps: list[float] | None = None
-                    if bool(args.ablation) and ours_contract_off_run is not None:
-                        ours_contract_off_ns, ours_contract_off_reps = _bench_cuda_graph_repeated(
-                            ours_contract_off_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
+                        ours_ns, ours_reps = multi["ours"]
+                        triton_ns, triton_reps = multi["triton"]
+                        ours_dispatch_off_ns, ours_dispatch_off_reps = multi.get("dispatch_off", (None, None))
+                        ours_contract_off_ns, ours_contract_off_reps = multi.get("contract_off", (None, None))
+                    else:
+                        ours_ns, ours_reps = _bench_cuda_graph_repeated(
+                            ours_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
                         )
+                        triton_ns, triton_reps = _bench_cuda_graph_repeated(
+                            triton_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
+                        )
+                        ours_dispatch_off_ns = None
+                        ours_dispatch_off_reps = None
+                        ours_contract_off_ns = None
+                        ours_contract_off_reps = None
                 except Exception as e:
                     _log(f"  WARN: bench_mode=graph failed ({type(e).__name__}: {e}); falling back to event mode")
                     ours_ns, ours_reps = _bench_cuda_repeated(ours_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats))
