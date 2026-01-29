@@ -623,18 +623,12 @@ def main() -> None:
             # Build bindings: real shapes + descriptor constexpr (e.g., BLOCK_M/BLOCK_N).
             bindings: Dict[str, Any] = dict(AI_BENCH_SHAPES.get(k, {}))
             bindings.update(_descriptor_constexpr(report))
-            # Default (no ablation): force specialize dims for best performance and
-            # to match historical E5 results.
+            # Performance experiment (paper baseline): specialize resolved dims as compile-time constants
+            # to reduce overhead and let nvcc aggressively optimize/unroll.
             #
-            # Ablation mode: rely on evidence-gated auto specialization instead so
-            # contract_v2 can meaningfully disable the fast path.
-            if bool(args.ablation):
-                bindings.setdefault("CUDA_SPECIALIZE_DIMS", 0)
-                bindings.setdefault("CUDA_AUTO_SPECIALIZE_DIMS", 1)
-            else:
-                # Performance experiment: specialize resolved dims as compile-time constants
-                # to reduce overhead and let nvcc aggressively optimize/unroll.
-                bindings.setdefault("CUDA_SPECIALIZE_DIMS", 1)
+            # NOTE: In ablation mode we still keep this baseline, and override per-variant bindings
+            # (e.g., contract_off forces specialize dims off) so comparisons stay apples-to-apples.
+            bindings.setdefault("CUDA_SPECIALIZE_DIMS", 1)
             # Optional overrides for quick tuning experiments.
             for item in list(args.bind or []):
                 if "=" not in str(item):
@@ -788,7 +782,10 @@ def main() -> None:
             ours_contract_off_run: Callable[[], None] | None = None
             if bool(args.ablation) and "contract_off" in (meta.get("ablation") or {}).get("modes", []):
                 intent_off = _intent_with_contract_level(intent_json, "OUT_OF_SCOPE")
-                ours_contract_off_rec, ours_contract_off_run, ours_off_ctx = _run_ours(intent_off, dict(bindings))
+                bnd3 = dict(bindings)
+                bnd3["CUDA_SPECIALIZE_DIMS"] = 0
+                bnd3.setdefault("CUDA_AUTO_SPECIALIZE_DIMS", 1)
+                ours_contract_off_rec, ours_contract_off_run, ours_off_ctx = _run_ours(intent_off, bnd3)
                 ours_outputs_off = ours_off_ctx["outputs"]
                 _check_outputs_close(kernel=k, ours=ours_outputs_off, triton=triton_outputs, allow_tf32=(k == "ai_bench_matmul"))
 
