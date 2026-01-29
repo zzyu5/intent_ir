@@ -377,6 +377,12 @@ def _make_triton_runner_from_shared_args(
         N = int(_scalar(arg_map["N"]))
         K = int(_scalar(arg_map["K"]))
         grid = lambda meta: (triton.cdiv(M, meta["BLOCK_M"]) * triton.cdiv(N, meta["BLOCK_N"]),)
+        # The original AI-Bench config (64x16x16) is intentionally minimal; it makes
+        # Triton look unrealistically slow on modern GPUs. Use a stronger fixed
+        # baseline (still no exhaustive autotune) so the figure is about compiler
+        # quality, not a weak reference schedule.
+        block_m, block_n, block_k = 64, 64, 32
+        num_warps, num_stages = 8, 4
 
         def run() -> None:
             ai_bench_matmul_kernel[grid](
@@ -392,9 +398,11 @@ def _make_triton_runner_from_shared_args(
                 b.stride(1),
                 c.stride(0),
                 c.stride(1),
-                BLOCK_M=64,
-                BLOCK_N=16,
-                BLOCK_K=16,
+                BLOCK_M=int(block_m),
+                BLOCK_N=int(block_n),
+                BLOCK_K=int(block_k),
+                num_warps=int(num_warps),
+                num_stages=int(num_stages),
             )
 
         return run
@@ -443,10 +451,12 @@ def _make_triton_runner_from_shared_args(
         M = int(_scalar(arg_map["M"]))
         N = int(_scalar(arg_map["N"]))
         eps = float(_scalar(arg_map.get("eps", 1e-5)))
-        block = 16
+        # Stronger baseline than BLOCK_SIZE=16 to avoid a misleadingly weak Triton ref.
+        block = 1024
+        num_warps = 8
 
         def run() -> None:
-            ai_bench_layernorm_fwd_kernel[(M,)](x, y, w, b, mean, rstd, M, N, eps, BLOCK_SIZE=int(block))
+            ai_bench_layernorm_fwd_kernel[(M,)](x, y, w, b, mean, rstd, M, N, eps, BLOCK_SIZE=int(block), num_warps=int(num_warps))
 
         return run
 
@@ -461,7 +471,9 @@ def _make_triton_runner_from_shared_args(
         height = int(_scalar(arg_map["height"]))
         width = int(_scalar(arg_map["width"]))
         out_shift = int(_scalar(arg_map.get("out_shift", 0)))
-        block_h, block_w, block_ic = 1, 8, 64
+        # Stronger baseline: bigger spatial tiles (the default 1x8 is extremely underutilized).
+        block_h, block_w, block_ic = 4, 32, 64
+        num_warps = 4
         grid = lambda meta: (
             triton.cdiv(width, meta["BLOCK_W"]),
             triton.cdiv(height, meta["BLOCK_H"]),
@@ -481,6 +493,7 @@ def _make_triton_runner_from_shared_args(
                 BLOCK_H=int(block_h),
                 BLOCK_W=int(block_w),
                 BLOCK_IC=int(block_ic),
+                num_warps=int(num_warps),
             )
 
         return run
@@ -493,7 +506,8 @@ def _make_triton_runner_from_shared_args(
         C = int(_scalar(arg_map["C"]))
         H = int(_scalar(arg_map["H"]))
         W = int(_scalar(arg_map["W"]))
-        block_w = 128
+        block_w = 256
+        num_warps = 4
         grid = lambda meta: (
             2 * H,
             C,
@@ -501,7 +515,7 @@ def _make_triton_runner_from_shared_args(
         )
 
         def run() -> None:
-            ai_bench_resize_kernel[grid](src, out, C, H, W, BLOCK_W=int(block_w))
+            ai_bench_resize_kernel[grid](src, out, C, H, W, BLOCK_W=int(block_w), num_warps=int(num_warps))
 
         return run
 
@@ -533,7 +547,9 @@ def _make_triton_runner_from_shared_args(
         C = int(_scalar(arg_map.get("C", int(src.shape[0]))))
         H = int(_scalar(arg_map.get("H", int(src.shape[1]))))
         W = int(_scalar(arg_map.get("W", int(src.shape[2]))))
+        # Keep BLOCK_W<=128: the benchmark kernel casts indices to int8.
         block_w = 128
+        num_warps = 4
         grid = lambda meta: (
             H,
             C,
@@ -541,7 +557,7 @@ def _make_triton_runner_from_shared_args(
         )
 
         def run() -> None:
-            ai_bench_warp_kernel[grid](src, offset, out, C, H, W, BLOCK_W=int(block_w))
+            ai_bench_warp_kernel[grid](src, offset, out, C, H, W, BLOCK_W=int(block_w), num_warps=int(num_warps))
 
         return run
 
