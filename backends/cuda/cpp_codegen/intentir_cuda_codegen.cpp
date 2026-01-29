@@ -584,8 +584,10 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.line("cudaEvent_t end = nullptr;");
       w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
-      w.line("constexpr int warm = 3;");
-      w.line("constexpr int iters = 50;");
+      // Use a slightly longer micro-benchmark window to reduce selection noise.
+      // This runs once per module load, so a few extra ms here is acceptable.
+      w.line("constexpr int warm = 5;");
+      w.line("constexpr int iters = 200;");
       w.line("float ms_acc[" + std::to_string(variants.size()) + "] = {0};");
       // Forward pass then reverse pass to reduce clock/thermal order bias.
       for (size_t i = 0; i < variants.size(); ++i) {
@@ -688,8 +690,9 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.line("cudaEvent_t end = nullptr;");
       w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
-      w.line("constexpr int warm = 2;");
-      w.line("constexpr int iters = 20;");
+      // Use a slightly longer micro-benchmark window to reduce selection noise.
+      w.line("constexpr int warm = 4;");
+      w.line("constexpr int iters = 150;");
       w.line("float ms_acc[" + std::to_string(variants.size()) + "] = {0};");
       // Forward pass then reverse pass to reduce clock/thermal order bias.
       for (size_t i = 0; i < variants.size(); ++i) {
