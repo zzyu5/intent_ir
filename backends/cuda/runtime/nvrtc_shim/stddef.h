@@ -1,12 +1,10 @@
 #pragma once
 
 // Minimal stddef.h shim for NVRTC device compilation.
-// We avoid pulling in host libc headers (glibc) which are not device-annotated.
-
-typedef unsigned long long size_t;
-typedef long long ptrdiff_t;
+//
+// NVRTC already provides `size_t` / `ptrdiff_t` via its builtin header. We only
+// define `NULL` to satisfy legacy code paths that still include <stddef.h>.
 
 #ifndef NULL
 #define NULL 0
 #endif
-
