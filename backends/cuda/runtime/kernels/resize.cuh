@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "intentir_cuda_ops.cuh"
+
 namespace intentir_cuda {
 
 template <int BLOCK_W>
@@ -34,10 +36,10 @@ __device__ __forceinline__ void resize_bilinear2x_i8(
   const int64_t row0 = src_base + (int64_t)y0 * (int64_t)W;
   const int64_t row1 = src_base + (int64_t)y1 * (int64_t)W;
 
-  const int16_t a = (int16_t)src[row0 + x0];
-  const int16_t b = (int16_t)src[row0 + x1];
-  const int16_t c0 = (int16_t)src[row1 + x0];
-  const int16_t d = (int16_t)src[row1 + x1];
+  const int16_t a = (int16_t)intentir_ldg<int8_t>(src + row0 + x0);
+  const int16_t b = (int16_t)intentir_ldg<int8_t>(src + row0 + x1);
+  const int16_t c0 = (int16_t)intentir_ldg<int8_t>(src + row1 + x0);
+  const int16_t d = (int16_t)intentir_ldg<int8_t>(src + row1 + x1);
 
   // Compute 2 output pixels: w=2*x0 (even) and w=2*x0+1 (odd).
   const int y_odd = (h_idx & 1);
@@ -47,11 +49,11 @@ __device__ __forceinline__ void resize_bilinear2x_i8(
   const int32_t sum2_odd = (((int32_t)c0 + (int32_t)d) >> 1);
   const int32_t out_even = y_odd ? ((sum1_even + sum2_even) >> 1) : sum1_even;
   const int32_t out_odd = y_odd ? ((sum1_odd + sum2_odd) >> 1) : sum1_odd;
-  const int w_even = x0 << 1;
-  const int w_odd = w_even + 1;
-  out[dst_base + (int64_t)w_even] = (int8_t)out_even;
-  out[dst_base + (int64_t)w_odd] = (int8_t)out_odd;
+  // Store two adjacent int8 outputs at once. The destination row base is
+  // 2-byte aligned because OW = 2*W is always even; 2*x0 is also even.
+  const uint16_t packed =
+      (uint16_t)((uint8_t)out_even) | (uint16_t)((uint8_t)out_odd) << 8;
+  reinterpret_cast<uint16_t*>(out + dst_base)[x0] = packed;
 }
 
 }  // namespace intentir_cuda
-
