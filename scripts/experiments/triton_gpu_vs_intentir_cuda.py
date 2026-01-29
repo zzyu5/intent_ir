@@ -31,7 +31,6 @@ import torch  # noqa: E402
 from backends.cuda.codegen.intentir_to_cuda import lower_intent_to_cuda_kernel  # noqa: E402
 from frontends.cuda.runtime import CudaLaunch, compile_cuda_extension  # noqa: E402
 from intent_ir.ir import IntentFunction  # noqa: E402
-from pipeline.triton.core import coverage_kernel_specs, run_pipeline_for_spec  # noqa: E402
 
 
 ARTIFACT_DIR = ROOT / "artifacts" / "full_pipeline_verify"
@@ -213,6 +212,10 @@ def _ensure_artifact(kernel_name: str, *, refresh: bool, cases_limit: int) -> Pa
     report_path = ARTIFACT_DIR / f"{kernel_name}.json"
     if report_path.exists() and not refresh:
         return report_path
+    # Import pipeline only when needed: the perf benchmark path uses pre-generated
+    # artifacts and shouldn't require the (heavier) pipeline/LLM dependencies.
+    from pipeline.triton.core import coverage_kernel_specs, run_pipeline_for_spec  # noqa: PLC0415
+
     spec_map = {s.name: s for s in coverage_kernel_specs()}
     if kernel_name not in spec_map:
         raise KeyError(f"kernel not found in triton coverage specs: {kernel_name}")
