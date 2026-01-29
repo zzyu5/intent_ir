@@ -171,12 +171,25 @@ __device__ __forceinline__ void softmax_2d_last_f32_warp4(const float* __restric
   float* __restrict__ buf = smem + (int)warp * MAX_C;
   const float* __restrict__ in_row = inp + (size_t)r * (size_t)C;
   float* __restrict__ out_row = out + (size_t)r * (size_t)C;
-  const bool aligned = (((uintptr_t)in_row & 15u) == 0u) && (((uintptr_t)out_row & 15u) == 0u);
+
+  const int prefix_in = (int)(((16u - (unsigned)((uintptr_t)in_row & 15u)) & 15u) >> 2);   // 0..3 floats
+  const int prefix_out = (int)(((16u - (unsigned)((uintptr_t)out_row & 15u)) & 15u) >> 2);  // 0..3 floats
 
   float tmax = -INFINITY;
+  // Prologue: advance to the next 16B boundary so we can use float4 loads for
+  // the bulk of the row even when the row pointer is only 4B-aligned (common
+  // for odd C like 781).
+  if (lane < prefix_in) {
+    const int c = lane;
+    if (c < C) {
+      const float v = intentir_ldg_f32(in_row + (size_t)c);
+      buf[(size_t)c] = v;
+      tmax = fmaxf(tmax, v);
+    }
+  }
   #pragma unroll 1
-  for (int base = lane * VEC; base < C; base += 32 * VEC) {
-    if (aligned && (base + (VEC - 1) < C)) {
+  for (int base = prefix_in + lane * VEC; base < C; base += 32 * VEC) {
+    if (base + (VEC - 1) < C) {
       const float4 x = *reinterpret_cast<const float4*>(in_row + (size_t)base);
       *reinterpret_cast<float4*>(buf + (size_t)base) = x;
       tmax = fmaxf(tmax, x.x);
@@ -198,9 +211,10 @@ __device__ __forceinline__ void softmax_2d_last_f32_warp4(const float* __restric
   const float mx = warp_allreduce_max(tmax);
 
   float tsum = 0.0f;
+  // The shared buffer is always 16B-aligned; we can safely vectorize across it.
   #pragma unroll 1
   for (int base = lane * VEC; base < C; base += 32 * VEC) {
-    if (aligned && (base + (VEC - 1) < C)) {
+    if (base + (VEC - 1) < C) {
       const float4 v = *reinterpret_cast<const float4*>(buf + (size_t)base);
       float4 e;
       e.x = __expf(v.x - mx);
@@ -225,9 +239,14 @@ __device__ __forceinline__ void softmax_2d_last_f32_warp4(const float* __restric
   const float sum = warp_allreduce_sum(tsum);
   const float inv = __fdividef(1.0f, sum);
 
+  // Store: vectorize across the aligned suffix of out_row.
+  if (lane < prefix_out) {
+    const int c = lane;
+    if (c < C) out_row[(size_t)c] = buf[(size_t)c] * inv;
+  }
   #pragma unroll 1
-  for (int base = lane * VEC; base < C; base += 32 * VEC) {
-    if (aligned && (base + (VEC - 1) < C)) {
+  for (int base = prefix_out + lane * VEC; base < C; base += 32 * VEC) {
+    if (base + (VEC - 1) < C) {
       float4 e = *reinterpret_cast<const float4*>(buf + (size_t)base);
       e.x *= inv;
       e.y *= inv;
