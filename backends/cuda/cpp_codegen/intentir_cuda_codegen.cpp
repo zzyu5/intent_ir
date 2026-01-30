@@ -1482,9 +1482,9 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       w.line("cudaEvent_t end = nullptr;");
       w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
-      // Reduce systematic order/clock bias: forward pass then reverse pass, accumulate times.
       w.line("constexpr int warm = 3;");
       w.line("constexpr int iters = 50;");
+      w.line("constexpr int reps = 3;");
       w.line("float ms_acc[" + std::to_string(variants.size()) + "] = {0};");
       w.line("bool ok[" + std::to_string(variants.size()) + "] = {false};");
 
@@ -1509,6 +1509,9 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         w.line("intentir_smem_cached = smem;");
         w.dedent();
         w.line("}");
+        w.line("float m0 = 0.0f, m1 = 0.0f, m2 = 0.0f;");
+        w.line("for (int rep = 0; rep < reps; ++rep) {");
+        w.indent();
         w.line("for (int i = 0; i < warm; ++i) {");
         w.indent();
         w.line(kname + "<<<g, b, (size_t)smem, stream>>>((const float*)A, (const float*)B, (float*)C, M_in, N_in, K_in);");
@@ -1524,7 +1527,14 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
         w.line("float ms = 0.0f;");
         w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
-        w.line("ms_acc[" + std::to_string(vi) + "] += (ms / (float)iters);");
+        w.line("ms = ms / (float)iters;");
+        w.line("if (rep == 0) m0 = ms; else if (rep == 1) m1 = ms; else m2 = ms;");
+        w.dedent();
+        w.line("}");
+        w.line("const float mn = fminf(m0, fminf(m1, m2));");
+        w.line("const float mx = fmaxf(m0, fmaxf(m1, m2));");
+        w.line("const float med = (m0 + m1 + m2) - mn - mx;");
+        w.line("ms_acc[" + std::to_string(vi) + "] += med;");
         w.dedent();
         w.line("}");
         w.dedent();
@@ -1551,6 +1561,9 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         w.line("intentir_smem_cached = smem;");
         w.dedent();
         w.line("}");
+        w.line("float m0 = 0.0f, m1 = 0.0f, m2 = 0.0f;");
+        w.line("for (int rep = 0; rep < reps; ++rep) {");
+        w.indent();
         w.line("for (int i = 0; i < warm; ++i) {");
         w.indent();
         w.line(kname + "<<<g, b, (size_t)smem, stream>>>((const float*)A, (const float*)B, (float*)C, M_in, N_in, K_in);");
@@ -1566,7 +1579,14 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
         w.line("float ms = 0.0f;");
         w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
-        w.line("ms_acc[" + std::to_string(rvi) + "] += (ms / (float)iters);");
+        w.line("ms = ms / (float)iters;");
+        w.line("if (rep == 0) m0 = ms; else if (rep == 1) m1 = ms; else m2 = ms;");
+        w.dedent();
+        w.line("}");
+        w.line("const float mn = fminf(m0, fminf(m1, m2));");
+        w.line("const float mx = fmaxf(m0, fmaxf(m1, m2));");
+        w.line("const float med = (m0 + m1 + m2) - mn - mx;");
+        w.line("ms_acc[" + std::to_string(rvi) + "] += med;");
         w.dedent();
         w.line("}");
         w.dedent();
