@@ -3,7 +3,6 @@
 #include <math.h>
 
 #include "intentir_cuda_ops.cuh"
-#include "kernels/reduce.cuh"
 
 namespace intentir_cuda {
 
@@ -31,6 +30,53 @@ __device__ __forceinline__ float warp_allreduce_sum(float v) {
   return __shfl_sync(0xffffffff, v, 0);
 }
 
+template <int BLOCK_THREADS>
+struct SoftmaxBlockReduceF32 {
+  static_assert(BLOCK_THREADS > 0, "SoftmaxBlockReduceF32: BLOCK_THREADS must be > 0");
+  static_assert((BLOCK_THREADS % 32) == 0, "SoftmaxBlockReduceF32: BLOCK_THREADS must be a multiple of 32");
+  static constexpr int WARPS = BLOCK_THREADS / 32;
+  float warp_out[WARPS];
+  float out;
+};
+
+template <int BLOCK_THREADS>
+__device__ __forceinline__ float softmax_block_allreduce_max(float v, SoftmaxBlockReduceF32<BLOCK_THREADS>* st) {
+  const int tid = (int)threadIdx.x;
+  const int lane = tid & 31;
+  const int warp = tid >> 5;
+  v = warp_reduce_max(v);
+  if (lane == 0) st->warp_out[warp] = v;
+  __syncthreads();
+
+  float out = -INFINITY;
+  if (warp == 0) {
+    out = (lane < SoftmaxBlockReduceF32<BLOCK_THREADS>::WARPS) ? st->warp_out[lane] : -INFINITY;
+    out = warp_reduce_max(out);
+    if (lane == 0) st->out = out;
+  }
+  __syncthreads();
+  return st->out;
+}
+
+template <int BLOCK_THREADS>
+__device__ __forceinline__ float softmax_block_allreduce_sum(float v, SoftmaxBlockReduceF32<BLOCK_THREADS>* st) {
+  const int tid = (int)threadIdx.x;
+  const int lane = tid & 31;
+  const int warp = tid >> 5;
+  v = warp_reduce_sum(v);
+  if (lane == 0) st->warp_out[warp] = v;
+  __syncthreads();
+
+  float out = 0.0f;
+  if (warp == 0) {
+    out = (lane < SoftmaxBlockReduceF32<BLOCK_THREADS>::WARPS) ? st->warp_out[lane] : 0.0f;
+    out = warp_reduce_sum(out);
+    if (lane == 0) st->out = out;
+  }
+  __syncthreads();
+  return st->out;
+}
+
 template <int BLOCK_THREADS, int EPT>
 __device__ __forceinline__ void softmax_2d_last_f32(const float* __restrict__ inp, float* __restrict__ out, int R, int C) {
   static_assert(BLOCK_THREADS > 0 && BLOCK_THREADS <= 1024, "softmax block size must be in (0,1024]");
@@ -52,8 +98,8 @@ __device__ __forceinline__ void softmax_2d_last_f32(const float* __restrict__ in
     expv[i] = v;
     tmax = fmaxf(tmax, v);
   }
-  __shared__ BlockAllreduceF32<BLOCK_THREADS> red;
-  const float mx = block_allreduce_max<BLOCK_THREADS>(tmax, &red);
+  __shared__ SoftmaxBlockReduceF32<BLOCK_THREADS> red;
+  const float mx = softmax_block_allreduce_max<BLOCK_THREADS>(tmax, &red);
 
   float tsum = 0.0f;
   #pragma unroll
@@ -64,7 +110,7 @@ __device__ __forceinline__ void softmax_2d_last_f32(const float* __restrict__ in
     expv[i] = e;
     tsum += e;
   }
-  const float sum = block_allreduce_sum<BLOCK_THREADS>(tsum, &red);
+  const float sum = softmax_block_allreduce_sum<BLOCK_THREADS>(tsum, &red);
   const float inv = __fdividef(1.0f, sum);
   #pragma unroll
   for (int i = 0; i < EPT; ++i) {
@@ -115,8 +161,8 @@ __device__ __forceinline__ void softmax_2d_last_f32_vec4(const float* __restrict
     tmax = fmaxf(tmax, v.z);
     tmax = fmaxf(tmax, v.w);
   }
-  __shared__ BlockAllreduceF32<BLOCK_THREADS> red;
-  const float mx = block_allreduce_max<BLOCK_THREADS>(tmax, &red);
+  __shared__ SoftmaxBlockReduceF32<BLOCK_THREADS> red;
+  const float mx = softmax_block_allreduce_max<BLOCK_THREADS>(tmax, &red);
 
   float tsum = 0.0f;
   #pragma unroll
@@ -129,7 +175,7 @@ __device__ __forceinline__ void softmax_2d_last_f32_vec4(const float* __restrict
     vals[t] = v;
     tsum += (v.x + v.y + v.z + v.w);
   }
-  const float sum = block_allreduce_sum<BLOCK_THREADS>(tsum, &red);
+  const float sum = softmax_block_allreduce_sum<BLOCK_THREADS>(tsum, &red);
   const float inv = __fdividef(1.0f, sum);
 
   #pragma unroll
