@@ -28,29 +28,24 @@ __device__ __forceinline__ void layernorm_2d_f32(
   const float* xrow = X + (size_t)m * (size_t)N;
   float* yrow = Y + (size_t)m * (size_t)N;
 
-#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
   const bool aligned = ((((uintptr_t)xrow) & 15u) == 0u) && ((((uintptr_t)yrow) & 15u) == 0u) && ((((uintptr_t)W) & 15u) == 0u) &&
                        ((((uintptr_t)B) & 15u) == 0u) && ((N & 3) == 0);
   if (aligned) {
     const int n4 = N >> 2;
     const float4* __restrict__ x4 = (const float4* __restrict__)xrow;
     float tsum4 = 0.0f;
-    for (int i = (int)threadIdx.x; i < n4; i += BLOCK_THREADS) {
-      const float4 v = x4[i];
-      tsum4 += ((v.x + v.y) + (v.z + v.w));
-    }
-    const float mean = block_allreduce_sum<BLOCK_THREADS>(tsum4, &red) / (float)N;
-
     float tsq4 = 0.0f;
     for (int i = (int)threadIdx.x; i < n4; i += BLOCK_THREADS) {
       const float4 v = x4[i];
-      const float c0 = v.x - mean;
-      const float c1 = v.y - mean;
-      const float c2 = v.z - mean;
-      const float c3 = v.w - mean;
-      tsq4 += ((c0 * c0 + c1 * c1) + (c2 * c2 + c3 * c3));
+      tsum4 += ((v.x + v.y) + (v.z + v.w));
+      tsq4 += ((v.x * v.x + v.y * v.y) + (v.z * v.z + v.w * v.w));
     }
-    const float var = block_allreduce_sum<BLOCK_THREADS>(tsq4, &red) / (float)N;
+    const float sum = block_allreduce_sum<BLOCK_THREADS>(tsum4, &red);
+    const float sumsq = block_allreduce_sum<BLOCK_THREADS>(tsq4, &red);
+    const float mean = sum / (float)N;
+    float var = (sumsq / (float)N) - (mean * mean);
+    var = fmaxf(var, 0.0f);
     const float rstd = rsqrtf(var + eps);
     if ((int)threadIdx.x == 0) {
       Mean[m] = mean;
@@ -76,17 +71,17 @@ __device__ __forceinline__ void layernorm_2d_f32(
 #endif
 
   float tsum = 0.0f;
-  for (int n = (int)threadIdx.x; n < N; n += BLOCK_THREADS) {
-    tsum += xrow[n];
-  }
-  const float mean = block_allreduce_sum<BLOCK_THREADS>(tsum, &red) / (float)N;
-
   float tsq = 0.0f;
   for (int n = (int)threadIdx.x; n < N; n += BLOCK_THREADS) {
-    float c = xrow[n] - mean;
-    tsq += c * c;
+    const float x = xrow[n];
+    tsum += x;
+    tsq += x * x;
   }
-  const float var = block_allreduce_sum<BLOCK_THREADS>(tsq, &red) / (float)N;
+  const float sum = block_allreduce_sum<BLOCK_THREADS>(tsum, &red);
+  const float sumsq = block_allreduce_sum<BLOCK_THREADS>(tsq, &red);
+  const float mean = sum / (float)N;
+  float var = (sumsq / (float)N) - (mean * mean);
+  var = fmaxf(var, 0.0f);
   const float rstd = rsqrtf(var + eps);
   if ((int)threadIdx.x == 0) {
     Mean[m] = mean;
