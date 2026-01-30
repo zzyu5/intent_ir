@@ -884,12 +884,15 @@ def main() -> None:
             torch.cuda.synchronize()
             _check_outputs_close(kernel=k, ours=ours_outputs0, triton=triton_outputs, allow_tf32=(k == "ai_bench_matmul"))
 
-            # Evidence-off (ablation): disable host-dispatch while keeping evidence/specialization on.
+            # Evidence-off (ablation): disable host-dispatch *selection* (seed-only) while keeping
+            # evidence/specialization on. This keeps the generated kernel variants identical to the
+            # "quick" path and isolates the benefit of host-side selection.
             ours_dispatch_off_rec: dict[str, Any] | None = None
             ours_dispatch_off_run: Callable[[], None] | None = None
             if bool(args.ablation) and "dispatch_off" in (meta.get("ablation") or {}).get("modes", []):
                 bnd2 = dict(bindings)
-                bnd2["CUDA_HOST_DISPATCH"] = 0
+                bnd2["CUDA_HOST_DISPATCH"] = 1
+                bnd2["CUDA_HOST_DISPATCH_SELECT"] = 0
                 ours_dispatch_off_rec, ours_dispatch_off_run, ours_disp_ctx = _run_ours(intent_json, bnd2)
                 ours_outputs_disp = ours_disp_ctx["outputs"]
                 _check_outputs_close(kernel=k, ours=ours_outputs_disp, triton=triton_outputs, allow_tf32=(k == "ai_bench_matmul"))

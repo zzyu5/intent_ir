@@ -341,6 +341,11 @@ bool want_host_dispatch(const json& bindings) {
   return true;
 }
 
+bool want_host_dispatch_select(const json& bindings) {
+  if (binding_int(bindings, "CUDA_HOST_DISPATCH_SELECT").value_or(1) == 0) return false;
+  return true;
+}
+
 std::optional<int64_t> resolve_dim_token(const json& tok, const json& bindings) {
   if (tok.is_number_integer()) return tok.get<int64_t>();
   if (tok.is_number()) return static_cast<int64_t>(tok.get<double>());
@@ -475,6 +480,7 @@ json emit_dropout(const Intent& intent, const json& bindings) {
   w.blank();
   emit_selected_api(w);
   const bool enable_host_dispatch = want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims;
+  const bool enable_host_dispatch_select = want_host_dispatch_select(bindings);
   bool host_launch = false;
 
   if (enable_host_dispatch) {
@@ -577,8 +583,15 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.line("(void)shared_mem;");
       w.line("(void)n_elements_in;");
       w.line("constexpr int64_t n_elements = " + std::to_string(n) + "LL;");
+      w.line("constexpr bool INTENTIR_HOST_DISPATCH_SELECT = " + std::string(enable_host_dispatch_select ? "true" : "false") + ";");
       w.line("static int intentir_selected = -1;");
       w.line("if (intentir_selected < 0) {");
+      w.indent();
+      w.line("if (!INTENTIR_HOST_DISPATCH_SELECT) {");
+      w.indent();
+      w.line("intentir_selected = 0;");
+      w.dedent();
+      w.line("} else {");
       w.indent();
       w.line("cudaEvent_t start = nullptr;");
       w.line("cudaEvent_t end = nullptr;");
@@ -637,6 +650,8 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.line("intentir_selected = best_i;");
       w.dedent();
       w.line("}");
+      w.dedent();
+      w.line("}");
       w.line("switch (intentir_selected) {");
       for (size_t i = 0; i < variants.size(); ++i) {
         const auto& v = variants[i];
@@ -681,8 +696,15 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.line("(void)shared_mem;");
       w.line("(void)n_elements_in;");
       w.line("constexpr int64_t n_elements = " + std::to_string(n) + "LL;");
+      w.line("constexpr bool INTENTIR_HOST_DISPATCH_SELECT = " + std::string(enable_host_dispatch_select ? "true" : "false") + ";");
       w.line("static int intentir_selected = -1;");
       w.line("if (intentir_selected < 0) {");
+      w.indent();
+      w.line("if (!INTENTIR_HOST_DISPATCH_SELECT) {");
+      w.indent();
+      w.line("intentir_selected = 0;");
+      w.dedent();
+      w.line("} else {");
       w.indent();
       w.line("cudaEvent_t start = nullptr;");
       w.line("cudaEvent_t end = nullptr;");
@@ -739,6 +761,8 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
       w.line("intentir_selected = best_i;");
+      w.dedent();
+      w.line("}");
       w.dedent();
       w.line("}");
       w.line("switch (intentir_selected) {");
@@ -1148,6 +1172,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
 
     const bool enable_host_dispatch =
         want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims && (!m_is_tensor) && (!n_is_tensor) && (!k_is_tensor);
+    const bool enable_host_dispatch_select = want_host_dispatch_select(bindings);
     const int64_t base_threads = 32 * wmma_warps_m * wmma_warps_n;
     const int64_t tile_warps_m = wmma_warps_m * wmma_frag_m;
     const int64_t tile_warps_n = wmma_warps_n * wmma_frag_n;
@@ -1431,10 +1456,27 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       w.dedent();
       w.line("}");
 
+      w.line("constexpr bool INTENTIR_HOST_DISPATCH_SELECT = " + std::string(enable_host_dispatch_select ? "true" : "false") + ";");
       w.line("static int intentir_selected = -1;");
       w.line("static int intentir_smem_cached = -1;");
       w.line("static const void* intentir_kernel_cached = nullptr;");
       w.line("if (intentir_selected < 0) {");
+      w.indent();
+      w.line("if (!INTENTIR_HOST_DISPATCH_SELECT) {");
+      w.indent();
+      w.line("int seed_i = -1;");
+      for (size_t vi = 0; vi < variants.size(); ++vi) {
+        const auto& v = variants[vi];
+        const int64_t smem_v = ((v.shared_bytes + 15) / 16) * 16;
+        if (vi == 0) {
+          w.line("if ((int)" + std::to_string(smem_v) + " <= intentir_max_smem_optin) seed_i = 0;");
+        } else {
+          w.line("else if ((int)" + std::to_string(smem_v) + " <= intentir_max_smem_optin) seed_i = " + std::to_string(vi) + ";");
+        }
+      }
+      w.line("intentir_selected = (seed_i >= 0) ? seed_i : " + std::to_string(fallback_i) + ";");
+      w.dedent();
+      w.line("} else {");
       w.indent();
       w.line("cudaEvent_t start = nullptr;");
       w.line("cudaEvent_t end = nullptr;");
@@ -1507,6 +1549,8 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       w.indent();
       w.line("intentir_selected, intentir_matmul_variant_tags[intentir_selected], (double)best_ms, warm, iters, reps);");
       w.dedent();
+      w.dedent();
+      w.line("}");
       w.dedent();
       w.line("}");
       w.dedent();
@@ -1654,6 +1698,7 @@ json emit_warp(const Intent& intent, const json& bindings) {
   const bool respect_schedule = binding_int(bindings, "CUDA_RESPECT_SCHEDULE").value_or(0) != 0;
   const bool specialize_dims = want_specialize_dims(intent, bindings);
   const bool enable_host_dispatch = want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims;
+  const bool enable_host_dispatch_select = want_host_dispatch_select(bindings);
   bool host_launch = false;
 
   int64_t block_w = binding_int(bindings, "BLOCK_W").value_or(128);
@@ -1767,8 +1812,15 @@ json emit_warp(const Intent& intent, const json& bindings) {
     w.line("constexpr int C = " + std::to_string(C) + ";");
     w.line("constexpr int H = " + std::to_string(H) + ";");
     w.line("constexpr int W = " + std::to_string(W) + ";");
+    w.line("constexpr bool INTENTIR_HOST_DISPATCH_SELECT = " + std::string(enable_host_dispatch_select ? "true" : "false") + ";");
     w.line("static int intentir_selected = -1;");
     w.line("if (intentir_selected < 0) {");
+    w.indent();
+    w.line("if (!INTENTIR_HOST_DISPATCH_SELECT) {");
+    w.indent();
+    w.line("intentir_selected = 0;");
+    w.dedent();
+    w.line("} else {");
     w.indent();
     w.line("cudaEvent_t start = nullptr;");
     w.line("cudaEvent_t end = nullptr;");
@@ -1801,6 +1853,8 @@ json emit_warp(const Intent& intent, const json& bindings) {
     w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
     w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
     w.line("intentir_selected = best_i;");
+    w.dedent();
+    w.line("}");
     w.dedent();
     w.line("}");
     w.line("switch (intentir_selected) {");
@@ -1868,6 +1922,7 @@ json emit_correlation(const Intent& intent, const json& bindings) {
   const bool respect_schedule = binding_int(bindings, "CUDA_RESPECT_SCHEDULE").value_or(0) != 0;
   const bool specialize_dims = want_specialize_dims(intent, bindings);
   const bool enable_host_dispatch = want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims;
+  const bool enable_host_dispatch_select = want_host_dispatch_select(bindings);
   bool host_launch = false;
 
   int64_t block_x = resolve_schedule_int(intent, bindings, "tile_n", 128);
@@ -2028,8 +2083,15 @@ json emit_correlation(const Intent& intent, const json& bindings) {
     w.line("constexpr int height_v = " + std::to_string(H) + ";");
     w.line("constexpr int width_v = " + std::to_string(W) + ";");
     w.line("constexpr int out_shift_v = " + std::to_string(out_shift_val) + ";");
+    w.line("constexpr bool INTENTIR_HOST_DISPATCH_SELECT = " + std::string(enable_host_dispatch_select ? "true" : "false") + ";");
     w.line("static int intentir_selected = -1;");
     w.line("if (intentir_selected < 0) {");
+    w.indent();
+    w.line("if (!INTENTIR_HOST_DISPATCH_SELECT) {");
+    w.indent();
+    w.line("intentir_selected = 0;");
+    w.dedent();
+    w.line("} else {");
     w.indent();
     w.line("cudaEvent_t start = nullptr;");
     w.line("cudaEvent_t end = nullptr;");
@@ -2062,6 +2124,8 @@ json emit_correlation(const Intent& intent, const json& bindings) {
     w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
     w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
     w.line("intentir_selected = best_i;");
+    w.dedent();
+    w.line("}");
     w.dedent();
     w.line("}");
     w.line("switch (intentir_selected) {");
@@ -2140,6 +2204,7 @@ json emit_resize_bilinear2x_i8(const Intent& intent, const json& bindings) {
   const bool respect_schedule = binding_int(bindings, "CUDA_RESPECT_SCHEDULE").value_or(0) != 0;
   const bool specialize_dims = want_specialize_dims(intent, bindings);
   const bool enable_host_dispatch = want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims;
+  const bool enable_host_dispatch_select = want_host_dispatch_select(bindings);
   bool host_launch = false;
 
   int hw_fl = 7;
@@ -2259,8 +2324,15 @@ json emit_resize_bilinear2x_i8(const Intent& intent, const json& bindings) {
     w.line("constexpr int H0 = " + std::to_string(H) + ";");
     w.line("constexpr int W0 = " + std::to_string(W) + ";");
     w.line("constexpr int OH0 = " + std::to_string(OH) + ";");
+    w.line("constexpr bool INTENTIR_HOST_DISPATCH_SELECT = " + std::string(enable_host_dispatch_select ? "true" : "false") + ";");
     w.line("static int intentir_selected = -1;");
     w.line("if (intentir_selected < 0) {");
+    w.indent();
+    w.line("if (!INTENTIR_HOST_DISPATCH_SELECT) {");
+    w.indent();
+    w.line("intentir_selected = 0;");
+    w.dedent();
+    w.line("} else {");
     w.indent();
     w.line("cudaEvent_t start = nullptr;");
     w.line("cudaEvent_t end = nullptr;");
@@ -2293,6 +2365,8 @@ json emit_resize_bilinear2x_i8(const Intent& intent, const json& bindings) {
     w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
     w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
     w.line("intentir_selected = best_i;");
+    w.dedent();
+    w.line("}");
     w.dedent();
     w.line("}");
     w.line("switch (intentir_selected) {");
@@ -2375,6 +2449,7 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
   const bool respect_schedule = binding_int(bindings, "CUDA_RESPECT_SCHEDULE").value_or(0) != 0;
   const bool specialize_dims = want_specialize_dims(intent, bindings);
   const bool enable_host_dispatch = want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims;
+  const bool enable_host_dispatch_select = want_host_dispatch_select(bindings);
   bool host_launch = false;
 
   int64_t heads_per_block = binding_int(bindings, "ROPE_HEADS_PER_BLOCK").value_or(1);
@@ -2628,8 +2703,15 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
     w.line("constexpr int BATCH_NUM = " + std::to_string(B) + ";");
     w.line("constexpr int HEAD_NUM = " + std::to_string(H) + ";");
     w.line("constexpr int HEAD_DIM = " + std::to_string(D) + ";");
+    w.line("constexpr bool INTENTIR_HOST_DISPATCH_SELECT = " + std::string(enable_host_dispatch_select ? "true" : "false") + ";");
     w.line("static int intentir_selected = -1;");
     w.line("if (intentir_selected < 0) {");
+    w.indent();
+    w.line("if (!INTENTIR_HOST_DISPATCH_SELECT) {");
+    w.indent();
+    w.line("intentir_selected = 0;");
+    w.dedent();
+    w.line("} else {");
     w.indent();
     w.line("cudaEvent_t start = nullptr;");
     w.line("cudaEvent_t end = nullptr;");
@@ -2673,6 +2755,8 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
     w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
     w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
     w.line("intentir_selected = best_i;");
+    w.dedent();
+    w.line("}");
     w.dedent();
     w.line("}");
     w.line("switch (intentir_selected) {");
@@ -3694,11 +3778,12 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
   CodeWriter w(cuda_ss);
   w.line("#include <cstdlib>");
   w.line("#include <cstdio>");
-  w.line("#include \"kernels/softmax.cuh\"");
-  w.blank();
-  emit_selected_api(w);
-  const bool enable_host_dispatch = want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims;
-  bool host_launch = false;
+	  w.line("#include \"kernels/softmax.cuh\"");
+	  w.blank();
+	  emit_selected_api(w);
+	  const bool enable_host_dispatch = want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims;
+	  const bool enable_host_dispatch_select = want_host_dispatch_select(bindings);
+	  bool host_launch = false;
 
   if (!enable_host_dispatch) {
     w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_threads) + ") void " + intent.name +
@@ -3864,8 +3949,15 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
     w.line(c_unused);
     w.line("constexpr int R = " + std::to_string(R) + ";");
     w.line("constexpr int C = " + std::to_string(C) + ";");
+    w.line("constexpr bool INTENTIR_HOST_DISPATCH_SELECT = " + std::string(enable_host_dispatch_select ? "true" : "false") + ";");
     w.line("static int intentir_selected = -1;");
     w.line("if (intentir_selected < 0) {");
+    w.indent();
+    w.line("if (!INTENTIR_HOST_DISPATCH_SELECT) {");
+    w.indent();
+    w.line("intentir_selected = 0;");
+    w.dedent();
+    w.line("} else {");
     w.indent();
     w.line("cudaEvent_t start = nullptr;");
     w.line("cudaEvent_t end = nullptr;");
@@ -3912,6 +4004,8 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
     w.line("if (const char* dbg = std::getenv(\"INTENTIR_CUDA_SOFTMAX_DISPATCH_DEBUG\")) {");
     w.indent();
     w.line("if (dbg[0]) std::fprintf(stderr, \"[intentir][softmax] selected=%d tag=%s best_ms=%f (warm=%d iters=%d reps=%d)\\n\", intentir_selected, intentir_softmax_variant_tags[intentir_selected], (double)best_ms, warm, iters, reps);");
+    w.dedent();
+    w.line("}");
     w.dedent();
     w.line("}");
 	    w.dedent();
@@ -4102,6 +4196,7 @@ json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
 
   const bool specialize_dims = want_specialize_dims(intent, bindings);
   const bool enable_host_dispatch = want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims;
+  const bool enable_host_dispatch_select = want_host_dispatch_select(bindings);
   bool host_launch = false;
 
   std::ostringstream cuda_ss;
@@ -4197,8 +4292,15 @@ json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
     w.line("(void)grid_x; (void)grid_y; (void)grid_z;");
     w.line("(void)block_x; (void)block_y; (void)block_z;");
     w.line("(void)shared_mem;");
+    w.line("constexpr bool INTENTIR_HOST_DISPATCH_SELECT = " + std::string(enable_host_dispatch_select ? "true" : "false") + ";");
     w.line("static int intentir_selected = -1;");
     w.line("if (intentir_selected < 0) {");
+    w.indent();
+    w.line("if (!INTENTIR_HOST_DISPATCH_SELECT) {");
+    w.indent();
+    w.line("intentir_selected = 0;");
+    w.dedent();
+    w.line("} else {");
     w.indent();
     w.line("cudaEvent_t start = nullptr;");
     w.line("cudaEvent_t end = nullptr;");
@@ -4231,6 +4333,8 @@ json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
     w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
     w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
     w.line("intentir_selected = best_i;");
+    w.dedent();
+    w.line("}");
     w.dedent();
     w.line("}");
     w.line("dim3 g((unsigned)M, 1u, 1u);");

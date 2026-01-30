@@ -551,7 +551,7 @@ def fig_e5_cuda_triton_vs_intentir(
 
     series: list[tuple[str, list[float | None], str]] = [("IntentIR-CUDA (quick)", sp_quick, PALETTE["red"])]
     if have_dispatch_off:
-        series.append(("Host dispatch off", sp_dispatch_off, PALETTE["blue"]))
+        series.append(("Host select off", sp_dispatch_off, PALETTE["blue"]))
     if have_contract_off:
         series.append(("Contract off", sp_contract_off, PALETTE["light_grey"]))
 
@@ -618,6 +618,17 @@ def fig_e5_cuda_triton_vs_intentir(
 
         ax_bot.set_ylim(y_lo, y_break)
         ax_top.set_ylim(y_break, max(y_break + 0.05, vmax * 1.10))
+        if y_lo > 0.0:
+            ax_bot.text(
+                0.01,
+                0.02,
+                f"y-min={y_lo:.2f}×",
+                transform=ax_bot.transAxes,
+                fontsize=8,
+                color=PALETTE["dark"],
+                ha="left",
+                va="bottom",
+            )
 
         ax_top.spines["bottom"].set_visible(False)
         ax_bot.spines["top"].set_visible(False)
@@ -637,6 +648,9 @@ def fig_e5_cuda_triton_vs_intentir(
         ax_bot.set_ylabel("Speedup over Triton (×)")
         ax_bot.set_xticks(x)
         ax_bot.set_xticklabels(labels, rotation=20, ha="right")
+        if y_break <= 2.0:
+            tick_start = math.floor(y_lo * 10.0) / 10.0
+            ax_bot.set_yticks(np.arange(tick_start, y_break + 1e-6, 0.2))
 
         # Annotate very large outliers on the top axis (keeps the plot readable).
         # Only label the primary series to avoid overlapping text in grouped bars.
@@ -674,8 +688,19 @@ def fig_e5_cuda_triton_vs_intentir(
         ax.set_ylim(y_lo, y_hi)
         # Denser ticks when we're in the "near-1×" regime.
         if y_hi <= 2.0:
-            ticks = np.arange(max(0.8, y_lo), y_hi + 1e-6, 0.2)
-            ax.set_yticks(ticks)
+            tick_start = math.floor(y_lo * 10.0) / 10.0
+            ax.set_yticks(np.arange(tick_start, y_hi + 1e-6, 0.2))
+        if y_lo > 0.0:
+            ax.text(
+                0.01,
+                0.02,
+                f"y-min={y_lo:.2f}×",
+                transform=ax.transAxes,
+                fontsize=8,
+                color=PALETTE["dark"],
+                ha="left",
+                va="bottom",
+            )
 
         # Annotate the primary (quick) series for readability at paper scale.
         if series_vals:
