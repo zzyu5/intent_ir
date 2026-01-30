@@ -710,8 +710,8 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.line("cudaEvent_t end = nullptr;");
       w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
-      w.line("constexpr int warm = 2;");
-      w.line("constexpr int iters = 20;");
+      w.line("constexpr int warm = 3;");
+      w.line("constexpr int iters = 50;");
       w.line("float ms_acc[" + std::to_string(variants.size()) + "] = {0};");
       // Forward pass then reverse pass to reduce clock/thermal order bias.
       for (size_t i = 0; i < variants.size(); ++i) {
@@ -1482,12 +1482,12 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       w.line("cudaEvent_t end = nullptr;");
       w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
-      w.line("float best_ms = 1e30f;");
-      w.line("int best_i = " + std::to_string(fallback_i) + ";");
-      w.line("bool intentir_found = false;");
-      w.line("const int warm = 3;");
-      w.line("const int iters = 50;");
-      w.line("const int reps = 3;");
+      // Reduce systematic order/clock bias: forward pass then reverse pass, accumulate times.
+      w.line("constexpr int warm = 3;");
+      w.line("constexpr int iters = 50;");
+      w.line("float ms_acc[" + std::to_string(variants.size()) + "] = {0};");
+      w.line("bool ok[" + std::to_string(variants.size()) + "] = {false};");
+
       for (size_t vi = 0; vi < variants.size(); ++vi) {
         const auto& v = variants[vi];
         const std::string kname = intent.name + "__" + v.suffix;
@@ -1497,7 +1497,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         w.line("const int smem = (int)" + std::to_string(smem_v) + ";");
         w.line("if (smem <= intentir_max_smem_optin) {");
         w.indent();
-        w.line("intentir_found = true;");
+        w.line("ok[" + std::to_string(vi) + "] = true;");
         w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
         w.line("dim3 g((unsigned)((N + " + std::to_string(v.tile_n) + " - 1) / " + std::to_string(v.tile_n) + "), "
                "(unsigned)((M + " + std::to_string(v.tile_m) + " - 1) / " + std::to_string(v.tile_m) + "), 1u);");
@@ -1509,9 +1509,6 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         w.line("intentir_smem_cached = smem;");
         w.dedent();
         w.line("}");
-        w.line("float m0 = 0.0f, m1 = 0.0f, m2 = 0.0f;");
-        w.line("for (int rep = 0; rep < reps; ++rep) {");
-        w.indent();
         w.line("for (int i = 0; i < warm; ++i) {");
         w.indent();
         w.line(kname + "<<<g, b, (size_t)smem, stream>>>((const float*)A, (const float*)B, (float*)C, M_in, N_in, K_in);");
@@ -1527,27 +1524,74 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
         w.line("float ms = 0.0f;");
         w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
-        w.line("ms = ms / (float)iters;");
-        w.line("if (rep == 0) m0 = ms; else if (rep == 1) m1 = ms; else m2 = ms;");
-        w.dedent();
-        w.line("}");
-        w.line("const float mn = fminf(m0, fminf(m1, m2));");
-        w.line("const float mx = fmaxf(m0, fmaxf(m1, m2));");
-        w.line("const float med = (m0 + m1 + m2) - mn - mx;");
-        w.line("if (med < best_ms) { best_ms = med; best_i = " + std::to_string(vi) + "; }");
+        w.line("ms_acc[" + std::to_string(vi) + "] += (ms / (float)iters);");
         w.dedent();
         w.line("}");
         w.dedent();
         w.line("}");
       }
+
+      for (size_t rvi = variants.size(); rvi-- > 0;) {
+        const auto& v = variants[rvi];
+        const std::string kname = intent.name + "__" + v.suffix;
+        const int64_t smem_v = ((v.shared_bytes + 15) / 16) * 16;
+        w.line("{");
+        w.indent();
+        w.line("const int smem = (int)" + std::to_string(smem_v) + ";");
+        w.line("if (smem <= intentir_max_smem_optin) {");
+        w.indent();
+        w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+        w.line("dim3 g((unsigned)((N + " + std::to_string(v.tile_n) + " - 1) / " + std::to_string(v.tile_n) + "), "
+               "(unsigned)((M + " + std::to_string(v.tile_m) + " - 1) / " + std::to_string(v.tile_m) + "), 1u);");
+        w.line("const void* kptr = (const void*)" + kname + ";");
+        w.line("if (smem >= 49152 && (intentir_kernel_cached != kptr || intentir_smem_cached != smem)) {");
+        w.indent();
+        w.line("TORCH_CHECK(cudaFuncSetAttribute(kptr, cudaFuncAttributeMaxDynamicSharedMemorySize, smem) == cudaSuccess);");
+        w.line("intentir_kernel_cached = kptr;");
+        w.line("intentir_smem_cached = smem;");
+        w.dedent();
+        w.line("}");
+        w.line("for (int i = 0; i < warm; ++i) {");
+        w.indent();
+        w.line(kname + "<<<g, b, (size_t)smem, stream>>>((const float*)A, (const float*)B, (float*)C, M_in, N_in, K_in);");
+        w.dedent();
+        w.line("}");
+        w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
+        w.line("for (int i = 0; i < iters; ++i) {");
+        w.indent();
+        w.line(kname + "<<<g, b, (size_t)smem, stream>>>((const float*)A, (const float*)B, (float*)C, M_in, N_in, K_in);");
+        w.dedent();
+        w.line("}");
+        w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
+        w.line("float ms = 0.0f;");
+        w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
+        w.line("ms_acc[" + std::to_string(rvi) + "] += (ms / (float)iters);");
+        w.dedent();
+        w.line("}");
+        w.dedent();
+        w.line("}");
+      }
+
+      w.line("float best_ms = 1e30f;");
+      w.line("int best_i = " + std::to_string(fallback_i) + ";");
+      w.line("bool intentir_found = false;");
+      w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) {");
+      w.indent();
+      w.line("if (!ok[i]) continue;");
+      w.line("intentir_found = true;");
+      w.line("const float ms = ms_acc[i];");
+      w.line("if (ms < best_ms) { best_ms = ms; best_i = i; }");
+      w.dedent();
+      w.line("}");
       w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
       w.line("intentir_selected = intentir_found ? best_i : " + std::to_string(fallback_i) + ";");
       w.line("if (const char* dbg = std::getenv(\"INTENTIR_CUDA_MATMUL_DISPATCH_DEBUG\")) {");
       w.indent();
-      w.line("if (dbg[0]) std::fprintf(stderr, \"[intentir][matmul] selected=%d tag=%s best_ms_per_iter=%f (warm=%d iters=%d reps=%d)\\n\",");
+      w.line("if (dbg[0]) std::fprintf(stderr, \"[intentir][matmul] selected=%d tag=%s best_ms_per_iter=%f (warm=%d iters=%d passes=2)\\n\",");
       w.indent();
-      w.line("intentir_selected, intentir_matmul_variant_tags[intentir_selected], (double)best_ms, warm, iters, reps);");
+      w.line("intentir_selected, intentir_matmul_variant_tags[intentir_selected], (double)(best_ms * 0.5), warm, iters);");
       w.dedent();
       w.dedent();
       w.line("}");
@@ -2092,40 +2136,68 @@ json emit_correlation(const Intent& intent, const json& bindings) {
     w.line("intentir_selected = 0;");
     w.dedent();
     w.line("} else {");
-    w.indent();
-    w.line("cudaEvent_t start = nullptr;");
-    w.line("cudaEvent_t end = nullptr;");
-    w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
-    w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
-    w.line("float best_ms = 1e30f;");
-    w.line("int best_i = 0;");
-    w.line("const int warm = 2;");
-    w.line("const int iters = 50;");
-    for (size_t i = 0; i < variants.size(); ++i) {
-      const auto& v = variants[i];
-      const std::string kname = intent.name + "__" + v.suffix;
-      w.line("{");
-      w.indent();
-      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
-      w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
-      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(" + src0_name + ", " + src1_name + ", " + out_name +
-             ", " + oc_arg + ", " + ic_arg + ", " + h_arg + ", " + w_arg + ", " + sh_arg + ");");
-      w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
-      w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(" + src0_name + ", " + src1_name + ", " + out_name +
-             ", " + oc_arg + ", " + ic_arg + ", " + h_arg + ", " + w_arg + ", " + sh_arg + ");");
-      w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
-      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
-      w.line("float ms = 0.0f;");
-      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
-      w.line("if (ms < best_ms) { best_ms = ms; best_i = " + std::to_string(i) + "; }");
-      w.dedent();
-      w.line("}");
-    }
-    w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
-    w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
-    w.line("intentir_selected = best_i;");
-    w.dedent();
-    w.line("}");
+	    w.indent();
+	    w.line("cudaEvent_t start = nullptr;");
+	    w.line("cudaEvent_t end = nullptr;");
+	    w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
+	    w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
+	    // Reduce systematic order/clock bias: forward pass then reverse pass, accumulate times.
+	    w.line("constexpr int warm = 2;");
+	    w.line("constexpr int iters = 50;");
+	    w.line("float ms_acc[" + std::to_string(variants.size()) + "] = {0};");
+	    for (size_t i = 0; i < variants.size(); ++i) {
+	      const auto& v = variants[i];
+	      const std::string kname = intent.name + "__" + v.suffix;
+	      w.line("{");
+	      w.indent();
+	      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+	      w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
+	      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(" + src0_name + ", " + src1_name + ", " + out_name +
+	             ", " + oc_arg + ", " + ic_arg + ", " + h_arg + ", " + w_arg + ", " + sh_arg + ");");
+	      w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
+	      w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(" + src0_name + ", " + src1_name + ", " + out_name +
+	             ", " + oc_arg + ", " + ic_arg + ", " + h_arg + ", " + w_arg + ", " + sh_arg + ");");
+	      w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
+	      w.line("float ms = 0.0f;");
+	      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
+	      w.line("ms_acc[" + std::to_string(i) + "] += ms;");
+	      w.dedent();
+	      w.line("}");
+	    }
+	    for (size_t ri = variants.size(); ri-- > 0;) {
+	      const auto& v = variants[ri];
+	      const std::string kname = intent.name + "__" + v.suffix;
+	      w.line("{");
+	      w.indent();
+	      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+	      w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
+	      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(" + src0_name + ", " + src1_name + ", " + out_name +
+	             ", " + oc_arg + ", " + ic_arg + ", " + h_arg + ", " + w_arg + ", " + sh_arg + ");");
+	      w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
+	      w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(" + src0_name + ", " + src1_name + ", " + out_name +
+	             ", " + oc_arg + ", " + ic_arg + ", " + h_arg + ", " + w_arg + ", " + sh_arg + ");");
+	      w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
+	      w.line("float ms = 0.0f;");
+	      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
+	      w.line("ms_acc[" + std::to_string(ri) + "] += ms;");
+	      w.dedent();
+	      w.line("}");
+	    }
+	    w.line("float best_ms = 1e30f;");
+	    w.line("int best_i = 0;");
+	    w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) {");
+	    w.indent();
+	    w.line("const float ms = ms_acc[i];");
+	    w.line("if (ms < best_ms) { best_ms = ms; best_i = i; }");
+	    w.dedent();
+	    w.line("}");
+	    w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
+	    w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
+	    w.line("intentir_selected = best_i;");
+	    w.dedent();
+	    w.line("}");
     w.dedent();
     w.line("}");
     w.line("switch (intentir_selected) {");
@@ -3958,16 +4030,15 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
     w.line("intentir_selected = 0;");
     w.dedent();
     w.line("} else {");
-    w.indent();
-    w.line("cudaEvent_t start = nullptr;");
-    w.line("cudaEvent_t end = nullptr;");
-    w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
-    w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
-    w.line("float best_ms = 1e30f;");
-    w.line("int best_i = 0;");
-	    w.line("const int warm = 5;");
-	    w.line("const int iters = 100;");
-	    w.line("const int reps = 3;");
+	    w.indent();
+	    w.line("cudaEvent_t start = nullptr;");
+	    w.line("cudaEvent_t end = nullptr;");
+	    w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
+	    w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
+	    // Reduce systematic order/clock bias: forward pass then reverse pass, accumulate times.
+	    w.line("constexpr int warm = 3;");
+	    w.line("constexpr int iters = 100;");
+	    w.line("float ms_acc[" + std::to_string(variants.size()) + "] = {0};");
 	    for (size_t i = 0; i < variants.size(); ++i) {
 	      const auto& v = variants[i];
 	      const std::string kname = intent.name + "__" + v.suffix;
@@ -3976,9 +4047,6 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      w.line("dim3 g((unsigned)((R + " + std::to_string(v.rows_per_block) + " - 1) / " + std::to_string(v.rows_per_block) +
 	             "), 1u, 1u);");
 	      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
-	      w.line("float m0 = 0.0f, m1 = 0.0f, m2 = 0.0f;");
-	      w.line("for (int rep = 0; rep < reps; ++rep) {");
-	      w.indent();
 	      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " +
 	             (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) + ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
 	      w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
@@ -3988,26 +4056,49 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
 	      w.line("float ms = 0.0f;");
 	      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
-	      w.line("if (rep == 0) m0 = ms; else if (rep == 1) m1 = ms; else m2 = ms;");
+	      w.line("ms_acc[" + std::to_string(i) + "] += ms;");
 	      w.dedent();
 	      w.line("}");
-	      w.line("const float mn = fminf(m0, fminf(m1, m2));");
-	      w.line("const float mx = fmaxf(m0, fmaxf(m1, m2));");
-	      w.line("const float med = (m0 + m1 + m2) - mn - mx;");
-	      w.line("if (med < best_ms) { best_ms = med; best_i = " + std::to_string(i) + "; }");
-      w.dedent();
-      w.line("}");
-    }
-    w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
-    w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
-    w.line("intentir_selected = best_i;");
-    w.line("if (const char* dbg = std::getenv(\"INTENTIR_CUDA_SOFTMAX_DISPATCH_DEBUG\")) {");
-    w.indent();
-    w.line("if (dbg[0]) std::fprintf(stderr, \"[intentir][softmax] selected=%d tag=%s best_ms=%f (warm=%d iters=%d reps=%d)\\n\", intentir_selected, intentir_softmax_variant_tags[intentir_selected], (double)best_ms, warm, iters, reps);");
-    w.dedent();
-    w.line("}");
-    w.dedent();
-    w.line("}");
+	    }
+	    for (size_t ri = variants.size(); ri-- > 0;) {
+	      const auto& v = variants[ri];
+	      const std::string kname = intent.name + "__" + v.suffix;
+	      w.line("{");
+	      w.indent();
+	      w.line("dim3 g((unsigned)((R + " + std::to_string(v.rows_per_block) + " - 1) / " + std::to_string(v.rows_per_block) +
+	             "), 1u, 1u);");
+	      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+	      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " +
+	             (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) + ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
+	      w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
+	      w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " +
+	             (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) + ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
+	      w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
+	      w.line("float ms = 0.0f;");
+	      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
+	      w.line("ms_acc[" + std::to_string(ri) + "] += ms;");
+	      w.dedent();
+	      w.line("}");
+	    }
+	    w.line("float best_ms = 1e30f;");
+	    w.line("int best_i = 0;");
+	    w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) {");
+	    w.indent();
+	    w.line("const float ms = ms_acc[i];");
+	    w.line("if (ms < best_ms) { best_ms = ms; best_i = i; }");
+	    w.dedent();
+	    w.line("}");
+	    w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
+	    w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
+	    w.line("intentir_selected = best_i;");
+	    w.line("if (const char* dbg = std::getenv(\"INTENTIR_CUDA_SOFTMAX_DISPATCH_DEBUG\")) {");
+	    w.indent();
+	    w.line("if (dbg[0]) std::fprintf(stderr, \"[intentir][softmax] selected=%d tag=%s best_ms=%f (warm=%d iters=%d)\\n\", intentir_selected, intentir_softmax_variant_tags[intentir_selected], (double)best_ms, warm, iters);");
+	    w.dedent();
+	    w.line("}");
+	    w.dedent();
+	    w.line("}");
 	    w.dedent();
 	    w.line("}");
 	    w.line("switch (intentir_selected) {");
