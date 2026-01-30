@@ -139,16 +139,18 @@ __device__ __forceinline__ void dropout_f32_vec4(
     if constexpr (!FULL_TILE) {
       if (i >= n_elements) break;
     }
-    const uint32_t ctr = (uint32_t)((uint64_t)i >> 2);
-    const intentir_uint4 rnd = intentir_philox_rand4_u32_rounds<N_ROUNDS>(seed, ctr);
+    const uint32_t r0 = intentir_philox_randint_u32_rounds<N_ROUNDS>(seed, (uint32_t)(i + 0));
+    const uint32_t r1 = intentir_philox_randint_u32_rounds<N_ROUNDS>(seed, (uint32_t)(i + 1));
+    const uint32_t r2 = intentir_philox_randint_u32_rounds<N_ROUNDS>(seed, (uint32_t)(i + 2));
+    const uint32_t r3 = intentir_philox_randint_u32_rounds<N_ROUNDS>(seed, (uint32_t)(i + 3));
 
     if (aligned && (FULL_TILE || (i + 3) < n_elements)) {
       const float4 x4 = *reinterpret_cast<const float4*>(X + i);
       float4 y4;
-      int32_t xi0 = (int32_t)rnd.x;
-      int32_t xi1 = (int32_t)rnd.y;
-      int32_t xi2 = (int32_t)rnd.z;
-      int32_t xi3 = (int32_t)rnd.w;
+      int32_t xi0 = (int32_t)r0;
+      int32_t xi1 = (int32_t)r1;
+      int32_t xi2 = (int32_t)r2;
+      int32_t xi3 = (int32_t)r3;
       xi0 ^= (xi0 >> 31);
       xi1 ^= (xi1 >> 31);
       xi2 ^= (xi2 >> 31);
@@ -159,7 +161,7 @@ __device__ __forceinline__ void dropout_f32_vec4(
       y4.w = ((uint32_t)xi3 > keep_thresh) ? (x4.w * inv_keep) : 0.0f;
       *reinterpret_cast<float4*>(Y + i) = y4;
     } else {
-      const uint32_t rv[4] = {rnd.x, rnd.y, rnd.z, rnd.w};
+      const uint32_t rv[4] = {r0, r1, r2, r3};
       #pragma unroll
       for (int j = 0; j < 4; ++j) {
         const int64_t idx = i + (int64_t)j;
