@@ -78,16 +78,7 @@ __device__ __forceinline__ float softmax_block_allreduce_sum(float v, SoftmaxBlo
   return st->out;
 }
 
-template <int BLOCK_THREADS, int EPT>
-__device__ __forceinline__ void softmax_2d_last_f32(
-    const float* __restrict__ inp,
-    float* __restrict__ out,
-    int R,
-    int C) {
-  softmax_2d_last_f32<BLOCK_THREADS, EPT, false>(inp, out, R, C);
-}
-
-template <int BLOCK_THREADS, int EPT, bool USE_WARP_REDUCE>
+template <int BLOCK_THREADS, int EPT, bool USE_WARP_REDUCE = false>
 __device__ __forceinline__ void softmax_2d_last_f32(const float* __restrict__ inp, float* __restrict__ out, int R, int C) {
   static_assert(BLOCK_THREADS > 0 && BLOCK_THREADS <= 1024, "softmax block size must be in (0,1024]");
   static_assert((BLOCK_THREADS % 32) == 0, "softmax block must be a multiple of 32 threads");
@@ -151,16 +142,7 @@ __device__ __forceinline__ void softmax_2d_last_f32(const float* __restrict__ in
   }
 }
 
-template <int BLOCK_THREADS, int TILES>
-__device__ __forceinline__ void softmax_2d_last_f32_vec4(
-    const float* __restrict__ inp,
-    float* __restrict__ out,
-    int R,
-    int C) {
-  softmax_2d_last_f32_vec4<BLOCK_THREADS, TILES, false>(inp, out, R, C);
-}
-
-template <int BLOCK_THREADS, int TILES, bool USE_WARP_REDUCE>
+template <int BLOCK_THREADS, int TILES, bool USE_WARP_REDUCE = false>
 __device__ __forceinline__ void softmax_2d_last_f32_vec4(const float* __restrict__ inp, float* __restrict__ out, int R, int C) {
   static_assert(BLOCK_THREADS > 0 && BLOCK_THREADS <= 1024, "softmax vec4 block size must be in (0,1024]");
   static_assert((BLOCK_THREADS % 32) == 0, "softmax vec4 block must be a multiple of 32 threads");
