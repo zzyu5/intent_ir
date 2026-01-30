@@ -91,6 +91,16 @@ def _latest_file(dir_path: Path, pattern: str) -> Path | None:
     cand.sort(key=lambda p: (p.stat().st_mtime, str(p)))
     return cand[-1]
 
+def _prefer_or_latest(dir_path: Path, prefer_name: str, pattern: str) -> Path | None:
+    """
+    Prefer a specific pinned filename (if present) to make paper figures reproducible,
+    otherwise fall back to the most recently modified match.
+    """
+    p = dir_path / prefer_name
+    if p.is_file():
+        return p
+    return _latest_file(dir_path, pattern)
+
 def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
@@ -551,7 +561,7 @@ def fig_e5_cuda_triton_vs_intentir(
 
     series: list[tuple[str, list[float | None], str]] = [("IntentIR-CUDA (quick)", sp_quick, PALETTE["red"])]
     if have_dispatch_off:
-        series.append(("Host select off", sp_dispatch_off, PALETTE["blue"]))
+        series.append(("Host dispatch off", sp_dispatch_off, PALETTE["blue"]))
     if have_contract_off:
         series.append(("Contract off", sp_contract_off, PALETTE["light_grey"]))
 
@@ -591,8 +601,11 @@ def fig_e5_cuda_triton_vs_intentir(
 
     # Figure: prefer a single axis when the dynamic range is small; fall back to a
     # broken y-axis (not log) only when outliers would squash 1×-level differences.
-    y_break = 1.30
-    y_lo = max(0.0, min(0.85, vmin * 0.95))
+    # IMPORTANT: keep the y-axis baseline at 0 to avoid misleading truncated bars.
+    # If outliers exist, use a broken axis (piecewise-linear) rather than shifting
+    # the baseline upward.
+    y_break = 2.0
+    y_lo = 0.0
     use_broken_axis = vmax > 2.5
 
     if use_broken_axis:
@@ -618,17 +631,6 @@ def fig_e5_cuda_triton_vs_intentir(
 
         ax_bot.set_ylim(y_lo, y_break)
         ax_top.set_ylim(y_break, max(y_break + 0.05, vmax * 1.10))
-        if y_lo > 0.0:
-            ax_bot.text(
-                0.01,
-                0.02,
-                f"y-min={y_lo:.2f}×",
-                transform=ax_bot.transAxes,
-                fontsize=8,
-                color=PALETTE["dark"],
-                ha="left",
-                va="bottom",
-            )
 
         ax_top.spines["bottom"].set_visible(False)
         ax_bot.spines["top"].set_visible(False)
@@ -690,17 +692,6 @@ def fig_e5_cuda_triton_vs_intentir(
         if y_hi <= 2.0:
             tick_start = math.floor(y_lo * 10.0) / 10.0
             ax.set_yticks(np.arange(tick_start, y_hi + 1e-6, 0.2))
-        if y_lo > 0.0:
-            ax.text(
-                0.01,
-                0.02,
-                f"y-min={y_lo:.2f}×",
-                transform=ax.transAxes,
-                fontsize=8,
-                color=PALETTE["dark"],
-                ha="left",
-                va="bottom",
-            )
 
         # Annotate the primary (quick) series for readability at paper scale.
         if series_vals:
@@ -763,10 +754,20 @@ def main() -> None:
 
     # Optional: E5 CUDA GPU figures (H100 + 5090D).
     cuda_dir = ROOT / "artifacts" / "experiments" / "E5"
-    p_5090_q = args.e5_cuda_5090d_quick or _latest_file(cuda_dir, "e5_cuda_5090d*quick*.json")
-    p_5090_a = args.e5_cuda_5090d_ablation or _latest_file(cuda_dir, "e5_cuda_5090d*ablation*.json")
-    p_h100_q = args.e5_cuda_h100_quick or _latest_file(cuda_dir, "e5_cuda_h100*quick*.json")
-    p_h100_a = args.e5_cuda_h100_ablation or _latest_file(cuda_dir, "e5_cuda_h100*ablation*.json")
+    # Pinned inputs (known-good) for the paper; can be overridden via CLI flags.
+    pinned_rev = "391daae"
+    p_5090_q = args.e5_cuda_5090d_quick or _prefer_or_latest(
+        cuda_dir, f"e5_cuda_5090d_quick_{pinned_rev}.json", "e5_cuda_5090d*quick*.json"
+    )
+    p_5090_a = args.e5_cuda_5090d_ablation or _prefer_or_latest(
+        cuda_dir, f"e5_cuda_5090d_ablation_{pinned_rev}.json", "e5_cuda_5090d*ablation*.json"
+    )
+    p_h100_q = args.e5_cuda_h100_quick or _prefer_or_latest(
+        cuda_dir, f"e5_cuda_h100_quick_{pinned_rev}.json", "e5_cuda_h100*quick*.json"
+    )
+    p_h100_a = args.e5_cuda_h100_ablation or _prefer_or_latest(
+        cuda_dir, f"e5_cuda_h100_ablation_{pinned_rev}.json", "e5_cuda_h100*ablation*.json"
+    )
 
     if p_h100_q and p_h100_q.is_file():
         h100_q = _load_json(p_h100_q)
