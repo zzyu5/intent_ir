@@ -3897,16 +3897,17 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
     w.line("}");
 	  } else {
 	    host_launch = true;
-	    struct SoftmaxVariant {
-	      int64_t threads;
-	      int64_t ept;
-	      int64_t tiles;
-	      int64_t rows_per_block;
-	      bool vec4;
-	      bool warp4;
-	      std::string suffix;
-	    };
-	    std::vector<SoftmaxVariant> variants;
+		    struct SoftmaxVariant {
+		      int64_t threads;
+		      int64_t ept;
+		      int64_t tiles;
+		      int64_t rows_per_block;
+		      bool vec4;
+		      bool warp4;
+		      bool warp_reduce;
+		      std::string suffix;
+		    };
+		    std::vector<SoftmaxVariant> variants;
 	    auto norm_threads = [](int64_t t) -> int64_t {
 	      if (t < 32) t = 32;
 	      if (t > 1024) t = 1024;
@@ -3914,32 +3915,33 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
       if (t > 1024) t = 1024;
 	      return t;
 	    };
-	    auto add_strided_variant_with_ept = [&](int64_t threads, int64_t vept, const std::string& tag) {
-	      threads = norm_threads(threads);
-	      if (threads <= 0) return;
-	      if (vept <= 0 || vept > 32) return;
-	      if (vept > max_ept) return;
-	      for (const auto& v : variants) {
-	        if (!v.warp4 && !v.vec4 && v.threads == threads && v.ept == vept) return;
-	      }
-	      variants.push_back(SoftmaxVariant{threads, vept, 0, 1, false, false, tag});
-	    };
+		    auto add_strided_variant_with_ept = [&](int64_t threads, int64_t vept, bool warp_reduce, const std::string& tag) {
+		      threads = norm_threads(threads);
+		      if (threads <= 0) return;
+		      if (vept <= 0 || vept > 32) return;
+		      if (vept > max_ept) return;
+		      for (const auto& v : variants) {
+		        if (!v.warp4 && !v.vec4 && v.warp_reduce == warp_reduce && v.threads == threads && v.ept == vept) return;
+		      }
+		      variants.push_back(SoftmaxVariant{threads, vept, 0, 1, false, false, warp_reduce, tag});
+		    };
 
-	    auto add_strided_variant = [&](int64_t threads, const std::string& tag) {
-	      const int64_t vept = std::max<int64_t>(1, (C + threads - 1) / threads);
-	      add_strided_variant_with_ept(threads, vept, tag);
-	    };
+		    auto add_strided_variant = [&](int64_t threads, const std::string& tag) {
+		      const int64_t vept = std::max<int64_t>(1, (C + threads - 1) / threads);
+		      add_strided_variant_with_ept(threads, vept, /*warp_reduce=*/false, tag);
+		      add_strided_variant_with_ept(threads, vept, /*warp_reduce=*/true, tag + "_wr");
+		    };
 
-	    auto add_vec4_variant = [&](int64_t threads, const std::string& tag) {
-	      threads = norm_threads(threads);
-	      if (threads <= 0) return;
-	      const int64_t tiles = (C + (threads * 4) - 1) / (threads * 4);
-	      if (tiles <= 0 || tiles > 8) return;
-	      for (const auto& v : variants) {
-	        if (v.vec4 && v.threads == threads) return;
-	      }
-	      variants.push_back(SoftmaxVariant{threads, 0, tiles, 1, true, false, tag});
-	    };
+		    auto add_vec4_variant = [&](int64_t threads, const std::string& tag) {
+		      threads = norm_threads(threads);
+		      if (threads <= 0) return;
+		      const int64_t tiles = (C + (threads * 4) - 1) / (threads * 4);
+		      if (tiles <= 0 || tiles > 8) return;
+		      for (const auto& v : variants) {
+		        if (v.vec4 && v.threads == threads) return;
+		      }
+		      variants.push_back(SoftmaxVariant{threads, 0, tiles, 1, true, false, /*warp_reduce=*/false, tag});
+		    };
 
 	    auto add_block_pair = [&](int64_t threads, const std::string& tag) {
 	      add_strided_variant(threads, tag);
@@ -3952,24 +3954,25 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      while (block_elems < C) block_elems <<= 1;
 	      if (block_elems > 1024) block_elems = 1024;
 	    }
-	    auto add_strided_pow2_variant = [&](int64_t threads, const std::string& tag) {
-	      threads = norm_threads(threads);
-	      if (threads <= 0) return;
-	      if ((block_elems % threads) != 0) return;
-	      const int64_t vept = block_elems / threads;
-	      add_strided_variant_with_ept(threads, vept, tag);
-	    };
+		    auto add_strided_pow2_variant = [&](int64_t threads, const std::string& tag) {
+		      threads = norm_threads(threads);
+		      if (threads <= 0) return;
+		      if ((block_elems % threads) != 0) return;
+		      const int64_t vept = block_elems / threads;
+		      add_strided_variant_with_ept(threads, vept, /*warp_reduce=*/false, tag);
+		      add_strided_variant_with_ept(threads, vept, /*warp_reduce=*/true, tag + "_wr");
+		    };
 
-	    auto add_warp4_variant = [&](int64_t warps_per_block, const std::string& tag) {
-	      if (warps_per_block <= 0) return;
-	      if (warps_per_block > 8) return;
-	      const int64_t threads = norm_threads(warps_per_block * 32);
-	      if (threads != warps_per_block * 32) return;
-	      for (const auto& v : variants) {
-	        if (v.warp4 && v.rows_per_block == warps_per_block) return;
-	      }
-	      variants.push_back(SoftmaxVariant{threads, 0, 0, warps_per_block, false, true, tag});
-	    };
+		    auto add_warp4_variant = [&](int64_t warps_per_block, const std::string& tag) {
+		      if (warps_per_block <= 0) return;
+		      if (warps_per_block > 8) return;
+		      const int64_t threads = norm_threads(warps_per_block * 32);
+		      if (threads != warps_per_block * 32) return;
+		      for (const auto& v : variants) {
+		        if (v.warp4 && v.rows_per_block == warps_per_block) return;
+		      }
+		      variants.push_back(SoftmaxVariant{threads, 0, 0, warps_per_block, false, true, /*warp_reduce=*/false, tag});
+		    };
 
 	    // Evidence-guided tiny candidate set: seed + a few standard warp-aligned sizes.
 	    add_block_pair(block_threads, "seed");
@@ -4008,18 +4011,22 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
       w.line(c_unused);
 	      w.line("constexpr int R = " + std::to_string(R) + ";");
 	      w.line("constexpr int C = " + std::to_string(C) + ";");
-	      if (v.warp4) {
-	        w.line("constexpr int WARPS_PER_BLOCK = " + std::to_string(v.rows_per_block) + ";");
-	        w.line("intentir_cuda::softmax_2d_last_f32_warp4<WARPS_PER_BLOCK>(" + in_name + ", " + out_name + ", R, C);");
-	      } else if (v.vec4) {
-	        w.line("constexpr int BLOCK_THREADS = " + std::to_string(v.threads) + ";");
-	        w.line("constexpr int TILES = " + std::to_string(v.tiles) + ";");
-	        w.line("intentir_cuda::softmax_2d_last_f32_vec4<BLOCK_THREADS, TILES>(" + in_name + ", " + out_name + ", R, C);");
-	      } else {
-	        w.line("constexpr int BLOCK_THREADS = " + std::to_string(v.threads) + ";");
-	        w.line("constexpr int EPT = " + std::to_string(v.ept) + ";");
-	        w.line("intentir_cuda::softmax_2d_last_f32<BLOCK_THREADS, EPT>(" + in_name + ", " + out_name + ", R, C);");
-	      }
+		      if (v.warp4) {
+		        w.line("constexpr int WARPS_PER_BLOCK = " + std::to_string(v.rows_per_block) + ";");
+		        w.line("intentir_cuda::softmax_2d_last_f32_warp4<WARPS_PER_BLOCK>(" + in_name + ", " + out_name + ", R, C);");
+		      } else if (v.vec4) {
+		        w.line("constexpr int BLOCK_THREADS = " + std::to_string(v.threads) + ";");
+		        w.line("constexpr int TILES = " + std::to_string(v.tiles) + ";");
+		        w.line("intentir_cuda::softmax_2d_last_f32_vec4<BLOCK_THREADS, TILES>(" + in_name + ", " + out_name + ", R, C);");
+		      } else {
+		        w.line("constexpr int BLOCK_THREADS = " + std::to_string(v.threads) + ";");
+		        w.line("constexpr int EPT = " + std::to_string(v.ept) + ";");
+		        if (v.warp_reduce) {
+		          w.line("intentir_cuda::softmax_2d_last_f32<BLOCK_THREADS, EPT, true>(" + in_name + ", " + out_name + ", R, C);");
+		        } else {
+		          w.line("intentir_cuda::softmax_2d_last_f32<BLOCK_THREADS, EPT>(" + in_name + ", " + out_name + ", R, C);");
+		        }
+		      }
 	      w.dedent();
 	      w.line("}");
 	      w.blank();

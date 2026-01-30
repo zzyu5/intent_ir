@@ -3,6 +3,7 @@
 #include <math.h>
 
 #include "intentir_cuda_ops.cuh"
+#include "kernels/reduce.cuh"
 
 namespace intentir_cuda {
 
@@ -78,6 +79,15 @@ __device__ __forceinline__ float softmax_block_allreduce_sum(float v, SoftmaxBlo
 }
 
 template <int BLOCK_THREADS, int EPT>
+__device__ __forceinline__ void softmax_2d_last_f32(
+    const float* __restrict__ inp,
+    float* __restrict__ out,
+    int R,
+    int C) {
+  softmax_2d_last_f32<BLOCK_THREADS, EPT, false>(inp, out, R, C);
+}
+
+template <int BLOCK_THREADS, int EPT, bool USE_WARP_REDUCE>
 __device__ __forceinline__ void softmax_2d_last_f32(const float* __restrict__ inp, float* __restrict__ out, int R, int C) {
   static_assert(BLOCK_THREADS > 0 && BLOCK_THREADS <= 1024, "softmax block size must be in (0,1024]");
   static_assert((BLOCK_THREADS % 32) == 0, "softmax block must be a multiple of 32 threads");
@@ -98,30 +108,59 @@ __device__ __forceinline__ void softmax_2d_last_f32(const float* __restrict__ in
     expv[i] = v;
     tmax = fmaxf(tmax, v);
   }
-  __shared__ SoftmaxBlockReduceF32<BLOCK_THREADS> red;
-  const float mx = softmax_block_allreduce_max<BLOCK_THREADS>(tmax, &red);
+  if constexpr (USE_WARP_REDUCE) {
+    __shared__ SoftmaxBlockReduceF32<BLOCK_THREADS> red;
+    const float mx = softmax_block_allreduce_max<BLOCK_THREADS>(tmax, &red);
 
-  float tsum = 0.0f;
-  #pragma unroll
-  for (int i = 0; i < EPT; ++i) {
-    const int c = tid + i * BLOCK_THREADS;
-    (void)c;
-    const float e = __expf(expv[i] - mx);
-    expv[i] = e;
-    tsum += e;
-  }
-  const float sum = softmax_block_allreduce_sum<BLOCK_THREADS>(tsum, &red);
-  const float inv = __fdividef(1.0f, sum);
-  #pragma unroll
-  for (int i = 0; i < EPT; ++i) {
-    const int c = tid + i * BLOCK_THREADS;
-    if (c < C) {
-      out_row[(size_t)c] = expv[i] * inv;
+    float tsum = 0.0f;
+    #pragma unroll
+    for (int i = 0; i < EPT; ++i) {
+      const int c = tid + i * BLOCK_THREADS;
+      (void)c;
+      const float e = __expf(expv[i] - mx);
+      expv[i] = e;
+      tsum += e;
+    }
+    const float sum = softmax_block_allreduce_sum<BLOCK_THREADS>(tsum, &red);
+    const float inv = __fdividef(1.0f, sum);
+    #pragma unroll
+    for (int i = 0; i < EPT; ++i) {
+      const int c = tid + i * BLOCK_THREADS;
+      if (c < C) out_row[(size_t)c] = expv[i] * inv;
+    }
+  } else {
+    __shared__ BlockAllreduceF32<BLOCK_THREADS> red;
+    const float mx = block_allreduce_max<BLOCK_THREADS>(tmax, &red);
+
+    float tsum = 0.0f;
+    #pragma unroll
+    for (int i = 0; i < EPT; ++i) {
+      const int c = tid + i * BLOCK_THREADS;
+      (void)c;
+      const float e = __expf(expv[i] - mx);
+      expv[i] = e;
+      tsum += e;
+    }
+    const float sum = block_allreduce_sum<BLOCK_THREADS>(tsum, &red);
+    const float inv = __fdividef(1.0f, sum);
+    #pragma unroll
+    for (int i = 0; i < EPT; ++i) {
+      const int c = tid + i * BLOCK_THREADS;
+      if (c < C) out_row[(size_t)c] = expv[i] * inv;
     }
   }
 }
 
 template <int BLOCK_THREADS, int TILES>
+__device__ __forceinline__ void softmax_2d_last_f32_vec4(
+    const float* __restrict__ inp,
+    float* __restrict__ out,
+    int R,
+    int C) {
+  softmax_2d_last_f32_vec4<BLOCK_THREADS, TILES, false>(inp, out, R, C);
+}
+
+template <int BLOCK_THREADS, int TILES, bool USE_WARP_REDUCE>
 __device__ __forceinline__ void softmax_2d_last_f32_vec4(const float* __restrict__ inp, float* __restrict__ out, int R, int C) {
   static_assert(BLOCK_THREADS > 0 && BLOCK_THREADS <= 1024, "softmax vec4 block size must be in (0,1024]");
   static_assert((BLOCK_THREADS % 32) == 0, "softmax vec4 block must be a multiple of 32 threads");
@@ -161,41 +200,83 @@ __device__ __forceinline__ void softmax_2d_last_f32_vec4(const float* __restrict
     tmax = fmaxf(tmax, v.z);
     tmax = fmaxf(tmax, v.w);
   }
-  __shared__ SoftmaxBlockReduceF32<BLOCK_THREADS> red;
-  const float mx = softmax_block_allreduce_max<BLOCK_THREADS>(tmax, &red);
+  if constexpr (USE_WARP_REDUCE) {
+    __shared__ SoftmaxBlockReduceF32<BLOCK_THREADS> red;
+    const float mx = softmax_block_allreduce_max<BLOCK_THREADS>(tmax, &red);
 
-  float tsum = 0.0f;
-  #pragma unroll
-  for (int t = 0; t < TILES; ++t) {
-    float4 v = vals[t];
-    v.x = __expf(v.x - mx);
-    v.y = __expf(v.y - mx);
-    v.z = __expf(v.z - mx);
-    v.w = __expf(v.w - mx);
-    vals[t] = v;
-    tsum += (v.x + v.y + v.z + v.w);
-  }
-  const float sum = softmax_block_allreduce_sum<BLOCK_THREADS>(tsum, &red);
-  const float inv = __fdividef(1.0f, sum);
-
-  #pragma unroll
-  for (int t = 0; t < TILES; ++t) {
-    const int base = t * (BLOCK_THREADS * VEC) + tid * VEC;
-    if (base >= C) continue;
-    float4 v = vals[t];
-    v.x *= inv;
-    v.y *= inv;
-    v.z *= inv;
-    v.w *= inv;
-    if (aligned && (base + (VEC - 1) < C)) {
-      *reinterpret_cast<float4*>(out_row + (size_t)base) = v;
-    } else {
-      if (base + 0 < C) out_row[(size_t)(base + 0)] = v.x;
-      if (base + 1 < C) out_row[(size_t)(base + 1)] = v.y;
-      if (base + 2 < C) out_row[(size_t)(base + 2)] = v.z;
-      if (base + 3 < C) out_row[(size_t)(base + 3)] = v.w;
+    float tsum = 0.0f;
+    #pragma unroll
+    for (int t = 0; t < TILES; ++t) {
+      float4 v = vals[t];
+      v.x = __expf(v.x - mx);
+      v.y = __expf(v.y - mx);
+      v.z = __expf(v.z - mx);
+      v.w = __expf(v.w - mx);
+      vals[t] = v;
+      tsum += (v.x + v.y + v.z + v.w);
     }
+    const float sum = softmax_block_allreduce_sum<BLOCK_THREADS>(tsum, &red);
+    const float inv = __fdividef(1.0f, sum);
+
+    #pragma unroll
+    for (int t = 0; t < TILES; ++t) {
+      const int base = t * (BLOCK_THREADS * VEC) + tid * VEC;
+      if (base >= C) continue;
+      float4 v = vals[t];
+      v.x *= inv;
+      v.y *= inv;
+      v.z *= inv;
+      v.w *= inv;
+      if (aligned && (base + (VEC - 1) < C)) {
+        *reinterpret_cast<float4*>(out_row + (size_t)base) = v;
+      } else {
+        if (base + 0 < C) out_row[(size_t)(base + 0)] = v.x;
+        if (base + 1 < C) out_row[(size_t)(base + 1)] = v.y;
+        if (base + 2 < C) out_row[(size_t)(base + 2)] = v.z;
+        if (base + 3 < C) out_row[(size_t)(base + 3)] = v.w;
+      }
+    }
+    return;
+  } else {
+    __shared__ BlockAllreduceF32<BLOCK_THREADS> red;
+    const float mx = block_allreduce_max<BLOCK_THREADS>(tmax, &red);
+
+    float tsum = 0.0f;
+    #pragma unroll
+    for (int t = 0; t < TILES; ++t) {
+      float4 v = vals[t];
+      v.x = __expf(v.x - mx);
+      v.y = __expf(v.y - mx);
+      v.z = __expf(v.z - mx);
+      v.w = __expf(v.w - mx);
+      vals[t] = v;
+      tsum += (v.x + v.y + v.z + v.w);
+    }
+    const float sum = block_allreduce_sum<BLOCK_THREADS>(tsum, &red);
+    const float inv = __fdividef(1.0f, sum);
+
+    #pragma unroll
+    for (int t = 0; t < TILES; ++t) {
+      const int base = t * (BLOCK_THREADS * VEC) + tid * VEC;
+      if (base >= C) continue;
+      float4 v = vals[t];
+      v.x *= inv;
+      v.y *= inv;
+      v.z *= inv;
+      v.w *= inv;
+      if (aligned && (base + (VEC - 1) < C)) {
+        *reinterpret_cast<float4*>(out_row + (size_t)base) = v;
+      } else {
+        if (base + 0 < C) out_row[(size_t)(base + 0)] = v.x;
+        if (base + 1 < C) out_row[(size_t)(base + 1)] = v.y;
+        if (base + 2 < C) out_row[(size_t)(base + 2)] = v.z;
+        if (base + 3 < C) out_row[(size_t)(base + 3)] = v.w;
+      }
+    }
+    return;
   }
+
+  // Unreachable.
 }
 
 template <int WARPS_PER_BLOCK>
