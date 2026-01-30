@@ -4074,7 +4074,8 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	    w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
 	    // Reduce systematic order/clock bias: forward pass then reverse pass, accumulate times.
 	    w.line("constexpr int warm = 3;");
-	    w.line("constexpr int iters = 100;");
+	    w.line("constexpr int iters = 200;");
+	    w.line("constexpr int reps = 3;");
 	    w.line("float ms_acc[" + std::to_string(variants.size()) + "] = {0};");
 	    for (size_t i = 0; i < variants.size(); ++i) {
 	      const auto& v = variants[i];
@@ -4084,6 +4085,9 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      w.line("dim3 g((unsigned)((R + " + std::to_string(v.rows_per_block) + " - 1) / " + std::to_string(v.rows_per_block) +
 	             "), 1u, 1u);");
 	      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+	      w.line("float m0 = 0.0f, m1 = 0.0f, m2 = 0.0f;");
+	      w.line("for (int rep = 0; rep < reps; ++rep) {");
+	      w.indent();
 	      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " +
 	             (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) + ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
 	      w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
@@ -4093,7 +4097,13 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
 	      w.line("float ms = 0.0f;");
 	      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
-	      w.line("ms_acc[" + std::to_string(i) + "] += ms;");
+	      w.line("if (rep == 0) m0 = ms; else if (rep == 1) m1 = ms; else m2 = ms;");
+	      w.dedent();
+	      w.line("}");
+	      w.line("const float mn = fminf(m0, fminf(m1, m2));");
+	      w.line("const float mx = fmaxf(m0, fmaxf(m1, m2));");
+	      w.line("const float med = (m0 + m1 + m2) - mn - mx;");
+	      w.line("ms_acc[" + std::to_string(i) + "] += med;");
 	      w.dedent();
 	      w.line("}");
 	    }
@@ -4105,6 +4115,9 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      w.line("dim3 g((unsigned)((R + " + std::to_string(v.rows_per_block) + " - 1) / " + std::to_string(v.rows_per_block) +
 	             "), 1u, 1u);");
 	      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+	      w.line("float m0 = 0.0f, m1 = 0.0f, m2 = 0.0f;");
+	      w.line("for (int rep = 0; rep < reps; ++rep) {");
+	      w.indent();
 	      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " +
 	             (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) + ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
 	      w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
@@ -4114,7 +4127,13 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
 	      w.line("float ms = 0.0f;");
 	      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
-	      w.line("ms_acc[" + std::to_string(ri) + "] += ms;");
+	      w.line("if (rep == 0) m0 = ms; else if (rep == 1) m1 = ms; else m2 = ms;");
+	      w.dedent();
+	      w.line("}");
+	      w.line("const float mn = fminf(m0, fminf(m1, m2));");
+	      w.line("const float mx = fmaxf(m0, fmaxf(m1, m2));");
+	      w.line("const float med = (m0 + m1 + m2) - mn - mx;");
+	      w.line("ms_acc[" + std::to_string(ri) + "] += med;");
 	      w.dedent();
 	      w.line("}");
 	    }
