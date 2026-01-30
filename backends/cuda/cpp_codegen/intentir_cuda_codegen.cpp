@@ -490,6 +490,7 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       int ept;
       int64_t grid_x;
       bool full_tile;
+      bool vec4;
       std::string suffix;
     };
     std::vector<DropoutVariant> variants;
@@ -500,37 +501,43 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       if (t > 1024) t = 1024;
       return t;
     };
-    auto add_variant = [&](int64_t threads, int vept, const std::string& tag) {
+    auto add_variant = [&](int64_t threads, int vept, bool vec4, const std::string& tag) {
       threads = norm_threads(threads);
       if (vept <= 0) vept = 1;
       if (vept > 8) vept = 8;
+      if (vec4 && ((vept % 4) != 0)) return;
       const int64_t tile = threads * (int64_t)vept;
       if (tile <= 0) return;
       const int64_t gx = (n + tile - 1) / tile;
       const bool full = ((n % tile) == 0);
       for (const auto& e : variants) {
-        if (e.threads == threads && e.ept == vept) return;
+        if (e.threads == threads && e.ept == vept && e.vec4 == vec4) return;
       }
-      variants.push_back(DropoutVariant{threads, vept, gx, full, tag});
+      variants.push_back(DropoutVariant{threads, vept, gx, full, vec4, tag});
+    };
+
+    auto add_variant_pair = [&](int64_t threads, int vept, const std::string& tag) {
+      add_variant(threads, vept, /*vec4=*/false, tag);
+      if ((vept % 4) == 0) add_variant(threads, vept, /*vec4=*/true, tag + "_v4");
     };
 
     // Evidence-guided candidate set: keep it small but span a few occupancy
     // regimes (threads) and ILP levels (elements-per-thread). The dispatcher
     // microbench picks the best once and caches it.
-    add_variant(block_x, ept, "seed");
-    add_variant(128, 1, "t128_e1");
-    add_variant(256, 1, "t256_e1");
-    add_variant(512, 1, "t512_e1");
-    add_variant(128, 2, "t128_e2");
-    add_variant(256, 2, "t256_e2");
-    add_variant(512, 2, "t512_e2");
-    add_variant(128, 4, "t128_e4");
-    add_variant(256, 4, "t256_e4");
-    add_variant(512, 4, "t512_e4");
-    add_variant(128, 8, "t128_e8");
-    add_variant(256, 8, "t256_e8");
-    add_variant(512, 8, "t512_e8");
-    if (variants.empty()) add_variant(block_x, ept, "fallback");
+    add_variant_pair(block_x, ept, "seed");
+    add_variant_pair(128, 1, "t128_e1");
+    add_variant_pair(256, 1, "t256_e1");
+    add_variant_pair(512, 1, "t512_e1");
+    add_variant_pair(128, 2, "t128_e2");
+    add_variant_pair(256, 2, "t256_e2");
+    add_variant_pair(512, 2, "t512_e2");
+    add_variant_pair(128, 4, "t128_e4");
+    add_variant_pair(256, 4, "t256_e4");
+    add_variant_pair(512, 4, "t512_e4");
+    add_variant_pair(128, 8, "t128_e8");
+    add_variant_pair(256, 8, "t256_e8");
+    add_variant_pair(512, 8, "t512_e8");
+    if (variants.empty()) add_variant_pair(block_x, ept, "fallback");
 
     for (const auto& v : variants) {
       const std::string kname = intent.name + "__" + v.suffix;
@@ -543,9 +550,17 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         w.line("constexpr int EPT = " + std::to_string(v.ept) + ";");
         w.line("constexpr int N_ROUNDS = " + std::to_string(rounds) + ";");
         if (v.full_tile) {
-          w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p, (uint32_t)seed, Y, n_elements);");
+          if (v.vec4) {
+            w.line("intentir_cuda::dropout_f32_vec4<EPT, N_ROUNDS, true>(X, p, (uint32_t)seed, Y, n_elements);");
+          } else {
+            w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p, (uint32_t)seed, Y, n_elements);");
+          }
         } else {
-          w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, false>(X, p, (uint32_t)seed, Y, n_elements);");
+          if (v.vec4) {
+            w.line("intentir_cuda::dropout_f32_vec4<EPT, N_ROUNDS, false>(X, p, (uint32_t)seed, Y, n_elements);");
+          } else {
+            w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, false>(X, p, (uint32_t)seed, Y, n_elements);");
+          }
         }
         w.dedent();
         w.line("}");
@@ -558,9 +573,17 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         w.line("constexpr int EPT = " + std::to_string(v.ept) + ";");
         w.line("constexpr int N_ROUNDS = " + std::to_string(rounds) + ";");
         if (v.full_tile) {
-          w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p_ptr, seed_ptr, Y, n_elements);");
+          if (v.vec4) {
+            w.line("intentir_cuda::dropout_f32_vec4<EPT, N_ROUNDS, true>(X, p_ptr, seed_ptr, Y, n_elements);");
+          } else {
+            w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p_ptr, seed_ptr, Y, n_elements);");
+          }
         } else {
-          w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, false>(X, p_ptr, seed_ptr, Y, n_elements);");
+          if (v.vec4) {
+            w.line("intentir_cuda::dropout_f32_vec4<EPT, N_ROUNDS, false>(X, p_ptr, seed_ptr, Y, n_elements);");
+          } else {
+            w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, false>(X, p_ptr, seed_ptr, Y, n_elements);");
+          }
         }
         w.dedent();
         w.line("}");
