@@ -286,4 +286,137 @@ __device__ __forceinline__ void softmax_2d_last_f32_warp4(const float* __restric
   }
 }
 
+template <int WARPS_PER_BLOCK>
+__device__ __forceinline__ void softmax_2d_last_f32_warp_expbuf(const float* __restrict__ inp, float* __restrict__ out, int R, int C) {
+  static_assert(WARPS_PER_BLOCK > 0 && WARPS_PER_BLOCK <= 8, "softmax warp expbuf supports 1..8 warps per block");
+  constexpr int VEC = 4;
+  constexpr int MAX_C = 1024;
+  __shared__ __align__(16) float smem[WARPS_PER_BLOCK * MAX_C];
+
+  const int tid = (int)threadIdx.x;
+  const int warp = tid >> 5;
+  const int lane = tid & 31;
+  if (warp >= WARPS_PER_BLOCK) return;
+
+  const int r = (int)blockIdx.x * WARPS_PER_BLOCK + warp;
+  if (r >= R) return;
+  if (C > MAX_C) return;
+
+  float* __restrict__ buf = smem + (int)warp * MAX_C;
+  const float* __restrict__ in_row = inp + (size_t)r * (size_t)C;
+  float* __restrict__ out_row = out + (size_t)r * (size_t)C;
+
+  const int shift_in = (int)(((16u - (unsigned)((uintptr_t)in_row & 15u)) & 15u) >> 2);   // 0..3 floats
+  const int shift_out = (int)(((16u - (unsigned)((uintptr_t)out_row & 15u)) & 15u) >> 2);  // 0..3 floats
+  const int shift = (shift_in < C) ? shift_in : C;
+  const int len0 = C - shift;  // elements in the aligned suffix [shift, C)
+
+  float tmax = -INFINITY;
+  #pragma unroll 1
+  for (int base = lane * VEC; base < len0; base += 32 * VEC) {
+    const int in_base = shift + base;
+    if (base + (VEC - 1) < len0) {
+      const float4 x = *reinterpret_cast<const float4*>(in_row + (size_t)in_base);
+      tmax = fmaxf(tmax, x.x);
+      tmax = fmaxf(tmax, x.y);
+      tmax = fmaxf(tmax, x.z);
+      tmax = fmaxf(tmax, x.w);
+    } else {
+      #pragma unroll
+      for (int j = 0; j < VEC; ++j) {
+        const int c = base + j;
+        if (c < len0) {
+          const float v = intentir_ldg_f32(in_row + (size_t)(shift + c));
+          tmax = fmaxf(tmax, v);
+        }
+      }
+    }
+  }
+  if (lane < shift) {
+    const int c = lane;
+    const float v = intentir_ldg_f32(in_row + (size_t)c);
+    tmax = fmaxf(tmax, v);
+  }
+  const float mx = warp_allreduce_max(tmax);
+
+  float tsum = 0.0f;
+  #pragma unroll 1
+  for (int base = lane * VEC; base < len0; base += 32 * VEC) {
+    const int in_base = shift + base;
+    if (base + (VEC - 1) < len0) {
+      const float4 x = *reinterpret_cast<const float4*>(in_row + (size_t)in_base);
+      float4 e;
+      e.x = __expf(x.x - mx);
+      e.y = __expf(x.y - mx);
+      e.z = __expf(x.z - mx);
+      e.w = __expf(x.w - mx);
+      *reinterpret_cast<float4*>(buf + (size_t)base) = e;
+      tsum += (e.x + e.y + e.z + e.w);
+    } else {
+      #pragma unroll
+      for (int j = 0; j < VEC; ++j) {
+        const int c = base + j;
+        if (c < len0) {
+          const float v = intentir_ldg_f32(in_row + (size_t)(shift + c));
+          const float e = __expf(v - mx);
+          buf[(size_t)c] = e;
+          tsum += e;
+        }
+      }
+    }
+  }
+  if (lane < shift) {
+    const int c = lane;
+    const int buf_idx = len0 + c;
+    if (buf_idx < C) {
+      const float v = intentir_ldg_f32(in_row + (size_t)c);
+      const float e = __expf(v - mx);
+      buf[(size_t)buf_idx] = e;
+      tsum += e;
+    }
+  }
+  const float sum = warp_allreduce_sum(tsum);
+  const float inv = __fdividef(1.0f, sum);
+
+  if (shift_out == shift) {
+    #pragma unroll 1
+    for (int base = lane * VEC; base < len0; base += 32 * VEC) {
+      const int out_base = shift + base;
+      if (base + (VEC - 1) < len0) {
+        float4 e = *reinterpret_cast<const float4*>(buf + (size_t)base);
+        e.x *= inv;
+        e.y *= inv;
+        e.z *= inv;
+        e.w *= inv;
+        *reinterpret_cast<float4*>(out_row + (size_t)out_base) = e;
+      } else {
+        #pragma unroll
+        for (int j = 0; j < VEC; ++j) {
+          const int c = base + j;
+          if (c < len0) out_row[(size_t)(shift + c)] = buf[(size_t)c] * inv;
+        }
+      }
+    }
+    if (lane < shift) {
+      const int c = lane;
+      const int buf_idx = len0 + c;
+      if (buf_idx < C) out_row[(size_t)c] = buf[(size_t)buf_idx] * inv;
+    }
+  } else {
+    #pragma unroll 1
+    for (int base = lane * VEC; base < len0; base += 32 * VEC) {
+      #pragma unroll
+      for (int j = 0; j < VEC; ++j) {
+        const int c = base + j;
+        if (c < len0) out_row[(size_t)(shift + c)] = buf[(size_t)c] * inv;
+      }
+    }
+    if (lane < shift) {
+      const int c = lane;
+      const int buf_idx = len0 + c;
+      if (buf_idx < C) out_row[(size_t)c] = buf[(size_t)buf_idx] * inv;
+    }
+  }
+}
+
 }  // namespace intentir_cuda

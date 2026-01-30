@@ -3904,6 +3904,7 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      int64_t rows_per_block;
 	      bool vec4;
 	      bool warp4;
+	      bool warp_expbuf;
 	      std::string suffix;
 	    };
 	    std::vector<SoftmaxVariant> variants;
@@ -3920,9 +3921,9 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      if (vept <= 0 || vept > 32) return;
 	      if (vept > max_ept) return;
 	      for (const auto& v : variants) {
-	        if (!v.warp4 && !v.vec4 && v.threads == threads && v.ept == vept) return;
+	        if (!v.warp4 && !v.warp_expbuf && !v.vec4 && v.threads == threads && v.ept == vept) return;
 	      }
-	      variants.push_back(SoftmaxVariant{threads, vept, 0, 1, false, false, tag});
+	      variants.push_back(SoftmaxVariant{threads, vept, 0, 1, false, false, false, tag});
 	    };
 
 	    auto add_strided_variant = [&](int64_t threads, const std::string& tag) {
@@ -3938,7 +3939,7 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      for (const auto& v : variants) {
 	        if (v.vec4 && v.threads == threads) return;
 	      }
-	      variants.push_back(SoftmaxVariant{threads, 0, tiles, 1, true, false, tag});
+	      variants.push_back(SoftmaxVariant{threads, 0, tiles, 1, true, false, false, tag});
 	    };
 
 	    auto add_block_pair = [&](int64_t threads, const std::string& tag) {
@@ -3968,7 +3969,18 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      for (const auto& v : variants) {
 	        if (v.warp4 && v.rows_per_block == warps_per_block) return;
 	      }
-	      variants.push_back(SoftmaxVariant{threads, 0, 0, warps_per_block, false, true, tag});
+	      variants.push_back(SoftmaxVariant{threads, 0, 0, warps_per_block, false, true, false, tag});
+	    };
+
+	    auto add_warp_expbuf_variant = [&](int64_t warps_per_block, const std::string& tag) {
+	      if (warps_per_block <= 0) return;
+	      if (warps_per_block > 8) return;
+	      const int64_t threads = norm_threads(warps_per_block * 32);
+	      if (threads != warps_per_block * 32) return;
+	      for (const auto& v : variants) {
+	        if (v.warp_expbuf && v.rows_per_block == warps_per_block) return;
+	      }
+	      variants.push_back(SoftmaxVariant{threads, 0, 0, warps_per_block, false, false, true, tag});
 	    };
 
 	    // Evidence-guided tiny candidate set: seed + a few standard warp-aligned sizes.
@@ -3990,6 +4002,8 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	    // Warp-specialized vectorized variant (SM80+ friendly, avoids block-wide sync).
 	    add_warp4_variant(4, "warp4_w4");
 	    add_warp4_variant(8, "warp4_w8");
+	    add_warp_expbuf_variant(4, "warpexp_w4");
+	    add_warp_expbuf_variant(8, "warpexp_w8");
 	    if (variants.empty()) add_block_pair(block_threads, "fallback");
 
 	    w.line("static const char* intentir_softmax_variant_tags[] = {");
@@ -4011,10 +4025,13 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      if (v.warp4) {
 	        w.line("constexpr int WARPS_PER_BLOCK = " + std::to_string(v.rows_per_block) + ";");
 	        w.line("intentir_cuda::softmax_2d_last_f32_warp4<WARPS_PER_BLOCK>(" + in_name + ", " + out_name + ", R, C);");
+	      } else if (v.warp_expbuf) {
+	        w.line("constexpr int WARPS_PER_BLOCK = " + std::to_string(v.rows_per_block) + ";");
+	        w.line("intentir_cuda::softmax_2d_last_f32_warp_expbuf<WARPS_PER_BLOCK>(" + in_name + ", " + out_name + ", R, C);");
 	      } else if (v.vec4) {
 	        w.line("constexpr int BLOCK_THREADS = " + std::to_string(v.threads) + ";");
 	        w.line("constexpr int TILES = " + std::to_string(v.tiles) + ";");
-	        w.line("intentir_cuda::softmax_2d_last_f32_vec4<BLOCK_THREADS, TILES>(" + in_name + ", " + out_name + ", R, C);");
+		        w.line("intentir_cuda::softmax_2d_last_f32_vec4<BLOCK_THREADS, TILES>(" + in_name + ", " + out_name + ", R, C);");
 	      } else {
 	        w.line("constexpr int BLOCK_THREADS = " + std::to_string(v.threads) + ";");
 	        w.line("constexpr int EPT = " + std::to_string(v.ept) + ";");
