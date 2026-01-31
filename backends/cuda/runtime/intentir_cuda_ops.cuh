@@ -120,6 +120,52 @@ __device__ __forceinline__ uint32_t intentir_philox_randint_u32_rounds(uint64_t 
   return c0;
 }
 
+struct intentir_uint4 {
+  uint32_t x;
+  uint32_t y;
+  uint32_t z;
+  uint32_t w;
+};
+
+// Compute 4 independent Philox32 RNG outputs for counters:
+//   c0_base + {0,1,2,3}
+// This preserves the per-element mapping of `intentir_philox_randint_u32_rounds(seed, c0)`,
+// but reduces overhead vs calling it 4x by sharing the key schedule updates.
+template <int N_ROUNDS>
+__device__ __forceinline__ intentir_uint4 intentir_philox_randint4_u32_rounds(uint64_t seed, uint32_t c0_base) {
+  static_assert(N_ROUNDS > 0 && N_ROUNDS <= 10, "intentir_philox_randint4_u32_rounds supports 1..10 rounds");
+  uint32_t c0[4] = {c0_base, c0_base + 1u, c0_base + 2u, c0_base + 3u};
+  uint32_t c1[4] = {0u, 0u, 0u, 0u};
+  uint32_t c2[4] = {0u, 0u, 0u, 0u};
+  uint32_t c3[4] = {0u, 0u, 0u, 0u};
+  uint32_t k0 = (uint32_t)(seed & 0xFFFFFFFFu);
+  uint32_t k1 = (uint32_t)((seed >> 32) & 0xFFFFFFFFu);
+  const uint32_t PHILOX_KEY_A = 0x9E3779B9u;
+  const uint32_t PHILOX_KEY_B = 0xBB67AE85u;
+  const uint32_t PHILOX_ROUND_A = 0xD2511F53u;
+  const uint32_t PHILOX_ROUND_B = 0xCD9E8D57u;
+
+  #pragma unroll
+  for (int r = 0; r < N_ROUNDS; ++r) {
+    #pragma unroll
+    for (int i = 0; i < 4; ++i) {
+      const uint32_t _c0 = c0[i];
+      const uint32_t _c2 = c2[i];
+      const uint32_t hi0 = __umulhi(PHILOX_ROUND_A, _c0);
+      const uint32_t hi1 = __umulhi(PHILOX_ROUND_B, _c2);
+      const uint32_t lo0 = (uint32_t)(PHILOX_ROUND_A * _c0);
+      const uint32_t lo1 = (uint32_t)(PHILOX_ROUND_B * _c2);
+      c0[i] = hi1 ^ c1[i] ^ k0;
+      c2[i] = hi0 ^ c3[i] ^ k1;
+      c1[i] = lo1;
+      c3[i] = lo0;
+    }
+    k0 += PHILOX_KEY_A;
+    k1 += PHILOX_KEY_B;
+  }
+  return intentir_uint4{c0[0], c0[1], c0[2], c0[3]};
+}
+
 __device__ __forceinline__ uint32_t intentir_philox_randint_u32(uint64_t seed, uint32_t c0, int n_rounds) {
   uint32_t c1 = 0u, c2 = 0u, c3 = 0u;
   uint32_t k0 = (uint32_t)(seed & 0xFFFFFFFFu);

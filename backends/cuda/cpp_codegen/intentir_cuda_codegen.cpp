@@ -485,11 +485,13 @@ json emit_dropout(const Intent& intent, const json& bindings) {
 
   if (enable_host_dispatch) {
     host_launch = true;
+    const bool enable_vec4 = binding_int(bindings, "CUDA_DROPOUT_VEC4").value_or(0) != 0;
     struct DropoutVariant {
       int64_t threads;
       int ept;
       int64_t grid_x;
       bool full_tile;
+      bool vec4;
       std::string suffix;
     };
     std::vector<DropoutVariant> variants;
@@ -500,37 +502,43 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       if (t > 1024) t = 1024;
       return t;
     };
-    auto add_variant = [&](int64_t threads, int vept, const std::string& tag) {
+    auto add_variant = [&](int64_t threads, int vept, bool vec4, const std::string& tag) {
       threads = norm_threads(threads);
       if (vept <= 0) vept = 1;
       if (vept > 8) vept = 8;
+      if (vec4 && ((vept % 4) != 0)) return;
       const int64_t tile = threads * (int64_t)vept;
       if (tile <= 0) return;
       const int64_t gx = (n + tile - 1) / tile;
       const bool full = ((n % tile) == 0);
       for (const auto& e : variants) {
-        if (e.threads == threads && e.ept == vept) return;
+        if (e.threads == threads && e.ept == vept && e.vec4 == vec4) return;
       }
-      variants.push_back(DropoutVariant{threads, vept, gx, full, tag});
+      variants.push_back(DropoutVariant{threads, vept, gx, full, vec4, tag});
+    };
+
+    auto add_variant_pair = [&](int64_t threads, int vept, const std::string& tag) {
+      add_variant(threads, vept, /*vec4=*/false, tag);
+      if (enable_vec4 && ((vept % 4) == 0)) add_variant(threads, vept, /*vec4=*/true, tag + "_v4");
     };
 
     // Evidence-guided candidate set: keep it small but span a few occupancy
     // regimes (threads) and ILP levels (elements-per-thread). The dispatcher
     // microbench picks the best once and caches it.
-    add_variant(block_x, ept, "seed");
-    add_variant(128, 1, "t128_e1");
-    add_variant(256, 1, "t256_e1");
-    add_variant(512, 1, "t512_e1");
-    add_variant(128, 2, "t128_e2");
-    add_variant(256, 2, "t256_e2");
-    add_variant(512, 2, "t512_e2");
-    add_variant(128, 4, "t128_e4");
-    add_variant(256, 4, "t256_e4");
-    add_variant(512, 4, "t512_e4");
-    add_variant(128, 8, "t128_e8");
-    add_variant(256, 8, "t256_e8");
-    add_variant(512, 8, "t512_e8");
-    if (variants.empty()) add_variant(block_x, ept, "fallback");
+    add_variant_pair(block_x, ept, "seed");
+    add_variant_pair(128, 1, "t128_e1");
+    add_variant_pair(256, 1, "t256_e1");
+    add_variant_pair(512, 1, "t512_e1");
+    add_variant_pair(128, 2, "t128_e2");
+    add_variant_pair(256, 2, "t256_e2");
+    add_variant_pair(512, 2, "t512_e2");
+    add_variant_pair(128, 4, "t128_e4");
+    add_variant_pair(256, 4, "t256_e4");
+    add_variant_pair(512, 4, "t512_e4");
+    add_variant_pair(128, 8, "t128_e8");
+    add_variant_pair(256, 8, "t256_e8");
+    add_variant_pair(512, 8, "t512_e8");
+    if (variants.empty()) add_variant_pair(block_x, ept, "fallback");
 
     for (const auto& v : variants) {
       const std::string kname = intent.name + "__" + v.suffix;
@@ -543,9 +551,17 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         w.line("constexpr int EPT = " + std::to_string(v.ept) + ";");
         w.line("constexpr int N_ROUNDS = " + std::to_string(rounds) + ";");
         if (v.full_tile) {
-          w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p, (uint32_t)seed, Y, n_elements);");
+          if (v.vec4) {
+            w.line("intentir_cuda::dropout_f32_vec4<EPT, N_ROUNDS, true>(X, p, (uint32_t)seed, Y, n_elements);");
+          } else {
+            w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p, (uint32_t)seed, Y, n_elements);");
+          }
         } else {
-          w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, false>(X, p, (uint32_t)seed, Y, n_elements);");
+          if (v.vec4) {
+            w.line("intentir_cuda::dropout_f32_vec4<EPT, N_ROUNDS, false>(X, p, (uint32_t)seed, Y, n_elements);");
+          } else {
+            w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, false>(X, p, (uint32_t)seed, Y, n_elements);");
+          }
         }
         w.dedent();
         w.line("}");
@@ -558,9 +574,17 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         w.line("constexpr int EPT = " + std::to_string(v.ept) + ";");
         w.line("constexpr int N_ROUNDS = " + std::to_string(rounds) + ";");
         if (v.full_tile) {
-          w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p_ptr, seed_ptr, Y, n_elements);");
+          if (v.vec4) {
+            w.line("intentir_cuda::dropout_f32_vec4<EPT, N_ROUNDS, true>(X, p_ptr, seed_ptr, Y, n_elements);");
+          } else {
+            w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p_ptr, seed_ptr, Y, n_elements);");
+          }
         } else {
-          w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, false>(X, p_ptr, seed_ptr, Y, n_elements);");
+          if (v.vec4) {
+            w.line("intentir_cuda::dropout_f32_vec4<EPT, N_ROUNDS, false>(X, p_ptr, seed_ptr, Y, n_elements);");
+          } else {
+            w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, false>(X, p_ptr, seed_ptr, Y, n_elements);");
+          }
         }
         w.dedent();
         w.line("}");
@@ -597,8 +621,11 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.line("cudaEvent_t end = nullptr;");
       w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
-      w.line("constexpr int warm = 3;");
-      w.line("constexpr int iters = 50;");
+      // More robust selection to avoid picking a bad variant on GPUs with
+      // aggressive clock/thermal dynamics (e.g., small kernels on Ada/Hopper/Blackwell).
+      w.line("constexpr int warm = 2;");
+      w.line("constexpr int iters = 100;");
+      w.line("constexpr int reps = 3;");
       w.line("float ms_acc[" + std::to_string(variants.size()) + "] = {0};");
       // Forward pass then reverse pass to reduce clock/thermal order bias.
       for (size_t i = 0; i < variants.size(); ++i) {
@@ -608,6 +635,9 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         w.indent();
         w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
         w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
+        w.line("float m0 = 0.0f, m1 = 0.0f, m2 = 0.0f;");
+        w.line("for (int rep = 0; rep < reps; ++rep) {");
+        w.indent();
         w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p, seed, Y, n_elements);");
         w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
         w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p, seed, Y, n_elements);");
@@ -615,7 +645,13 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
         w.line("float ms = 0.0f;");
         w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
-        w.line("ms_acc[" + std::to_string(i) + "] += ms;");
+        w.line("if (rep == 0) m0 = ms; else if (rep == 1) m1 = ms; else m2 = ms;");
+        w.dedent();
+        w.line("}");
+        w.line("const float mn = fminf(m0, fminf(m1, m2));");
+        w.line("const float mx = fmaxf(m0, fmaxf(m1, m2));");
+        w.line("const float med = (m0 + m1 + m2) - mn - mx;");
+        w.line("ms_acc[" + std::to_string(i) + "] += med;");
         w.dedent();
         w.line("}");
       }
@@ -626,6 +662,9 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         w.indent();
         w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
         w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
+        w.line("float m0 = 0.0f, m1 = 0.0f, m2 = 0.0f;");
+        w.line("for (int rep = 0; rep < reps; ++rep) {");
+        w.indent();
         w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p, seed, Y, n_elements);");
         w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
         w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p, seed, Y, n_elements);");
@@ -633,7 +672,13 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
         w.line("float ms = 0.0f;");
         w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
-        w.line("ms_acc[" + std::to_string(ri) + "] += ms;");
+        w.line("if (rep == 0) m0 = ms; else if (rep == 1) m1 = ms; else m2 = ms;");
+        w.dedent();
+        w.line("}");
+        w.line("const float mn = fminf(m0, fminf(m1, m2));");
+        w.line("const float mx = fmaxf(m0, fmaxf(m1, m2));");
+        w.line("const float med = (m0 + m1 + m2) - mn - mx;");
+        w.line("ms_acc[" + std::to_string(ri) + "] += med;");
         w.dedent();
         w.line("}");
       }
@@ -710,8 +755,11 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.line("cudaEvent_t end = nullptr;");
       w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
-      w.line("constexpr int warm = 3;");
-      w.line("constexpr int iters = 50;");
+      // More robust selection to avoid picking a bad variant on GPUs with
+      // aggressive clock/thermal dynamics (e.g., small kernels on Ada/Hopper/Blackwell).
+      w.line("constexpr int warm = 2;");
+      w.line("constexpr int iters = 100;");
+      w.line("constexpr int reps = 3;");
       w.line("float ms_acc[" + std::to_string(variants.size()) + "] = {0};");
       // Forward pass then reverse pass to reduce clock/thermal order bias.
       for (size_t i = 0; i < variants.size(); ++i) {
@@ -721,6 +769,9 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         w.indent();
         w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
         w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
+        w.line("float m0 = 0.0f, m1 = 0.0f, m2 = 0.0f;");
+        w.line("for (int rep = 0; rep < reps; ++rep) {");
+        w.indent();
         w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
         w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
         w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
@@ -728,7 +779,13 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
         w.line("float ms = 0.0f;");
         w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
-        w.line("ms_acc[" + std::to_string(i) + "] += ms;");
+        w.line("if (rep == 0) m0 = ms; else if (rep == 1) m1 = ms; else m2 = ms;");
+        w.dedent();
+        w.line("}");
+        w.line("const float mn = fminf(m0, fminf(m1, m2));");
+        w.line("const float mx = fmaxf(m0, fmaxf(m1, m2));");
+        w.line("const float med = (m0 + m1 + m2) - mn - mx;");
+        w.line("ms_acc[" + std::to_string(i) + "] += med;");
         w.dedent();
         w.line("}");
       }
@@ -739,6 +796,9 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         w.indent();
         w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
         w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
+        w.line("float m0 = 0.0f, m1 = 0.0f, m2 = 0.0f;");
+        w.line("for (int rep = 0; rep < reps; ++rep) {");
+        w.indent();
         w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
         w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
         w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
@@ -746,7 +806,13 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
         w.line("float ms = 0.0f;");
         w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
-        w.line("ms_acc[" + std::to_string(ri) + "] += ms;");
+        w.line("if (rep == 0) m0 = ms; else if (rep == 1) m1 = ms; else m2 = ms;");
+        w.dedent();
+        w.line("}");
+        w.line("const float mn = fminf(m0, fminf(m1, m2));");
+        w.line("const float mx = fmaxf(m0, fmaxf(m1, m2));");
+        w.line("const float med = (m0 + m1 + m2) - mn - mx;");
+        w.line("ms_acc[" + std::to_string(ri) + "] += med;");
         w.dedent();
         w.line("}");
       }
