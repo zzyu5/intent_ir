@@ -134,10 +134,16 @@ struct intentir_uint4 {
 template <int N_ROUNDS>
 __device__ __forceinline__ intentir_uint4 intentir_philox_randint4_u32_rounds(uint64_t seed, uint32_t c0_base) {
   static_assert(N_ROUNDS > 0 && N_ROUNDS <= 10, "intentir_philox_randint4_u32_rounds supports 1..10 rounds");
-  uint32_t c0[4] = {c0_base, c0_base + 1u, c0_base + 2u, c0_base + 3u};
-  uint32_t c1[4] = {0u, 0u, 0u, 0u};
-  uint32_t c2[4] = {0u, 0u, 0u, 0u};
-  uint32_t c3[4] = {0u, 0u, 0u, 0u};
+  // Use scalar lanes instead of small arrays: this typically compiles to fewer
+  // local-memory accesses and gives NVCC more room for register allocation /
+  // instruction scheduling (important for RNG-heavy kernels like dropout).
+  uint32_t c0_0 = c0_base;
+  uint32_t c0_1 = c0_base + 1u;
+  uint32_t c0_2 = c0_base + 2u;
+  uint32_t c0_3 = c0_base + 3u;
+  uint32_t c1_0 = 0u, c1_1 = 0u, c1_2 = 0u, c1_3 = 0u;
+  uint32_t c2_0 = 0u, c2_1 = 0u, c2_2 = 0u, c2_3 = 0u;
+  uint32_t c3_0 = 0u, c3_1 = 0u, c3_2 = 0u, c3_3 = 0u;
   uint32_t k0 = (uint32_t)(seed & 0xFFFFFFFFu);
   uint32_t k1 = (uint32_t)((seed >> 32) & 0xFFFFFFFFu);
   const uint32_t PHILOX_KEY_A = 0x9E3779B9u;
@@ -145,25 +151,31 @@ __device__ __forceinline__ intentir_uint4 intentir_philox_randint4_u32_rounds(ui
   const uint32_t PHILOX_ROUND_A = 0xD2511F53u;
   const uint32_t PHILOX_ROUND_B = 0xCD9E8D57u;
 
+#define INTENTIR_PHILOX_ROUND_STEP(c0, c1, c2, c3)           \
+  do {                                                      \
+    const uint32_t hi0 = __umulhi(PHILOX_ROUND_A, (c0));     \
+    const uint32_t hi1 = __umulhi(PHILOX_ROUND_B, (c2));     \
+    const uint32_t lo0 = (uint32_t)(PHILOX_ROUND_A * (c0));  \
+    const uint32_t lo1 = (uint32_t)(PHILOX_ROUND_B * (c2));  \
+    (c0) = hi1 ^ (c1) ^ k0;                                  \
+    (c2) = hi0 ^ (c3) ^ k1;                                  \
+    (c1) = lo1;                                              \
+    (c3) = lo0;                                              \
+  } while (0)
+
   #pragma unroll
   for (int r = 0; r < N_ROUNDS; ++r) {
-    #pragma unroll
-    for (int i = 0; i < 4; ++i) {
-      const uint32_t _c0 = c0[i];
-      const uint32_t _c2 = c2[i];
-      const uint32_t hi0 = __umulhi(PHILOX_ROUND_A, _c0);
-      const uint32_t hi1 = __umulhi(PHILOX_ROUND_B, _c2);
-      const uint32_t lo0 = (uint32_t)(PHILOX_ROUND_A * _c0);
-      const uint32_t lo1 = (uint32_t)(PHILOX_ROUND_B * _c2);
-      c0[i] = hi1 ^ c1[i] ^ k0;
-      c2[i] = hi0 ^ c3[i] ^ k1;
-      c1[i] = lo1;
-      c3[i] = lo0;
-    }
+    INTENTIR_PHILOX_ROUND_STEP(c0_0, c1_0, c2_0, c3_0);
+    INTENTIR_PHILOX_ROUND_STEP(c0_1, c1_1, c2_1, c3_1);
+    INTENTIR_PHILOX_ROUND_STEP(c0_2, c1_2, c2_2, c3_2);
+    INTENTIR_PHILOX_ROUND_STEP(c0_3, c1_3, c2_3, c3_3);
     k0 += PHILOX_KEY_A;
     k1 += PHILOX_KEY_B;
   }
-  return intentir_uint4{c0[0], c0[1], c0[2], c0[3]};
+
+#undef INTENTIR_PHILOX_ROUND_STEP
+
+  return intentir_uint4{c0_0, c0_1, c0_2, c0_3};
 }
 
 __device__ __forceinline__ uint32_t intentir_philox_randint_u32(uint64_t seed, uint32_t c0, int n_rounds) {
