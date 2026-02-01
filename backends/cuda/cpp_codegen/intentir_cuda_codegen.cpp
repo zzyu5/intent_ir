@@ -1406,14 +1406,41 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       add_geom(base_tw_m, base_tw_n, 1, 2, /*is_base_tile=*/true, base_tile_tag + "_fm1_fn2");
       add_geom(base_tw_m, base_tw_n, 2, 2, /*is_base_tile=*/true, base_tile_tag + "_fm2_fn2");
 
-      auto add_tile_variant = [&](int64_t tw_m, int64_t tw_n) {
+      auto add_tile_family = [&](int64_t tw_m, int64_t tw_n, bool is_base_tile, bool rich) {
+        if (tw_m <= 0 || tw_n <= 0) return;
+        if (!rich) {
+          add_geom(tw_m, tw_n, 1, 1, /*is_base_tile=*/is_base_tile, tile_tag(tw_m, tw_n) + "_fm1_fn1");
+          return;
+        }
+        const std::string tag = tile_tag(tw_m, tw_n);
+        add_geom(tw_m, tw_n, 1, 1, /*is_base_tile=*/is_base_tile, tag + "_fm1_fn1");
+        add_geom(tw_m, tw_n, 2, 1, /*is_base_tile=*/is_base_tile, tag + "_fm2_fn1");
+        add_geom(tw_m, tw_n, 1, 2, /*is_base_tile=*/is_base_tile, tag + "_fm1_fn2");
+        add_geom(tw_m, tw_n, 2, 2, /*is_base_tile=*/is_base_tile, tag + "_fm2_fn2");
+      };
+
+      auto add_neighbor_tile = [&](int64_t tw_m, int64_t tw_n) {
         if (tw_m <= 0 || tw_n <= 0) return;
         if (tw_m == base_tw_m && tw_n == base_tw_n) return;
-        add_geom(tw_m, tw_n, 1, 1, /*is_base_tile=*/false, tile_tag(tw_m, tw_n) + "_fm1_fn1");
+        // For downscaled tiles, keep only the simplest frag config; for upscaled tiles, include a small
+        // family so the dispatcher can trade WARPS vs FRAG shape.
+        const bool rich = (tw_m > base_tw_m) || (tw_n > base_tw_n);
+        add_tile_family(tw_m, tw_n, /*is_base_tile=*/false, rich);
       };
-      if (base_tw_m > 1) add_tile_variant(base_tw_m / 2, base_tw_n);
-      if (base_tw_n > 1) add_tile_variant(base_tw_m, base_tw_n / 2);
-      if (base_tw_m > 1 && base_tw_n > 1) add_tile_variant(base_tw_m / 2, base_tw_n / 2);
+
+      // Neighborhood around the schedule-derived base tile:
+      //  - downscale (smaller tiles) helps small problems / occupancy
+      //  - upscale (larger tiles) helps newer GPUs where a bigger CTA can be profitable
+      if (base_tw_m > 1) add_neighbor_tile(base_tw_m / 2, base_tw_n);
+      if (base_tw_n > 1) add_neighbor_tile(base_tw_m, base_tw_n / 2);
+      if (base_tw_m > 1 && base_tw_n > 1) add_neighbor_tile(base_tw_m / 2, base_tw_n / 2);
+
+      if (base_tw_m * 2 <= 8) add_neighbor_tile(base_tw_m * 2, base_tw_n);
+      if (base_tw_n * 2 <= 8) add_neighbor_tile(base_tw_m, base_tw_n * 2);
+      if (base_tw_m * 2 <= 8 && base_tw_n * 2 <= 8) add_neighbor_tile(base_tw_m * 2, base_tw_n * 2);
+
+      // Aspect swap candidate (often helps when schedule tile_m/tile_n is imbalanced).
+      if (base_tw_m != base_tw_n) add_neighbor_tile(base_tw_n, base_tw_m);
       if (geoms.empty()) geoms.push_back(WmmaGeom{wmma_warps_m, wmma_warps_n, wmma_frag_m, wmma_frag_n, true, "base"});
 
       for (const auto& g : geoms) {
