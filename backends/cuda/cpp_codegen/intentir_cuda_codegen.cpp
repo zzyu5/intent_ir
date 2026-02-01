@@ -1226,11 +1226,13 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     const bool specialize_full_tile = specialize_dims && ((M % wmma_tile_m) == 0) && ((N % wmma_tile_n) == 0) && ((K % wmma_stage_k) == 0) &&
                                       ((K & 3) == 0) && ((N & 3) == 0) && (!wmma_disable_fastpath);
 
-    const std::string wmma_cp_a_enum = (wmma_cp_a_policy == "ca") ? "intentir_cuda::CpAsyncPolicy::CA" : "intentir_cuda::CpAsyncPolicy::CG";
-    const std::string wmma_cp_b_enum = (wmma_cp_b_policy == "ca") ? "intentir_cuda::CpAsyncPolicy::CA" : "intentir_cuda::CpAsyncPolicy::CG";
-    const std::string use_cp_async_const = wmma_use_cp_async ? "true" : "false";
-    const std::string enable_fastpath_const = wmma_disable_fastpath ? "false" : "true";
-    const std::string specialize_full_tile_const = specialize_full_tile ? "true" : "false";
+	    const std::string wmma_cp_a_enum = (wmma_cp_a_policy == "ca") ? "intentir_cuda::CpAsyncPolicy::CA" : "intentir_cuda::CpAsyncPolicy::CG";
+	    const std::string wmma_cp_b_enum = (wmma_cp_b_policy == "ca") ? "intentir_cuda::CpAsyncPolicy::CA" : "intentir_cuda::CpAsyncPolicy::CG";
+	    const int wmma_cp_a_int = (wmma_cp_a_policy == "ca") ? 0 : 1;
+	    const int wmma_cp_b_int = (wmma_cp_b_policy == "ca") ? 0 : 1;
+	    const std::string use_cp_async_const = wmma_use_cp_async ? "true" : "false";
+	    const std::string enable_fastpath_const = wmma_disable_fastpath ? "false" : "true";
+	    const std::string specialize_full_tile_const = specialize_full_tile ? "true" : "false";
 
     w.line("#include <cuda_runtime.h>");
     w.line("#include <math.h>");
@@ -1239,21 +1241,25 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     w.line("#include \"kernels/wmma_matmul.cuh\"");
     w.blank();
     emit_selected_api(w);
-    struct WmmaVariant {
-      int64_t warps_m;
-      int64_t warps_n;
-      int64_t frag_m;
-      int64_t frag_n;
-      int64_t tile_m;
-      int64_t tile_n;
-      int64_t stage_k;
-      int64_t pipe_stages;
-      bool use_cp_async;
-      bool specialize_full_tile;
-      int64_t shared_bytes;
-      int64_t threads;
-      std::string suffix;
-    };
+	    struct WmmaVariant {
+	      int64_t warps_m;
+	      int64_t warps_n;
+	      int64_t frag_m;
+	      int64_t frag_n;
+	      int64_t tile_m;
+	      int64_t tile_n;
+	      int64_t stage_k;
+	      int64_t pipe_stages;
+	      bool use_cp_async;
+	      bool specialize_full_tile;
+	      int64_t shared_bytes;
+	      int64_t threads;
+	      int64_t as_pad;
+	      int64_t bs_pad;
+	      int cp_a_policy;
+	      int cp_b_policy;
+	      std::string suffix;
+	    };
 
     const bool enable_host_dispatch =
         want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims && (!m_is_tensor) && (!n_is_tensor) && (!k_is_tensor);
@@ -1262,41 +1268,52 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     const int64_t tile_warps_m = wmma_warps_m * wmma_frag_m;
     const int64_t tile_warps_n = wmma_warps_n * wmma_frag_n;
 
-    auto make_variant = [&](int64_t warps_m,
-                            int64_t warps_n,
-                            int64_t frag_m,
-                            int64_t frag_n,
-                            int64_t stage_k,
-                            int64_t pipe_stages,
-                            bool use_cp_async,
-                            const std::string& suffix) -> std::optional<WmmaVariant> {
-      if (warps_m <= 0 || warps_n <= 0) return std::nullopt;
-      if (frag_m <= 0 || frag_n <= 0) return std::nullopt;
-      if (!(frag_m == 1 || frag_m == 2)) return std::nullopt;
-      if (!(frag_n == 1 || frag_n == 2)) return std::nullopt;
+	    auto make_variant = [&](int64_t warps_m,
+	                            int64_t warps_n,
+	                            int64_t frag_m,
+	                            int64_t frag_n,
+	                            int64_t stage_k,
+	                            int64_t pipe_stages,
+	                            bool use_cp_async,
+	                            int64_t as_pad,
+	                            int64_t bs_pad,
+	                            int cp_a_policy,
+	                            int cp_b_policy,
+	                            const std::string& suffix) -> std::optional<WmmaVariant> {
+	      if (warps_m <= 0 || warps_n <= 0) return std::nullopt;
+	      if (frag_m <= 0 || frag_n <= 0) return std::nullopt;
+	      if (!(frag_m == 1 || frag_m == 2)) return std::nullopt;
+	      if (!(frag_n == 1 || frag_n == 2)) return std::nullopt;
       if (warps_m > 4 || warps_n > 8) return std::nullopt;
       if ((warps_m * warps_n) > 16) return std::nullopt;
       const int64_t threads = 32 * warps_m * warps_n;
       if (threads <= 0 || threads > 1024) return std::nullopt;
-      const int64_t tile_m = 16 * warps_m * frag_m;
-      const int64_t tile_n = 16 * warps_n * frag_n;
-      if (stage_k <= 0) return std::nullopt;
-      if ((stage_k % 8) != 0) return std::nullopt;
-      if ((K % stage_k) != 0) return std::nullopt;
-      if (use_cp_async) {
-        if (!(pipe_stages == 2 || pipe_stages == 3)) return std::nullopt;
-      } else {
-        pipe_stages = 1;
-      }
-      const int64_t as_ld = stage_k + wmma_as_pad;
-      const int64_t bs_ld = tile_n + wmma_bs_pad;
-      const int64_t smem = 4LL * (pipe_stages * tile_m * as_ld + pipe_stages * stage_k * bs_ld);
-      if (smem > max_smem_optin) return std::nullopt;
-      const bool specialize_full_tile_v = specialize_dims && ((M % tile_m) == 0) && ((N % tile_n) == 0) && ((K % stage_k) == 0) && ((K & 3) == 0) &&
-                                          ((N & 3) == 0) && (!wmma_disable_fastpath);
-      WmmaVariant v{warps_m, warps_n, frag_m, frag_n, tile_m, tile_n, stage_k, pipe_stages, use_cp_async, specialize_full_tile_v, smem, threads, suffix};
-      return v;
-    };
+	      const int64_t tile_m = 16 * warps_m * frag_m;
+	      const int64_t tile_n = 16 * warps_n * frag_n;
+	      if (stage_k <= 0) return std::nullopt;
+	      if ((stage_k % 8) != 0) return std::nullopt;
+	      if ((K % stage_k) != 0) return std::nullopt;
+	      if (as_pad < 0 || bs_pad < 0) return std::nullopt;
+	      if (as_pad > 32 || bs_pad > 32) return std::nullopt;
+	      if ((as_pad % 4) != 0) return std::nullopt;
+	      if ((bs_pad % 4) != 0) return std::nullopt;
+	      if (!(cp_a_policy == 0 || cp_a_policy == 1)) return std::nullopt;
+	      if (!(cp_b_policy == 0 || cp_b_policy == 1)) return std::nullopt;
+	      if (use_cp_async) {
+	        if (!(pipe_stages == 2 || pipe_stages == 3)) return std::nullopt;
+	      } else {
+	        pipe_stages = 1;
+	      }
+	      const int64_t as_ld = stage_k + as_pad;
+	      const int64_t bs_ld = tile_n + bs_pad;
+	      const int64_t smem = 4LL * (pipe_stages * tile_m * as_ld + pipe_stages * stage_k * bs_ld);
+	      if (smem > max_smem_optin) return std::nullopt;
+	      const bool specialize_full_tile_v = specialize_dims && ((M % tile_m) == 0) && ((N % tile_n) == 0) && ((K % stage_k) == 0) && ((K & 3) == 0) &&
+	                                          ((N & 3) == 0) && (!wmma_disable_fastpath);
+	      WmmaVariant v{warps_m, warps_n, frag_m, frag_n, tile_m, tile_n, stage_k, pipe_stages, use_cp_async, specialize_full_tile_v, smem, threads,
+	                    as_pad, bs_pad, cp_a_policy, cp_b_policy, suffix};
+	      return v;
+	    };
 
     if (!enable_host_dispatch) {
       // Single-kernel codegen path.
@@ -1341,27 +1358,44 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       w.dedent();
       w.line("}");
       w.blank();
-    } else {
-      host_launch = true;
-      // Multi-version codegen + host dispatcher (paper-friendly: evidence-guided small search).
-      std::vector<WmmaVariant> variants;
-      auto add_variant = [&](int64_t warps_m,
-                             int64_t warps_n,
-                             int64_t frag_m,
-                             int64_t frag_n,
-                             int64_t stage_k,
-                             int64_t pipe_stages,
-                             bool use_cp_async,
-                             const std::string& suffix) {
-        auto v = make_variant(warps_m, warps_n, frag_m, frag_n, stage_k, pipe_stages, use_cp_async, suffix);
-        if (!v.has_value()) return;
-        for (const auto& existing : variants) {
-          if (existing.warps_m == v->warps_m && existing.warps_n == v->warps_n && existing.frag_m == v->frag_m && existing.frag_n == v->frag_n &&
-              existing.stage_k == v->stage_k && existing.pipe_stages == v->pipe_stages && existing.use_cp_async == v->use_cp_async)
-            return;
-        }
-        variants.push_back(*v);
-      };
+	    } else {
+	      host_launch = true;
+	      // Multi-version codegen + host dispatcher (paper-friendly: evidence-guided small search).
+	      std::vector<WmmaVariant> variants;
+	      auto add_variant_ex = [&](int64_t warps_m,
+	                                int64_t warps_n,
+	                                int64_t frag_m,
+	                                int64_t frag_n,
+	                                int64_t stage_k,
+	                                int64_t pipe_stages,
+	                                bool use_cp_async,
+	                                int64_t as_pad,
+	                                int64_t bs_pad,
+	                                int cp_a_policy,
+	                                int cp_b_policy,
+	                                const std::string& suffix) {
+	        auto v =
+	            make_variant(warps_m, warps_n, frag_m, frag_n, stage_k, pipe_stages, use_cp_async, as_pad, bs_pad, cp_a_policy, cp_b_policy, suffix);
+	        if (!v.has_value()) return;
+	        for (const auto& existing : variants) {
+	          if (existing.warps_m == v->warps_m && existing.warps_n == v->warps_n && existing.frag_m == v->frag_m && existing.frag_n == v->frag_n &&
+	              existing.stage_k == v->stage_k && existing.pipe_stages == v->pipe_stages && existing.use_cp_async == v->use_cp_async &&
+	              existing.as_pad == v->as_pad && existing.bs_pad == v->bs_pad && existing.cp_a_policy == v->cp_a_policy && existing.cp_b_policy == v->cp_b_policy)
+	            return;
+	        }
+	        variants.push_back(*v);
+	      };
+	      auto add_variant = [&](int64_t warps_m,
+	                             int64_t warps_n,
+	                             int64_t frag_m,
+	                             int64_t frag_n,
+	                             int64_t stage_k,
+	                             int64_t pipe_stages,
+	                             bool use_cp_async,
+	                             const std::string& suffix) {
+	        add_variant_ex(warps_m, warps_n, frag_m, frag_n, stage_k, pipe_stages, use_cp_async, wmma_as_pad, wmma_bs_pad, wmma_cp_a_int, wmma_cp_b_int,
+	                       suffix);
+	      };
 
       struct WmmaGeom {
         int64_t warps_m;
@@ -1443,23 +1477,61 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       if (base_tw_m != base_tw_n) add_neighbor_tile(base_tw_n, base_tw_m);
       if (geoms.empty()) geoms.push_back(WmmaGeom{wmma_warps_m, wmma_warps_n, wmma_frag_m, wmma_frag_n, true, "base"});
 
-      for (const auto& g : geoms) {
-        if (wmma_use_cp_async) {
-          add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, wmma_pipe_stages, /*use_cp_async=*/true,
-                      g.tag + "_p" + std::to_string(wmma_pipe_stages));
-          if (g.is_base_tile) {
+	      const std::string focus_base = base_tile_tag + "_fm1_fn1";
+	      std::string focus_half;
+	      if (base_tw_m > 1 && base_tw_n > 1) focus_half = tile_tag(base_tw_m / 2, base_tw_n / 2) + "_fm1_fn1";
+	      auto cp_tag = [](int p) -> std::string { return (p == 0) ? "ca" : "cg"; };
+
+	      for (const auto& g : geoms) {
+	        const bool is_focus = (g.tag == focus_base) || (!focus_half.empty() && g.tag == focus_half);
+	        if (wmma_use_cp_async) {
+	          add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, wmma_pipe_stages, /*use_cp_async=*/true,
+	                      g.tag + "_p" + std::to_string(wmma_pipe_stages));
+	          if (g.is_base_tile) {
             add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 3, /*use_cp_async=*/true, g.tag + "_p3");
             add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 2, /*use_cp_async=*/true, g.tag + "_p2");
             if (K >= 128 && (K % 128) == 0) {
               add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 3, /*use_cp_async=*/true, g.tag + "_k128_p3");
               add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 2, /*use_cp_async=*/true, g.tag + "_k128_p2");
             }
-          } else {
-            if (wmma_pipe_stages == 3) add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 2, /*use_cp_async=*/true, g.tag + "_p2");
-          }
-        }
-        add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 1, /*use_cp_async=*/false, g.tag + "_sync");
-      }
+	          } else {
+	            if (wmma_pipe_stages == 3) add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 2, /*use_cp_async=*/true, g.tag + "_p2");
+	            // For the most likely winning tiles (base and base/2), also try stage_k=128.
+	            if (is_focus && K >= 128 && (K % 128) == 0) {
+	              add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 3, /*use_cp_async=*/true, g.tag + "_k128_p3");
+	              add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 2, /*use_cp_async=*/true, g.tag + "_k128_p2");
+	            }
+	            // Focused micro-search: a couple of padding + cp.async policy combos for PIPE=3.
+	            if (is_focus) {
+	              const int cp_a_cands[3] = {wmma_cp_a_int, 0, 1};
+	              const int cp_b_cands[3] = {wmma_cp_b_int, 0, 1};
+	              const int64_t pad_as[2] = {wmma_as_pad, 0};
+	              const int64_t pad_bs[2] = {wmma_bs_pad, 0};
+	              const int64_t stage_cands[2] = {wmma_stage_k, (K >= 128 && (K % 128) == 0) ? 128 : wmma_stage_k};
+	              for (int si = 0; si < 2; ++si) {
+	                const int64_t sk = stage_cands[si];
+	                if (sk <= 0) continue;
+	                const std::string base_suffix =
+	                    (sk == wmma_stage_k) ? (g.tag + "_p3") : (g.tag + "_k" + std::to_string(sk) + "_p3");
+	                for (int pi = 0; pi < 2; ++pi) {
+	                  for (int qi = 0; qi < 3; ++qi) {
+	                    const int cp_a = cp_a_cands[qi];
+	                    const int cp_b = cp_b_cands[qi];
+	                    const int64_t as_pad = pad_as[pi];
+	                    const int64_t bs_pad = pad_bs[pi];
+	                    if (as_pad == wmma_as_pad && bs_pad == wmma_bs_pad && cp_a == wmma_cp_a_int && cp_b == wmma_cp_b_int) continue;
+	                    std::string suf = base_suffix;
+	                    suf += "_ap" + std::to_string(as_pad) + "_bp" + std::to_string(bs_pad);
+	                    suf += "_a" + cp_tag(cp_a) + "_b" + cp_tag(cp_b);
+	                    add_variant_ex(g.warps_m, g.warps_n, g.frag_m, g.frag_n, sk, 3, /*use_cp_async=*/true, as_pad, bs_pad, cp_a, cp_b, suf);
+	                  }
+	                }
+	              }
+	            }
+	          }
+	        }
+	        add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 1, /*use_cp_async=*/false, g.tag + "_sync");
+	      }
       if (variants.empty()) add_variant(wmma_warps_m, wmma_warps_n, wmma_frag_m, wmma_frag_n, wmma_stage_k, 1, /*use_cp_async=*/false, "fallback");
 
       w.line("static const char* intentir_matmul_variant_tags[] = {");
@@ -1484,32 +1556,34 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
           }
         }
         w.blank();
-        w.line("constexpr int WARPS_M = " + std::to_string(v.warps_m) + ";");
-        w.line("constexpr int WARPS_N = " + std::to_string(v.warps_n) + ";");
-        w.line("constexpr int FRAG_M = " + std::to_string(v.frag_m) + ";");
-        w.line("constexpr int FRAG_N = " + std::to_string(v.frag_n) + ";");
-        w.line("constexpr int STAGE_K = " + std::to_string(v.stage_k) + ";");
-        w.line("constexpr int AS_PAD = " + std::to_string(wmma_as_pad) + ";");
-        w.line("constexpr int BS_PAD = " + std::to_string(wmma_bs_pad) + ";");
-        w.line("constexpr int PIPE_STAGES = " + std::to_string(v.pipe_stages) + ";");
-        w.blank();
-        const std::string use_cp_async_v = v.use_cp_async ? "true" : "false";
-        const std::string specialize_full_tile_v = v.specialize_full_tile ? "true" : "false";
-        w.line("intentir_cuda::wmma_matmul_f32_tf32<");
-        w.indent();
-        w.line("WARPS_M,");
+	        w.line("constexpr int WARPS_M = " + std::to_string(v.warps_m) + ";");
+	        w.line("constexpr int WARPS_N = " + std::to_string(v.warps_n) + ";");
+	        w.line("constexpr int FRAG_M = " + std::to_string(v.frag_m) + ";");
+	        w.line("constexpr int FRAG_N = " + std::to_string(v.frag_n) + ";");
+	        w.line("constexpr int STAGE_K = " + std::to_string(v.stage_k) + ";");
+	        w.line("constexpr int AS_PAD = " + std::to_string(v.as_pad) + ";");
+	        w.line("constexpr int BS_PAD = " + std::to_string(v.bs_pad) + ";");
+	        w.line("constexpr int PIPE_STAGES = " + std::to_string(v.pipe_stages) + ";");
+	        w.blank();
+	        const std::string use_cp_async_v = v.use_cp_async ? "true" : "false";
+	        const std::string specialize_full_tile_v = v.specialize_full_tile ? "true" : "false";
+	        const std::string cp_a_enum_v = (v.cp_a_policy == 0) ? "intentir_cuda::CpAsyncPolicy::CA" : "intentir_cuda::CpAsyncPolicy::CG";
+	        const std::string cp_b_enum_v = (v.cp_b_policy == 0) ? "intentir_cuda::CpAsyncPolicy::CA" : "intentir_cuda::CpAsyncPolicy::CG";
+	        w.line("intentir_cuda::wmma_matmul_f32_tf32<");
+	        w.indent();
+	        w.line("WARPS_M,");
         w.line("WARPS_N,");
         w.line("FRAG_M,");
         w.line("FRAG_N,");
         w.line("STAGE_K,");
         w.line("AS_PAD,");
-        w.line("BS_PAD,");
-        w.line("PIPE_STAGES,");
-        w.line(use_cp_async_v + ",");
-        w.line(wmma_cp_a_enum + ",");
-        w.line(wmma_cp_b_enum + ",");
-        w.line(enable_fastpath_const + ",");
-        w.line(specialize_full_tile_v + ">(A, B, C, M, N, K);");
+	        w.line("BS_PAD,");
+	        w.line("PIPE_STAGES,");
+	        w.line(use_cp_async_v + ",");
+	        w.line(cp_a_enum_v + ",");
+	        w.line(cp_b_enum_v + ",");
+	        w.line(enable_fastpath_const + ",");
+	        w.line(specialize_full_tile_v + ">(A, B, C, M, N, K);");
         w.dedent();
         w.dedent();
         w.line("}");
