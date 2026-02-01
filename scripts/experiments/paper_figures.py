@@ -559,7 +559,7 @@ def fig_e5_cuda_triton_vs_intentir(
     have_dispatch_off = any(v is not None for v in sp_dispatch_off)
     have_contract_off = any(v is not None for v in sp_contract_off)
 
-    series: list[tuple[str, list[float | None], str]] = [("IntentIR-CUDA (quick)", sp_quick, PALETTE["red"])]
+    series: list[tuple[str, list[float | None], str]] = [("IntentIR (default)", sp_quick, PALETTE["red"])]
     if have_dispatch_off:
         series.append(("Host dispatch off", sp_dispatch_off, PALETTE["blue"]))
     if have_contract_off:
@@ -588,16 +588,20 @@ def fig_e5_cuda_triton_vs_intentir(
     except Exception:
         gpu = None
 
-    gm = None
-    try:
-        s = quick.get("summary") if isinstance(quick.get("summary"), dict) else {}
-        gm = s.get("geom_speedup_ours_over_triton")
-    except Exception:
-        gm = None
+    def _short_gpu_name(s: str) -> str:
+        s = s.strip()
+        if not s:
+            return "GPU"
+        if "H100" in s:
+            return "H100"
+        if "5090" in s:
+            return "RTX 5090 D"
+        if "4080" in s:
+            return "RTX 4080 SUPER"
+        s = s.replace("NVIDIA ", "").replace("GeForce ", "")
+        return " ".join(s.split()) or "GPU"
 
-    title = str(gpu) if isinstance(gpu, str) and gpu else "CUDA GPU"
-    if isinstance(gm, (int, float)):
-        title = f"{title} (Geomean: {float(gm):.2f}×)"
+    title = _short_gpu_name(str(gpu)) if isinstance(gpu, str) and gpu else "GPU"
 
     # Figure: prefer a single axis when the dynamic range is small; fall back to a
     # broken y-axis (not log) only when outliers would squash 1×-level differences.
