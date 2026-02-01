@@ -2207,19 +2207,21 @@ json emit_correlation(const Intent& intent, const json& bindings) {
       if (t > 1024) t = 1024;
       return t;
     };
-    auto add_variant = [&](int64_t threads, const std::string& tag) {
-      threads = norm_threads(threads);
-      const int64_t gx = (total + threads - 1) / threads;
-      for (const auto& v : variants) {
-        if (v.threads == threads) return;
-      }
-      variants.push_back(CorrVariant{threads, gx, tag});
-    };
-    add_variant(block_x, "seed");
-    add_variant(128, "t128");
-    add_variant(256, "t256");
-    add_variant(512, "t512");
-    if (variants.empty()) add_variant(block_x, "fallback");
+	    auto add_variant = [&](int64_t threads, const std::string& tag) {
+	      threads = norm_threads(threads);
+	      const int64_t gx = (total + threads - 1) / threads;
+	      for (const auto& v : variants) {
+	        if (v.threads == threads) return;
+	      }
+	      variants.push_back(CorrVariant{threads, gx, tag});
+	    };
+	    add_variant(block_x, "seed");
+	    add_variant(64, "t64");
+	    add_variant(128, "t128");
+	    add_variant(256, "t256");
+	    add_variant(512, "t512");
+	    add_variant(1024, "t1024");
+	    if (variants.empty()) add_variant(block_x, "fallback");
 
     const int64_t out_shift_val = binding_int(bindings, "out_shift").value_or(0);
     const std::string oc_arg = oc_is_tensor ? "out_channel_ptr" : "out_channel";
