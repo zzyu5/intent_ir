@@ -4249,12 +4249,16 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	    add_strided_pow2_variant(64, "pow2_t64");
 	    add_strided_pow2_variant(128, "pow2_t128");
 	    add_strided_pow2_variant(256, "pow2_t256");
-	    // Warp-specialized vectorized variant (SM80+ friendly, avoids block-wide sync).
-	    add_warp4_variant(4, "warp4_w4");
-	    add_warp4_variant(8, "warp4_w8");
-	    add_warp_expbuf_variant(4, "warpexp_w4");
-	    add_warp_expbuf_variant(8, "warpexp_w8");
-	    if (variants.empty()) add_block_pair(block_threads, "fallback");
+		    // Warp-specialized vectorized variant (SM80+ friendly, avoids block-wide sync).
+		    add_warp4_variant(1, "warp4_w1");
+		    add_warp4_variant(2, "warp4_w2");
+		    add_warp4_variant(4, "warp4_w4");
+		    add_warp4_variant(8, "warp4_w8");
+		    add_warp_expbuf_variant(1, "warpexp_w1");
+		    add_warp_expbuf_variant(2, "warpexp_w2");
+		    add_warp_expbuf_variant(4, "warpexp_w4");
+		    add_warp_expbuf_variant(8, "warpexp_w8");
+		    if (variants.empty()) add_block_pair(block_threads, "fallback");
 
 	    w.line("static const char* intentir_softmax_variant_tags[] = {");
 	    w.indent();
