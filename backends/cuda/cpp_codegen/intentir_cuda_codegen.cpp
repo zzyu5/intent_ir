@@ -1496,10 +1496,18 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
             }
 	          } else {
 	            if (wmma_pipe_stages == 3) add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 2, /*use_cp_async=*/true, g.tag + "_p2");
-	            // For the most likely winning tiles (base and base/2), also try stage_k=128.
-	            if (is_focus && K >= 128 && (K % 128) == 0) {
-	              add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 3, /*use_cp_async=*/true, g.tag + "_k128_p3");
-	              add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 2, /*use_cp_async=*/true, g.tag + "_k128_p2");
+	            // For the most likely winning tiles (base and base/2), also try a couple of alternative stage_k.
+	            if (is_focus) {
+	              for (int64_t sk : {int64_t(32), int64_t(128)}) {
+	                if (sk <= 0) continue;
+	                if (sk == wmma_stage_k) continue;
+	                if (K >= sk && (K % sk) == 0) {
+	                  add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, sk, 3, /*use_cp_async=*/true,
+	                              g.tag + "_k" + std::to_string(sk) + "_p3");
+	                  add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, sk, 2, /*use_cp_async=*/true,
+	                              g.tag + "_k" + std::to_string(sk) + "_p2");
+	                }
+	              }
 	            }
 	            // Focused micro-search: a couple of padding + cp.async policy combos for PIPE=3.
 	            if (is_focus) {
@@ -1507,10 +1515,18 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
 	              const int cp_b_cands[3] = {wmma_cp_b_int, 0, 1};
 	              const int64_t pad_as[2] = {wmma_as_pad, 0};
 	              const int64_t pad_bs[2] = {wmma_bs_pad, 0};
-	              const int64_t stage_cands[2] = {wmma_stage_k, (K >= 128 && (K % 128) == 0) ? 128 : wmma_stage_k};
-	              for (int si = 0; si < 2; ++si) {
-	                const int64_t sk = stage_cands[si];
-	                if (sk <= 0) continue;
+	              std::vector<int64_t> stage_cands;
+	              auto add_stage = [&](int64_t sk) {
+	                if (sk <= 0) return;
+	                for (int64_t x : stage_cands) {
+	                  if (x == sk) return;
+	                }
+	                stage_cands.push_back(sk);
+	              };
+	              add_stage(wmma_stage_k);
+	              if ((K % 32) == 0) add_stage(32);
+	              if ((K % 128) == 0) add_stage(128);
+	              for (int64_t sk : stage_cands) {
 	                const std::string base_suffix =
 	                    (sk == wmma_stage_k) ? (g.tag + "_p3") : (g.tag + "_k" + std::to_string(sk) + "_p3");
 	                for (int pi = 0; pi < 2; ++pi) {
