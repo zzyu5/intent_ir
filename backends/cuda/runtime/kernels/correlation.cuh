@@ -41,7 +41,7 @@ __device__ __forceinline__ void correlation_i8(
   int32_t acc = 0;
   const int64_t off0 = (int64_t)h * (int64_t)width + (int64_t)w;
   const int64_t off1 = (int64_t)h * (int64_t)width + (int64_t)(w - oc);
-#pragma unroll 4
+#pragma unroll
   for (int k = 0; k < in_channel; ++k) {
     const int64_t base = (int64_t)k * hw;
     const int8_t a = intentir_ldg<int8_t>(src0 + base + off0);
