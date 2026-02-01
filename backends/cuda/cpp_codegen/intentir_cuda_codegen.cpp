@@ -2918,6 +2918,8 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
     add_hp((int)heads_per_block);
     add_hp(1);
     add_hp(2);
+    add_hp(4);
+    add_hp(8);
 
     std::vector<int> rv_cands;
     auto add_rv = [&](int rv) {
@@ -2942,6 +2944,7 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
     add_bx(32);
     add_bx(64);
     add_bx(128);
+    add_bx(256);
     const int64_t sched_threads = resolve_schedule_int(intent, bindings, "tile_n", 0);
     if (sched_threads > 0) add_bx(sched_threads);
 
