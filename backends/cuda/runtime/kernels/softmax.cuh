@@ -7,6 +7,21 @@
 
 namespace intentir_cuda {
 
+// Softmax uses exp heavily; allow switching between exp and exp2 (exp2 can be
+// faster on some architectures). Keep it local to softmax to avoid changing
+// semantics elsewhere.
+__device__ __forceinline__ float softmax_fast_exp(float x) {
+#if defined(INTENTIR_CUDA_SOFTMAX_USE_EXP2)
+  // exp(x) = exp2(x * log2(e))
+  float y;
+  const float a = x * 1.4426950408889634f;
+  asm("ex2.approx.f32 %0, %1;" : "=f"(y) : "f"(a));
+  return y;
+#else
+  return __expf(x);
+#endif
+}
+
 __device__ __forceinline__ float warp_reduce_max(float v) {
   for (int off = 16; off > 0; off >>= 1) {
     v = fmaxf(v, __shfl_down_sync(0xffffffff, v, off));
@@ -59,8 +74,10 @@ __device__ __forceinline__ void softmax_2d_last_f32(const float* __restrict__ in
   #pragma unroll
   for (int i = 0; i < EPT; ++i) {
     const int c = tid + i * BLOCK_THREADS;
-    (void)c;
-    const float e = __expf(expv[i] - mx);
+    // Avoid exp() on masked lanes: for common non-power-of-two widths this
+    // trims a non-trivial fraction of expensive SFU work.
+    float e = 0.0f;
+    if (c < C) e = softmax_fast_exp(expv[i] - mx);
     expv[i] = e;
     tsum += e;
   }
@@ -122,10 +139,11 @@ __device__ __forceinline__ void softmax_2d_last_f32_vec4(const float* __restrict
   #pragma unroll
   for (int t = 0; t < TILES; ++t) {
     float4 v = vals[t];
-    v.x = __expf(v.x - mx);
-    v.y = __expf(v.y - mx);
-    v.z = __expf(v.z - mx);
-    v.w = __expf(v.w - mx);
+    const int base = t * (BLOCK_THREADS * VEC) + tid * VEC;
+    if (base + 0 < C) v.x = softmax_fast_exp(v.x - mx); else v.x = 0.0f;
+    if (base + 1 < C) v.y = softmax_fast_exp(v.y - mx); else v.y = 0.0f;
+    if (base + 2 < C) v.z = softmax_fast_exp(v.z - mx); else v.z = 0.0f;
+    if (base + 3 < C) v.w = softmax_fast_exp(v.w - mx); else v.w = 0.0f;
     vals[t] = v;
     tsum += (v.x + v.y + v.z + v.w);
   }
@@ -222,10 +240,10 @@ __device__ __forceinline__ void softmax_2d_last_f32_warp4(const float* __restric
     if (base + (VEC - 1) < C) {
       const float4 v = *reinterpret_cast<const float4*>(buf + (size_t)base);
       float4 e;
-      e.x = __expf(v.x - mx);
-      e.y = __expf(v.y - mx);
-      e.z = __expf(v.z - mx);
-      e.w = __expf(v.w - mx);
+      e.x = softmax_fast_exp(v.x - mx);
+      e.y = softmax_fast_exp(v.y - mx);
+      e.z = softmax_fast_exp(v.z - mx);
+      e.w = softmax_fast_exp(v.w - mx);
       *reinterpret_cast<float4*>(buf + (size_t)base) = e;
       tsum += (e.x + e.y + e.z + e.w);
     } else {
@@ -234,7 +252,7 @@ __device__ __forceinline__ void softmax_2d_last_f32_warp4(const float* __restric
         const int c = base + j;
         if (c < C) {
           const float v = buf[(size_t)c];
-          const float e = __expf(v - mx);
+          const float e = softmax_fast_exp(v - mx);
           buf[(size_t)c] = e;
           tsum += e;
         }
@@ -346,10 +364,10 @@ __device__ __forceinline__ void softmax_2d_last_f32_warp_expbuf(const float* __r
     if (base + (VEC - 1) < len0) {
       const float4 x = *reinterpret_cast<const float4*>(in_row + (size_t)in_base);
       float4 e;
-      e.x = __expf(x.x - mx);
-      e.y = __expf(x.y - mx);
-      e.z = __expf(x.z - mx);
-      e.w = __expf(x.w - mx);
+      e.x = softmax_fast_exp(x.x - mx);
+      e.y = softmax_fast_exp(x.y - mx);
+      e.z = softmax_fast_exp(x.z - mx);
+      e.w = softmax_fast_exp(x.w - mx);
       *reinterpret_cast<float4*>(buf + (size_t)base) = e;
       tsum += (e.x + e.y + e.z + e.w);
     } else {
@@ -358,7 +376,7 @@ __device__ __forceinline__ void softmax_2d_last_f32_warp_expbuf(const float* __r
         const int c = base + j;
         if (c < len0) {
           const float v = intentir_ldg_f32(in_row + (size_t)(shift + c));
-          const float e = __expf(v - mx);
+          const float e = softmax_fast_exp(v - mx);
           buf[(size_t)c] = e;
           tsum += e;
         }
@@ -370,7 +388,7 @@ __device__ __forceinline__ void softmax_2d_last_f32_warp_expbuf(const float* __r
     const int buf_idx = len0 + c;
     if (buf_idx < C) {
       const float v = intentir_ldg_f32(in_row + (size_t)c);
-      const float e = __expf(v - mx);
+      const float e = softmax_fast_exp(v - mx);
       buf[(size_t)buf_idx] = e;
       tsum += e;
     }

@@ -4298,6 +4298,8 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
   CodeWriter w(cuda_ss);
   w.line("#include <cstdlib>");
   w.line("#include <cstdio>");
+	  const bool softmax_use_exp2 = binding_int(bindings, "SOFTMAX_USE_EXP2").value_or(0) != 0;
+	  if (softmax_use_exp2) w.line("#define INTENTIR_CUDA_SOFTMAX_USE_EXP2 1");
 	  w.line("#include \"kernels/softmax.cuh\"");
 	  w.blank();
 	  emit_selected_api(w);
