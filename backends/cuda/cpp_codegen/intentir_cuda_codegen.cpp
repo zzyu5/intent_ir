@@ -16,6 +16,10 @@
 
 #include "code_writer.h"
 
+#ifdef INTENTIR_CUDA_CODEGEN_PYBIND
+#include <pybind11/pybind11.h>
+#endif
+
 using json = nlohmann::json;
 
 namespace {
@@ -5023,8 +5027,96 @@ json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
   return out;
 }
 
+json lower_intent_to_cuda(const Intent& intent, const json& bindings_json) {
+  if (!bindings_json.is_object()) fail("bindings must be object");
+
+  if (intent.ops.size() == 1 && intent.ops[0].op == "matmul") return emit_matmul_f32(intent, bindings_json);
+  if (intent.ops.size() == 1 && intent.ops[0].op == "transpose") return emit_transpose_2d_f32(intent, bindings_json);
+  if (intent.ops.size() == 1 && intent.ops[0].op == "reduce_sum") return emit_reduce_sum_2d_axis1_f32(intent, bindings_json);
+  if (intent.ops.size() == 1 && intent.ops[0].op == "reduce_max") return emit_reduce_max_2d_axis1_f32(intent, bindings_json);
+  if (intent.ops.size() == 1 && intent.ops[0].op == "gather") return emit_gather2d_f32(intent, bindings_json);
+  if (intent.ops.size() == 1 && intent.ops[0].op == "dropout") return emit_dropout(intent, bindings_json);
+  if (intent.ops.size() == 1 && intent.ops[0].op == "warp") return emit_warp(intent, bindings_json);
+  if (intent.ops.size() == 1 && intent.ops[0].op == "correlation") return emit_correlation(intent, bindings_json);
+  if (intent.ops.size() == 1 && intent.ops[0].op == "resize") return emit_resize_bilinear2x_i8(intent, bindings_json);
+  if (intent.ops.size() == 1 && intent.ops[0].op == "rope") return emit_rope_f32(intent, bindings_json);
+
+  // Pattern-based kernels.
+  if (intent.ops.size() == 3 && intent.ops[0].op == "const" && intent.ops[1].op == "ne" && intent.ops[2].op == "reduce_any") {
+    return emit_any_dim_f32_to_i1(intent, bindings_json);
+  }
+  {
+    bool hasY = false, hasMean = false, hasRstd = false;
+    for (const auto& o : intent.outputs) {
+      if (o == "Y") hasY = true;
+      if (o == "Mean") hasMean = true;
+      if (o == "Rstd") hasRstd = true;
+    }
+    if (hasY && hasMean && hasRstd) return emit_layernorm_2d_f32(intent, bindings_json);
+  }
+  {
+    const std::string nm = ascii_lower(intent.name);
+    bool is_softmax = (nm.find("softmax") != std::string::npos);
+    if (!is_softmax) {
+      bool has_reduce_max = false, has_reduce_sum = false, has_exp = false, has_div = false;
+      for (const auto& op : intent.ops) {
+        if (op.op == "reduce_max") has_reduce_max = true;
+        if (op.op == "reduce_sum") has_reduce_sum = true;
+        if (op.op == "exp") has_exp = true;
+        if (op.op == "div") has_div = true;
+      }
+      is_softmax = has_reduce_max && has_reduce_sum && has_exp && has_div;
+    }
+    if (is_softmax) return emit_softmax_2d_last_f32(intent, bindings_json);
+  }
+  {
+    auto is_elem_op = [](const std::string& op) -> bool {
+      static const std::unordered_map<std::string, bool> k = {
+          {"const", true}, {"identity", true}, {"broadcast_in_dim", true}, {"cast", true}, {"add", true},   {"sub", true},
+          {"mul", true},   {"div", true},      {"max", true},              {"min", true},  {"relu", true},  {"abs", true},
+          {"exp", true},   {"floor", true},    {"rsqrt", true},            {"ne", true},   {"lt", true},    {"le", true},
+          {"gt", true},    {"ge", true},       {"and", true},              {"or", true},   {"not", true},   {"where", true},
+      };
+      return k.find(op) != k.end();
+    };
+    bool all_elem = !intent.ops.empty();
+    for (const auto& op : intent.ops) {
+      if (!is_elem_op(op.op)) {
+        all_elem = false;
+        break;
+      }
+    }
+    if (all_elem) return emit_fused_elementwise(intent, bindings_json);
+  }
+
+  fail(
+      "unsupported intent for cuda cpp codegen (supported: matmul, dropout, softmax, layernorm, correlation, resize, rope, warp, transpose, "
+      "reduce_sum, reduce_max, any_dim, gather, fused_elementwise)");
+}
+
 }  // namespace
 
+#ifdef INTENTIR_CUDA_CODEGEN_PYBIND
+namespace py = pybind11;
+
+static std::string lower_from_json_str(const std::string& intent_json, const std::string& bindings_json) {
+  Intent intent = parse_intent(json::parse(intent_json));
+  json bindings = json::parse(bindings_json);
+  json out = lower_intent_to_cuda(intent, bindings);
+  return out.dump();
+}
+
+#ifndef INTENTIR_CUDA_CODEGEN_PYBIND_MODULE_NAME
+#define INTENTIR_CUDA_CODEGEN_PYBIND_MODULE_NAME intentir_cuda_codegen_ext
+#endif
+
+PYBIND11_MODULE(INTENTIR_CUDA_CODEGEN_PYBIND_MODULE_NAME, m) {
+  m.doc() = "IntentIR CUDA C++ codegen (pybind11 wrapper)";
+  m.def("lower_from_json_str", &lower_from_json_str, py::arg("intent_json"), py::arg("bindings_json"));
+}
+#endif
+
+#ifndef INTENTIR_CUDA_CODEGEN_NO_MAIN
 int main(int argc, char** argv) {
   try {
     std::string intent_path;
@@ -5047,145 +5139,12 @@ int main(int argc, char** argv) {
 
     Intent intent = parse_intent(read_json_file(intent_path));
     json bindings_json = read_json_file(bindings_path);
-    if (!bindings_json.is_object()) fail("bindings must be object");
-
-    if (intent.ops.size() == 1 && intent.ops[0].op == "matmul") {
-      json out = emit_matmul_f32(intent, bindings_json);
-      std::cout << out.dump() << "\n";
-      return 0;
-    }
-    if (intent.ops.size() == 1 && intent.ops[0].op == "transpose") {
-      json out = emit_transpose_2d_f32(intent, bindings_json);
-      std::cout << out.dump() << "\n";
-      return 0;
-    }
-    if (intent.ops.size() == 1 && intent.ops[0].op == "reduce_sum") {
-      json out = emit_reduce_sum_2d_axis1_f32(intent, bindings_json);
-      std::cout << out.dump() << "\n";
-      return 0;
-    }
-    if (intent.ops.size() == 1 && intent.ops[0].op == "reduce_max") {
-      json out = emit_reduce_max_2d_axis1_f32(intent, bindings_json);
-      std::cout << out.dump() << "\n";
-      return 0;
-    }
-    if (intent.ops.size() == 1 && intent.ops[0].op == "gather") {
-      json out = emit_gather2d_f32(intent, bindings_json);
-      std::cout << out.dump() << "\n";
-      return 0;
-    }
-    if (intent.ops.size() == 1 && intent.ops[0].op == "dropout") {
-      json out = emit_dropout(intent, bindings_json);
-      std::cout << out.dump() << "\n";
-      return 0;
-    }
-    if (intent.ops.size() == 1 && intent.ops[0].op == "warp") {
-      json out = emit_warp(intent, bindings_json);
-      std::cout << out.dump() << "\n";
-      return 0;
-    }
-    if (intent.ops.size() == 1 && intent.ops[0].op == "correlation") {
-      json out = emit_correlation(intent, bindings_json);
-      std::cout << out.dump() << "\n";
-      return 0;
-    }
-    if (intent.ops.size() == 1 && intent.ops[0].op == "resize") {
-      json out = emit_resize_bilinear2x_i8(intent, bindings_json);
-      std::cout << out.dump() << "\n";
-      return 0;
-    }
-    if (intent.ops.size() == 1 && intent.ops[0].op == "rope") {
-      json out = emit_rope_f32(intent, bindings_json);
-      std::cout << out.dump() << "\n";
-      return 0;
-    }
-
-    // Pattern-based kernels.
-    if (intent.ops.size() == 3 && intent.ops[0].op == "const" && intent.ops[1].op == "ne" && intent.ops[2].op == "reduce_any") {
-      json out = emit_any_dim_f32_to_i1(intent, bindings_json);
-      std::cout << out.dump() << "\n";
-      return 0;
-    }
-    {
-      bool hasY = false, hasMean = false, hasRstd = false;
-      for (const auto& o : intent.outputs) {
-        if (o == "Y") hasY = true;
-        if (o == "Mean") hasMean = true;
-        if (o == "Rstd") hasRstd = true;
-      }
-      if (hasY && hasMean && hasRstd) {
-        json out = emit_layernorm_2d_f32(intent, bindings_json);
-        std::cout << out.dump() << "\n";
-        return 0;
-      }
-    }
-    {
-      const std::string nm = ascii_lower(intent.name);
-      bool is_softmax = (nm.find("softmax") != std::string::npos);
-      if (!is_softmax) {
-        bool has_reduce_max = false, has_reduce_sum = false, has_exp = false, has_div = false;
-        for (const auto& op : intent.ops) {
-          if (op.op == "reduce_max") has_reduce_max = true;
-          if (op.op == "reduce_sum") has_reduce_sum = true;
-          if (op.op == "exp") has_exp = true;
-          if (op.op == "div") has_div = true;
-        }
-        is_softmax = has_reduce_max && has_reduce_sum && has_exp && has_div;
-      }
-      if (is_softmax) {
-        json out = emit_softmax_2d_last_f32(intent, bindings_json);
-        std::cout << out.dump() << "\n";
-        return 0;
-      }
-    }
-    {
-      auto is_elem_op = [](const std::string& op) -> bool {
-        static const std::unordered_map<std::string, bool> k = {
-            {"const", true},
-            {"identity", true},
-            {"broadcast_in_dim", true},
-            {"cast", true},
-            {"add", true},
-            {"sub", true},
-            {"mul", true},
-            {"div", true},
-            {"max", true},
-            {"min", true},
-            {"relu", true},
-            {"abs", true},
-            {"exp", true},
-            {"floor", true},
-            {"rsqrt", true},
-            {"ne", true},
-            {"lt", true},
-            {"le", true},
-            {"gt", true},
-            {"ge", true},
-            {"and", true},
-            {"or", true},
-            {"not", true},
-            {"where", true},
-        };
-        return k.find(op) != k.end();
-      };
-      bool all_elem = !intent.ops.empty();
-      for (const auto& op : intent.ops) {
-        if (!is_elem_op(op.op)) {
-          all_elem = false;
-          break;
-        }
-      }
-      if (all_elem) {
-        json out = emit_fused_elementwise(intent, bindings_json);
-        std::cout << out.dump() << "\n";
-        return 0;
-      }
-    }
-
-    fail(
-        "unsupported intent for cuda cpp codegen (supported: matmul, dropout, softmax, layernorm, correlation, resize, rope, warp, transpose, reduce_sum, reduce_max, any_dim, gather, fused_elementwise)");
+    json out = lower_intent_to_cuda(intent, bindings_json);
+    std::cout << out.dump() << "\n";
+    return 0;
   } catch (const std::exception& e) {
     std::cerr << "intentir_cuda_codegen error: " << e.what() << "\\n";
     return 3;
   }
 }
+#endif
