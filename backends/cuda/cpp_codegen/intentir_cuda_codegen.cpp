@@ -1158,17 +1158,17 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     if (auto v = binding_int(bindings, "WMMA_USE_CP_ASYNC")) use_cp_async_raw = *v;
     bool wmma_use_cp_async = (use_cp_async_raw < 0) ? true : (use_cp_async_raw != 0);
 
-    auto wmma_pipe_opt = binding_int(bindings, "WMMA_PIPE_STAGES");
-    const bool pipe_stages_override = wmma_pipe_opt.has_value() && (*wmma_pipe_opt > 0);
-    int64_t wmma_pipe_stages = wmma_pipe_opt.value_or(0);
-    if (!wmma_use_cp_async) {
-      wmma_pipe_stages = 1;
-    } else {
-      const int64_t sched_pipe = (!pipe_stages_override && respect_schedule) ? resolve_schedule_int(intent, bindings, "pipeline_depth", 0) : 0;
-      if (!pipe_stages_override && sched_pipe > 0) wmma_pipe_stages = sched_pipe;
-      if (wmma_pipe_stages <= 0) wmma_pipe_stages = 3;
-      if (!(wmma_pipe_stages == 2 || wmma_pipe_stages == 3)) wmma_pipe_stages = 3;
-    }
+	    auto wmma_pipe_opt = binding_int(bindings, "WMMA_PIPE_STAGES");
+	    const bool pipe_stages_override = wmma_pipe_opt.has_value() && (*wmma_pipe_opt > 0);
+	    int64_t wmma_pipe_stages = wmma_pipe_opt.value_or(0);
+	    if (!wmma_use_cp_async) {
+	      wmma_pipe_stages = 1;
+	    } else {
+	      const int64_t sched_pipe = (!pipe_stages_override && respect_schedule) ? resolve_schedule_int(intent, bindings, "pipeline_depth", 0) : 0;
+	      if (!pipe_stages_override && sched_pipe > 0) wmma_pipe_stages = sched_pipe;
+	      if (wmma_pipe_stages <= 0) wmma_pipe_stages = 3;
+	      if (!(wmma_pipe_stages == 2 || wmma_pipe_stages == 3 || wmma_pipe_stages == 4)) wmma_pipe_stages = 3;
+	    }
 
     int64_t wmma_as_pad = binding_int(bindings, "WMMA_AS_PAD").value_or(8);
     int64_t wmma_bs_pad = binding_int(bindings, "WMMA_BS_PAD").value_or(8);
@@ -1189,31 +1189,37 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       return 4LL * (pipe_stages * wmma_tile_m * as_ld + pipe_stages * stage_k * bs_ld);
     };
 
-    int64_t shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
-    if (wmma_pipe_stages > 2 && shared_bytes > max_smem_optin) {
-      wmma_pipe_stages = 2;
-      shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
-    }
-    if (shared_bytes > max_smem_optin) {
-      for (int64_t cand : {int64_t(64), int64_t(32), int64_t(16), int64_t(8)}) {
-        if (cand >= wmma_stage_k) continue;
-        if ((K % cand) != 0) continue;
-        if (wmma_smem_bytes(cand, wmma_pipe_stages) <= max_smem_optin) {
-          wmma_stage_k = cand;
-          shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
-          break;
-        }
-      }
-    }
+	    int64_t shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
+	    if (shared_bytes > max_smem_optin) {
+	      for (int64_t cand : {int64_t(64), int64_t(32), int64_t(16), int64_t(8)}) {
+	        if (cand >= wmma_stage_k) continue;
+	        if ((K % cand) != 0) continue;
+	        if (wmma_smem_bytes(cand, wmma_pipe_stages) <= max_smem_optin) {
+	          wmma_stage_k = cand;
+	          shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
+	          break;
+	        }
+	      }
+	    }
+	    // If the selected pipeline depth is too large even after stage_k adjustment,
+	    // gracefully shrink it (4->3->2). PIPE_STAGES==1 is treated as sync fallback.
+	    if (wmma_pipe_stages == 4 && shared_bytes > max_smem_optin) {
+	      wmma_pipe_stages = 3;
+	      shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
+	    }
+	    if (wmma_pipe_stages == 3 && shared_bytes > max_smem_optin) {
+	      wmma_pipe_stages = 2;
+	      shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
+	    }
 
     bool wmma_force_sync = false;
-    if (!pipe_stages_override && wmma_pipe_stages == 2) {
-      const int64_t bytes3 = wmma_smem_bytes(wmma_stage_k, 3);
-      if (bytes3 <= max_smem_optin) {
-        wmma_pipe_stages = 3;
-        shared_bytes = bytes3;
-      }
-    }
+	    if (!pipe_stages_override && wmma_pipe_stages == 2) {
+	      const int64_t bytes3 = wmma_smem_bytes(wmma_stage_k, 3);
+	      if (bytes3 <= max_smem_optin) {
+	        wmma_pipe_stages = 3;
+	        shared_bytes = bytes3;
+	      }
+	    }
     if (shared_bytes > max_smem_optin) {
       wmma_force_sync = true;
       wmma_use_cp_async = false;
@@ -1300,7 +1306,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
 	      if (!(cp_a_policy == 0 || cp_a_policy == 1)) return std::nullopt;
 	      if (!(cp_b_policy == 0 || cp_b_policy == 1)) return std::nullopt;
 	      if (use_cp_async) {
-	        if (!(pipe_stages == 2 || pipe_stages == 3)) return std::nullopt;
+	        if (!(pipe_stages == 2 || pipe_stages == 3 || pipe_stages == 4)) return std::nullopt;
 	      } else {
 	        pipe_stages = 1;
 	      }
@@ -1488,12 +1494,14 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
 	          add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, wmma_pipe_stages, /*use_cp_async=*/true,
 	                      g.tag + "_p" + std::to_string(wmma_pipe_stages));
 	          if (g.is_base_tile) {
-            add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 3, /*use_cp_async=*/true, g.tag + "_p3");
-            add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 2, /*use_cp_async=*/true, g.tag + "_p2");
-            if (K >= 128 && (K % 128) == 0) {
-              add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 3, /*use_cp_async=*/true, g.tag + "_k128_p3");
-              add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 2, /*use_cp_async=*/true, g.tag + "_k128_p2");
-            }
+	            add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 4, /*use_cp_async=*/true, g.tag + "_p4");
+	            add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 3, /*use_cp_async=*/true, g.tag + "_p3");
+	            add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 2, /*use_cp_async=*/true, g.tag + "_p2");
+	            if (K >= 128 && (K % 128) == 0) {
+	              add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 4, /*use_cp_async=*/true, g.tag + "_k128_p4");
+	              add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 3, /*use_cp_async=*/true, g.tag + "_k128_p3");
+	              add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 2, /*use_cp_async=*/true, g.tag + "_k128_p2");
+	            }
 	          } else {
 	            if (wmma_pipe_stages == 3) add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 2, /*use_cp_async=*/true, g.tag + "_p2");
 	            // For the most likely winning tiles (base and base/2), also try a couple of alternative stage_k.

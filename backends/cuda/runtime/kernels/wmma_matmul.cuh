@@ -183,20 +183,25 @@ __device__ __forceinline__ void wmma_matmul_f32_tf32(
     if constexpr (USE_CP_ASYNC) {
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
       if constexpr (PIPE_STAGES == 2) {
+        const int num_tiles = K / STAGE_K;
+        // Prime tiles 0 and 1 (if present). Keep one group outstanding to overlap
+        // global->shared copies with compute (2-stage double buffer).
         cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD, CP_A_POLICY, CP_B_POLICY>(0, 0, A, B, As, Bs, row0, col0, K, N);
         intentir_cp_async_commit();
-        intentir_cp_async_wait_all();
+        if (num_tiles > 1) {
+          cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD, CP_A_POLICY, CP_B_POLICY>(1, STAGE_K, A, B, As, Bs, row0, col0, K, N);
+          intentir_cp_async_commit();
+        }
+        if (num_tiles > 1) {
+          intentir_cp_async_wait_group<1>();
+        } else {
+          intentir_cp_async_wait_group<0>();
+        }
         __syncthreads();
 
-        int buf = 0;
-        for (int k0 = 0; k0 < K; k0 += STAGE_K) {
-          const int next_k0 = k0 + STAGE_K;
-          const int next_buf = buf ^ 1;
-          if (next_k0 < K) {
-            cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD, CP_A_POLICY, CP_B_POLICY>(
-                next_buf, next_k0, A, B, As, Bs, row0, col0, K, N);
-            intentir_cp_async_commit();
-          }
+        #pragma unroll
+        for (int stage = 0; stage < num_tiles; ++stage) {
+          const int buf = stage & 1;
 
           #pragma unroll
           for (int kk0 = 0; kk0 < STAGE_K; kk0 += 8) {
@@ -220,14 +225,24 @@ __device__ __forceinline__ void wmma_matmul_f32_tf32(
             }
           }
 
-          if (next_k0 < K) {
-            intentir_cp_async_wait_all();
+          const int pf_stage = stage + PIPE_STAGES;
+          if (pf_stage < num_tiles) {
+            cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD, CP_A_POLICY, CP_B_POLICY>(
+                buf, pf_stage * STAGE_K, A, B, As, Bs, row0, col0, K, N);
+            intentir_cp_async_commit();
+          }
+
+          if (stage + 1 < num_tiles) {
+            const int tail = num_tiles - (stage + 2);
+            if (tail >= 1) {
+              intentir_cp_async_wait_group<1>();
+            } else {
+              intentir_cp_async_wait_group<0>();
+            }
             __syncthreads();
           }
-          buf = next_buf;
         }
-      } else {
-        static_assert(PIPE_STAGES == 3, "PIPE_STAGES must be 3 for this pipeline path");
+      } else if constexpr (PIPE_STAGES == 3) {
         const int num_tiles = K / STAGE_K;
 
         // Prime the pipeline with the first up to PIPE_STAGES tiles. Tile `t` is stored in
@@ -300,6 +315,86 @@ __device__ __forceinline__ void wmma_matmul_f32_tf32(
             __syncthreads();
           }
         }
+      } else if constexpr (PIPE_STAGES == 4) {
+        const int num_tiles = K / STAGE_K;
+
+        // Prime up to 4 tiles. Tile t goes to buffer (t % 4).
+        cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD, CP_A_POLICY, CP_B_POLICY>(0, 0, A, B, As, Bs, row0, col0, K, N);
+        intentir_cp_async_commit();
+        if (num_tiles > 1) {
+          cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD, CP_A_POLICY, CP_B_POLICY>(1, STAGE_K, A, B, As, Bs, row0, col0, K, N);
+          intentir_cp_async_commit();
+        }
+        if (num_tiles > 2) {
+          cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD, CP_A_POLICY, CP_B_POLICY>(2, 2 * STAGE_K, A, B, As, Bs, row0, col0, K, N);
+          intentir_cp_async_commit();
+        }
+        if (num_tiles > 3) {
+          cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD, CP_A_POLICY, CP_B_POLICY>(3, 3 * STAGE_K, A, B, As, Bs, row0, col0, K, N);
+          intentir_cp_async_commit();
+        }
+
+        // Ensure tile0 ready; keep up to 3 groups outstanding.
+        if (num_tiles > 3) {
+          intentir_cp_async_wait_group<3>();
+        } else if (num_tiles > 2) {
+          intentir_cp_async_wait_group<2>();
+        } else if (num_tiles > 1) {
+          intentir_cp_async_wait_group<1>();
+        } else {
+          intentir_cp_async_wait_group<0>();
+        }
+        __syncthreads();
+
+        #pragma unroll
+        for (int stage = 0; stage < num_tiles; ++stage) {
+          const int buf = stage & 3;
+
+          #pragma unroll
+          for (int kk0 = 0; kk0 < STAGE_K; kk0 += 8) {
+            #pragma unroll
+            for (int fn = 0; fn < FRAG_N; ++fn) {
+              load_matrix_sync(
+                  b_frag[fn],
+                  Bs + (size_t)buf * (size_t)(STAGE_K * BS_LD) + (size_t)kk0 * (size_t)BS_LD + (size_t)((warp_n * FRAG_N + fn) * 16),
+                  BS_LD);
+            }
+            #pragma unroll
+            for (int fm = 0; fm < FRAG_M; ++fm) {
+              load_matrix_sync(
+                  a_frag,
+                  As + (size_t)buf * (size_t)(TILE_M * AS_LD) + (size_t)((warp_m * FRAG_M + fm) * 16) * (size_t)AS_LD + (size_t)kk0,
+                  AS_LD);
+              #pragma unroll
+              for (int fn = 0; fn < FRAG_N; ++fn) {
+                mma_tf32_m16n16k8_rr(acc[fm][fn], a_frag, b_frag[fn]);
+              }
+            }
+          }
+
+          const int pf_stage = stage + PIPE_STAGES;
+          if (pf_stage < num_tiles) {
+            cp_async_tile_f32<TILE_M, TILE_N, STAGE_K, AS_PAD, BS_PAD, CP_A_POLICY, CP_B_POLICY>(
+                buf, pf_stage * STAGE_K, A, B, As, Bs, row0, col0, K, N);
+            intentir_cp_async_commit();
+          }
+
+          if (stage + 1 < num_tiles) {
+            const int tail = num_tiles - (stage + 2);
+            if (tail >= 3) {
+              intentir_cp_async_wait_group<3>();
+            } else if (tail == 2) {
+              intentir_cp_async_wait_group<2>();
+            } else if (tail == 1) {
+              intentir_cp_async_wait_group<1>();
+            } else {
+              intentir_cp_async_wait_group<0>();
+            }
+            __syncthreads();
+          }
+        }
+      } else {
+        static_assert((PIPE_STAGES == 2) || (PIPE_STAGES == 3) || (PIPE_STAGES == 4), "PIPE_STAGES must be 2, 3, or 4");
       }
 #else
       constexpr int VEC = 4;

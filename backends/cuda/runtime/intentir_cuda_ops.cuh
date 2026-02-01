@@ -82,6 +82,13 @@ __device__ __forceinline__ void intentir_cp_async_wait_group<2>() {
 #endif
 }
 
+template <>
+__device__ __forceinline__ void intentir_cp_async_wait_group<3>() {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
+  asm volatile("cp.async.wait_group 3;\n" : : : "memory");
+#endif
+}
+
 __device__ __forceinline__ void intentir_cp_async_wait_all() {
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
   intentir_cp_async_wait_group<0>();
