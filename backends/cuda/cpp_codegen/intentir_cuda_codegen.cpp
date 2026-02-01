@@ -486,7 +486,10 @@ json emit_dropout(const Intent& intent, const json& bindings) {
 
   if (enable_host_dispatch) {
     host_launch = true;
-    const bool enable_vec4 = binding_int(bindings, "CUDA_DROPOUT_VEC4").value_or(0) != 0;
+    // Default to enabling vec4 variants: they are guarded by runtime alignment
+    // checks in the kernel and reduce instruction count for large vectors.
+    // Can be disabled via CUDA_DROPOUT_VEC4=0 for debugging.
+    const bool enable_vec4 = binding_int(bindings, "CUDA_DROPOUT_VEC4").value_or(1) != 0;
     struct DropoutVariant {
       int64_t threads;
       int ept;
