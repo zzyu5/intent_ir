@@ -16,6 +16,7 @@ kernels/cuda/ops/tilelang_generated/
 
 # C++ codegen build output
 backends/spmd_rvv/cpp_codegen/build/
+backends/cuda/cpp_codegen/build/
 
 # Python cache
 __pycache__/
