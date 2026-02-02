@@ -73,11 +73,7 @@ __device__ __forceinline__ void softmax_2d_last_f32(const float* __restrict__ in
   float tsum = 0.0f;
   #pragma unroll
   for (int i = 0; i < EPT; ++i) {
-    const int c = tid + i * BLOCK_THREADS;
-    // Avoid exp() on masked lanes: for common non-power-of-two widths this
-    // trims a non-trivial fraction of expensive SFU work.
-    float e = 0.0f;
-    if (c < C) e = softmax_fast_exp(expv[i] - mx);
+    const float e = softmax_fast_exp(expv[i] - mx);
     expv[i] = e;
     tsum += e;
   }
