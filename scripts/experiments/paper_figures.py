@@ -601,7 +601,17 @@ def fig_e5_cuda_triton_vs_intentir(
         s = s.replace("NVIDIA ", "").replace("GeForce ", "")
         return " ".join(s.split()) or "GPU"
 
+    gm = None
+    try:
+        summ = quick.get("summary") if isinstance(quick.get("summary"), dict) else {}
+        gm = summ.get("geom_speedup_ours_over_triton")
+        gm = float(gm) if isinstance(gm, (int, float)) else None
+    except Exception:
+        gm = None
+
     title = _short_gpu_name(str(gpu)) if isinstance(gpu, str) and gpu else "GPU"
+    if isinstance(gm, float) and gm > 0:
+        title = f"{title} (Geomean: {gm:.2f}×)"
 
     # Figure: prefer a single axis when the dynamic range is small; fall back to a
     # broken y-axis (not log) only when outliers would squash 1×-level differences.
@@ -759,19 +769,22 @@ def main() -> None:
     # Optional: E5 CUDA GPU figures (H100 + 5090D).
     cuda_dir = ROOT / "artifacts" / "experiments" / "E5"
     # Pinned inputs (known-good) for the paper; can be overridden via CLI flags.
-    pinned_rev = "391daae"
+    pinned_rev = "42fad66"
     p_5090_q = args.e5_cuda_5090d_quick or _prefer_or_latest(
         cuda_dir, f"e5_cuda_5090d_quick_{pinned_rev}.json", "e5_cuda_5090d*quick*.json"
     )
-    p_5090_a = args.e5_cuda_5090d_ablation or _prefer_or_latest(
-        cuda_dir, f"e5_cuda_5090d_ablation_{pinned_rev}.json", "e5_cuda_5090d*ablation*.json"
-    )
+    # NOTE: For ablations, do NOT fall back to "latest" automatically, otherwise the
+    # figure can silently mix quick results from one revision with ablations from
+    # another. Provide an explicit path via CLI or keep it pinned.
+    p_5090_a = args.e5_cuda_5090d_ablation or (cuda_dir / f"e5_cuda_5090d_ablation_{pinned_rev}.json")
+    if not (p_5090_a and p_5090_a.is_file()):
+        p_5090_a = None
     p_h100_q = args.e5_cuda_h100_quick or _prefer_or_latest(
         cuda_dir, f"e5_cuda_h100_quick_{pinned_rev}.json", "e5_cuda_h100*quick*.json"
     )
-    p_h100_a = args.e5_cuda_h100_ablation or _prefer_or_latest(
-        cuda_dir, f"e5_cuda_h100_ablation_{pinned_rev}.json", "e5_cuda_h100*ablation*.json"
-    )
+    p_h100_a = args.e5_cuda_h100_ablation or (cuda_dir / f"e5_cuda_h100_ablation_{pinned_rev}.json")
+    if not (p_h100_a and p_h100_a.is_file()):
+        p_h100_a = None
 
     if p_h100_q and p_h100_q.is_file():
         h100_q = _load_json(p_h100_q)
