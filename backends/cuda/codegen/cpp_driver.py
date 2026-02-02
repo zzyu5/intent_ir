@@ -78,6 +78,12 @@ def ensure_cpp_codegen_ext_loaded(*, verbose: bool = False) -> Any:
 
     _maybe_add_python_ninja_to_path()
     try:
+        from frontends.cuda.runtime import _maybe_set_cuda_home_for_hopper as _rt_cuda_home_fix  # type: ignore[attr-defined]
+
+        _rt_cuda_home_fix()
+    except Exception:
+        pass
+    try:
         from torch.utils.cpp_extension import load  # noqa: PLC0415
     except Exception as e:
         raise RuntimeError(f"cuda cpp codegen ext: torch extension build unavailable: {type(e).__name__}: {e}") from e
