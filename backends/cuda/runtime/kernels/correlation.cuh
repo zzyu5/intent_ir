@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "intentir_cuda_ops.cuh"
+
 namespace intentir_cuda {
 
 template <int BLOCK_THREADS>
@@ -39,9 +41,12 @@ __device__ __forceinline__ void correlation_i8(
   int32_t acc = 0;
   const int64_t off0 = (int64_t)h * (int64_t)width + (int64_t)w;
   const int64_t off1 = (int64_t)h * (int64_t)width + (int64_t)(w - oc);
+#pragma unroll
   for (int k = 0; k < in_channel; ++k) {
     const int64_t base = (int64_t)k * hw;
-    acc += (int32_t)src0[base + off0] * (int32_t)src1[base + off1];
+    const int8_t a = intentir_ldg<int8_t>(src0 + base + off0);
+    const int8_t b = intentir_ldg<int8_t>(src1 + base + off1);
+    acc += (int32_t)a * (int32_t)b;
   }
   out[(size_t)tid] = (int8_t)(acc >> sh);
 }

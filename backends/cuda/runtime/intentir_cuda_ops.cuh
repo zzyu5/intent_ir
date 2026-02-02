@@ -82,6 +82,13 @@ __device__ __forceinline__ void intentir_cp_async_wait_group<2>() {
 #endif
 }
 
+template <>
+__device__ __forceinline__ void intentir_cp_async_wait_group<3>() {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
+  asm volatile("cp.async.wait_group 3;\n" : : : "memory");
+#endif
+}
+
 __device__ __forceinline__ void intentir_cp_async_wait_all() {
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
   intentir_cp_async_wait_group<0>();
@@ -118,6 +125,64 @@ __device__ __forceinline__ uint32_t intentir_philox_randint_u32_rounds(uint64_t 
     k1 += PHILOX_KEY_B;
   }
   return c0;
+}
+
+struct intentir_uint4 {
+  uint32_t x;
+  uint32_t y;
+  uint32_t z;
+  uint32_t w;
+};
+
+// Compute 4 independent Philox32 RNG outputs for counters:
+//   c0_base + {0,1,2,3}
+// This preserves the per-element mapping of `intentir_philox_randint_u32_rounds(seed, c0)`,
+// but reduces overhead vs calling it 4x by sharing the key schedule updates.
+template <int N_ROUNDS>
+__device__ __forceinline__ intentir_uint4 intentir_philox_randint4_u32_rounds(uint64_t seed, uint32_t c0_base) {
+  static_assert(N_ROUNDS > 0 && N_ROUNDS <= 10, "intentir_philox_randint4_u32_rounds supports 1..10 rounds");
+  // Use scalar lanes instead of small arrays: this typically compiles to fewer
+  // local-memory accesses and gives NVCC more room for register allocation /
+  // instruction scheduling (important for RNG-heavy kernels like dropout).
+  uint32_t c0_0 = c0_base;
+  uint32_t c0_1 = c0_base + 1u;
+  uint32_t c0_2 = c0_base + 2u;
+  uint32_t c0_3 = c0_base + 3u;
+  uint32_t c1_0 = 0u, c1_1 = 0u, c1_2 = 0u, c1_3 = 0u;
+  uint32_t c2_0 = 0u, c2_1 = 0u, c2_2 = 0u, c2_3 = 0u;
+  uint32_t c3_0 = 0u, c3_1 = 0u, c3_2 = 0u, c3_3 = 0u;
+  uint32_t k0 = (uint32_t)(seed & 0xFFFFFFFFu);
+  uint32_t k1 = (uint32_t)((seed >> 32) & 0xFFFFFFFFu);
+  const uint32_t PHILOX_KEY_A = 0x9E3779B9u;
+  const uint32_t PHILOX_KEY_B = 0xBB67AE85u;
+  const uint32_t PHILOX_ROUND_A = 0xD2511F53u;
+  const uint32_t PHILOX_ROUND_B = 0xCD9E8D57u;
+
+#define INTENTIR_PHILOX_ROUND_STEP(c0, c1, c2, c3)           \
+  do {                                                      \
+    const uint32_t hi0 = __umulhi(PHILOX_ROUND_A, (c0));     \
+    const uint32_t hi1 = __umulhi(PHILOX_ROUND_B, (c2));     \
+    const uint32_t lo0 = (uint32_t)(PHILOX_ROUND_A * (c0));  \
+    const uint32_t lo1 = (uint32_t)(PHILOX_ROUND_B * (c2));  \
+    (c0) = hi1 ^ (c1) ^ k0;                                  \
+    (c2) = hi0 ^ (c3) ^ k1;                                  \
+    (c1) = lo1;                                              \
+    (c3) = lo0;                                              \
+  } while (0)
+
+  #pragma unroll
+  for (int r = 0; r < N_ROUNDS; ++r) {
+    INTENTIR_PHILOX_ROUND_STEP(c0_0, c1_0, c2_0, c3_0);
+    INTENTIR_PHILOX_ROUND_STEP(c0_1, c1_1, c2_1, c3_1);
+    INTENTIR_PHILOX_ROUND_STEP(c0_2, c1_2, c2_2, c3_2);
+    INTENTIR_PHILOX_ROUND_STEP(c0_3, c1_3, c2_3, c3_3);
+    k0 += PHILOX_KEY_A;
+    k1 += PHILOX_KEY_B;
+  }
+
+#undef INTENTIR_PHILOX_ROUND_STEP
+
+  return intentir_uint4{c0_0, c0_1, c0_2, c0_3};
 }
 
 __device__ __forceinline__ uint32_t intentir_philox_randint_u32(uint64_t seed, uint32_t c0, int n_rounds) {

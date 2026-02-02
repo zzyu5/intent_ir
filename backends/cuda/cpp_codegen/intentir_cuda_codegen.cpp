@@ -16,6 +16,10 @@
 
 #include "code_writer.h"
 
+#ifdef INTENTIR_CUDA_CODEGEN_PYBIND
+#include <pybind11/pybind11.h>
+#endif
+
 using json = nlohmann::json;
 
 namespace {
@@ -476,6 +480,7 @@ json emit_dropout(const Intent& intent, const json& bindings) {
 
   std::ostringstream cuda_ss;
   CodeWriter w(cuda_ss);
+  w.line("#include <cuda_runtime.h>");
   w.line("#include \"kernels/dropout.cuh\"");
   w.blank();
   emit_selected_api(w);
@@ -485,11 +490,16 @@ json emit_dropout(const Intent& intent, const json& bindings) {
 
   if (enable_host_dispatch) {
     host_launch = true;
+    // Default to enabling vec4 variants: they are guarded by runtime alignment
+    // checks in the kernel and reduce instruction count for large vectors.
+    // Can be disabled via CUDA_DROPOUT_VEC4=0 for debugging.
+    const bool enable_vec4 = binding_int(bindings, "CUDA_DROPOUT_VEC4").value_or(1) != 0;
     struct DropoutVariant {
       int64_t threads;
       int ept;
       int64_t grid_x;
       bool full_tile;
+      bool vec4;
       std::string suffix;
     };
     std::vector<DropoutVariant> variants;
@@ -500,37 +510,43 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       if (t > 1024) t = 1024;
       return t;
     };
-    auto add_variant = [&](int64_t threads, int vept, const std::string& tag) {
+    auto add_variant = [&](int64_t threads, int vept, bool vec4, const std::string& tag) {
       threads = norm_threads(threads);
       if (vept <= 0) vept = 1;
       if (vept > 8) vept = 8;
+      if (vec4 && ((vept % 4) != 0)) return;
       const int64_t tile = threads * (int64_t)vept;
       if (tile <= 0) return;
       const int64_t gx = (n + tile - 1) / tile;
       const bool full = ((n % tile) == 0);
       for (const auto& e : variants) {
-        if (e.threads == threads && e.ept == vept) return;
+        if (e.threads == threads && e.ept == vept && e.vec4 == vec4) return;
       }
-      variants.push_back(DropoutVariant{threads, vept, gx, full, tag});
+      variants.push_back(DropoutVariant{threads, vept, gx, full, vec4, tag});
+    };
+
+    auto add_variant_pair = [&](int64_t threads, int vept, const std::string& tag) {
+      add_variant(threads, vept, /*vec4=*/false, tag);
+      if (enable_vec4 && ((vept % 4) == 0)) add_variant(threads, vept, /*vec4=*/true, tag + "_v4");
     };
 
     // Evidence-guided candidate set: keep it small but span a few occupancy
     // regimes (threads) and ILP levels (elements-per-thread). The dispatcher
     // microbench picks the best once and caches it.
-    add_variant(block_x, ept, "seed");
-    add_variant(128, 1, "t128_e1");
-    add_variant(256, 1, "t256_e1");
-    add_variant(512, 1, "t512_e1");
-    add_variant(128, 2, "t128_e2");
-    add_variant(256, 2, "t256_e2");
-    add_variant(512, 2, "t512_e2");
-    add_variant(128, 4, "t128_e4");
-    add_variant(256, 4, "t256_e4");
-    add_variant(512, 4, "t512_e4");
-    add_variant(128, 8, "t128_e8");
-    add_variant(256, 8, "t256_e8");
-    add_variant(512, 8, "t512_e8");
-    if (variants.empty()) add_variant(block_x, ept, "fallback");
+    add_variant_pair(block_x, ept, "seed");
+    add_variant_pair(128, 1, "t128_e1");
+    add_variant_pair(256, 1, "t256_e1");
+    add_variant_pair(512, 1, "t512_e1");
+    add_variant_pair(128, 2, "t128_e2");
+    add_variant_pair(256, 2, "t256_e2");
+    add_variant_pair(512, 2, "t512_e2");
+    add_variant_pair(128, 4, "t128_e4");
+    add_variant_pair(256, 4, "t256_e4");
+    add_variant_pair(512, 4, "t512_e4");
+    add_variant_pair(128, 8, "t128_e8");
+    add_variant_pair(256, 8, "t256_e8");
+    add_variant_pair(512, 8, "t512_e8");
+    if (variants.empty()) add_variant_pair(block_x, ept, "fallback");
 
     for (const auto& v : variants) {
       const std::string kname = intent.name + "__" + v.suffix;
@@ -543,9 +559,17 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         w.line("constexpr int EPT = " + std::to_string(v.ept) + ";");
         w.line("constexpr int N_ROUNDS = " + std::to_string(rounds) + ";");
         if (v.full_tile) {
-          w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p, (uint32_t)seed, Y, n_elements);");
+          if (v.vec4) {
+            w.line("intentir_cuda::dropout_f32_vec4<EPT, N_ROUNDS, true>(X, p, (uint32_t)seed, Y, n_elements);");
+          } else {
+            w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p, (uint32_t)seed, Y, n_elements);");
+          }
         } else {
-          w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, false>(X, p, (uint32_t)seed, Y, n_elements);");
+          if (v.vec4) {
+            w.line("intentir_cuda::dropout_f32_vec4<EPT, N_ROUNDS, false>(X, p, (uint32_t)seed, Y, n_elements);");
+          } else {
+            w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, false>(X, p, (uint32_t)seed, Y, n_elements);");
+          }
         }
         w.dedent();
         w.line("}");
@@ -558,9 +582,17 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         w.line("constexpr int EPT = " + std::to_string(v.ept) + ";");
         w.line("constexpr int N_ROUNDS = " + std::to_string(rounds) + ";");
         if (v.full_tile) {
-          w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p_ptr, seed_ptr, Y, n_elements);");
+          if (v.vec4) {
+            w.line("intentir_cuda::dropout_f32_vec4<EPT, N_ROUNDS, true>(X, p_ptr, seed_ptr, Y, n_elements);");
+          } else {
+            w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p_ptr, seed_ptr, Y, n_elements);");
+          }
         } else {
-          w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, false>(X, p_ptr, seed_ptr, Y, n_elements);");
+          if (v.vec4) {
+            w.line("intentir_cuda::dropout_f32_vec4<EPT, N_ROUNDS, false>(X, p_ptr, seed_ptr, Y, n_elements);");
+          } else {
+            w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, false>(X, p_ptr, seed_ptr, Y, n_elements);");
+          }
         }
         w.dedent();
         w.line("}");
@@ -597,10 +629,18 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.line("cudaEvent_t end = nullptr;");
       w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
+      w.line("cudaStream_t sel_stream = nullptr;");
+      w.line("TORCH_CHECK(cudaStreamCreateWithFlags(&sel_stream, cudaStreamNonBlocking) == cudaSuccess);");
+      // Match the benchmark harness: capture a CUDA graph with `iters` launches
+      // and time a single replay. This avoids picking variants that only win
+      // under Python submission overhead (small kernels).
       w.line("constexpr int warm = 3;");
       w.line("constexpr int iters = 50;");
+      w.line("cudaGraph_t graphs[" + std::to_string(variants.size()) + "] = {};");
+      w.line("cudaGraphExec_t execs[" + std::to_string(variants.size()) + "] = {};");
       w.line("float ms_acc[" + std::to_string(variants.size()) + "] = {0};");
-      // Forward pass then reverse pass to reduce clock/thermal order bias.
+
+      // Capture & instantiate graphs for each variant.
       for (size_t i = 0; i < variants.size(); ++i) {
         const auto& v = variants[i];
         const std::string kname = intent.name + "__" + v.suffix;
@@ -608,10 +648,26 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         w.indent();
         w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
         w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
-        w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p, seed, Y, n_elements);");
-        w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
-        w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p, seed, Y, n_elements);");
-        w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
+        w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, sel_stream>>>(X, p, seed, Y, n_elements);");
+        w.line("TORCH_CHECK(cudaStreamSynchronize(sel_stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaStreamBeginCapture(sel_stream, cudaStreamCaptureModeGlobal) == cudaSuccess);");
+        w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, sel_stream>>>(X, p, seed, Y, n_elements);");
+        w.line("TORCH_CHECK(cudaStreamEndCapture(sel_stream, &graphs[" + std::to_string(i) + "]) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaGraphInstantiate(&execs[" + std::to_string(i) + "], graphs[" + std::to_string(i) +
+               "], nullptr, nullptr, 0) == cudaSuccess);");
+        w.dedent();
+        w.line("}");
+      }
+
+      // Forward pass then reverse pass to reduce clock/thermal order bias.
+      for (size_t i = 0; i < variants.size(); ++i) {
+        w.line("{");
+        w.indent();
+        w.line("for (int i = 0; i < warm; ++i) TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(i) +
+               "], sel_stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaEventRecord(start, sel_stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(i) + "], sel_stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaEventRecord(end, sel_stream) == cudaSuccess);");
         w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
         w.line("float ms = 0.0f;");
         w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
@@ -620,16 +676,13 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         w.line("}");
       }
       for (size_t ri = variants.size(); ri-- > 0;) {
-        const auto& v = variants[ri];
-        const std::string kname = intent.name + "__" + v.suffix;
         w.line("{");
         w.indent();
-        w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
-        w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
-        w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p, seed, Y, n_elements);");
-        w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
-        w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p, seed, Y, n_elements);");
-        w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
+        w.line("for (int i = 0; i < warm; ++i) TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(ri) +
+               "], sel_stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaEventRecord(start, sel_stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(ri) + "], sel_stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaEventRecord(end, sel_stream) == cudaSuccess);");
         w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
         w.line("float ms = 0.0f;");
         w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
@@ -645,8 +698,15 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.line("if (ms < best_ms) { best_ms = ms; best_i = i; }");
       w.dedent();
       w.line("}");
+      w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) {");
+      w.indent();
+      w.line("if (execs[i]) TORCH_CHECK(cudaGraphExecDestroy(execs[i]) == cudaSuccess);");
+      w.line("if (graphs[i]) TORCH_CHECK(cudaGraphDestroy(graphs[i]) == cudaSuccess);");
+      w.dedent();
+      w.line("}");
       w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaStreamDestroy(sel_stream) == cudaSuccess);");
       w.line("intentir_selected = best_i;");
       w.dedent();
       w.line("}");
@@ -710,10 +770,18 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.line("cudaEvent_t end = nullptr;");
       w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
+      w.line("cudaStream_t sel_stream = nullptr;");
+      w.line("TORCH_CHECK(cudaStreamCreateWithFlags(&sel_stream, cudaStreamNonBlocking) == cudaSuccess);");
+      // Match the benchmark harness: capture a CUDA graph with `iters` launches
+      // and time a single replay. This avoids picking variants that only win
+      // under Python submission overhead (small kernels).
       w.line("constexpr int warm = 3;");
       w.line("constexpr int iters = 50;");
+      w.line("cudaGraph_t graphs[" + std::to_string(variants.size()) + "] = {};");
+      w.line("cudaGraphExec_t execs[" + std::to_string(variants.size()) + "] = {};");
       w.line("float ms_acc[" + std::to_string(variants.size()) + "] = {0};");
-      // Forward pass then reverse pass to reduce clock/thermal order bias.
+
+      // Capture & instantiate graphs for each variant.
       for (size_t i = 0; i < variants.size(); ++i) {
         const auto& v = variants[i];
         const std::string kname = intent.name + "__" + v.suffix;
@@ -721,10 +789,26 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         w.indent();
         w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
         w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
-        w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
-        w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
-        w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
-        w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
+        w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, sel_stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
+        w.line("TORCH_CHECK(cudaStreamSynchronize(sel_stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaStreamBeginCapture(sel_stream, cudaStreamCaptureModeGlobal) == cudaSuccess);");
+        w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, sel_stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
+        w.line("TORCH_CHECK(cudaStreamEndCapture(sel_stream, &graphs[" + std::to_string(i) + "]) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaGraphInstantiate(&execs[" + std::to_string(i) + "], graphs[" + std::to_string(i) +
+               "], nullptr, nullptr, 0) == cudaSuccess);");
+        w.dedent();
+        w.line("}");
+      }
+
+      // Forward pass then reverse pass to reduce clock/thermal order bias.
+      for (size_t i = 0; i < variants.size(); ++i) {
+        w.line("{");
+        w.indent();
+        w.line("for (int i = 0; i < warm; ++i) TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(i) +
+               "], sel_stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaEventRecord(start, sel_stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(i) + "], sel_stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaEventRecord(end, sel_stream) == cudaSuccess);");
         w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
         w.line("float ms = 0.0f;");
         w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
@@ -733,16 +817,13 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         w.line("}");
       }
       for (size_t ri = variants.size(); ri-- > 0;) {
-        const auto& v = variants[ri];
-        const std::string kname = intent.name + "__" + v.suffix;
         w.line("{");
         w.indent();
-        w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
-        w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
-        w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
-        w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
-        w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
-        w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
+        w.line("for (int i = 0; i < warm; ++i) TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(ri) +
+               "], sel_stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaEventRecord(start, sel_stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(ri) + "], sel_stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaEventRecord(end, sel_stream) == cudaSuccess);");
         w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
         w.line("float ms = 0.0f;");
         w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
@@ -758,8 +839,15 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.line("if (ms < best_ms) { best_ms = ms; best_i = i; }");
       w.dedent();
       w.line("}");
+      w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) {");
+      w.indent();
+      w.line("if (execs[i]) TORCH_CHECK(cudaGraphExecDestroy(execs[i]) == cudaSuccess);");
+      w.line("if (graphs[i]) TORCH_CHECK(cudaGraphDestroy(graphs[i]) == cudaSuccess);");
+      w.dedent();
+      w.line("}");
       w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaStreamDestroy(sel_stream) == cudaSuccess);");
       w.line("intentir_selected = best_i;");
       w.dedent();
       w.line("}");
@@ -1074,17 +1162,17 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     if (auto v = binding_int(bindings, "WMMA_USE_CP_ASYNC")) use_cp_async_raw = *v;
     bool wmma_use_cp_async = (use_cp_async_raw < 0) ? true : (use_cp_async_raw != 0);
 
-    auto wmma_pipe_opt = binding_int(bindings, "WMMA_PIPE_STAGES");
-    const bool pipe_stages_override = wmma_pipe_opt.has_value() && (*wmma_pipe_opt > 0);
-    int64_t wmma_pipe_stages = wmma_pipe_opt.value_or(0);
-    if (!wmma_use_cp_async) {
-      wmma_pipe_stages = 1;
-    } else {
-      const int64_t sched_pipe = (!pipe_stages_override && respect_schedule) ? resolve_schedule_int(intent, bindings, "pipeline_depth", 0) : 0;
-      if (!pipe_stages_override && sched_pipe > 0) wmma_pipe_stages = sched_pipe;
-      if (wmma_pipe_stages <= 0) wmma_pipe_stages = 3;
-      if (!(wmma_pipe_stages == 2 || wmma_pipe_stages == 3)) wmma_pipe_stages = 3;
-    }
+	    auto wmma_pipe_opt = binding_int(bindings, "WMMA_PIPE_STAGES");
+	    const bool pipe_stages_override = wmma_pipe_opt.has_value() && (*wmma_pipe_opt > 0);
+	    int64_t wmma_pipe_stages = wmma_pipe_opt.value_or(0);
+	    if (!wmma_use_cp_async) {
+	      wmma_pipe_stages = 1;
+	    } else {
+	      const int64_t sched_pipe = (!pipe_stages_override && respect_schedule) ? resolve_schedule_int(intent, bindings, "pipeline_depth", 0) : 0;
+	      if (!pipe_stages_override && sched_pipe > 0) wmma_pipe_stages = sched_pipe;
+	      if (wmma_pipe_stages <= 0) wmma_pipe_stages = 3;
+	      if (!(wmma_pipe_stages == 2 || wmma_pipe_stages == 3 || wmma_pipe_stages == 4)) wmma_pipe_stages = 3;
+	    }
 
     int64_t wmma_as_pad = binding_int(bindings, "WMMA_AS_PAD").value_or(8);
     int64_t wmma_bs_pad = binding_int(bindings, "WMMA_BS_PAD").value_or(8);
@@ -1105,31 +1193,37 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       return 4LL * (pipe_stages * wmma_tile_m * as_ld + pipe_stages * stage_k * bs_ld);
     };
 
-    int64_t shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
-    if (wmma_pipe_stages > 2 && shared_bytes > max_smem_optin) {
-      wmma_pipe_stages = 2;
-      shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
-    }
-    if (shared_bytes > max_smem_optin) {
-      for (int64_t cand : {int64_t(64), int64_t(32), int64_t(16), int64_t(8)}) {
-        if (cand >= wmma_stage_k) continue;
-        if ((K % cand) != 0) continue;
-        if (wmma_smem_bytes(cand, wmma_pipe_stages) <= max_smem_optin) {
-          wmma_stage_k = cand;
-          shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
-          break;
-        }
-      }
-    }
+	    int64_t shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
+	    if (shared_bytes > max_smem_optin) {
+	      for (int64_t cand : {int64_t(64), int64_t(32), int64_t(16), int64_t(8)}) {
+	        if (cand >= wmma_stage_k) continue;
+	        if ((K % cand) != 0) continue;
+	        if (wmma_smem_bytes(cand, wmma_pipe_stages) <= max_smem_optin) {
+	          wmma_stage_k = cand;
+	          shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
+	          break;
+	        }
+	      }
+	    }
+	    // If the selected pipeline depth is too large even after stage_k adjustment,
+	    // gracefully shrink it (4->3->2). PIPE_STAGES==1 is treated as sync fallback.
+	    if (wmma_pipe_stages == 4 && shared_bytes > max_smem_optin) {
+	      wmma_pipe_stages = 3;
+	      shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
+	    }
+	    if (wmma_pipe_stages == 3 && shared_bytes > max_smem_optin) {
+	      wmma_pipe_stages = 2;
+	      shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
+	    }
 
     bool wmma_force_sync = false;
-    if (!pipe_stages_override && wmma_pipe_stages == 2) {
-      const int64_t bytes3 = wmma_smem_bytes(wmma_stage_k, 3);
-      if (bytes3 <= max_smem_optin) {
-        wmma_pipe_stages = 3;
-        shared_bytes = bytes3;
-      }
-    }
+	    if (!pipe_stages_override && wmma_pipe_stages == 2) {
+	      const int64_t bytes3 = wmma_smem_bytes(wmma_stage_k, 3);
+	      if (bytes3 <= max_smem_optin) {
+	        wmma_pipe_stages = 3;
+	        shared_bytes = bytes3;
+	      }
+	    }
     if (shared_bytes > max_smem_optin) {
       wmma_force_sync = true;
       wmma_use_cp_async = false;
@@ -1142,33 +1236,40 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     const bool specialize_full_tile = specialize_dims && ((M % wmma_tile_m) == 0) && ((N % wmma_tile_n) == 0) && ((K % wmma_stage_k) == 0) &&
                                       ((K & 3) == 0) && ((N & 3) == 0) && (!wmma_disable_fastpath);
 
-    const std::string wmma_cp_a_enum = (wmma_cp_a_policy == "ca") ? "intentir_cuda::CpAsyncPolicy::CA" : "intentir_cuda::CpAsyncPolicy::CG";
-    const std::string wmma_cp_b_enum = (wmma_cp_b_policy == "ca") ? "intentir_cuda::CpAsyncPolicy::CA" : "intentir_cuda::CpAsyncPolicy::CG";
-    const std::string use_cp_async_const = wmma_use_cp_async ? "true" : "false";
-    const std::string enable_fastpath_const = wmma_disable_fastpath ? "false" : "true";
-    const std::string specialize_full_tile_const = specialize_full_tile ? "true" : "false";
+	    const std::string wmma_cp_a_enum = (wmma_cp_a_policy == "ca") ? "intentir_cuda::CpAsyncPolicy::CA" : "intentir_cuda::CpAsyncPolicy::CG";
+	    const std::string wmma_cp_b_enum = (wmma_cp_b_policy == "ca") ? "intentir_cuda::CpAsyncPolicy::CA" : "intentir_cuda::CpAsyncPolicy::CG";
+	    const int wmma_cp_a_int = (wmma_cp_a_policy == "ca") ? 0 : 1;
+	    const int wmma_cp_b_int = (wmma_cp_b_policy == "ca") ? 0 : 1;
+	    const std::string use_cp_async_const = wmma_use_cp_async ? "true" : "false";
+	    const std::string enable_fastpath_const = wmma_disable_fastpath ? "false" : "true";
+	    const std::string specialize_full_tile_const = specialize_full_tile ? "true" : "false";
 
+    w.line("#include <cuda_runtime.h>");
     w.line("#include <math.h>");
     w.line("#include <cstdlib>");
     w.line("#include <cstdio>");
     w.line("#include \"kernels/wmma_matmul.cuh\"");
     w.blank();
     emit_selected_api(w);
-    struct WmmaVariant {
-      int64_t warps_m;
-      int64_t warps_n;
-      int64_t frag_m;
-      int64_t frag_n;
-      int64_t tile_m;
-      int64_t tile_n;
-      int64_t stage_k;
-      int64_t pipe_stages;
-      bool use_cp_async;
-      bool specialize_full_tile;
-      int64_t shared_bytes;
-      int64_t threads;
-      std::string suffix;
-    };
+	    struct WmmaVariant {
+	      int64_t warps_m;
+	      int64_t warps_n;
+	      int64_t frag_m;
+	      int64_t frag_n;
+	      int64_t tile_m;
+	      int64_t tile_n;
+	      int64_t stage_k;
+	      int64_t pipe_stages;
+	      bool use_cp_async;
+	      bool specialize_full_tile;
+	      int64_t shared_bytes;
+	      int64_t threads;
+	      int64_t as_pad;
+	      int64_t bs_pad;
+	      int cp_a_policy;
+	      int cp_b_policy;
+	      std::string suffix;
+	    };
 
     const bool enable_host_dispatch =
         want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims && (!m_is_tensor) && (!n_is_tensor) && (!k_is_tensor);
@@ -1177,41 +1278,52 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     const int64_t tile_warps_m = wmma_warps_m * wmma_frag_m;
     const int64_t tile_warps_n = wmma_warps_n * wmma_frag_n;
 
-    auto make_variant = [&](int64_t warps_m,
-                            int64_t warps_n,
-                            int64_t frag_m,
-                            int64_t frag_n,
-                            int64_t stage_k,
-                            int64_t pipe_stages,
-                            bool use_cp_async,
-                            const std::string& suffix) -> std::optional<WmmaVariant> {
-      if (warps_m <= 0 || warps_n <= 0) return std::nullopt;
-      if (frag_m <= 0 || frag_n <= 0) return std::nullopt;
-      if (!(frag_m == 1 || frag_m == 2)) return std::nullopt;
-      if (!(frag_n == 1 || frag_n == 2)) return std::nullopt;
+	    auto make_variant = [&](int64_t warps_m,
+	                            int64_t warps_n,
+	                            int64_t frag_m,
+	                            int64_t frag_n,
+	                            int64_t stage_k,
+	                            int64_t pipe_stages,
+	                            bool use_cp_async,
+	                            int64_t as_pad,
+	                            int64_t bs_pad,
+	                            int cp_a_policy,
+	                            int cp_b_policy,
+	                            const std::string& suffix) -> std::optional<WmmaVariant> {
+	      if (warps_m <= 0 || warps_n <= 0) return std::nullopt;
+	      if (frag_m <= 0 || frag_n <= 0) return std::nullopt;
+	      if (!(frag_m == 1 || frag_m == 2)) return std::nullopt;
+	      if (!(frag_n == 1 || frag_n == 2)) return std::nullopt;
       if (warps_m > 4 || warps_n > 8) return std::nullopt;
       if ((warps_m * warps_n) > 16) return std::nullopt;
       const int64_t threads = 32 * warps_m * warps_n;
       if (threads <= 0 || threads > 1024) return std::nullopt;
-      const int64_t tile_m = 16 * warps_m * frag_m;
-      const int64_t tile_n = 16 * warps_n * frag_n;
-      if (stage_k <= 0) return std::nullopt;
-      if ((stage_k % 8) != 0) return std::nullopt;
-      if ((K % stage_k) != 0) return std::nullopt;
-      if (use_cp_async) {
-        if (!(pipe_stages == 2 || pipe_stages == 3)) return std::nullopt;
-      } else {
-        pipe_stages = 1;
-      }
-      const int64_t as_ld = stage_k + wmma_as_pad;
-      const int64_t bs_ld = tile_n + wmma_bs_pad;
-      const int64_t smem = 4LL * (pipe_stages * tile_m * as_ld + pipe_stages * stage_k * bs_ld);
-      if (smem > max_smem_optin) return std::nullopt;
-      const bool specialize_full_tile_v = specialize_dims && ((M % tile_m) == 0) && ((N % tile_n) == 0) && ((K % stage_k) == 0) && ((K & 3) == 0) &&
-                                          ((N & 3) == 0) && (!wmma_disable_fastpath);
-      WmmaVariant v{warps_m, warps_n, frag_m, frag_n, tile_m, tile_n, stage_k, pipe_stages, use_cp_async, specialize_full_tile_v, smem, threads, suffix};
-      return v;
-    };
+	      const int64_t tile_m = 16 * warps_m * frag_m;
+	      const int64_t tile_n = 16 * warps_n * frag_n;
+	      if (stage_k <= 0) return std::nullopt;
+	      if ((stage_k % 8) != 0) return std::nullopt;
+	      if ((K % stage_k) != 0) return std::nullopt;
+	      if (as_pad < 0 || bs_pad < 0) return std::nullopt;
+	      if (as_pad > 32 || bs_pad > 32) return std::nullopt;
+	      if ((as_pad % 4) != 0) return std::nullopt;
+	      if ((bs_pad % 4) != 0) return std::nullopt;
+	      if (!(cp_a_policy == 0 || cp_a_policy == 1)) return std::nullopt;
+	      if (!(cp_b_policy == 0 || cp_b_policy == 1)) return std::nullopt;
+	      if (use_cp_async) {
+	        if (!(pipe_stages == 2 || pipe_stages == 3 || pipe_stages == 4)) return std::nullopt;
+	      } else {
+	        pipe_stages = 1;
+	      }
+	      const int64_t as_ld = stage_k + as_pad;
+	      const int64_t bs_ld = tile_n + bs_pad;
+	      const int64_t smem = 4LL * (pipe_stages * tile_m * as_ld + pipe_stages * stage_k * bs_ld);
+	      if (smem > max_smem_optin) return std::nullopt;
+	      const bool specialize_full_tile_v = specialize_dims && ((M % tile_m) == 0) && ((N % tile_n) == 0) && ((K % stage_k) == 0) && ((K & 3) == 0) &&
+	                                          ((N & 3) == 0) && (!wmma_disable_fastpath);
+	      WmmaVariant v{warps_m, warps_n, frag_m, frag_n, tile_m, tile_n, stage_k, pipe_stages, use_cp_async, specialize_full_tile_v, smem, threads,
+	                    as_pad, bs_pad, cp_a_policy, cp_b_policy, suffix};
+	      return v;
+	    };
 
     if (!enable_host_dispatch) {
       // Single-kernel codegen path.
@@ -1256,27 +1368,44 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       w.dedent();
       w.line("}");
       w.blank();
-    } else {
-      host_launch = true;
-      // Multi-version codegen + host dispatcher (paper-friendly: evidence-guided small search).
-      std::vector<WmmaVariant> variants;
-      auto add_variant = [&](int64_t warps_m,
-                             int64_t warps_n,
-                             int64_t frag_m,
-                             int64_t frag_n,
-                             int64_t stage_k,
-                             int64_t pipe_stages,
-                             bool use_cp_async,
-                             const std::string& suffix) {
-        auto v = make_variant(warps_m, warps_n, frag_m, frag_n, stage_k, pipe_stages, use_cp_async, suffix);
-        if (!v.has_value()) return;
-        for (const auto& existing : variants) {
-          if (existing.warps_m == v->warps_m && existing.warps_n == v->warps_n && existing.frag_m == v->frag_m && existing.frag_n == v->frag_n &&
-              existing.stage_k == v->stage_k && existing.pipe_stages == v->pipe_stages && existing.use_cp_async == v->use_cp_async)
-            return;
-        }
-        variants.push_back(*v);
-      };
+	    } else {
+	      host_launch = true;
+	      // Multi-version codegen + host dispatcher (paper-friendly: evidence-guided small search).
+	      std::vector<WmmaVariant> variants;
+	      auto add_variant_ex = [&](int64_t warps_m,
+	                                int64_t warps_n,
+	                                int64_t frag_m,
+	                                int64_t frag_n,
+	                                int64_t stage_k,
+	                                int64_t pipe_stages,
+	                                bool use_cp_async,
+	                                int64_t as_pad,
+	                                int64_t bs_pad,
+	                                int cp_a_policy,
+	                                int cp_b_policy,
+	                                const std::string& suffix) {
+	        auto v =
+	            make_variant(warps_m, warps_n, frag_m, frag_n, stage_k, pipe_stages, use_cp_async, as_pad, bs_pad, cp_a_policy, cp_b_policy, suffix);
+	        if (!v.has_value()) return;
+	        for (const auto& existing : variants) {
+	          if (existing.warps_m == v->warps_m && existing.warps_n == v->warps_n && existing.frag_m == v->frag_m && existing.frag_n == v->frag_n &&
+	              existing.stage_k == v->stage_k && existing.pipe_stages == v->pipe_stages && existing.use_cp_async == v->use_cp_async &&
+	              existing.as_pad == v->as_pad && existing.bs_pad == v->bs_pad && existing.cp_a_policy == v->cp_a_policy && existing.cp_b_policy == v->cp_b_policy)
+	            return;
+	        }
+	        variants.push_back(*v);
+	      };
+	      auto add_variant = [&](int64_t warps_m,
+	                             int64_t warps_n,
+	                             int64_t frag_m,
+	                             int64_t frag_n,
+	                             int64_t stage_k,
+	                             int64_t pipe_stages,
+	                             bool use_cp_async,
+	                             const std::string& suffix) {
+	        add_variant_ex(warps_m, warps_n, frag_m, frag_n, stage_k, pipe_stages, use_cp_async, wmma_as_pad, wmma_bs_pad, wmma_cp_a_int, wmma_cp_b_int,
+	                       suffix);
+	      };
 
       struct WmmaGeom {
         int64_t warps_m;
@@ -1321,29 +1450,156 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       add_geom(base_tw_m, base_tw_n, 1, 2, /*is_base_tile=*/true, base_tile_tag + "_fm1_fn2");
       add_geom(base_tw_m, base_tw_n, 2, 2, /*is_base_tile=*/true, base_tile_tag + "_fm2_fn2");
 
-      auto add_tile_variant = [&](int64_t tw_m, int64_t tw_n) {
+      auto add_tile_family = [&](int64_t tw_m, int64_t tw_n, bool is_base_tile, bool rich) {
+        if (tw_m <= 0 || tw_n <= 0) return;
+        if (!rich) {
+          add_geom(tw_m, tw_n, 1, 1, /*is_base_tile=*/is_base_tile, tile_tag(tw_m, tw_n) + "_fm1_fn1");
+          return;
+        }
+        const std::string tag = tile_tag(tw_m, tw_n);
+        add_geom(tw_m, tw_n, 1, 1, /*is_base_tile=*/is_base_tile, tag + "_fm1_fn1");
+        add_geom(tw_m, tw_n, 2, 1, /*is_base_tile=*/is_base_tile, tag + "_fm2_fn1");
+        add_geom(tw_m, tw_n, 1, 2, /*is_base_tile=*/is_base_tile, tag + "_fm1_fn2");
+        add_geom(tw_m, tw_n, 2, 2, /*is_base_tile=*/is_base_tile, tag + "_fm2_fn2");
+      };
+
+      auto add_neighbor_tile = [&](int64_t tw_m, int64_t tw_n) {
         if (tw_m <= 0 || tw_n <= 0) return;
         if (tw_m == base_tw_m && tw_n == base_tw_n) return;
-        add_geom(tw_m, tw_n, 1, 1, /*is_base_tile=*/false, tile_tag(tw_m, tw_n) + "_fm1_fn1");
+        // For downscaled tiles, keep only the simplest frag config; for upscaled tiles, include a small
+        // family so the dispatcher can trade WARPS vs FRAG shape.
+        const bool rich = (tw_m > base_tw_m) || (tw_n > base_tw_n);
+        add_tile_family(tw_m, tw_n, /*is_base_tile=*/false, rich);
       };
-      if (base_tw_m > 1) add_tile_variant(base_tw_m / 2, base_tw_n);
-      if (base_tw_n > 1) add_tile_variant(base_tw_m, base_tw_n / 2);
-      if (base_tw_m > 1 && base_tw_n > 1) add_tile_variant(base_tw_m / 2, base_tw_n / 2);
+
+      // Neighborhood around the schedule-derived base tile:
+      //  - downscale (smaller tiles) helps small problems / occupancy
+      //  - upscale (larger tiles) helps newer GPUs where a bigger CTA can be profitable
+      if (base_tw_m > 1) add_neighbor_tile(base_tw_m / 2, base_tw_n);
+      if (base_tw_n > 1) add_neighbor_tile(base_tw_m, base_tw_n / 2);
+      if (base_tw_m > 1 && base_tw_n > 1) add_neighbor_tile(base_tw_m / 2, base_tw_n / 2);
+
+      if (base_tw_m * 2 <= 8) add_neighbor_tile(base_tw_m * 2, base_tw_n);
+      if (base_tw_n * 2 <= 8) add_neighbor_tile(base_tw_m, base_tw_n * 2);
+      if (base_tw_m * 2 <= 8 && base_tw_n * 2 <= 8) add_neighbor_tile(base_tw_m * 2, base_tw_n * 2);
+
+      // Aspect swap candidate (often helps when schedule tile_m/tile_n is imbalanced).
+      if (base_tw_m != base_tw_n) add_neighbor_tile(base_tw_n, base_tw_m);
       if (geoms.empty()) geoms.push_back(WmmaGeom{wmma_warps_m, wmma_warps_n, wmma_frag_m, wmma_frag_n, true, "base"});
 
+      const std::string focus_base = base_tile_tag + "_fm1_fn1";
+      std::string focus_half;
+      if (base_tw_m > 1 && base_tw_n > 1) {
+        focus_half = tile_tag(base_tw_m / 2, base_tw_n / 2) + "_fm1_fn1";
+      }
+
+      auto cp_tag = [](int p) -> std::string { return (p == 0) ? "ca" : "cg"; };
+      const int cp_pol[2] = {0, 1};
+      // Keep the micro-search small: either use the default padding or disable it.
+      const int64_t pad_pair_as[2] = {wmma_as_pad, 0};
+      const int64_t pad_pair_bs[2] = {wmma_bs_pad, 0};
+
+      std::vector<int64_t> focus_stage_cands;
+      auto add_focus_stage = [&](int64_t sk) {
+        if (sk <= 0) return;
+        for (int64_t x : focus_stage_cands) {
+          if (x == sk) return;
+        }
+        focus_stage_cands.push_back(sk);
+      };
+      add_focus_stage(wmma_stage_k);
+      if ((K % 32) == 0) add_focus_stage(32);
+      if ((K % 128) == 0) add_focus_stage(128);
+
+      auto add_focus_microsearch = [&](const WmmaGeom& g) {
+        for (int64_t sk : focus_stage_cands) {
+          if (sk <= 0) continue;
+          if (K < sk || (K % sk) != 0) continue;
+          for (int pipe : {3, 4}) {
+            const std::string base_suffix =
+                (sk == wmma_stage_k) ? (g.tag + "_p" + std::to_string(pipe))
+                                     : (g.tag + "_k" + std::to_string(sk) + "_p" + std::to_string(pipe));
+            for (int pi = 0; pi < 2; ++pi) {
+              const int64_t as_pad = pad_pair_as[pi];
+              const int64_t bs_pad = pad_pair_bs[pi];
+              for (int cp_a : cp_pol) {
+                for (int cp_b : cp_pol) {
+                  std::string suf = base_suffix;
+                  suf += "_ap" + std::to_string(as_pad) + "_bp" + std::to_string(bs_pad);
+                  suf += "_a" + cp_tag(cp_a) + "_b" + cp_tag(cp_b);
+                  add_variant_ex(g.warps_m,
+                                 g.warps_n,
+                                 g.frag_m,
+                                 g.frag_n,
+                                 sk,
+                                 pipe,
+                                 /*use_cp_async=*/true,
+                                 as_pad,
+                                 bs_pad,
+                                 cp_a,
+                                 cp_b,
+                                 suf);
+                }
+              }
+            }
+          }
+        }
+      };
+
       for (const auto& g : geoms) {
+        const bool is_focus = (g.tag == focus_base) || (!focus_half.empty() && g.tag == focus_half);
         if (wmma_use_cp_async) {
-          add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, wmma_pipe_stages, /*use_cp_async=*/true,
+          add_variant(g.warps_m,
+                      g.warps_n,
+                      g.frag_m,
+                      g.frag_n,
+                      wmma_stage_k,
+                      wmma_pipe_stages,
+                      /*use_cp_async=*/true,
                       g.tag + "_p" + std::to_string(wmma_pipe_stages));
+
           if (g.is_base_tile) {
+            add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 4, /*use_cp_async=*/true, g.tag + "_p4");
             add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 3, /*use_cp_async=*/true, g.tag + "_p3");
             add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 2, /*use_cp_async=*/true, g.tag + "_p2");
             if (K >= 128 && (K % 128) == 0) {
+              add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 4, /*use_cp_async=*/true, g.tag + "_k128_p4");
               add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 3, /*use_cp_async=*/true, g.tag + "_k128_p3");
               add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 2, /*use_cp_async=*/true, g.tag + "_k128_p2");
             }
           } else {
-            if (wmma_pipe_stages == 3) add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 2, /*use_cp_async=*/true, g.tag + "_p2");
+            if (wmma_pipe_stages == 3) {
+              add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 2, /*use_cp_async=*/true, g.tag + "_p2");
+            }
+          }
+
+          // For the most likely winners (base fm1_fn1 and base/2 fm1_fn1), try a small cross-product of
+          // cp.async cache policy (CA/CG), padding on/off, stage_k, and PIPE=3/4.
+          if (is_focus) {
+            // Also include a couple of simpler stage_k alternatives for PIPE=2/3.
+            for (int64_t sk : focus_stage_cands) {
+              if (sk <= 0) continue;
+              if (sk == wmma_stage_k) continue;
+              if (K >= sk && (K % sk) == 0) {
+                add_variant(g.warps_m,
+                            g.warps_n,
+                            g.frag_m,
+                            g.frag_n,
+                            sk,
+                            3,
+                            /*use_cp_async=*/true,
+                            g.tag + "_k" + std::to_string(sk) + "_p3");
+                add_variant(g.warps_m,
+                            g.warps_n,
+                            g.frag_m,
+                            g.frag_n,
+                            sk,
+                            2,
+                            /*use_cp_async=*/true,
+                            g.tag + "_k" + std::to_string(sk) + "_p2");
+              }
+            }
+            add_focus_microsearch(g);
           }
         }
         add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 1, /*use_cp_async=*/false, g.tag + "_sync");
@@ -1372,32 +1628,34 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
           }
         }
         w.blank();
-        w.line("constexpr int WARPS_M = " + std::to_string(v.warps_m) + ";");
-        w.line("constexpr int WARPS_N = " + std::to_string(v.warps_n) + ";");
-        w.line("constexpr int FRAG_M = " + std::to_string(v.frag_m) + ";");
-        w.line("constexpr int FRAG_N = " + std::to_string(v.frag_n) + ";");
-        w.line("constexpr int STAGE_K = " + std::to_string(v.stage_k) + ";");
-        w.line("constexpr int AS_PAD = " + std::to_string(wmma_as_pad) + ";");
-        w.line("constexpr int BS_PAD = " + std::to_string(wmma_bs_pad) + ";");
-        w.line("constexpr int PIPE_STAGES = " + std::to_string(v.pipe_stages) + ";");
-        w.blank();
-        const std::string use_cp_async_v = v.use_cp_async ? "true" : "false";
-        const std::string specialize_full_tile_v = v.specialize_full_tile ? "true" : "false";
-        w.line("intentir_cuda::wmma_matmul_f32_tf32<");
-        w.indent();
-        w.line("WARPS_M,");
+	        w.line("constexpr int WARPS_M = " + std::to_string(v.warps_m) + ";");
+	        w.line("constexpr int WARPS_N = " + std::to_string(v.warps_n) + ";");
+	        w.line("constexpr int FRAG_M = " + std::to_string(v.frag_m) + ";");
+	        w.line("constexpr int FRAG_N = " + std::to_string(v.frag_n) + ";");
+	        w.line("constexpr int STAGE_K = " + std::to_string(v.stage_k) + ";");
+	        w.line("constexpr int AS_PAD = " + std::to_string(v.as_pad) + ";");
+	        w.line("constexpr int BS_PAD = " + std::to_string(v.bs_pad) + ";");
+	        w.line("constexpr int PIPE_STAGES = " + std::to_string(v.pipe_stages) + ";");
+	        w.blank();
+	        const std::string use_cp_async_v = v.use_cp_async ? "true" : "false";
+	        const std::string specialize_full_tile_v = v.specialize_full_tile ? "true" : "false";
+	        const std::string cp_a_enum_v = (v.cp_a_policy == 0) ? "intentir_cuda::CpAsyncPolicy::CA" : "intentir_cuda::CpAsyncPolicy::CG";
+	        const std::string cp_b_enum_v = (v.cp_b_policy == 0) ? "intentir_cuda::CpAsyncPolicy::CA" : "intentir_cuda::CpAsyncPolicy::CG";
+	        w.line("intentir_cuda::wmma_matmul_f32_tf32<");
+	        w.indent();
+	        w.line("WARPS_M,");
         w.line("WARPS_N,");
         w.line("FRAG_M,");
         w.line("FRAG_N,");
         w.line("STAGE_K,");
         w.line("AS_PAD,");
-        w.line("BS_PAD,");
-        w.line("PIPE_STAGES,");
-        w.line(use_cp_async_v + ",");
-        w.line(wmma_cp_a_enum + ",");
-        w.line(wmma_cp_b_enum + ",");
-        w.line(enable_fastpath_const + ",");
-        w.line(specialize_full_tile_v + ">(A, B, C, M, N, K);");
+	        w.line("BS_PAD,");
+	        w.line("PIPE_STAGES,");
+	        w.line(use_cp_async_v + ",");
+	        w.line(cp_a_enum_v + ",");
+	        w.line(cp_b_enum_v + ",");
+	        w.line(enable_fastpath_const + ",");
+	        w.line(specialize_full_tile_v + ">(A, B, C, M, N, K);");
         w.dedent();
         w.dedent();
         w.line("}");
@@ -1482,11 +1740,14 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       w.line("cudaEvent_t end = nullptr;");
       w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
+      w.line("cudaStream_t sel_stream = nullptr;");
+      w.line("TORCH_CHECK(cudaStreamCreateWithFlags(&sel_stream, cudaStreamNonBlocking) == cudaSuccess);");
       w.line("constexpr int warm = 3;");
       w.line("constexpr int iters = 50;");
-      w.line("constexpr int reps = 3;");
       w.line("float ms_acc[" + std::to_string(variants.size()) + "] = {0};");
       w.line("bool ok[" + std::to_string(variants.size()) + "] = {false};");
+      w.line("cudaGraph_t graphs[" + std::to_string(variants.size()) + "] = {};");
+      w.line("cudaGraphExec_t execs[" + std::to_string(variants.size()) + "] = {};");
 
       for (size_t vi = 0; vi < variants.size(); ++vi) {
         const auto& v = variants[vi];
@@ -1509,32 +1770,31 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         w.line("intentir_smem_cached = smem;");
         w.dedent();
         w.line("}");
-        w.line("float m0 = 0.0f, m1 = 0.0f, m2 = 0.0f;");
-        w.line("for (int rep = 0; rep < reps; ++rep) {");
-        w.indent();
         w.line("for (int i = 0; i < warm; ++i) {");
         w.indent();
-        w.line(kname + "<<<g, b, (size_t)smem, stream>>>((const float*)A, (const float*)B, (float*)C, M_in, N_in, K_in);");
+        w.line(kname + "<<<g, b, (size_t)smem, sel_stream>>>((const float*)A, (const float*)B, (float*)C, M_in, N_in, K_in);");
         w.dedent();
         w.line("}");
-        w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaStreamSynchronize(sel_stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaStreamBeginCapture(sel_stream, cudaStreamCaptureModeGlobal) == cudaSuccess);");
         w.line("for (int i = 0; i < iters; ++i) {");
         w.indent();
-        w.line(kname + "<<<g, b, (size_t)smem, stream>>>((const float*)A, (const float*)B, (float*)C, M_in, N_in, K_in);");
+        w.line(kname + "<<<g, b, (size_t)smem, sel_stream>>>((const float*)A, (const float*)B, (float*)C, M_in, N_in, K_in);");
         w.dedent();
         w.line("}");
-        w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaStreamEndCapture(sel_stream, &graphs[" + std::to_string(vi) + "]) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaGraphInstantiate(&execs[" + std::to_string(vi) + "], graphs[" + std::to_string(vi) +
+               "], nullptr, nullptr, 0) == cudaSuccess);");
+        w.line("for (int i = 0; i < warm; ++i) TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(vi) +
+               "], sel_stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaEventRecord(start, sel_stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(vi) + "], sel_stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaEventRecord(end, sel_stream) == cudaSuccess);");
         w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
         w.line("float ms = 0.0f;");
         w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
         w.line("ms = ms / (float)iters;");
-        w.line("if (rep == 0) m0 = ms; else if (rep == 1) m1 = ms; else m2 = ms;");
-        w.dedent();
-        w.line("}");
-        w.line("const float mn = fminf(m0, fminf(m1, m2));");
-        w.line("const float mx = fmaxf(m0, fmaxf(m1, m2));");
-        w.line("const float med = (m0 + m1 + m2) - mn - mx;");
-        w.line("ms_acc[" + std::to_string(vi) + "] += med;");
+        w.line("ms_acc[" + std::to_string(vi) + "] += ms;");
         w.dedent();
         w.line("}");
         w.dedent();
@@ -1561,32 +1821,16 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         w.line("intentir_smem_cached = smem;");
         w.dedent();
         w.line("}");
-        w.line("float m0 = 0.0f, m1 = 0.0f, m2 = 0.0f;");
-        w.line("for (int rep = 0; rep < reps; ++rep) {");
-        w.indent();
-        w.line("for (int i = 0; i < warm; ++i) {");
-        w.indent();
-        w.line(kname + "<<<g, b, (size_t)smem, stream>>>((const float*)A, (const float*)B, (float*)C, M_in, N_in, K_in);");
-        w.dedent();
-        w.line("}");
-        w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
-        w.line("for (int i = 0; i < iters; ++i) {");
-        w.indent();
-        w.line(kname + "<<<g, b, (size_t)smem, stream>>>((const float*)A, (const float*)B, (float*)C, M_in, N_in, K_in);");
-        w.dedent();
-        w.line("}");
-        w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
+        w.line("for (int i = 0; i < warm; ++i) TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(rvi) +
+               "], sel_stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaEventRecord(start, sel_stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(rvi) + "], sel_stream) == cudaSuccess);");
+        w.line("TORCH_CHECK(cudaEventRecord(end, sel_stream) == cudaSuccess);");
         w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
         w.line("float ms = 0.0f;");
         w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
         w.line("ms = ms / (float)iters;");
-        w.line("if (rep == 0) m0 = ms; else if (rep == 1) m1 = ms; else m2 = ms;");
-        w.dedent();
-        w.line("}");
-        w.line("const float mn = fminf(m0, fminf(m1, m2));");
-        w.line("const float mx = fmaxf(m0, fmaxf(m1, m2));");
-        w.line("const float med = (m0 + m1 + m2) - mn - mx;");
-        w.line("ms_acc[" + std::to_string(rvi) + "] += med;");
+        w.line("ms_acc[" + std::to_string(rvi) + "] += ms;");
         w.dedent();
         w.line("}");
         w.dedent();
@@ -1604,6 +1848,13 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       w.line("if (ms < best_ms) { best_ms = ms; best_i = i; }");
       w.dedent();
       w.line("}");
+      w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) {");
+      w.indent();
+      w.line("if (execs[i]) TORCH_CHECK(cudaGraphExecDestroy(execs[i]) == cudaSuccess);");
+      w.line("if (graphs[i]) TORCH_CHECK(cudaGraphDestroy(graphs[i]) == cudaSuccess);");
+      w.dedent();
+      w.line("}");
+      w.line("TORCH_CHECK(cudaStreamDestroy(sel_stream) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
       w.line("intentir_selected = intentir_found ? best_i : " + std::to_string(fallback_i) + ";");
@@ -1890,10 +2141,18 @@ json emit_warp(const Intent& intent, const json& bindings) {
     w.line("cudaEvent_t end = nullptr;");
     w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
     w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
-    w.line("float best_ms = 1e30f;");
-    w.line("int best_i = 0;");
-    w.line("const int warm = 2;");
-    w.line("const int iters = 50;");
+    w.line("cudaStream_t sel_stream = nullptr;");
+    w.line("TORCH_CHECK(cudaStreamCreateWithFlags(&sel_stream, cudaStreamNonBlocking) == cudaSuccess);");
+    // Match the benchmark harness: capture a CUDA graph with `iters` launches
+    // and time a single replay. This avoids picking variants that only win
+    // under Python submission overhead (small kernels).
+    w.line("constexpr int warm = 3;");
+    w.line("constexpr int iters = 50;");
+    w.line("cudaGraph_t graphs[" + std::to_string(variants.size()) + "] = {};");
+    w.line("cudaGraphExec_t execs[" + std::to_string(variants.size()) + "] = {};");
+    w.line("float ms_acc[" + std::to_string(variants.size()) + "] = {0};");
+
+    // Capture & instantiate graphs for each variant.
     for (size_t i = 0; i < variants.size(); ++i) {
       const auto& v = variants[i];
       const std::string kname = intent.name + "__" + v.suffix;
@@ -1901,21 +2160,66 @@ json emit_warp(const Intent& intent, const json& bindings) {
       w.indent();
       w.line("dim3 b((unsigned)" + std::to_string(v.block_w) + ", 1u, 1u);");
       w.line("dim3 g((unsigned)" + std::to_string(v.grid_w) + ", (unsigned)H, (unsigned)C);");
-      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(" + src_name + ", " + offset_name + ", " + out_name +
+      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, sel_stream>>>(" + src_name + ", " + offset_name + ", " + out_name +
              ", C, H, W);");
-      w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
-      w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(" + src_name + ", " + offset_name + ", " + out_name +
+      w.line("TORCH_CHECK(cudaStreamSynchronize(sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaStreamBeginCapture(sel_stream, cudaStreamCaptureModeGlobal) == cudaSuccess);");
+      w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, sel_stream>>>(" + src_name + ", " + offset_name + ", " + out_name +
              ", C, H, W);");
-      w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
-      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
-      w.line("float ms = 0.0f;");
-      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
-      w.line("if (ms < best_ms) { best_ms = ms; best_i = " + std::to_string(i) + "; }");
+      w.line("TORCH_CHECK(cudaStreamEndCapture(sel_stream, &graphs[" + std::to_string(i) + "]) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaGraphInstantiate(&execs[" + std::to_string(i) + "], graphs[" + std::to_string(i) +
+             "], nullptr, nullptr, 0) == cudaSuccess);");
       w.dedent();
       w.line("}");
     }
+
+    // Forward pass then reverse pass to reduce clock/thermal order bias.
+    for (size_t i = 0; i < variants.size(); ++i) {
+      w.line("{");
+      w.indent();
+      w.line("for (int i = 0; i < warm; ++i) TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(i) + "], sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventRecord(start, sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(i) + "], sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventRecord(end, sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
+      w.line("float ms = 0.0f;");
+      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
+      w.line("ms_acc[" + std::to_string(i) + "] += ms;");
+      w.dedent();
+      w.line("}");
+    }
+    for (size_t ri = variants.size(); ri-- > 0;) {
+      w.line("{");
+      w.indent();
+      w.line("for (int i = 0; i < warm; ++i) TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(ri) + "], sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventRecord(start, sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(ri) + "], sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventRecord(end, sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
+      w.line("float ms = 0.0f;");
+      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
+      w.line("ms_acc[" + std::to_string(ri) + "] += ms;");
+      w.dedent();
+      w.line("}");
+    }
+
+    w.line("float best_ms = 1e30f;");
+    w.line("int best_i = 0;");
+    w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) {");
+    w.indent();
+    w.line("const float ms = ms_acc[i];");
+    w.line("if (ms < best_ms) { best_ms = ms; best_i = i; }");
+    w.dedent();
+    w.line("}");
+    w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) {");
+    w.indent();
+    w.line("if (execs[i]) TORCH_CHECK(cudaGraphExecDestroy(execs[i]) == cudaSuccess);");
+    w.line("if (graphs[i]) TORCH_CHECK(cudaGraphDestroy(graphs[i]) == cudaSuccess);");
+    w.dedent();
+    w.line("}");
     w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
     w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
+    w.line("TORCH_CHECK(cudaStreamDestroy(sel_stream) == cudaSuccess);");
     w.line("intentir_selected = best_i;");
     w.dedent();
     w.line("}");
@@ -2076,19 +2380,21 @@ json emit_correlation(const Intent& intent, const json& bindings) {
       if (t > 1024) t = 1024;
       return t;
     };
-    auto add_variant = [&](int64_t threads, const std::string& tag) {
-      threads = norm_threads(threads);
-      const int64_t gx = (total + threads - 1) / threads;
-      for (const auto& v : variants) {
-        if (v.threads == threads) return;
-      }
-      variants.push_back(CorrVariant{threads, gx, tag});
-    };
-    add_variant(block_x, "seed");
-    add_variant(128, "t128");
-    add_variant(256, "t256");
-    add_variant(512, "t512");
-    if (variants.empty()) add_variant(block_x, "fallback");
+	    auto add_variant = [&](int64_t threads, const std::string& tag) {
+	      threads = norm_threads(threads);
+	      const int64_t gx = (total + threads - 1) / threads;
+	      for (const auto& v : variants) {
+	        if (v.threads == threads) return;
+	      }
+	      variants.push_back(CorrVariant{threads, gx, tag});
+	    };
+	    add_variant(block_x, "seed");
+	    add_variant(64, "t64");
+	    add_variant(128, "t128");
+	    add_variant(256, "t256");
+	    add_variant(512, "t512");
+	    add_variant(1024, "t1024");
+	    if (variants.empty()) add_variant(block_x, "fallback");
 
     const int64_t out_shift_val = binding_int(bindings, "out_shift").value_or(0);
     const std::string oc_arg = oc_is_tensor ? "out_channel_ptr" : "out_channel";
@@ -2161,10 +2467,18 @@ json emit_correlation(const Intent& intent, const json& bindings) {
 	    w.line("cudaEvent_t end = nullptr;");
 	    w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
 	    w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
-	    // Reduce systematic order/clock bias: forward pass then reverse pass, accumulate times.
-	    w.line("constexpr int warm = 2;");
+	    w.line("cudaStream_t sel_stream = nullptr;");
+	    w.line("TORCH_CHECK(cudaStreamCreateWithFlags(&sel_stream, cudaStreamNonBlocking) == cudaSuccess);");
+	    // Match the benchmark harness: capture a CUDA graph with `iters` launches
+	    // and time a single replay. This avoids picking variants that only win
+	    // under Python submission overhead (small kernels).
+	    w.line("constexpr int warm = 3;");
 	    w.line("constexpr int iters = 50;");
+	    w.line("cudaGraph_t graphs[" + std::to_string(variants.size()) + "] = {};");
+	    w.line("cudaGraphExec_t execs[" + std::to_string(variants.size()) + "] = {};");
 	    w.line("float ms_acc[" + std::to_string(variants.size()) + "] = {0};");
+
+	    // Capture & instantiate graphs for each variant.
 	    for (size_t i = 0; i < variants.size(); ++i) {
 	      const auto& v = variants[i];
 	      const std::string kname = intent.name + "__" + v.suffix;
@@ -2172,12 +2486,27 @@ json emit_correlation(const Intent& intent, const json& bindings) {
 	      w.indent();
 	      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
 	      w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
-	      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(" + src0_name + ", " + src1_name + ", " + out_name +
+	      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, sel_stream>>>(" + src0_name + ", " + src1_name + ", " + out_name +
 	             ", " + oc_arg + ", " + ic_arg + ", " + h_arg + ", " + w_arg + ", " + sh_arg + ");");
-	      w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
-	      w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(" + src0_name + ", " + src1_name + ", " + out_name +
+	      w.line("TORCH_CHECK(cudaStreamSynchronize(sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaStreamBeginCapture(sel_stream, cudaStreamCaptureModeGlobal) == cudaSuccess);");
+	      w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, sel_stream>>>(" + src0_name + ", " + src1_name + ", " + out_name +
 	             ", " + oc_arg + ", " + ic_arg + ", " + h_arg + ", " + w_arg + ", " + sh_arg + ");");
-	      w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaStreamEndCapture(sel_stream, &graphs[" + std::to_string(i) + "]) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaGraphInstantiate(&execs[" + std::to_string(i) + "], graphs[" + std::to_string(i) +
+	             "], nullptr, nullptr, 0) == cudaSuccess);");
+	      w.dedent();
+	      w.line("}");
+	    }
+
+	    // Forward pass then reverse pass to reduce clock/thermal order bias.
+	    for (size_t i = 0; i < variants.size(); ++i) {
+	      w.line("{");
+	      w.indent();
+	      w.line("for (int i = 0; i < warm; ++i) TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(i) + "], sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaEventRecord(start, sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(i) + "], sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaEventRecord(end, sel_stream) == cudaSuccess);");
 	      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
 	      w.line("float ms = 0.0f;");
 	      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
@@ -2186,18 +2515,12 @@ json emit_correlation(const Intent& intent, const json& bindings) {
 	      w.line("}");
 	    }
 	    for (size_t ri = variants.size(); ri-- > 0;) {
-	      const auto& v = variants[ri];
-	      const std::string kname = intent.name + "__" + v.suffix;
 	      w.line("{");
 	      w.indent();
-	      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
-	      w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
-	      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(" + src0_name + ", " + src1_name + ", " + out_name +
-	             ", " + oc_arg + ", " + ic_arg + ", " + h_arg + ", " + w_arg + ", " + sh_arg + ");");
-	      w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
-	      w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(" + src0_name + ", " + src1_name + ", " + out_name +
-	             ", " + oc_arg + ", " + ic_arg + ", " + h_arg + ", " + w_arg + ", " + sh_arg + ");");
-	      w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
+	      w.line("for (int i = 0; i < warm; ++i) TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(ri) + "], sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaEventRecord(start, sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(ri) + "], sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaEventRecord(end, sel_stream) == cudaSuccess);");
 	      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
 	      w.line("float ms = 0.0f;");
 	      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
@@ -2213,8 +2536,15 @@ json emit_correlation(const Intent& intent, const json& bindings) {
 	    w.line("if (ms < best_ms) { best_ms = ms; best_i = i; }");
 	    w.dedent();
 	    w.line("}");
+	    w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) {");
+	    w.indent();
+	    w.line("if (execs[i]) TORCH_CHECK(cudaGraphExecDestroy(execs[i]) == cudaSuccess);");
+	    w.line("if (graphs[i]) TORCH_CHECK(cudaGraphDestroy(graphs[i]) == cudaSuccess);");
+	    w.dedent();
+	    w.line("}");
 	    w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
 	    w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
+	    w.line("TORCH_CHECK(cudaStreamDestroy(sel_stream) == cudaSuccess);");
 	    w.line("intentir_selected = best_i;");
 	    w.dedent();
 	    w.line("}");
@@ -2430,10 +2760,18 @@ json emit_resize_bilinear2x_i8(const Intent& intent, const json& bindings) {
     w.line("cudaEvent_t end = nullptr;");
     w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
     w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
-    w.line("float best_ms = 1e30f;");
-    w.line("int best_i = 0;");
-    w.line("const int warm = 2;");
-    w.line("const int iters = 50;");
+    w.line("cudaStream_t sel_stream = nullptr;");
+    w.line("TORCH_CHECK(cudaStreamCreateWithFlags(&sel_stream, cudaStreamNonBlocking) == cudaSuccess);");
+    // Match the benchmark harness: capture a CUDA graph with `iters` launches
+    // and time a single replay. This avoids picking variants that only win
+    // under Python submission overhead (small kernels).
+    w.line("constexpr int warm = 3;");
+    w.line("constexpr int iters = 50;");
+    w.line("cudaGraph_t graphs[" + std::to_string(variants.size()) + "] = {};");
+    w.line("cudaGraphExec_t execs[" + std::to_string(variants.size()) + "] = {};");
+    w.line("float ms_acc[" + std::to_string(variants.size()) + "] = {0};");
+
+    // Capture & instantiate graphs for each variant.
     for (size_t i = 0; i < variants.size(); ++i) {
       const auto& v = variants[i];
       const std::string kname = intent.name + "__" + v.suffix;
@@ -2441,21 +2779,66 @@ json emit_resize_bilinear2x_i8(const Intent& intent, const json& bindings) {
       w.indent();
       w.line("dim3 b((unsigned)" + std::to_string(v.block_w) + ", 1u, 1u);");
       w.line("dim3 g((unsigned)" + std::to_string(v.grid_w) + ", (unsigned)OH0, (unsigned)C0);");
-      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(" + src_name + ", " + out_name + ", " + c_arg + ", " + h_arg +
+      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, sel_stream>>>(" + src_name + ", " + out_name + ", " + c_arg + ", " + h_arg +
              ", " + w_arg + ");");
-      w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
-      w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(" + src_name + ", " + out_name + ", " + c_arg + ", " + h_arg +
+      w.line("TORCH_CHECK(cudaStreamSynchronize(sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaStreamBeginCapture(sel_stream, cudaStreamCaptureModeGlobal) == cudaSuccess);");
+      w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, sel_stream>>>(" + src_name + ", " + out_name + ", " + c_arg + ", " + h_arg +
              ", " + w_arg + ");");
-      w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
-      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
-      w.line("float ms = 0.0f;");
-      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
-      w.line("if (ms < best_ms) { best_ms = ms; best_i = " + std::to_string(i) + "; }");
+      w.line("TORCH_CHECK(cudaStreamEndCapture(sel_stream, &graphs[" + std::to_string(i) + "]) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaGraphInstantiate(&execs[" + std::to_string(i) + "], graphs[" + std::to_string(i) +
+             "], nullptr, nullptr, 0) == cudaSuccess);");
       w.dedent();
       w.line("}");
     }
+
+    // Forward pass then reverse pass to reduce clock/thermal order bias.
+    for (size_t i = 0; i < variants.size(); ++i) {
+      w.line("{");
+      w.indent();
+      w.line("for (int i = 0; i < warm; ++i) TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(i) + "], sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventRecord(start, sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(i) + "], sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventRecord(end, sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
+      w.line("float ms = 0.0f;");
+      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
+      w.line("ms_acc[" + std::to_string(i) + "] += ms;");
+      w.dedent();
+      w.line("}");
+    }
+    for (size_t ri = variants.size(); ri-- > 0;) {
+      w.line("{");
+      w.indent();
+      w.line("for (int i = 0; i < warm; ++i) TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(ri) + "], sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventRecord(start, sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(ri) + "], sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventRecord(end, sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
+      w.line("float ms = 0.0f;");
+      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
+      w.line("ms_acc[" + std::to_string(ri) + "] += ms;");
+      w.dedent();
+      w.line("}");
+    }
+
+    w.line("float best_ms = 1e30f;");
+    w.line("int best_i = 0;");
+    w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) {");
+    w.indent();
+    w.line("const float ms = ms_acc[i];");
+    w.line("if (ms < best_ms) { best_ms = ms; best_i = i; }");
+    w.dedent();
+    w.line("}");
+    w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) {");
+    w.indent();
+    w.line("if (execs[i]) TORCH_CHECK(cudaGraphExecDestroy(execs[i]) == cudaSuccess);");
+    w.line("if (graphs[i]) TORCH_CHECK(cudaGraphDestroy(graphs[i]) == cudaSuccess);");
+    w.dedent();
+    w.line("}");
     w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
     w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
+    w.line("TORCH_CHECK(cudaStreamDestroy(sel_stream) == cudaSuccess);");
     w.line("intentir_selected = best_i;");
     w.dedent();
     w.line("}");
@@ -2708,6 +3091,8 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
     add_hp((int)heads_per_block);
     add_hp(1);
     add_hp(2);
+    add_hp(4);
+    add_hp(8);
 
     std::vector<int> rv_cands;
     auto add_rv = [&](int rv) {
@@ -2732,6 +3117,7 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
     add_bx(32);
     add_bx(64);
     add_bx(128);
+    add_bx(256);
     const int64_t sched_threads = resolve_schedule_int(intent, bindings, "tile_n", 0);
     if (sched_threads > 0) add_bx(sched_threads);
 
@@ -2809,11 +3195,18 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
     w.line("cudaEvent_t end = nullptr;");
     w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
     w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
-    w.line("float best_ms = 1e30f;");
-    w.line("int best_i = 0;");
-    w.line("const int warm = 1;");
-    w.line("const int iters = 10;");
-    w.line("const int reps = 3;");
+    w.line("cudaStream_t sel_stream = nullptr;");
+    w.line("TORCH_CHECK(cudaStreamCreateWithFlags(&sel_stream, cudaStreamNonBlocking) == cudaSuccess);");
+    // Match the benchmark harness: capture a CUDA graph with `iters` launches
+    // and time a single replay. This avoids picking variants that only win
+    // under Python submission overhead (small kernels).
+    w.line("constexpr int warm = 3;");
+    w.line("constexpr int iters = 50;");
+    w.line("cudaGraph_t graphs[" + std::to_string(variants.size()) + "] = {};");
+    w.line("cudaGraphExec_t execs[" + std::to_string(variants.size()) + "] = {};");
+    w.line("float ms_acc[" + std::to_string(variants.size()) + "] = {0};");
+
+    // Capture & instantiate graphs for each variant.
     for (size_t i = 0; i < variants.size(); ++i) {
       const auto& v = variants[i];
       const std::string kname = intent.name + "__" + v.suffix;
@@ -2821,31 +3214,66 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
       w.indent();
       w.line("dim3 b((unsigned)" + std::to_string(v.block_x) + ", 1u, 1u);");
       w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", (unsigned)BATCH_NUM, (unsigned)SEQ_LEN);");
-      w.line("float m0 = 0.0f, m1 = 0.0f, m2 = 0.0f;");
-      w.line("for (int rep = 0; rep < reps; ++rep) {");
-      w.indent();
-      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + cos_name + ", " + sin_name + ", " + out_name +
+      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, sel_stream>>>(" + in_name + ", " + cos_name + ", " + sin_name + ", " + out_name +
              ", " + seq_arg + ", " + b_arg + ", " + h_arg + ", " + d_arg + ");");
-      w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
-      w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + cos_name + ", " + sin_name + ", " + out_name +
+      w.line("TORCH_CHECK(cudaStreamSynchronize(sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaStreamBeginCapture(sel_stream, cudaStreamCaptureModeGlobal) == cudaSuccess);");
+      w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, sel_stream>>>(" + in_name + ", " + cos_name + ", " + sin_name + ", " + out_name +
              ", " + seq_arg + ", " + b_arg + ", " + h_arg + ", " + d_arg + ");");
-      w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
-      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
-      w.line("float ms = 0.0f;");
-      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
-      w.line("ms = ms / (float)iters;");
-      w.line("if (rep == 0) m0 = ms; else if (rep == 1) m1 = ms; else m2 = ms;");
-      w.dedent();
-      w.line("}");
-      w.line("const float mn = fminf(m0, fminf(m1, m2));");
-      w.line("const float mx = fmaxf(m0, fmaxf(m1, m2));");
-      w.line("const float med = (m0 + m1 + m2) - mn - mx;");
-      w.line("if (med < best_ms) { best_ms = med; best_i = " + std::to_string(i) + "; }");
+      w.line("TORCH_CHECK(cudaStreamEndCapture(sel_stream, &graphs[" + std::to_string(i) + "]) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaGraphInstantiate(&execs[" + std::to_string(i) + "], graphs[" + std::to_string(i) +
+             "], nullptr, nullptr, 0) == cudaSuccess);");
       w.dedent();
       w.line("}");
     }
+
+    // Forward pass then reverse pass to reduce clock/thermal order bias.
+    for (size_t i = 0; i < variants.size(); ++i) {
+      w.line("{");
+      w.indent();
+      w.line("for (int i = 0; i < warm; ++i) TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(i) + "], sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventRecord(start, sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(i) + "], sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventRecord(end, sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
+      w.line("float ms = 0.0f;");
+      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
+      w.line("ms_acc[" + std::to_string(i) + "] += ms;");
+      w.dedent();
+      w.line("}");
+    }
+    for (size_t ri = variants.size(); ri-- > 0;) {
+      w.line("{");
+      w.indent();
+      w.line("for (int i = 0; i < warm; ++i) TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(ri) + "], sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventRecord(start, sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(ri) + "], sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventRecord(end, sel_stream) == cudaSuccess);");
+      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
+      w.line("float ms = 0.0f;");
+      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
+      w.line("ms_acc[" + std::to_string(ri) + "] += ms;");
+      w.dedent();
+      w.line("}");
+    }
+
+    w.line("float best_ms = 1e30f;");
+    w.line("int best_i = 0;");
+    w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) {");
+    w.indent();
+    w.line("const float ms = ms_acc[i];");
+    w.line("if (ms < best_ms) { best_ms = ms; best_i = i; }");
+    w.dedent();
+    w.line("}");
+    w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) {");
+    w.indent();
+    w.line("if (execs[i]) TORCH_CHECK(cudaGraphExecDestroy(execs[i]) == cudaSuccess);");
+    w.line("if (graphs[i]) TORCH_CHECK(cudaGraphDestroy(graphs[i]) == cudaSuccess);");
+    w.dedent();
+    w.line("}");
     w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
     w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
+    w.line("TORCH_CHECK(cudaStreamDestroy(sel_stream) == cudaSuccess);");
     w.line("intentir_selected = best_i;");
     w.dedent();
     w.line("}");
@@ -3794,9 +4222,9 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 
 	  const bool respect_schedule = binding_int(bindings, "CUDA_RESPECT_SCHEDULE").value_or(0) != 0;
 
-	  int64_t max_ept = binding_int(bindings, "SOFTMAX_MAX_EPT").value_or(16);
-	  if (max_ept < 4) max_ept = 4;
-	  if (max_ept > 16) max_ept = 16;
+		  int64_t max_ept = binding_int(bindings, "SOFTMAX_MAX_EPT").value_or(16);
+		  if (max_ept < 4) max_ept = 4;
+		  if (max_ept > 16) max_ept = 16;
 
 	  int64_t block_threads = 0;
 	  int64_t sched_threads = 0;
@@ -3870,6 +4298,8 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
   CodeWriter w(cuda_ss);
   w.line("#include <cstdlib>");
   w.line("#include <cstdio>");
+	  const bool softmax_use_exp2 = binding_int(bindings, "SOFTMAX_USE_EXP2").value_or(0) != 0;
+	  if (softmax_use_exp2) w.line("#define INTENTIR_CUDA_SOFTMAX_USE_EXP2 1");
 	  w.line("#include \"kernels/softmax.cuh\"");
 	  w.blank();
 	  emit_selected_api(w);
@@ -3904,6 +4334,7 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      int64_t rows_per_block;
 	      bool vec4;
 	      bool warp4;
+	      bool warp_expbuf;
 	      std::string suffix;
 	    };
 	    std::vector<SoftmaxVariant> variants;
@@ -3920,9 +4351,9 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      if (vept <= 0 || vept > 32) return;
 	      if (vept > max_ept) return;
 	      for (const auto& v : variants) {
-	        if (!v.warp4 && !v.vec4 && v.threads == threads && v.ept == vept) return;
+	        if (!v.warp4 && !v.warp_expbuf && !v.vec4 && v.threads == threads && v.ept == vept) return;
 	      }
-	      variants.push_back(SoftmaxVariant{threads, vept, 0, 1, false, false, tag});
+	      variants.push_back(SoftmaxVariant{threads, vept, 0, 1, false, false, false, tag});
 	    };
 
 	    auto add_strided_variant = [&](int64_t threads, const std::string& tag) {
@@ -3938,7 +4369,7 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      for (const auto& v : variants) {
 	        if (v.vec4 && v.threads == threads) return;
 	      }
-	      variants.push_back(SoftmaxVariant{threads, 0, tiles, 1, true, false, tag});
+	      variants.push_back(SoftmaxVariant{threads, 0, tiles, 1, true, false, false, tag});
 	    };
 
 	    auto add_block_pair = [&](int64_t threads, const std::string& tag) {
@@ -3968,15 +4399,26 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      for (const auto& v : variants) {
 	        if (v.warp4 && v.rows_per_block == warps_per_block) return;
 	      }
-	      variants.push_back(SoftmaxVariant{threads, 0, 0, warps_per_block, false, true, tag});
+	      variants.push_back(SoftmaxVariant{threads, 0, 0, warps_per_block, false, true, false, tag});
 	    };
 
-	    // Evidence-guided tiny candidate set: seed + a few standard warp-aligned sizes.
-	    add_block_pair(block_threads, "seed");
-	    add_block_pair(64, "t64");
-	    add_block_pair(128, "t128");
-	    add_block_pair(256, "t256");
-	    add_block_pair(512, "t512");
+	    auto add_warp_expbuf_variant = [&](int64_t warps_per_block, const std::string& tag) {
+	      if (warps_per_block <= 0) return;
+	      if (warps_per_block > 8) return;
+	      const int64_t threads = norm_threads(warps_per_block * 32);
+	      if (threads != warps_per_block * 32) return;
+	      for (const auto& v : variants) {
+	        if (v.warp_expbuf && v.rows_per_block == warps_per_block) return;
+	      }
+	      variants.push_back(SoftmaxVariant{threads, 0, 0, warps_per_block, false, false, true, tag});
+	    };
+
+		    // Evidence-guided tiny candidate set: seed + a few standard warp-aligned sizes.
+		    add_block_pair(block_threads, "seed");
+		    add_block_pair(64, "t64");
+		    add_block_pair(128, "t128");
+		    add_block_pair(256, "t256");
+		    add_block_pair(512, "t512");
 	    // Systematic small search: derive candidate thread counts from the allowed EPT range.
 	    // This often surfaces better middle-ground sizes like 96/160/224 for odd C.
 	    for (int64_t ept_target = 3; ept_target <= max_ept; ++ept_target) {
@@ -3987,10 +4429,16 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	    add_strided_pow2_variant(64, "pow2_t64");
 	    add_strided_pow2_variant(128, "pow2_t128");
 	    add_strided_pow2_variant(256, "pow2_t256");
-	    // Warp-specialized vectorized variant (SM80+ friendly, avoids block-wide sync).
-	    add_warp4_variant(4, "warp4_w4");
-	    add_warp4_variant(8, "warp4_w8");
-	    if (variants.empty()) add_block_pair(block_threads, "fallback");
+		    // Warp-specialized vectorized variant (SM80+ friendly, avoids block-wide sync).
+		    add_warp4_variant(1, "warp4_w1");
+		    add_warp4_variant(2, "warp4_w2");
+		    add_warp4_variant(4, "warp4_w4");
+		    add_warp4_variant(8, "warp4_w8");
+		    add_warp_expbuf_variant(1, "warpexp_w1");
+		    add_warp_expbuf_variant(2, "warpexp_w2");
+		    add_warp_expbuf_variant(4, "warpexp_w4");
+		    add_warp_expbuf_variant(8, "warpexp_w8");
+		    if (variants.empty()) add_block_pair(block_threads, "fallback");
 
 	    w.line("static const char* intentir_softmax_variant_tags[] = {");
 	    w.indent();
@@ -4011,10 +4459,13 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      if (v.warp4) {
 	        w.line("constexpr int WARPS_PER_BLOCK = " + std::to_string(v.rows_per_block) + ";");
 	        w.line("intentir_cuda::softmax_2d_last_f32_warp4<WARPS_PER_BLOCK>(" + in_name + ", " + out_name + ", R, C);");
+	      } else if (v.warp_expbuf) {
+	        w.line("constexpr int WARPS_PER_BLOCK = " + std::to_string(v.rows_per_block) + ";");
+	        w.line("intentir_cuda::softmax_2d_last_f32_warp_expbuf<WARPS_PER_BLOCK>(" + in_name + ", " + out_name + ", R, C);");
 	      } else if (v.vec4) {
 	        w.line("constexpr int BLOCK_THREADS = " + std::to_string(v.threads) + ";");
 	        w.line("constexpr int TILES = " + std::to_string(v.tiles) + ";");
-	        w.line("intentir_cuda::softmax_2d_last_f32_vec4<BLOCK_THREADS, TILES>(" + in_name + ", " + out_name + ", R, C);");
+		        w.line("intentir_cuda::softmax_2d_last_f32_vec4<BLOCK_THREADS, TILES>(" + in_name + ", " + out_name + ", R, C);");
 	      } else {
 	        w.line("constexpr int BLOCK_THREADS = " + std::to_string(v.threads) + ";");
 	        w.line("constexpr int EPT = " + std::to_string(v.ept) + ";");
@@ -4055,10 +4506,18 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	    w.line("cudaEvent_t end = nullptr;");
 	    w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
 	    w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
-	    // Reduce systematic order/clock bias: forward pass then reverse pass, accumulate times.
+	    w.line("cudaStream_t sel_stream = nullptr;");
+	    w.line("TORCH_CHECK(cudaStreamCreateWithFlags(&sel_stream, cudaStreamNonBlocking) == cudaSuccess);");
+	    // Match the benchmark harness: capture a CUDA graph with `iters` launches
+	    // and time a single replay. This avoids picking variants that only win
+	    // under Python submission overhead (small kernels).
 	    w.line("constexpr int warm = 3;");
-	    w.line("constexpr int iters = 100;");
+	    w.line("constexpr int iters = 50;");
+	    w.line("cudaGraph_t graphs[" + std::to_string(variants.size()) + "] = {};");
+	    w.line("cudaGraphExec_t execs[" + std::to_string(variants.size()) + "] = {};");
 	    w.line("float ms_acc[" + std::to_string(variants.size()) + "] = {0};");
+
+	    // Capture & instantiate graphs for each variant.
 	    for (size_t i = 0; i < variants.size(); ++i) {
 	      const auto& v = variants[i];
 	      const std::string kname = intent.name + "__" + v.suffix;
@@ -4067,12 +4526,28 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      w.line("dim3 g((unsigned)((R + " + std::to_string(v.rows_per_block) + " - 1) / " + std::to_string(v.rows_per_block) +
 	             "), 1u, 1u);");
 	      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
-	      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " +
+	      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, sel_stream>>>(" + in_name + ", " + out_name + ", " +
 	             (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) + ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
-	      w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
-	      w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " +
+	      w.line("TORCH_CHECK(cudaStreamSynchronize(sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaStreamBeginCapture(sel_stream, cudaStreamCaptureModeGlobal) == cudaSuccess);");
+	      w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, sel_stream>>>(" + in_name + ", " + out_name + ", " +
 	             (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) + ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
-	      w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaStreamEndCapture(sel_stream, &graphs[" + std::to_string(i) + "]) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaGraphInstantiate(&execs[" + std::to_string(i) + "], graphs[" + std::to_string(i) +
+	             "], nullptr, nullptr, 0) == cudaSuccess);");
+	      w.dedent();
+	      w.line("}");
+	    }
+
+	    // Forward pass then reverse pass to reduce clock/thermal order bias.
+	    for (size_t i = 0; i < variants.size(); ++i) {
+	      w.line("{");
+	      w.indent();
+	      w.line("for (int i = 0; i < warm; ++i) TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(i) +
+	             "], sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaEventRecord(start, sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(i) + "], sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaEventRecord(end, sel_stream) == cudaSuccess);");
 	      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
 	      w.line("float ms = 0.0f;");
 	      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
@@ -4081,19 +4556,13 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      w.line("}");
 	    }
 	    for (size_t ri = variants.size(); ri-- > 0;) {
-	      const auto& v = variants[ri];
-	      const std::string kname = intent.name + "__" + v.suffix;
 	      w.line("{");
 	      w.indent();
-	      w.line("dim3 g((unsigned)((R + " + std::to_string(v.rows_per_block) + " - 1) / " + std::to_string(v.rows_per_block) +
-	             "), 1u, 1u);");
-	      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
-	      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " +
-	             (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) + ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
-	      w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
-	      w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + out_name + ", " +
-	             (r_is_tensor ? (R_name + "_ptr") : (R_name + "_in")) + ", " + (c_is_tensor ? (C_name + "_ptr") : (C_name + "_in")) + ");");
-	      w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
+	      w.line("for (int i = 0; i < warm; ++i) TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(ri) +
+	             "], sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaEventRecord(start, sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(ri) + "], sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaEventRecord(end, sel_stream) == cudaSuccess);");
 	      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
 	      w.line("float ms = 0.0f;");
 	      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
@@ -4101,6 +4570,7 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      w.dedent();
 	      w.line("}");
 	    }
+
 	    w.line("float best_ms = 1e30f;");
 	    w.line("int best_i = 0;");
 	    w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) {");
@@ -4109,12 +4579,19 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	    w.line("if (ms < best_ms) { best_ms = ms; best_i = i; }");
 	    w.dedent();
 	    w.line("}");
+	    w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) {");
+	    w.indent();
+	    w.line("if (execs[i]) TORCH_CHECK(cudaGraphExecDestroy(execs[i]) == cudaSuccess);");
+	    w.line("if (graphs[i]) TORCH_CHECK(cudaGraphDestroy(graphs[i]) == cudaSuccess);");
+	    w.dedent();
+	    w.line("}");
 	    w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
 	    w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
+	    w.line("TORCH_CHECK(cudaStreamDestroy(sel_stream) == cudaSuccess);");
 	    w.line("intentir_selected = best_i;");
 	    w.line("if (const char* dbg = std::getenv(\"INTENTIR_CUDA_SOFTMAX_DISPATCH_DEBUG\")) {");
 	    w.indent();
-	    w.line("if (dbg[0]) std::fprintf(stderr, \"[intentir][softmax] selected=%d tag=%s best_ms=%f (warm=%d iters=%d)\\n\", intentir_selected, intentir_softmax_variant_tags[intentir_selected], (double)best_ms, warm, iters);");
+	    w.line("if (dbg[0]) std::fprintf(stderr, \"[intentir][softmax] selected=%d tag=%s best_ms=%f (warm=%d iters=%d passes=2)\\n\", intentir_selected, intentir_softmax_variant_tags[intentir_selected], (double)best_ms, warm, iters);");
 	    w.dedent();
 	    w.line("}");
 	    w.dedent();
@@ -4412,40 +4889,93 @@ json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
     w.line("intentir_selected = 0;");
     w.dedent();
     w.line("} else {");
-    w.indent();
-    w.line("cudaEvent_t start = nullptr;");
-    w.line("cudaEvent_t end = nullptr;");
-    w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
-    w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
-    w.line("float best_ms = 1e30f;");
-    w.line("int best_i = 0;");
-    w.line("const int warm = 2;");
-    w.line("const int iters = 20;");
-    w.line("dim3 g((unsigned)M, 1u, 1u);");
-    for (size_t i = 0; i < variants.size(); ++i) {
-      const auto& v = variants[i];
-      const std::string kname = intent.name + "__" + v.suffix;
-      w.line("{");
-      w.indent();
-      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
-      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, stream>>>(" + X_name + ", " + Y_name + ", " + W_name + ", " + B_name +
-             ", " + Mean_name + ", " + Rstd_name + ", M, N, eps);");
-      w.line("TORCH_CHECK(cudaEventRecord(start, stream) == cudaSuccess);");
-      w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, stream>>>(" + X_name + ", " + Y_name + ", " + W_name + ", " + B_name +
-             ", " + Mean_name + ", " + Rstd_name + ", M, N, eps);");
-      w.line("TORCH_CHECK(cudaEventRecord(end, stream) == cudaSuccess);");
-      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
-      w.line("float ms = 0.0f;");
-      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
-      w.line("if (ms < best_ms) { best_ms = ms; best_i = " + std::to_string(i) + "; }");
-      w.dedent();
-      w.line("}");
-    }
-    w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
-    w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
-    w.line("intentir_selected = best_i;");
-    w.dedent();
-    w.line("}");
+	    w.indent();
+	    w.line("cudaEvent_t start = nullptr;");
+	    w.line("cudaEvent_t end = nullptr;");
+	    w.line("TORCH_CHECK(cudaEventCreate(&start) == cudaSuccess);");
+	    w.line("TORCH_CHECK(cudaEventCreate(&end) == cudaSuccess);");
+	    w.line("cudaStream_t sel_stream = nullptr;");
+	    w.line("TORCH_CHECK(cudaStreamCreateWithFlags(&sel_stream, cudaStreamNonBlocking) == cudaSuccess);");
+	    // Match the benchmark harness: capture a CUDA graph with `iters` launches
+	    // and time a single replay. This avoids picking variants that only win
+	    // under Python submission overhead (small kernels).
+	    w.line("constexpr int warm = 3;");
+	    w.line("constexpr int iters = 50;");
+	    w.line("cudaGraph_t graphs[" + std::to_string(variants.size()) + "] = {};");
+	    w.line("cudaGraphExec_t execs[" + std::to_string(variants.size()) + "] = {};");
+	    w.line("float ms_acc[" + std::to_string(variants.size()) + "] = {0};");
+
+	    // Capture & instantiate graphs for each variant.
+	    for (size_t i = 0; i < variants.size(); ++i) {
+	      const auto& v = variants[i];
+	      const std::string kname = intent.name + "__" + v.suffix;
+	      w.line("{");
+	      w.indent();
+	      w.line("dim3 g((unsigned)M, 1u, 1u);");
+	      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
+	      w.line("for (int i = 0; i < warm; ++i) " + kname + "<<<g, b, 0, sel_stream>>>(" + X_name + ", " + Y_name + ", " + W_name + ", " + B_name +
+	             ", " + Mean_name + ", " + Rstd_name + ", M, N, eps);");
+	      w.line("TORCH_CHECK(cudaStreamSynchronize(sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaStreamBeginCapture(sel_stream, cudaStreamCaptureModeGlobal) == cudaSuccess);");
+	      w.line("for (int i = 0; i < iters; ++i) " + kname + "<<<g, b, 0, sel_stream>>>(" + X_name + ", " + Y_name + ", " + W_name + ", " + B_name +
+	             ", " + Mean_name + ", " + Rstd_name + ", M, N, eps);");
+	      w.line("TORCH_CHECK(cudaStreamEndCapture(sel_stream, &graphs[" + std::to_string(i) + "]) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaGraphInstantiate(&execs[" + std::to_string(i) + "], graphs[" + std::to_string(i) +
+	             "], nullptr, nullptr, 0) == cudaSuccess);");
+	      w.dedent();
+	      w.line("}");
+	    }
+
+	    // Forward pass then reverse pass to reduce clock/thermal order bias.
+	    for (size_t i = 0; i < variants.size(); ++i) {
+	      w.line("{");
+	      w.indent();
+	      w.line("for (int i = 0; i < warm; ++i) TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(i) + "], sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaEventRecord(start, sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(i) + "], sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaEventRecord(end, sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
+	      w.line("float ms = 0.0f;");
+	      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
+	      w.line("ms_acc[" + std::to_string(i) + "] += ms;");
+	      w.dedent();
+	      w.line("}");
+	    }
+	    for (size_t ri = variants.size(); ri-- > 0;) {
+	      w.line("{");
+	      w.indent();
+	      w.line("for (int i = 0; i < warm; ++i) TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(ri) + "], sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaEventRecord(start, sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaGraphLaunch(execs[" + std::to_string(ri) + "], sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaEventRecord(end, sel_stream) == cudaSuccess);");
+	      w.line("TORCH_CHECK(cudaEventSynchronize(end) == cudaSuccess);");
+	      w.line("float ms = 0.0f;");
+	      w.line("TORCH_CHECK(cudaEventElapsedTime(&ms, start, end) == cudaSuccess);");
+	      w.line("ms_acc[" + std::to_string(ri) + "] += ms;");
+	      w.dedent();
+	      w.line("}");
+	    }
+
+	    w.line("float best_ms = 1e30f;");
+	    w.line("int best_i = 0;");
+	    w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) {");
+	    w.indent();
+	    w.line("const float ms = ms_acc[i];");
+	    w.line("if (ms < best_ms) { best_ms = ms; best_i = i; }");
+	    w.dedent();
+	    w.line("}");
+	    w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) {");
+	    w.indent();
+	    w.line("if (execs[i]) TORCH_CHECK(cudaGraphExecDestroy(execs[i]) == cudaSuccess);");
+	    w.line("if (graphs[i]) TORCH_CHECK(cudaGraphDestroy(graphs[i]) == cudaSuccess);");
+	    w.dedent();
+	    w.line("}");
+	    w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
+	    w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
+	    w.line("TORCH_CHECK(cudaStreamDestroy(sel_stream) == cudaSuccess);");
+	    w.line("intentir_selected = best_i;");
+	    w.dedent();
+	    w.line("}");
     w.dedent();
     w.line("}");
     w.line("dim3 g((unsigned)M, 1u, 1u);");
@@ -4499,8 +5029,96 @@ json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
   return out;
 }
 
+json lower_intent_to_cuda(const Intent& intent, const json& bindings_json) {
+  if (!bindings_json.is_object()) fail("bindings must be object");
+
+  if (intent.ops.size() == 1 && intent.ops[0].op == "matmul") return emit_matmul_f32(intent, bindings_json);
+  if (intent.ops.size() == 1 && intent.ops[0].op == "transpose") return emit_transpose_2d_f32(intent, bindings_json);
+  if (intent.ops.size() == 1 && intent.ops[0].op == "reduce_sum") return emit_reduce_sum_2d_axis1_f32(intent, bindings_json);
+  if (intent.ops.size() == 1 && intent.ops[0].op == "reduce_max") return emit_reduce_max_2d_axis1_f32(intent, bindings_json);
+  if (intent.ops.size() == 1 && intent.ops[0].op == "gather") return emit_gather2d_f32(intent, bindings_json);
+  if (intent.ops.size() == 1 && intent.ops[0].op == "dropout") return emit_dropout(intent, bindings_json);
+  if (intent.ops.size() == 1 && intent.ops[0].op == "warp") return emit_warp(intent, bindings_json);
+  if (intent.ops.size() == 1 && intent.ops[0].op == "correlation") return emit_correlation(intent, bindings_json);
+  if (intent.ops.size() == 1 && intent.ops[0].op == "resize") return emit_resize_bilinear2x_i8(intent, bindings_json);
+  if (intent.ops.size() == 1 && intent.ops[0].op == "rope") return emit_rope_f32(intent, bindings_json);
+
+  // Pattern-based kernels.
+  if (intent.ops.size() == 3 && intent.ops[0].op == "const" && intent.ops[1].op == "ne" && intent.ops[2].op == "reduce_any") {
+    return emit_any_dim_f32_to_i1(intent, bindings_json);
+  }
+  {
+    bool hasY = false, hasMean = false, hasRstd = false;
+    for (const auto& o : intent.outputs) {
+      if (o == "Y") hasY = true;
+      if (o == "Mean") hasMean = true;
+      if (o == "Rstd") hasRstd = true;
+    }
+    if (hasY && hasMean && hasRstd) return emit_layernorm_2d_f32(intent, bindings_json);
+  }
+  {
+    const std::string nm = ascii_lower(intent.name);
+    bool is_softmax = (nm.find("softmax") != std::string::npos);
+    if (!is_softmax) {
+      bool has_reduce_max = false, has_reduce_sum = false, has_exp = false, has_div = false;
+      for (const auto& op : intent.ops) {
+        if (op.op == "reduce_max") has_reduce_max = true;
+        if (op.op == "reduce_sum") has_reduce_sum = true;
+        if (op.op == "exp") has_exp = true;
+        if (op.op == "div") has_div = true;
+      }
+      is_softmax = has_reduce_max && has_reduce_sum && has_exp && has_div;
+    }
+    if (is_softmax) return emit_softmax_2d_last_f32(intent, bindings_json);
+  }
+  {
+    auto is_elem_op = [](const std::string& op) -> bool {
+      static const std::unordered_map<std::string, bool> k = {
+          {"const", true}, {"identity", true}, {"broadcast_in_dim", true}, {"cast", true}, {"add", true},   {"sub", true},
+          {"mul", true},   {"div", true},      {"max", true},              {"min", true},  {"relu", true},  {"abs", true},
+          {"exp", true},   {"floor", true},    {"rsqrt", true},            {"ne", true},   {"lt", true},    {"le", true},
+          {"gt", true},    {"ge", true},       {"and", true},              {"or", true},   {"not", true},   {"where", true},
+      };
+      return k.find(op) != k.end();
+    };
+    bool all_elem = !intent.ops.empty();
+    for (const auto& op : intent.ops) {
+      if (!is_elem_op(op.op)) {
+        all_elem = false;
+        break;
+      }
+    }
+    if (all_elem) return emit_fused_elementwise(intent, bindings_json);
+  }
+
+  fail(
+      "unsupported intent for cuda cpp codegen (supported: matmul, dropout, softmax, layernorm, correlation, resize, rope, warp, transpose, "
+      "reduce_sum, reduce_max, any_dim, gather, fused_elementwise)");
+}
+
 }  // namespace
 
+#ifdef INTENTIR_CUDA_CODEGEN_PYBIND
+namespace py = pybind11;
+
+static std::string lower_from_json_str(const std::string& intent_json, const std::string& bindings_json) {
+  Intent intent = parse_intent(json::parse(intent_json));
+  json bindings = json::parse(bindings_json);
+  json out = lower_intent_to_cuda(intent, bindings);
+  return out.dump();
+}
+
+#ifndef INTENTIR_CUDA_CODEGEN_PYBIND_MODULE_NAME
+#define INTENTIR_CUDA_CODEGEN_PYBIND_MODULE_NAME intentir_cuda_codegen_ext
+#endif
+
+PYBIND11_MODULE(INTENTIR_CUDA_CODEGEN_PYBIND_MODULE_NAME, m) {
+  m.doc() = "IntentIR CUDA C++ codegen (pybind11 wrapper)";
+  m.def("lower_from_json_str", &lower_from_json_str, py::arg("intent_json"), py::arg("bindings_json"));
+}
+#endif
+
+#ifndef INTENTIR_CUDA_CODEGEN_NO_MAIN
 int main(int argc, char** argv) {
   try {
     std::string intent_path;
@@ -4523,145 +5141,12 @@ int main(int argc, char** argv) {
 
     Intent intent = parse_intent(read_json_file(intent_path));
     json bindings_json = read_json_file(bindings_path);
-    if (!bindings_json.is_object()) fail("bindings must be object");
-
-    if (intent.ops.size() == 1 && intent.ops[0].op == "matmul") {
-      json out = emit_matmul_f32(intent, bindings_json);
-      std::cout << out.dump() << "\n";
-      return 0;
-    }
-    if (intent.ops.size() == 1 && intent.ops[0].op == "transpose") {
-      json out = emit_transpose_2d_f32(intent, bindings_json);
-      std::cout << out.dump() << "\n";
-      return 0;
-    }
-    if (intent.ops.size() == 1 && intent.ops[0].op == "reduce_sum") {
-      json out = emit_reduce_sum_2d_axis1_f32(intent, bindings_json);
-      std::cout << out.dump() << "\n";
-      return 0;
-    }
-    if (intent.ops.size() == 1 && intent.ops[0].op == "reduce_max") {
-      json out = emit_reduce_max_2d_axis1_f32(intent, bindings_json);
-      std::cout << out.dump() << "\n";
-      return 0;
-    }
-    if (intent.ops.size() == 1 && intent.ops[0].op == "gather") {
-      json out = emit_gather2d_f32(intent, bindings_json);
-      std::cout << out.dump() << "\n";
-      return 0;
-    }
-    if (intent.ops.size() == 1 && intent.ops[0].op == "dropout") {
-      json out = emit_dropout(intent, bindings_json);
-      std::cout << out.dump() << "\n";
-      return 0;
-    }
-    if (intent.ops.size() == 1 && intent.ops[0].op == "warp") {
-      json out = emit_warp(intent, bindings_json);
-      std::cout << out.dump() << "\n";
-      return 0;
-    }
-    if (intent.ops.size() == 1 && intent.ops[0].op == "correlation") {
-      json out = emit_correlation(intent, bindings_json);
-      std::cout << out.dump() << "\n";
-      return 0;
-    }
-    if (intent.ops.size() == 1 && intent.ops[0].op == "resize") {
-      json out = emit_resize_bilinear2x_i8(intent, bindings_json);
-      std::cout << out.dump() << "\n";
-      return 0;
-    }
-    if (intent.ops.size() == 1 && intent.ops[0].op == "rope") {
-      json out = emit_rope_f32(intent, bindings_json);
-      std::cout << out.dump() << "\n";
-      return 0;
-    }
-
-    // Pattern-based kernels.
-    if (intent.ops.size() == 3 && intent.ops[0].op == "const" && intent.ops[1].op == "ne" && intent.ops[2].op == "reduce_any") {
-      json out = emit_any_dim_f32_to_i1(intent, bindings_json);
-      std::cout << out.dump() << "\n";
-      return 0;
-    }
-    {
-      bool hasY = false, hasMean = false, hasRstd = false;
-      for (const auto& o : intent.outputs) {
-        if (o == "Y") hasY = true;
-        if (o == "Mean") hasMean = true;
-        if (o == "Rstd") hasRstd = true;
-      }
-      if (hasY && hasMean && hasRstd) {
-        json out = emit_layernorm_2d_f32(intent, bindings_json);
-        std::cout << out.dump() << "\n";
-        return 0;
-      }
-    }
-    {
-      const std::string nm = ascii_lower(intent.name);
-      bool is_softmax = (nm.find("softmax") != std::string::npos);
-      if (!is_softmax) {
-        bool has_reduce_max = false, has_reduce_sum = false, has_exp = false, has_div = false;
-        for (const auto& op : intent.ops) {
-          if (op.op == "reduce_max") has_reduce_max = true;
-          if (op.op == "reduce_sum") has_reduce_sum = true;
-          if (op.op == "exp") has_exp = true;
-          if (op.op == "div") has_div = true;
-        }
-        is_softmax = has_reduce_max && has_reduce_sum && has_exp && has_div;
-      }
-      if (is_softmax) {
-        json out = emit_softmax_2d_last_f32(intent, bindings_json);
-        std::cout << out.dump() << "\n";
-        return 0;
-      }
-    }
-    {
-      auto is_elem_op = [](const std::string& op) -> bool {
-        static const std::unordered_map<std::string, bool> k = {
-            {"const", true},
-            {"identity", true},
-            {"broadcast_in_dim", true},
-            {"cast", true},
-            {"add", true},
-            {"sub", true},
-            {"mul", true},
-            {"div", true},
-            {"max", true},
-            {"min", true},
-            {"relu", true},
-            {"abs", true},
-            {"exp", true},
-            {"floor", true},
-            {"rsqrt", true},
-            {"ne", true},
-            {"lt", true},
-            {"le", true},
-            {"gt", true},
-            {"ge", true},
-            {"and", true},
-            {"or", true},
-            {"not", true},
-            {"where", true},
-        };
-        return k.find(op) != k.end();
-      };
-      bool all_elem = !intent.ops.empty();
-      for (const auto& op : intent.ops) {
-        if (!is_elem_op(op.op)) {
-          all_elem = false;
-          break;
-        }
-      }
-      if (all_elem) {
-        json out = emit_fused_elementwise(intent, bindings_json);
-        std::cout << out.dump() << "\n";
-        return 0;
-      }
-    }
-
-    fail(
-        "unsupported intent for cuda cpp codegen (supported: matmul, dropout, softmax, layernorm, correlation, resize, rope, warp, transpose, reduce_sum, reduce_max, any_dim, gather, fused_elementwise)");
+    json out = lower_intent_to_cuda(intent, bindings_json);
+    std::cout << out.dump() << "\n";
+    return 0;
   } catch (const std::exception& e) {
     std::cerr << "intentir_cuda_codegen error: " << e.what() << "\\n";
     return 3;
   }
 }
+#endif
