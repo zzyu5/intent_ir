@@ -840,7 +840,8 @@ def main() -> None:
                 meta_j = it.get("meta")
                 meta2: dict[str, Any] = dict(meta_j) if isinstance(meta_j, dict) else {}
 
-                need_aw = not isinstance(meta2.get("access_witness"), dict)
+                aw0 = meta2.get("access_witness")
+                need_aw = (not isinstance(aw0, dict)) or (not isinstance(aw0.get("axis_contig_len"), dict))
                 need_sh = not isinstance(meta2.get("schedule_hints_v2"), dict)
                 if not (need_aw or need_sh):
                     return it
@@ -893,16 +894,18 @@ def main() -> None:
                                 continue
 
                     if need_aw:
-                        meta2["access_witness"] = {
-                            "dominant_axis": j.get("dominant_axis"),
-                            "dominant_range": j.get("dominant_range"),
-                            "dominant_range_len": j.get("dominant_range_len"),
-                            "has_contiguous_range": bool(j.get("has_contiguous_range")),
-                            "tensor_penalty_top": top,
-                            "notes": list(j.get("notes") or []) if isinstance(j.get("notes"), list) else [],
-                        }
-                        if axis_contig_len:
-                            meta2["access_witness"]["axis_contig_len"] = dict(axis_contig_len)
+                        aw2: dict[str, Any] = dict(aw0) if isinstance(aw0, dict) else {}
+                        aw2.setdefault("dominant_axis", j.get("dominant_axis"))
+                        aw2.setdefault("dominant_range", j.get("dominant_range"))
+                        aw2.setdefault("dominant_range_len", j.get("dominant_range_len"))
+                        aw2.setdefault("has_contiguous_range", bool(j.get("has_contiguous_range")))
+                        aw2.setdefault("tensor_penalty_top", top)
+                        aw2.setdefault(
+                            "notes", list(j.get("notes") or []) if isinstance(j.get("notes"), list) else []
+                        )
+                        if axis_contig_len and not isinstance(aw2.get("axis_contig_len"), dict):
+                            aw2["axis_contig_len"] = dict(axis_contig_len)
+                        meta2["access_witness"] = aw2
 
                     if need_sh:
                         sh = cv2.get("schedule_hints") if isinstance(cv2.get("schedule_hints"), dict) else {}
