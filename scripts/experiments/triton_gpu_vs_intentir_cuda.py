@@ -826,6 +826,72 @@ def main() -> None:
                 it2["meta"] = meta2
                 return it2
 
+            def _intent_with_cert_evidence(it: dict[str, Any], report_json: dict[str, Any]) -> dict[str, Any]:
+                """
+                Ensure `intent.meta` contains the evidence summaries consumed by the backend.
+
+                Some reports may embed a fresh `certificate_v2` but have a stale `intent.meta`
+                (e.g., only `contract_v2`/`canonical_shapes`). For the GPU experiments we want
+                evidence-guided codegen/dispatch, so we attach `access_witness` and
+                `schedule_hints_v2` from CertificateV2 on-the-fly.
+                """
+                if not isinstance(it, dict):
+                    return it
+                meta_j = it.get("meta")
+                meta2: dict[str, Any] = dict(meta_j) if isinstance(meta_j, dict) else {}
+
+                need_aw = not isinstance(meta2.get("access_witness"), dict)
+                need_sh = not isinstance(meta2.get("schedule_hints_v2"), dict)
+                if not (need_aw or need_sh):
+                    return it
+
+                cv2 = report_json.get("certificate_v2")
+                if not isinstance(cv2, dict):
+                    return it
+
+                # Shape bindings for resolving simple stride witnesses.
+                shape_bindings: dict[str, int] = {}
+                cs = meta2.get("canonical_shapes")
+                if isinstance(cs, dict):
+                    for kk, vv in cs.items():
+                        if isinstance(kk, str) and isinstance(vv, (int, float)) and float(vv).is_integer():
+                            shape_bindings[str(kk)] = int(vv)
+                if not shape_bindings:
+                    for kk, vv in (AI_BENCH_SHAPES.get(k, {}) or {}).items():
+                        if isinstance(kk, str) and isinstance(vv, (int, float)) and float(vv).is_integer():
+                            shape_bindings[str(kk)] = int(vv)
+
+                try:
+                    from frontends.common.access_witness import build_stride_summary  # noqa: PLC0415
+
+                    ss = build_stride_summary(cv2, shape_bindings=shape_bindings)
+                    j = ss.to_json_dict()
+                    tp = j.get("tensor_penalty") if isinstance(j.get("tensor_penalty"), dict) else {}
+                    top = sorted(((str(kk), float(vv)) for kk, vv in tp.items()), key=lambda kv: kv[1], reverse=True)[:8]
+
+                    if need_aw:
+                        meta2["access_witness"] = {
+                            "dominant_axis": j.get("dominant_axis"),
+                            "dominant_range": j.get("dominant_range"),
+                            "dominant_range_len": j.get("dominant_range_len"),
+                            "has_contiguous_range": bool(j.get("has_contiguous_range")),
+                            "tensor_penalty_top": top,
+                            "notes": list(j.get("notes") or []) if isinstance(j.get("notes"), list) else [],
+                        }
+
+                    if need_sh:
+                        sh = cv2.get("schedule_hints") if isinstance(cv2.get("schedule_hints"), dict) else {}
+                        meta2["schedule_hints_v2"] = {
+                            "tile_hints": list(sh.get("tile_hints") or []) if isinstance(sh.get("tile_hints"), list) else [],
+                            "symbol_ranges": dict(sh.get("symbol_ranges") or {}) if isinstance(sh.get("symbol_ranges"), dict) else {},
+                        }
+                except Exception:
+                    return it
+
+                it2: dict[str, Any] = dict(it)
+                it2["meta"] = meta2
+                return it2
+
             def _intent_with_contract_level(it: dict[str, Any], level: str) -> dict[str, Any]:
                 it2: dict[str, Any] = dict(it)
                 meta_j = it2.get("meta")
@@ -887,6 +953,7 @@ def main() -> None:
 
             if bool(args.ablation):
                 intent_json = _intent_with_canonical_shapes(intent_json)
+            intent_json = _intent_with_cert_evidence(intent_json, report)
 
             # Evidence-on (default): keep the artifact intent.meta (contract_v2 etc).
             ours_rec, ours_run, ours_ctx = _run_ours(intent_json, dict(bindings))

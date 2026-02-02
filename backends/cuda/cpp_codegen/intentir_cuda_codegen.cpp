@@ -304,6 +304,25 @@ std::optional<int64_t> json_int64(const json& v) {
   return std::nullopt;
 }
 
+std::vector<int64_t> schedule_hints_tile_hints(const Intent& intent) {
+  std::vector<int64_t> out;
+  if (!intent.meta.is_object()) return out;
+  auto it = intent.meta.find("schedule_hints_v2");
+  if (it == intent.meta.end() || !it->is_object()) return out;
+  const json& sh = *it;
+  auto th = sh.find("tile_hints");
+  if (th == sh.end() || !th->is_array()) return out;
+  for (const auto& x : *th) {
+    auto v = json_int64(x);
+    if (!v.has_value()) continue;
+    if (*v <= 0) continue;
+    out.push_back(*v);
+  }
+  std::sort(out.begin(), out.end());
+  out.erase(std::unique(out.begin(), out.end()), out.end());
+  return out;
+}
+
 std::optional<std::string> contract_level_v2(const Intent& intent) {
   if (!intent.meta.is_object()) return std::nullopt;
   auto it = intent.meta.find("contract_v2");
@@ -474,6 +493,7 @@ json emit_dropout(const Intent& intent, const json& bindings) {
   const int64_t grid_x = (n + denom - 1) / denom;
 
   const bool specialize_dims = want_specialize_dims(intent, bindings);
+  const bool contract_full = (contract_level_v2(intent).value_or("PARTIAL") == "FULL");
 
   const bool p_is_scalar = is_scalar_tensor(intent, p_name, "f32");
   const bool seed_is_scalar = is_scalar_tensor(intent, seed_name, "i32");
@@ -558,7 +578,7 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         w.line("constexpr int64_t n_elements = " + std::to_string(n) + "LL;");
         w.line("constexpr int EPT = " + std::to_string(v.ept) + ";");
         w.line("constexpr int N_ROUNDS = " + std::to_string(rounds) + ";");
-        if (v.full_tile) {
+        if (contract_full && v.full_tile) {
           if (v.vec4) {
             w.line("intentir_cuda::dropout_f32_vec4<EPT, N_ROUNDS, true>(X, p, (uint32_t)seed, Y, n_elements);");
           } else {
@@ -581,7 +601,7 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         w.line("constexpr int64_t n_elements = " + std::to_string(n) + "LL;");
         w.line("constexpr int EPT = " + std::to_string(v.ept) + ";");
         w.line("constexpr int N_ROUNDS = " + std::to_string(rounds) + ";");
-        if (v.full_tile) {
+        if (contract_full && v.full_tile) {
           if (v.vec4) {
             w.line("intentir_cuda::dropout_f32_vec4<EPT, N_ROUNDS, true>(X, p_ptr, seed_ptr, Y, n_elements);");
           } else {
@@ -729,7 +749,7 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       }
       w.line("default: {");
       w.indent();
-      const auto& v0 = variants.empty() ? DropoutVariant{block_x, ept, grid_x, (n % denom) == 0, "fallback"} : variants[0];
+      const auto& v0 = variants.empty() ? DropoutVariant{block_x, ept, grid_x, (n % denom) == 0, /*vec4=*/false, "fallback"} : variants[0];
       const std::string k0 = intent.name + "__" + v0.suffix;
       w.line("intentir_cuda_selected_variant_idx = 0;");
       w.line("intentir_cuda_selected_variant_tag = \"" + v0.suffix + "\";");
@@ -870,7 +890,7 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       }
       w.line("default: {");
       w.indent();
-      const auto& v0 = variants.empty() ? DropoutVariant{block_x, ept, grid_x, (n % denom) == 0, "fallback"} : variants[0];
+      const auto& v0 = variants.empty() ? DropoutVariant{block_x, ept, grid_x, (n % denom) == 0, /*vec4=*/false, "fallback"} : variants[0];
       const std::string k0 = intent.name + "__" + v0.suffix;
       w.line("intentir_cuda_selected_variant_idx = 0;");
       w.line("intentir_cuda_selected_variant_tag = \"" + v0.suffix + "\";");
@@ -901,7 +921,7 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.line("constexpr int N_ROUNDS = " + std::to_string(rounds) + ";");
       w.line("const int64_t tile = (int64_t)BLOCK_THREADS * (int64_t)EPT;");
       w.line("const bool full_tile = (tile > 0) ? ((n_elements % tile) == 0) : false;");
-      w.line("if (full_tile) {");
+      w.line(std::string("if (") + (contract_full ? "true" : "false") + " && full_tile) {");
       w.indent();
       w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p, (uint32_t)seed, Y, n_elements);");
       w.dedent();
@@ -927,7 +947,7 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.line("constexpr int N_ROUNDS = " + std::to_string(rounds) + ";");
       w.line("const int64_t tile = (int64_t)BLOCK_THREADS * (int64_t)EPT;");
       w.line("const bool full_tile = (tile > 0) ? ((n_elements % tile) == 0) : false;");
-      w.line("if (full_tile) {");
+      w.line(std::string("if (") + (contract_full ? "true" : "false") + " && full_tile) {");
       w.indent();
       w.line("intentir_cuda::dropout_f32<EPT, N_ROUNDS, true>(X, p_ptr, seed_ptr, Y, n_elements);");
       w.dedent();
@@ -1032,6 +1052,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
   const bool k_is_tensor = is_scalar_tensor(intent, K_name, "i32");
 
   const bool specialize_dims = want_specialize_dims(intent, bindings);
+  const bool contract_full = (contract_level_v2(intent).value_or("PARTIAL") == "FULL");
 
   const std::string m_param = m_is_tensor ? ("const int* " + M_name + "_ptr") : "int M_in";
   const std::string n_param = n_is_tensor ? ("const int* " + N_name + "_ptr") : "int N_in";
@@ -1216,16 +1237,14 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
 	      shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
 	    }
 
-    bool wmma_force_sync = false;
-	    if (!pipe_stages_override && wmma_pipe_stages == 2) {
-	      const int64_t bytes3 = wmma_smem_bytes(wmma_stage_k, 3);
-	      if (bytes3 <= max_smem_optin) {
-	        wmma_pipe_stages = 3;
-	        shared_bytes = bytes3;
-	      }
-	    }
+		    if (!pipe_stages_override && wmma_pipe_stages == 2) {
+		      const int64_t bytes3 = wmma_smem_bytes(wmma_stage_k, 3);
+		      if (bytes3 <= max_smem_optin) {
+		        wmma_pipe_stages = 3;
+		        shared_bytes = bytes3;
+		      }
+		    }
     if (shared_bytes > max_smem_optin) {
-      wmma_force_sync = true;
       wmma_use_cp_async = false;
       wmma_pipe_stages = 1;
       shared_bytes = wmma_smem_bytes(wmma_stage_k, wmma_pipe_stages);
@@ -1233,7 +1252,8 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
 
     shared_bytes = ((shared_bytes + 15) / 16) * 16;
     const bool wmma_disable_fastpath = (binding_int(bindings, "WMMA_DISABLE_FASTPATH").value_or(0) != 0);
-    const bool specialize_full_tile = specialize_dims && ((M % wmma_tile_m) == 0) && ((N % wmma_tile_n) == 0) && ((K % wmma_stage_k) == 0) &&
+    const bool specialize_full_tile = contract_full && specialize_dims && ((M % wmma_tile_m) == 0) && ((N % wmma_tile_n) == 0) &&
+                                      ((K % wmma_stage_k) == 0) &&
                                       ((K & 3) == 0) && ((N & 3) == 0) && (!wmma_disable_fastpath);
 
 	    const std::string wmma_cp_a_enum = (wmma_cp_a_policy == "ca") ? "intentir_cuda::CpAsyncPolicy::CA" : "intentir_cuda::CpAsyncPolicy::CG";
@@ -1318,8 +1338,9 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
 	      const int64_t bs_ld = tile_n + bs_pad;
 	      const int64_t smem = 4LL * (pipe_stages * tile_m * as_ld + pipe_stages * stage_k * bs_ld);
 	      if (smem > max_smem_optin) return std::nullopt;
-	      const bool specialize_full_tile_v = specialize_dims && ((M % tile_m) == 0) && ((N % tile_n) == 0) && ((K % stage_k) == 0) && ((K & 3) == 0) &&
-	                                          ((N & 3) == 0) && (!wmma_disable_fastpath);
+		      const bool specialize_full_tile_v = contract_full && specialize_dims && ((M % tile_m) == 0) && ((N % tile_n) == 0) &&
+		                                          ((K % stage_k) == 0) && ((K & 3) == 0) &&
+		                                          ((N & 3) == 0) && (!wmma_disable_fastpath);
 	      WmmaVariant v{warps_m, warps_n, frag_m, frag_n, tile_m, tile_n, stage_k, pipe_stages, use_cp_async, specialize_full_tile_v, smem, threads,
 	                    as_pad, bs_pad, cp_a_policy, cp_b_policy, suffix};
 	      return v;
@@ -1508,6 +1529,14 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         focus_stage_cands.push_back(sk);
       };
       add_focus_stage(wmma_stage_k);
+      // Evidence-guided priors: reuse TTIR/Certificate schedule hints or witness ranges when present.
+      if (auto aw = access_witness_meta(intent)) {
+        if (aw->has_contiguous_range && !aw->dominant_axis.empty() && aw->dominant_axis == K_name) {
+          if (aw->dominant_range_len > 0) add_focus_stage(aw->dominant_range_len);
+        }
+      }
+      for (int64_t th : schedule_hints_tile_hints(intent)) add_focus_stage(th);
+      // Conservative fallbacks for common stage sizes.
       if ((K % 32) == 0) add_focus_stage(32);
       if ((K % 128) == 0) add_focus_stage(128);
 
@@ -4413,31 +4442,33 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	      variants.push_back(SoftmaxVariant{threads, 0, 0, warps_per_block, false, false, true, tag});
 	    };
 
-		    // Evidence-guided tiny candidate set: seed + a few standard warp-aligned sizes.
-		    add_block_pair(block_threads, "seed");
-		    add_block_pair(64, "t64");
-		    add_block_pair(128, "t128");
-		    add_block_pair(256, "t256");
-		    add_block_pair(512, "t512");
-	    // Systematic small search: derive candidate thread counts from the allowed EPT range.
-	    // This often surfaces better middle-ground sizes like 96/160/224 for odd C.
-	    for (int64_t ept_target = 3; ept_target <= max_ept; ++ept_target) {
-	      const int64_t t = norm_threads((C + ept_target - 1) / ept_target);
-	      add_block_pair(t, "ept" + std::to_string(ept_target));
-	    }
-	    // Pow2-ish variant: match Triton's power-of-two reduction width when possible.
-	    add_strided_pow2_variant(64, "pow2_t64");
-	    add_strided_pow2_variant(128, "pow2_t128");
-	    add_strided_pow2_variant(256, "pow2_t256");
-		    // Warp-specialized vectorized variant (SM80+ friendly, avoids block-wide sync).
-		    add_warp4_variant(1, "warp4_w1");
-		    add_warp4_variant(2, "warp4_w2");
-		    add_warp4_variant(4, "warp4_w4");
-		    add_warp4_variant(8, "warp4_w8");
-		    add_warp_expbuf_variant(1, "warpexp_w1");
-		    add_warp_expbuf_variant(2, "warpexp_w2");
-		    add_warp_expbuf_variant(4, "warpexp_w4");
-		    add_warp_expbuf_variant(8, "warpexp_w8");
+		    // Evidence-guided small search space:
+		    // - Seed from evidence-derived `block_threads`
+		    // - A couple of neighbors (half/double) for occupancy vs ILP tradeoffs
+		    // - One pow2-aligned reduction candidate
+		    // - 1-2 warp-specialized candidates (often good on newer GPUs)
+		    std::vector<int64_t> thread_cands;
+		    auto add_thread = [&](int64_t t) {
+		      t = norm_threads(t);
+		      for (int64_t x : thread_cands) {
+		        if (x == t) return;
+		      }
+		      thread_cands.push_back(t);
+		    };
+		    add_thread(block_threads);
+		    add_thread(block_threads / 2);
+		    add_thread(block_threads * 2);
+		    // Ensure we cover the minimum threads required by EPT constraints.
+		    add_thread(min_threads);
+		    for (int64_t t : thread_cands) add_block_pair(t, "t" + std::to_string(t));
+		    add_strided_pow2_variant(block_threads, "pow2_seed");
+		    const int64_t warps_seed = std::max<int64_t>(1, std::min<int64_t>(8, block_threads / 32));
+		    add_warp4_variant(warps_seed, "warp4_seed");
+		    add_warp_expbuf_variant(warps_seed, "warpexp_seed");
+		    if (warps_seed > 1) {
+		      add_warp4_variant(warps_seed / 2, "warp4_half");
+		      add_warp_expbuf_variant(warps_seed / 2, "warpexp_half");
+		    }
 		    if (variants.empty()) add_block_pair(block_threads, "fallback");
 
 	    w.line("static const char* intentir_softmax_variant_tags[] = {");
