@@ -1575,63 +1575,217 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         }
       };
 
-      for (const auto& g : geoms) {
-        const bool is_focus = (g.tag == focus_base) || (!focus_half.empty() && g.tag == focus_half);
-        if (wmma_use_cp_async) {
-          add_variant(g.warps_m,
-                      g.warps_n,
-                      g.frag_m,
-                      g.frag_n,
-                      wmma_stage_k,
-                      wmma_pipe_stages,
-                      /*use_cp_async=*/true,
-                      g.tag + "_p" + std::to_string(wmma_pipe_stages));
-
-          if (g.is_base_tile) {
-            add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 4, /*use_cp_async=*/true, g.tag + "_p4");
-            add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 3, /*use_cp_async=*/true, g.tag + "_p3");
-            add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 2, /*use_cp_async=*/true, g.tag + "_p2");
-            if (K >= 128 && (K % 128) == 0) {
-              add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 4, /*use_cp_async=*/true, g.tag + "_k128_p4");
-              add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 3, /*use_cp_async=*/true, g.tag + "_k128_p3");
-              add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 2, /*use_cp_async=*/true, g.tag + "_k128_p2");
-            }
-          } else {
-            if (wmma_pipe_stages == 3) {
-              add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 2, /*use_cp_async=*/true, g.tag + "_p2");
+      const bool wmma_tiny_search = binding_int(bindings, "WMMA_TINY_SEARCH").value_or(1) != 0;
+      if (wmma_tiny_search) {
+        // Evidence-guided *tiny* search space (paper-friendly and fast to compile):
+        // - Keep only a handful of tiles around the schedule-derived base tile.
+        // - Keep only a small set of (stage_k, pipe_stages) candidates derived from
+        //   the access witness / schedule hints.
+        //
+        // This makes the "search space reduction" claim concrete: the IR/certificate
+        // provides strong priors, so we don't need a large brute-force autotune set.
+        struct TileCand {
+          int64_t tw_m;
+          int64_t tw_n;
+          bool is_base;
+        };
+        std::vector<TileCand> tiles;
+        auto add_tile = [&](int64_t tw_m, int64_t tw_n) {
+          if (tw_m <= 0 || tw_n <= 0) return;
+          for (const auto& t : tiles) {
+            if (t.tw_m == tw_m && t.tw_n == tw_n) return;
+          }
+          tiles.push_back(TileCand{tw_m, tw_n, (tw_m == base_tw_m && tw_n == base_tw_n)});
+        };
+        add_tile(base_tw_m, base_tw_n);
+        if (base_tw_m > 1) add_tile(base_tw_m / 2, base_tw_n);
+        if (base_tw_n > 1) add_tile(base_tw_m, base_tw_n / 2);
+        if (base_tw_m > 1 && base_tw_n > 1) add_tile(base_tw_m / 2, base_tw_n / 2);
+        // A couple of conservative upscales (still within warp limits) often help newer GPUs.
+        if (base_tw_m * 2 <= 4) add_tile(base_tw_m * 2, base_tw_n);
+        if (base_tw_n * 2 <= 8) add_tile(base_tw_m, base_tw_n * 2);
+        if (base_tw_m != base_tw_n) add_tile(base_tw_n, base_tw_m);
+        // Seed additional tiles from schedule-hint tile sizes (typically the frontend's BLOCK_M/BLOCK_N).
+        // The hints are unlabeled, so we add a few symmetric/one-axis substitutions and let the dispatcher
+        // pick the winner.
+        std::vector<int64_t> hint_tws;
+        for (int64_t h : schedule_hints_tile_hints(intent)) {
+          if ((h % 16) != 0) continue;
+          const int64_t tw = h / 16;
+          if (tw <= 0 || tw > 8) continue;
+          bool seen = false;
+          for (int64_t x : hint_tws) {
+            if (x == tw) {
+              seen = true;
+              break;
             }
           }
-
-          // For the most likely winners (base fm1_fn1 and base/2 fm1_fn1), try a small cross-product of
-          // cp.async cache policy (CA/CG), padding on/off, stage_k, and PIPE=3/4.
-          if (is_focus) {
-            // Also include a couple of simpler stage_k alternatives for PIPE=2/3.
-            for (int64_t sk : focus_stage_cands) {
-              if (sk <= 0) continue;
-              if (sk == wmma_stage_k) continue;
-              if (K >= sk && (K % sk) == 0) {
-                add_variant(g.warps_m,
-                            g.warps_n,
-                            g.frag_m,
-                            g.frag_n,
-                            sk,
-                            3,
-                            /*use_cp_async=*/true,
-                            g.tag + "_k" + std::to_string(sk) + "_p3");
-                add_variant(g.warps_m,
-                            g.warps_n,
-                            g.frag_m,
-                            g.frag_n,
-                            sk,
-                            2,
-                            /*use_cp_async=*/true,
-                            g.tag + "_k" + std::to_string(sk) + "_p2");
-              }
-            }
-            add_focus_microsearch(g);
+          if (!seen) hint_tws.push_back(tw);
+        }
+        if (!hint_tws.empty()) {
+          std::sort(hint_tws.begin(), hint_tws.end());
+          const int64_t lo = hint_tws.front();
+          const int64_t hi = hint_tws.back();
+          if (lo == hi) {
+            add_tile(lo, lo);
+          } else {
+            // Add both orientations since hints are unlabeled.
+            add_tile(lo, hi);
+            add_tile(hi, lo);
           }
         }
-        add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 1, /*use_cp_async=*/false, g.tag + "_sync");
+        if (tiles.empty()) add_tile(base_tw_m, base_tw_n);
+
+        // Pick a very small stage_k candidate set: the current heuristic + the smallest
+        // evidence hint that divides K (+ an optional middle ground like 32).
+        auto norm_stage = [&](int64_t sk) -> int64_t {
+          if (sk <= 0) return 0;
+          if ((sk % 8) != 0) return 0;
+          if ((K % sk) != 0) return 0;
+          if (sk > 128) return 0;
+          return sk;
+        };
+        int64_t hint_stage = 0;
+        for (int64_t sk : focus_stage_cands) {
+          sk = norm_stage(sk);
+          if (sk <= 0) continue;
+          if (hint_stage <= 0 || sk < hint_stage) hint_stage = sk;
+        }
+        std::vector<int64_t> stage_cands;
+        auto add_stage = [&](int64_t sk) {
+          sk = norm_stage(sk);
+          if (sk <= 0) return;
+          for (int64_t x : stage_cands) {
+            if (x == sk) return;
+          }
+          stage_cands.push_back(sk);
+        };
+        add_stage(wmma_stage_k);
+        add_stage(hint_stage);
+        add_stage(32);
+        if (stage_cands.empty()) add_stage(wmma_stage_k);
+        while (stage_cands.size() > 3) stage_cands.pop_back();
+
+        // Pipe depth candidates:
+        // - Base tile explores a small neighborhood.
+        // - Other tiles keep only the heuristic default to cap compile time.
+        std::vector<int> pipe_cands_base;
+        std::vector<int> pipe_cands_other;
+        auto add_pipe = [&](std::vector<int>& dst, int p) {
+          if (!(p == 2 || p == 3 || p == 4)) return;
+          for (int x : dst) {
+            if (x == p) return;
+          }
+          dst.push_back(p);
+        };
+        if (wmma_use_cp_async) {
+          const int p0 = (int)wmma_pipe_stages;
+          add_pipe(pipe_cands_base, p0);
+          if (p0 != 2) add_pipe(pipe_cands_base, 2);
+          if (p0 != 3) add_pipe(pipe_cands_base, 3);
+          if (p0 != 4) add_pipe(pipe_cands_base, 4);
+          while (pipe_cands_base.size() > 3) pipe_cands_base.pop_back();
+          add_pipe(pipe_cands_other, p0);
+        }
+
+        std::vector<int64_t> stage_cands_base = stage_cands;
+        std::vector<int64_t> stage_cands_other;
+        if (!stage_cands.empty())
+          stage_cands_other.push_back(stage_cands[0]);
+        else
+          stage_cands_other.push_back(wmma_stage_k);
+
+        for (const auto& t : tiles) {
+          // Use only the simplest frag geometry (fm1_fn1) to keep compile/search small.
+          const int64_t warps_m = t.tw_m;
+          const int64_t warps_n = t.tw_n;
+          if (warps_m <= 0 || warps_n <= 0) continue;
+          if (warps_m > 4 || warps_n > 8) continue;
+          if ((warps_m * warps_n) > 16) continue;
+          const std::string base_tag = tile_tag(t.tw_m, t.tw_n) + "_fm1_fn1";
+
+          if (wmma_use_cp_async) {
+            const auto& sks = t.is_base ? stage_cands_base : stage_cands_other;
+            const auto& ps = t.is_base ? pipe_cands_base : pipe_cands_other;
+            if (!ps.empty()) {
+              for (int64_t sk : sks) {
+                for (int p : ps) {
+                std::string suf = base_tag;
+                if (sk != wmma_stage_k) suf += "_k" + std::to_string(sk);
+                suf += "_p" + std::to_string(p);
+                add_variant((int64_t)warps_m, (int64_t)warps_n, /*frag_m=*/1, /*frag_n=*/1, sk, p, /*use_cp_async=*/true, suf);
+                }
+              }
+            }
+          }
+
+          // Always include a sync fallback (pipe_stages=1).
+          const int64_t sk_sync = stage_cands_other.empty() ? wmma_stage_k : stage_cands_other[0];
+          std::string suf_sync = base_tag;
+          if (sk_sync != wmma_stage_k) suf_sync += "_k" + std::to_string(sk_sync);
+          suf_sync += "_sync";
+          add_variant((int64_t)warps_m, (int64_t)warps_n, /*frag_m=*/1, /*frag_n=*/1, sk_sync, 1, /*use_cp_async=*/false, suf_sync);
+        }
+      } else {
+        // Full search (debug): larger candidate set.
+        for (const auto& g : geoms) {
+          const bool is_focus = (g.tag == focus_base) || (!focus_half.empty() && g.tag == focus_half);
+          if (wmma_use_cp_async) {
+            add_variant(g.warps_m,
+                        g.warps_n,
+                        g.frag_m,
+                        g.frag_n,
+                        wmma_stage_k,
+                        wmma_pipe_stages,
+                        /*use_cp_async=*/true,
+                        g.tag + "_p" + std::to_string(wmma_pipe_stages));
+
+            if (g.is_base_tile) {
+              add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 4, /*use_cp_async=*/true, g.tag + "_p4");
+              add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 3, /*use_cp_async=*/true, g.tag + "_p3");
+              add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 2, /*use_cp_async=*/true, g.tag + "_p2");
+              if (K >= 128 && (K % 128) == 0) {
+                add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 4, /*use_cp_async=*/true, g.tag + "_k128_p4");
+                add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 3, /*use_cp_async=*/true, g.tag + "_k128_p3");
+                add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, 128, 2, /*use_cp_async=*/true, g.tag + "_k128_p2");
+              }
+            } else {
+              if (wmma_pipe_stages == 3) {
+                add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 2, /*use_cp_async=*/true, g.tag + "_p2");
+              }
+            }
+
+            // For the most likely winners (base fm1_fn1 and base/2 fm1_fn1), try a small cross-product of
+            // cp.async cache policy (CA/CG), padding on/off, stage_k, and PIPE=3/4.
+            if (is_focus) {
+              // Also include a couple of simpler stage_k alternatives for PIPE=2/3.
+              for (int64_t sk : focus_stage_cands) {
+                if (sk <= 0) continue;
+                if (sk == wmma_stage_k) continue;
+                if (K >= sk && (K % sk) == 0) {
+                  add_variant(g.warps_m,
+                              g.warps_n,
+                              g.frag_m,
+                              g.frag_n,
+                              sk,
+                              3,
+                              /*use_cp_async=*/true,
+                              g.tag + "_k" + std::to_string(sk) + "_p3");
+                  add_variant(g.warps_m,
+                              g.warps_n,
+                              g.frag_m,
+                              g.frag_n,
+                              sk,
+                              2,
+                              /*use_cp_async=*/true,
+                              g.tag + "_k" + std::to_string(sk) + "_p2");
+                }
+              }
+              add_focus_microsearch(g);
+            }
+          }
+          add_variant(g.warps_m, g.warps_n, g.frag_m, g.frag_n, wmma_stage_k, 1, /*use_cp_async=*/false, g.tag + "_sync");
+        }
       }
       if (variants.empty()) add_variant(wmma_warps_m, wmma_warps_n, wmma_frag_m, wmma_frag_n, wmma_stage_k, 1, /*use_cp_async=*/false, "fallback");
 
