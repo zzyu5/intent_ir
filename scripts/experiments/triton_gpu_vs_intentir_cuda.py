@@ -389,9 +389,11 @@ def _make_triton_runner_from_shared_args(
             (64, 16, 16, 4, 3),
             (64, 32, 16, 4, 3),
         ]
-        best = candidates[0]
-        best_ns = float("inf")
+        run_fns: dict[str, Callable[[], None]] = {}
+        cand_meta: dict[str, dict[str, int]] = {}
         for bm, bn, bk, warps, stages in candidates:
+            name = f"bm{bm}_bn{bn}_bk{bk}_w{warps}_s{stages}"
+
             def _make_run(bm=bm, bn=bn, bk=bk, warps=warps, stages=stages) -> Callable[[], None]:
                 def _run() -> None:
                     ai_bench_matmul_kernel[grid](
@@ -413,12 +415,28 @@ def _make_triton_runner_from_shared_args(
                         num_warps=int(warps),
                         num_stages=int(stages),
                     )
+
                 return _run
-            ns, _ = _bench_cuda_graph_repeated(_make_run(), warmup=5, iters=50, repeats=1)
-            if ns < best_ns:
-                best_ns = float(ns)
-                best = (bm, bn, bk, warps, stages)
-        block_m, block_n, block_k, num_warps, num_stages = best
+
+            run_fns[name] = _make_run()
+            cand_meta[name] = {
+                "BLOCK_M": int(bm),
+                "BLOCK_N": int(bn),
+                "BLOCK_K": int(bk),
+                "num_warps": int(warps),
+                "num_stages": int(stages),
+            }
+
+        # NOTE: This is intentionally more stable than the main benchmark's
+        # per-kernel repeats: the chosen Triton baseline must not drift between
+        # runs, otherwise speedups become meaningless. We benchmark all
+        # candidates together (rotated order per repeat) and select the best
+        # by median graph-replay time.
+        timing = _bench_cuda_graph_multi_repeated(run_fns, warmup=10, iters=100, repeats=5)
+        best_name = min(timing.keys(), key=lambda n: float(timing[n][0]))
+        best = cand_meta[best_name]
+        block_m, block_n, block_k = best["BLOCK_M"], best["BLOCK_N"], best["BLOCK_K"]
+        num_warps, num_stages = best["num_warps"], best["num_stages"]
 
         def run() -> None:
             ai_bench_matmul_kernel[grid](
@@ -441,6 +459,10 @@ def _make_triton_runner_from_shared_args(
                 num_stages=int(num_stages),
             )
 
+        run._intentir_triton_meta = {
+            "selected_config": best,
+            "candidate_median_ns_per_iter": {k: float(v[0]) for k, v in timing.items()},
+        }
         return run
 
     if kernel == "ai_bench_dropout":
@@ -991,6 +1013,11 @@ def main() -> None:
             if bool(args.ablation) and ours_contract_off_ns is not None and ours_contract_off_ns > 0:
                 speedup_contract_off = float(triton_ns) / float(ours_contract_off_ns)
                 speedup_gain = float(ours_contract_off_ns) / float(ours_ns) if ours_ns > 0 else None
+            triton_rec: dict[str, Any] = {"ns_per_iter": triton_ns, "ns_per_iter_repeats": triton_reps}
+            triton_meta = getattr(triton_run, "_intentir_triton_meta", None)
+            if isinstance(triton_meta, dict) and triton_meta:
+                triton_rec["meta"] = triton_meta
+
             results.append(
                 {
                     "kernel": k,
@@ -1001,7 +1028,7 @@ def main() -> None:
                     "ours": ours_rec,
                     "ours_dispatch_off": ours_dispatch_off_rec,
                     "ours_contract_off": ours_contract_off_rec,
-                    "triton": {"ns_per_iter": triton_ns, "ns_per_iter_repeats": triton_reps},
+                    "triton": triton_rec,
                     "speedup_ours_over_triton": speedup,
                     "speedup_ours_dispatch_off_over_triton": speedup_dispatch_off,
                     "speedup_ours_contract_off_over_triton": speedup_contract_off,
