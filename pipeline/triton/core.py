@@ -163,6 +163,30 @@ def _attach_access_witness_meta(intent, *, cert_v2: SemanticCertificateV2 | None
         j = ss.to_json_dict()
         tp = j.get("tensor_penalty") if isinstance(j.get("tensor_penalty"), dict) else {}
         top = sorted(((str(k), float(v)) for k, v in tp.items()), key=lambda kv: kv[1], reverse=True)[:8]
+        # Derive labeled contiguous ranges per axis (e.g., {"M":64,"N":16}) from per-access witnesses.
+        # This is stronger than unlabeled `tile_hints`: it binds evidence ranges to semantic axes.
+        axis_contig_len: Dict[str, int] = {}
+        for a in (j.get("accesses") or []):
+            if not isinstance(a, dict):
+                continue
+            axis_bind = a.get("axis_bindings") if isinstance(a.get("axis_bindings"), dict) else {}
+            for r in (a.get("range_strides") or []):
+                if not isinstance(r, dict):
+                    continue
+                try:
+                    stride_elems = r.get("stride_elems")
+                    range_len = r.get("range_len")
+                    if stride_elems is None or int(stride_elems) != 1:
+                        continue
+                    if range_len is None:
+                        continue
+                    sym = str(r.get("range_sym") or "")
+                    axis = axis_bind.get(sym)
+                    if not isinstance(axis, str) or not axis:
+                        continue
+                    axis_contig_len[axis] = max(int(axis_contig_len.get(axis, 0)), int(range_len))
+                except Exception:
+                    continue
         meta = dict(getattr(intent, "meta", {}) or {})
         # Contract V2 summary (obligation-driven) can drive safe fastpath decisions.
         try:
@@ -193,6 +217,8 @@ def _attach_access_witness_meta(intent, *, cert_v2: SemanticCertificateV2 | None
             "tensor_penalty_top": top,
             "notes": list(j.get("notes") or []) if isinstance(j.get("notes"), list) else [],
         }
+        if axis_contig_len:
+            meta["access_witness"]["axis_contig_len"] = dict(axis_contig_len)
         intent.meta = meta
     except Exception:
         return

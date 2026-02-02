@@ -868,6 +868,29 @@ def main() -> None:
                     j = ss.to_json_dict()
                     tp = j.get("tensor_penalty") if isinstance(j.get("tensor_penalty"), dict) else {}
                     top = sorted(((str(kk), float(vv)) for kk, vv in tp.items()), key=lambda kv: kv[1], reverse=True)[:8]
+                    # Labeled contiguous ranges per axis (e.g., {"M":64,"N":16}) for evidence-guided tuning.
+                    axis_contig_len: dict[str, int] = {}
+                    for a in (j.get("accesses") or []):
+                        if not isinstance(a, dict):
+                            continue
+                        axis_bind = a.get("axis_bindings") if isinstance(a.get("axis_bindings"), dict) else {}
+                        for r in (a.get("range_strides") or []):
+                            if not isinstance(r, dict):
+                                continue
+                            try:
+                                stride_elems = r.get("stride_elems")
+                                range_len = r.get("range_len")
+                                if stride_elems is None or int(stride_elems) != 1:
+                                    continue
+                                if range_len is None:
+                                    continue
+                                sym = str(r.get("range_sym") or "")
+                                axis = axis_bind.get(sym)
+                                if not isinstance(axis, str) or not axis:
+                                    continue
+                                axis_contig_len[axis] = max(int(axis_contig_len.get(axis, 0)), int(range_len))
+                            except Exception:
+                                continue
 
                     if need_aw:
                         meta2["access_witness"] = {
@@ -878,6 +901,8 @@ def main() -> None:
                             "tensor_penalty_top": top,
                             "notes": list(j.get("notes") or []) if isinstance(j.get("notes"), list) else [],
                         }
+                        if axis_contig_len:
+                            meta2["access_witness"]["axis_contig_len"] = dict(axis_contig_len)
 
                     if need_sh:
                         sh = cv2.get("schedule_hints") if isinstance(cv2.get("schedule_hints"), dict) else {}

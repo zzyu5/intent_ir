@@ -51,6 +51,7 @@ struct AccessWitnessMeta {
   std::string dominant_axis;
   int64_t dominant_range_len = 0;
   bool has_contiguous_range = false;
+  std::unordered_map<std::string, int64_t> axis_contig_len;  // e.g., {"M":64,"N":16}
 };
 
 std::optional<AccessWitnessMeta> access_witness_meta(const Intent& intent) {
@@ -78,7 +79,31 @@ std::optional<AccessWitnessMeta> access_witness_meta(const Intent& intent) {
       out.has_contiguous_range = (cr->get<double>() != 0.0);
   }
 
-  if (out.dominant_axis.empty() && out.dominant_range_len <= 0 && !out.has_contiguous_range) return std::nullopt;
+  auto acl = aw.find("axis_contig_len");
+  if (acl != aw.end() && acl->is_object()) {
+    for (auto kv = acl->begin(); kv != acl->end(); ++kv) {
+      const std::string axis = kv.key();
+      const json& v = kv.value();
+      std::optional<int64_t> len;
+      if (v.is_number_integer())
+        len = v.get<int64_t>();
+      else if (v.is_number())
+        len = static_cast<int64_t>(v.get<double>());
+      else if (v.is_string()) {
+        try {
+          len = std::stoll(v.get<std::string>());
+        } catch (...) {
+          len = std::nullopt;
+        }
+      }
+      if (!len.has_value()) continue;
+      if (*len <= 0) continue;
+      out.axis_contig_len[axis] = *len;
+    }
+  }
+
+  if (out.dominant_axis.empty() && out.dominant_range_len <= 0 && !out.has_contiguous_range && out.axis_contig_len.empty())
+    return std::nullopt;
   return out;
 }
 
@@ -1605,6 +1630,19 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         if (base_tw_m * 2 <= 4) add_tile(base_tw_m * 2, base_tw_n);
         if (base_tw_n * 2 <= 8) add_tile(base_tw_m, base_tw_n * 2);
         if (base_tw_m != base_tw_n) add_tile(base_tw_n, base_tw_m);
+        // If the access witness provides labeled contiguous ranges for M/N, add that as a tile hint.
+        // This is stronger than unlabeled `tile_hints` and directly ties the search space to evidence.
+        if (auto aw = access_witness_meta(intent)) {
+          auto it_m = aw->axis_contig_len.find(M_name);
+          auto it_n = aw->axis_contig_len.find(N_name);
+          if (it_m != aw->axis_contig_len.end() && it_n != aw->axis_contig_len.end()) {
+            const int64_t tm = it_m->second;
+            const int64_t tn = it_n->second;
+            if ((tm % 16) == 0 && (tn % 16) == 0) {
+              add_tile(tm / 16, tn / 16);
+            }
+          }
+        }
         // Seed additional tiles from schedule-hint tile sizes (typically the frontend's BLOCK_M/BLOCK_N).
         // The hints are unlabeled, so we add a few symmetric/one-axis substitutions and let the dispatcher
         // pick the winner.
@@ -1662,6 +1700,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         };
         add_stage(wmma_stage_k);
         add_stage(hint_stage);
+        if (auto bk = binding_int(bindings, "BLOCK_K")) add_stage(*bk);
         add_stage(32);
         if (stage_cands.empty()) add_stage(wmma_stage_k);
         while (stage_cands.size() > 3) stage_cands.pop_back();
