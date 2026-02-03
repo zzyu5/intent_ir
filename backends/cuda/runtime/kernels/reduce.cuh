@@ -14,6 +14,14 @@
 #define INTENTIR_CUDA_HAS_CUB 0
 #endif
 
+// NVCC + CUB support for very new SM versions (e.g., Blackwell sm_120) can be
+// fragile across environments. Prefer our shuffle-based fallback on SM >= 1000
+// to keep the runtime headers portable across clusters.
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 1000)
+#undef INTENTIR_CUDA_HAS_CUB
+#define INTENTIR_CUDA_HAS_CUB 0
+#endif
+
 #if INTENTIR_CUDA_HAS_CUB
 #include <cub/block/block_reduce.cuh>
 #endif
