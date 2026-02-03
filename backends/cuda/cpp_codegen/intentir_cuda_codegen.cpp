@@ -3325,7 +3325,7 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
       if (v == 2) return half / 2;
       return half;
     };
-    auto add_variant = [&](int hp, int rv, int64_t bx) {
+    auto add_variant = [&](int hp, int rv, int64_t bx, const char* prefix = nullptr) {
       if (hp <= 0) hp = 1;
       if (hp > 16) hp = 16;
       if (hp > H) hp = static_cast<int>(H);
@@ -3339,6 +3339,7 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
         if (v.heads_per_block == hp && v.rope_vec == rv && v.block_x == bx) return;
       }
       std::ostringstream ss;
+      if (prefix && prefix[0]) ss << prefix << "_";
       ss << "hp" << hp << "_v" << rv << "_bx" << bx;
       variants.push_back(RopeVariant{hp, rv, bx, viters, gx, ss.str()});
     };
@@ -3388,6 +3389,10 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
     add_bx(256);
     const int64_t sched_threads = resolve_schedule_int(intent, bindings, "tile_n", 0);
     if (sched_threads > 0) add_bx(sched_threads);
+
+    // Make the ablation semantics crisp: variant[0] is always the seed config
+    // derived from (evidence/schedule) defaults; dispatch_off uses this.
+    add_variant(static_cast<int>(heads_per_block), static_cast<int>(rope_vec), block_x, "seed");
 
     for (int hp : hp_cands) {
       for (int rv : rv_cands) {
