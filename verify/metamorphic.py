@@ -640,11 +640,11 @@ def _bounded_specs(
         # Total: 3^6 * 2^2 = 2916 cases (exhaustive), truncated if needed.
         return ({"inp": (2, 3), "mask": (2,)}, ["inp", "mask"], [-1.0, 0.0, 1.0])
     if kernel_name == "masked_softmax2d":
-        # Tiny masked_softmax: M=2, N=3, with mask
-        return ({"input": (2, 3), "mask": (2, 3)}, ["input", "mask"], [-1.0, 0.0, 1.0])
-    if kernel_name == "masked_attention2d":
-        # Tiny attention with mask: Q=2xD, K=3xD, V=3xD, mask=2x3, D=2
-        return ({"Q": (2, 2), "K": (3, 2), "V": (3, 2), "mask": (2, 3)}, ["Q", "K", "V", "mask"], [-1.0, 0.0, 1.0])
+        # Tiny masked_softmax: M=2, N=3, 1D mask along N dimension
+        # IntentFunction uses 'inp' (f32) and 'mask' (i1), mask is 1D[N], not 2D
+        return ({"inp": (2, 3), "mask": (3,)}, ["inp", "mask"], [-1.0, 0.0, 1.0])
+    # Note: masked_attention2d does NOT have a mask input, only Q/K/V/sm_scale
+    # flash_attention2d has internal causal_mask but it's computed, not input
     if kernel_name == "where2d":
         # Tiny where: M=2, N=3, condition + true + false branches
         return ({"cond": (2, 3), "true_val": (2, 3), "false_val": (2, 3)}, ["cond", "true_val", "false_val"], [-1.0, 0.0, 1.0])
@@ -669,12 +669,9 @@ def _case_shapes_from_input_shapes(kernel_name: str, input_shapes: Dict[str, Tup
         m, n = input_shapes["inp"]
         return {"M": int(m), "N": int(n)}
     if kernel_name == "masked_softmax2d":
-        m, n = input_shapes["input"]
+        m, n = input_shapes["inp"]
         return {"M": int(m), "N": int(n)}
-    if kernel_name == "masked_attention2d":
-        seq_q, d = input_shapes["Q"]
-        seq_kv, _ = input_shapes["K"]
-        return {"SEQ_Q": int(seq_q), "SEQ_KV": int(seq_kv), "D": int(d)}
+    # masked_attention2d does not have mask input, so no bounded spec
     if kernel_name == "where2d":
         m, n = input_shapes["cond"]
         return {"M": int(m), "N": int(n)}
