@@ -454,8 +454,36 @@ void emit_selected_api(CodeWriter& w) {
   // Host-dispatch kernels update these; single-kernel paths keep the default.
   w.line("static int intentir_cuda_selected_variant_idx = -1;");
   w.line("static const char* intentir_cuda_selected_variant_tag = \"unset\";");
+  w.line("static float intentir_cuda_dispatch_total_ms = 0.0f;");
+  w.line("static int intentir_cuda_dispatch_evals = 0;");
+  w.line("static int intentir_cuda_fastpath_enabled = 0;");
   w.line("extern \"C\" int intentir_cuda_selected_variant() { return intentir_cuda_selected_variant_idx; }");
   w.line("extern \"C\" const char* intentir_cuda_selected_tag() { return intentir_cuda_selected_variant_tag; }");
+  w.line("extern \"C\" float intentir_cuda_get_dispatch_total_ms() { return intentir_cuda_dispatch_total_ms; }");
+  w.line("extern \"C\" int intentir_cuda_get_dispatch_evals() { return intentir_cuda_dispatch_evals; }");
+  w.line("extern \"C\" int intentir_cuda_get_fastpath_enabled() { return intentir_cuda_fastpath_enabled; }");
+  w.blank();
+}
+
+int contract_level_code(const Intent& intent) {
+  const std::string lv = contract_level_v2(intent).value_or("PARTIAL");
+  if (lv == "OUT_OF_SCOPE") return 0;
+  if (lv == "FULL") return 2;
+  return 1;  // PARTIAL/unknown
+}
+
+bool intent_has_evidence(const Intent& intent) {
+  if (access_witness_meta(intent).has_value()) return true;
+  if (!schedule_hints_tile_hints(intent).empty()) return true;
+  return false;
+}
+
+void emit_const_introspection_api(CodeWriter& w, int variant_count, bool has_evidence, int contract_level, bool specialize_dims) {
+  if (variant_count < 1) variant_count = 1;
+  w.line("extern \"C\" int intentir_cuda_variant_count() { return " + std::to_string(variant_count) + "; }");
+  w.line("extern \"C\" int intentir_cuda_has_evidence() { return " + std::string(has_evidence ? "1" : "0") + "; }");
+  w.line("extern \"C\" int intentir_cuda_contract_level() { return " + std::to_string(contract_level) + "; }");
+  w.line("extern \"C\" int intentir_cuda_specialize_dims() { return " + std::string(specialize_dims ? "1" : "0") + "; }");
   w.blank();
 }
 
@@ -545,6 +573,8 @@ json emit_dropout(const Intent& intent, const json& bindings) {
   const int64_t grid_x = (n + denom - 1) / denom;
 
   const bool specialize_dims = want_specialize_dims(intent, bindings);
+  const bool has_evidence = intent_has_evidence(intent);
+  const int contract_level = contract_level_code(intent);
   const bool contract_full = (contract_level_v2(intent).value_or("PARTIAL") == "FULL");
 
   const bool p_is_scalar = is_scalar_tensor(intent, p_name, "f32");
@@ -639,8 +669,14 @@ json emit_dropout(const Intent& intent, const json& bindings) {
 
     std::vector<int> ept_cands;
     add_ept(ept_cands, ept);
-    add_ept(ept_cands, max_ept_from_evidence);
-    if (max_ept_from_evidence > 1) add_ept(ept_cands, max_ept_from_evidence / 2);
+    if (has_evidence) {
+      // Evidence-on: keep a tight EPT neighborhood derived from the witness.
+      add_ept(ept_cands, max_ept_from_evidence);
+      if (max_ept_from_evidence > 1) add_ept(ept_cands, max_ept_from_evidence / 2);
+    } else {
+      // Evidence-off: widen the candidate set to hedge against unknown contiguity.
+      for (int cand : {1, 2, 4, 8}) add_ept(ept_cands, cand);
+    }
     // Large vectors are typically bandwidth/RNG dominated; keep 4 as a stable ILP anchor.
     if (n >= (1LL << 20)) add_ept(ept_cands, 4);
 
@@ -653,10 +689,22 @@ json emit_dropout(const Intent& intent, const json& bindings) {
     };
     std::vector<int64_t> thread_cands;
     add_thread(thread_cands, block_x);
-    add_thread(thread_cands, block_x / 2);
-    add_thread(thread_cands, block_x * 2);
-    add_thread(thread_cands, 128);
-    add_thread(thread_cands, 256);
+    if (has_evidence) {
+      // Evidence-on: restrict threads to a small, stable set near the seed.
+      add_thread(thread_cands, block_x / 2);
+      add_thread(thread_cands, 128);
+      add_thread(thread_cands, 256);
+    } else {
+      // Evidence-off: explore a wider neighborhood so host dispatch can recover
+      // a good configuration without certificate priors.
+      add_thread(thread_cands, block_x / 2);
+      add_thread(thread_cands, block_x * 2);
+      add_thread(thread_cands, 64);
+      add_thread(thread_cands, 128);
+      add_thread(thread_cands, 256);
+      add_thread(thread_cands, 512);
+      add_thread(thread_cands, 1024);
+    }
 
     for (int64_t t : thread_cands) {
       for (int vept : ept_cands) {
@@ -665,6 +713,8 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       }
     }
     if (variants.empty()) add_variant_pair(block_x, ept, "fallback");
+
+    emit_const_introspection_api(w, (int)variants.size(), has_evidence, contract_level, specialize_dims);
 
     for (const auto& v : variants) {
       const std::string kname = intent.name + "__" + v.suffix;
@@ -734,6 +784,9 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.line("(void)n_elements_in;");
       w.line("constexpr int64_t n_elements = " + std::to_string(n) + "LL;");
       w.line("constexpr bool INTENTIR_HOST_DISPATCH_SELECT = " + std::string(enable_host_dispatch_select ? "true" : "false") + ";");
+      w.line("intentir_cuda_dispatch_total_ms = 0.0f;");
+      w.line("intentir_cuda_dispatch_evals = 0;");
+      w.line("intentir_cuda_fastpath_enabled = 0;");
       w.line("static int intentir_selected = -1;");
       w.line("if (intentir_selected < 0) {");
       w.indent();
@@ -826,6 +879,10 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaStreamDestroy(sel_stream) == cudaSuccess);");
       w.line("intentir_selected = best_i;");
+      w.line("float total_ms = 0.0f;");
+      w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) total_ms += ms_acc[i];");
+      w.line("intentir_cuda_dispatch_total_ms = total_ms;");
+      w.line("intentir_cuda_dispatch_evals = " + std::to_string(2 * variants.size()) + ";");
       w.dedent();
       w.line("}");
       w.dedent();
@@ -838,6 +895,7 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         w.indent();
         w.line("intentir_cuda_selected_variant_idx = " + std::to_string(i) + ";");
         w.line("intentir_cuda_selected_variant_tag = \"" + v.suffix + "\";");
+        w.line("intentir_cuda_fastpath_enabled = " + std::string((contract_full && v.full_tile) ? "1" : "0") + ";");
         w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
         w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
         w.line(kname + "<<<g, b, 0, stream>>>(X, p, seed, Y, n_elements);");
@@ -851,6 +909,7 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       const std::string k0 = intent.name + "__" + v0.suffix;
       w.line("intentir_cuda_selected_variant_idx = 0;");
       w.line("intentir_cuda_selected_variant_tag = \"" + v0.suffix + "\";");
+      w.line("intentir_cuda_fastpath_enabled = " + std::string((contract_full && v0.full_tile) ? "1" : "0") + ";");
       w.line("dim3 b((unsigned)" + std::to_string(v0.threads) + ", 1u, 1u);");
       w.line("dim3 g((unsigned)" + std::to_string(v0.grid_x) + ", 1u, 1u);");
       w.line(k0 + "<<<g, b, 0, stream>>>(X, p, seed, Y, n_elements);");
@@ -875,6 +934,9 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.line("(void)n_elements_in;");
       w.line("constexpr int64_t n_elements = " + std::to_string(n) + "LL;");
       w.line("constexpr bool INTENTIR_HOST_DISPATCH_SELECT = " + std::string(enable_host_dispatch_select ? "true" : "false") + ";");
+      w.line("intentir_cuda_dispatch_total_ms = 0.0f;");
+      w.line("intentir_cuda_dispatch_evals = 0;");
+      w.line("intentir_cuda_fastpath_enabled = 0;");
       w.line("static int intentir_selected = -1;");
       w.line("if (intentir_selected < 0) {");
       w.indent();
@@ -967,6 +1029,10 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaStreamDestroy(sel_stream) == cudaSuccess);");
       w.line("intentir_selected = best_i;");
+      w.line("float total_ms = 0.0f;");
+      w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) total_ms += ms_acc[i];");
+      w.line("intentir_cuda_dispatch_total_ms = total_ms;");
+      w.line("intentir_cuda_dispatch_evals = " + std::to_string(2 * variants.size()) + ";");
       w.dedent();
       w.line("}");
       w.dedent();
@@ -979,6 +1045,7 @@ json emit_dropout(const Intent& intent, const json& bindings) {
         w.indent();
         w.line("intentir_cuda_selected_variant_idx = " + std::to_string(i) + ";");
         w.line("intentir_cuda_selected_variant_tag = \"" + v.suffix + "\";");
+        w.line("intentir_cuda_fastpath_enabled = " + std::string((contract_full && v.full_tile) ? "1" : "0") + ";");
         w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
         w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
         w.line(kname + "<<<g, b, 0, stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
@@ -992,6 +1059,7 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       const std::string k0 = intent.name + "__" + v0.suffix;
       w.line("intentir_cuda_selected_variant_idx = 0;");
       w.line("intentir_cuda_selected_variant_tag = \"" + v0.suffix + "\";");
+      w.line("intentir_cuda_fastpath_enabled = " + std::string((contract_full && v0.full_tile) ? "1" : "0") + ";");
       w.line("dim3 b((unsigned)" + std::to_string(v0.threads) + ", 1u, 1u);");
       w.line("dim3 g((unsigned)" + std::to_string(v0.grid_x) + ", 1u, 1u);");
       w.line(k0 + "<<<g, b, 0, stream>>>(X, p_ptr, seed_ptr, Y, n_elements);");
@@ -1004,6 +1072,7 @@ json emit_dropout(const Intent& intent, const json& bindings) {
     }
   } else {
     // Single-kernel fallback path (no host dispatcher).
+    emit_const_introspection_api(w, /*variant_count=*/1, has_evidence, contract_level, specialize_dims);
     if (p_is_scalar && seed_is_scalar) {
       w.line("extern \"C\" __global__ void " + intent.name +
              "(const float* X, float p, int seed, float* Y, int64_t n_elements_in) {");
@@ -1150,6 +1219,8 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
   const bool k_is_tensor = is_scalar_tensor(intent, K_name, "i32");
 
   const bool specialize_dims = want_specialize_dims(intent, bindings);
+  const bool has_evidence = intent_has_evidence(intent);
+  const int contract_level = contract_level_code(intent);
   const bool contract_full = (contract_level_v2(intent).value_or("PARTIAL") == "FULL");
 
   const std::string m_param = m_is_tensor ? ("const int* " + M_name + "_ptr") : "int M_in";
@@ -1461,6 +1532,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
 
     if (!enable_host_dispatch) {
       // Single-kernel codegen path.
+      emit_const_introspection_api(w, /*variant_count=*/1, has_evidence, contract_level, specialize_dims);
       w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(base_threads) + ") void " + intent.name + "(");
       w.indent();
       w.line("const float* __restrict__ A, const float* __restrict__ B, float* __restrict__ C,");
@@ -1602,7 +1674,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         if (tw_m == base_tw_m && tw_n == base_tw_n) return;
         // For downscaled tiles, keep only the simplest frag config; for upscaled tiles, include a small
         // family so the dispatcher can trade WARPS vs FRAG shape.
-        const bool rich = (tw_m > base_tw_m) || (tw_n > base_tw_n);
+        const bool rich = (!has_evidence) ? true : ((tw_m > base_tw_m) || (tw_n > base_tw_n));
         add_tile_family(tw_m, tw_n, /*is_base_tile=*/false, rich);
       };
 
@@ -1924,6 +1996,8 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       }
       if (variants.empty()) add_variant(wmma_warps_m, wmma_warps_n, wmma_frag_m, wmma_frag_n, wmma_stage_k, 1, /*use_cp_async=*/false, "fallback");
 
+      emit_const_introspection_api(w, (int)variants.size(), has_evidence, contract_level, specialize_dims);
+
       w.line("static const char* intentir_matmul_variant_tags[] = {");
       w.indent();
       for (const auto& v : variants) w.line("\"" + v.suffix + "\",");
@@ -2033,6 +2107,9 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       w.line("}");
 
       w.line("constexpr bool INTENTIR_HOST_DISPATCH_SELECT = " + std::string(enable_host_dispatch_select ? "true" : "false") + ";");
+      w.line("intentir_cuda_dispatch_total_ms = 0.0f;");
+      w.line("intentir_cuda_dispatch_evals = 0;");
+      w.line("intentir_cuda_fastpath_enabled = 0;");
       w.line("static int intentir_selected = -1;");
       w.line("static int intentir_smem_cached = -1;");
       w.line("static const void* intentir_kernel_cached = nullptr;");
@@ -2176,6 +2253,12 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       w.line("TORCH_CHECK(cudaEventDestroy(start) == cudaSuccess);");
       w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
       w.line("intentir_selected = intentir_found ? best_i : " + std::to_string(fallback_i) + ";");
+      w.line("float total_ms = 0.0f;");
+      w.line("int evals = 0;");
+      w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) { if (ok[i]) { total_ms += ms_acc[i]; evals += 2; } }");
+      w.line("total_ms = total_ms * (float)iters;");
+      w.line("intentir_cuda_dispatch_total_ms = total_ms;");
+      w.line("intentir_cuda_dispatch_evals = evals;");
       w.line("if (const char* dbg = std::getenv(\"INTENTIR_CUDA_MATMUL_DISPATCH_DEBUG\")) {");
       w.indent();
       w.line("if (dbg[0]) std::fprintf(stderr, \"[intentir][matmul] selected=%d tag=%s best_ms_per_iter=%f (warm=%d iters=%d passes=2)\\n\",");
@@ -2198,6 +2281,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
         w.indent();
         w.line("intentir_cuda_selected_variant_idx = " + std::to_string(vi) + ";");
         w.line("intentir_cuda_selected_variant_tag = \"" + v.suffix + "\";");
+        w.line("intentir_cuda_fastpath_enabled = " + std::string(v.specialize_full_tile ? "1" : "0") + ";");
         w.line("const int smem = (int)" + std::to_string(smem_v) + ";");
         w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
         w.line("dim3 g((unsigned)((N + " + std::to_string(v.tile_n) + " - 1) / " + std::to_string(v.tile_n) + "), "
@@ -2221,6 +2305,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       const int64_t smem0 = ((variants[0].shared_bytes + 15) / 16) * 16;
       w.line("intentir_cuda_selected_variant_idx = 0;");
       w.line("intentir_cuda_selected_variant_tag = \"" + variants[0].suffix + "\";");
+      w.line("intentir_cuda_fastpath_enabled = " + std::string(variants[0].specialize_full_tile ? "1" : "0") + ";");
       w.line("const int smem = (int)" + std::to_string(smem0) + ";");
       w.line("dim3 b((unsigned)" + std::to_string(variants[0].threads) + ", 1u, 1u);");
       w.line("dim3 g((unsigned)((N + " + std::to_string(variants[0].tile_n) + " - 1) / " + std::to_string(variants[0].tile_n) + "), "
@@ -2330,6 +2415,8 @@ json emit_warp(const Intent& intent, const json& bindings) {
 
   const bool respect_schedule = binding_int(bindings, "CUDA_RESPECT_SCHEDULE").value_or(0) != 0;
   const bool specialize_dims = want_specialize_dims(intent, bindings);
+  const bool has_evidence = intent_has_evidence(intent);
+  const int contract_level = contract_level_code(intent);
   const bool enable_host_dispatch = want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims;
   const bool enable_host_dispatch_select = want_host_dispatch_select(bindings);
   bool host_launch = false;
@@ -2362,6 +2449,7 @@ json emit_warp(const Intent& intent, const json& bindings) {
   w.blank();
   emit_selected_api(w);
   if (!enable_host_dispatch) {
+    emit_const_introspection_api(w, /*variant_count=*/1, has_evidence, contract_level, specialize_dims);
     w.line("extern \"C\" __global__ void " + intent.name +
            "(const int8_t* __restrict__ " + src_name + ", const int16_t* __restrict__ " + offset_name + ", int8_t* __restrict__ " +
            out_name + ", int C_in, int H_in, int W_in) {");
@@ -2424,6 +2512,8 @@ json emit_warp(const Intent& intent, const json& bindings) {
     add_variant(512, "bw512");
     if (variants.empty()) add_variant(block_w, "fallback");
 
+    emit_const_introspection_api(w, (int)variants.size(), has_evidence, contract_level, specialize_dims);
+
     for (const auto& v : variants) {
       const std::string kname = intent.name + "__" + v.suffix;
       w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(v.block_w) + ") void " + kname +
@@ -2461,6 +2551,9 @@ json emit_warp(const Intent& intent, const json& bindings) {
     w.line("constexpr int H = " + std::to_string(H) + ";");
     w.line("constexpr int W = " + std::to_string(W) + ";");
     w.line("constexpr bool INTENTIR_HOST_DISPATCH_SELECT = " + std::string(enable_host_dispatch_select ? "true" : "false") + ";");
+    w.line("intentir_cuda_dispatch_total_ms = 0.0f;");
+    w.line("intentir_cuda_dispatch_evals = 0;");
+    w.line("intentir_cuda_fastpath_enabled = 0;");
     w.line("static int intentir_selected = -1;");
     w.line("if (intentir_selected < 0) {");
     w.indent();
@@ -2554,6 +2647,10 @@ json emit_warp(const Intent& intent, const json& bindings) {
     w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
     w.line("TORCH_CHECK(cudaStreamDestroy(sel_stream) == cudaSuccess);");
     w.line("intentir_selected = best_i;");
+    w.line("float total_ms = 0.0f;");
+    w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) total_ms += ms_acc[i];");
+    w.line("intentir_cuda_dispatch_total_ms = total_ms;");
+    w.line("intentir_cuda_dispatch_evals = " + std::to_string(2 * variants.size()) + ";");
     w.dedent();
     w.line("}");
     w.dedent();
@@ -2566,6 +2663,7 @@ json emit_warp(const Intent& intent, const json& bindings) {
       w.indent();
       w.line("intentir_cuda_selected_variant_idx = " + std::to_string(i) + ";");
       w.line("intentir_cuda_selected_variant_tag = \"" + v.suffix + "\";");
+      w.line("intentir_cuda_fastpath_enabled = 0;");
       w.line("dim3 b((unsigned)" + std::to_string(v.block_w) + ", 1u, 1u);");
       w.line("dim3 g((unsigned)" + std::to_string(v.grid_w) + ", (unsigned)H, (unsigned)C);");
       w.line(kname + "<<<g, b, 0, stream>>>(" + src_name + ", " + offset_name + ", " + out_name + ", C, H, W);");
@@ -2579,6 +2677,7 @@ json emit_warp(const Intent& intent, const json& bindings) {
     const std::string k0 = intent.name + "__" + v0.suffix;
     w.line("intentir_cuda_selected_variant_idx = 0;");
     w.line("intentir_cuda_selected_variant_tag = \"" + v0.suffix + "\";");
+    w.line("intentir_cuda_fastpath_enabled = 0;");
     w.line("dim3 b((unsigned)" + std::to_string(v0.block_w) + ", 1u, 1u);");
     w.line("dim3 g((unsigned)" + std::to_string(v0.grid_w) + ", (unsigned)H, (unsigned)C);");
     w.line(k0 + "<<<g, b, 0, stream>>>(" + src_name + ", " + offset_name + ", " + out_name + ", C, H, W);");
@@ -2622,6 +2721,8 @@ json emit_correlation(const Intent& intent, const json& bindings) {
 
   const bool respect_schedule = binding_int(bindings, "CUDA_RESPECT_SCHEDULE").value_or(0) != 0;
   const bool specialize_dims = want_specialize_dims(intent, bindings);
+  const bool has_evidence = intent_has_evidence(intent);
+  const int contract_level = contract_level_code(intent);
   const bool enable_host_dispatch = want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims;
   const bool enable_host_dispatch_select = want_host_dispatch_select(bindings);
   bool host_launch = false;
@@ -2664,6 +2765,7 @@ json emit_correlation(const Intent& intent, const json& bindings) {
   const std::string sh_unused = dim_unused("out_shift", sh_is_tensor);
 
   if (!enable_host_dispatch) {
+    emit_const_introspection_api(w, /*variant_count=*/1, has_evidence, contract_level, specialize_dims);
     w.line("extern \"C\" __global__ void " + intent.name + "(");
     w.indent();
     w.line("const int8_t* __restrict__ " + src0_name + ",");
@@ -2729,6 +2831,8 @@ json emit_correlation(const Intent& intent, const json& bindings) {
 	    add_variant(1024, "t1024");
 	    if (variants.empty()) add_variant(block_x, "fallback");
 
+	    emit_const_introspection_api(w, (int)variants.size(), has_evidence, contract_level, specialize_dims);
+
     const int64_t out_shift_val = binding_int(bindings, "out_shift").value_or(0);
     const std::string oc_arg = oc_is_tensor ? "out_channel_ptr" : "out_channel";
     const std::string ic_arg = ic_is_tensor ? "in_channel_ptr" : "in_channel";
@@ -2787,6 +2891,9 @@ json emit_correlation(const Intent& intent, const json& bindings) {
     w.line("constexpr int width_v = " + std::to_string(W) + ";");
     w.line("constexpr int out_shift_v = " + std::to_string(out_shift_val) + ";");
     w.line("constexpr bool INTENTIR_HOST_DISPATCH_SELECT = " + std::string(enable_host_dispatch_select ? "true" : "false") + ";");
+    w.line("intentir_cuda_dispatch_total_ms = 0.0f;");
+    w.line("intentir_cuda_dispatch_evals = 0;");
+    w.line("intentir_cuda_fastpath_enabled = 0;");
     w.line("static int intentir_selected = -1;");
     w.line("if (intentir_selected < 0) {");
     w.indent();
@@ -2879,6 +2986,10 @@ json emit_correlation(const Intent& intent, const json& bindings) {
 	    w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
 	    w.line("TORCH_CHECK(cudaStreamDestroy(sel_stream) == cudaSuccess);");
 	    w.line("intentir_selected = best_i;");
+	    w.line("float total_ms = 0.0f;");
+	    w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) total_ms += ms_acc[i];");
+	    w.line("intentir_cuda_dispatch_total_ms = total_ms;");
+	    w.line("intentir_cuda_dispatch_evals = " + std::to_string(2 * variants.size()) + ";");
 	    w.dedent();
 	    w.line("}");
     w.dedent();
@@ -2891,6 +3002,7 @@ json emit_correlation(const Intent& intent, const json& bindings) {
       w.indent();
       w.line("intentir_cuda_selected_variant_idx = " + std::to_string(i) + ";");
       w.line("intentir_cuda_selected_variant_tag = \"" + v.suffix + "\";");
+      w.line("intentir_cuda_fastpath_enabled = 0;");
       w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
       w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", 1u, 1u);");
       w.line(kname + "<<<g, b, 0, stream>>>(" + src0_name + ", " + src1_name + ", " + out_name +
@@ -2905,6 +3017,7 @@ json emit_correlation(const Intent& intent, const json& bindings) {
     const std::string k0 = intent.name + "__" + v0.suffix;
     w.line("intentir_cuda_selected_variant_idx = 0;");
     w.line("intentir_cuda_selected_variant_tag = \"" + v0.suffix + "\";");
+    w.line("intentir_cuda_fastpath_enabled = 0;");
     w.line("dim3 b((unsigned)" + std::to_string(v0.threads) + ", 1u, 1u);");
     w.line("dim3 g((unsigned)" + std::to_string(v0.grid_x) + ", 1u, 1u);");
     w.line(k0 + "<<<g, b, 0, stream>>>(" + src0_name + ", " + src1_name + ", " + out_name +
@@ -2958,6 +3071,8 @@ json emit_resize_bilinear2x_i8(const Intent& intent, const json& bindings) {
 
   const bool respect_schedule = binding_int(bindings, "CUDA_RESPECT_SCHEDULE").value_or(0) != 0;
   const bool specialize_dims = want_specialize_dims(intent, bindings);
+  const bool has_evidence = intent_has_evidence(intent);
+  const int contract_level = contract_level_code(intent);
   const bool enable_host_dispatch = want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims;
   const bool enable_host_dispatch_select = want_host_dispatch_select(bindings);
   bool host_launch = false;
@@ -3017,6 +3132,7 @@ json emit_resize_bilinear2x_i8(const Intent& intent, const json& bindings) {
   w.blank();
   emit_selected_api(w);
   if (!enable_host_dispatch) {
+    emit_const_introspection_api(w, /*variant_count=*/1, has_evidence, contract_level, specialize_dims);
     w.line("extern \"C\" __global__ void " + intent.name + "(const int8_t* __restrict__ " + src_name + ", int8_t* __restrict__ " + out_name +
            ", " + c_param + ", " + h_param + ", " + w_param + ") {");
     w.indent();
@@ -3058,6 +3174,8 @@ json emit_resize_bilinear2x_i8(const Intent& intent, const json& bindings) {
     add_variant(512, "bw512");
     if (variants.empty()) add_variant(block_w, "fallback");
 
+    emit_const_introspection_api(w, (int)variants.size(), has_evidence, contract_level, specialize_dims);
+
     for (const auto& v : variants) {
       const std::string kname = intent.name + "__" + v.suffix;
       w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(v.block_w) + ") void " + kname + "(const int8_t* __restrict__ " +
@@ -3095,6 +3213,9 @@ json emit_resize_bilinear2x_i8(const Intent& intent, const json& bindings) {
     w.line("constexpr int W0 = " + std::to_string(W) + ";");
     w.line("constexpr int OH0 = " + std::to_string(OH) + ";");
     w.line("constexpr bool INTENTIR_HOST_DISPATCH_SELECT = " + std::string(enable_host_dispatch_select ? "true" : "false") + ";");
+    w.line("intentir_cuda_dispatch_total_ms = 0.0f;");
+    w.line("intentir_cuda_dispatch_evals = 0;");
+    w.line("intentir_cuda_fastpath_enabled = 0;");
     w.line("static int intentir_selected = -1;");
     w.line("if (intentir_selected < 0) {");
     w.indent();
@@ -3188,6 +3309,10 @@ json emit_resize_bilinear2x_i8(const Intent& intent, const json& bindings) {
     w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
     w.line("TORCH_CHECK(cudaStreamDestroy(sel_stream) == cudaSuccess);");
     w.line("intentir_selected = best_i;");
+    w.line("float total_ms = 0.0f;");
+    w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) total_ms += ms_acc[i];");
+    w.line("intentir_cuda_dispatch_total_ms = total_ms;");
+    w.line("intentir_cuda_dispatch_evals = " + std::to_string(2 * variants.size()) + ";");
     w.dedent();
     w.line("}");
     w.dedent();
@@ -3200,6 +3325,7 @@ json emit_resize_bilinear2x_i8(const Intent& intent, const json& bindings) {
       w.indent();
       w.line("intentir_cuda_selected_variant_idx = " + std::to_string(i) + ";");
       w.line("intentir_cuda_selected_variant_tag = \"" + v.suffix + "\";");
+      w.line("intentir_cuda_fastpath_enabled = 0;");
       w.line("dim3 b((unsigned)" + std::to_string(v.block_w) + ", 1u, 1u);");
       w.line("dim3 g((unsigned)" + std::to_string(v.grid_w) + ", (unsigned)OH0, (unsigned)C0);");
       w.line(kname + "<<<g, b, 0, stream>>>(" + src_name + ", " + out_name + ", " + c_arg + ", " + h_arg + ", " + w_arg + ");");
@@ -3213,6 +3339,7 @@ json emit_resize_bilinear2x_i8(const Intent& intent, const json& bindings) {
     const std::string k0 = intent.name + "__" + v0.suffix;
     w.line("intentir_cuda_selected_variant_idx = 0;");
     w.line("intentir_cuda_selected_variant_tag = \"" + v0.suffix + "\";");
+    w.line("intentir_cuda_fastpath_enabled = 0;");
     w.line("dim3 b((unsigned)" + std::to_string(v0.block_w) + ", 1u, 1u);");
     w.line("dim3 g((unsigned)" + std::to_string(v0.grid_w) + ", (unsigned)OH0, (unsigned)C0);");
     w.line(k0 + "<<<g, b, 0, stream>>>(" + src_name + ", " + out_name + ", " + c_arg + ", " + h_arg + ", " + w_arg + ");");
@@ -3277,6 +3404,8 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
 
   const bool respect_schedule = binding_int(bindings, "CUDA_RESPECT_SCHEDULE").value_or(0) != 0;
   const bool specialize_dims = want_specialize_dims(intent, bindings);
+  const bool has_evidence = intent_has_evidence(intent);
+  const int contract_level = contract_level_code(intent);
   const bool enable_host_dispatch = want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims;
   const bool enable_host_dispatch_select = want_host_dispatch_select(bindings);
   bool host_launch = false;
@@ -3349,6 +3478,7 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
   const std::string d_arg = d_is_tensor ? "HEAD_DIM_ptr" : "HEAD_DIM_in";
 
   if (!enable_host_dispatch) {
+    emit_const_introspection_api(w, /*variant_count=*/1, has_evidence, contract_level, specialize_dims);
     w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_x) + ") void " + intent.name + "(");
     w.indent();
     w.line("const float* __restrict__ " + in_name + ", const float* __restrict__ " + cos_name + ", const float* __restrict__ " + sin_name +
@@ -3489,6 +3619,8 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
     }
     if (variants.empty()) add_variant(static_cast<int>(heads_per_block), static_cast<int>(rope_vec), block_x);
 
+    emit_const_introspection_api(w, (int)variants.size(), has_evidence, contract_level, specialize_dims);
+
     for (const auto& v : variants) {
       const std::string kname = intent.name + "__" + v.suffix;
       w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(v.block_x) + ") void " + kname + "(");
@@ -3541,6 +3673,9 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
     w.line("constexpr int HEAD_NUM = " + std::to_string(H) + ";");
     w.line("constexpr int HEAD_DIM = " + std::to_string(D) + ";");
     w.line("constexpr bool INTENTIR_HOST_DISPATCH_SELECT = " + std::string(enable_host_dispatch_select ? "true" : "false") + ";");
+    w.line("intentir_cuda_dispatch_total_ms = 0.0f;");
+    w.line("intentir_cuda_dispatch_evals = 0;");
+    w.line("intentir_cuda_fastpath_enabled = 0;");
     w.line("static int intentir_selected = -1;");
     w.line("if (intentir_selected < 0) {");
     w.indent();
@@ -3634,6 +3769,10 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
     w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
     w.line("TORCH_CHECK(cudaStreamDestroy(sel_stream) == cudaSuccess);");
     w.line("intentir_selected = best_i;");
+    w.line("float total_ms = 0.0f;");
+    w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) total_ms += ms_acc[i];");
+    w.line("intentir_cuda_dispatch_total_ms = total_ms;");
+    w.line("intentir_cuda_dispatch_evals = " + std::to_string(2 * variants.size()) + ";");
     w.dedent();
     w.line("}");
     w.dedent();
@@ -3646,6 +3785,7 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
       w.indent();
       w.line("intentir_cuda_selected_variant_idx = " + std::to_string(i) + ";");
       w.line("intentir_cuda_selected_variant_tag = \"" + v.suffix + "\";");
+      w.line("intentir_cuda_fastpath_enabled = 0;");
       w.line("dim3 b((unsigned)" + std::to_string(v.block_x) + ", 1u, 1u);");
       w.line("dim3 g((unsigned)" + std::to_string(v.grid_x) + ", (unsigned)BATCH_NUM, (unsigned)SEQ_LEN);");
       w.line(kname + "<<<g, b, 0, stream>>>(" + in_name + ", " + cos_name + ", " + sin_name + ", " + out_name + ", " + seq_arg + ", " + b_arg +
@@ -3660,6 +3800,7 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
     const std::string k0 = intent.name + "__" + v0.suffix;
     w.line("intentir_cuda_selected_variant_idx = 0;");
     w.line("intentir_cuda_selected_variant_tag = \"" + v0.suffix + "\";");
+    w.line("intentir_cuda_fastpath_enabled = 0;");
     w.line("dim3 b((unsigned)" + std::to_string(v0.block_x) + ", 1u, 1u);");
     w.line("dim3 g((unsigned)" + std::to_string(v0.grid_x) + ", (unsigned)BATCH_NUM, (unsigned)SEQ_LEN);");
     w.line(k0 + "<<<g, b, 0, stream>>>(" + in_name + ", " + cos_name + ", " + sin_name + ", " + out_name + ", " + seq_arg + ", " + b_arg + ", " +
@@ -4637,6 +4778,8 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	  if (ept_override > 0 && block_threads == sched_threads) ept = ept_override;
 
   const bool specialize_dims = want_specialize_dims(intent, bindings);
+  const bool has_evidence = intent_has_evidence(intent);
+  const int contract_level = contract_level_code(intent);
   const std::string R_name = dim_str(R_dim);
   const std::string C_name = dim_str(C_dim);
   bool r_is_tensor = is_scalar_tensor(intent, R_name, "i32");
@@ -4667,6 +4810,7 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	  bool host_launch = false;
 
 	  if (!enable_host_dispatch) {
+	    emit_const_introspection_api(w, /*variant_count=*/1, has_evidence, contract_level, specialize_dims);
 	    w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_threads) + ") void " + intent.name +
 	           "(const float* __restrict__ " + in_name + ", float* __restrict__ " + out_name + ", " + r_param + ", " + c_param + ") {");
 	    w.indent();
@@ -4793,6 +4937,7 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 		    //   evidence_on  = evidence + host selection,
 		    //   dispatch_off = evidence + seed-only (no selection),
 		    //   contract_off = no contract/specialize fastpaths.
+		    const bool intentir_evidence_on = has_evidence;
 		    for (bool use_exp2 : exp2_cands) add_strided_variant_with_ept(block_threads, (int)ept, use_exp2, tag_exp("seed", use_exp2));
 		    for (bool use_exp2 : exp2_cands) add_vec4_variant(block_threads, use_exp2, tag_exp("vec4_seed", use_exp2));
 
@@ -4805,22 +4950,37 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 		      }
 		      thread_cands.push_back(t);
 		    };
-		    add_thread(block_threads / 2);
-		    add_thread(block_threads * 2);
-		    add_thread(block_threads - 32);
-		    add_thread(block_threads + 32);
-		    // Ensure we cover the minimum threads required by EPT constraints.
-		    add_thread(min_threads);
+		    if (intentir_evidence_on) {
+		      // Evidence-on: keep the candidate set small; trust the witness/schedule-derived seed.
+		      add_thread(block_threads / 2);
+		      add_thread(block_threads * 2);
+		      add_thread(min_threads);
+		    } else {
+		      // Evidence-off: widen the neighborhood so selection can recover without priors.
+		      add_thread(block_threads / 2);
+		      add_thread(block_threads * 2);
+		      add_thread(block_threads - 32);
+		      add_thread(block_threads + 32);
+		      add_thread(64);
+		      add_thread(128);
+		      add_thread(256);
+		      // Ensure we cover the minimum threads required by EPT constraints.
+		      add_thread(min_threads);
+		    }
+
 				    for (int64_t t : thread_cands) add_block_pair(t, "t" + std::to_string(t));
 				    add_strided_pow2_variant(block_threads, "pow2_seed");
-				    for (int64_t t : thread_cands) add_strided_pow2_variant(t, "pow2_t" + std::to_string(t));
+				    if (!intentir_evidence_on) {
+				      for (int64_t t : thread_cands) add_strided_pow2_variant(t, "pow2_t" + std::to_string(t));
+				    }
+
 				    const int64_t warps_seed = std::max<int64_t>(1, std::min<int64_t>(8, block_threads / 32));
 				    for (bool use_exp2 : exp2_cands) {
 				      add_warp4_variant(warps_seed, use_exp2, tag_exp("warp4_seed", use_exp2));
 				      add_warp_expbuf_variant(warps_seed, use_exp2, tag_exp("warpexp_seed", use_exp2));
 				    }
-				    // Also cover ±1 warp around the seed when valid. This is a tiny expansion
-				    // of the search space but often matters across architectures (e.g. Hopper).
+
+				    // Always include a tiny warp neighborhood around the seed; without evidence we widen further.
 				    for (int64_t dw : {-1, +1}) {
 				      const int64_t w = warps_seed + dw;
 				      if (w <= 0 || w > 8 || w == warps_seed) continue;
@@ -4829,23 +4989,30 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 				        add_warp_expbuf_variant(w, use_exp2, tag_exp("warpexp_w" + std::to_string(w), use_exp2));
 				      }
 				    }
-				    if (warps_seed > 1) {
+
+				    if (!intentir_evidence_on) {
+				      // Only widen the warp neighborhood without evidence; keep evidence-on minimal.
+				      if (warps_seed > 1) {
+				        for (bool use_exp2 : exp2_cands) {
+				          add_warp4_variant(warps_seed / 2, use_exp2, tag_exp("warp4_half", use_exp2));
+				          add_warp_expbuf_variant(warps_seed / 2, use_exp2, tag_exp("warpexp_half", use_exp2));
+				        }
+				      }
 				      for (bool use_exp2 : exp2_cands) {
-				        add_warp4_variant(warps_seed / 2, use_exp2, tag_exp("warp4_half", use_exp2));
-				        add_warp_expbuf_variant(warps_seed / 2, use_exp2, tag_exp("warpexp_half", use_exp2));
+				        add_warp4_variant(1, use_exp2, tag_exp("warp4_1", use_exp2));
+				        add_warp_expbuf_variant(1, use_exp2, tag_exp("warpexp_1", use_exp2));
+				      }
+				      if (warps_seed < 8) {
+				        for (bool use_exp2 : exp2_cands) {
+				          add_warp4_variant(std::min<int64_t>(8, warps_seed * 2), use_exp2, tag_exp("warp4_double", use_exp2));
+				          add_warp_expbuf_variant(std::min<int64_t>(8, warps_seed * 2), use_exp2, tag_exp("warpexp_double", use_exp2));
+				        }
 				      }
 				    }
-				    for (bool use_exp2 : exp2_cands) {
-				      add_warp4_variant(1, use_exp2, tag_exp("warp4_1", use_exp2));
-				      add_warp_expbuf_variant(1, use_exp2, tag_exp("warpexp_1", use_exp2));
-				    }
-				    if (warps_seed < 8) {
-				      for (bool use_exp2 : exp2_cands) {
-				        add_warp4_variant(std::min<int64_t>(8, warps_seed * 2), use_exp2, tag_exp("warp4_double", use_exp2));
-				        add_warp_expbuf_variant(std::min<int64_t>(8, warps_seed * 2), use_exp2, tag_exp("warpexp_double", use_exp2));
-				      }
-				    }
+
 				    if (variants.empty()) add_block_pair(block_threads, "fallback");
+
+	    emit_const_introspection_api(w, (int)variants.size(), has_evidence, contract_level, specialize_dims);
 
 	    w.line("static const char* intentir_softmax_variant_tags[] = {");
 	    w.indent();
@@ -4901,6 +5068,9 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
     w.line("constexpr int R = " + std::to_string(R) + ";");
     w.line("constexpr int C = " + std::to_string(C) + ";");
     w.line("constexpr bool INTENTIR_HOST_DISPATCH_SELECT = " + std::string(enable_host_dispatch_select ? "true" : "false") + ";");
+    w.line("intentir_cuda_dispatch_total_ms = 0.0f;");
+    w.line("intentir_cuda_dispatch_evals = 0;");
+    w.line("intentir_cuda_fastpath_enabled = 0;");
     w.line("static int intentir_selected = -1;");
     w.line("if (intentir_selected < 0) {");
     w.indent();
@@ -4997,6 +5167,10 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	    w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
 	    w.line("TORCH_CHECK(cudaStreamDestroy(sel_stream) == cudaSuccess);");
 	    w.line("intentir_selected = best_i;");
+	    w.line("float total_ms = 0.0f;");
+	    w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) total_ms += ms_acc[i];");
+	    w.line("intentir_cuda_dispatch_total_ms = total_ms;");
+	    w.line("intentir_cuda_dispatch_evals = " + std::to_string(2 * variants.size()) + ";");
 	    w.line("if (const char* dbg = std::getenv(\"INTENTIR_CUDA_SOFTMAX_DISPATCH_DEBUG\")) {");
 	    w.indent();
 	    w.line("if (dbg[0]) std::fprintf(stderr, \"[intentir][softmax] selected=%d tag=%s best_ms=%f (warm=%d iters=%d passes=2)\\n\", intentir_selected, intentir_softmax_variant_tags[intentir_selected], (double)best_ms, warm, iters);");
@@ -5014,6 +5188,7 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 		      w.indent();
           w.line("intentir_cuda_selected_variant_idx = " + std::to_string(i) + ";");
           w.line("intentir_cuda_selected_variant_tag = \"" + v.suffix + "\";");
+          w.line("intentir_cuda_fastpath_enabled = 0;");
 		      w.line("dim3 g((unsigned)((R + " + std::to_string(v.rows_per_block) + " - 1) / " + std::to_string(v.rows_per_block) +
 		             "), 1u, 1u);");
 		      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
@@ -5029,6 +5204,7 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 		    const std::string k0 = intent.name + "__" + v0.suffix;
         w.line("intentir_cuda_selected_variant_idx = 0;");
         w.line("intentir_cuda_selected_variant_tag = \"" + v0.suffix + "\";");
+        w.line("intentir_cuda_fastpath_enabled = 0;");
 		    w.line("dim3 g((unsigned)((R + " + std::to_string(v0.rows_per_block) + " - 1) / " + std::to_string(v0.rows_per_block) +
 		           "), 1u, 1u);");
 		    w.line("dim3 b((unsigned)" + std::to_string(v0.threads) + ", 1u, 1u);");
@@ -5191,6 +5367,8 @@ json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
   }
 
   const bool specialize_dims = want_specialize_dims(intent, bindings);
+  const bool has_evidence = intent_has_evidence(intent);
+  const int contract_level = contract_level_code(intent);
   const bool enable_host_dispatch = want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims;
   const bool enable_host_dispatch_select = want_host_dispatch_select(bindings);
   bool host_launch = false;
@@ -5201,6 +5379,7 @@ json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
   w.blank();
   emit_selected_api(w);
   if (!enable_host_dispatch) {
+    emit_const_introspection_api(w, /*variant_count=*/1, has_evidence, contract_level, specialize_dims);
     w.line("extern \"C\" __global__ void " + intent.name + "(");
     w.indent();
     w.line("const float* __restrict__ " + X_name + ",");
@@ -5253,6 +5432,8 @@ json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
     add_variant(512, "t512");
     if (variants.empty()) add_variant(block_x, "fallback");
 
+    emit_const_introspection_api(w, (int)variants.size(), has_evidence, contract_level, specialize_dims);
+
     for (const auto& v : variants) {
       const std::string kname = intent.name + "__" + v.suffix;
       w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(v.threads) + ") void " + kname + "(");
@@ -5289,6 +5470,9 @@ json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
     w.line("(void)block_x; (void)block_y; (void)block_z;");
     w.line("(void)shared_mem;");
     w.line("constexpr bool INTENTIR_HOST_DISPATCH_SELECT = " + std::string(enable_host_dispatch_select ? "true" : "false") + ";");
+    w.line("intentir_cuda_dispatch_total_ms = 0.0f;");
+    w.line("intentir_cuda_dispatch_evals = 0;");
+    w.line("intentir_cuda_fastpath_enabled = 0;");
     w.line("static int intentir_selected = -1;");
     w.line("if (intentir_selected < 0) {");
     w.indent();
@@ -5382,6 +5566,10 @@ json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
 	    w.line("TORCH_CHECK(cudaEventDestroy(end) == cudaSuccess);");
 	    w.line("TORCH_CHECK(cudaStreamDestroy(sel_stream) == cudaSuccess);");
 	    w.line("intentir_selected = best_i;");
+	    w.line("float total_ms = 0.0f;");
+	    w.line("for (int i = 0; i < " + std::to_string(variants.size()) + "; ++i) total_ms += ms_acc[i];");
+	    w.line("intentir_cuda_dispatch_total_ms = total_ms;");
+	    w.line("intentir_cuda_dispatch_evals = " + std::to_string(2 * variants.size()) + ";");
 	    w.dedent();
 	    w.line("}");
     w.dedent();

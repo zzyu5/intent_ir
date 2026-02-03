@@ -704,7 +704,7 @@ def main() -> None:
         "--ablation-modes",
         type=str,
         default="evidence_on,contract_off",
-        help="Comma-separated modes for --ablation. Supported: evidence_on, dispatch_off, contract_off. Default: evidence_on,contract_off.",
+        help="Comma-separated modes for --ablation. Supported: evidence_on, evidence_off, dispatch_off, contract_off. Default: evidence_on,contract_off.",
     )
     ap.add_argument("--out", type=Path, default=OUT_DEFAULT, help="Output JSON path.")
     ap.add_argument(
@@ -745,7 +745,7 @@ def main() -> None:
     }
     if bool(args.ablation):
         modes = [m.strip() for m in str(args.ablation_modes).split(",") if m.strip()]
-        bad = [m for m in modes if m not in {"evidence_on", "dispatch_off", "contract_off"}]
+        bad = [m for m in modes if m not in {"evidence_on", "evidence_off", "dispatch_off", "contract_off"}]
         if bad:
             raise SystemExit(f"--ablation-modes has unknown entries: {bad}")
         if not modes:
@@ -945,6 +945,19 @@ def main() -> None:
                 it2["meta"] = meta2
                 return it2
 
+            def _intent_without_evidence(it: dict[str, Any]) -> dict[str, Any]:
+                # Strip evidence fields consumed by the backend (access witness + schedule hints),
+                # while keeping contract_v2/canonical_shapes and everything else.
+                it2: dict[str, Any] = dict(it)
+                meta_j = it2.get("meta")
+                if not isinstance(meta_j, dict):
+                    return it2
+                meta2: dict[str, Any] = dict(meta_j)
+                meta2.pop("access_witness", None)
+                meta2.pop("schedule_hints_v2", None)
+                it2["meta"] = meta2
+                return it2
+
             def _run_ours(it_json: dict[str, Any], bnd: dict[str, Any]) -> tuple[dict[str, Any], Callable[[], None], dict[str, Any]]:
                 intent = IntentFunction.from_json_dict(it_json)
                 lowered = lower_intent_to_cuda_kernel(intent, shape_bindings=bnd)
@@ -967,14 +980,42 @@ def main() -> None:
 
                 sel_variant: int | None = None
                 sel_tag: str | None = None
+                variant_count: int | None = None
+                dispatch_total_ms: float | None = None
+                dispatch_evals: int | None = None
+                has_evidence: int | None = None
+                contract_level: int | None = None
+                specialize_dims: int | None = None
+                fastpath_enabled: int | None = None
                 try:
                     if hasattr(mod, "selected_variant"):
                         sel_variant = int(mod.selected_variant())
                     if hasattr(mod, "selected_tag"):
                         sel_tag = str(mod.selected_tag())
+                    if hasattr(mod, "variant_count"):
+                        variant_count = int(mod.variant_count())
+                    if hasattr(mod, "dispatch_total_ms"):
+                        dispatch_total_ms = float(mod.dispatch_total_ms())
+                    if hasattr(mod, "dispatch_evals"):
+                        dispatch_evals = int(mod.dispatch_evals())
+                    if hasattr(mod, "has_evidence"):
+                        has_evidence = int(mod.has_evidence())
+                    if hasattr(mod, "contract_level"):
+                        contract_level = int(mod.contract_level())
+                    if hasattr(mod, "specialize_dims"):
+                        specialize_dims = int(mod.specialize_dims())
+                    if hasattr(mod, "fastpath_enabled"):
+                        fastpath_enabled = int(mod.fastpath_enabled())
                 except Exception:
                     sel_variant = None
                     sel_tag = None
+                    variant_count = None
+                    dispatch_total_ms = None
+                    dispatch_evals = None
+                    has_evidence = None
+                    contract_level = None
+                    specialize_dims = None
+                    fastpath_enabled = None
 
                 rec = {
                     "ns_per_iter": None,
@@ -983,6 +1024,13 @@ def main() -> None:
                     "host_launch": bool(lowered.io_spec.get("host_launch")),
                     "selected_variant": sel_variant,
                     "selected_tag": sel_tag,
+                    "variant_count": variant_count,
+                    "dispatch_total_ms": dispatch_total_ms,
+                    "dispatch_evals": dispatch_evals,
+                    "has_evidence": has_evidence,
+                    "contract_level": contract_level,
+                    "specialize_dims": specialize_dims,
+                    "fastpath_enabled": fastpath_enabled,
                 }
                 ctx = {"mod": mod, "outputs": ours_outputs, "lowered": lowered, "args": ours_args}
                 return rec, run, ctx
@@ -1000,6 +1048,15 @@ def main() -> None:
             # Evidence-on (default): keep the artifact intent.meta (contract_v2 etc).
             ours_rec, ours_run, ours_ctx = _run_ours(intent_json, dict(bindings))
 
+            # Evidence-off (ablation): remove certificate evidence from intent.meta.
+            ours_evidence_off_rec: dict[str, Any] | None = None
+            ours_evidence_off_run: Callable[[], None] | None = None
+            if bool(args.ablation) and "evidence_off" in (meta.get("ablation") or {}).get("modes", []):
+                intent_no_ev = _intent_without_evidence(intent_json)
+                ours_evidence_off_rec, ours_evidence_off_run, ours_ev_ctx = _run_ours(intent_no_ev, dict(bindings))
+                ours_outputs_ev = ours_ev_ctx["outputs"]
+                _check_outputs_close(kernel=k, ours=ours_outputs_ev, triton=ours_ctx["outputs"], allow_tf32=(k == "ai_bench_matmul"))
+
             # Build Triton runner from the evidence-on shared args.
             lowered0 = ours_ctx["lowered"]
             ours_args0 = ours_ctx["args"]
@@ -1015,7 +1072,7 @@ def main() -> None:
             torch.cuda.synchronize()
             _check_outputs_close(kernel=k, ours=ours_outputs0, triton=triton_outputs, allow_tf32=(k == "ai_bench_matmul"))
 
-            # Evidence-off (ablation): disable host-dispatch *selection* (seed-only) while keeping
+            # Dispatch-off (ablation): disable host-dispatch *selection* (seed-only) while keeping
             # evidence/specialization on. This keeps the generated kernel variants identical to the
             # "quick" path and isolates the benefit of host-side selection.
             ours_dispatch_off_rec: dict[str, Any] | None = None
@@ -1034,8 +1091,9 @@ def main() -> None:
             if bool(args.ablation) and "contract_off" in (meta.get("ablation") or {}).get("modes", []):
                 intent_off = _intent_with_contract_level(intent_json, "OUT_OF_SCOPE")
                 bnd3 = dict(bindings)
-                bnd3["CUDA_SPECIALIZE_DIMS"] = 0
-                bnd3.setdefault("CUDA_AUTO_SPECIALIZE_DIMS", 1)
+                # Keep the paper baseline (specialize dims) so this isolates the effect of
+                # contract-gated fast paths (mask removal / full-tile specialization), not
+                # generic shape plumbing overhead.
                 ours_contract_off_rec, ours_contract_off_run, ours_off_ctx = _run_ours(intent_off, bnd3)
                 ours_outputs_off = ours_off_ctx["outputs"]
                 _check_outputs_close(kernel=k, ours=ours_outputs_off, triton=triton_outputs, allow_tf32=(k == "ai_bench_matmul"))
@@ -1045,6 +1103,8 @@ def main() -> None:
                     # Always benchmark via the multi-graph harness (even without ablation) to
                     # avoid systematic order/clock bias between ours vs Triton.
                     fns: dict[str, Callable[[], None]] = {"ours": ours_run, "triton": triton_run}
+                    if bool(args.ablation) and ours_evidence_off_run is not None:
+                        fns["evidence_off"] = ours_evidence_off_run
                     if bool(args.ablation) and ours_dispatch_off_run is not None:
                         fns["dispatch_off"] = ours_dispatch_off_run
                     if bool(args.ablation) and ours_contract_off_run is not None:
@@ -1054,6 +1114,7 @@ def main() -> None:
                     )
                     ours_ns, ours_reps = multi["ours"]
                     triton_ns, triton_reps = multi["triton"]
+                    ours_evidence_off_ns, ours_evidence_off_reps = multi.get("evidence_off", (None, None))
                     ours_dispatch_off_ns, ours_dispatch_off_reps = multi.get("dispatch_off", (None, None))
                     ours_contract_off_ns, ours_contract_off_reps = multi.get("contract_off", (None, None))
                 except Exception as e:
@@ -1062,6 +1123,12 @@ def main() -> None:
                     triton_ns, triton_reps = _bench_cuda_repeated(
                         triton_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
                     )
+                    ours_evidence_off_ns = None
+                    ours_evidence_off_reps = None
+                    if bool(args.ablation) and ours_evidence_off_run is not None:
+                        ours_evidence_off_ns, ours_evidence_off_reps = _bench_cuda_repeated(
+                            ours_evidence_off_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
+                        )
                     ours_dispatch_off_ns = None
                     ours_dispatch_off_reps = None
                     if bool(args.ablation) and ours_dispatch_off_run is not None:
@@ -1079,6 +1146,12 @@ def main() -> None:
                 triton_ns, triton_reps = _bench_cuda_repeated(
                     triton_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
                 )
+                ours_evidence_off_ns = None
+                ours_evidence_off_reps = None
+                if bool(args.ablation) and ours_evidence_off_run is not None:
+                    ours_evidence_off_ns, ours_evidence_off_reps = _bench_cuda_repeated(
+                        ours_evidence_off_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
+                    )
                 ours_dispatch_off_ns = None
                 ours_dispatch_off_reps = None
                 if bool(args.ablation) and ours_dispatch_off_run is not None:
@@ -1094,6 +1167,9 @@ def main() -> None:
 
             ours_rec["ns_per_iter"] = ours_ns
             ours_rec["ns_per_iter_repeats"] = ours_reps
+            if ours_evidence_off_rec is not None:
+                ours_evidence_off_rec["ns_per_iter"] = ours_evidence_off_ns
+                ours_evidence_off_rec["ns_per_iter_repeats"] = ours_evidence_off_reps
             if ours_dispatch_off_rec is not None:
                 ours_dispatch_off_rec["ns_per_iter"] = ours_dispatch_off_ns
                 ours_dispatch_off_rec["ns_per_iter_repeats"] = ours_dispatch_off_reps
@@ -1102,6 +1178,11 @@ def main() -> None:
                 ours_contract_off_rec["ns_per_iter_repeats"] = ours_contract_off_reps
 
             speedup = float(triton_ns) / float(ours_ns) if ours_ns > 0 else 0.0
+            speedup_evidence_off = None
+            slowdown_evidence_off = None
+            if bool(args.ablation) and ours_evidence_off_ns is not None and ours_evidence_off_ns > 0:
+                speedup_evidence_off = float(triton_ns) / float(ours_evidence_off_ns)
+                slowdown_evidence_off = float(ours_evidence_off_ns) / float(ours_ns) if ours_ns > 0 else None
             speedup_dispatch_off = None
             slowdown_dispatch_off = None
             if bool(args.ablation) and ours_dispatch_off_ns is not None and ours_dispatch_off_ns > 0:
@@ -1125,12 +1206,15 @@ def main() -> None:
                         "contract_v2_level": intent_contract_v2_level,
                     },
                     "ours": ours_rec,
+                    "ours_evidence_off": ours_evidence_off_rec,
                     "ours_dispatch_off": ours_dispatch_off_rec,
                     "ours_contract_off": ours_contract_off_rec,
                     "triton": triton_rec,
                     "speedup_ours_over_triton": speedup,
+                    "speedup_ours_evidence_off_over_triton": speedup_evidence_off,
                     "speedup_ours_dispatch_off_over_triton": speedup_dispatch_off,
                     "speedup_ours_contract_off_over_triton": speedup_contract_off,
+                    "slowdown_evidence_off_over_ours": slowdown_evidence_off,
                     "slowdown_dispatch_off_over_ours": slowdown_dispatch_off,
                     "slowdown_contract_off_over_ours": speedup_gain,
                 }
@@ -1146,6 +1230,11 @@ def main() -> None:
         for r in results
         if r.get("status") == "OK" and isinstance(r.get("speedup_ours_dispatch_off_over_triton"), (int, float))
     ]
+    ok_rates_evidence_off = [
+        r["speedup_ours_evidence_off_over_triton"]
+        for r in results
+        if r.get("status") == "OK" and isinstance(r.get("speedup_ours_evidence_off_over_triton"), (int, float))
+    ]
     ok_rates_contract_off = [
         r["speedup_ours_contract_off_over_triton"]
         for r in results
@@ -1155,6 +1244,7 @@ def main() -> None:
         "ok": sum(1 for r in results if r.get("status") == "OK"),
         "total": len(results),
         "geom_speedup_ours_over_triton": _geom_mean(ok_rates),
+        "geom_speedup_ours_evidence_off_over_triton": _geom_mean(ok_rates_evidence_off) if ok_rates_evidence_off else None,
         "geom_speedup_ours_dispatch_off_over_triton": _geom_mean(ok_rates_dispatch_off) if ok_rates_dispatch_off else None,
         "geom_speedup_ours_contract_off_over_triton": _geom_mean(ok_rates_contract_off) if ok_rates_contract_off else None,
         "min_speedup": min(ok_rates) if ok_rates else None,

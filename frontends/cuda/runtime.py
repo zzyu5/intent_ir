@@ -625,6 +625,12 @@ def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, 
     scalars = io_spec.get("scalars") if isinstance(io_spec.get("scalars"), dict) else {}
     use_host_launch = bool(io_spec.get("host_launch"))
     has_selected_api = ("intentir_cuda_selected_variant" in cuda_src) and ("intentir_cuda_selected_tag" in cuda_src)
+    has_variant_count_api = "intentir_cuda_variant_count" in cuda_src
+    has_dispatch_api = ("intentir_cuda_get_dispatch_total_ms" in cuda_src) and ("intentir_cuda_get_dispatch_evals" in cuda_src)
+    has_evidence_api = "intentir_cuda_has_evidence" in cuda_src
+    has_contract_api = "intentir_cuda_contract_level" in cuda_src
+    has_specialize_api = "intentir_cuda_specialize_dims" in cuda_src
+    has_fastpath_api = "intentir_cuda_get_fastpath_enabled" in cuda_src
 
     # Build launch() signature: tensors as torch::Tensor, scalars as int64_t.
     sig_args: list[str] = []
@@ -747,6 +753,31 @@ def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, 
     const char* s = intentir_cuda_selected_tag();
     return s ? std::string(s) : std::string();
   }, "Selected variant tag");
+"""
+    if has_variant_count_api:
+        selected_api += """
+  m.def("variant_count", []() { return (int64_t)intentir_cuda_variant_count(); }, "Number of compiled variants (host dispatch search space)");
+"""
+    if has_dispatch_api:
+        selected_api += """
+  m.def("dispatch_total_ms", []() { return (double)intentir_cuda_get_dispatch_total_ms(); }, "Total selection microbench time in milliseconds");
+  m.def("dispatch_evals", []() { return (int64_t)intentir_cuda_get_dispatch_evals(); }, "Number of candidates evaluated during selection");
+"""
+    if has_evidence_api:
+        selected_api += """
+  m.def("has_evidence", []() { return (int64_t)intentir_cuda_has_evidence(); }, "Whether intent.meta evidence was present at codegen time");
+"""
+    if has_contract_api:
+        selected_api += """
+  m.def("contract_level", []() { return (int64_t)intentir_cuda_contract_level(); }, "Contract level enum (0=OUT_OF_SCOPE,1=PARTIAL,2=FULL)");
+"""
+    if has_specialize_api:
+        selected_api += """
+  m.def("specialize_dims", []() { return (int64_t)intentir_cuda_specialize_dims(); }, "Whether dimensions were specialized as compile-time constants");
+"""
+    if has_fastpath_api:
+        selected_api += """
+  m.def("fastpath_enabled", []() { return (int64_t)intentir_cuda_get_fastpath_enabled(); }, "Whether a contract-gated fast path was enabled for the selected variant");
 """
 
     src = f"""
