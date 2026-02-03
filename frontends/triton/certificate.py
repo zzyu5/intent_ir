@@ -77,8 +77,8 @@ def _infer_kernel_kind(facts: TTIRFacts) -> Literal["matmul", "reduce", "softmax
 
 
 BLOCK_RE = re.compile(r"BLOCK_[MNK]\s*=\s*(\d+)")
-MAKE_RANGE_END_RE = re.compile(r"tt\\.make_range\\b[^\\n]*?end\\s*=\\s*(\\d+)")
-ARITH_CONST_I_RE = re.compile(r"arith\\.constant\\s+(\\d+)\\s*:\\s*i(?:32|64)")
+MAKE_RANGE_END_RE = re.compile(r"tt\.make_range\b[^\n]*?end\s*=\s*(\d+)")
+ARITH_CONST_I_RE = re.compile(r"arith\.constant\s+(-?\d+)\s*:\s*i(?:32|64)")
 TENSOR_SHAPE_RE = re.compile(r"tensor<([0-9]+(?:x[0-9]+)+)x")
 
 

@@ -148,6 +148,65 @@ def _refresh_one(artifact_dir: Path, kernel: str) -> Dict[str, Any]:
         # Preserve canonical_shapes if present in descriptor launch.
         if isinstance(desc.launch, dict) and isinstance(desc.launch.get("canonical_shapes"), dict):
             meta.setdefault("canonical_shapes", dict(desc.launch.get("canonical_shapes") or {}))
+        # Refresh schedule hints + access witnesses used by GPU backends.
+        try:
+            sh = getattr(cert_v2, "schedule_hints", {}) or {}
+            if isinstance(sh, dict):
+                meta["schedule_hints_v2"] = {
+                    "tile_hints": list(sh.get("tile_hints") or []) if isinstance(sh.get("tile_hints"), list) else [],
+                    "symbol_ranges": dict(sh.get("symbol_ranges") or {}) if isinstance(sh.get("symbol_ranges"), dict) else {},
+                }
+        except Exception:
+            pass
+        try:
+            from frontends.common.access_witness import build_stride_summary  # noqa: PLC0415
+
+            shape_bindings: dict[str, int] = {}
+            cs = meta.get("canonical_shapes")
+            if isinstance(cs, dict):
+                for kk, vv in cs.items():
+                    if isinstance(kk, str) and isinstance(vv, int):
+                        shape_bindings[str(kk)] = int(vv)
+                    elif isinstance(kk, str) and isinstance(vv, float) and float(vv).is_integer():
+                        shape_bindings[str(kk)] = int(vv)
+            ss = build_stride_summary(cert_v2.to_json_dict(), shape_bindings=shape_bindings)
+            j = ss.to_json_dict()
+            tp = j.get("tensor_penalty") if isinstance(j.get("tensor_penalty"), dict) else {}
+            top = sorted(((str(k), float(v)) for k, v in tp.items()), key=lambda kv: kv[1], reverse=True)[:8]
+            axis_contig_len: dict[str, int] = {}
+            for a in (j.get("accesses") or []):
+                if not isinstance(a, dict):
+                    continue
+                axis_bind = a.get("axis_bindings") if isinstance(a.get("axis_bindings"), dict) else {}
+                for r in (a.get("range_strides") or []):
+                    if not isinstance(r, dict):
+                        continue
+                    try:
+                        stride_elems = r.get("stride_elems")
+                        range_len = r.get("range_len")
+                        if stride_elems is None or int(stride_elems) != 1:
+                            continue
+                        if range_len is None:
+                            continue
+                        sym = str(r.get("range_sym") or "")
+                        axis = axis_bind.get(sym)
+                        if not isinstance(axis, str) or not axis:
+                            continue
+                        axis_contig_len[axis] = max(int(axis_contig_len.get(axis, 0)), int(range_len))
+                    except Exception:
+                        continue
+            meta["access_witness"] = {
+                "dominant_axis": j.get("dominant_axis"),
+                "dominant_range": j.get("dominant_range"),
+                "dominant_range_len": j.get("dominant_range_len"),
+                "has_contiguous_range": bool(j.get("has_contiguous_range")),
+                "tensor_penalty_top": top,
+                "notes": list(j.get("notes") or []) if isinstance(j.get("notes"), list) else [],
+            }
+            if axis_contig_len:
+                meta["access_witness"]["axis_contig_len"] = dict(axis_contig_len)
+        except Exception:
+            pass
         intent.meta = meta
         report["intent"] = intent.to_json_dict()
         # Also refresh Stage-A static validation report (purely for paper/debug).

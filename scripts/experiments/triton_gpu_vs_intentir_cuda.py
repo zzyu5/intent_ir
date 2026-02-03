@@ -468,8 +468,18 @@ def _make_triton_runner_from_shared_args(
     if kernel == "ai_bench_dropout":
         from kernels.triton.ops.ai_bench_dropout import ai_bench_dropout_kernel  # noqa: PLC0415
 
-        x = arg_map["X"]
-        y = triton_outputs["Out"]
+        x = arg_map.get("X")
+        if x is None:
+            x = arg_map["x"]
+        y = triton_outputs.get("Out")
+        if y is None:
+            y = triton_outputs.get("out")
+        if y is None:
+            y = triton_outputs.get("Y")
+        if y is None:
+            y = triton_outputs.get("y")
+        if y is None:
+            raise KeyError("dropout output not found in triton_outputs")
         n = int(_scalar(arg_map.get("n_elements", int(x.numel()))))
         p = float(_scalar(arg_map["p"]))
         seed = int(_scalar(arg_map["seed"]))
@@ -842,8 +852,10 @@ def main() -> None:
 
                 aw0 = meta2.get("access_witness")
                 need_aw = (not isinstance(aw0, dict)) or (not isinstance(aw0.get("axis_contig_len"), dict))
-                need_sh = not isinstance(meta2.get("schedule_hints_v2"), dict)
-                if not (need_aw or need_sh):
+                sh0 = meta2.get("schedule_hints_v2")
+                stale_empty_sh = isinstance(sh0, dict) and isinstance(sh0.get("tile_hints"), list) and (not bool(sh0.get("tile_hints")))
+                need_sh = (not isinstance(sh0, dict)) or (not isinstance(sh0.get("tile_hints"), list))
+                if not (need_aw or need_sh or stale_empty_sh):
                     return it
 
                 cv2 = report_json.get("certificate_v2")
@@ -907,12 +919,14 @@ def main() -> None:
                             aw2["axis_contig_len"] = dict(axis_contig_len)
                         meta2["access_witness"] = aw2
 
-                    if need_sh:
+                    if need_sh or stale_empty_sh:
                         sh = cv2.get("schedule_hints") if isinstance(cv2.get("schedule_hints"), dict) else {}
-                        meta2["schedule_hints_v2"] = {
-                            "tile_hints": list(sh.get("tile_hints") or []) if isinstance(sh.get("tile_hints"), list) else [],
-                            "symbol_ranges": dict(sh.get("symbol_ranges") or {}) if isinstance(sh.get("symbol_ranges"), dict) else {},
-                        }
+                        tile_hints = list(sh.get("tile_hints") or []) if isinstance(sh.get("tile_hints"), list) else []
+                        if need_sh or tile_hints:
+                            meta2["schedule_hints_v2"] = {
+                                "tile_hints": tile_hints,
+                                "symbol_ranges": dict(sh.get("symbol_ranges") or {}) if isinstance(sh.get("symbol_ranges"), dict) else {},
+                            }
                 except Exception:
                     return it
 
