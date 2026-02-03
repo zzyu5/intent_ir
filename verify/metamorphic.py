@@ -572,14 +572,11 @@ def _default_relations(
         # Test that flipping a row mask flips whether output is zero or preserved.
         # If mask[i] = True, output[i,:] = input[i,:]
         # If mask[i] = False, output[i,:] = 0
+        # Note: IntentFunction uses tensor name 'mask' (i1 dtype), not 'row_mask'
         def _transform_flip_mask(inputs: Dict[str, np.ndarray], bindings: Dict[str, int], rng: np.random.Generator) -> Dict[str, np.ndarray]:
-            mask = np.asarray(inputs.get("row_mask") if "row_mask" in inputs else inputs["mask"], dtype=bool)
+            mask = np.asarray(inputs["mask"], dtype=bool)
             out = dict(inputs)
-            flipped = ~mask
-            if "row_mask" in out:
-                out["row_mask"] = flipped
-            else:
-                out["mask"] = flipped
+            out["mask"] = ~mask
             return out
 
         def _check_flip_mask(base_out: Dict[str, np.ndarray], tr_out: Dict[str, np.ndarray], bindings: Dict[str, int], *, atol: float, rtol: float) -> Tuple[bool, str]:
@@ -589,8 +586,6 @@ def _default_relations(
             # This checks that the output correctly responds to mask changes.
             y0 = np.asarray(base_out.get("out") if "out" in base_out else base_out["output"], dtype=np.float32)
             y1 = np.asarray(tr_out.get("out") if "out" in tr_out else tr_out["output"], dtype=np.float32)
-            # Both outputs should have zero rows where their respective masks are False.
-            # We verify that the outputs are complementary: where one has values, the other should be zero.
             # Check that at least one flip actually occurs (they're not identical)
             not_identical = not np.allclose(y0, y1, atol=atol, rtol=rtol)
             return not_identical, ("mask flip changes output correctly" if not_identical else "mask flip did not change output - possible where_drop_mask mutation")
@@ -639,10 +634,11 @@ def _bounded_specs(
         return ({"in_ptr": (1, 2), "weight_ptr": (2,), "bias_ptr": (2,)}, ["in_ptr"], [-1.0, 0.0, 1.0])
     if kernel_name == "rowmask_where2d":
         # Tiny rowmask: M=2, N=3, enumerate both inp values and mask patterns.
+        # IntentFunction uses 'inp' (f32) and 'mask' (i1), not 'row_mask'
         # inp: 2x3 = 6 elements, mask: 2 booleans
-        # Domain for inp: [-1.0, 0.0, 1.0], domain for mask: [0.0=False, 1.0=True]
+        # For boolean mask, use 0.0=False, 1.0=True in domain
         # Total: 3^6 * 2^2 = 2916 cases (exhaustive), truncated if needed.
-        return ({"inp": (2, 3), "row_mask": (2,)}, ["inp", "row_mask"], [-1.0, 0.0, 1.0])
+        return ({"inp": (2, 3), "mask": (2,)}, ["inp", "mask"], [-1.0, 0.0, 1.0])
     if kernel_name == "masked_softmax2d":
         # Tiny masked_softmax: M=2, N=3, with mask
         return ({"input": (2, 3), "mask": (2, 3)}, ["input", "mask"], [-1.0, 0.0, 1.0])
