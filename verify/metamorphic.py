@@ -568,6 +568,46 @@ def _default_relations(
 
         relations.append(("MR_upsample_scale_input", _transform_scale, _check_scale))
 
+    if kernel_name == "rowmask_where2d":
+        # Test that flipping a row mask flips whether output is zero or preserved.
+        # If mask[i] = True, output[i,:] = input[i,:]
+        # If mask[i] = False, output[i,:] = 0
+        # Note: IntentFunction uses tensor name 'mask' (i1 dtype), not 'row_mask'
+        def _transform_flip_mask(inputs: Dict[str, np.ndarray], bindings: Dict[str, int], rng: np.random.Generator) -> Dict[str, np.ndarray]:
+            mask = np.asarray(inputs["mask"], dtype=bool)
+            out = dict(inputs)
+            out["mask"] = ~mask
+            return out
+
+        def _check_flip_mask(base_out: Dict[str, np.ndarray], tr_out: Dict[str, np.ndarray], bindings: Dict[str, int], *, atol: float, rtol: float) -> Tuple[bool, str]:
+            # After flipping mask, the non-zero rows should swap.
+            # base: mask[i] = True means out[i,:] = inp[i,:]
+            # transformed: mask[i] = False means out[i,:] = 0
+            # This checks that the output correctly responds to mask changes.
+            y0 = np.asarray(base_out.get("out") if "out" in base_out else base_out["output"], dtype=np.float32)
+            y1 = np.asarray(tr_out.get("out") if "out" in tr_out else tr_out["output"], dtype=np.float32)
+            # Check that at least one flip actually occurs (they're not identical)
+            not_identical = not np.allclose(y0, y1, atol=atol, rtol=rtol)
+            return not_identical, ("mask flip changes output correctly" if not_identical else "mask flip did not change output - possible where_drop_mask mutation")
+
+        relations.append(("MR_rowmask_flip", _transform_flip_mask, _check_flip_mask))
+
+    if kernel_name == "masked_softmax2d":
+        # Test that flipping the mask changes which elements get -inf (before softmax)
+        def _transform_flip_mask(inputs: Dict[str, np.ndarray], bindings: Dict[str, int], rng: np.random.Generator) -> Dict[str, np.ndarray]:
+            mask = np.asarray(inputs["mask"], dtype=bool)
+            out = dict(inputs)
+            out["mask"] = ~mask
+            return out
+
+        def _check_flip_mask(base_out: Dict[str, np.ndarray], tr_out: Dict[str, np.ndarray], bindings: Dict[str, int], *, atol: float, rtol: float) -> Tuple[bool, str]:
+            y0 = np.asarray(base_out.get("out") if "out" in base_out else base_out["output"], dtype=np.float32)
+            y1 = np.asarray(tr_out.get("out") if "out" in tr_out else tr_out["output"], dtype=np.float32)
+            not_identical = not np.allclose(y0, y1, atol=atol, rtol=rtol)
+            return not_identical, ("mask flip changes softmax output" if not_identical else "mask flip did not change output")
+
+        relations.append(("MR_masked_softmax_flip", _transform_flip_mask, _check_flip_mask))
+
     return relations
 
 
@@ -592,6 +632,22 @@ def _bounded_specs(
     if kernel_name == "layer_norm_persistent":
         # Tiny layernorm: M=1,N=2, domain 3^2=9 for input only.
         return ({"in_ptr": (1, 2), "weight_ptr": (2,), "bias_ptr": (2,)}, ["in_ptr"], [-1.0, 0.0, 1.0])
+    if kernel_name == "rowmask_where2d":
+        # Tiny rowmask: M=2, N=3, enumerate both inp values and mask patterns.
+        # IntentFunction uses 'inp' (f32) and 'mask' (i1), not 'row_mask'
+        # inp: 2x3 = 6 elements, mask: 2 booleans
+        # For boolean mask, use 0.0=False, 1.0=True in domain
+        # Total: 3^6 * 2^2 = 2916 cases (exhaustive), truncated if needed.
+        return ({"inp": (2, 3), "mask": (2,)}, ["inp", "mask"], [-1.0, 0.0, 1.0])
+    if kernel_name == "masked_softmax2d":
+        # Tiny masked_softmax: M=2, N=3, 1D mask along N dimension
+        # IntentFunction uses 'inp' (f32) and 'mask' (i1), mask is 1D[N], not 2D
+        return ({"inp": (2, 3), "mask": (3,)}, ["inp", "mask"], [-1.0, 0.0, 1.0])
+    # Note: masked_attention2d does NOT have a mask input, only Q/K/V/sm_scale
+    # flash_attention2d has internal causal_mask but it's computed, not input
+    if kernel_name == "where2d":
+        # Tiny where: M=2, N=3, condition + true + false branches
+        return ({"cond": (2, 3), "true_val": (2, 3), "false_val": (2, 3)}, ["cond", "true_val", "false_val"], [-1.0, 0.0, 1.0])
     return None
 
 
@@ -608,6 +664,16 @@ def _case_shapes_from_input_shapes(kernel_name: str, input_shapes: Dict[str, Tup
         return {"M": int(m), "N": int(n)}
     if kernel_name == "layer_norm_persistent":
         m, n = input_shapes["in_ptr"]
+        return {"M": int(m), "N": int(n)}
+    if kernel_name == "rowmask_where2d":
+        m, n = input_shapes["inp"]
+        return {"M": int(m), "N": int(n)}
+    if kernel_name == "masked_softmax2d":
+        m, n = input_shapes["inp"]
+        return {"M": int(m), "N": int(n)}
+    # masked_attention2d does not have mask input, so no bounded spec
+    if kernel_name == "where2d":
+        m, n = input_shapes["cond"]
         return {"M": int(m), "N": int(n)}
     raise ValueError(f"unknown kernel_name for bounded case shapes: {kernel_name}")
 
