@@ -5030,21 +5030,21 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
       w.line(c_unused);
 		      w.line("constexpr int R = " + std::to_string(R) + ";");
 		      w.line("constexpr int C = " + std::to_string(C) + ";");
-		      w.line(std::string("constexpr bool USE_EXP2 = ") + (v.use_exp2 ? "true" : "false") + ";");
+		      const std::string exp2 = v.use_exp2 ? "true" : "false";
 		      if (v.warp4) {
 		        w.line("constexpr int WARPS_PER_BLOCK = " + std::to_string(v.rows_per_block) + ";");
-		        w.line("intentir_cuda::softmax_2d_last_f32_warp4<WARPS_PER_BLOCK, USE_EXP2>(" + in_name + ", " + out_name + ", R, C);");
+		        w.line("intentir_cuda::softmax_2d_last_f32_warp4<WARPS_PER_BLOCK, " + exp2 + ">(" + in_name + ", " + out_name + ", R, C);");
 		      } else if (v.warp_expbuf) {
 		        w.line("constexpr int WARPS_PER_BLOCK = " + std::to_string(v.rows_per_block) + ";");
-		        w.line("intentir_cuda::softmax_2d_last_f32_warp_expbuf<WARPS_PER_BLOCK, USE_EXP2>(" + in_name + ", " + out_name + ", R, C);");
+		        w.line("intentir_cuda::softmax_2d_last_f32_warp_expbuf<WARPS_PER_BLOCK, " + exp2 + ">(" + in_name + ", " + out_name + ", R, C);");
 		      } else if (v.vec4) {
 		        w.line("constexpr int BLOCK_THREADS = " + std::to_string(v.threads) + ";");
 		        w.line("constexpr int TILES = " + std::to_string(v.tiles) + ";");
-			        w.line("intentir_cuda::softmax_2d_last_f32_vec4<BLOCK_THREADS, TILES, USE_EXP2>(" + in_name + ", " + out_name + ", R, C);");
+			        w.line("intentir_cuda::softmax_2d_last_f32_vec4<BLOCK_THREADS, TILES, " + exp2 + ">(" + in_name + ", " + out_name + ", R, C);");
 		      } else {
 		        w.line("constexpr int BLOCK_THREADS = " + std::to_string(v.threads) + ";");
 		        w.line("constexpr int EPT = " + std::to_string(v.ept) + ";");
-		        w.line("intentir_cuda::softmax_2d_last_f32<BLOCK_THREADS, EPT, USE_EXP2>(" + in_name + ", " + out_name + ", R, C);");
+		        w.line("intentir_cuda::softmax_2d_last_f32<BLOCK_THREADS, EPT, " + exp2 + ">(" + in_name + ", " + out_name + ", R, C);");
 		      }
 	      w.dedent();
 	      w.line("}");
