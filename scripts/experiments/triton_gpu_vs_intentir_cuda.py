@@ -1028,30 +1028,20 @@ def main() -> None:
 
             if str(args.bench_mode) == "graph":
                 try:
-                    if bool(args.ablation):
-                        fns: dict[str, Callable[[], None]] = {"ours": ours_run, "triton": triton_run}
-                        if ours_dispatch_off_run is not None:
-                            fns["dispatch_off"] = ours_dispatch_off_run
-                        if ours_contract_off_run is not None:
-                            fns["contract_off"] = ours_contract_off_run
-                        multi = _bench_cuda_graph_multi_repeated(
-                            fns, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
-                        )
-                        ours_ns, ours_reps = multi["ours"]
-                        triton_ns, triton_reps = multi["triton"]
-                        ours_dispatch_off_ns, ours_dispatch_off_reps = multi.get("dispatch_off", (None, None))
-                        ours_contract_off_ns, ours_contract_off_reps = multi.get("contract_off", (None, None))
-                    else:
-                        ours_ns, ours_reps = _bench_cuda_graph_repeated(
-                            ours_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
-                        )
-                        triton_ns, triton_reps = _bench_cuda_graph_repeated(
-                            triton_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
-                        )
-                        ours_dispatch_off_ns = None
-                        ours_dispatch_off_reps = None
-                        ours_contract_off_ns = None
-                        ours_contract_off_reps = None
+                    # Always benchmark via the multi-graph harness (even without ablation) to
+                    # avoid systematic order/clock bias between ours vs Triton.
+                    fns: dict[str, Callable[[], None]] = {"ours": ours_run, "triton": triton_run}
+                    if bool(args.ablation) and ours_dispatch_off_run is not None:
+                        fns["dispatch_off"] = ours_dispatch_off_run
+                    if bool(args.ablation) and ours_contract_off_run is not None:
+                        fns["contract_off"] = ours_contract_off_run
+                    multi = _bench_cuda_graph_multi_repeated(
+                        fns, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats)
+                    )
+                    ours_ns, ours_reps = multi["ours"]
+                    triton_ns, triton_reps = multi["triton"]
+                    ours_dispatch_off_ns, ours_dispatch_off_reps = multi.get("dispatch_off", (None, None))
+                    ours_contract_off_ns, ours_contract_off_reps = multi.get("contract_off", (None, None))
                 except Exception as e:
                     _log(f"  WARN: bench_mode=graph failed ({type(e).__name__}: {e}); falling back to event mode")
                     ours_ns, ours_reps = _bench_cuda_repeated(ours_run, warmup=int(args.warmup), iters=int(args.iters), repeats=int(args.repeats))
