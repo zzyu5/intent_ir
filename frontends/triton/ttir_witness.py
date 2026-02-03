@@ -56,7 +56,9 @@ class MaskWitness:
 
 
 FUNC_RE = re.compile(r"tt\.func\b[^(]*\((.*)\)\s+attributes")
-ARG_RE = re.compile(r"(%arg\d+)\s*:\s*([^,)]+)")
+# Triton TTIR argument names may be either positional (%arg0) or symbolic (%x_ptr).
+# Accept both so downstream pointer/mask witnesses stay robust across TTIR versions.
+ARG_RE = re.compile(r"(%[A-Za-z0-9_]+)\s*:\s*([^,)]+)")
 DEF_RE = re.compile(r"^\s*(%[A-Za-z0-9_]+)(?::\d+)?\s*=\s*(.+?)\s*$")
 
 
