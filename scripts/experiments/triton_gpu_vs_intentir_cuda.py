@@ -766,8 +766,10 @@ def main() -> None:
     for k in wanted:
         _log(f"[E5-CUDA] {k}")
         try:
+            _log("  stage: load artifact")
             report_path = _ensure_artifact(k, refresh=bool(args.refresh_artifacts), cases_limit=int(args.cases_limit))
             report = _load_report(report_path)
+            _log("  stage: build bindings")
 
             # Build bindings: real shapes + descriptor constexpr (e.g., BLOCK_M/BLOCK_N).
             bindings: Dict[str, Any] = dict(AI_BENCH_SHAPES.get(k, {}))
@@ -1046,16 +1048,20 @@ def main() -> None:
             intent_json = _intent_with_cert_evidence(intent_json, report)
 
             # Evidence-on (default): keep the artifact intent.meta (contract_v2 etc).
+            _log("  stage: ours(evidence_on) lower+compile")
             ours_rec, ours_run, ours_ctx = _run_ours(intent_json, dict(bindings))
+            _log("  stage: ours(evidence_on) ready")
 
             # Evidence-off (ablation): remove certificate evidence from intent.meta.
             ours_evidence_off_rec: dict[str, Any] | None = None
             ours_evidence_off_run: Callable[[], None] | None = None
             if bool(args.ablation) and "evidence_off" in (meta.get("ablation") or {}).get("modes", []):
+                _log("  stage: ours(evidence_off) lower+compile")
                 intent_no_ev = _intent_without_evidence(intent_json)
                 ours_evidence_off_rec, ours_evidence_off_run, ours_ev_ctx = _run_ours(intent_no_ev, dict(bindings))
                 ours_outputs_ev = ours_ev_ctx["outputs"]
                 _check_outputs_close(kernel=k, ours=ours_outputs_ev, triton=ours_ctx["outputs"], allow_tf32=(k == "ai_bench_matmul"))
+                _log("  stage: ours(evidence_off) ready")
 
             # Build Triton runner from the evidence-on shared args.
             lowered0 = ours_ctx["lowered"]
@@ -1072,6 +1078,7 @@ def main() -> None:
                 triton_outputs = {name: torch.zeros_like(t) for name, t in ours_outputs0.items()}
             else:
                 triton_outputs = {name: torch.empty_like(t) for name, t in ours_outputs0.items()}
+            _log("  stage: triton compile+run (correctness)")
             triton_run = _make_triton_runner_from_shared_args(k, arg_map0, triton_outputs)
 
             # Sanity correctness check for evidence-on.
@@ -1085,17 +1092,20 @@ def main() -> None:
             ours_dispatch_off_rec: dict[str, Any] | None = None
             ours_dispatch_off_run: Callable[[], None] | None = None
             if bool(args.ablation) and "dispatch_off" in (meta.get("ablation") or {}).get("modes", []):
+                _log("  stage: ours(dispatch_off) lower+compile")
                 bnd2 = dict(bindings)
                 bnd2["CUDA_HOST_DISPATCH"] = 1
                 bnd2["CUDA_HOST_DISPATCH_SELECT"] = 0
                 ours_dispatch_off_rec, ours_dispatch_off_run, ours_disp_ctx = _run_ours(intent_json, bnd2)
                 ours_outputs_disp = ours_disp_ctx["outputs"]
                 _check_outputs_close(kernel=k, ours=ours_outputs_disp, triton=triton_outputs, allow_tf32=(k == "ai_bench_matmul"))
+                _log("  stage: ours(dispatch_off) ready")
 
             # Evidence-off (ablation): force contract_v2 to OUT_OF_SCOPE and re-lower.
             ours_contract_off_rec: dict[str, Any] | None = None
             ours_contract_off_run: Callable[[], None] | None = None
             if bool(args.ablation) and "contract_off" in (meta.get("ablation") or {}).get("modes", []):
+                _log("  stage: ours(contract_off) lower+compile")
                 intent_off = _intent_with_contract_level(intent_json, "OUT_OF_SCOPE")
                 bnd3 = dict(bindings)
                 # Keep the paper baseline (specialize dims) so this isolates the effect of
@@ -1104,11 +1114,13 @@ def main() -> None:
                 ours_contract_off_rec, ours_contract_off_run, ours_off_ctx = _run_ours(intent_off, bnd3)
                 ours_outputs_off = ours_off_ctx["outputs"]
                 _check_outputs_close(kernel=k, ours=ours_outputs_off, triton=triton_outputs, allow_tf32=(k == "ai_bench_matmul"))
+                _log("  stage: ours(contract_off) ready")
 
             if str(args.bench_mode) == "graph":
                 try:
                     # Always benchmark via the multi-graph harness (even without ablation) to
                     # avoid systematic order/clock bias between ours vs Triton.
+                    _log("  stage: bench graph-multi")
                     fns: dict[str, Callable[[], None]] = {"ours": ours_run, "triton": triton_run}
                     if bool(args.ablation) and ours_evidence_off_run is not None:
                         fns["evidence_off"] = ours_evidence_off_run
