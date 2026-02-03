@@ -4780,6 +4780,7 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
   const bool specialize_dims = want_specialize_dims(intent, bindings);
   const bool has_evidence = intent_has_evidence(intent);
   const int contract_level = contract_level_code(intent);
+  const bool contract_full = (contract_level_v2(intent).value_or("PARTIAL") == "FULL");
   const std::string R_name = dim_str(R_dim);
   const std::string C_name = dim_str(C_dim);
   bool r_is_tensor = is_scalar_tensor(intent, R_name, "i32");
@@ -4825,8 +4826,9 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	    }
 	    w.line("constexpr int BLOCK_THREADS = " + std::to_string(block_threads) + ";");
 	    w.line("constexpr int EPT = " + std::to_string(ept) + ";");
-	    w.line(std::string("intentir_cuda::softmax_2d_last_f32<BLOCK_THREADS, EPT, ") + (softmax_use_exp2 ? "true" : "false") + ">(" + in_name +
-	           ", " + out_name + ", R, C);");
+      const bool full_tile = contract_full && specialize_dims && (C == (int64_t)block_threads * (int64_t)ept);
+	    w.line(std::string("intentir_cuda::softmax_2d_last_f32<BLOCK_THREADS, EPT, ") + (softmax_use_exp2 ? "true" : "false") +
+	           ", " + std::string(full_tile ? "true" : "false") + ">(" + in_name + ", " + out_name + ", R, C);");
 	    w.dedent();
 	    w.line("}");
 		  } else {
@@ -5038,13 +5040,17 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 		        w.line("constexpr int WARPS_PER_BLOCK = " + std::to_string(v.rows_per_block) + ";");
 		        w.line("intentir_cuda::softmax_2d_last_f32_warp_expbuf<WARPS_PER_BLOCK, " + exp2 + ">(" + in_name + ", " + out_name + ", R, C);");
 		      } else if (v.vec4) {
+            const bool full_tile = contract_full && specialize_dims && (C == (int64_t)v.threads * 4LL * (int64_t)v.tiles);
 		        w.line("constexpr int BLOCK_THREADS = " + std::to_string(v.threads) + ";");
 		        w.line("constexpr int TILES = " + std::to_string(v.tiles) + ";");
-			        w.line("intentir_cuda::softmax_2d_last_f32_vec4<BLOCK_THREADS, TILES, " + exp2 + ">(" + in_name + ", " + out_name + ", R, C);");
+			        w.line("intentir_cuda::softmax_2d_last_f32_vec4<BLOCK_THREADS, TILES, " + exp2 + ", " +
+			               std::string(full_tile ? "true" : "false") + ">(" + in_name + ", " + out_name + ", R, C);");
 		      } else {
+            const bool full_tile = contract_full && specialize_dims && (C == (int64_t)v.threads * (int64_t)v.ept);
 		        w.line("constexpr int BLOCK_THREADS = " + std::to_string(v.threads) + ";");
 		        w.line("constexpr int EPT = " + std::to_string(v.ept) + ";");
-		        w.line("intentir_cuda::softmax_2d_last_f32<BLOCK_THREADS, EPT, " + exp2 + ">(" + in_name + ", " + out_name + ", R, C);");
+		        w.line("intentir_cuda::softmax_2d_last_f32<BLOCK_THREADS, EPT, " + exp2 + ", " +
+			               std::string(full_tile ? "true" : "false") + ">(" + in_name + ", " + out_name + ", R, C);");
 		      }
 	      w.dedent();
 	      w.line("}");
@@ -5188,7 +5194,13 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 		      w.indent();
           w.line("intentir_cuda_selected_variant_idx = " + std::to_string(i) + ";");
           w.line("intentir_cuda_selected_variant_tag = \"" + v.suffix + "\";");
-          w.line("intentir_cuda_fastpath_enabled = 0;");
+          if (!v.warp4 && !v.warp_expbuf) {
+            const bool full_tile = contract_full && specialize_dims &&
+                                   (v.vec4 ? (C == (int64_t)v.threads * 4LL * (int64_t)v.tiles) : (C == (int64_t)v.threads * (int64_t)v.ept));
+            w.line("intentir_cuda_fastpath_enabled = " + std::string(full_tile ? "1" : "0") + ";");
+          } else {
+            w.line("intentir_cuda_fastpath_enabled = 0;");
+          }
 		      w.line("dim3 g((unsigned)((R + " + std::to_string(v.rows_per_block) + " - 1) / " + std::to_string(v.rows_per_block) +
 		             "), 1u, 1u);");
 		      w.line("dim3 b((unsigned)" + std::to_string(v.threads) + ", 1u, 1u);");
@@ -5204,7 +5216,13 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 		    const std::string k0 = intent.name + "__" + v0.suffix;
         w.line("intentir_cuda_selected_variant_idx = 0;");
         w.line("intentir_cuda_selected_variant_tag = \"" + v0.suffix + "\";");
-        w.line("intentir_cuda_fastpath_enabled = 0;");
+        if (!v0.warp4 && !v0.warp_expbuf) {
+          const bool full_tile = contract_full && specialize_dims &&
+                                 (v0.vec4 ? (C == (int64_t)v0.threads * 4LL * (int64_t)v0.tiles) : (C == (int64_t)v0.threads * (int64_t)v0.ept));
+          w.line("intentir_cuda_fastpath_enabled = " + std::string(full_tile ? "1" : "0") + ";");
+        } else {
+          w.line("intentir_cuda_fastpath_enabled = 0;");
+        }
 		    w.line("dim3 g((unsigned)((R + " + std::to_string(v0.rows_per_block) + " - 1) / " + std::to_string(v0.rows_per_block) +
 		           "), 1u, 1u);");
 		    w.line("dim3 b((unsigned)" + std::to_string(v0.threads) + ", 1u, 1u);");
