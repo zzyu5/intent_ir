@@ -1409,9 +1409,14 @@ def _kernel_rope_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLo
     use_i32 = total_elems <= (2**31 - 1)
     idx_t = "int" if use_i32 else "size_t"
 
-    if not intent.ops or intent.ops[0].op != "rope":
-        raise CudaLoweringError("rope lowering expects a single rope op")
-    op = intent.ops[0]
+    # Historically this intent was a single `rope` op, but newer pipeline versions
+    # may prepend derived scalars as unused `const` ops (e.g. HEAD_DIM_DIV2 =
+    # HEAD_DIM // 2). Treat `const* + rope` as equivalent.
+    if not intent.ops:
+        raise CudaLoweringError("rope lowering expects a rope op")
+    if intent.ops[-1].op != "rope" or any(o.op != "const" for o in intent.ops[:-1]):
+        raise CudaLoweringError("rope lowering expects `const* + rope` (rope last)")
+    op = intent.ops[-1]
     if len(op.inputs) != 3:
         raise CudaLoweringError("rope expects 3 inputs (input, cos, sin)")
     in_name, cos_name, sin_name = op.inputs
@@ -2123,29 +2128,32 @@ def lower_intent_to_cuda_kernel(
                 raise
             # Fallback to the Python codegen for kernels not yet supported by the C++ tool.
 
-    # 1) Direct single-op kernels.
-    if intent.ops and len(intent.ops) == 1:
-        op0 = intent.ops[0].op
-        if op0 == "matmul":
-            return _kernel_matmul_f32(intent, bindings)
-        if op0 == "dropout":
-            return _kernel_dropout_f32(intent, bindings)
-        if op0 == "correlation":
-            return _kernel_correlation_i8(intent, bindings)
-        if op0 == "resize":
-            return _kernel_resize_bilinear2x_i8(intent, bindings)
-        if op0 == "warp":
-            return _kernel_warp_q8_8_i8_i16(intent, bindings)
-        if op0 == "rope":
+    # 1) Direct kernels.
+    if intent.ops:
+        # Robustness across pipeline versions: allow `const* + rope` (rope last).
+        if intent.ops[-1].op == "rope" and all(o.op == "const" for o in intent.ops[:-1]):
             return _kernel_rope_f32(intent, bindings)
-        if op0 == "transpose":
-            return _kernel_transpose_2d_f32(intent, bindings)
-        if op0 == "reduce_sum":
-            return _kernel_reduce_sum_2d_axis1_f32(intent, bindings)
-        if op0 == "reduce_max":
-            return _kernel_reduce_max_2d_axis1_f32(intent, bindings)
-        if op0 == "gather":
-            return _kernel_gather2d_f32(intent, bindings)
+
+        if len(intent.ops) == 1:
+            op0 = intent.ops[0].op
+            if op0 == "matmul":
+                return _kernel_matmul_f32(intent, bindings)
+            if op0 == "dropout":
+                return _kernel_dropout_f32(intent, bindings)
+            if op0 == "correlation":
+                return _kernel_correlation_i8(intent, bindings)
+            if op0 == "resize":
+                return _kernel_resize_bilinear2x_i8(intent, bindings)
+            if op0 == "warp":
+                return _kernel_warp_q8_8_i8_i16(intent, bindings)
+            if op0 == "transpose":
+                return _kernel_transpose_2d_f32(intent, bindings)
+            if op0 == "reduce_sum":
+                return _kernel_reduce_sum_2d_axis1_f32(intent, bindings)
+            if op0 == "reduce_max":
+                return _kernel_reduce_max_2d_axis1_f32(intent, bindings)
+            if op0 == "gather":
+                return _kernel_gather2d_f32(intent, bindings)
 
     # 2) Pattern-based kernels (fused).
     outs = set(intent.outputs or [])

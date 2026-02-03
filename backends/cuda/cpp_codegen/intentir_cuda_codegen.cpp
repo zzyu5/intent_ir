@@ -3253,8 +3253,14 @@ json emit_resize_bilinear2x_i8(const Intent& intent, const json& bindings) {
 }
 
 json emit_rope_f32(const Intent& intent, const json& bindings) {
-  if (!(intent.ops.size() == 1 && intent.ops[0].op == "rope")) fail("rope lowering expects a single rope op");
-  const Op& op = intent.ops[0];
+  // Newer pipeline versions may prepend derived scalars as unused `const` ops
+  // (e.g. HEAD_DIM_DIV2 = HEAD_DIM // 2). Treat `const* + rope` as equivalent.
+  if (intent.ops.empty()) fail("rope lowering expects a rope op");
+  if (intent.ops.back().op != "rope") fail("rope lowering expects `const* + rope` (rope last)");
+  for (size_t i = 0; i + 1 < intent.ops.size(); ++i) {
+    if (intent.ops[i].op != "const") fail("rope lowering expects `const* + rope` (only consts before rope)");
+  }
+  const Op& op = intent.ops.back();
   if (op.inputs.size() != 3) fail("rope expects 3 inputs (input, cos, sin)");
   const std::string in_name = op.inputs[0];
   const std::string cos_name = op.inputs[1];
@@ -5433,7 +5439,16 @@ json lower_intent_to_cuda(const Intent& intent, const json& bindings_json) {
   if (intent.ops.size() == 1 && intent.ops[0].op == "warp") return emit_warp(intent, bindings_json);
   if (intent.ops.size() == 1 && intent.ops[0].op == "correlation") return emit_correlation(intent, bindings_json);
   if (intent.ops.size() == 1 && intent.ops[0].op == "resize") return emit_resize_bilinear2x_i8(intent, bindings_json);
-  if (intent.ops.size() == 1 && intent.ops[0].op == "rope") return emit_rope_f32(intent, bindings_json);
+  if (intent.ops.size() >= 1 && intent.ops.back().op == "rope") {
+    bool ok = true;
+    for (size_t i = 0; i + 1 < intent.ops.size(); ++i) {
+      if (intent.ops[i].op != "const") {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return emit_rope_f32(intent, bindings_json);
+  }
 
   // Pattern-based kernels.
   if (intent.ops.size() == 3 && intent.ops[0].op == "const" && intent.ops[1].op == "ne" && intent.ops[2].op == "reduce_any") {
