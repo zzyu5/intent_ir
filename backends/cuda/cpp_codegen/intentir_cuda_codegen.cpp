@@ -4693,19 +4693,27 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 		    };
 
 		    // Evidence-guided small search space:
-		    // - Seed from evidence-derived `block_threads`
-		    // - A couple of neighbors (half/double) for occupancy vs ILP tradeoffs
-		    // - One pow2-aligned reduction candidate
-		    // - 1-2 warp-specialized candidates (often good on newer GPUs)
+		    // - Variant[0] is always the strided "seed" (dispatch_off uses this).
+		    // - Then, a couple of neighbors (half/double) for occupancy vs ILP tradeoffs.
+		    // - One pow2-aligned reduction candidate.
+		    // - 1-2 warp-specialized candidates (often good on newer GPUs).
+		    //
+		    // This makes the ablation semantics crisp:
+		    //   evidence_on  = evidence + host selection,
+		    //   dispatch_off = evidence + seed-only (no selection),
+		    //   contract_off = no contract/specialize fastpaths.
+		    for (bool use_exp2 : exp2_cands) add_strided_variant_with_ept(block_threads, (int)ept, use_exp2, tag_exp("seed", use_exp2));
+		    for (bool use_exp2 : exp2_cands) add_vec4_variant(block_threads, use_exp2, tag_exp("vec4_seed", use_exp2));
+
 		    std::vector<int64_t> thread_cands;
 		    auto add_thread = [&](int64_t t) {
 		      t = norm_threads(t);
+		      if (t == norm_threads(block_threads)) return;
 		      for (int64_t x : thread_cands) {
 		        if (x == t) return;
 		      }
 		      thread_cands.push_back(t);
 		    };
-		    add_thread(block_threads);
 		    add_thread(block_threads / 2);
 		    add_thread(block_threads * 2);
 		    // Ensure we cover the minimum threads required by EPT constraints.
