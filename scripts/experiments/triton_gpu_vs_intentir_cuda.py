@@ -1064,7 +1064,14 @@ def main() -> None:
             arg_names0 = lowered0.io_spec.get("arg_names") if isinstance(lowered0.io_spec, dict) else None
             arg_names0 = [str(x) for x in (arg_names0 or [])]
             arg_map0 = {name: ours_args0[i] for i, name in enumerate(arg_names0)}
-            triton_outputs = {name: torch.empty_like(t) for name, t in ours_outputs0.items()}
+            # IMPORTANT: some Triton kernels use masked stores that leave "out-of-mask"
+            # elements untouched (garbage in an uninitialized output buffer). For
+            # correctness checks we want deterministic semantics, so we zero-init
+            # outputs for those kernels.
+            if k == "ai_bench_correlation":
+                triton_outputs = {name: torch.zeros_like(t) for name, t in ours_outputs0.items()}
+            else:
+                triton_outputs = {name: torch.empty_like(t) for name, t in ours_outputs0.items()}
             triton_run = _make_triton_runner_from_shared_args(k, arg_map0, triton_outputs)
 
             # Sanity correctness check for evidence-on.
