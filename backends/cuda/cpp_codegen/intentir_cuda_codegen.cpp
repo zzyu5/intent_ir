@@ -501,18 +501,45 @@ json emit_dropout(const Intent& intent, const json& bindings) {
   if (block_x > 1024) block_x = 1024;
 
   int ept = 8;
+  bool ept_user = false;
   if (op.attrs.is_object()) {
     auto it = op.attrs.find("elements_per_thread");
     if (it != op.attrs.end()) {
       if (it->is_number_integer()) ept = it->get<int>();
       else if (it->is_number()) ept = static_cast<int>(it->get<double>());
+      ept_user = true;
     }
   }
-  if (ept == 8) {
-    if (auto v = binding_int(bindings, "DROPOUT_EPT")) ept = static_cast<int>(*v);
+  if (!ept_user) {
+    if (auto v = binding_int(bindings, "DROPOUT_EPT")) {
+      ept = static_cast<int>(*v);
+      ept_user = true;
+    }
   }
   if (ept <= 0) ept = 1;
   if (ept > 8) ept = 8;
+
+  // Shape-driven seed stabilization: for very large vectors, avoid a too-large
+  // (threads*EPT) tile that produces too few blocks and underutilizes the GPU.
+  //
+  // We keep this conservative (only adjust when EPT wasn't explicitly set) so
+  // the user's schedule/tune overrides still win.
+  if (!ept_user && !respect_schedule) {
+    constexpr int64_t kMinBlocks = 1024;
+    int best = ept;
+    if (n >= (1LL << 20)) {
+      for (int cand : {4, 2, 1}) {
+        const int64_t tile = block_x * static_cast<int64_t>(cand);
+        if (tile <= 0) continue;
+        const int64_t gx = (n + tile - 1) / tile;
+        if (gx >= kMinBlocks) {
+          best = cand;
+          break;
+        }
+      }
+    }
+    ept = best;
+  }
 
   const int64_t denom = block_x * static_cast<int64_t>(ept);
   const int64_t grid_x = (n + denom - 1) / denom;
@@ -1625,6 +1652,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       // Conservative fallbacks for common stage sizes.
       if ((K % 32) == 0) add_focus_stage(32);
       if ((K % 128) == 0) add_focus_stage(128);
+      while (focus_stage_cands.size() > 3) focus_stage_cands.pop_back();
 
       auto add_focus_microsearch = [&](const WmmaGeom& g) {
         for (int64_t sk : focus_stage_cands) {
@@ -1816,6 +1844,13 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
                 add_variant((int64_t)warps_m, (int64_t)warps_n, /*frag_m=*/1, /*frag_n=*/1, sk, p, /*use_cp_async=*/true, suf);
                 }
               }
+            }
+            // Optional microsearch (still small): for the base tile only, also vary cp.async cache
+            // policy and padding on/off, as in the full-search focus path. This can recover some
+            // of the remaining gap vs Triton without exploding the search space.
+            if (t.is_base) {
+              WmmaGeom g{warps_m, warps_n, 1, 1, /*is_base_tile=*/true, base_tag};
+              add_focus_microsearch(g);
             }
           }
 
@@ -4766,22 +4801,35 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 		    };
 		    add_thread(block_threads / 2);
 		    add_thread(block_threads * 2);
+		    add_thread(block_threads - 32);
+		    add_thread(block_threads + 32);
 		    // Ensure we cover the minimum threads required by EPT constraints.
 		    add_thread(min_threads);
-			    for (int64_t t : thread_cands) add_block_pair(t, "t" + std::to_string(t));
-			    add_strided_pow2_variant(block_threads, "pow2_seed");
-			    const int64_t warps_seed = std::max<int64_t>(1, std::min<int64_t>(8, block_threads / 32));
-			    for (bool use_exp2 : exp2_cands) {
-			      add_warp4_variant(warps_seed, use_exp2, tag_exp("warp4_seed", use_exp2));
-			      add_warp_expbuf_variant(warps_seed, use_exp2, tag_exp("warpexp_seed", use_exp2));
-			    }
-			    if (warps_seed > 1) {
-			      for (bool use_exp2 : exp2_cands) {
-			        add_warp4_variant(warps_seed / 2, use_exp2, tag_exp("warp4_half", use_exp2));
-			        add_warp_expbuf_variant(warps_seed / 2, use_exp2, tag_exp("warpexp_half", use_exp2));
-			      }
-			    }
-			    if (variants.empty()) add_block_pair(block_threads, "fallback");
+				    for (int64_t t : thread_cands) add_block_pair(t, "t" + std::to_string(t));
+				    add_strided_pow2_variant(block_threads, "pow2_seed");
+				    for (int64_t t : thread_cands) add_strided_pow2_variant(t, "pow2_t" + std::to_string(t));
+				    const int64_t warps_seed = std::max<int64_t>(1, std::min<int64_t>(8, block_threads / 32));
+				    for (bool use_exp2 : exp2_cands) {
+				      add_warp4_variant(warps_seed, use_exp2, tag_exp("warp4_seed", use_exp2));
+				      add_warp_expbuf_variant(warps_seed, use_exp2, tag_exp("warpexp_seed", use_exp2));
+				    }
+				    if (warps_seed > 1) {
+				      for (bool use_exp2 : exp2_cands) {
+				        add_warp4_variant(warps_seed / 2, use_exp2, tag_exp("warp4_half", use_exp2));
+				        add_warp_expbuf_variant(warps_seed / 2, use_exp2, tag_exp("warpexp_half", use_exp2));
+				      }
+				    }
+				    for (bool use_exp2 : exp2_cands) {
+				      add_warp4_variant(1, use_exp2, tag_exp("warp4_1", use_exp2));
+				      add_warp_expbuf_variant(1, use_exp2, tag_exp("warpexp_1", use_exp2));
+				    }
+				    if (warps_seed < 8) {
+				      for (bool use_exp2 : exp2_cands) {
+				        add_warp4_variant(std::min<int64_t>(8, warps_seed * 2), use_exp2, tag_exp("warp4_double", use_exp2));
+				        add_warp_expbuf_variant(std::min<int64_t>(8, warps_seed * 2), use_exp2, tag_exp("warpexp_double", use_exp2));
+				      }
+				    }
+				    if (variants.empty()) add_block_pair(block_threads, "fallback");
 
 	    w.line("static const char* intentir_softmax_variant_tags[] = {");
 	    w.indent();
