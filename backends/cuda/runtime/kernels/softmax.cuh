@@ -7,19 +7,19 @@
 
 namespace intentir_cuda {
 
-// Softmax uses exp heavily; allow switching between exp and exp2 (exp2 can be
-// faster on some architectures). Keep it local to softmax to avoid changing
-// semantics elsewhere.
+// Softmax uses exp heavily; allow switching between exp and exp2. We keep this
+// local to softmax to avoid changing semantics elsewhere.
+template <bool USE_EXP2>
 __device__ __forceinline__ float softmax_fast_exp(float x) {
-#if defined(INTENTIR_CUDA_SOFTMAX_USE_EXP2)
-  // exp(x) = exp2(x * log2(e))
-  float y;
-  const float a = x * 1.4426950408889634f;
-  asm("ex2.approx.f32 %0, %1;" : "=f"(y) : "f"(a));
-  return y;
-#else
-  return __expf(x);
-#endif
+  if constexpr (USE_EXP2) {
+    // exp(x) = exp2(x * log2(e))
+    float y;
+    const float a = x * 1.4426950408889634f;
+    asm("ex2.approx.f32 %0, %1;" : "=f"(y) : "f"(a));
+    return y;
+  } else {
+    return __expf(x);
+  }
 }
 
 __device__ __forceinline__ float warp_reduce_max(float v) {
@@ -46,7 +46,7 @@ __device__ __forceinline__ float warp_allreduce_sum(float v) {
   return __shfl_sync(0xffffffff, v, 0);
 }
 
-template <int BLOCK_THREADS, int EPT>
+template <int BLOCK_THREADS, int EPT, bool USE_EXP2>
 __device__ __forceinline__ void softmax_2d_last_f32(const float* __restrict__ inp, float* __restrict__ out, int R, int C) {
   static_assert(BLOCK_THREADS > 0 && BLOCK_THREADS <= 1024, "softmax block size must be in (0,1024]");
   static_assert((BLOCK_THREADS % 32) == 0, "softmax block must be a multiple of 32 threads");
@@ -73,7 +73,7 @@ __device__ __forceinline__ void softmax_2d_last_f32(const float* __restrict__ in
   float tsum = 0.0f;
   #pragma unroll
   for (int i = 0; i < EPT; ++i) {
-    const float e = softmax_fast_exp(expv[i] - mx);
+    const float e = softmax_fast_exp<USE_EXP2>(expv[i] - mx);
     expv[i] = e;
     tsum += e;
   }
@@ -88,7 +88,7 @@ __device__ __forceinline__ void softmax_2d_last_f32(const float* __restrict__ in
   }
 }
 
-template <int BLOCK_THREADS, int TILES>
+template <int BLOCK_THREADS, int TILES, bool USE_EXP2>
 __device__ __forceinline__ void softmax_2d_last_f32_vec4(const float* __restrict__ inp, float* __restrict__ out, int R, int C) {
   static_assert(BLOCK_THREADS > 0 && BLOCK_THREADS <= 1024, "softmax vec4 block size must be in (0,1024]");
   static_assert((BLOCK_THREADS % 32) == 0, "softmax vec4 block must be a multiple of 32 threads");
@@ -136,10 +136,10 @@ __device__ __forceinline__ void softmax_2d_last_f32_vec4(const float* __restrict
   for (int t = 0; t < TILES; ++t) {
     float4 v = vals[t];
     const int base = t * (BLOCK_THREADS * VEC) + tid * VEC;
-    if (base + 0 < C) v.x = softmax_fast_exp(v.x - mx); else v.x = 0.0f;
-    if (base + 1 < C) v.y = softmax_fast_exp(v.y - mx); else v.y = 0.0f;
-    if (base + 2 < C) v.z = softmax_fast_exp(v.z - mx); else v.z = 0.0f;
-    if (base + 3 < C) v.w = softmax_fast_exp(v.w - mx); else v.w = 0.0f;
+    if (base + 0 < C) v.x = softmax_fast_exp<USE_EXP2>(v.x - mx); else v.x = 0.0f;
+    if (base + 1 < C) v.y = softmax_fast_exp<USE_EXP2>(v.y - mx); else v.y = 0.0f;
+    if (base + 2 < C) v.z = softmax_fast_exp<USE_EXP2>(v.z - mx); else v.z = 0.0f;
+    if (base + 3 < C) v.w = softmax_fast_exp<USE_EXP2>(v.w - mx); else v.w = 0.0f;
     vals[t] = v;
     tsum += (v.x + v.y + v.z + v.w);
   }
@@ -166,7 +166,7 @@ __device__ __forceinline__ void softmax_2d_last_f32_vec4(const float* __restrict
   }
 }
 
-template <int WARPS_PER_BLOCK>
+template <int WARPS_PER_BLOCK, bool USE_EXP2>
 __device__ __forceinline__ void softmax_2d_last_f32_warp4(const float* __restrict__ inp, float* __restrict__ out, int R, int C) {
   static_assert(WARPS_PER_BLOCK > 0 && WARPS_PER_BLOCK <= 8, "softmax warp4 supports 1..8 warps per block");
   constexpr int VEC = 4;
@@ -236,10 +236,10 @@ __device__ __forceinline__ void softmax_2d_last_f32_warp4(const float* __restric
     if (base + (VEC - 1) < C) {
       const float4 v = *reinterpret_cast<const float4*>(buf + (size_t)base);
       float4 e;
-      e.x = softmax_fast_exp(v.x - mx);
-      e.y = softmax_fast_exp(v.y - mx);
-      e.z = softmax_fast_exp(v.z - mx);
-      e.w = softmax_fast_exp(v.w - mx);
+      e.x = softmax_fast_exp<USE_EXP2>(v.x - mx);
+      e.y = softmax_fast_exp<USE_EXP2>(v.y - mx);
+      e.z = softmax_fast_exp<USE_EXP2>(v.z - mx);
+      e.w = softmax_fast_exp<USE_EXP2>(v.w - mx);
       *reinterpret_cast<float4*>(buf + (size_t)base) = e;
       tsum += (e.x + e.y + e.z + e.w);
     } else {
@@ -248,7 +248,7 @@ __device__ __forceinline__ void softmax_2d_last_f32_warp4(const float* __restric
         const int c = base + j;
         if (c < C) {
           const float v = buf[(size_t)c];
-          const float e = softmax_fast_exp(v - mx);
+          const float e = softmax_fast_exp<USE_EXP2>(v - mx);
           buf[(size_t)c] = e;
           tsum += e;
         }
@@ -300,7 +300,7 @@ __device__ __forceinline__ void softmax_2d_last_f32_warp4(const float* __restric
   }
 }
 
-template <int WARPS_PER_BLOCK>
+template <int WARPS_PER_BLOCK, bool USE_EXP2>
 __device__ __forceinline__ void softmax_2d_last_f32_warp_expbuf(const float* __restrict__ inp, float* __restrict__ out, int R, int C) {
   static_assert(WARPS_PER_BLOCK > 0 && WARPS_PER_BLOCK <= 8, "softmax warp expbuf supports 1..8 warps per block");
   constexpr int VEC = 4;
@@ -360,10 +360,10 @@ __device__ __forceinline__ void softmax_2d_last_f32_warp_expbuf(const float* __r
     if (base + (VEC - 1) < len0) {
       const float4 x = *reinterpret_cast<const float4*>(in_row + (size_t)in_base);
       float4 e;
-      e.x = softmax_fast_exp(x.x - mx);
-      e.y = softmax_fast_exp(x.y - mx);
-      e.z = softmax_fast_exp(x.z - mx);
-      e.w = softmax_fast_exp(x.w - mx);
+      e.x = softmax_fast_exp<USE_EXP2>(x.x - mx);
+      e.y = softmax_fast_exp<USE_EXP2>(x.y - mx);
+      e.z = softmax_fast_exp<USE_EXP2>(x.z - mx);
+      e.w = softmax_fast_exp<USE_EXP2>(x.w - mx);
       *reinterpret_cast<float4*>(buf + (size_t)base) = e;
       tsum += (e.x + e.y + e.z + e.w);
     } else {
@@ -372,7 +372,7 @@ __device__ __forceinline__ void softmax_2d_last_f32_warp_expbuf(const float* __r
         const int c = base + j;
         if (c < len0) {
           const float v = intentir_ldg_f32(in_row + (size_t)(shift + c));
-          const float e = softmax_fast_exp(v - mx);
+          const float e = softmax_fast_exp<USE_EXP2>(v - mx);
           buf[(size_t)c] = e;
           tsum += e;
         }
@@ -384,7 +384,7 @@ __device__ __forceinline__ void softmax_2d_last_f32_warp_expbuf(const float* __r
     const int buf_idx = len0 + c;
     if (buf_idx < C) {
       const float v = intentir_ldg_f32(in_row + (size_t)c);
-      const float e = softmax_fast_exp(v - mx);
+      const float e = softmax_fast_exp<USE_EXP2>(v - mx);
       buf[(size_t)buf_idx] = e;
       tsum += e;
     }
