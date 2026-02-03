@@ -575,22 +575,68 @@ json emit_dropout(const Intent& intent, const json& bindings) {
       if (enable_vec4 && ((vept % 4) == 0)) add_variant(threads, vept, /*vec4=*/true, tag + "_v4");
     };
 
-    // Evidence-guided candidate set: keep it small but span a few occupancy
-    // regimes (threads) and ILP levels (elements-per-thread). The dispatcher
-    // microbench picks the best once and caches it.
+    // Evidence-guided candidate set:
+    // - Variant[0] is always the "seed" (dispatch_off uses this).
+    // - Then, derive a small cross-product of (threads × EPT) candidates from:
+    //   (a) the seed schedule/defaults, and (b) certificate stride evidence.
+    //
+    // This is the research-friendly story: evidence doesn't "find the best tile"
+    // by itself, but it *shrinks and shapes* the tuning space so host-dispatch
+    // selection is cheaper and more portable.
     add_variant_pair(block_x, ept, "seed");
-    add_variant_pair(128, 1, "t128_e1");
-    add_variant_pair(256, 1, "t256_e1");
-    add_variant_pair(512, 1, "t512_e1");
-    add_variant_pair(128, 2, "t128_e2");
-    add_variant_pair(256, 2, "t256_e2");
-    add_variant_pair(512, 2, "t512_e2");
-    add_variant_pair(128, 4, "t128_e4");
-    add_variant_pair(256, 4, "t256_e4");
-    add_variant_pair(512, 4, "t512_e4");
-    add_variant_pair(128, 8, "t128_e8");
-    add_variant_pair(256, 8, "t256_e8");
-    add_variant_pair(512, 8, "t512_e8");
+
+    int64_t contig = 0;
+    if (auto aw = access_witness_meta(intent)) {
+      auto it = aw->axis_contig_len.find("n_elements");
+      if (it != aw->axis_contig_len.end()) contig = it->second;
+      if (contig <= 0 && aw->dominant_axis == "n_elements") contig = aw->dominant_range_len;
+    }
+
+    auto add_ept = [&](std::vector<int>& xs, int v) {
+      if (v <= 0) return;
+      if (v > 8) v = 8;
+      for (int x : xs) {
+        if (x == v) return;
+      }
+      xs.push_back(v);
+    };
+    int max_ept_from_evidence = 1;
+    if (contig >= 32)
+      max_ept_from_evidence = 8;
+    else if (contig >= 16)
+      max_ept_from_evidence = 4;
+    else if (contig >= 8)
+      max_ept_from_evidence = 2;
+    else
+      max_ept_from_evidence = 1;
+
+    std::vector<int> ept_cands;
+    add_ept(ept_cands, ept);
+    add_ept(ept_cands, max_ept_from_evidence);
+    if (max_ept_from_evidence > 1) add_ept(ept_cands, max_ept_from_evidence / 2);
+    // Large vectors are typically bandwidth/RNG dominated; keep 4 as a stable ILP anchor.
+    if (n >= (1LL << 20)) add_ept(ept_cands, 4);
+
+    auto add_thread = [&](std::vector<int64_t>& xs, int64_t t) {
+      t = norm_threads(t);
+      for (int64_t x : xs) {
+        if (x == t) return;
+      }
+      xs.push_back(t);
+    };
+    std::vector<int64_t> thread_cands;
+    add_thread(thread_cands, block_x);
+    add_thread(thread_cands, block_x / 2);
+    add_thread(thread_cands, block_x * 2);
+    add_thread(thread_cands, 128);
+    add_thread(thread_cands, 256);
+
+    for (int64_t t : thread_cands) {
+      for (int vept : ept_cands) {
+        if (t == block_x && vept == ept) continue;  // already added as seed
+        add_variant_pair(t, vept, "t" + std::to_string(t) + "_e" + std::to_string(vept));
+      }
+    }
     if (variants.empty()) add_variant_pair(block_x, ept, "fallback");
 
     for (const auto& v : variants) {
