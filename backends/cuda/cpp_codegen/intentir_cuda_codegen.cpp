@@ -4819,6 +4819,16 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 				      add_warp4_variant(warps_seed, use_exp2, tag_exp("warp4_seed", use_exp2));
 				      add_warp_expbuf_variant(warps_seed, use_exp2, tag_exp("warpexp_seed", use_exp2));
 				    }
+				    // Also cover ±1 warp around the seed when valid. This is a tiny expansion
+				    // of the search space but often matters across architectures (e.g. Hopper).
+				    for (int64_t dw : {-1, +1}) {
+				      const int64_t w = warps_seed + dw;
+				      if (w <= 0 || w > 8 || w == warps_seed) continue;
+				      for (bool use_exp2 : exp2_cands) {
+				        add_warp4_variant(w, use_exp2, tag_exp("warp4_w" + std::to_string(w), use_exp2));
+				        add_warp_expbuf_variant(w, use_exp2, tag_exp("warpexp_w" + std::to_string(w), use_exp2));
+				      }
+				    }
 				    if (warps_seed > 1) {
 				      for (bool use_exp2 : exp2_cands) {
 				        add_warp4_variant(warps_seed / 2, use_exp2, tag_exp("warp4_half", use_exp2));
