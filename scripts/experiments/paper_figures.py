@@ -412,8 +412,16 @@ def fig_e2_trust_ablation(e2: dict[str, Any], out: Path) -> None:
             tot += d["total"]; kill += d["killed"]
         vals.append(kill / tot if tot > 0 else 0)
         
-        ax.bar(x + (i-0.5)*w, vals, width=w, label=m.replace("_", "-").title(), 
+        bars = ax.bar(x + (i-0.5)*w, vals, width=w, label=m.replace("_", "-").title(), 
                color=colors[i], edgecolor='white')
+
+        # Add value labels
+        for bar in bars:
+            height = bar.get_height()
+            if height > 0:
+                ax.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                        f'{height:.1%}' if height < 0.99 else '100%' if height > 0.999 else f'{height:.1%}',
+                        ha='center', va='bottom', fontsize=6, rotation=0)
 
     ax.set_xticks(x)
     ax.set_xticklabels([f.capitalize() for f in frontends] + ["All"])
