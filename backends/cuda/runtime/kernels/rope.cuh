@@ -6,7 +6,7 @@
 
 namespace intentir_cuda {
 
-template <int HEADS_PER_BLOCK, int ROPE_VEC, int BLOCK_X, int ITERS, typename idx_t>
+template <int HEADS_PER_BLOCK, int ROPE_VEC, int BLOCK_X, int ITERS, bool FULL_HEADS, bool FULL_TILE, typename idx_t>
 __device__ __forceinline__ void rope_f32(
     const float* __restrict__ inp,
     const float* __restrict__ cos,
@@ -32,7 +32,7 @@ __device__ __forceinline__ void rope_f32(
   }
   const int half = (int)(HEAD_DIM >> 1);
   const int head0 = pid_head_group * HEADS_PER_BLOCK;
-  if constexpr (HEADS_PER_BLOCK != 1) {
+  if constexpr (HEADS_PER_BLOCK != 1 && !FULL_HEADS) {
     if (head0 >= HEAD_NUM) return;
   }
 
@@ -54,7 +54,9 @@ __device__ __forceinline__ void rope_f32(
       #pragma unroll
       for (int k = 0; k < ITERS; ++k) {
         const int j4 = tid + k * BLOCK_X;
-        if (j4 >= half4) break;
+        if constexpr (!FULL_TILE) {
+          if (j4 >= half4) break;
+        }
         const float4 c4 = cos4[j4];
         const float4 s4 = sin4[j4];
         const float4 a = x14[j4];
@@ -79,7 +81,9 @@ __device__ __forceinline__ void rope_f32(
         #pragma unroll
         for (int gh = 0; gh < HEADS_PER_BLOCK; ++gh) {
           const int head = head0 + gh;
-          if (head >= HEAD_NUM) break;
+          if constexpr (!FULL_HEADS) {
+            if (head >= HEAD_NUM) break;
+          }
           const idx_t base = base0 + (idx_t)head * (idx_t)HEAD_DIM;
           const float4* __restrict__ x14 = (const float4* __restrict__)(inp + base);
           const float4* __restrict__ x24 = (const float4* __restrict__)(inp + base + (idx_t)half);
@@ -116,7 +120,9 @@ __device__ __forceinline__ void rope_f32(
       #pragma unroll
       for (int k = 0; k < ITERS; ++k) {
         const int j2 = tid + k * BLOCK_X;
-        if (j2 >= half2) break;
+        if constexpr (!FULL_TILE) {
+          if (j2 >= half2) break;
+        }
         const float2 c2 = cos2[j2];
         const float2 s2 = sin2[j2];
         const float2 a = x12[j2];
@@ -137,7 +143,9 @@ __device__ __forceinline__ void rope_f32(
         #pragma unroll
         for (int gh = 0; gh < HEADS_PER_BLOCK; ++gh) {
           const int head = head0 + gh;
-          if (head >= HEAD_NUM) break;
+          if constexpr (!FULL_HEADS) {
+            if (head >= HEAD_NUM) break;
+          }
           const idx_t base = base0 + (idx_t)head * (idx_t)HEAD_DIM;
           const float2* __restrict__ x12 = (const float2* __restrict__)(inp + base);
           const float2* __restrict__ x22 = (const float2* __restrict__)(inp + base + (idx_t)half);
@@ -163,7 +171,9 @@ __device__ __forceinline__ void rope_f32(
       #pragma unroll
       for (int k = 0; k < ITERS; ++k) {
         const int j = tid + k * BLOCK_X;
-        if (j >= half) break;
+        if constexpr (!FULL_TILE) {
+          if (j >= half) break;
+        }
         const idx_t cb = cb0 + (idx_t)j;
         const float c = intentir_ldg_f32(&cos[cb]);
         const float s0 = intentir_ldg_f32(&sin[cb]);
@@ -180,7 +190,9 @@ __device__ __forceinline__ void rope_f32(
         #pragma unroll
         for (int gh = 0; gh < HEADS_PER_BLOCK; ++gh) {
           const int head = head0 + gh;
-          if (head >= HEAD_NUM) break;
+          if constexpr (!FULL_HEADS) {
+            if (head >= HEAD_NUM) break;
+          }
           const idx_t base = base0 + (idx_t)head * (idx_t)HEAD_DIM;
           const float x1 = intentir_ldg_f32(&inp[base + (idx_t)j]);
           const float x2 = intentir_ldg_f32(&inp[base + (idx_t)half + (idx_t)j]);
@@ -193,4 +205,3 @@ __device__ __forceinline__ void rope_f32(
 }
 
 }  // namespace intentir_cuda
-

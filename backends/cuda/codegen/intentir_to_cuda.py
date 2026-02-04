@@ -1322,7 +1322,7 @@ extern "C" __global__ void {intent.name}(
     int N,
     float eps) {{
   constexpr int BLOCK_THREADS = {block_x};
-  intentir_cuda::layernorm_2d_f32<BLOCK_THREADS>({X_name}, {Y_name}, {W_name}, {B_name}, {Mean_name}, {Rstd_name}, M, N, eps);
+  intentir_cuda::layernorm_2d_f32<BLOCK_THREADS, false>({X_name}, {Y_name}, {W_name}, {B_name}, {Mean_name}, {Rstd_name}, M, N, eps);
 }}
 """.lstrip()
 
@@ -1454,7 +1454,7 @@ extern "C" __global__ void {intent.name}(
   constexpr int BLOCK_X = {block_x};
   constexpr int ITERS = {iters};
   using idx_t = {idx_t};
-  intentir_cuda::rope_f32<HEADS_PER_BLOCK, ROPE_VEC, BLOCK_X, ITERS, idx_t>(
+  intentir_cuda::rope_f32<HEADS_PER_BLOCK, ROPE_VEC, BLOCK_X, ITERS, false, false, idx_t>(
       {in_name}, {cos_name}, {sin_name}, {out_name}, SEQ_LEN, BATCH_NUM, HEAD_NUM, HEAD_DIM);
 }}
 """.lstrip()
@@ -1890,7 +1890,7 @@ extern "C" __global__ void {intent.name}(const int8_t* __restrict__ {src_name}, 
   {h_load}
   {w_load}
   constexpr int BLOCK_W = {block_w};
-  intentir_cuda::resize_bilinear2x_i8<BLOCK_W>({src_name}, {out_name}, C, H, W);
+  intentir_cuda::resize_bilinear2x_i8<BLOCK_W, false>({src_name}, {out_name}, C, H, W);
 }}
 """.lstrip()
 
@@ -2023,7 +2023,7 @@ extern "C" __global__ void {intent.name}(
   {w_load}
   {sh_load}
   constexpr int BLOCK_THREADS = {block_x};
-  intentir_cuda::correlation_i8<BLOCK_THREADS>({src0_name}, {src1_name}, {out_name}, out_channel, in_channel, height, width, out_shift);
+  intentir_cuda::correlation_i8<BLOCK_THREADS, false>({src0_name}, {src1_name}, {out_name}, out_channel, in_channel, height, width, out_shift);
 }}
 """.lstrip()
 

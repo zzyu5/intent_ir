@@ -8,7 +8,7 @@
 
 namespace intentir_cuda {
 
-template <int BLOCK_THREADS>
+template <int BLOCK_THREADS, bool FULL_M>
 __device__ __forceinline__ void layernorm_2d_f32(
     const float* __restrict__ X,
     float* __restrict__ Y,
@@ -22,7 +22,9 @@ __device__ __forceinline__ void layernorm_2d_f32(
   static_assert(BLOCK_THREADS > 0 && BLOCK_THREADS <= 1024, "layernorm block size must be in (0,1024]");
 
   const int m = (int)blockIdx.x;
-  if (m >= M) return;
+  if constexpr (!FULL_M) {
+    if (m >= M) return;
+  }
 
   __shared__ BlockAllreduceF32<BLOCK_THREADS> red;
   const float* xrow = X + (size_t)m * (size_t)N;

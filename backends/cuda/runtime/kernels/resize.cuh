@@ -7,7 +7,7 @@
 
 namespace intentir_cuda {
 
-template <int BLOCK_W>
+template <int BLOCK_W, bool FULL_W>
 __device__ __forceinline__ void resize_bilinear2x_i8(
     const int8_t* __restrict__ src,
     int8_t* __restrict__ out,
@@ -22,7 +22,12 @@ __device__ __forceinline__ void resize_bilinear2x_i8(
   const int h_idx = (int)blockIdx.y;
   const int c = (int)blockIdx.z;
   const int x0 = (int)blockIdx.x * BLOCK_W + (int)threadIdx.x;
-  if (c >= C || h_idx >= OH || x0 >= W) return;
+  // `c` and `h_idx` are in-bounds by construction (grid.z=C, grid.y=OH).
+  (void)C;
+  (void)OH;
+  if constexpr (!FULL_W) {
+    if (x0 >= W) return;
+  }
 
   const int y0 = h_idx >> 1;
   const int x1 = (x0 + 1 < W) ? (x0 + 1) : (W - 1);

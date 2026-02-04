@@ -7,7 +7,7 @@
 
 namespace intentir_cuda {
 
-template <int BLOCK_THREADS>
+template <int BLOCK_THREADS, bool FULL_TILE>
 __device__ __forceinline__ void correlation_i8(
     const int8_t* __restrict__ src0,
     const int8_t* __restrict__ src1,
@@ -22,7 +22,9 @@ __device__ __forceinline__ void correlation_i8(
   const int64_t hw = (int64_t)height * (int64_t)width;
   const int64_t total = (int64_t)out_channel * hw;
   const int64_t tid = (int64_t)blockIdx.x * (int64_t)BLOCK_THREADS + (int64_t)threadIdx.x;
-  if (tid >= total) return;
+  if constexpr (!FULL_TILE) {
+    if (tid >= total) return;
+  }
 
   const int oc = (int)(tid / hw);
   const int64_t rem = tid - (int64_t)oc * hw;
