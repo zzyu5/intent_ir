@@ -2495,25 +2495,32 @@ json emit_warp(const Intent& intent, const json& bindings) {
       if ((b % 32) != 0) b = ((b + 31) / 32) * 32;
       if (b > 1024) b = 1024;
       return b;
-    };
-    auto add_variant = [&](int64_t bw, const std::string& tag) {
-      bw = norm_bw(bw);
-      const int64_t gw = (W + bw - 1) / bw;
-      const bool full = ((W % bw) == 0);
+	    };
+	    auto add_variant = [&](int64_t bw, const std::string& tag) {
+	      bw = norm_bw(bw);
+	      const int64_t gw = (W + bw - 1) / bw;
+	      const bool full = ((W % bw) == 0);
       for (const auto& v : variants) {
         if (v.block_w == bw) return;
       }
-      variants.push_back(WarpVariant{bw, gw, full, tag});
-    };
+	      variants.push_back(WarpVariant{bw, gw, full, tag});
+	    };
 
-    add_variant(block_w, "seed_bw" + std::to_string(block_w));
-    add_variant(64, "bw64");
-    add_variant(128, "bw128");
-    add_variant(256, "bw256");
-    add_variant(512, "bw512");
-    if (variants.empty()) add_variant(block_w, "fallback");
+	    add_variant(block_w, "seed_bw" + std::to_string(block_w));
+	    add_variant(block_w / 2, "bw_half");
+	    add_variant(block_w * 2, "bw_double");
+	    if (!has_evidence) {
+	      // Evidence-off: widen the candidate set so selection can recover without
+	      // certificate priors (kept small to avoid codegen blowup).
+	      add_variant(64, "bw64");
+	      add_variant(128, "bw128");
+	      add_variant(256, "bw256");
+	      add_variant(512, "bw512");
+	      add_variant(1024, "bw1024");
+	    }
+	    if (variants.empty()) add_variant(block_w, "fallback");
 
-    emit_const_introspection_api(w, (int)variants.size(), has_evidence, contract_level, specialize_dims);
+	    emit_const_introspection_api(w, (int)variants.size(), has_evidence, contract_level, specialize_dims);
 
     for (const auto& v : variants) {
       const std::string kname = intent.name + "__" + v.suffix;
@@ -2816,23 +2823,30 @@ json emit_correlation(const Intent& intent, const json& bindings) {
       if (t > 1024) t = 1024;
       return t;
     };
-	    auto add_variant = [&](int64_t threads, const std::string& tag) {
-	      threads = norm_threads(threads);
-	      const int64_t gx = (total + threads - 1) / threads;
-	      for (const auto& v : variants) {
+		    auto add_variant = [&](int64_t threads, const std::string& tag) {
+		      threads = norm_threads(threads);
+		      const int64_t gx = (total + threads - 1) / threads;
+		      for (const auto& v : variants) {
 	        if (v.threads == threads) return;
 	      }
-	      variants.push_back(CorrVariant{threads, gx, tag});
-	    };
-	    add_variant(block_x, "seed");
-	    add_variant(64, "t64");
-	    add_variant(128, "t128");
-	    add_variant(256, "t256");
-	    add_variant(512, "t512");
-	    add_variant(1024, "t1024");
-	    if (variants.empty()) add_variant(block_x, "fallback");
+		      variants.push_back(CorrVariant{threads, gx, tag});
+		    };
+		    add_variant(block_x, "seed");
+		    add_variant(block_x / 2, "t_half");
+		    add_variant(block_x * 2, "t_double");
+		    if (!has_evidence) {
+		      // Evidence-off: widen the neighborhood.
+		      add_variant(block_x - 32, "t_m32");
+		      add_variant(block_x + 32, "t_p32");
+		      add_variant(64, "t64");
+		      add_variant(128, "t128");
+		      add_variant(256, "t256");
+		      add_variant(512, "t512");
+		      add_variant(1024, "t1024");
+		    }
+		    if (variants.empty()) add_variant(block_x, "fallback");
 
-	    emit_const_introspection_api(w, (int)variants.size(), has_evidence, contract_level, specialize_dims);
+		    emit_const_introspection_api(w, (int)variants.size(), has_evidence, contract_level, specialize_dims);
 
     const int64_t out_shift_val = binding_int(bindings, "out_shift").value_or(0);
     const std::string oc_arg = oc_is_tensor ? "out_channel_ptr" : "out_channel";
@@ -3158,24 +3172,30 @@ json emit_resize_bilinear2x_i8(const Intent& intent, const json& bindings) {
       if ((b % 32) != 0) b = ((b + 31) / 32) * 32;
       if (b > 1024) b = 1024;
       return b;
-    };
-    auto add_variant = [&](int64_t bw, const std::string& tag) {
-      bw = norm_bw(bw);
-      const int64_t gw = (W + bw - 1) / bw;
+	    };
+	    auto add_variant = [&](int64_t bw, const std::string& tag) {
+	      bw = norm_bw(bw);
+	      const int64_t gw = (W + bw - 1) / bw;
       for (const auto& v : variants) {
         if (v.block_w == bw) return;
       }
-      variants.push_back(ResizeVariant{bw, gw, tag});
-    };
+	      variants.push_back(ResizeVariant{bw, gw, tag});
+	    };
 
-    add_variant(block_w, "seed_bw" + std::to_string(block_w));
-    add_variant(64, "bw64");
-    add_variant(128, "bw128");
-    add_variant(256, "bw256");
-    add_variant(512, "bw512");
-    if (variants.empty()) add_variant(block_w, "fallback");
+	    add_variant(block_w, "seed_bw" + std::to_string(block_w));
+	    add_variant(block_w / 2, "bw_half");
+	    add_variant(block_w * 2, "bw_double");
+	    if (!has_evidence) {
+	      // Evidence-off: widen the candidate set so selection can recover without priors.
+	      add_variant(64, "bw64");
+	      add_variant(128, "bw128");
+	      add_variant(256, "bw256");
+	      add_variant(512, "bw512");
+	      add_variant(1024, "bw1024");
+	    }
+	    if (variants.empty()) add_variant(block_w, "fallback");
 
-    emit_const_introspection_api(w, (int)variants.size(), has_evidence, contract_level, specialize_dims);
+	    emit_const_introspection_api(w, (int)variants.size(), has_evidence, contract_level, specialize_dims);
 
     for (const auto& v : variants) {
       const std::string kname = intent.name + "__" + v.suffix;
@@ -3565,47 +3585,59 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
     // - small set of head groupings (often 1 is best; 2 sometimes helps)
     // - best legal vector width + one fallback
     // - a few warp-aligned thread counts
-    std::vector<int> hp_cands;
-    auto add_hp = [&](int hp) {
-      if (hp <= 0) hp = 1;
+	    std::vector<int> hp_cands;
+	    auto add_hp = [&](int hp) {
+	      if (hp <= 0) hp = 1;
       if (hp > 16) hp = 16;
       if (hp > H) hp = static_cast<int>(H);
       for (int x : hp_cands)
         if (x == hp) return;
-      hp_cands.push_back(hp);
-    };
-    add_hp((int)heads_per_block);
-    add_hp(1);
-    add_hp(2);
-    add_hp(4);
-    add_hp(8);
+	      hp_cands.push_back(hp);
+	    };
+	    add_hp((int)heads_per_block);
+	    add_hp(1);
+	    add_hp(2);
+	    if (!has_evidence) {
+	      // Evidence-off: widen head-group candidates.
+	      add_hp(4);
+	      add_hp(8);
+	    }
 
-    std::vector<int> rv_cands;
-    auto add_rv = [&](int rv) {
-      if (!legal_rope_vec(rv)) return;
+	    std::vector<int> rv_cands;
+	    auto add_rv = [&](int rv) {
+	      if (!legal_rope_vec(rv)) return;
       for (int x : rv_cands)
         if (x == rv) return;
-      rv_cands.push_back(rv);
-    };
-    add_rv((int)rope_vec);
-    if (rope_vec == 4) add_rv(2);
-    else if (rope_vec == 2)
-      add_rv(1);
+	      rv_cands.push_back(rv);
+	    };
+	    add_rv((int)rope_vec);
+	    // Keep a single fallback vec-width across both modes: widening this dimension
+	    // blows up codegen/dispatch cost (RoPE already has many variants).
+	    if (rope_vec == 4) add_rv(2);
+	    else if (rope_vec == 2)
+	      add_rv(1);
 
-    std::vector<int64_t> bx_cands;
-    auto add_bx = [&](int64_t bx) {
-      bx = norm_block_x(bx);
+	    std::vector<int64_t> bx_cands;
+	    auto add_bx = [&](int64_t bx) {
+	      bx = norm_block_x(bx);
       for (int64_t x : bx_cands)
         if (x == bx) return;
-      bx_cands.push_back(bx);
-    };
-    add_bx(block_x);
-    add_bx(32);
-    add_bx(64);
-    add_bx(128);
-    add_bx(256);
-    const int64_t sched_threads = resolve_schedule_int(intent, bindings, "tile_n", 0);
-    if (sched_threads > 0) add_bx(sched_threads);
+	      bx_cands.push_back(bx);
+	    };
+	    add_bx(block_x);
+	    if (has_evidence) {
+	      // Evidence-on: avoid bloating codegen/dispatch; keep a small, stable set.
+	      add_bx(128);
+	      add_bx(256);
+	    } else {
+	      // Evidence-off: widen the neighborhood.
+	      add_bx(32);
+	      add_bx(64);
+	      add_bx(128);
+	      add_bx(256);
+	    }
+	    const int64_t sched_threads = resolve_schedule_int(intent, bindings, "tile_n", 0);
+	    if (sched_threads > 0) add_bx(sched_threads);
 
     // Make the ablation semantics crisp: variant[0] is always the seed config
     // derived from (evidence/schedule) defaults; dispatch_off uses this.
@@ -5496,16 +5528,24 @@ json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
         if (v.threads == threads) return;
       }
       variants.push_back(LnVariant{threads, tag});
-    };
+	    };
 
-    add_variant(block_x, "seed");
-    add_variant(64, "t64");
-    add_variant(128, "t128");
-    add_variant(256, "t256");
-    add_variant(512, "t512");
-    if (variants.empty()) add_variant(block_x, "fallback");
+	    add_variant(block_x, "seed");
+	    add_variant(block_x / 2, "t_half");
+	    add_variant(block_x * 2, "t_double");
+	    if (!has_evidence) {
+	      // Evidence-off: widen the candidate set.
+	      add_variant(block_x - 32, "t_m32");
+	      add_variant(block_x + 32, "t_p32");
+	      add_variant(64, "t64");
+	      add_variant(128, "t128");
+	      add_variant(256, "t256");
+	      add_variant(512, "t512");
+	      add_variant(1024, "t1024");
+	    }
+	    if (variants.empty()) add_variant(block_x, "fallback");
 
-    emit_const_introspection_api(w, (int)variants.size(), has_evidence, contract_level, specialize_dims);
+	    emit_const_introspection_api(w, (int)variants.size(), has_evidence, contract_level, specialize_dims);
 
     for (const auto& v : variants) {
       const std::string kname = intent.name + "__" + v.suffix;
