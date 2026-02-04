@@ -133,6 +133,16 @@ def _common_legend(fig, handles, labels, ncol=3, y_pos=0.99):
                ncol=ncol, frameon=False, fontsize=9)
 
 
+def _annotate_bars(ax: plt.Axes, bars, fmt="{:.2f}", threshold=0.0):
+    """Add value labels on top of bars."""
+    for bar in bars:
+        height = bar.get_height()
+        if height > threshold:
+            ax.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                    fmt.format(height), ha='center', va='bottom', 
+                    fontsize=5.5, color=PALETTE["dark"], fontweight='bold')
+
+
 # =============================================================================
 # 3. Plotting Functions (Modified Margins)
 # =============================================================================
@@ -177,8 +187,11 @@ def fig_e1e3_recoverability(e1: dict[str, Any], e1e3: dict[str, Any], out: Path)
     ax = axes[0]
     w = 0.35
     
-    ax.bar([i - w/2 for i in x_locs], ok_one + [avg_one], width=w, color=PALETTE["blue"], label="One-shot")
-    ax.bar([i + w/2 for i in x_locs], ok_fb + [avg_fb], width=w, color=PALETTE["red"], label="Feedback")
+    b1 = ax.bar([i - w/2 for i in x_locs], ok_one + [avg_one], width=w, color=PALETTE["blue"], label="One-shot")
+    b2 = ax.bar([i + w/2 for i in x_locs], ok_fb + [avg_fb], width=w, color=PALETTE["red"], label="Feedback")
+    
+    _annotate_bars(ax, b1, "{:.0%}")
+    _annotate_bars(ax, b2, "{:.0%}")
     
     _draw_x_separator(ax, len(fes), 1.0)
     
@@ -198,9 +211,13 @@ def fig_e1e3_recoverability(e1: dict[str, Any], e1e3: dict[str, Any], out: Path)
     ax = axes[1]
     w = 0.25
     
-    ax.bar([i - w for i in x_locs], acc_rule + [avg_rule], width=w, color=PALETTE["grey"], label="Rule-only")
-    ax.bar([i for i in x_locs], acc_one + [avg_one_acc], width=w, color=PALETTE["blue"], label="One-shot")
-    ax.bar([i + w for i in x_locs], acc_fb + [avg_fb_acc], width=w, color=PALETTE["red"], label="Feedback")
+    b1 = ax.bar([i - w for i in x_locs], acc_rule + [avg_rule], width=w, color=PALETTE["grey"], label="Rule-only")
+    b2 = ax.bar([i for i in x_locs], acc_one + [avg_one_acc], width=w, color=PALETTE["blue"], label="One-shot")
+    b3 = ax.bar([i + w for i in x_locs], acc_fb + [avg_fb_acc], width=w, color=PALETTE["red"], label="Feedback")
+
+    _annotate_bars(ax, b1, "{:.0%}", 0.05)
+    _annotate_bars(ax, b2, "{:.0%}", 0.05)
+    _annotate_bars(ax, b3, "{:.0%}", 0.05)
     
     _draw_x_separator(ax, len(fes), 1.0)
 
@@ -365,8 +382,16 @@ def fig_e6_contract_calibration(e6: dict[str, Any], out: Path) -> None:
             
             hatch = "/////" if rep == "linalg" else None
             edge = "white"
-            ax.bar(x + offset, vals, width=w, bottom=bottoms, 
+            bars = ax.bar(x + offset, vals, width=w, bottom=bottoms, 
                    color=c_map[lvl], edgecolor=edge, linewidth=0.5, hatch=hatch)
+            
+            # Annotate segments > 5%
+            for bar, v in zip(bars, vals):
+                if v > 0.05:
+                    mid = bar.get_y() + bar.get_height()/2
+                    ax.text(bar.get_x() + bar.get_width()/2, mid, f"{v:.1%}", 
+                            ha='center', va='center', fontsize=6, color="white" if lvl != "OUT_OF_SCOPE" else "black", fontweight='bold')
+            
             bottoms += np.array(vals)
 
     ax.set_xticks(x)
