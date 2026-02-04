@@ -551,6 +551,28 @@ def fig_e5_cuda_triton_vs_intentir(
     labels = [pretty.get(k, k) for k in kernels]
     x = np.arange(len(kernels))
 
+    def _get_fastpath_enabled(r: dict[str, Any] | None, key: str) -> bool:
+        if not isinstance(r, dict):
+            return False
+        obj = r.get(key)
+        if not isinstance(obj, dict):
+            return False
+        v = obj.get("fastpath_enabled")
+        if isinstance(v, bool):
+            return bool(v)
+        if isinstance(v, (int, float)):
+            return int(v) != 0
+        return False
+
+    # Contract fastpath marker: only meaningful when the default run selects a
+    # contract-gated kernel and contract_off disables it.
+    fp_flags: list[bool] = []
+    for k in kernels:
+        ra = by_a.get(k)
+        fp_on = _get_fastpath_enabled(ra, "ours")
+        fp_off = _get_fastpath_enabled(ra, "ours_contract_off")
+        fp_flags.append(bool(fp_on and (not fp_off)))
+
     # Build series (speedup vs Triton, so Triton itself is 1.0×).
     sp_quick = [_get_speedup(by_q.get(k), "speedup_ours_over_triton") for k in kernels]
     sp_dispatch_off = [_get_speedup(by_a.get(k), "speedup_ours_dispatch_off_over_triton") for k in kernels]
@@ -636,8 +658,17 @@ def fig_e5_cuda_triton_vs_intentir(
         for i, (name, _, color) in enumerate(series):
             vals = series_vals[i]
             pos = x + offsets[i]
-            ax_bot.bar(pos, vals, width=width * 0.90, color=color, edgecolor="white", linewidth=0.5, label=name)
-            ax_top.bar(pos, vals, width=width * 0.90, color=color, edgecolor="white", linewidth=0.5)
+            bars_bot = ax_bot.bar(pos, vals, width=width * 0.90, color=color, edgecolor="white", linewidth=0.5, label=name)
+            bars_top = ax_top.bar(pos, vals, width=width * 0.90, color=color, edgecolor="white", linewidth=0.5)
+            if i == 0 and any(fp_flags):
+                for j, flag in enumerate(fp_flags):
+                    if not flag:
+                        continue
+                    for bars in (bars_bot, bars_top):
+                        if 0 <= j < len(bars.patches):
+                            bars.patches[j].set_hatch("///")
+                            bars.patches[j].set_edgecolor(PALETTE["dark"])
+                            bars.patches[j].set_linewidth(0.6)
 
         for ax in (ax_top, ax_bot):
             ax.axhline(1.0, color=PALETTE["dark"], linestyle="--", linewidth=1.0, alpha=0.8)
@@ -686,6 +717,19 @@ def fig_e5_cuda_triton_vs_intentir(
                     color=PALETTE["dark"],
                 )
 
+        if any(fp_flags):
+            ax_bot.text(
+                0.99,
+                0.02,
+                "Hatched: contract fast path selected",
+                transform=ax_bot.transAxes,
+                ha="right",
+                va="bottom",
+                fontsize=8,
+                color=PALETTE["dark"],
+                alpha=0.9,
+            )
+
         _common_legend(fig, *ax_bot.get_legend_handles_labels(), ncol=min(3, n_series), y_pos=0.99)
         _save_fig(fig, out_dir / f"{out_name}.pdf")
     else:
@@ -694,7 +738,15 @@ def fig_e5_cuda_triton_vs_intentir(
         ax.set_title(title)
         for i, (name, _, color) in enumerate(series):
             vals = series_vals[i]
-            ax.bar(x + offsets[i], vals, width=width * 0.90, color=color, edgecolor="white", linewidth=0.5, label=name)
+            bars = ax.bar(x + offsets[i], vals, width=width * 0.90, color=color, edgecolor="white", linewidth=0.5, label=name)
+            if i == 0 and any(fp_flags):
+                for j, flag in enumerate(fp_flags):
+                    if not flag:
+                        continue
+                    if 0 <= j < len(bars.patches):
+                        bars.patches[j].set_hatch("///")
+                        bars.patches[j].set_edgecolor(PALETTE["dark"])
+                        bars.patches[j].set_linewidth(0.6)
         ax.axhline(1.0, color=PALETTE["dark"], linestyle="--", linewidth=1.0, alpha=0.8)
         ax.grid(axis="y", which="major", alpha=0.5)
         ax.set_ylabel("Speedup over Triton (×)")
@@ -723,6 +775,18 @@ def fig_e5_cuda_triton_vs_intentir(
                     fontsize=8,
                     color=PALETTE["dark"],
                 )
+        if any(fp_flags):
+            ax.text(
+                0.99,
+                0.02,
+                "Hatched: contract fast path selected",
+                transform=ax.transAxes,
+                ha="right",
+                va="bottom",
+                fontsize=8,
+                color=PALETTE["dark"],
+                alpha=0.9,
+            )
         _common_legend(fig, *ax.get_legend_handles_labels(), ncol=min(3, n_series), y_pos=0.99)
         _save_fig(fig, out_dir / f"{out_name}.pdf")
 
