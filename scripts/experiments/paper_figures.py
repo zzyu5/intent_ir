@@ -133,14 +133,25 @@ def _common_legend(fig, handles, labels, ncol=3, y_pos=0.99):
                ncol=ncol, frameon=False, fontsize=9)
 
 
-def _annotate_bars(ax: plt.Axes, bars, fmt="{:.2f}", threshold=0.0):
-    """Add value labels on top of bars."""
+def _annotate_bars(ax: plt.Axes, bars, fmt="{:.2f}", threshold=0.0, inside=True, color="white"):
+    """Add value labels on top of (or inside) bars."""
     for bar in bars:
         height = bar.get_height()
         if height > threshold:
-            ax.text(bar.get_x() + bar.get_width()/2., height + 0.01,
-                    fmt.format(height), ha='center', va='bottom', 
-                    fontsize=5.5, color=PALETTE["dark"], fontweight='bold')
+            if inside:
+                # Place inside top
+                y = height - 0.02
+                va = 'top'
+                c = color
+            else:
+                # Place on top
+                y = height + 0.01
+                va = 'bottom'
+                c = PALETTE["dark"]
+            
+            ax.text(bar.get_x() + bar.get_width()/2., y,
+                    fmt.format(height), ha='center', va=va, 
+                    fontsize=6, color=c, fontweight='bold', zorder=15)
 
 
 # =============================================================================
@@ -389,8 +400,10 @@ def fig_e6_contract_calibration(e6: dict[str, Any], out: Path) -> None:
             for bar, v in zip(bars, vals):
                 if v > 0.05:
                     mid = bar.get_y() + bar.get_height()/2
+                    # Use black text for better contrast on Morandi colors/hatches
+                    # Add a white halo for readability if needed, but bold black is usually enough on these lights
                     ax.text(bar.get_x() + bar.get_width()/2, mid, f"{v:.1%}", 
-                            ha='center', va='center', fontsize=6, color="white" if lvl != "OUT_OF_SCOPE" else "black", fontweight='bold')
+                            ha='center', va='center', fontsize=6, color="black", fontweight='bold', zorder=15)
             
             bottoms += np.array(vals)
 
