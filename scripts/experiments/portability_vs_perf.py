@@ -421,7 +421,10 @@ def main() -> None:
                 port=int(args.port),
                 case_index=0,
                 shape_overrides=shape_bindings,
-                tune_request=TuningRequest(mode=str(args.tune_mode), budget=int(args.tune_budget)),
+                tune_request=TuningRequest(
+                    mode=str(args.tune_mode),
+                    budget=(4 if k == "gather2d" else int(args.tune_budget)),
+                ),
                 schedule_override=None,
                 tune_profile=profile_name_or_path,
                 bench_iters=int(args.bench_iters),

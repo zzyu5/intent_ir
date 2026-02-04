@@ -832,6 +832,7 @@ def fig_e5_cuda_triton_vs_intentir(
 
 
 
+
 def fig_e5_cuda_evidence_ablation(
     *,
     ablation: dict[str, Any],
@@ -840,13 +841,13 @@ def fig_e5_cuda_evidence_ablation(
 ) -> None:
     """E5 GPU: evidence-off ablation (search-space shaping).
 
-    We plot *ratios* relative to evidence-on (default):
-      - candidate variant count ratio
-      - host-dispatch eval count ratio
+    Goal: show that removing evidence increases *tuning work*.
 
-    This figure is intentionally not a speedup-vs-baseline plot: evidence-off may
-    occasionally be faster because it searches a larger space, but it is strictly
-    more expensive to select.
+    We report ratios (evidence-off / evidence-on) for:
+      1) candidate variants (search-space size)
+      2) host-dispatch total time in ms (selection cost)
+
+    We intentionally do NOT plot speedup-vs-Triton here.
     """
 
     order = [
@@ -878,43 +879,40 @@ def fig_e5_cuda_evidence_ablation(
             by_k[k] = r
 
     kernels = [k for k in order if k in by_k]
-    labels = [pretty.get(k, k) for k in kernels]
     if not kernels:
         return
 
-    def _get_int(d: dict[str, Any] | None, key: str) -> int | None:
-        if not isinstance(d, dict):
-            return None
-        v = d.get(key)
+    labels = [pretty.get(k, k) for k in kernels]
+
+    def _as_float(v: object) -> float | None:
         if isinstance(v, bool):
-            return int(bool(v))
+            return float(int(v))
         if isinstance(v, (int, float)):
-            return int(v)
+            return float(v)
         return None
 
-    def _ratio(off: int | None, on: int | None) -> float | None:
-        if not isinstance(off, int) or not isinstance(on, int):
+    def _ratio(off: float | None, on: float | None) -> float | None:
+        if not isinstance(off, (int, float)) or not isinstance(on, (int, float)):
             return None
-        if off <= 0 or on <= 0:
+        if on <= 0 or off <= 0:
             return None
         return float(off) / float(on)
 
-    cand_ratio: list[float | None] = []
-    eval_ratio: list[float | None] = []
+    var_ratio: list[float] = []
+    sel_ratio: list[float] = []
     for k in kernels:
-        r = by_k.get(k) or {}
+        r = by_k[k]
         on = r.get("ours") if isinstance(r.get("ours"), dict) else None
         off = r.get("ours_evidence_off") if isinstance(r.get("ours_evidence_off"), dict) else None
-        cand_ratio.append(_ratio(_get_int(off, "variant_count"), _get_int(on, "variant_count")))
-        eval_ratio.append(_ratio(_get_int(off, "dispatch_evals"), _get_int(on, "dispatch_evals")))
+        v_on = _as_float((on or {}).get("variant_count"))
+        v_off = _as_float((off or {}).get("variant_count"))
+        ms_on = _as_float((on or {}).get("dispatch_total_ms"))
+        ms_off = _as_float((off or {}).get("dispatch_total_ms"))
+        var_ratio.append(_ratio(v_off, v_on) or float('nan'))
+        sel_ratio.append(_ratio(ms_off, ms_on) or float('nan'))
 
-    cand = np.array([float(v) if isinstance(v, (int, float)) else np.nan for v in cand_ratio], dtype=np.float64)
-    evs = np.array([float(v) if isinstance(v, (int, float)) else np.nan for v in eval_ratio], dtype=np.float64)
-
-    vmax = 1.0
-    for arr in (cand, evs):
-        if np.any(np.isfinite(arr)):
-            vmax = max(vmax, float(np.nanmax(arr)))
+    var = np.array(var_ratio, dtype=np.float64)
+    sel = np.array(sel_ratio, dtype=np.float64)
 
     meta = ablation.get("meta") if isinstance(ablation.get("meta"), dict) else {}
     gpu = meta.get("gpu") if isinstance(meta.get("gpu"), str) else ""
@@ -934,57 +932,68 @@ def fig_e5_cuda_evidence_ablation(
 
     title = _short_gpu_name(gpu)
 
-    x = np.arange(len(kernels))
-    width = 0.32
-    offsets = (np.arange(2) - 0.5) * width
+    # Horizontal bars are much more readable at paper scale.
+    y = np.arange(len(kernels))
+    h = 0.34
 
-    fig, ax = plt.subplots(figsize=(6.8, 2.2))
-    plt.subplots_adjust(top=0.82, bottom=0.30, left=0.10, right=0.99)
+    vmax = 1.0
+    for arr in (var, sel):
+        if np.any(np.isfinite(arr)):
+            vmax = max(vmax, float(np.nanmax(arr)))
+
+    fig, ax = plt.subplots(figsize=(6.8, 2.6))
+    plt.subplots_adjust(top=0.82, bottom=0.18, left=0.22, right=0.99)
     ax.set_title(title)
 
-    bars0 = ax.bar(
-        x + offsets[0],
-        cand,
-        width=width * 0.90,
+    b0 = ax.barh(
+        y - h / 2.0,
+        var,
+        height=h * 0.90,
         color=PALETTE["blue"],
         edgecolor="white",
         linewidth=0.5,
-        label="Candidate variants",
+        label="Candidate variants (ratio)",
     )
-    bars1 = ax.bar(
-        x + offsets[1],
-        evs,
-        width=width * 0.90,
+    b1 = ax.barh(
+        y + h / 2.0,
+        sel,
+        height=h * 0.90,
         color=PALETTE["grey"],
         edgecolor="white",
         linewidth=0.5,
-        label="Dispatch evals",
+        label="Dispatch time (ratio)",
     )
 
-    ax.axhline(1.0, color=PALETTE["dark"], linestyle="--", linewidth=1.0, alpha=0.8)
-    ax.grid(axis="y", which="major", alpha=0.5)
-    ax.set_ylabel("Evidence-off / evidence-on (×)")
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=20, ha="right")
-    ax.set_ylim(0.0, max(1.4, vmax * 1.15))
+    ax.axvline(1.0, color=PALETTE["dark"], linestyle="--", linewidth=1.0, alpha=0.8)
+    ax.grid(axis="x", which="major", alpha=0.5)
+    ax.set_xlabel("Evidence-off / evidence-on (×)")
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels)
+    ax.set_xlim(0.0, max(1.8, vmax * 1.12))
 
-    for bars in (bars0, bars1):
+    # Annotate large ratios only.
+    def _annotate(bars):
         for p in bars.patches:
-            h = float(p.get_height())
-            if not (h >= 2.0):
+            w = float(p.get_width())
+            if not (w >= 2.0) or not np.isfinite(w):
                 continue
             ax.text(
-                float(p.get_x() + p.get_width() / 2.0),
-                h + 0.03 * max(1.0, vmax),
-                f"{h:.1f}×",
-                ha="center",
-                va="bottom",
+                w + 0.03 * max(1.0, vmax),
+                float(p.get_y() + p.get_height() / 2.0),
+                f"{w:.1f}×",
+                ha="left",
+                va="center",
                 fontsize=8,
                 color=PALETTE["dark"],
             )
 
+    _annotate(b0)
+    _annotate(b1)
+
     _common_legend(fig, *ax.get_legend_handles_labels(), ncol=2, y_pos=0.99)
     _save_fig(fig, out_dir / f"{out_name}.pdf")
+
+
 # =============================================================================
 # Main
 # =============================================================================
