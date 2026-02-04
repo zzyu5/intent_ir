@@ -1917,10 +1917,11 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
                 }
               }
             }
-            // Optional microsearch (still small): for the base tile only, also vary cp.async cache
-            // policy and padding on/off, as in the full-search focus path. This can recover some
-            // of the remaining gap vs Triton without exploding the search space.
-            if (t.is_base) {
+            // Optional microsearch: for evidence-off runs (no certificate priors), widen the
+            // base-tile neighborhood by varying cp.async cache policy and padding on/off. When
+            // evidence is present, we keep the candidate set tight so the "evidence shapes the
+            // search space" claim is measurable via variant_count/dispatch_evals.
+            if (t.is_base && (!has_evidence)) {
               WmmaGeom g{warps_m, warps_n, 1, 1, /*is_base_tile=*/true, base_tag};
               add_focus_microsearch(g);
             }
