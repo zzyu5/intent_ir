@@ -152,7 +152,7 @@ def _annotate_bars(ax: plt.Axes, bars, fmt="{:.2f}", threshold=0.0, inside=True,
             
             ax.text(bar.get_x() + bar.get_width()/2., y,
                     fmt.format(height), ha='center', va=va, 
-                    fontsize=6, color=c, fontweight='bold', zorder=15)
+                    fontsize=4.5, color=c, fontweight='bold', zorder=15)
 
 
 # =============================================================================
@@ -460,7 +460,7 @@ def fig_e2_trust_ablation(e2: dict[str, Any], out: Path) -> None:
             if height > 0:
                 ax.text(bar.get_x() + bar.get_width()/2., height + 0.01,
                         f'{height:.1%}' if height < 0.99 else '100%' if height > 0.999 else f'{height:.1%}',
-                        ha='center', va='bottom', fontsize=6, rotation=0)
+                        ha='center', va='bottom', fontsize=4.5, rotation=0)
 
     ax.set_xticks(x)
     ax.set_xticklabels([f.capitalize() for f in frontends] + ["All"])
@@ -830,6 +830,161 @@ def fig_e5_cuda_triton_vs_intentir(
         _save_fig(fig, out_dir / f"{out_name}.pdf")
 
 
+
+
+def fig_e5_cuda_evidence_ablation(
+    *,
+    ablation: dict[str, Any],
+    out_dir: Path,
+    out_name: str,
+) -> None:
+    """E5 GPU: evidence-off ablation (search-space shaping).
+
+    We plot *ratios* relative to evidence-on (default):
+      - candidate variant count ratio
+      - host-dispatch eval count ratio
+
+    This figure is intentionally not a speedup-vs-baseline plot: evidence-off may
+    occasionally be faster because it searches a larger space, but it is strictly
+    more expensive to select.
+    """
+
+    order = [
+        "ai_bench_matmul",
+        "ai_bench_dropout",
+        "ai_bench_softmax",
+        "ai_bench_layernorm",
+        "ai_bench_correlation",
+        "ai_bench_resize",
+        "ai_bench_rope",
+        "ai_bench_warp",
+    ]
+    pretty = {
+        "ai_bench_matmul": "MatMul",
+        "ai_bench_dropout": "Dropout",
+        "ai_bench_softmax": "Softmax",
+        "ai_bench_layernorm": "LayerNorm",
+        "ai_bench_correlation": "Correlation",
+        "ai_bench_resize": "Resize",
+        "ai_bench_rope": "RoPE",
+        "ai_bench_warp": "Warp",
+    }
+
+    rows = [r for r in list(ablation.get("results") or []) if isinstance(r, dict)]
+    by_k: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        k = r.get("kernel")
+        if isinstance(k, str) and k:
+            by_k[k] = r
+
+    kernels = [k for k in order if k in by_k]
+    labels = [pretty.get(k, k) for k in kernels]
+    if not kernels:
+        return
+
+    def _get_int(d: dict[str, Any] | None, key: str) -> int | None:
+        if not isinstance(d, dict):
+            return None
+        v = d.get(key)
+        if isinstance(v, bool):
+            return int(bool(v))
+        if isinstance(v, (int, float)):
+            return int(v)
+        return None
+
+    def _ratio(off: int | None, on: int | None) -> float | None:
+        if not isinstance(off, int) or not isinstance(on, int):
+            return None
+        if off <= 0 or on <= 0:
+            return None
+        return float(off) / float(on)
+
+    cand_ratio: list[float | None] = []
+    eval_ratio: list[float | None] = []
+    for k in kernels:
+        r = by_k.get(k) or {}
+        on = r.get("ours") if isinstance(r.get("ours"), dict) else None
+        off = r.get("ours_evidence_off") if isinstance(r.get("ours_evidence_off"), dict) else None
+        cand_ratio.append(_ratio(_get_int(off, "variant_count"), _get_int(on, "variant_count")))
+        eval_ratio.append(_ratio(_get_int(off, "dispatch_evals"), _get_int(on, "dispatch_evals")))
+
+    cand = np.array([float(v) if isinstance(v, (int, float)) else np.nan for v in cand_ratio], dtype=np.float64)
+    evs = np.array([float(v) if isinstance(v, (int, float)) else np.nan for v in eval_ratio], dtype=np.float64)
+
+    vmax = 1.0
+    for arr in (cand, evs):
+        if np.any(np.isfinite(arr)):
+            vmax = max(vmax, float(np.nanmax(arr)))
+
+    meta = ablation.get("meta") if isinstance(ablation.get("meta"), dict) else {}
+    gpu = meta.get("gpu") if isinstance(meta.get("gpu"), str) else ""
+
+    def _short_gpu_name(s: str) -> str:
+        s = (s or "").strip()
+        if not s:
+            return "GPU"
+        if "H100" in s:
+            return "H100"
+        if "5090" in s:
+            return "RTX 5090 D"
+        if "4080" in s:
+            return "RTX 4080 SUPER"
+        s = s.replace("NVIDIA ", "").replace("GeForce ", "")
+        return " ".join(s.split()) or "GPU"
+
+    title = _short_gpu_name(gpu)
+
+    x = np.arange(len(kernels))
+    width = 0.32
+    offsets = (np.arange(2) - 0.5) * width
+
+    fig, ax = plt.subplots(figsize=(6.8, 2.2))
+    plt.subplots_adjust(top=0.82, bottom=0.30, left=0.10, right=0.99)
+    ax.set_title(title)
+
+    bars0 = ax.bar(
+        x + offsets[0],
+        cand,
+        width=width * 0.90,
+        color=PALETTE["blue"],
+        edgecolor="white",
+        linewidth=0.5,
+        label="Candidate variants",
+    )
+    bars1 = ax.bar(
+        x + offsets[1],
+        evs,
+        width=width * 0.90,
+        color=PALETTE["grey"],
+        edgecolor="white",
+        linewidth=0.5,
+        label="Dispatch evals",
+    )
+
+    ax.axhline(1.0, color=PALETTE["dark"], linestyle="--", linewidth=1.0, alpha=0.8)
+    ax.grid(axis="y", which="major", alpha=0.5)
+    ax.set_ylabel("Evidence-off / evidence-on (×)")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=20, ha="right")
+    ax.set_ylim(0.0, max(1.4, vmax * 1.15))
+
+    for bars in (bars0, bars1):
+        for p in bars.patches:
+            h = float(p.get_height())
+            if not (h >= 2.0):
+                continue
+            ax.text(
+                float(p.get_x() + p.get_width() / 2.0),
+                h + 0.03 * max(1.0, vmax),
+                f"{h:.1f}×",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+                color=PALETTE["dark"],
+            )
+
+    _common_legend(fig, *ax.get_legend_handles_labels(), ncol=2, y_pos=0.99)
+    _save_fig(fig, out_dir / f"{out_name}.pdf")
 # =============================================================================
 # Main
 # =============================================================================
@@ -893,11 +1048,15 @@ def main() -> None:
         h100_q = _load_json(p_h100_q)
         h100_a = _load_json(p_h100_a) if (p_h100_a and p_h100_a.is_file()) else None
         fig_e5_cuda_triton_vs_intentir(quick=h100_q, ablation=h100_a, out_dir=fig_dir, out_name="e5_cuda_gpu_h100")
+        if h100_a:
+            fig_e5_cuda_evidence_ablation(ablation=h100_a, out_dir=fig_dir, out_name="e5_cuda_evidence_h100")
 
     if p_5090_q and p_5090_q.is_file():
         g5090_q = _load_json(p_5090_q)
         g5090_a = _load_json(p_5090_a) if (p_5090_a and p_5090_a.is_file()) else None
         fig_e5_cuda_triton_vs_intentir(quick=g5090_q, ablation=g5090_a, out_dir=fig_dir, out_name="e5_cuda_gpu_5090d")
+        if g5090_a:
+            fig_e5_cuda_evidence_ablation(ablation=g5090_a, out_dir=fig_dir, out_name="e5_cuda_evidence_5090d")
     
     print(f"Done. Figures written to: {fig_dir}")
 
