@@ -4841,6 +4841,7 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 			      int64_t rows_per_block;
 			      bool vec4;
 			      bool ragged;
+			      bool warp_ragged;
 			      bool warp4;
 			      bool warp_expbuf;
 			      bool use_exp2;
@@ -4869,11 +4870,11 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 			      if (vept <= 0 || vept > 32) return;
 			      if (vept > max_ept) return;
 			      for (const auto& v : variants) {
-			        if (!v.warp4 && !v.warp_expbuf && !v.vec4 && !v.ragged && v.threads == threads && v.ept == vept &&
+			        if (!v.warp4 && !v.warp_expbuf && !v.warp_ragged && !v.vec4 && !v.ragged && v.threads == threads && v.ept == vept &&
 			            v.use_exp2 == use_exp2)
 			          return;
 			      }
-			      variants.push_back(SoftmaxVariant{threads, vept, 0, 1, false, false, false, false, use_exp2, tag});
+			      variants.push_back(SoftmaxVariant{threads, vept, 0, 1, false, false, false, false, false, use_exp2, tag});
 			    };
 
 		    auto add_strided_variant = [&](int64_t threads, const std::string& tag) {
@@ -4889,7 +4890,7 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 			      for (const auto& v : variants) {
 			        if (v.vec4 && v.threads == threads && v.use_exp2 == use_exp2) return;
 			      }
-			      variants.push_back(SoftmaxVariant{threads, 0, tiles, 1, true, false, false, false, use_exp2, tag});
+			      variants.push_back(SoftmaxVariant{threads, 0, tiles, 1, true, false, false, false, false, use_exp2, tag});
 			    };
 
 			    auto add_ragged_variant = [&](int64_t threads, bool use_exp2, const std::string& tag) {
@@ -4899,13 +4900,12 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 			      for (const auto& v : variants) {
 			        if (v.ragged && v.threads == threads && v.use_exp2 == use_exp2) return;
 			      }
-			      variants.push_back(SoftmaxVariant{threads, 0, 0, 1, false, true, false, false, use_exp2, tag});
+			      variants.push_back(SoftmaxVariant{threads, 0, 0, 1, false, true, false, false, false, use_exp2, tag});
 			    };
 
 			    auto add_block_pair = [&](int64_t threads, const std::string& tag) {
 			      add_strided_variant(threads, tag);
 			      for (bool use_exp2 : exp2_cands) add_vec4_variant(threads, use_exp2, tag_exp("vec4_" + tag, use_exp2));
-			      for (bool use_exp2 : exp2_cands) add_ragged_variant(threads, use_exp2, tag_exp("ragged_" + tag, use_exp2));
 			    };
 
 	    int64_t block_elems = resolve_schedule_int(intent, bindings, "tile_n", 0);
@@ -4930,7 +4930,19 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 			      for (const auto& v : variants) {
 			        if (v.warp4 && v.rows_per_block == warps_per_block && v.use_exp2 == use_exp2) return;
 			      }
-			      variants.push_back(SoftmaxVariant{threads, 0, 0, warps_per_block, false, false, true, false, use_exp2, tag});
+			      variants.push_back(SoftmaxVariant{threads, 0, 0, warps_per_block, false, false, false, true, false, use_exp2, tag});
+			    };
+
+			    auto add_warp_ragged_variant = [&](int64_t warps_per_block, bool use_exp2, const std::string& tag) {
+			      if (!(contract_full && specialize_dims)) return;
+			      if (warps_per_block <= 0) return;
+			      if (warps_per_block > 8) return;
+			      const int64_t threads = norm_threads(warps_per_block * 32);
+			      if (threads != warps_per_block * 32) return;
+			      for (const auto& v : variants) {
+			        if (v.warp_ragged && v.rows_per_block == warps_per_block && v.use_exp2 == use_exp2) return;
+			      }
+			      variants.push_back(SoftmaxVariant{threads, 0, 0, warps_per_block, false, false, true, false, false, use_exp2, tag});
 			    };
 
 			    auto add_warp_expbuf_variant = [&](int64_t warps_per_block, bool use_exp2, const std::string& tag) {
@@ -4941,7 +4953,7 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 			      for (const auto& v : variants) {
 			        if (v.warp_expbuf && v.rows_per_block == warps_per_block && v.use_exp2 == use_exp2) return;
 			      }
-			      variants.push_back(SoftmaxVariant{threads, 0, 0, warps_per_block, false, false, false, true, use_exp2, tag});
+			      variants.push_back(SoftmaxVariant{threads, 0, 0, warps_per_block, false, false, false, false, true, use_exp2, tag});
 			    };
 
 		    // Evidence-guided small search space:
@@ -4957,7 +4969,6 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 			    const bool intentir_evidence_on = has_evidence;
 			    for (bool use_exp2 : exp2_cands) add_strided_variant_with_ept(block_threads, (int)ept, use_exp2, tag_exp("seed", use_exp2));
 			    for (bool use_exp2 : exp2_cands) add_vec4_variant(block_threads, use_exp2, tag_exp("vec4_seed", use_exp2));
-			    for (bool use_exp2 : exp2_cands) add_ragged_variant(block_threads, use_exp2, tag_exp("ragged_seed", use_exp2));
 
 		    std::vector<int64_t> thread_cands;
 		    auto add_thread = [&](int64_t t) {
@@ -4992,41 +5003,46 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 				      for (int64_t t : thread_cands) add_strided_pow2_variant(t, "pow2_t" + std::to_string(t));
 				    }
 
-				    const int64_t warps_seed = std::max<int64_t>(1, std::min<int64_t>(8, block_threads / 32));
-				    for (bool use_exp2 : exp2_cands) {
-				      add_warp4_variant(warps_seed, use_exp2, tag_exp("warp4_seed", use_exp2));
-				      add_warp_expbuf_variant(warps_seed, use_exp2, tag_exp("warpexp_seed", use_exp2));
-				    }
+					    const int64_t warps_seed = std::max<int64_t>(1, std::min<int64_t>(8, block_threads / 32));
+					    for (bool use_exp2 : exp2_cands) {
+					      add_warp_ragged_variant(warps_seed, use_exp2, tag_exp("warprag_seed", use_exp2));
+					      add_warp4_variant(warps_seed, use_exp2, tag_exp("warp4_seed", use_exp2));
+					      add_warp_expbuf_variant(warps_seed, use_exp2, tag_exp("warpexp_seed", use_exp2));
+					    }
 
-				    // Always include a tiny warp neighborhood around the seed; without evidence we widen further.
-				    for (int64_t dw : {-1, +1}) {
-				      const int64_t w = warps_seed + dw;
-				      if (w <= 0 || w > 8 || w == warps_seed) continue;
-				      for (bool use_exp2 : exp2_cands) {
-				        add_warp4_variant(w, use_exp2, tag_exp("warp4_w" + std::to_string(w), use_exp2));
-				        add_warp_expbuf_variant(w, use_exp2, tag_exp("warpexp_w" + std::to_string(w), use_exp2));
-				      }
-				    }
+					    // Always include a tiny warp neighborhood around the seed; without evidence we widen further.
+					    for (int64_t dw : {-1, +1}) {
+					      const int64_t w = warps_seed + dw;
+					      if (w <= 0 || w > 8 || w == warps_seed) continue;
+					      for (bool use_exp2 : exp2_cands) {
+					        add_warp_ragged_variant(w, use_exp2, tag_exp("warprag_w" + std::to_string(w), use_exp2));
+					        add_warp4_variant(w, use_exp2, tag_exp("warp4_w" + std::to_string(w), use_exp2));
+					        add_warp_expbuf_variant(w, use_exp2, tag_exp("warpexp_w" + std::to_string(w), use_exp2));
+					      }
+					    }
 
 				    if (!intentir_evidence_on) {
 				      // Only widen the warp neighborhood without evidence; keep evidence-on minimal.
-				      if (warps_seed > 1) {
-				        for (bool use_exp2 : exp2_cands) {
-				          add_warp4_variant(warps_seed / 2, use_exp2, tag_exp("warp4_half", use_exp2));
-				          add_warp_expbuf_variant(warps_seed / 2, use_exp2, tag_exp("warpexp_half", use_exp2));
-				        }
-				      }
-				      for (bool use_exp2 : exp2_cands) {
-				        add_warp4_variant(1, use_exp2, tag_exp("warp4_1", use_exp2));
-				        add_warp_expbuf_variant(1, use_exp2, tag_exp("warpexp_1", use_exp2));
-				      }
-				      if (warps_seed < 8) {
-				        for (bool use_exp2 : exp2_cands) {
-				          add_warp4_variant(std::min<int64_t>(8, warps_seed * 2), use_exp2, tag_exp("warp4_double", use_exp2));
-				          add_warp_expbuf_variant(std::min<int64_t>(8, warps_seed * 2), use_exp2, tag_exp("warpexp_double", use_exp2));
-				        }
-				      }
-				    }
+					      if (warps_seed > 1) {
+					        for (bool use_exp2 : exp2_cands) {
+					          add_warp_ragged_variant(warps_seed / 2, use_exp2, tag_exp("warprag_half", use_exp2));
+					          add_warp4_variant(warps_seed / 2, use_exp2, tag_exp("warp4_half", use_exp2));
+					          add_warp_expbuf_variant(warps_seed / 2, use_exp2, tag_exp("warpexp_half", use_exp2));
+					        }
+					      }
+					      for (bool use_exp2 : exp2_cands) {
+					        add_warp_ragged_variant(1, use_exp2, tag_exp("warprag_1", use_exp2));
+					        add_warp4_variant(1, use_exp2, tag_exp("warp4_1", use_exp2));
+					        add_warp_expbuf_variant(1, use_exp2, tag_exp("warpexp_1", use_exp2));
+					      }
+					      if (warps_seed < 8) {
+					        for (bool use_exp2 : exp2_cands) {
+					          add_warp_ragged_variant(std::min<int64_t>(8, warps_seed * 2), use_exp2, tag_exp("warprag_double", use_exp2));
+					          add_warp4_variant(std::min<int64_t>(8, warps_seed * 2), use_exp2, tag_exp("warp4_double", use_exp2));
+					          add_warp_expbuf_variant(std::min<int64_t>(8, warps_seed * 2), use_exp2, tag_exp("warpexp_double", use_exp2));
+					        }
+					      }
+					    }
 
 				    if (variants.empty()) add_block_pair(block_threads, "fallback");
 
@@ -5049,7 +5065,11 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 			      w.line("constexpr int R = " + std::to_string(R) + ";");
 			      w.line("constexpr int C = " + std::to_string(C) + ";");
 			      const std::string exp2 = v.use_exp2 ? "true" : "false";
-			      if (v.ragged) {
+			      if (v.warp_ragged) {
+			        w.line("constexpr int WARPS_PER_BLOCK = " + std::to_string(v.rows_per_block) + ";");
+			        w.line("intentir_cuda::softmax_2d_last_f32_warp_ragged<WARPS_PER_BLOCK, " + std::to_string(C) + ", " + exp2 +
+			               ">(" + in_name + ", " + out_name + ", R);");
+			      } else if (v.ragged) {
 			        w.line("constexpr int BLOCK_THREADS = " + std::to_string(v.threads) + ";");
 			        w.line("intentir_cuda::softmax_2d_last_f32_ragged<BLOCK_THREADS, " + std::to_string(C) + ", " + exp2 + ">(" +
 			               in_name + ", " + out_name + ", R);");
@@ -5214,7 +5234,9 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 		      w.indent();
 	          w.line("intentir_cuda_selected_variant_idx = " + std::to_string(i) + ";");
 	          w.line("intentir_cuda_selected_variant_tag = \"" + v.suffix + "\";");
-	          if (!v.warp4 && !v.warp_expbuf) {
+	          if (v.warp_ragged) {
+	            w.line("intentir_cuda_fastpath_enabled = " + std::string((contract_full && specialize_dims) ? "1" : "0") + ";");
+	          } else if (!v.warp4 && !v.warp_expbuf) {
 	            const bool full_tile = contract_full && specialize_dims &&
 	                                   (v.vec4 ? (C == (int64_t)v.threads * 4LL * (int64_t)v.tiles)
 	                                           : (C == (int64_t)v.threads * (int64_t)v.ept));
@@ -5238,7 +5260,9 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 			    const std::string k0 = intent.name + "__" + v0.suffix;
 	        w.line("intentir_cuda_selected_variant_idx = 0;");
 	        w.line("intentir_cuda_selected_variant_tag = \"" + v0.suffix + "\";");
-	        if (!v0.warp4 && !v0.warp_expbuf) {
+	        if (v0.warp_ragged) {
+	          w.line("intentir_cuda_fastpath_enabled = " + std::string((contract_full && specialize_dims) ? "1" : "0") + ";");
+	        } else if (!v0.warp4 && !v0.warp_expbuf) {
 	          const bool full_tile = contract_full && specialize_dims &&
 	                                 (v0.vec4 ? (C == (int64_t)v0.threads * 4LL * (int64_t)v0.tiles)
 	                                          : (C == (int64_t)v0.threads * (int64_t)v0.ept));

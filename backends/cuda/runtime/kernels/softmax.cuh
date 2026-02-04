@@ -317,6 +317,82 @@ __device__ __forceinline__ void softmax_2d_last_f32_vec4(const float* __restrict
   }
 }
 
+// Warp-specialized contract fast path: one warp computes one row with warp
+// allreduces (no __syncthreads), using a ragged distribution to avoid per-element
+// bounds checks when C is not a multiple of 32.
+template <int WARPS_PER_BLOCK, int C, bool USE_EXP2>
+__device__ __forceinline__ void softmax_2d_last_f32_warp_ragged(const float* __restrict__ inp, float* __restrict__ out, int R) {
+  static_assert(WARPS_PER_BLOCK > 0 && WARPS_PER_BLOCK <= 8, "softmax warp_ragged supports 1..8 warps per block");
+  static_assert(C > 0 && C <= 1024, "softmax warp_ragged supports C in (0,1024]");
+  constexpr int WARP = 32;
+  constexpr int Q = C / WARP;
+  constexpr int REM = C - Q * WARP;
+  static_assert(Q >= 0, "softmax warp_ragged requires non-negative Q");
+  static_assert(Q <= 32, "softmax warp_ragged requires Q<=32");
+
+  const int tid = (int)threadIdx.x;
+  const int warp = tid >> 5;
+  const int lane = tid & 31;
+  if (warp >= WARPS_PER_BLOCK) return;
+
+  const int r = (int)blockIdx.x * WARPS_PER_BLOCK + warp;
+  if (r >= R) return;
+
+  const float* __restrict__ in_row = inp + (size_t)r * (size_t)C;
+  float* __restrict__ out_row = out + (size_t)r * (size_t)C;
+
+  float tmax = -INFINITY;
+  float expv[Q + ((REM > 0) ? 1 : 0)];
+
+  #pragma unroll
+  for (int i = 0; i < Q; ++i) {
+    const int c = lane + i * WARP;
+    const float v = intentir_ldg_f32(in_row + (size_t)c);
+    expv[i] = v;
+    tmax = fmaxf(tmax, v);
+  }
+  if constexpr (REM > 0) {
+    float v = -INFINITY;
+    if (lane < REM) {
+      const int c = lane + Q * WARP;
+      v = intentir_ldg_f32(in_row + (size_t)c);
+    }
+    expv[Q] = v;
+    tmax = fmaxf(tmax, v);
+  }
+
+  const float mx = warp_allreduce_max(tmax);
+
+  float tsum = 0.0f;
+  #pragma unroll
+  for (int i = 0; i < Q; ++i) {
+    const float e = softmax_fast_exp<USE_EXP2>(expv[i] - mx);
+    expv[i] = e;
+    tsum += e;
+  }
+  if constexpr (REM > 0) {
+    float e = 0.0f;
+    if (lane < REM) e = softmax_fast_exp<USE_EXP2>(expv[Q] - mx);
+    expv[Q] = e;
+    tsum += e;
+  }
+
+  const float sum = warp_allreduce_sum(tsum);
+  const float inv = __fdividef(1.0f, sum);
+
+  #pragma unroll
+  for (int i = 0; i < Q; ++i) {
+    const int c = lane + i * WARP;
+    out_row[(size_t)c] = expv[i] * inv;
+  }
+  if constexpr (REM > 0) {
+    if (lane < REM) {
+      const int c = lane + Q * WARP;
+      out_row[(size_t)c] = expv[Q] * inv;
+    }
+  }
+}
+
 template <int WARPS_PER_BLOCK, bool USE_EXP2>
 __device__ __forceinline__ void softmax_2d_last_f32_warp4(const float* __restrict__ inp, float* __restrict__ out, int R, int C) {
   static_assert(WARPS_PER_BLOCK > 0 && WARPS_PER_BLOCK <= 8, "softmax warp4 supports 1..8 warps per block");
