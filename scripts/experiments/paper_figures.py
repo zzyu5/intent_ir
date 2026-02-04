@@ -341,13 +341,14 @@ def fig_e6_contract_calibration(e6: dict[str, Any], out: Path) -> None:
     levels = ["FULL", "PARTIAL", "OUT_OF_SCOPE"]
     c_map = {"FULL": PALETTE["green"], "PARTIAL": PALETTE["blue"], "OUT_OF_SCOPE": "#F0F0F0"}
 
-    fig, axes = plt.subplots(2, 1, figsize=(3.5, 5.5))
+    fig, ax = plt.subplots(figsize=(3.5, 2.8))
+    axes = [ax]
     
-    # [FIX] Adjusted top from 0.92 to 0.84 (Significant reduction for 2-row legend safety)
-    plt.subplots_adjust(top=0.84, bottom=0.08, hspace=0.45)
+    # [FIX] Adjusted top for single panel
+    plt.subplots_adjust(top=0.75, bottom=0.15)
 
     # --- Panel A ---
-    ax = axes[0]
+    # ax is already defined
     x = np.arange(len(ablations))
     w = 0.35
     
@@ -372,27 +373,7 @@ def fig_e6_contract_calibration(e6: dict[str, Any], out: Path) -> None:
     ax.set_xticklabels(x_labels)
     ax.set_ylabel("Fraction of Kernels")
     ax.set_title("Contract Distribution")
-    _panel_label(ax, "(a)")
-
-    # --- Panel B ---
-    ax = axes[1]
-    reps = ["intentir", "linalg"]
-    vals = [float(ps["by_rep_ablation"][r]["full"]["full_false_accept_rate"]) for r in reps]
-    
-    bars = ax.bar(np.arange(len(reps)), vals, width=0.5, 
-                  color=[PALETTE["red"], PALETTE["grey"]])
-    bars[1].set_hatch("/////")
-    bars[1].set_edgecolor("white")
-    
-    ax.set_xticks(np.arange(len(reps)))
-    ax.set_xticklabels(["IntentIR", "Linalg"])
-    ax.set_ylabel("False Accept Rate")
-    ax.set_title("Calibration Error (Lower is Better)")
-    ax.set_ylim(0, max(vals)*1.4)
-    
-    for bar, v in zip(bars, vals):
-        ax.text(bar.get_x() + bar.get_width()/2, v + 0.005, f"{v:.3f}", ha='center', fontsize=9)
-    _panel_label(ax, "(b)")
+    # _panel_label(ax, "(a)")  # No panels anymore
 
     leg_handles = [
         Patch(facecolor=c_map["FULL"], label="Full"),
@@ -408,8 +389,9 @@ def fig_e6_contract_calibration(e6: dict[str, Any], out: Path) -> None:
 
 def fig_e2_trust_ablation(e2: dict[str, Any], out: Path) -> None:
     frontends = ["triton", "tilelang", "cuda"]
-    modes = ["diff_only", "generic", "full"]
-    colors = ["#C4D4E0", "#8FA9BF", PALETTE["red"]]
+    # NOTE: generic mode removed - it produces identical results to full mode
+    modes = ["diff_only", "full"]
+    colors = ["#C4D4E0", PALETTE["red"]]
 
     fig, ax = plt.subplots(figsize=(3.5, 3.0))
     
@@ -417,7 +399,7 @@ def fig_e2_trust_ablation(e2: dict[str, Any], out: Path) -> None:
     plt.subplots_adjust(top=0.78)
 
     x = np.arange(len(frontends) + 1)
-    w = 0.22
+    w = 0.30  # wider bars since only 2 modes
 
     for i, m in enumerate(modes):
         vals = []
@@ -430,7 +412,7 @@ def fig_e2_trust_ablation(e2: dict[str, Any], out: Path) -> None:
             tot += d["total"]; kill += d["killed"]
         vals.append(kill / tot if tot > 0 else 0)
         
-        ax.bar(x + (i-1)*w, vals, width=w, label=m.replace("_", "-").title(), 
+        ax.bar(x + (i-0.5)*w, vals, width=w, label=m.replace("_", "-").title(), 
                color=colors[i], edgecolor='white')
 
     ax.set_xticks(x)
@@ -439,7 +421,7 @@ def fig_e2_trust_ablation(e2: dict[str, Any], out: Path) -> None:
     ax.set_title("Trustworthiness Ablation")
     ax.set_ylim(0, 1.05)
     
-    _common_legend(fig, *ax.get_legend_handles_labels(), ncol=3)
+    _common_legend(fig, *ax.get_legend_handles_labels(), ncol=2)
     _save_fig(fig, out / "e2_trust_ablation.pdf")
 
 

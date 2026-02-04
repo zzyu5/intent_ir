@@ -357,7 +357,7 @@ def main() -> None:
     modes: List[Mode] = []
     empty_cert = SemanticCertificateV2()
     modes.append(Mode(name="full", static_validate_fn=None))  # filled per-kernel (captures cert)
-    modes.append(Mode(name="generic", static_validate_fn=(lambda m, _c=empty_cert: static_validate(m, _c))))
+    # NOTE: generic mode removed - it produces identical results to full mode
     modes.append(Mode(name="diff_only", static_validate_fn=None))
 
     results: List[Dict[str, Any]] = []

@@ -608,6 +608,56 @@ def _default_relations(
 
         relations.append(("MR_masked_softmax_flip", _transform_flip_mask, _check_flip_mask))
 
+    if "upsample" in kernel_name:
+        def _transform_affine_shift(inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+            out = inputs.copy()
+            # y = INTERP(x) -> y + C = INTERP(x + C) for linear/bicubic?
+            # Actually simpler: upsample(x + C) should be upsample(x) + C for purely linear ops
+            # But bicubic might clip? If no clipping, it holds.
+            # Let's try constant shift which detects const_value survivors effectively.
+            if "input" in out:
+                out["input"] = out["input"] + 1.0
+            elif "X" in out:
+                out["X"] = out["X"] + 1.0
+            return out
+
+        def _check_affine_shift(base_out: Dict[str, np.ndarray], tr_out: Dict[str, np.ndarray], bindings: Dict[str, int], *, atol: float, rtol: float) -> Tuple[bool, str]:
+            y0 = np.asarray(base_out.get("out") if "out" in base_out else base_out["output"], dtype=np.float32)
+            y1 = np.asarray(tr_out.get("out") if "out" in tr_out else tr_out["output"], dtype=np.float32)
+            # Expect y1 = y0 + 1.0
+            expected = y0 + 1.0
+            # Relax tolerance slightly for accumulative error
+            diff = np.abs(y1 - expected)
+            # Use slightly loose tolerance: 1e-4 + 1e-4*y
+            limit = 1e-3 + 1e-3 * np.abs(expected) 
+            not_equiv = np.any(diff > limit)
+            if not_equiv:
+                 max_err = np.max(diff)
+                 return True, f"affine shift violated (max diff {max_err})"
+            return False, "affine shift held"
+
+        relations.append(("MR_upsample_affine_shift", _transform_affine_shift, _check_affine_shift))
+
+    if "relu" in kernel_name:
+        def _transform_relu_scale(inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+            out = inputs.copy()
+            # ReLU(k*x) = k*ReLU(x) for k > 0
+            k = 2.0
+            for key in out:
+                if out[key].dtype == np.float32: # primitive checking
+                     out[key] = out[key] * k
+            return out
+
+        def _check_relu_scale(base_out: Dict[str, np.ndarray], tr_out: Dict[str, np.ndarray], bindings: Dict[str, int], *, atol: float, rtol: float) -> Tuple[bool, str]:
+             y0 = np.asarray(base_out.get("out") if "out" in base_out else base_out["output"], dtype=np.float32)
+             y1 = np.asarray(tr_out.get("out") if "out" in tr_out else tr_out["output"], dtype=np.float32)
+             expected = y0 * 2.0
+             # Allow loose tolerance for large reductions if any, but relu is elemwise
+             not_equiv = not np.allclose(y1, expected, atol=1e-3, rtol=1e-3)
+             return not_equiv, ("relu homogeneity violated" if not_equiv else "relu homogeneity held")
+
+        relations.append(("MR_relu_scale_pos", _transform_relu_scale, _check_relu_scale))
+
     return relations
 
 
