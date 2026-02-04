@@ -152,7 +152,7 @@ def _annotate_bars(ax: plt.Axes, bars, fmt="{:.2f}", threshold=0.0, inside=True,
             
             ax.text(bar.get_x() + bar.get_width()/2., y,
                     fmt.format(height), ha='center', va=va, 
-                    fontsize=4.5, color=c, fontweight='bold', zorder=15)
+                    fontsize=3.5, color=c, fontweight='bold', zorder=15)
 
 
 # =============================================================================
