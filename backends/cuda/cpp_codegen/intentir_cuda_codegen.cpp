@@ -5010,21 +5010,28 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 					      add_warp_expbuf_variant(warps_seed, use_exp2, tag_exp("warpexp_seed", use_exp2));
 					    }
 
-					    // Always include a tiny warp neighborhood around the seed; without evidence we widen further.
-					    for (int64_t dw : {-1, +1}) {
-					      const int64_t w = warps_seed + dw;
-					      if (w <= 0 || w > 8 || w == warps_seed) continue;
-					      for (bool use_exp2 : exp2_cands) {
-					        add_warp_ragged_variant(w, use_exp2, tag_exp("warprag_w" + std::to_string(w), use_exp2));
-					        add_warp4_variant(w, use_exp2, tag_exp("warp4_w" + std::to_string(w), use_exp2));
-					        add_warp_expbuf_variant(w, use_exp2, tag_exp("warpexp_w" + std::to_string(w), use_exp2));
-					      }
-					    }
+						    // Always include a tiny warp neighborhood around the seed; without evidence we widen further.
+						    for (int64_t dw : {-1, +1}) {
+						      const int64_t w = warps_seed + dw;
+						      if (w <= 0 || w > 8 || w == warps_seed) continue;
+						      for (bool use_exp2 : exp2_cands) {
+						        add_warp_ragged_variant(w, use_exp2, tag_exp("warprag_w" + std::to_string(w), use_exp2));
+						        add_warp4_variant(w, use_exp2, tag_exp("warp4_w" + std::to_string(w), use_exp2));
+						        add_warp_expbuf_variant(w, use_exp2, tag_exp("warpexp_w" + std::to_string(w), use_exp2));
+						      }
+						    }
+						    if (intentir_evidence_on) {
+						      // Evidence-on still needs a "warp=1" escape hatch: on some GPUs the best
+						      // contract-fastpath is a single-warp ragged kernel (e.g., when C is small).
+						      for (bool use_exp2 : exp2_cands) {
+						        add_warp_ragged_variant(1, use_exp2, tag_exp("warprag_1", use_exp2));
+						      }
+						    }
 
-				    if (!intentir_evidence_on) {
-				      // Only widen the warp neighborhood without evidence; keep evidence-on minimal.
-					      if (warps_seed > 1) {
-					        for (bool use_exp2 : exp2_cands) {
+					    if (!intentir_evidence_on) {
+					      // Only widen the warp neighborhood without evidence; keep evidence-on minimal.
+						      if (warps_seed > 1) {
+						        for (bool use_exp2 : exp2_cands) {
 					          add_warp_ragged_variant(warps_seed / 2, use_exp2, tag_exp("warprag_half", use_exp2));
 					          add_warp4_variant(warps_seed / 2, use_exp2, tag_exp("warp4_half", use_exp2));
 					          add_warp_expbuf_variant(warps_seed / 2, use_exp2, tag_exp("warpexp_half", use_exp2));
