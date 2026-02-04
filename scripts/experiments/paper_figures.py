@@ -142,7 +142,8 @@ def _annotate_bars(ax: plt.Axes, bars, fmt="{:.2f}", threshold=0.0, inside=True,
                 # Place inside top
                 y = height - 0.02
                 va = 'top'
-                c = color
+                # [FIX]: User complained about visibility. Force BLACK even inside.
+                c = "black" # color -> ignored, force high contrast
             else:
                 # Place on top
                 y = height + 0.01
@@ -507,8 +508,18 @@ def fig_e4_consistency(e4: dict[str, Any], out: Path) -> None:
     for i, v in enumerate(expanded): axes[0].text(v+0.02, i+0.17, f"{v:.1%}", fontsize=8, va='center')
 
     clean_keys = [k.replace("tilelang:", "").replace("_", " ").capitalize() for k in keys]
-    _do_barh(axes[1], clean_keys, [r_int.get(k,0) for k in keys], [r_exp.get(k,0) for k in keys], "Benign Drift Sources", "(b)")
+    vals1 = [r_int.get(k,0) for k in keys]
+    vals2 = [r_exp.get(k,0) for k in keys]
+    _do_barh(axes[1], clean_keys, vals1, vals2, "Benign Drift Sources", "(b)")
     axes[1].set_xlabel("Count (out of 30)")
+    
+    # [FIX] Add labels for Panel B
+    xmax = max(max(vals1), max(vals2)) if (vals1 or vals2) else 1
+    axes[1].set_xlim(0, xmax * 1.15)
+    for i, v in enumerate(vals1):
+        if v > 0: axes[1].text(v + 0.2, i-0.17, str(v), fontsize=7, va='center', color=PALETTE["dark"])
+    for i, v in enumerate(vals2):
+        if v > 0: axes[1].text(v + 0.2, i+0.17, str(v), fontsize=7, va='center', color=PALETTE["dark"])
 
     handles = [Patch(facecolor=PALETTE["blue"], label="Macro-level"),
                Patch(facecolor="#D99F94", label="Expanded primitives")]
