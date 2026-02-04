@@ -138,6 +138,79 @@ __device__ __forceinline__ void softmax_2d_last_f32(const float* __restrict__ in
   }
 }
 
+// Contract-gated fast path: when C is a compile-time constant but not a multiple of
+// BLOCK_THREADS, we can still eliminate per-element bounds checks by distributing the
+// remainder across the first (C % BLOCK_THREADS) lanes. This keeps the inner loop
+// branch-free and makes the "contract enables aggressive specialization" story
+// measurable (contract_off disables this variant).
+template <int BLOCK_THREADS, int C, bool USE_EXP2>
+__device__ __forceinline__ void softmax_2d_last_f32_ragged(const float* __restrict__ inp, float* __restrict__ out, int R) {
+  static_assert(BLOCK_THREADS > 0 && BLOCK_THREADS <= 1024, "softmax ragged block size must be in (0,1024]");
+  static_assert((BLOCK_THREADS % 32) == 0, "softmax ragged block must be a multiple of 32 threads");
+  static_assert(C > 0 && C <= 1024, "softmax ragged supports C in (0,1024]");
+  constexpr int Q = C / BLOCK_THREADS;
+  constexpr int REM = C - Q * BLOCK_THREADS;
+  static_assert(Q >= 0, "softmax ragged requires non-negative Q");
+  static_assert(Q <= 32, "softmax ragged requires Q<=32");
+
+  const int r = (int)blockIdx.x;
+  if (r >= R) return;
+  const float* __restrict__ in_row = inp + (size_t)r * (size_t)C;
+  float* __restrict__ out_row = out + (size_t)r * (size_t)C;
+  const int tid = (int)threadIdx.x;
+
+  float tmax = -INFINITY;
+  float expv[Q + ((REM > 0) ? 1 : 0)];
+
+  #pragma unroll
+  for (int i = 0; i < Q; ++i) {
+    const int c = tid + i * BLOCK_THREADS;
+    const float v = intentir_ldg_f32(in_row + (size_t)c);
+    expv[i] = v;
+    tmax = fmaxf(tmax, v);
+  }
+  if constexpr (REM > 0) {
+    float v = -INFINITY;
+    if (tid < REM) {
+      const int c = tid + Q * BLOCK_THREADS;
+      v = intentir_ldg_f32(in_row + (size_t)c);
+    }
+    expv[Q] = v;
+    tmax = fmaxf(tmax, v);
+  }
+
+  const float mx = block_allreduce_max_f32<BLOCK_THREADS>(tmax);
+
+  float tsum = 0.0f;
+  #pragma unroll
+  for (int i = 0; i < Q; ++i) {
+    const float e = softmax_fast_exp<USE_EXP2>(expv[i] - mx);
+    expv[i] = e;
+    tsum += e;
+  }
+  if constexpr (REM > 0) {
+    float e = 0.0f;
+    if (tid < REM) e = softmax_fast_exp<USE_EXP2>(expv[Q] - mx);
+    expv[Q] = e;
+    tsum += e;
+  }
+
+  const float sum = block_allreduce_sum_f32<BLOCK_THREADS>(tsum);
+  const float inv = __fdividef(1.0f, sum);
+
+  #pragma unroll
+  for (int i = 0; i < Q; ++i) {
+    const int c = tid + i * BLOCK_THREADS;
+    out_row[(size_t)c] = expv[i] * inv;
+  }
+  if constexpr (REM > 0) {
+    if (tid < REM) {
+      const int c = tid + Q * BLOCK_THREADS;
+      out_row[(size_t)c] = expv[Q] * inv;
+    }
+  }
+}
+
 template <int BLOCK_THREADS, int TILES, bool USE_EXP2, bool FULL_TILE = false>
 __device__ __forceinline__ void softmax_2d_last_f32_vec4(const float* __restrict__ inp, float* __restrict__ out, int R, int C) {
   static_assert(BLOCK_THREADS > 0 && BLOCK_THREADS <= 1024, "softmax vec4 block size must be in (0,1024]");
