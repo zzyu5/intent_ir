@@ -81,7 +81,10 @@ __device__ __forceinline__ void dropout_f32_vec4(
   const int64_t tile = threads * (int64_t)EPT;
   const int64_t base = (int64_t)blockIdx.x * tile + (int64_t)tid * (int64_t)EPT;
   const uint64_t seed = (uint64_t)seed_u32;
-  const bool aligned = (((uintptr_t)(X + base) & 15u) == 0u) && (((uintptr_t)(Y + base) & 15u) == 0u);
+  bool aligned = false;
+  if constexpr (FULL_TILE) {
+    aligned = (((uintptr_t)(X + base) & 15u) == 0u) && (((uintptr_t)(Y + base) & 15u) == 0u);
+  }
 
   if (p <= 0.0f) {
     #pragma unroll
@@ -90,7 +93,7 @@ __device__ __forceinline__ void dropout_f32_vec4(
       if constexpr (!FULL_TILE) {
         if (i >= n_elements) break;
       }
-      if (aligned && (FULL_TILE || (i + 3) < n_elements)) {
+      if (aligned) {
         const float4 x4 = *reinterpret_cast<const float4*>(X + i);
         *reinterpret_cast<float4*>(Y + i) = x4;
       } else {
@@ -114,7 +117,7 @@ __device__ __forceinline__ void dropout_f32_vec4(
       if constexpr (!FULL_TILE) {
         if (i >= n_elements) break;
       }
-      if (aligned && (FULL_TILE || (i + 3) < n_elements)) {
+      if (aligned) {
         *reinterpret_cast<float4*>(Y + i) = z4;
       } else {
         #pragma unroll
@@ -141,7 +144,7 @@ __device__ __forceinline__ void dropout_f32_vec4(
     }
     const intentir_uint4 rnd = intentir_philox_randint4_u32_rounds<N_ROUNDS>(seed, (uint32_t)i);
 
-    if (aligned && (FULL_TILE || (i + 3) < n_elements)) {
+    if (aligned) {
       const float4 x4 = *reinterpret_cast<const float4*>(X + i);
       float4 y4;
       int32_t xi0 = (int32_t)rnd.x;

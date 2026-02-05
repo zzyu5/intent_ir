@@ -85,6 +85,259 @@ def _latest_e6_2_coverage(e6_dir: Path) -> Path | None:
     return best or cand[-1]
 
 
+def _best_e4_consistency(e4_dir: Path) -> Path | None:
+    """
+    Prefer the *most complete* E4 artifact for paper exports.
+
+    The E4 directory can contain many debug/subset re-runs; picking the newest
+    file by mtime is brittle and can accidentally export a partial run where
+    some pairs are missing Intent/cert.
+    """
+    patterns = [
+        "e4_triton_tilelang_artifact_intersection_axisroles_v*.json",
+        "e4_*artifact_intersection*.json",
+        "e4_cross_frontend_consistency*.json",
+    ]
+    cand: list[Path] = []
+    seen: set[str] = set()
+    for pat in patterns:
+        for p in e4_dir.glob(pat):
+            if not p.is_file():
+                continue
+            sp = str(p)
+            if sp in seen:
+                continue
+            seen.add(sp)
+            cand.append(p)
+    if not cand:
+        return None
+
+    best: Path | None = None
+    best_score: tuple[int, int, int, float] | None = None
+    for p in cand:
+        try:
+            obj = _load_json(p)
+        except Exception:
+            continue
+        if str(obj.get("experiment") or "") != "E4_cross_frontend_consistency":
+            continue
+        s = obj.get("summary")
+        if not isinstance(s, dict):
+            continue
+        n = s.get("n")
+        if not isinstance(n, int) or n <= 0:
+            n = len(list(obj.get("results") or []))
+
+        struct_ok = s.get("intent_structural_ok")
+        if not isinstance(struct_ok, int):
+            rate = s.get("intent_structural_ok_rate")
+            if isinstance(rate, (int, float)) and n > 0:
+                struct_ok = int(round(float(rate) * float(n)))
+            else:
+                struct_ok = 0
+
+        portable_ok = s.get("intent_ok")
+        if not isinstance(portable_ok, int):
+            rate = s.get("intent_ok_rate")
+            if isinstance(rate, (int, float)) and n > 0:
+                portable_ok = int(round(float(rate) * float(n)))
+            else:
+                portable_ok = 0
+
+        score = (int(struct_ok), int(portable_ok), int(n), float(p.stat().st_mtime))
+        if best is None or best_score is None or score > best_score:
+            best = p
+            best_score = score
+
+    return best or _latest_file(e4_dir, patterns[0]) or _latest_file(e4_dir, patterns[1])
+
+
+def _augment_e4_summary(e4_obj: dict[str, Any]) -> dict[str, Any]:
+    """
+    Add a paper-friendly "normalization ladder" view to E4.
+
+    We compute exact-match rates under progressively more semantic normalizations:
+      raw -> drop schedule hints -> portable canonical form -> structural hash
+    and attribute drift to the earliest step that resolves it.
+
+    This is derived from the per-pair `results[*].per_frontend` payload that is
+    already present in E4 artifacts.
+    """
+
+    s0 = e4_obj.get("summary")
+    s: dict[str, Any] = dict(s0) if isinstance(s0, dict) else {}
+
+    frontends = e4_obj.get("frontends")
+    fes = [str(x) for x in (frontends or []) if str(x).strip()] if isinstance(frontends, list) else []
+    if len(fes) < 2:
+        return s
+
+    base_fe = str(fes[0])
+    other_fes = [str(x) for x in fes[1:]]
+
+    def _drop_parallel_axes(sig: dict[str, Any]) -> dict[str, Any]:
+        out = dict(sig)
+        out.pop("parallel_axes", None)
+        return out
+
+    def _as_bool(v: Any) -> bool:
+        if isinstance(v, bool):
+            return bool(v)
+        if isinstance(v, (int, float)):
+            return int(v) != 0
+        return False
+
+    def _drift_bucket(*, contract_oos: bool, ok_structural: bool, ok_raw: bool, ok_no_schedule: bool, ok_portable: bool) -> str:
+        if contract_oos:
+            return "facts_missing_or_out_of_scope"
+        if not ok_structural:
+            return "semantic_or_interface_mismatch"
+        if ok_raw:
+            return "raw_exact"
+        if ok_no_schedule:
+            return "schedule_hint_drift"
+        if ok_portable:
+            return "specialization_view_drift"
+        return "representation_drift"
+
+    results = e4_obj.get("results")
+    rows = [r for r in list(results or []) if isinstance(r, dict)]
+    if not rows:
+        return s
+
+    raw_ok = 0
+    nosched_ok = 0
+    portable_ok = 0
+    structural_ok = 0
+    drift_counts: dict[str, int] = {}
+    by_tier_aug: dict[str, dict[str, Any]] = {}
+    by_kind_aug: dict[str, dict[str, Any]] = {}
+
+    for r in rows:
+        per = r.get("per_frontend")
+        if not isinstance(per, dict):
+            continue
+
+        tier = str(r.get("anchor_tier") or "D_none")
+        kind = str(r.get("kernel_kind") or "unknown")
+
+        ok = r.get("ok")
+        ok_struct = _as_bool(ok.get("intent_structural") if isinstance(ok, dict) else None)
+
+        base = per.get(base_fe) if isinstance(per.get(base_fe), dict) else {}
+        base_sig = base.get("sig_intent")
+        base_strict = base.get("sig_intent_strict")
+
+        ok_raw = isinstance(base_sig, dict)
+        ok_no_schedule = isinstance(base_sig, dict)
+        ok_portable = isinstance(base_strict, dict)
+
+        for fe in other_fes:
+            other = per.get(fe) if isinstance(per.get(fe), dict) else {}
+            sig = other.get("sig_intent")
+            sig_strict = other.get("sig_intent_strict")
+            if not isinstance(sig, dict) or not isinstance(base_sig, dict):
+                ok_raw = False
+                ok_no_schedule = False
+            else:
+                if sig != base_sig:
+                    ok_raw = False
+                if _drop_parallel_axes(sig) != _drop_parallel_axes(base_sig):
+                    ok_no_schedule = False
+            if not (isinstance(sig_strict, dict) and isinstance(base_strict, dict) and sig_strict == base_strict):
+                ok_portable = False
+
+        contract_oos = any(
+            str((per.get(fe) or {}).get("contract")) == "OUT_OF_SCOPE"
+            for fe in fes
+            if isinstance(per.get(fe), dict)
+        )
+        bucket = _drift_bucket(
+            contract_oos=bool(contract_oos),
+            ok_structural=bool(ok_struct),
+            ok_raw=bool(ok_raw),
+            ok_no_schedule=bool(ok_no_schedule),
+            ok_portable=bool(ok_portable),
+        )
+
+        raw_ok += int(ok_raw)
+        nosched_ok += int(ok_no_schedule)
+        portable_ok += int(ok_portable)
+        structural_ok += int(ok_struct)
+        drift_counts[bucket] = drift_counts.get(bucket, 0) + 1
+
+        bt = by_tier_aug.setdefault(
+            tier,
+            {
+                "n": 0,
+                "ok_intent_raw": 0,
+                "ok_intent_no_schedule": 0,
+                "ok_intent": 0,
+                "ok_intent_structural": 0,
+                "drift_breakdown": {},
+            },
+        )
+        bt["n"] = int(bt.get("n", 0)) + 1
+        bt["ok_intent_raw"] = int(bt.get("ok_intent_raw", 0)) + int(ok_raw)
+        bt["ok_intent_no_schedule"] = int(bt.get("ok_intent_no_schedule", 0)) + int(ok_no_schedule)
+        bt["ok_intent"] = int(bt.get("ok_intent", 0)) + int(ok_portable)
+        bt["ok_intent_structural"] = int(bt.get("ok_intent_structural", 0)) + int(ok_struct)
+        dbt = bt.setdefault("drift_breakdown", {})
+        if isinstance(dbt, dict):
+            dbt[bucket] = int(dbt.get(bucket, 0)) + 1
+
+        bk = by_kind_aug.setdefault(
+            kind,
+            {
+                "n": 0,
+                "ok_intent_raw": 0,
+                "ok_intent_no_schedule": 0,
+                "ok_intent": 0,
+                "ok_intent_structural": 0,
+                "drift_breakdown": {},
+            },
+        )
+        bk["n"] = int(bk.get("n", 0)) + 1
+        bk["ok_intent_raw"] = int(bk.get("ok_intent_raw", 0)) + int(ok_raw)
+        bk["ok_intent_no_schedule"] = int(bk.get("ok_intent_no_schedule", 0)) + int(ok_no_schedule)
+        bk["ok_intent"] = int(bk.get("ok_intent", 0)) + int(ok_portable)
+        bk["ok_intent_structural"] = int(bk.get("ok_intent_structural", 0)) + int(ok_struct)
+        dbk = bk.setdefault("drift_breakdown", {})
+        if isinstance(dbk, dict):
+            dbk[bucket] = int(dbk.get(bucket, 0)) + 1
+
+    n = len(rows)
+    s["n"] = int(s.get("n")) if isinstance(s.get("n"), int) else int(n)
+    s["intent_raw_ok"] = int(raw_ok)
+    s["intent_raw_ok_rate"] = (float(raw_ok) / float(n)) if n > 0 else 0.0
+    s["intent_no_schedule_ok"] = int(nosched_ok)
+    s["intent_no_schedule_ok_rate"] = (float(nosched_ok) / float(n)) if n > 0 else 0.0
+    s["intent_ok"] = int(portable_ok)
+    s["intent_ok_rate"] = (float(portable_ok) / float(n)) if n > 0 else 0.0
+    s["intent_structural_ok"] = int(structural_ok)
+    s["intent_structural_ok_rate"] = (float(structural_ok) / float(n)) if n > 0 else 0.0
+    s["drift_breakdown"] = {k: int(v) for k, v in sorted(drift_counts.items(), key=lambda kv: (-int(kv[1]), str(kv[0])))}
+
+    # Merge augmented per-tier/per-kind stats into the original summary if present.
+    by_tier_out: dict[str, Any] = dict(s.get("by_tier") or {}) if isinstance(s.get("by_tier"), dict) else {}
+    for tier, aug in by_tier_aug.items():
+        base = by_tier_out.get(tier)
+        merged = dict(base) if isinstance(base, dict) else {}
+        merged.update(aug)
+        by_tier_out[str(tier)] = merged
+    s["by_tier"] = by_tier_out
+
+    by_kind_out: dict[str, Any] = dict(s.get("by_kind") or {}) if isinstance(s.get("by_kind"), dict) else {}
+    for kind, aug in by_kind_aug.items():
+        base = by_kind_out.get(kind)
+        merged = dict(base) if isinstance(base, dict) else {}
+        merged.update(aug)
+        by_kind_out[str(kind)] = merged
+    s["by_kind"] = by_kind_out
+
+    return s
+
+
 def _geom_mean(xs: list[float]) -> float | None:
     xs = [float(x) for x in xs if isinstance(x, (int, float)) and float(x) > 0]
     if not xs:
@@ -519,10 +772,11 @@ def main() -> None:
     )
 
     # E4: cross-frontend consistency.
-    e4_src = _latest_file(e4_dir, "e4_triton_tilelang_artifact_intersection_axisroles_v*.json") or _latest_file(
+    e4_src = _best_e4_consistency(e4_dir) or _latest_file(e4_dir, "e4_triton_tilelang_artifact_intersection_axisroles_v*.json") or _latest_file(
         e4_dir, "e4_*artifact_intersection*.json"
     )
     e4_obj = _load_json(e4_src) if (e4_src and e4_src.exists()) else {}
+    e4_summary = _augment_e4_summary(e4_obj) if isinstance(e4_obj, dict) else {}
     _write_json(
         paths.e4,
         {
@@ -532,7 +786,7 @@ def main() -> None:
             "frontends": e4_obj.get("frontends"),
             "suite": e4_obj.get("suite"),
             "kernels": e4_obj.get("kernels"),
-            "summary": e4_obj.get("summary"),
+            "summary": e4_summary,
         },
     )
 

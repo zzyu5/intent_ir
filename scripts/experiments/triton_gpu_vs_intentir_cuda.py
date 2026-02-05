@@ -18,6 +18,7 @@ import argparse
 import json
 import math
 import os
+import statistics
 import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Tuple, Union
@@ -99,8 +100,7 @@ def _bench_cuda_repeated(fn: Callable[[], None], *, warmup: int, iters: int, rep
     times: list[float] = []
     for _ in range(rs):
         times.append(_bench_cuda(fn, warmup=int(warmup), iters=int(iters)))
-    times_sorted = sorted(times)
-    median = times_sorted[len(times_sorted) // 2]
+    median = float(statistics.median(times))
     return median, times
 
 
@@ -138,8 +138,7 @@ def _bench_cuda_graph_repeated(fn: Callable[[], None], *, warmup: int, iters: in
         torch.cuda.synchronize()
         ms = float(start.elapsed_time(end))
         times.append((ms * 1e6) / float(iters))
-    times_sorted = sorted(times)
-    median = times_sorted[len(times_sorted) // 2]
+    median = float(statistics.median(times))
     return median, times
 
 
@@ -201,9 +200,7 @@ def _bench_cuda_graph_multi_repeated(
     out: dict[str, tuple[float, list[float]]] = {}
     for n in names:
         ts = times[n]
-        ts_sorted = sorted(ts)
-        median = ts_sorted[len(ts_sorted) // 2]
-        out[n] = (median, ts)
+        out[n] = (float(statistics.median(ts)), ts)
     return out
 
 
@@ -714,6 +711,9 @@ def main() -> None:
         help="Override shape bindings as KEY=VAL (repeatable). VAL parsed as int/float/str.",
     )
     args = ap.parse_args()
+
+    if int(args.repeats) % 2 == 0:
+        _log(f"[WARN] --repeats={int(args.repeats)} is even. Prefer an odd repeats count (e.g., 3/5) for a more robust median.")
 
     # This experiment compares *kernel runtime*; enabling fast-math for our kernels
     # makes the comparison fairer because Triton GPU kernels typically use fast math

@@ -580,6 +580,39 @@ def _strict_normalize_sig(sig: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _drop_parallel_axes(sig: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(sig)
+    out.pop("parallel_axes", None)
+    return out
+
+
+def _drift_bucket(
+    *,
+    contract_oos: bool,
+    ok_structural: bool,
+    ok_raw: bool,
+    ok_no_schedule: bool,
+    ok_portable: bool,
+) -> str:
+    """
+    Attribute mismatches to the first normalization step that resolves them.
+
+    Order matters:
+      raw -> drop schedule hints -> portable canonicalization -> structural hash
+    """
+    if contract_oos:
+        return "facts_missing_or_out_of_scope"
+    if not ok_structural:
+        return "semantic_or_interface_mismatch"
+    if ok_raw:
+        return "raw_exact"
+    if ok_no_schedule:
+        return "schedule_hint_drift"
+    if ok_portable:
+        return "specialization_view_drift"
+    return "representation_drift"
+
+
 def _diff_reasons(a: Dict[str, Any], b: Dict[str, Any]) -> List[str]:
     reasons: List[str] = []
     if a.get("ops") != b.get("ops"):
@@ -821,6 +854,8 @@ class PairResult:
     kernel: str
     anchor_tier: str
     kernel_kind: str
+    ok_intent_raw: bool
+    ok_intent_no_schedule: bool
     ok_intent: bool
     ok_expanded: bool
     ok_intent_structural: bool
@@ -831,6 +866,7 @@ class PairResult:
     reasons_expanded: List[str]
     reasons_intent_structural: List[str]
     reasons_expanded_structural: List[str]
+    drift_bucket: str
     sigs: Dict[str, Any]
 
 
@@ -926,7 +962,9 @@ def main() -> None:
         per_fe: Dict[str, Dict[str, Any]] = {}
         tier = "D_none"
         kind = "unknown"
-        ok_intent = True  # strict
+        ok_intent_raw = True
+        ok_intent_no_schedule = True
+        ok_intent = True  # strict (portable canonical form)
         ok_expanded = True  # strict
         ok_intent_struct = True
         ok_expanded_struct = True
@@ -950,6 +988,8 @@ def main() -> None:
                     fresh = _run_pipeline(fe, k, out_dir=out_dir, cases_limit=int(args.cases_limit))
                     report_path.write_text(json.dumps(fresh, indent=2, ensure_ascii=False), encoding="utf-8")
                 except Exception as e:
+                    ok_intent_raw = False
+                    ok_intent_no_schedule = False
                     ok_intent = False
                     ok_expanded = False
                     ok_intent_struct = False
@@ -962,6 +1002,8 @@ def main() -> None:
                     reasons_expanded_struct.append(f"refresh_failed:{fe}:{type(e).__name__}")
                     continue
             if not report_path.exists():
+                ok_intent_raw = False
+                ok_intent_no_schedule = False
                 ok_intent = False
                 ok_expanded = False
                 ok_intent_struct = False
@@ -978,6 +1020,8 @@ def main() -> None:
             expanded_json = rep.get("intent_expanded") or intent_json
             cert_json = rep.get("certificate_v2")
             if not isinstance(intent_json, dict) or not isinstance(expanded_json, dict) or not isinstance(cert_json, dict):
+                ok_intent_raw = False
+                ok_intent_no_schedule = False
                 ok_intent = False
                 ok_expanded = False
                 ok_intent_struct = False
@@ -993,6 +1037,8 @@ def main() -> None:
                 intent = canonicalize_for_consistency(IntentFunction.from_json_dict(intent_json))
                 intent_expanded = canonicalize_for_consistency(IntentFunction.from_json_dict(expanded_json))
             except Exception as e:
+                ok_intent_raw = False
+                ok_intent_no_schedule = False
                 ok_intent = False
                 ok_expanded = False
                 ok_intent_struct = False
@@ -1028,6 +1074,8 @@ def main() -> None:
         base_exp_sig = per_fe.get(base_fe, {}).get("sig_expanded")
         base_exp_sig_strict = per_fe.get(base_fe, {}).get("sig_expanded_strict")
         if not isinstance(base_intent_sig, dict):
+            ok_intent_raw = False
+            ok_intent_no_schedule = False
             ok_intent = False
             ok_intent_struct = False
             axis_recall_intent = 0.0
@@ -1051,6 +1099,10 @@ def main() -> None:
             sig_e = per_fe.get(fe, {}).get("sig_expanded")
             sig_e_strict = per_fe.get(fe, {}).get("sig_expanded_strict")
             if isinstance(base_intent_sig, dict) and isinstance(sig_i, dict):
+                if sig_i != base_intent_sig:
+                    ok_intent_raw = False
+                if _drop_parallel_axes(sig_i) != _drop_parallel_axes(base_intent_sig):
+                    ok_intent_no_schedule = False
                 if isinstance(base_intent_sig_strict, dict) and isinstance(sig_i_strict, dict) and sig_i_strict != base_intent_sig_strict:
                     ok_intent = False
                     reasons_intent.extend([f"{fe}:{r}" for r in _diff_reasons(base_intent_sig_strict, sig_i_strict)])
@@ -1062,6 +1114,9 @@ def main() -> None:
                     reasons_intent_struct.append(f"{fe}:graph_mismatch")
                 axis_recall_intent = min(axis_recall_intent, _axis_roles_recall(base_intent_sig, sig_i))
             else:
+                ok_intent_raw = False
+                ok_intent_no_schedule = False
+                ok_intent = False
                 ok_intent_struct = False
                 axis_recall_intent = 0.0
             if isinstance(base_exp_sig, dict) and isinstance(sig_e, dict):
@@ -1079,11 +1134,22 @@ def main() -> None:
                 ok_expanded_struct = False
                 axis_recall_expanded = 0.0
 
+        contract_oos = any((v.get("contract") == "OUT_OF_SCOPE") for v in per_fe.values() if isinstance(v, dict))
+        drift_bucket = _drift_bucket(
+            contract_oos=bool(contract_oos),
+            ok_structural=bool(ok_intent_struct),
+            ok_raw=bool(ok_intent_raw),
+            ok_no_schedule=bool(ok_intent_no_schedule),
+            ok_portable=bool(ok_intent),
+        )
+
         results.append(
             PairResult(
                 kernel=k,
                 anchor_tier=str(tier),
                 kernel_kind=str(kind),
+                ok_intent_raw=bool(ok_intent_raw),
+                ok_intent_no_schedule=bool(ok_intent_no_schedule),
                 ok_intent=bool(ok_intent),
                 ok_expanded=bool(ok_expanded),
                 ok_intent_structural=bool(ok_intent_struct),
@@ -1094,6 +1160,7 @@ def main() -> None:
                 reasons_expanded=sorted(set(reasons_expanded)),
                 reasons_intent_structural=sorted(set(reasons_intent_struct)),
                 reasons_expanded_structural=sorted(set(reasons_expanded_struct)),
+                drift_bucket=str(drift_bucket),
                 sigs=per_fe,
             )
         )
@@ -1110,6 +1177,7 @@ def main() -> None:
     by_reason_intent_struct: Dict[str, int] = {}
     by_reason_expanded_struct: Dict[str, int] = {}
     by_category: Dict[str, int] = {}
+    drift_counts: Dict[str, int] = {}
     axis_recalls_intent: List[float] = []
     axis_recalls_expanded: List[float] = []
     for r in results:
@@ -1120,24 +1188,60 @@ def main() -> None:
             ok_expanded_strict=r.ok_expanded,
             ok_expanded_structural=r.ok_expanded_structural,
         )
-        by_tier.setdefault(r.anchor_tier, {"n": 0, "ok_intent": 0, "ok_expanded": 0})
+        drift_counts[str(r.drift_bucket)] = drift_counts.get(str(r.drift_bucket), 0) + 1
+
+        by_tier.setdefault(
+            r.anchor_tier,
+            {
+                "n": 0,
+                "ok_intent_raw": 0,
+                "ok_intent_no_schedule": 0,
+                "ok_intent": 0,
+                "ok_expanded": 0,
+                "drift_breakdown": {},
+            },
+        )
         by_tier[r.anchor_tier]["n"] += 1
+        if r.ok_intent_raw:
+            by_tier[r.anchor_tier]["ok_intent_raw"] += 1
+        if r.ok_intent_no_schedule:
+            by_tier[r.anchor_tier]["ok_intent_no_schedule"] += 1
         if r.ok_intent:
             by_tier[r.anchor_tier]["ok_intent"] += 1
         if r.ok_expanded:
             by_tier[r.anchor_tier]["ok_expanded"] += 1
+        dbt = by_tier[r.anchor_tier].setdefault("drift_breakdown", {})
+        if isinstance(dbt, dict):
+            dbt[str(r.drift_bucket)] = int(dbt.get(str(r.drift_bucket), 0)) + 1
         by_tier[r.anchor_tier].setdefault("ok_intent_structural", 0)
         by_tier[r.anchor_tier].setdefault("ok_expanded_structural", 0)
         if r.ok_intent_structural:
             by_tier[r.anchor_tier]["ok_intent_structural"] += 1
         if r.ok_expanded_structural:
             by_tier[r.anchor_tier]["ok_expanded_structural"] += 1
-        by_kind.setdefault(r.kernel_kind, {"n": 0, "ok_intent": 0, "ok_expanded": 0})
+        by_kind.setdefault(
+            r.kernel_kind,
+            {
+                "n": 0,
+                "ok_intent_raw": 0,
+                "ok_intent_no_schedule": 0,
+                "ok_intent": 0,
+                "ok_expanded": 0,
+                "drift_breakdown": {},
+            },
+        )
         by_kind[r.kernel_kind]["n"] += 1
+        if r.ok_intent_raw:
+            by_kind[r.kernel_kind]["ok_intent_raw"] += 1
+        if r.ok_intent_no_schedule:
+            by_kind[r.kernel_kind]["ok_intent_no_schedule"] += 1
         if r.ok_intent:
             by_kind[r.kernel_kind]["ok_intent"] += 1
         if r.ok_expanded:
             by_kind[r.kernel_kind]["ok_expanded"] += 1
+        dbk = by_kind[r.kernel_kind].setdefault("drift_breakdown", {})
+        if isinstance(dbk, dict):
+            dbk[str(r.drift_bucket)] = int(dbk.get(str(r.drift_bucket), 0)) + 1
         by_kind[r.kernel_kind].setdefault("ok_intent_structural", 0)
         by_kind[r.kernel_kind].setdefault("ok_expanded_structural", 0)
         if r.ok_intent_structural:
@@ -1163,6 +1267,12 @@ def main() -> None:
         "kernels": list(kernels),
         "summary": {
             "n": int(len(results)),
+            "intent_raw_ok": int(sum(1 for r in results if r.ok_intent_raw)),
+            "intent_raw_ok_rate": (float(sum(1 for r in results if r.ok_intent_raw)) / float(len(results)) if results else 0.0),
+            "intent_no_schedule_ok": int(sum(1 for r in results if r.ok_intent_no_schedule)),
+            "intent_no_schedule_ok_rate": (
+                float(sum(1 for r in results if r.ok_intent_no_schedule)) / float(len(results)) if results else 0.0
+            ),
             "intent_ok": int(sum(1 for r in results if r.ok_intent)),
             "intent_ok_rate": (float(sum(1 for r in results if r.ok_intent)) / float(len(results)) if results else 0.0),
             "intent_structural_ok": int(sum(1 for r in results if r.ok_intent_structural)),
@@ -1181,6 +1291,9 @@ def main() -> None:
             ),
             "by_tier": by_tier,
             "by_kind": by_kind,
+            "drift_breakdown": {
+                k: int(v) for k, v in sorted(drift_counts.items(), key=lambda kv: (-int(kv[1]), str(kv[0])))
+            },
             "mismatch_categories": {k: int(v) for k, v in sorted(by_category.items(), key=lambda kv: (-int(kv[1]), str(kv[0])))},
             "top_reasons_intent": {
                 k: int(v) for k, v in sorted(by_reason_intent.items(), key=lambda kv: (-int(kv[1]), str(kv[0])))[:20]
@@ -1204,6 +1317,8 @@ def main() -> None:
                 "anchor_tier": r.anchor_tier,
                 "kernel_kind": r.kernel_kind,
                 "ok": {
+                    "intent_raw": bool(r.ok_intent_raw),
+                    "intent_no_schedule": bool(r.ok_intent_no_schedule),
                     "intent_strict": bool(r.ok_intent),
                     "intent_structural": bool(r.ok_intent_structural),
                     "expanded_strict": bool(r.ok_expanded),
@@ -1216,6 +1331,7 @@ def main() -> None:
                     "expanded_strict": list(r.reasons_expanded),
                     "expanded_structural": list(r.reasons_expanded_structural),
                 },
+                "drift_bucket": str(r.drift_bucket),
                 "category": _mismatch_category(
                     r.sigs,
                     ok_intent_strict=r.ok_intent,

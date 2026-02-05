@@ -474,57 +474,114 @@ def fig_e2_trust_ablation(e2: dict[str, Any], out: Path) -> None:
 
 def fig_e4_consistency(e4: dict[str, Any], out: Path) -> None:
     s = e4["summary"]
-    # We report a "consistency vs strictness" view:
-    # - canonical: exact equality under a portable normalization (drops schedule hints + size specialization)
-    # - structural: order-insensitive graph hash + interface compatibility
-    # - roles: axis-role recall on labeled subset
-    labels_a = ["Canonical match", "Structural match", "Axis-role recall"]
-    intent = [s["intent_ok_rate"], s["intent_structural_ok_rate"], s["axis_roles_recall_intent_avg"]]
-    expanded = [s["expanded_ok_rate"], s["expanded_structural_ok_rate"], s["axis_roles_recall_expanded_avg"]]
-    
-    r_int = s.get("top_reasons_intent", {})
-    r_exp = s.get("top_reasons_expanded", {})
-    keys = sorted(set(r_int)|set(r_exp), key=lambda k: max(r_int.get(k,0), r_exp.get(k,0)), reverse=True)[:4]
-    
-    fig, axes = plt.subplots(2, 1, figsize=(3.8, 5.0))
-    
-    # [FIX] Adjusted top from 0.90 to 0.85
-    plt.subplots_adjust(top=0.85, bottom=0.10, hspace=0.5, left=0.3)
+    # E4 reframed for paper: show a *normalization ladder* (raw -> portable -> structural),
+    # and attribute where drift comes from by kernel tier.
+    #
+    # This avoids saturating metrics (many 100%) while directly supporting the
+    # paper's design claim: schedule hints can drift, semantic structure does not.
 
-    def _do_barh(ax, y_labels, v1, v2, title, panel):
-        y = np.arange(len(y_labels))
-        h = 0.35
-        ax.barh(y - h/2, v1, height=h, color=PALETTE["blue"], label="Macro-level")
-        ax.barh(y + h/2, v2, height=h, color="#D99F94", label="Expanded primitives")
-        ax.set_yticks(y)
-        ax.set_yticklabels(y_labels)
-        ax.invert_yaxis()
-        ax.set_title(title)
-        _panel_label(ax, panel)
+    def _as_rate(v: Any) -> float:
+        return float(v) if isinstance(v, (int, float)) else 0.0
 
-    _do_barh(axes[0], labels_a, intent, expanded, "Consistency at Macro vs Primitive Levels", "(a)")
-    axes[0].set_xlim(0, 1.15)
-    for i, v in enumerate(intent): axes[0].text(v+0.02, i-0.17, f"{v:.1%}", fontsize=8, va='center')
-    for i, v in enumerate(expanded): axes[0].text(v+0.02, i+0.17, f"{v:.1%}", fontsize=8, va='center')
+    # Panel (a): cumulative match rates under progressively more semantic views.
+    ladder_labels = ["Raw", "-Schedule", "Portable", "Structural"]
+    ladder_vals = [
+        _as_rate(s.get("intent_raw_ok_rate")),
+        _as_rate(s.get("intent_no_schedule_ok_rate")),
+        _as_rate(s.get("intent_ok_rate")),
+        _as_rate(s.get("intent_structural_ok_rate")),
+    ]
+    ladder_colors = [PALETTE["grey"], PALETTE["blue"], PALETTE["green"], PALETTE["red"]]
 
-    clean_keys = [k.replace("tilelang:", "").replace("_", " ").capitalize() for k in keys]
-    vals1 = [r_int.get(k,0) for k in keys]
-    vals2 = [r_exp.get(k,0) for k in keys]
-    _do_barh(axes[1], clean_keys, vals1, vals2, "Benign Drift Sources", "(b)")
-    axes[1].set_xlabel("Count (out of 30)")
-    
-    # [FIX] Add labels for Panel B
-    xmax = max(max(vals1), max(vals2)) if (vals1 or vals2) else 1
-    axes[1].set_xlim(0, xmax * 1.15)
-    for i, v in enumerate(vals1):
-        if v > 0: axes[1].text(v + 0.2, i-0.17, str(v), fontsize=7, va='center', color=PALETTE["dark"])
-    for i, v in enumerate(vals2):
-        if v > 0: axes[1].text(v + 0.2, i+0.17, str(v), fontsize=7, va='center', color=PALETTE["dark"])
+    # Panel (b): drift attribution (which ladder step resolves the mismatch).
+    by_tier = s.get("by_tier", {}) if isinstance(s.get("by_tier"), dict) else {}
+    tier_order = ["A_dot", "B_reduce", "C_copy", "All"]
+    # Keep labels short to avoid overlap in the paper's narrow column width.
+    tier_pretty = {"A_dot": "Dot", "B_reduce": "Reduce", "C_copy": "Copy", "All": "All"}
 
-    handles = [Patch(facecolor=PALETTE["blue"], label="Macro-level"),
-               Patch(facecolor="#D99F94", label="Expanded primitives")]
-    _common_legend(fig, handles, [h.get_label() for h in handles], ncol=2)
+    def _tier_row(t: str) -> tuple[str, int, dict[str, int]]:
+        if t == "All":
+            n = int(s.get("n") or 0) if isinstance(s.get("n"), int) else 0
+            db = s.get("drift_breakdown", {})
+            return tier_pretty[t], n, (db if isinstance(db, dict) else {})
+        d = by_tier.get(t)
+        if not isinstance(d, dict):
+            return tier_pretty.get(t, t), 0, {}
+        n = int(d.get("n") or 0) if isinstance(d.get("n"), int) else 0
+        db = d.get("drift_breakdown", {})
+        return tier_pretty.get(t, t), n, (db if isinstance(db, dict) else {})
 
+    drift_keys = [
+        ("raw_exact", "Raw", PALETTE["grey"]),
+        ("schedule_hint_drift", "-Schedule", PALETTE["blue"]),
+        ("specialization_view_drift", "Portable", PALETTE["green"]),
+        ("representation_drift", "Structural", PALETTE["red"]),
+    ]
+
+    x_labels: list[str] = []
+    n_rows: list[int] = []
+    drift_fracs: dict[str, list[float]] = {k: [] for k, _, _ in drift_keys}
+    other_frac: list[float] = []
+    for t in tier_order:
+        name, n, db = _tier_row(t)
+        if n <= 0:
+            continue
+        x_labels.append(f"{name}\n{n}")
+        n_rows.append(int(n))
+        used = 0
+        for k, _, _ in drift_keys:
+            c = int(db.get(k, 0)) if isinstance(db.get(k, 0), int) else 0
+            used += c
+            drift_fracs[k].append(float(c) / float(n))
+        other = max(0, int(n) - int(used))
+        other_frac.append(float(other) / float(n))
+
+    fig, axes = plt.subplots(2, 1, figsize=(3.8, 4.8))
+    plt.subplots_adjust(top=0.86, bottom=0.12, hspace=0.65, left=0.18, right=0.98)
+
+    # (a) Ladder bar chart.
+    ax = axes[0]
+    x = np.arange(len(ladder_labels))
+    bars = ax.bar(x, ladder_vals, color=ladder_colors, edgecolor="white")
+    ax.set_xticks(x)
+    ax.set_xticklabels(ladder_labels)
+    ax.set_ylabel("Match rate")
+    ax.set_ylim(0, 1.08)
+    ax.set_title("Normalization Ladder (Triton vs TileLang)")
+    _panel_label(ax, "(a)")
+    for i, b in enumerate(bars):
+        v = float(ladder_vals[i])
+        ax.text(b.get_x() + b.get_width() / 2.0, v + 0.02, f"{v:.1%}", ha="center", va="bottom", fontsize=8, color=PALETTE["dark"])
+
+    # (b) Drift attribution stacked bars.
+    ax = axes[1]
+    x = np.arange(len(x_labels))
+    bottom = np.zeros(len(x_labels))
+    width = 0.58
+    handles: list[Any] = []
+    labels: list[str] = []
+    for k, lab, col in drift_keys:
+        vals = drift_fracs.get(k, [])
+        b = ax.bar(x, vals, width=width, bottom=bottom, color=col, edgecolor="white")
+        bottom = bottom + np.array(vals, dtype=float)
+        handles.append(Patch(facecolor=col, label=lab))
+        labels.append(lab)
+
+    # Any remaining categories (OOS / true mismatches) collapse into "Other".
+    if any(v > 0 for v in other_frac):
+        col = PALETTE["light_grey"]
+        ax.bar(x, other_frac, width=width, bottom=bottom, color=col, edgecolor="white")
+        handles.append(Patch(facecolor=col, label="Other"))
+        labels.append("Other")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_labels, fontsize=7)
+    ax.set_ylabel("Fraction of pairs")
+    ax.set_ylim(0, 1.08)
+    ax.set_title("Where Drift Comes From (by Tier)")
+    _panel_label(ax, "(b)")
+
+    _common_legend(fig, handles, labels, ncol=4)
     _save_fig(fig, out / "e4_consistency.pdf")
 
 
@@ -994,6 +1051,161 @@ def fig_e5_cuda_evidence_ablation(
     _save_fig(fig, out_dir / f"{out_name}.pdf")
 
 
+def table_e5_cuda_evidence_off(
+    *,
+    h100_ablation: dict[str, Any] | None,
+    g5090_ablation: dict[str, Any] | None,
+    out_dir: Path,
+    out_name: str = "e5_cuda_evidence_off.tex",
+) -> None:
+    """
+    Paper table: evidence-off / evidence-on ratios for search-space shaping.
+
+    We report (evidence_off / evidence_on) for:
+      - candidate variants (variant_count)
+      - host-dispatch selection time (dispatch_total_ms)
+
+    Output is a standalone LaTeX table suitable for \\input.
+
+    Notes:
+      - Variant-count ratios are effectively backend-defined and usually identical
+        across GPUs for the same kernel suite.
+      - Dispatch-time ratios can vary by GPU, but trends are consistent; we report
+        the geometric mean across the two GPUs (when both are available) to keep
+        the table single-column and paper-friendly.
+    """
+
+    order = [
+        "ai_bench_matmul",
+        "ai_bench_dropout",
+        "ai_bench_softmax",
+        "ai_bench_layernorm",
+        "ai_bench_correlation",
+        "ai_bench_resize",
+        "ai_bench_rope",
+        "ai_bench_warp",
+    ]
+    pretty = {
+        "ai_bench_matmul": "MatMul",
+        "ai_bench_dropout": "Dropout",
+        "ai_bench_softmax": "Softmax",
+        "ai_bench_layernorm": "LayerNorm",
+        "ai_bench_correlation": "Correlation",
+        "ai_bench_resize": "Resize",
+        "ai_bench_rope": "RoPE",
+        "ai_bench_warp": "Warp",
+    }
+
+    def _by_kernel(obj: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+        if not isinstance(obj, dict):
+            return {}
+        rows = [r for r in list(obj.get("results") or []) if isinstance(r, dict)]
+        out: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            k = r.get("kernel")
+            if isinstance(k, str) and k:
+                out[k] = r
+        return out
+
+    def _as_float(v: object) -> float | None:
+        if isinstance(v, bool):
+            return float(int(v))
+        if isinstance(v, (int, float)):
+            return float(v)
+        return None
+
+    def _ratio(off: float | None, on: float | None) -> float | None:
+        if not isinstance(off, (int, float)) or not isinstance(on, (int, float)):
+            return None
+        if off <= 0 or on <= 0:
+            return None
+        return float(off) / float(on)
+
+    def _extract(ablation: dict[str, Any] | None) -> tuple[list[tuple[float | None, float | None]], tuple[float | None, float | None]]:
+        by_k = _by_kernel(ablation)
+        rows: list[tuple[float | None, float | None]] = []
+        vs: list[float] = []
+        ms: list[float] = []
+        for k in order:
+            r = by_k.get(k)
+            on = r.get("ours") if isinstance(r, dict) and isinstance(r.get("ours"), dict) else {}
+            off = r.get("ours_evidence_off") if isinstance(r, dict) and isinstance(r.get("ours_evidence_off"), dict) else {}
+            v_on = _as_float((on or {}).get("variant_count"))
+            v_off = _as_float((off or {}).get("variant_count"))
+            ms_on = _as_float((on or {}).get("dispatch_total_ms"))
+            ms_off = _as_float((off or {}).get("dispatch_total_ms"))
+            rv = _ratio(v_off, v_on)
+            rms = _ratio(ms_off, ms_on)
+            rows.append((rv, rms))
+            if isinstance(rv, (int, float)) and np.isfinite(rv):
+                vs.append(float(rv))
+            if isinstance(rms, (int, float)) and np.isfinite(rms):
+                ms.append(float(rms))
+        gm_v = _geom_mean(vs) if vs else None
+        gm_ms = _geom_mean(ms) if ms else None
+        return rows, (gm_v, gm_ms)
+
+    h100_rows, _ = _extract(h100_ablation)
+    g5090_rows, _ = _extract(g5090_ablation)
+
+    def _merge(a: float | None, b: float | None) -> float | None:
+        aa = float(a) if isinstance(a, (int, float)) and np.isfinite(a) and float(a) > 0 else None
+        bb = float(b) if isinstance(b, (int, float)) and np.isfinite(b) and float(b) > 0 else None
+        if aa is not None and bb is not None:
+            return float(math.sqrt(aa * bb))
+        return aa if aa is not None else bb
+
+    merged_rows: list[tuple[float | None, float | None]] = []
+    merged_vs: list[float] = []
+    merged_ms: list[float] = []
+    for i, _k in enumerate(order):
+        hv, hms = h100_rows[i] if i < len(h100_rows) else (None, None)
+        gv, gms = g5090_rows[i] if i < len(g5090_rows) else (None, None)
+        mv = _merge(hv, gv)
+        mms = _merge(hms, gms)
+        merged_rows.append((mv, mms))
+        if isinstance(mv, (int, float)) and np.isfinite(mv) and float(mv) > 0:
+            merged_vs.append(float(mv))
+        if isinstance(mms, (int, float)) and np.isfinite(mms) and float(mms) > 0:
+            merged_ms.append(float(mms))
+
+    gm_v = _geom_mean(merged_vs) if merged_vs else None
+    gm_ms = _geom_mean(merged_ms) if merged_ms else None
+
+    def _fmt(v: float | None) -> str:
+        if not isinstance(v, (int, float)) or not np.isfinite(v):
+            return "--"
+        return f"{float(v):.2f}"
+
+    lines: list[str] = []
+    lines.append("% Auto-generated by scripts/experiments/paper_figures.py")
+    lines.append("\\begin{table}[t]")
+    lines.append("\\centering")
+    lines.append("\\small")
+    lines.append("\\begin{tabular}{lrr}")
+    lines.append("\\toprule")
+    lines.append("Kernel & Variants ($\\times$) & Dispatch ms ($\\times$) \\\\")
+    lines.append("\\midrule")
+    for i, k in enumerate(order):
+        name = pretty.get(k, k)
+        mv, mms = merged_rows[i] if i < len(merged_rows) else (None, None)
+        lines.append(f"{name} & {_fmt(mv)} & {_fmt(mms)} \\\\")
+    lines.append("\\midrule")
+    lines.append(f"GeoMean & {_fmt(gm_v)} & {_fmt(gm_ms)} \\\\")
+    lines.append("\\bottomrule")
+    lines.append("\\end{tabular}")
+    lines.append(
+        "\\caption{Evidence-off / evidence-on ratios: candidate variants (search-space size) and host-dispatch selection time (ms). Values are geometric means across H100 and RTX 5090 D.}"
+    )
+    lines.append("\\label{tab:e5-cuda-evidence-off}")
+    lines.append("\\end{table}")
+    lines.append("")
+
+    out_path = out_dir / out_name
+    _ensure_dir(out_path.parent)
+    out_path.write_text("\n".join(lines), encoding="utf-8")
+
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -1010,6 +1222,7 @@ def main() -> None:
 
     pj = args.paper_json_dir
     fig_dir = args.paper_dir / "fig"
+    table_dir = args.paper_dir / "tables"
 
     # Load
     try:
@@ -1034,38 +1247,26 @@ def main() -> None:
     fig_e6_contract_calibration(e6, fig_dir)
 
     # Optional: E5 CUDA GPU figures (H100 + 5090D).
-    cuda_dir = ROOT / "artifacts" / "experiments" / "E5"
-    # Pinned inputs (known-good) for the paper; can be overridden via CLI flags.
-    pinned_rev = "42fad66"
-    p_5090_q = args.e5_cuda_5090d_quick or _prefer_or_latest(
-        cuda_dir, f"e5_cuda_5090d_quick_{pinned_rev}.json", "e5_cuda_5090d*quick*.json"
-    )
-    # NOTE: For ablations, do NOT fall back to "latest" automatically, otherwise the
-    # figure can silently mix quick results from one revision with ablations from
-    # another. Provide an explicit path via CLI or keep it pinned.
-    p_5090_a = args.e5_cuda_5090d_ablation or (cuda_dir / f"e5_cuda_5090d_ablation_{pinned_rev}.json")
-    if not (p_5090_a and p_5090_a.is_file()):
-        p_5090_a = None
-    p_h100_q = args.e5_cuda_h100_quick or _prefer_or_latest(
-        cuda_dir, f"e5_cuda_h100_quick_{pinned_rev}.json", "e5_cuda_h100*quick*.json"
-    )
-    p_h100_a = args.e5_cuda_h100_ablation or (cuda_dir / f"e5_cuda_h100_ablation_{pinned_rev}.json")
-    if not (p_h100_a and p_h100_a.is_file()):
-        p_h100_a = None
+    # We keep GPU inputs pinned to artifacts/experiments/paper via fixed filenames
+    # so `make figures` is reproducible across machines and revisions.
+    #
+    # For E5 GPU, we use the ablation (long) run as both the "default" series and
+    # the ablation series to guarantee consistent measurement settings.
+    p_h100_a = args.e5_cuda_h100_ablation or (pj / "e5_cuda_h100_ablation.paper.json")
+    p_5090_a = args.e5_cuda_5090d_ablation or (pj / "e5_cuda_5090d_ablation.paper.json")
+    h100_a = _load_json(p_h100_a) if (p_h100_a and p_h100_a.is_file()) else None
+    g5090_a = _load_json(p_5090_a) if (p_5090_a and p_5090_a.is_file()) else None
 
-    if p_h100_q and p_h100_q.is_file():
-        h100_q = _load_json(p_h100_q)
-        h100_a = _load_json(p_h100_a) if (p_h100_a and p_h100_a.is_file()) else None
-        fig_e5_cuda_triton_vs_intentir(quick=h100_q, ablation=h100_a, out_dir=fig_dir, out_name="e5_cuda_gpu_h100")
-        if h100_a:
-            fig_e5_cuda_evidence_ablation(ablation=h100_a, out_dir=fig_dir, out_name="e5_cuda_evidence_h100")
+    if h100_a:
+        fig_e5_cuda_triton_vs_intentir(quick=h100_a, ablation=h100_a, out_dir=fig_dir, out_name="e5_cuda_gpu_h100")
+        fig_e5_cuda_evidence_ablation(ablation=h100_a, out_dir=fig_dir, out_name="e5_cuda_evidence_h100")
 
-    if p_5090_q and p_5090_q.is_file():
-        g5090_q = _load_json(p_5090_q)
-        g5090_a = _load_json(p_5090_a) if (p_5090_a and p_5090_a.is_file()) else None
-        fig_e5_cuda_triton_vs_intentir(quick=g5090_q, ablation=g5090_a, out_dir=fig_dir, out_name="e5_cuda_gpu_5090d")
-        if g5090_a:
-            fig_e5_cuda_evidence_ablation(ablation=g5090_a, out_dir=fig_dir, out_name="e5_cuda_evidence_5090d")
+    if g5090_a:
+        fig_e5_cuda_triton_vs_intentir(quick=g5090_a, ablation=g5090_a, out_dir=fig_dir, out_name="e5_cuda_gpu_5090d")
+        fig_e5_cuda_evidence_ablation(ablation=g5090_a, out_dir=fig_dir, out_name="e5_cuda_evidence_5090d")
+
+    # Evidence-off table (combined H100 + 5090D).
+    table_e5_cuda_evidence_off(h100_ablation=h100_a, g5090_ablation=g5090_a, out_dir=table_dir)
     
     print(f"Done. Figures written to: {fig_dir}")
 

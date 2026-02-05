@@ -54,11 +54,17 @@ __device__ __forceinline__ void resize_bilinear2x_i8(
   const int32_t sum2_odd = (((int32_t)c0 + (int32_t)d) >> 1);
   const int32_t out_even = y_odd ? ((sum1_even + sum2_even) >> 1) : sum1_even;
   const int32_t out_odd = y_odd ? ((sum1_odd + sum2_odd) >> 1) : sum1_odd;
-  // Store two adjacent int8 outputs at once. The destination row base is
-  // 2-byte aligned because OW = 2*W is always even; 2*x0 is also even.
-  const uint16_t packed =
-      (uint16_t)((uint8_t)out_even) | (uint16_t)((uint8_t)out_odd) << 8;
-  reinterpret_cast<uint16_t*>(out + dst_base)[x0] = packed;
+  if constexpr (FULL_W) {
+    // Store two adjacent int8 outputs at once. The destination row base is
+    // 2-byte aligned because OW = 2*W is always even; 2*x0 is also even.
+    const uint16_t packed =
+        (uint16_t)((uint8_t)out_even) | (uint16_t)((uint8_t)out_odd) << 8;
+    reinterpret_cast<uint16_t*>(out + dst_base)[x0] = packed;
+  } else {
+    // Conservative fallback: scalar stores.
+    out[dst_base + (int64_t)(2 * x0 + 0)] = (int8_t)out_even;
+    out[dst_base + (int64_t)(2 * x0 + 1)] = (int8_t)out_odd;
+  }
 }
 
 }  // namespace intentir_cuda

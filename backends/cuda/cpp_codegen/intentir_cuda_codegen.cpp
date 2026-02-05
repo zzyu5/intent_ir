@@ -1445,7 +1445,7 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
 	    const int wmma_cp_a_int = (wmma_cp_a_policy == "ca") ? 0 : 1;
 	    const int wmma_cp_b_int = (wmma_cp_b_policy == "ca") ? 0 : 1;
 	    const std::string use_cp_async_const = wmma_use_cp_async ? "true" : "false";
-	    const std::string enable_fastpath_const = wmma_disable_fastpath ? "false" : "true";
+	    const std::string enable_fastpath_const = (contract_full && (!wmma_disable_fastpath)) ? "true" : "false";
 	    const std::string specialize_full_tile_const = specialize_full_tile ? "true" : "false";
 
     w.line("#include <cuda_runtime.h>");
@@ -2832,6 +2832,11 @@ json emit_correlation(const Intent& intent, const json& bindings) {
 		    add_variant(block_x, "seed");
 		    add_variant(block_x / 2, "t_half");
 		    add_variant(block_x * 2, "t_double");
+		    if (has_evidence && (total >= 32768)) {
+		      // Evidence-on: keep a tight neighborhood but include a high-threads option
+		      // for large outputs (can significantly improve throughput on wide kernels).
+		      add_variant(512, "t512");
+		    }
 		    if (!has_evidence) {
 		      // Evidence-off: widen the neighborhood.
 		      add_variant(block_x - 32, "t_m32");
@@ -3455,6 +3460,7 @@ json emit_rope_f32(const Intent& intent, const json& bindings) {
   if (!(rope_vec == 1 || rope_vec == 2 || rope_vec == 4)) rope_vec = 4;
   if (rope_vec == 4 && (half & 3) != 0) rope_vec = ((half & 1) == 0) ? 2 : 1;
   if (rope_vec == 2 && (half & 1) != 0) rope_vec = 1;
+  if (!contract_full) rope_vec = 1;
 
   int64_t packs = half;
   if (rope_vec == 4) packs = half / 4;
@@ -5557,6 +5563,10 @@ json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
 	    add_variant(block_x, "seed");
 	    add_variant(block_x / 2, "t_half");
 	    add_variant(block_x * 2, "t_double");
+	    if (has_evidence && (N >= 4096)) {
+	      // Evidence-on: include a high-threads option for wide reductions.
+	      add_variant(512, "t512");
+	    }
 	    if (!has_evidence) {
 	      // Evidence-off: widen the candidate set.
 	      add_variant(block_x - 32, "t_m32");
