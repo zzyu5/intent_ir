@@ -18,6 +18,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
+from matplotlib.ticker import MultipleLocator
 import numpy as np
 
 
@@ -60,7 +61,9 @@ def _set_pro_style() -> None:
 
         # Layout
         "figure.dpi": 300,
-        "savefig.bbox": "tight",
+        # Default to the *full* figure bbox. Individual figures can still opt into
+        # tight bbox via `_save_fig(..., tight=True)`.
+        "savefig.bbox": None,
         "savefig.pad_inches": 0.05,
         "legend.frameon": False,  # Clean look
         "legend.handletextpad": 0.4,
@@ -76,6 +79,17 @@ PALETTE = {
     "light_grey": "#D3D3D3", # Background context
     "dark": "#4A4A4A",       # Text / Scatter points
 }
+
+# Paper figure sizing (inches). Keep a single column width and a consistent
+# height system so LaTeX scaling preserves font sizes across figures.
+COL_W = 3.5
+H_SINGLE = 2.6
+H_DOUBLE = 5.2
+
+# Bar styling (consistent across Fig4/5/6).
+BAR_EDGE_COLOR = "white"
+BAR_EDGE_LW = 0.5
+BAR_W = 0.30
 
 # =============================================================================
 # 2. Helper Utilities
@@ -104,16 +118,30 @@ def _prefer_or_latest(dir_path: Path, prefer_name: str, pattern: str) -> Path | 
 def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
-def _save_fig(fig: plt.Figure, out: Path) -> None:
+def _save_fig(fig: plt.Figure, out: Path, *, tight: bool = True) -> None:
     _ensure_dir(out.parent)
-    fig.savefig(out)
+    if tight:
+        fig.savefig(out, bbox_inches="tight")
+    else:
+        fig.savefig(out)
     plt.close(fig)
 
 def _panel_label(ax: plt.Axes, label: str) -> None:
     """Standardized panel label (a)/(b) placement."""
-    # 稍微调整了 Y 位置，配合 margin 调整，防止贴得太近
-    ax.text(-0.15, 1.02, label, transform=ax.transAxes, fontsize=11, 
-            fontweight="bold", va="bottom", ha="right", color="black")
+    # Place the label slightly into the left margin to avoid overlapping titles,
+    # while staying inside the saved figure bbox (non-tight export).
+    ax.text(
+        -0.12,
+        1.02,
+        label,
+        transform=ax.transAxes,
+        fontsize=10,
+        fontweight="bold",
+        va="bottom",
+        ha="left",
+        color="black",
+        clip_on=False,
+    )
 
 def _draw_x_separator(ax: plt.Axes, x_pos: float, y_limit: float) -> None:
     """Draws a vertical dotted line to separate 'All' from specific frontends."""
@@ -133,7 +161,7 @@ def _common_legend(fig, handles, labels, ncol=3, y_pos=0.99):
                ncol=ncol, frameon=False, fontsize=9)
 
 
-def _annotate_bars(ax: plt.Axes, bars, fmt="{:.2f}", threshold=0.0, inside=True, color="white"):
+def _annotate_bars(ax: plt.Axes, bars, fmt="{:.2f}", threshold=0.0, inside=True, color="white", *, fontsize: float = 3.5):
     """Add value labels on top of (or inside) bars."""
     for bar in bars:
         height = bar.get_height()
@@ -152,7 +180,7 @@ def _annotate_bars(ax: plt.Axes, bars, fmt="{:.2f}", threshold=0.0, inside=True,
             
             ax.text(bar.get_x() + bar.get_width()/2., y,
                     fmt.format(height), ha='center', va=va, 
-                    fontsize=3.5, color=c, fontweight='bold', zorder=15)
+                    fontsize=fontsize, color=c, fontweight='bold', zorder=15)
 
 
 # =============================================================================
@@ -184,10 +212,8 @@ def fig_e1e3_recoverability(e1: dict[str, Any], e1e3: dict[str, Any], out: Path)
     acc_fb, avg_fb_acc = _get_data(e1e3["label_eval"]["feedback"]["by_frontend"], ["semantic_class"])
 
     # Layout Setup
-    fig, axes = plt.subplots(2, 1, figsize=(3.5, 4.5))
-    
-    # [FIX] Adjusted top from 0.88 to 0.82 to prevent overlap
-    plt.subplots_adjust(top=0.82, bottom=0.10, hspace=0.5)
+    fig, axes = plt.subplots(2, 1, figsize=(COL_W, H_DOUBLE))
+    plt.subplots_adjust(top=0.84, bottom=0.12, hspace=0.55, left=0.18, right=0.98)
 
     # X-Axis Construction
     x = np.arange(len(fes))
@@ -197,10 +223,28 @@ def fig_e1e3_recoverability(e1: dict[str, Any], e1e3: dict[str, Any], out: Path)
 
     # --- Panel A: Pass Rate ---
     ax = axes[0]
-    w = 0.35
-    
-    b1 = ax.bar([i - w/2 for i in x_locs], ok_one + [avg_one], width=w, color=PALETTE["blue"], label="One-shot")
-    b2 = ax.bar([i + w/2 for i in x_locs], ok_fb + [avg_fb], width=w, color=PALETTE["red"], label="Feedback")
+    w = BAR_W
+
+    b1 = ax.bar(
+        [i - w / 2 for i in x_locs],
+        ok_one + [avg_one],
+        width=w,
+        color=PALETTE["blue"],
+        label="One-shot",
+        edgecolor=BAR_EDGE_COLOR,
+        linewidth=BAR_EDGE_LW,
+        zorder=2,
+    )
+    b2 = ax.bar(
+        [i + w / 2 for i in x_locs],
+        ok_fb + [avg_fb],
+        width=w,
+        color=PALETTE["red"],
+        label="Feedback",
+        edgecolor=BAR_EDGE_COLOR,
+        linewidth=BAR_EDGE_LW,
+        zorder=2,
+    )
     
     _annotate_bars(ax, b1, "{:.0%}")
     _annotate_bars(ax, b2, "{:.0%}")
@@ -221,11 +265,38 @@ def fig_e1e3_recoverability(e1: dict[str, Any], e1e3: dict[str, Any], out: Path)
 
     # --- Panel B: Accuracy ---
     ax = axes[1]
-    w = 0.25
-    
-    b1 = ax.bar([i - w for i in x_locs], acc_rule + [avg_rule], width=w, color=PALETTE["grey"], label="Rule-only")
-    b2 = ax.bar([i for i in x_locs], acc_one + [avg_one_acc], width=w, color=PALETTE["blue"], label="One-shot")
-    b3 = ax.bar([i + w for i in x_locs], acc_fb + [avg_fb_acc], width=w, color=PALETTE["red"], label="Feedback")
+    w = BAR_W
+
+    b1 = ax.bar(
+        [i - w for i in x_locs],
+        acc_rule + [avg_rule],
+        width=w,
+        color=PALETTE["grey"],
+        label="Rule-only",
+        edgecolor=BAR_EDGE_COLOR,
+        linewidth=BAR_EDGE_LW,
+        zorder=2,
+    )
+    b2 = ax.bar(
+        [i for i in x_locs],
+        acc_one + [avg_one_acc],
+        width=w,
+        color=PALETTE["blue"],
+        label="One-shot",
+        edgecolor=BAR_EDGE_COLOR,
+        linewidth=BAR_EDGE_LW,
+        zorder=2,
+    )
+    b3 = ax.bar(
+        [i + w for i in x_locs],
+        acc_fb + [avg_fb_acc],
+        width=w,
+        color=PALETTE["red"],
+        label="Feedback",
+        edgecolor=BAR_EDGE_COLOR,
+        linewidth=BAR_EDGE_LW,
+        zorder=2,
+    )
 
     _annotate_bars(ax, b1, "{:.0%}", 0.05)
     _annotate_bars(ax, b2, "{:.0%}", 0.05)
@@ -248,68 +319,186 @@ def fig_e1e3_recoverability(e1: dict[str, Any], e1e3: dict[str, Any], out: Path)
     ]
     _common_legend(fig, handles, [h.get_label() for h in handles], ncol=3)
     
-    _save_fig(fig, out / "e1e3_recoverability.pdf")
+    _save_fig(fig, out / "e1e3_recoverability.pdf", tight=False)
 
 
 def fig_e5_1_external_baseline(e5_1: dict[str, Any], out: Path) -> None:
     rows = [r for r in list(e5_1.get("per_kernel") or []) if isinstance(r, dict)]
-    data = []
+    per: dict[str, dict[str, float]] = {}
     for r in rows:
-        vals = [r.get(k) for k in ["baseline_seconds_per_iter_t1", "ours_seconds_per_iter_t1", 
-                                   "baseline_seconds_per_iter_t16", "ours_seconds_per_iter_t16"]]
-        if all(isinstance(v, (int, float)) and v > 0 for v in vals):
-            data.append({
-                "name": str(r.get("name")),
-                "base_t1": 1.0/float(vals[0]), "ours_t1": 1.0/float(vals[1]),
-                "base_t16": 1.0/float(vals[2]), "ours_t16": 1.0/float(vals[3])
-            })
-    
-    data.sort(key=lambda x: x["ours_t16"]/x["base_t16"])
-    names = [d["name"] for d in data]
-    y = np.arange(len(names))
+        name = str(r.get("name"))
+        vals = [
+            r.get("baseline_seconds_per_iter_t1"),
+            r.get("ours_seconds_per_iter_t1"),
+            r.get("baseline_seconds_per_iter_t16"),
+            r.get("ours_seconds_per_iter_t16"),
+        ]
+        if not name or not all(isinstance(v, (int, float)) and float(v) > 0 for v in vals):
+            continue
+        b1, o1, b16, o16 = (float(v) for v in vals)
+        per[name] = {
+            "base_t1": 1.0 / b1,
+            "ours_t1": 1.0 / o1,
+            "base_t16": 1.0 / b16,
+            "ours_t16": 1.0 / o16,
+        }
 
-    fig, axes = plt.subplots(2, 1, figsize=(3.8, 6.0), sharex=False)
-    
-    # [FIX] Adjusted top from 0.90 to 0.85
-    plt.subplots_adjust(top=0.85, bottom=0.08, hspace=0.4, left=0.25)
+    order = ["matmul", "dropout", "softmax", "layernorm", "correlation", "resize", "rope", "warp"]
+    pretty = {
+        "matmul": "MatMul",
+        "dropout": "Dropout",
+        "softmax": "Softmax",
+        "layernorm": "LayerNorm",
+        "correlation": "Correlation",
+        "resize": "Resize",
+        "rope": "RoPE",
+        "warp": "Warp",
+    }
+    kernels = [k for k in order if k in per]
+    if not kernels:
+        return
 
-    def _plot_h(ax, k_base, k_ours, title):
-        base = [d[k_base] for d in data]
-        ours = [d[k_ours] for d in data]
-        speedups = [o/b for o, b in zip(ours, base)]
-        
-        h = 0.35
-        ax.barh(y + h/2, base, height=h, color=PALETTE["grey"], label="Baseline")
-        ax.barh(y - h/2, ours, height=h, color=PALETTE["red"], label="IntentIR (Ours)")
-        
-        ax.set_yticks(y)
-        ax.set_yticklabels(names, fontsize=9)
-        ax.set_title(title, pad=5)
-        ax.grid(axis='x', which='major', alpha=0.5)
+    x = np.arange(len(kernels))
+    x_labels = [pretty.get(k, k) for k in kernels]
+    w = BAR_W
 
-        xmax = max(base + ours) if (base + ours) else 1.0
-        ax.set_xlim(0.0, xmax * 1.25)
-        
-        for i, (v, sp) in enumerate(zip(ours, speedups)):
-            ax.text(v + xmax * 0.03, i - h/2, f"{sp:.1f}x", va='center', fontsize=7,
-                    color=PALETTE["red"], fontweight='bold')
+    def _plot_one(
+        *,
+        key_base: str,
+        key_ours: str,
+        title: str,
+        out_name: str,
+    ) -> None:
+        base = [per[k][key_base] for k in kernels]
+        ours = [per[k][key_ours] for k in kernels]
+        speedups = [(o / b) if b > 0 else float("nan") for b, o in zip(base, ours)]
+        ymax = max([s for s in speedups if isinstance(s, (int, float)) and np.isfinite(s)] + [1.0])
+        ymax = max(1.2, ymax * 1.20)
+
+        # Match Fig9-style scaling in the paper (wide PDF, scaled down by LaTeX),
+        # so the cross-column figure does not appear taller/larger than GPU figs.
+        #
+        # Use a fixed bbox (no tight-crop) so the two panels have identical
+        # page sizes even though their y-tick labels have different widths.
+        fig, ax = plt.subplots(figsize=(6.64, 2.37))
+        plt.subplots_adjust(top=0.80, bottom=0.27, left=0.10, right=0.99)
+
+        bars = ax.bar(
+            x,
+            speedups,
+            width=w * 0.9,
+            color=PALETTE["red"],
+            edgecolor=BAR_EDGE_COLOR,
+            linewidth=BAR_EDGE_LW,
+            zorder=2,
+        )
+
+        ax.axhline(1.0, color=PALETTE["grey"], linestyle="--", linewidth=1.2, alpha=0.9, zorder=1)
+
+        ax.set_ylim(0.0, ymax)
+        ax.set_ylabel("Speedup (×)")
+        ax.set_title(title)
+        ax.grid(axis="y", which="major", alpha=0.5)
+        ax.set_xticks(x)
+        ax.set_xticklabels(x_labels, rotation=20, ha="right")
+
+        for bar, sp in zip(bars, speedups):
+            if not np.isfinite(sp):
+                continue
+            ax.text(
+                float(bar.get_x() + bar.get_width() / 2.0),
+                float(sp) + ymax * 0.02,
+                f"{float(sp):.1f}×",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+                color=PALETTE["red"],
+                fontweight="bold",
+            )
+
+        handles = [
+            Patch(facecolor=PALETTE["red"], label="IntentIR speedup"),
+            plt.Line2D([0], [0], color=PALETTE["grey"], linestyle="--", linewidth=1.2, label="Baseline (1.0×)"),
+        ]
+        _common_legend(fig, handles, [h.get_label() for h in handles], ncol=2)
+        _save_fig(fig, out / out_name, tight=False)
 
     gm1 = e5_1.get("summary", {}).get("geom_speedup_ours_over_baseline_t1")
     title1 = f"Single-Thread (Geomean: {float(gm1):.2f}x)" if gm1 else "Single-Thread"
-    _plot_h(axes[0], "base_t1", "ours_t1", title1)
-    _panel_label(axes[0], "(a)")
+    _plot_one(key_base="base_t1", key_ours="ours_t1", title=title1, out_name="e5_1_external_baseline_t1.pdf")
 
     gm16 = e5_1.get("summary", {}).get("geom_speedup_ours_over_baseline_t16")
     title16 = f"16-Thread (Geomean: {float(gm16):.2f}x)" if gm16 else "16-Thread"
-    _plot_h(axes[1], "base_t16", "ours_t16", title16)
-    _panel_label(axes[1], "(b)")
-    axes[1].set_xlabel("Throughput (iter/s)")
+    _plot_one(key_base="base_t16", key_ours="ours_t16", title=title16, out_name="e5_1_external_baseline_t16.pdf")
 
-    handles = [Patch(facecolor=PALETTE["grey"], label="Triton-CPU LLVM baseline"),
-               Patch(facecolor=PALETTE["red"], label="IntentIR (Ours)")]
-    _common_legend(fig, handles, [h.get_label() for h in handles], ncol=2)
 
-    _save_fig(fig, out / "e5_1_external_baseline.pdf")
+def table_e5_1_external_baseline_throughput(e5_1: dict[str, Any], out_dir: Path) -> None:
+    """Write per-kernel throughput table for the RVV external baseline study (E5.1)."""
+
+    rows = [r for r in list(e5_1.get("per_kernel") or []) if isinstance(r, dict)]
+    per: dict[str, dict[str, float]] = {}
+    for r in rows:
+        name = str(r.get("name"))
+        vals = [
+            r.get("baseline_seconds_per_iter_t1"),
+            r.get("ours_seconds_per_iter_t1"),
+            r.get("baseline_seconds_per_iter_t16"),
+            r.get("ours_seconds_per_iter_t16"),
+        ]
+        if not name or not all(isinstance(v, (int, float)) and float(v) > 0 for v in vals):
+            continue
+        b1, o1, b16, o16 = (float(v) for v in vals)
+        per[name] = {
+            "base_t1": 1.0 / b1,
+            "ours_t1": 1.0 / o1,
+            "base_t16": 1.0 / b16,
+            "ours_t16": 1.0 / o16,
+        }
+
+    order = ["matmul", "dropout", "softmax", "layernorm", "correlation", "resize", "rope", "warp"]
+    pretty = {
+        "matmul": "MatMul",
+        "dropout": "Dropout",
+        "softmax": "Softmax",
+        "layernorm": "LayerNorm",
+        "correlation": "Correlation",
+        "resize": "Resize",
+        "rope": "RoPE",
+        "warp": "Warp",
+    }
+
+    kernels = [k for k in order if k in per]
+    if not kernels:
+        return
+
+    def _fmt(v: float) -> str:
+        # Throughput in iter/s is used as a reference number; keep it compact.
+        return f"{int(round(float(v)))}"
+
+    lines: list[str] = []
+    lines.append("% Auto-generated by scripts/experiments/paper_figures.py")
+    lines.append("\\begin{table*}[t]")
+    lines.append("\\centering")
+    lines.append("\\small")
+    lines.append("\\caption{Per-kernel throughput (iter/s) on RVV for the Triton-CPU LLVM baseline and IntentIR.}")
+    lines.append("\\label{tab:e5-external-throughput}")
+    lines.append("\\begin{tabular}{lrrrr}")
+    lines.append("\\toprule")
+    lines.append("Kernel & Baseline (1T) & Ours (1T) & Baseline (16T) & Ours (16T) \\\\")
+    lines.append("\\midrule")
+    for k in kernels:
+        d = per[k]
+        lines.append(
+            f"{pretty.get(k, k)} & {_fmt(d['base_t1'])} & {_fmt(d['ours_t1'])} & {_fmt(d['base_t16'])} & {_fmt(d['ours_t16'])} \\\\"
+        )
+    lines.append("\\bottomrule")
+    lines.append("\\end{tabular}")
+    lines.append("\\end{table*}")
+    lines.append("")
+
+    out_path = out_dir / "e5_1_external_baseline_throughput.tex"
+    _ensure_dir(out_path.parent)
+    out_path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def fig_e5_2_retune_vs_freeze(e5_2: dict[str, Any], out: Path) -> None:
@@ -326,41 +515,64 @@ def fig_e5_2_retune_vs_freeze(e5_2: dict[str, Any], out: Path) -> None:
     for t, s in pairs: 
         if t in by_tier: by_tier[t].append(s)
     
-    gm_tier = [_geom_mean(by_tier[t]) or 0.0 for t in order]
-    
-    fig, ax = plt.subplots(figsize=(3.5, 3.5))
-    
-    # [FIX] Adjusted top from 0.85 to 0.78 (Short figure needs more relative legend space)
-    plt.subplots_adjust(top=0.78, bottom=0.15)
-    
-    x = np.arange(len(order))
-    
-    ax.bar(x, gm_tier, width=0.5, color=PALETTE["red"], alpha=0.9, label="Tier Geomean")
-    
-    rng = np.random.default_rng(42)
-    for i, t in enumerate(order):
-        ys = by_tier[t]
-        if ys:
-            xs = i + rng.uniform(-0.1, 0.1, size=len(ys))
-            ax.scatter(xs, ys, s=12, color=PALETTE["dark"], alpha=0.5, 
-                       linewidths=0, zorder=3, label="Kernel" if i==0 else None)
+    def _kde_gaussian(xs: np.ndarray, grid: np.ndarray) -> np.ndarray:
+        xs = xs[np.isfinite(xs)]
+        n = xs.size
+        if n == 0:
+            return np.zeros_like(grid)
 
-    ax.axhline(1.0, color=PALETTE["grey"], linestyle="--", linewidth=1.5, label="Freeze (1.0x)")
+        if n == 1:
+            bw = max(0.03, 0.05 * float(xs[0]))
+        else:
+            std = float(xs.std(ddof=1))
+            q75, q25 = (float(v) for v in np.percentile(xs, [75, 25]))
+            iqr = q75 - q25
+            sigma = min(std, iqr / 1.34) if iqr > 0 else std
+            if sigma <= 0:
+                sigma = max(0.05, 0.05 * float(xs.mean()))
+            bw = 0.9 * sigma * (n ** (-1.0 / 5.0))
+            bw = max(bw, 0.03)
 
-    ax.set_xticks(x)
-    ax.set_xticklabels([f"{labels[t]}\n(n={len(by_tier[t])})" for t in order])
-    ax.set_ylabel("Speedup (Retune / Freeze)")
-    ax.set_title("Portability: Retuning Benefit")
-    ax.set_ylim(0, 2.4)
-    
-    handles = [
-        Patch(facecolor=PALETTE["red"], label="Tier Geomean"),
-        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=PALETTE["dark"], alpha=0.5, label='Kernel'),
-        plt.Line2D([0], [0], color=PALETTE["grey"], linestyle='--', label='Freeze (1.0x)')
+        u = (grid[:, None] - xs[None, :]) / bw
+        y = np.exp(-0.5 * u * u).sum(axis=1) / (n * bw * math.sqrt(2.0 * math.pi))
+        return y
+
+    x_min, x_max = 0.95, 2.4
+    grid = np.linspace(x_min, x_max, 320)
+
+    fig, ax = plt.subplots(figsize=(COL_W, H_SINGLE))
+    plt.subplots_adjust(top=0.76, bottom=0.28, left=0.18, right=0.98)
+
+    tier_styles = [
+        ("A_dot", "GEMM", PALETTE["red"]),
+        ("B_reduce", "Reduce", PALETTE["green"]),
+        ("C_copy", "Copy", PALETTE["blue"]),
     ]
-    _common_legend(fig, handles, [h.get_label() for h in handles], ncol=3, y_pos=0.99)
-    
-    _save_fig(fig, out / "e5_2_retune_vs_freeze.pdf")
+
+    handles: list[Any] = []
+    labels_out: list[str] = []
+    for tier, lab, col in tier_styles:
+        xs = np.asarray(by_tier.get(tier, []), dtype=float)
+        if xs.size == 0:
+            continue
+        y = _kde_gaussian(xs, grid)
+        ax.fill_between(grid, 0.0, y, color=col, alpha=0.22, linewidth=0)
+        (ln,) = ax.plot(grid, y, color=col, linewidth=2.0, label=lab)
+        handles.append(ln)
+        labels_out.append(lab)
+
+    ax.axvline(1.0, color=PALETTE["grey"], linestyle="--", linewidth=1.5)
+
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(bottom=0.0)
+    ax.set_ylabel("Density")
+    ax.set_xlabel("Retune / Freeze (×)")
+    ax.set_title("Portability: Retuning Benefit")
+    ax.grid(axis="x", which="major", alpha=0.5)
+    ax.yaxis.set_major_locator(MultipleLocator(2.0))
+
+    _common_legend(fig, handles, labels_out, ncol=3, y_pos=0.99)
+    _save_fig(fig, out / "e5_2_retune_vs_freeze.pdf", tight=False)
 
 
 def fig_e6_contract_calibration(e6: dict[str, Any], out: Path) -> None:
@@ -432,13 +644,11 @@ def fig_e2_trust_ablation(e2: dict[str, Any], out: Path) -> None:
     modes = ["diff_only", "full"]
     colors = ["#C4D4E0", PALETTE["red"]]
 
-    fig, ax = plt.subplots(figsize=(3.5, 3.0))
-    
-    # [FIX] Adjusted top from 0.85 to 0.78 (Very short figure needs room)
-    plt.subplots_adjust(top=0.78)
+    fig, ax = plt.subplots(figsize=(COL_W, H_SINGLE))
+    plt.subplots_adjust(top=0.80, bottom=0.25, left=0.18, right=0.98)
 
     x = np.arange(len(frontends) + 1)
-    w = 0.30  # wider bars since only 2 modes
+    w = BAR_W
 
     for i, m in enumerate(modes):
         vals = []
@@ -451,8 +661,16 @@ def fig_e2_trust_ablation(e2: dict[str, Any], out: Path) -> None:
             tot += d["total"]; kill += d["killed"]
         vals.append(kill / tot if tot > 0 else 0)
         
-        bars = ax.bar(x + (i-0.5)*w, vals, width=w, label=m.replace("_", "-").title(), 
-               color=colors[i], edgecolor='white')
+        bars = ax.bar(
+            x + (i - 0.5) * w,
+            vals,
+            width=w,
+            label=m.replace("_", "-").title(),
+            color=colors[i],
+            edgecolor=BAR_EDGE_COLOR,
+            linewidth=BAR_EDGE_LW,
+            zorder=2,
+        )
 
         # Add value labels
         for bar in bars:
@@ -469,7 +687,7 @@ def fig_e2_trust_ablation(e2: dict[str, Any], out: Path) -> None:
     ax.set_ylim(0, 1.05)
     
     _common_legend(fig, *ax.get_legend_handles_labels(), ncol=2)
-    _save_fig(fig, out / "e2_trust_ablation.pdf")
+    _save_fig(fig, out / "e2_trust_ablation.pdf", tight=False)
 
 
 def fig_e4_consistency(e4: dict[str, Any], out: Path) -> None:
@@ -484,7 +702,7 @@ def fig_e4_consistency(e4: dict[str, Any], out: Path) -> None:
         return float(v) if isinstance(v, (int, float)) else 0.0
 
     # Panel (a): cumulative match rates under progressively more semantic views.
-    ladder_labels = ["Raw", "-Schedule", "Portable", "Structural"]
+    ladder_labels = ["Raw", "Schedule", "Portable", "Structural"]
     ladder_vals = [
         _as_rate(s.get("intent_raw_ok_rate")),
         _as_rate(s.get("intent_no_schedule_ok_rate")),
@@ -536,33 +754,77 @@ def fig_e4_consistency(e4: dict[str, Any], out: Path) -> None:
         other = max(0, int(n) - int(used))
         other_frac.append(float(other) / float(n))
 
-    fig, axes = plt.subplots(2, 1, figsize=(3.8, 4.8))
-    plt.subplots_adjust(top=0.86, bottom=0.12, hspace=0.65, left=0.18, right=0.98)
+    fig, axes = plt.subplots(2, 1, figsize=(COL_W, H_DOUBLE))
+    plt.subplots_adjust(top=0.84, bottom=0.12, hspace=0.65, left=0.18, right=0.98)
 
-    # (a) Ladder bar chart.
+    # (a) Normalization ladder: step-style curve (paper default).
     ax = axes[0]
     x = np.arange(len(ladder_labels))
-    bars = ax.bar(x, ladder_vals, color=ladder_colors, edgecolor="white")
+    ax.plot(x, ladder_vals, color=PALETTE["dark"], linewidth=2.6, zorder=1)
+    ax.scatter(
+        x,
+        ladder_vals,
+        s=48,
+        c=ladder_colors,
+        edgecolors="white",
+        linewidths=0.8,
+        zorder=3,
+    )
     ax.set_xticks(x)
     ax.set_xticklabels(ladder_labels)
     ax.set_ylabel("Match rate")
     ax.set_ylim(0, 1.08)
-    ax.set_title("Normalization Ladder (Triton vs TileLang)")
+    ax.set_title("Normalization (Triton vs TileLang)")
     _panel_label(ax, "(a)")
-    for i, b in enumerate(bars):
-        v = float(ladder_vals[i])
-        ax.text(b.get_x() + b.get_width() / 2.0, v + 0.02, f"{v:.1%}", ha="center", va="bottom", fontsize=8, color=PALETTE["dark"])
+
+    # Absolute match-rate labels at each step.
+    for i, v in enumerate(ladder_vals):
+        vv = float(v)
+        dy = 0.02 if vv >= 0.95 else 0.03
+        ax.text(float(x[i]), vv + dy, f"{vv:.1%}", ha="center", va="bottom", fontsize=8, color=PALETTE["dark"])
+
+    # Increment labels between steps: closer to the polyline and with a subtle
+    # white background to avoid overlapping the line.
+    incr_dy = 0.012
+    for i in range(1, len(ladder_vals)):
+        v0 = float(ladder_vals[i - 1])
+        v1 = float(ladder_vals[i])
+        dv = v1 - v0
+        if dv <= 1e-9:
+            continue
+        xm = float(x[i - 1] + x[i]) / 2.0
+        ym = float(v0 + v1) / 2.0 + incr_dy
+        ax.text(
+            xm,
+            ym,
+            f"+{dv * 100.0:.1f}%",
+            ha="center",
+            va="bottom",
+            fontsize=7,
+            color=PALETTE["dark"],
+            bbox=dict(facecolor="white", edgecolor="none", alpha=0.65, boxstyle="round,pad=0.15"),
+            zorder=4,
+        )
 
     # (b) Drift attribution stacked bars.
     ax = axes[1]
     x = np.arange(len(x_labels))
     bottom = np.zeros(len(x_labels))
-    width = 0.58
+    width = BAR_W
     handles: list[Any] = []
     labels: list[str] = []
     for k, lab, col in drift_keys:
         vals = drift_fracs.get(k, [])
-        b = ax.bar(x, vals, width=width, bottom=bottom, color=col, edgecolor="white")
+        b = ax.bar(
+            x,
+            vals,
+            width=width,
+            bottom=bottom,
+            color=col,
+            edgecolor=BAR_EDGE_COLOR,
+            linewidth=BAR_EDGE_LW,
+            zorder=2,
+        )
         bottom = bottom + np.array(vals, dtype=float)
         handles.append(Patch(facecolor=col, label=lab))
         labels.append(lab)
@@ -570,19 +832,29 @@ def fig_e4_consistency(e4: dict[str, Any], out: Path) -> None:
     # Any remaining categories (OOS / true mismatches) collapse into "Other".
     if any(v > 0 for v in other_frac):
         col = PALETTE["light_grey"]
-        ax.bar(x, other_frac, width=width, bottom=bottom, color=col, edgecolor="white")
+        ax.bar(
+            x,
+            other_frac,
+            width=width,
+            bottom=bottom,
+            color=col,
+            edgecolor=BAR_EDGE_COLOR,
+            linewidth=BAR_EDGE_LW,
+            zorder=2,
+        )
         handles.append(Patch(facecolor=col, label="Other"))
         labels.append("Other")
 
     ax.set_xticks(x)
-    ax.set_xticklabels(x_labels, fontsize=7)
+    ax.set_xticklabels(x_labels)
     ax.set_ylabel("Fraction of pairs")
     ax.set_ylim(0, 1.08)
     ax.set_title("Where Drift Comes From (by Tier)")
     _panel_label(ax, "(b)")
 
-    _common_legend(fig, handles, labels, ncol=4)
-    _save_fig(fig, out / "e4_consistency.pdf")
+    # Use 2 columns to avoid clipping long legend labels under fixed-size export.
+    _common_legend(fig, handles, labels, ncol=2)
+    _save_fig(fig, out / "e4_consistency.pdf", tight=False)
 
 
 def fig_e5_cuda_triton_vs_intentir(
@@ -813,18 +1085,18 @@ def fig_e5_cuda_triton_vs_intentir(
                     color=PALETTE["dark"],
                 )
 
-        if any(fp_flags):
-            ax_bot.text(
-                0.99,
-                0.02,
-                "Hatched: contract fast path selected",
-                transform=ax_bot.transAxes,
-                ha="right",
-                va="bottom",
-                fontsize=8,
-                color=PALETTE["dark"],
-                alpha=0.9,
-            )
+        # if any(fp_flags):
+        #     ax_bot.text(
+        #         0.99,
+        #         0.02,
+        #         "Hatched: contract fast path selected",
+        #         transform=ax_bot.transAxes,
+        #         ha="right",
+        #         va="bottom",
+        #         fontsize=8,
+        #         color=PALETTE["dark"],
+        #         alpha=0.9,
+        #     )
 
         _common_legend(fig, *ax_bot.get_legend_handles_labels(), ncol=min(3, n_series), y_pos=0.99)
         _save_fig(fig, out_dir / f"{out_name}.pdf")
@@ -1182,6 +1454,8 @@ def table_e5_cuda_evidence_off(
     lines.append("\\begin{table}[t]")
     lines.append("\\centering")
     lines.append("\\small")
+    lines.append("\\caption{Evidence-off / evidence-on ratios for candidate variants and host dispatch time.}")
+    lines.append("\\label{tab:e5-cuda-evidence-off}")
     lines.append("\\begin{tabular}{lrr}")
     lines.append("\\toprule")
     lines.append("Kernel & Variants ($\\times$) & Dispatch ms ($\\times$) \\\\")
@@ -1194,10 +1468,6 @@ def table_e5_cuda_evidence_off(
     lines.append(f"GeoMean & {_fmt(gm_v)} & {_fmt(gm_ms)} \\\\")
     lines.append("\\bottomrule")
     lines.append("\\end{tabular}")
-    lines.append(
-        "\\caption{Evidence-off / evidence-on ratios: candidate variants (search-space size) and host-dispatch selection time (ms). Values are geometric means across H100 and RTX 5090 D.}"
-    )
-    lines.append("\\label{tab:e5-cuda-evidence-off}")
     lines.append("\\end{table}")
     lines.append("")
 
@@ -1245,6 +1515,7 @@ def main() -> None:
     fig_e5_1_external_baseline(e5_1, fig_dir)
     fig_e5_2_retune_vs_freeze(e5_2, fig_dir)
     fig_e6_contract_calibration(e6, fig_dir)
+    table_e5_1_external_baseline_throughput(e5_1, table_dir)
 
     # Optional: E5 CUDA GPU figures (H100 + 5090D).
     # We keep GPU inputs pinned to artifacts/experiments/paper via fixed filenames
