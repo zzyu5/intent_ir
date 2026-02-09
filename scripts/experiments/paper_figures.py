@@ -91,6 +91,18 @@ BAR_EDGE_COLOR = "white"
 BAR_EDGE_LW = 0.5
 BAR_W = 0.30
 
+FRONTEND_PRETTY = {
+    "triton": "Triton",
+    "tilelang": "TileLang",
+    "cuda": "CUDA",
+    "all": "All",
+}
+
+
+def _pretty_frontend(name: str) -> str:
+    key = str(name).strip().lower()
+    return FRONTEND_PRETTY.get(key, str(name))
+
 # =============================================================================
 # 2. Helper Utilities
 # =============================================================================
@@ -219,7 +231,7 @@ def fig_e1e3_recoverability(e1: dict[str, Any], e1e3: dict[str, Any], out: Path)
     x = np.arange(len(fes))
     x_all = len(fes) + 0.6 
     x_locs = list(x) + [x_all]
-    x_labels = [f.capitalize() for f in fes] + ["All"]
+    x_labels = [_pretty_frontend(f) for f in fes] + [_pretty_frontend("all")]
 
     # --- Panel A: Pass Rate ---
     ax = axes[0]
@@ -681,7 +693,7 @@ def fig_e2_trust_ablation(e2: dict[str, Any], out: Path) -> None:
                         ha='center', va='bottom', fontsize=4.5, rotation=0)
 
     ax.set_xticks(x)
-    ax.set_xticklabels([f.capitalize() for f in frontends] + ["All"])
+    ax.set_xticklabels([_pretty_frontend(f) for f in frontends] + [_pretty_frontend("all")])
     ax.set_ylabel("Mutation Kill Rate")
     ax.set_title("Trustworthiness Ablation")
     ax.set_ylim(0, 1.05)
@@ -772,6 +784,9 @@ def fig_e4_consistency(e4: dict[str, Any], out: Path) -> None:
     )
     ax.set_xticks(x)
     ax.set_xticklabels(ladder_labels)
+    # Provide extra horizontal padding so the last tick label ("Structural") is
+    # not clipped under fixed-size export.
+    ax.set_xlim(-0.35, float(len(ladder_labels) - 1) + 0.35)
     ax.set_ylabel("Match rate")
     ax.set_ylim(0, 1.08)
     ax.set_title("Normalization (Triton vs TileLang)")
