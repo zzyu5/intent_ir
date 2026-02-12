@@ -1,0 +1,167 @@
+"""
+Converge FlagGems registry status using execution artifacts.
+
+Inputs are optional and can come from:
+- Triton provider reports (`artifacts/flaggems_triton_full_pipeline/*.json`)
+- RVV smoke summary (`scripts/backend_codegen_smoke.py --json --out ...`)
+- CUDA smoke summary (`scripts/cuda_backend_smoke.py --json --out ...`)
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def _load_json(path: Path | None) -> dict | None:
+    if path is None:
+        return None
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_result_map(summary: dict | None) -> tuple[dict[str, bool], bool]:
+    if not isinstance(summary, dict):
+        return {}, False
+    skipped = bool(summary.get("skipped"))
+    results = summary.get("results")
+    if not isinstance(results, list):
+        return {}, skipped
+    out: dict[str, bool] = {}
+    for r in results:
+        if not isinstance(r, dict):
+            continue
+        k = r.get("kernel")
+        if not isinstance(k, str) or not k:
+            continue
+        out[k] = bool(r.get("ok"))
+    return out, skipped
+
+
+def _provider_report_state(report_path: Path) -> dict[str, Any]:
+    if not report_path.is_file():
+        return {"exists": False, "diff_ok": False}
+    try:
+        rep = json.loads(report_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"exists": True, "diff_ok": False, "parse_error": True}
+    diff_ok = bool(((rep.get("diff") or {}).get("ok")))
+    return {"exists": True, "diff_ok": diff_ok}
+
+
+def _derive_status(
+    *,
+    intent_ops: list[str],
+    has_e2e_spec: bool,
+    provider_ok: bool,
+    rvv: str,
+    cuda: str,
+) -> tuple[str, str]:
+    if not intent_ops:
+        return "blocked_ir", "no_intentir_mapping"
+    if not has_e2e_spec:
+        return "blocked_backend", "missing_e2e_spec"
+    if not provider_ok:
+        return "blocked_backend", "pipeline_diff_failed_or_missing"
+
+    rvv_pass = rvv == "pass"
+    cuda_pass = cuda == "pass"
+    if rvv_pass and cuda_pass:
+        return "dual_pass", "runtime_dual_backend_pass"
+    if rvv_pass and cuda in {"fail", "unknown"}:
+        return "rvv_only", ("runtime_cuda_fail" if cuda == "fail" else "runtime_cuda_unknown")
+    if cuda_pass and rvv in {"fail", "unknown"}:
+        return "cuda_only", ("runtime_rvv_fail" if rvv == "fail" else "runtime_rvv_unknown")
+    return "blocked_backend", "runtime_backend_fail"
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--registry", type=Path, default=(ROOT / "pipeline" / "triton" / "flaggems_registry.json"))
+    ap.add_argument("--provider-report-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_triton_full_pipeline"))
+    ap.add_argument("--rvv-json", type=Path, default=None, help="RVV smoke JSON summary path")
+    ap.add_argument("--cuda-json", type=Path, default=None, help="CUDA smoke JSON summary path")
+    ap.add_argument("--out", type=Path, default=(ROOT / "artifacts" / "flaggems_coverage" / "status_converged.json"))
+    ap.add_argument("--write-registry", action="store_true", help="overwrite registry with converged statuses")
+    args = ap.parse_args()
+
+    if not args.registry.is_file():
+        raise FileNotFoundError(f"registry not found: {args.registry}")
+    reg = json.loads(args.registry.read_text(encoding="utf-8"))
+    entries = [e for e in (reg.get("entries") or []) if isinstance(e, dict)]
+
+    rvv_summary = _load_json(args.rvv_json)
+    cuda_summary = _load_json(args.cuda_json)
+    rvv_map, rvv_skipped = _load_result_map(rvv_summary)
+    cuda_map, cuda_skipped = _load_result_map(cuda_summary)
+
+    converged_entries: list[dict[str, Any]] = []
+    counts: dict[str, int] = {}
+    for e in entries:
+        out = dict(e)
+        spec = out.get("e2e_spec")
+        kernel = str(spec) if isinstance(spec, str) and spec else None
+
+        provider_state = {"exists": False, "diff_ok": False}
+        if kernel is not None:
+            provider_state = _provider_report_state(args.provider_report_dir / f"{kernel}.json")
+
+        def _runtime_state(result_map: dict[str, bool], *, skipped: bool) -> str:
+            if kernel is None:
+                return "unknown"
+            if skipped:
+                return "unknown"
+            if kernel not in result_map:
+                return "unknown"
+            return "pass" if bool(result_map[kernel]) else "fail"
+
+        rvv_state = _runtime_state(rvv_map, skipped=rvv_skipped)
+        cuda_state = _runtime_state(cuda_map, skipped=cuda_skipped)
+
+        intent_ops = [str(x) for x in (out.get("intent_ops") or []) if isinstance(x, str)]
+        status, reason = _derive_status(
+            intent_ops=intent_ops,
+            has_e2e_spec=(kernel is not None),
+            provider_ok=bool(provider_state.get("diff_ok")),
+            rvv=rvv_state,
+            cuda=cuda_state,
+        )
+        out["status"] = status
+        out["status_reason"] = reason
+        out["runtime"] = {
+            "provider": provider_state,
+            "rvv": rvv_state,
+            "cuda": cuda_state,
+        }
+        converged_entries.append(out)
+        counts[status] = counts.get(status, 0) + 1
+
+    result = {
+        "schema_version": "flaggems_registry_converged_v1",
+        "registry_path": str(args.registry),
+        "provider_report_dir": str(args.provider_report_dir),
+        "rvv_json": (str(args.rvv_json) if args.rvv_json else None),
+        "cuda_json": (str(args.cuda_json) if args.cuda_json else None),
+        "counts_by_status": dict(sorted(counts.items(), key=lambda kv: kv[0])),
+        "entries": converged_entries,
+    }
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"Converged status report written: {args.out}")
+
+    if args.write_registry:
+        reg2 = dict(reg)
+        reg2["entries"] = converged_entries
+        reg2["counts"] = dict(reg2.get("counts") or {})
+        reg2["counts"]["by_status"] = dict(sorted(counts.items(), key=lambda kv: kv[0]))
+        args.registry.write_text(json.dumps(reg2, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"Registry updated: {args.registry}")
+
+
+if __name__ == "__main__":
+    main()

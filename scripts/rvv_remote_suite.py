@@ -84,8 +84,33 @@ FLAGGEMS_KERNEL_SUITES = {
 }
 
 
-def _suite_kernels_for(frontend: str, *, suite: str, triton_provider: str) -> List[str]:
+def _suite_kernels_for(
+    frontend: str,
+    *,
+    suite: str,
+    triton_provider: str,
+    flaggems_opset: str = "deterministic_forward",
+    backend_target: str = "rvv",
+) -> List[str]:
     if frontend == "triton" and str(triton_provider) == "flaggems":
+        try:
+            from pipeline.triton.flaggems_specs import coverage_flaggems_kernel_specs, default_flaggems_kernel_specs  # noqa: PLC0415
+
+            if str(suite) == "smoke":
+                specs = default_flaggems_kernel_specs(
+                    flaggems_opset=str(flaggems_opset),
+                    backend_target=str(backend_target),
+                )
+            else:
+                specs = coverage_flaggems_kernel_specs(
+                    flaggems_opset=str(flaggems_opset),
+                    backend_target=str(backend_target),
+                )
+            names = [str(s.name) for s in specs]
+            if names:
+                return names
+        except Exception:
+            pass
         return list(FLAGGEMS_KERNEL_SUITES[str(suite)])
     return list(KERNEL_SUITES[str(suite)])
 
@@ -144,6 +169,18 @@ def main() -> None:
         choices=["native", "flaggems"],
         default="native",
         help="Triton artifact provider (default: native)",
+    )
+    ap.add_argument(
+        "--flaggems-opset",
+        choices=["deterministic_forward"],
+        default="deterministic_forward",
+        help="FlagGems semantic-op set used to resolve default kernels.",
+    )
+    ap.add_argument(
+        "--backend-target",
+        choices=["rvv", "cuda_h100", "cuda_5090d"],
+        default="rvv",
+        help="Capability target used when resolving FlagGems default kernels.",
     )
     ap.add_argument(
         "--host",
@@ -226,6 +263,8 @@ def main() -> None:
             str(fe),
             suite=str(args.suite),
             triton_provider=str(args.triton_provider),
+            flaggems_opset=str(args.flaggems_opset),
+            backend_target=str(args.backend_target),
         )
         kernels_by_frontend[str(fe)] = list(kernels)
         for k in kernels:

@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -44,14 +45,24 @@ DEFAULT_KERNELS = [
     "upsample_bicubic2d_aa",
 ]
 
-FLAGGEMS_KERNELS = [
-    "any_kernel_dim",
-    "add2d",
-    "group_norm_kernel",
-    "layer_norm_persistent",
-    "softmax_inner",
-    "upsample_bicubic2d_aa",
-]
+def _default_kernels_for(
+    *,
+    frontend: str,
+    triton_provider: str,
+    flaggems_opset: str,
+    backend_target: str,
+) -> list[str]:
+    if str(frontend) == "triton" and str(triton_provider) == "flaggems":
+        from pipeline.triton.flaggems_specs import default_flaggems_kernel_specs  # noqa: PLC0415
+
+        return [
+            str(s.name)
+            for s in default_flaggems_kernel_specs(
+                flaggems_opset=str(flaggems_opset),
+                backend_target=str(backend_target),
+            )
+        ]
+    return list(DEFAULT_KERNELS)
 
 
 def _artifact_dir_for_frontend(frontend: str, *, triton_provider: str = "native") -> str:
@@ -251,19 +262,36 @@ def main() -> None:
         help="Triton artifact provider (default: native)",
     )
     ap.add_argument("--kernel", action="append", default=[], help="repeatable; default runs 6 kernels")
+    ap.add_argument(
+        "--flaggems-opset",
+        choices=["deterministic_forward"],
+        default="deterministic_forward",
+        help="FlagGems semantic-op set used to resolve default kernels.",
+    )
+    ap.add_argument(
+        "--backend-target",
+        choices=["rvv", "cuda_h100", "cuda_5090d"],
+        default="rvv",
+        help="Capability target passed to FlagGems spec registry when selecting defaults.",
+    )
     ap.add_argument("--keep-tmp", action="store_true", help="keep generated C + binaries in a temp dir")
     ap.add_argument("--tune-mode", choices=["auto", "guided", "locked"], default=None)
     ap.add_argument("--lock", action="append", default=[], help="repeatable; e.g. --lock tile_n=128")
     ap.add_argument("--constraint", action="append", default=[], help="repeatable; e.g. --constraint 'tile_n in (64,128)'")
     ap.add_argument("--profile", default=None, help="RVV profile name or JSON path (default: generic_rvv_256 when tuning)")
+    ap.add_argument("--json", action="store_true", help="print machine-readable summary JSON")
+    ap.add_argument("--out", default=None, help="write summary JSON to this path")
     args = ap.parse_args()
 
     if args.kernel:
         kernels = list(args.kernel)
-    elif str(args.frontend) == "triton" and str(args.triton_provider) == "flaggems":
-        kernels = list(FLAGGEMS_KERNELS)
     else:
-        kernels = list(DEFAULT_KERNELS)
+        kernels = _default_kernels_for(
+            frontend=str(args.frontend),
+            triton_provider=str(args.triton_provider),
+            flaggems_opset=str(args.flaggems_opset),
+            backend_target=str(args.backend_target),
+        )
     tune_req = None
     if args.tune_mode:
         tune_req = TuningRequest(
@@ -272,27 +300,52 @@ def main() -> None:
             locks=parse_locks(args.lock or []),
             constraints=parse_constraints(args.constraint or []),
         )
-    results = []
+    results: list[dict[str, Any]] = []
     ok_all = True
     for k in kernels:
-        r = run_one(
-            k,
-            frontend=str(args.frontend),
-            triton_provider=str(args.triton_provider),
-            keep_tmp=bool(args.keep_tmp),
-            tune_request=tune_req,
-            tune_profile=str(args.profile) if args.profile else None,
-        )
+        try:
+            r = run_one(
+                k,
+                frontend=str(args.frontend),
+                triton_provider=str(args.triton_provider),
+                keep_tmp=bool(args.keep_tmp),
+                tune_request=tune_req,
+                tune_profile=str(args.profile) if args.profile else None,
+            )
+        except Exception as e:
+            r = {
+                "kernel": str(k),
+                "ok": False,
+                "rc": 1,
+                "stdout": "",
+                "stderr": f"{type(e).__name__}: {e}",
+                "error": {"type": type(e).__name__, "message": str(e)},
+            }
         results.append(r)
         ok_all = ok_all and bool(r["ok"])
-        status = "OK" if r["ok"] else "FAIL"
-        print(f"[{k}] {status} rc={r['rc']}")
-        if r["stdout"]:
-            print(r["stdout"])
-        if r["stderr"]:
-            print(r["stderr"])
-        if args.keep_tmp and r.get("tmpdir"):
-            print(f"  tmpdir={r['tmpdir']}")
+        if not bool(args.json):
+            status = "OK" if r["ok"] else "FAIL"
+            print(f"[{k}] {status} rc={r.get('rc', 1)}")
+            if r.get("stdout"):
+                print(r["stdout"])
+            if r.get("stderr"):
+                print(r["stderr"])
+            if args.keep_tmp and r.get("tmpdir"):
+                print(f"  tmpdir={r['tmpdir']}")
+
+    summary = {
+        "frontend": str(args.frontend),
+        "triton_provider": (str(args.triton_provider) if str(args.frontend) == "triton" else None),
+        "flaggems_opset": str(args.flaggems_opset),
+        "backend_target": str(args.backend_target),
+        "kernels": list(kernels),
+        "results": results,
+        "ok": bool(ok_all),
+    }
+    if args.out:
+        Path(args.out).write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    if bool(args.json):
+        print(json.dumps(summary, ensure_ascii=False))
     raise SystemExit(0 if ok_all else 1)
 
 

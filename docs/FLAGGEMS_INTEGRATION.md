@@ -70,3 +70,23 @@ PYTHONPATH=. python scripts/flaggems/coverage_report.py
 
 Default output:
 - `artifacts/flaggems_coverage/coverage_report.json`
+
+## Multi-Backend Matrix
+
+Run a full local matrix (pipeline + RVV local smoke + CUDA local smoke + status convergence):
+
+```bash
+PYTHONPATH=. python scripts/flaggems/run_multibackend_matrix.py \
+  --suite smoke \
+  --flaggems-opset deterministic_forward \
+  --backend-target rvv
+```
+
+Converge status using existing result JSONs:
+
+```bash
+PYTHONPATH=. python scripts/flaggems/converge_status.py \
+  --rvv-json artifacts/flaggems_matrix/rvv_local.json \
+  --cuda-json artifacts/flaggems_matrix/cuda_local.json \
+  --out artifacts/flaggems_matrix/status_converged.json
+```

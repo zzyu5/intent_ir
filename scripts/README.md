@@ -15,8 +15,14 @@ importable modules (e.g., `pipeline/triton/core.py`, or backend/verify packages)
 - `pipeline/triton/core.py`: reusable Triton pipeline helper library used by `scripts/triton/full_pipeline_verify.py`.
 - `flaggems/generate_registry.py`: generate/freeze `pipeline/triton/flaggems_registry.json` from `flag_gems.ops.__all__`.
 - `flaggems/coverage_report.py`: emit machine-readable FlagGems coverage report JSON for CI/gates.
+- `flaggems/converge_status.py`: merge provider + RVV + CUDA execution results into converged status matrix (`dual_pass|rvv_only|cuda_only|blocked_ir|blocked_backend`).
+- `flaggems/run_multibackend_matrix.py`: one-command runner for pipeline + RVV local smoke + CUDA local smoke + status convergence.
 - `backend_codegen_smoke.py`: validate Task6 backend codegen locally (no LLM, no remote).
   - `--triton-provider native|flaggems` selects Triton artifact directory for backend smoke.
+  - `--flaggems-opset deterministic_forward` and `--backend-target rvv|cuda_h100|cuda_5090d` align default kernel selection with registry/spec metadata.
+  - Supports `--json --out <path>` for machine-readable results.
+- `cuda_backend_smoke.py`: local CUDA backend smoke from existing frontend artifacts.
+  - Supports `--triton-provider native|flaggems`, `--flaggems-opset`, `--backend-target`, and `--json --out`.
 - `rvv_remote_run.py`: run Task6 on a remote RVV host and compare with saved baseline.
   - `--triton-provider native|flaggems` allows direct remote run from FlagGems Triton artifacts.
   - Defaults: `--host 192.168.8.72 --user ubuntu` (overridable by `INTENTIR_RVV_HOST`, `INTENTIR_RVV_USER`).
