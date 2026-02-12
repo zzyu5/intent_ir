@@ -31,3 +31,8 @@ importable modules (e.g., `pipeline/triton/core.py`, or backend/verify packages)
 
 - `experiments/mutation_kill_ablation.py`: summarize mutation-kill outcomes from existing artifacts.
 - `experiments/rvv_e2e_case_study.py`: run `rvv_remote_run.py` across the 6-kernel suite and collect a single JSON report.
+  - Supports `--triton-provider native|flaggems` and the same RVV host/user defaults.
+- `experiments/portability_vs_perf.py`: E5 freeze-vs-retune study on remote RVV.
+  - Supports `--triton-provider native|flaggems`; provider also selects the default kernel family.
+- `experiments/experiment_a_ai_benchmark.py`: E5 external baseline comparison (AI-Benchmark vs ours).
+  - Supports `--triton-provider`; currently requires `native` because AI-Benchmark-equivalent kernels are not yet in the FlagGems spec set.

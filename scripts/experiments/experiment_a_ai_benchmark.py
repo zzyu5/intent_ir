@@ -25,12 +25,15 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pipeline.triton.core import coverage_kernel_specs, run_pipeline_for_spec
+from pipeline.triton.core import run_pipeline_for_spec
 from scripts.rvv_remote_run import run_remote
 from backends.spmd_rvv.analysis.tuning import TuningRequest
 
 
-ARTIFACT_DIR = ROOT / "artifacts" / "full_pipeline_verify"
+_TRITON_PROVIDER_ENV = str(os.getenv("INTENTIR_TRITON_PROVIDER", "native")).strip().lower()
+DEFAULT_TRITON_PROVIDER = _TRITON_PROVIDER_ENV if _TRITON_PROVIDER_ENV in {"native", "flaggems"} else "native"
+DEFAULT_RVV_HOST = os.getenv("INTENTIR_RVV_HOST", "192.168.8.72")
+DEFAULT_RVV_USER = os.getenv("INTENTIR_RVV_USER", "ubuntu")
 AI_BENCH_REPORT = ROOT / "experiment" / "AI-Benchmark" / "COMPLETE_PERFORMANCE_SUMMARY.md"
 
 
@@ -135,6 +138,22 @@ def _log(msg: str) -> None:
     print(str(msg), file=sys.stderr, flush=True)
 
 
+def _artifact_dir_for_provider(triton_provider: str) -> Path:
+    if str(triton_provider) == "flaggems":
+        return ROOT / "artifacts" / "flaggems_triton_full_pipeline"
+    return ROOT / "artifacts" / "full_pipeline_verify"
+
+
+def _coverage_specs_for_provider(triton_provider: str) -> list:
+    if str(triton_provider) == "flaggems":
+        from pipeline.triton.flaggems_specs import coverage_flaggems_kernel_specs  # noqa: PLC0415
+
+        return list(coverage_flaggems_kernel_specs())
+    from pipeline.triton.core import coverage_kernel_specs  # noqa: PLC0415
+
+    return list(coverage_kernel_specs())
+
+
 def _parse_baseline_time_from_output(text: str) -> Optional[float]:
     # Prints: "Running Triton Kernel Time: <value> s"
     m = re.search(r"Running\\s+Triton\\s+Kernel\\s+Time:\\s*([0-9]*\\.?[0-9]+)\\s*s", text)
@@ -179,22 +198,24 @@ def _remote_run_baseline(
         client.close()
 
 
-def _ensure_ours_artifact(kernel_name: str, *, cases_limit: int) -> None:
-    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-    report_path = ARTIFACT_DIR / f"{kernel_name}.json"
+def _ensure_ours_artifact(kernel_name: str, *, cases_limit: int, triton_provider: str) -> None:
+    artifact_dir = _artifact_dir_for_provider(str(triton_provider))
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    report_path = artifact_dir / f"{kernel_name}.json"
     if report_path.exists():
         return
-    spec_map = {s.name: s for s in coverage_kernel_specs()}
+    spec_map = {s.name: s for s in _coverage_specs_for_provider(str(triton_provider))}
     if kernel_name not in spec_map:
         raise KeyError(f"kernel not found in triton coverage specs: {kernel_name}")
     _log(f"[ours:{kernel_name}] generating artifacts via pipeline (cases_limit={cases_limit})")
-    report = run_pipeline_for_spec(spec_map[kernel_name], out_dir=ARTIFACT_DIR, cases_limit=int(cases_limit))
+    report = run_pipeline_for_spec(spec_map[kernel_name], out_dir=artifact_dir, cases_limit=int(cases_limit))
     report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def _run_ours_remote_bench(
     *,
     kernel_name: str,
+    triton_provider: str,
     host: str,
     user: str,
     password: str | None,
@@ -213,6 +234,7 @@ def _run_ours_remote_bench(
     res = run_remote(
         kernel=kernel_name,
         frontend="triton",
+        triton_provider=str(triton_provider),
         host=host,
         user=user,
         password=None if use_key else password,
@@ -239,8 +261,22 @@ def _run_ours_remote_bench(
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--host", required=True)
-    ap.add_argument("--user", default="ubuntu")
+    ap.add_argument(
+        "--triton-provider",
+        choices=["native", "flaggems"],
+        default=DEFAULT_TRITON_PROVIDER,
+        help="Triton artifact/provider source (default: INTENTIR_TRITON_PROVIDER or native)",
+    )
+    ap.add_argument(
+        "--host",
+        default=DEFAULT_RVV_HOST,
+        help=f"RVV host (default: {DEFAULT_RVV_HOST}; env: INTENTIR_RVV_HOST)",
+    )
+    ap.add_argument(
+        "--user",
+        default=DEFAULT_RVV_USER,
+        help=f"SSH user (default: {DEFAULT_RVV_USER}; env: INTENTIR_RVV_USER)",
+    )
     ap.add_argument("--password", default=None)
     ap.add_argument("--use-key", action="store_true")
     ap.add_argument("--port", type=int, default=22)
@@ -255,6 +291,16 @@ def main() -> None:
     ap.add_argument("--timeout", type=int, default=600)
     ap.add_argument("--out", default=str(ROOT / "artifacts" / "experiments" / "E5" / "experiment_a_ai_benchmark.json"))
     args = ap.parse_args()
+
+    required_ours_kernels = [str(v["kernel"]) for v in OURS_EQUIV.values() if isinstance(v, dict) and "kernel" in v]
+    available_ours_kernels = {s.name for s in _coverage_specs_for_provider(str(args.triton_provider))}
+    missing_ours_kernels = [k for k in required_ours_kernels if k not in available_ours_kernels]
+    if missing_ours_kernels:
+        raise SystemExit(
+            "selected Triton provider does not include required kernels for Experiment A: "
+            + ", ".join(missing_ours_kernels)
+            + ". Use `--triton-provider native`."
+        )
 
     password: str | None = None
     if not bool(args.use_key):
@@ -278,6 +324,8 @@ def main() -> None:
             "bench_warmup": int(args.bench_warmup),
             "omp_threads": int(args.ours_threads),
             "tune": (not bool(args.no_tune)),
+            "triton_provider": str(args.triton_provider),
+            "artifact_dir": str(_artifact_dir_for_provider(str(args.triton_provider))),
         },
         "kernels": [],
     }
@@ -320,7 +368,11 @@ def main() -> None:
         shapes = dict(equiv["shapes"])
 
         try:
-            _ensure_ours_artifact(kernel_name, cases_limit=int(args.cases_limit))
+            _ensure_ours_artifact(
+                kernel_name,
+                cases_limit=int(args.cases_limit),
+                triton_provider=str(args.triton_provider),
+            )
         except Exception as e:
             entry["ours"] = {"status": "PIPELINE_FAIL", "kernel": kernel_name, "error": f"{type(e).__name__}: {e}"}
             results["kernels"].append(entry)
@@ -329,6 +381,7 @@ def main() -> None:
         try:
             ours = _run_ours_remote_bench(
                 kernel_name=kernel_name,
+                triton_provider=str(args.triton_provider),
                 host=str(args.host),
                 user=str(args.user),
                 password=password,

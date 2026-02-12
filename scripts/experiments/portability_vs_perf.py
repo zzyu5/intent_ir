@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pipeline.triton.core import coverage_kernel_specs, run_pipeline_for_spec  # noqa: E402
+from pipeline.triton.core import run_pipeline_for_spec  # noqa: E402
 from scripts.rvv_remote_run import run_remote  # noqa: E402
 from backends.spmd_rvv.analysis.tuning import TuningRequest  # noqa: E402
 from backends.spmd_rvv.analysis.device_query import query_remote_device  # noqa: E402
@@ -36,7 +36,10 @@ from backends.spmd_rvv.baseline_freeze_tile import freeze_tile_schedule  # noqa:
 from intent_ir.ir import IntentFunction  # noqa: E402
 
 
-ARTIFACT_DIR = ROOT / "artifacts" / "full_pipeline_verify"
+_TRITON_PROVIDER_ENV = str(os.getenv("INTENTIR_TRITON_PROVIDER", "native")).strip().lower()
+DEFAULT_TRITON_PROVIDER = _TRITON_PROVIDER_ENV if _TRITON_PROVIDER_ENV in {"native", "flaggems"} else "native"
+DEFAULT_RVV_HOST = os.getenv("INTENTIR_RVV_HOST", "192.168.8.72")
+DEFAULT_RVV_USER = os.getenv("INTENTIR_RVV_USER", "ubuntu")
 
 AI_BENCH_KERNELS: list[str] = [
     "ai_bench_matmul",
@@ -72,11 +75,36 @@ DEFAULT6_KERNELS: list[str] = [
     "upsample_bicubic2d_aa",
 ]
 
+FLAGGEMS_DEFAULT6_KERNELS: list[str] = [
+    "any_kernel_dim",
+    "add2d",
+    "group_norm_kernel",
+    "layer_norm_persistent",
+    "softmax_inner",
+    "upsample_bicubic2d_aa",
+]
+
 TRITON_COVERAGE_SUITE_NAME = "triton_coverage"
 
 
 def _log(msg: str) -> None:
     print(str(msg), file=sys.stderr, flush=True)
+
+
+def _artifact_dir_for_provider(triton_provider: str) -> Path:
+    if str(triton_provider) == "flaggems":
+        return ROOT / "artifacts" / "flaggems_triton_full_pipeline"
+    return ROOT / "artifacts" / "full_pipeline_verify"
+
+
+def _coverage_specs_for_provider(triton_provider: str) -> list:
+    if str(triton_provider) == "flaggems":
+        from pipeline.triton.flaggems_specs import coverage_flaggems_kernel_specs  # noqa: PLC0415
+
+        return list(coverage_flaggems_kernel_specs())
+    from pipeline.triton.core import coverage_kernel_specs  # noqa: PLC0415
+
+    return list(coverage_kernel_specs())
 
 
 def _anchor_tier_from_contract(contract: dict) -> str:
@@ -95,18 +123,19 @@ def _anchor_tier_from_contract(contract: dict) -> str:
     return "D_none"
 
 
-def _ensure_artifact(kernel_name: str, *, cases_limit: int, refresh: bool) -> Path:
-    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-    report_path = ARTIFACT_DIR / f"{kernel_name}.json"
+def _ensure_artifact(kernel_name: str, *, cases_limit: int, refresh: bool, triton_provider: str) -> Path:
+    artifact_dir = _artifact_dir_for_provider(str(triton_provider))
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    report_path = artifact_dir / f"{kernel_name}.json"
     if report_path.exists() and not refresh:
         return report_path
 
-    spec_map = {s.name: s for s in coverage_kernel_specs()}
+    spec_map = {s.name: s for s in _coverage_specs_for_provider(str(triton_provider))}
     if kernel_name not in spec_map:
         raise KeyError(f"kernel not found in triton coverage specs: {kernel_name}")
     spec = spec_map[kernel_name]
     _log(f"[E5:{kernel_name}] generate artifacts (cases_limit={cases_limit}, refresh={refresh})")
-    report = run_pipeline_for_spec(spec, out_dir=ARTIFACT_DIR, cases_limit=int(cases_limit))
+    report = run_pipeline_for_spec(spec, out_dir=artifact_dir, cases_limit=int(cases_limit))
     report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     return report_path
 
@@ -188,8 +217,22 @@ def _paired_speedup_from_measured_autotune(retune_remote: dict) -> Dict[str, Any
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--host", required=True)
-    ap.add_argument("--user", default="ubuntu")
+    ap.add_argument(
+        "--triton-provider",
+        choices=["native", "flaggems"],
+        default=DEFAULT_TRITON_PROVIDER,
+        help="Triton artifact/provider source (default: INTENTIR_TRITON_PROVIDER or native)",
+    )
+    ap.add_argument(
+        "--host",
+        default=DEFAULT_RVV_HOST,
+        help=f"RVV host (default: {DEFAULT_RVV_HOST}; env: INTENTIR_RVV_HOST)",
+    )
+    ap.add_argument(
+        "--user",
+        default=DEFAULT_RVV_USER,
+        help=f"SSH user (default: {DEFAULT_RVV_USER}; env: INTENTIR_RVV_USER)",
+    )
     ap.add_argument("--password", default=None)
     ap.add_argument("--use-key", action="store_true")
     ap.add_argument("--port", type=int, default=22)
@@ -225,16 +268,16 @@ def main() -> None:
     wanted.extend(list(args.kernel or []))
     suites = list(args.suite or [])
     if "all" in suites:
-        suites = ["ai_bench8", "default6"]
+        suites = ["default6"] if str(args.triton_provider) == "flaggems" else ["ai_bench8", "default6"]
     if "ai_bench8" in suites:
         wanted.extend(AI_BENCH_KERNELS)
     if "default6" in suites:
-        wanted.extend(DEFAULT6_KERNELS)
+        wanted.extend(FLAGGEMS_DEFAULT6_KERNELS if str(args.triton_provider) == "flaggems" else DEFAULT6_KERNELS)
     # Triton full coverage suite (currently 38 kernels).
     if TRITON_COVERAGE_SUITE_NAME in suites:
-        wanted.extend([s.name for s in coverage_kernel_specs()])
+        wanted.extend([s.name for s in _coverage_specs_for_provider(str(args.triton_provider))])
     if not wanted:
-        wanted = list(AI_BENCH_KERNELS)
+        wanted = list(FLAGGEMS_DEFAULT6_KERNELS if str(args.triton_provider) == "flaggems" else AI_BENCH_KERNELS)
     # De-dup while preserving order.
     dedup: list[str] = []
     seen: set[str] = set()
@@ -251,7 +294,7 @@ def main() -> None:
     out_dir = Path(args.out).resolve().parent
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    spec_map = {s.name: s for s in coverage_kernel_specs()}
+    spec_map = {s.name: s for s in _coverage_specs_for_provider(str(args.triton_provider))}
 
     out_path = Path(args.out)
     existing_by_kernel: dict[str, dict[str, Any]] = {}
@@ -303,7 +346,12 @@ def main() -> None:
             continue
         spec = spec_map[k]
         try:
-            report_path = _ensure_artifact(k, cases_limit=int(args.cases_limit), refresh=bool(args.refresh_artifacts))
+            report_path = _ensure_artifact(
+                k,
+                cases_limit=int(args.cases_limit),
+                refresh=bool(args.refresh_artifacts),
+                triton_provider=str(args.triton_provider),
+            )
             report = json.loads(report_path.read_text(encoding="utf-8"))
             intent = IntentFunction.from_json_dict(report["intent"])
         except Exception as e:
@@ -371,6 +419,7 @@ def main() -> None:
             freeze_res = run_remote(
                 kernel=k,
                 frontend="triton",
+                triton_provider=str(args.triton_provider),
                 host=str(args.host),
                 user=str(args.user),
                 password=None if bool(args.use_key) else (args.password or os.getenv("INTENTIR_SSH_PASSWORD")),
@@ -415,6 +464,7 @@ def main() -> None:
             retune_res = run_remote(
                 kernel=k,
                 frontend="triton",
+                triton_provider=str(args.triton_provider),
                 host=str(args.host),
                 user=str(args.user),
                 password=None if bool(args.use_key) else (args.password or os.getenv("INTENTIR_SSH_PASSWORD")),
@@ -525,6 +575,8 @@ def main() -> None:
     out = {
         "experiment": "E5_portability_vs_perf_v1",
         "host": str(args.host),
+        "triton_provider": str(args.triton_provider),
+        "artifact_dir": str(_artifact_dir_for_provider(str(args.triton_provider))),
         "omp_threads": int(args.omp_threads),
         "omp_proc_bind": str(args.omp_proc_bind),
         "bench_iters": int(args.bench_iters),
