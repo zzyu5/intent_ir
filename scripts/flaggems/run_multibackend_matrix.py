@@ -36,7 +36,12 @@ def main() -> None:
     ap.add_argument("--skip-pipeline", action="store_true")
     ap.add_argument("--skip-rvv", action="store_true")
     ap.add_argument("--skip-cuda", action="store_true")
-    ap.add_argument("--allow-cuda-skip", action="store_true", default=True)
+    ap.add_argument(
+        "--allow-cuda-skip",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Allow CUDA stage to exit 0 with skipped status when CUDA env is unavailable.",
+    )
     ap.add_argument("--out-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_matrix"))
     ap.add_argument("--write-registry", action="store_true")
     args = ap.parse_args()
