@@ -1,33 +1,53 @@
 """
 CUDA backend supported op set (WIP).
 
-MVP target: AI-Bench8 suite + core primitives (const/elemwise/reduce/matmul).
+This reflects currently implemented lowering paths in `intentir_to_cuda.py`
+(direct kernels + fused patterns + generic fused elementwise).
 """
 
 from __future__ import annotations
 
 
 CUDA_SUPPORTED_OPS: set[str] = {
-    # Single-op macro kernels (AI-Bench8).
+    # Single-op semantic kernels.
     "matmul",
     "dropout",
+    "softmax",
     "correlation",
     "resize",
     "warp",
     "rope",
-    # Patterns we currently lower as fused CUDA kernels (softmax / layernorm).
-    # These appear as primitive ops in IntentIR today.
+    # Tensor transforms / indexing.
+    "transpose",
+    "gather",
+    # Core primitives covered by pattern + fused elementwise lowerings.
     "const",
     "identity",
+    "broadcast_in_dim",
+    "cast",
     "reduce_sum",
     "reduce_max",
-    "broadcast_in_dim",
+    "reduce_any",
     "add",
     "sub",
     "mul",
     "div",
+    "max",
+    "min",
+    "relu",
+    "abs",
     "exp",
+    "floor",
     "rsqrt",
+    "ne",
+    "lt",
+    "le",
+    "gt",
+    "ge",
+    "and",
+    "or",
+    "not",
+    "where",
 }
 
 __all__ = ["CUDA_SUPPORTED_OPS"]

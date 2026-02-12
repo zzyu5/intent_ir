@@ -55,6 +55,70 @@ class KernelSpec:
     constexpr: Dict[str, int] = field(default_factory=dict)
     exclude_axes: Optional[List[str]] = None
     normalize_shapes: Optional[Callable[[Dict[str, int]], Dict[str, int]]] = None
+
+
+def _annotate_flaggems_intent_meta(
+    intent,
+    *,
+    source_op: str,
+    capability_state: str,
+    backend_target: str | None,
+) -> None:
+    meta = dict(getattr(intent, "meta", {}) or {})
+    meta["provider"] = "flaggems"
+    meta["source_op"] = str(source_op)
+    meta["capability_state"] = str(capability_state)
+    if backend_target is not None:
+        meta["backend_target"] = str(backend_target)
+    intent.meta = meta
+
+    for op in (getattr(intent, "ops", []) or []):
+        op_meta = dict(getattr(op, "meta", {}) or {})
+        op_meta["provider"] = "flaggems"
+        op_meta["source_op"] = str(source_op)
+        op_meta["capability_state"] = str(capability_state)
+        if backend_target is not None:
+            op_meta["backend_target"] = str(backend_target)
+        setattr(op, "meta", op_meta)
+
+
+def _validate_flaggems_intent_meta(intent) -> Dict[str, object]:
+    fn_meta = dict(getattr(intent, "meta", {}) or {})
+    fn_ok = (
+        fn_meta.get("provider") == "flaggems"
+        and isinstance(fn_meta.get("source_op"), str)
+        and isinstance(fn_meta.get("capability_state"), str)
+    )
+    missing_ops: List[int] = []
+    for i, op in enumerate(getattr(intent, "ops", []) or []):
+        op_meta = dict(getattr(op, "meta", {}) or {})
+        if op_meta.get("provider") != "flaggems":
+            missing_ops.append(i)
+            continue
+        if not isinstance(op_meta.get("source_op"), str) or not isinstance(op_meta.get("capability_state"), str):
+            missing_ops.append(i)
+            continue
+    return {
+        "ok": bool(fn_ok and not missing_ops),
+        "function_meta_ok": bool(fn_ok),
+        "missing_op_meta_indices": list(missing_ops),
+    }
+
+
+def _backend_capability_preflight(intent, *, backend_target: str | None) -> Dict[str, object]:
+    if backend_target is None:
+        return {"ok": True, "skipped": True, "reason": "backend_target_not_set"}
+    from backends.capability import check_target_support  # noqa: PLC0415
+
+    ops = sorted({str(op.op) for op in (getattr(intent, "ops", []) or []) if getattr(op, "op", None)})
+    res = check_target_support(str(backend_target), ops)
+    return {
+        "ok": bool(res.ok),
+        "skipped": False,
+        "result": res.to_json_dict(),
+    }
+
+
 def llm_to_intent(desc, feedback: Optional[List[str]] = None) -> CandidateIntent:
     """
     Backward-compatible helper: lift a KernelDescriptor into a CandidateIntent.
@@ -2269,6 +2333,8 @@ def run_pipeline_for_spec(
     out_dir: Path,
     cases_limit: int = 8,
     use_llm: bool = True,
+    triton_provider: str = "native",
+    backend_target: str | None = None,
 ) -> Dict[str, object]:
     """
     Run the full pipeline for a single kernel spec and write artifacts under out_dir.
@@ -2280,7 +2346,11 @@ def run_pipeline_for_spec(
         False: skip LLM extraction and rely on deterministic fallback intents
                (when available for the kernel name).
     """
-    report: Dict[str, object] = {"kernel": spec.name}
+    report: Dict[str, object] = {
+        "kernel": spec.name,
+        "triton_provider": str(triton_provider),
+        "backend_target": (str(backend_target) if backend_target is not None else None),
+    }
     adapter = pipeline_registry.get("triton")
     print(f"[{spec.name}] stage1: prepare triton dump/cache", flush=True)
     dump_dir, cache_dir = prepare_dump_and_cache_dirs(out_dir, spec.name, clean=True)
@@ -2290,6 +2360,14 @@ def run_pipeline_for_spec(
     # 1) Load source
     print(f"[{spec.name}] stage2: load triton source", flush=True)
     desc = adapter.build_descriptor(spec)
+    if isinstance(desc.meta, dict):
+        desc.meta["triton_provider"] = str(triton_provider)
+        if backend_target is not None:
+            desc.meta["backend_target"] = str(backend_target)
+        if getattr(spec, "source_op", None) is not None:
+            desc.meta["source_op"] = str(getattr(spec, "source_op"))
+        if getattr(spec, "capability_state", None) is not None:
+            desc.meta["capability_state"] = str(getattr(spec, "capability_state"))
     # Attach run-specific artifact paths for adapter extraction.
     desc.meta["artifact_dir"] = str(out_dir)
     desc.meta["triton_dump_dir"] = str(dump_dir)
@@ -2519,10 +2597,25 @@ def run_pipeline_for_spec(
     # Ensure schedule is attached even if the LLM emits only partial schedule fields.
     _ensure_schedule(cand.intent, kernel_name=spec.name, triton_src=src)
     _attach_access_witness_meta(cand.intent, cert_v2=cert_v2, canonical_shapes=dict(spec.canonical_shapes))
+    if str(triton_provider) == "flaggems":
+        _annotate_flaggems_intent_meta(
+            cand.intent,
+            source_op=str(getattr(spec, "source_op", getattr(spec, "name", "unknown"))),
+            capability_state=str(getattr(spec, "capability_state", getattr(spec, "capability_status", "blocked_ir"))),
+            backend_target=backend_target,
+        )
+        report["provider_meta_validation"] = _validate_flaggems_intent_meta(cand.intent)
     report["intent"] = cand.intent.to_json_dict()
     if cand_expanded is not None:
         _ensure_schedule(cand_expanded.intent, kernel_name=spec.name, triton_src=src)
         _attach_access_witness_meta(cand_expanded.intent, cert_v2=cert_v2, canonical_shapes=dict(spec.canonical_shapes))
+        if str(triton_provider) == "flaggems":
+            _annotate_flaggems_intent_meta(
+                cand_expanded.intent,
+                source_op=str(getattr(spec, "source_op", getattr(spec, "name", "unknown"))),
+                capability_state=str(getattr(spec, "capability_state", getattr(spec, "capability_status", "blocked_ir"))),
+                backend_target=backend_target,
+            )
     report["intent_expanded"] = (cand_expanded.intent.to_json_dict() if cand_expanded is not None else None)
 
     # 4) Static validation (Intent vs certificate), if TTIR certificate exists.
@@ -2568,6 +2661,7 @@ def run_pipeline_for_spec(
     # 5) Stage B diff
     print(f"[{spec.name}] stage7: Task5 cases + diff", flush=True)
     cand_for_run = cand_expanded or cand
+    report["backend_preflight"] = _backend_capability_preflight(cand_for_run.intent, backend_target=backend_target)
     assumptions = []
     try:
         if isinstance(report.get("contract"), dict):

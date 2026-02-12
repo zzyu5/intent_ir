@@ -1,0 +1,7115 @@
+{
+  "schema_version": "flaggems_registry_v1",
+  "generated_at": "2026-02-12T16:35:02.367616+00:00",
+  "opset": "deterministic_forward",
+  "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
+  "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
+  "family_order": [
+    "elementwise_broadcast",
+    "reduction",
+    "norm_activation",
+    "index_scatter_gather",
+    "matmul_linear",
+    "conv_pool_interp",
+    "attention_sequence"
+  ],
+  "counts": {
+    "source_all_ops": 302,
+    "source_filtered_ops": 213,
+    "semantic_ops": 197,
+    "by_status": {
+      "blocked_backend": 19,
+      "blocked_ir": 174,
+      "dual_pass": 4
+    },
+    "by_family": {
+      "attention_sequence": 5,
+      "conv_pool_interp": 9,
+      "elementwise_broadcast": 127,
+      "index_scatter_gather": 14,
+      "matmul_linear": 8,
+      "norm_activation": 15,
+      "reduction": 19
+    }
+  },
+  "entries": [
+    {
+      "semantic_op": "abs",
+      "source_ops": [
+        "abs"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [
+        "abs"
+      ],
+      "e2e_spec": null,
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [
+            "abs"
+          ],
+          "supported_ops": [
+            "abs"
+          ],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [
+            "abs"
+          ],
+          "supported_ops": [
+            "abs"
+          ],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [
+            "abs"
+          ],
+          "supported_ops": [
+            "abs"
+          ],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "acos",
+      "source_ops": [
+        "acos"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "add",
+      "source_ops": [
+        "add"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [
+        "add"
+      ],
+      "e2e_spec": "add2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [
+            "add"
+          ],
+          "supported_ops": [
+            "add"
+          ],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [
+            "add"
+          ],
+          "supported_ops": [
+            "add"
+          ],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [
+            "add"
+          ],
+          "supported_ops": [
+            "add"
+          ],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "addcdiv",
+      "source_ops": [
+        "addcdiv"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "addcmul",
+      "source_ops": [
+        "addcmul"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "addmv",
+      "source_ops": [
+        "addmv",
+        "addmv_out"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "addr",
+      "source_ops": [
+        "addr"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "angle",
+      "source_ops": [
+        "angle"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "arange",
+      "source_ops": [
+        "arange",
+        "arange_start"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "atan",
+      "source_ops": [
+        "atan"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "bitwise_and_scalar",
+      "source_ops": [
+        "bitwise_and_scalar"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "bitwise_and_scalar_tensor",
+      "source_ops": [
+        "bitwise_and_scalar_tensor"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "bitwise_and_tensor",
+      "source_ops": [
+        "bitwise_and_tensor"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "bitwise_left_shift",
+      "source_ops": [
+        "bitwise_left_shift"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "bitwise_not",
+      "source_ops": [
+        "bitwise_not"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "bitwise_or_scalar",
+      "source_ops": [
+        "bitwise_or_scalar"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "bitwise_or_scalar_tensor",
+      "source_ops": [
+        "bitwise_or_scalar_tensor"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "bitwise_or_tensor",
+      "source_ops": [
+        "bitwise_or_tensor"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "bitwise_right_shift",
+      "source_ops": [
+        "bitwise_right_shift"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "cat",
+      "source_ops": [
+        "cat"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "ceil",
+      "source_ops": [
+        "ceil",
+        "ceil_out"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "celu",
+      "source_ops": [
+        "celu"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "clamp",
+      "source_ops": [
+        "clamp"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "clamp_min",
+      "source_ops": [
+        "clamp_min"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "clamp_tensor",
+      "source_ops": [
+        "clamp_tensor"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "constant_pad_nd",
+      "source_ops": [
+        "constant_pad_nd"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "contiguous",
+      "source_ops": [
+        "contiguous"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "copy",
+      "source_ops": [
+        "copy"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "cos",
+      "source_ops": [
+        "cos"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "count_nonzero",
+      "source_ops": [
+        "count_nonzero"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "diag",
+      "source_ops": [
+        "diag"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "diag_embed",
+      "source_ops": [
+        "diag_embed"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "div_mode",
+      "source_ops": [
+        "div_mode"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "elu",
+      "source_ops": [
+        "elu"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "eq",
+      "source_ops": [
+        "eq"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "eq_scalar",
+      "source_ops": [
+        "eq_scalar"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "equal",
+      "source_ops": [
+        "equal"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "erf",
+      "source_ops": [
+        "erf"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "exp",
+      "source_ops": [
+        "exp",
+        "exp_out"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [
+        "exp"
+      ],
+      "e2e_spec": null,
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [
+            "exp"
+          ],
+          "supported_ops": [
+            "exp"
+          ],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [
+            "exp"
+          ],
+          "supported_ops": [
+            "exp"
+          ],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [
+            "exp"
+          ],
+          "supported_ops": [
+            "exp"
+          ],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "exp2",
+      "source_ops": [
+        "exp2"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "eye",
+      "source_ops": [
+        "eye"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "eye_m",
+      "source_ops": [
+        "eye_m"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "fill_scalar",
+      "source_ops": [
+        "fill_scalar"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "fill_tensor",
+      "source_ops": [
+        "fill_tensor"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "floor_divide",
+      "source_ops": [
+        "floor_divide"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "full",
+      "source_ops": [
+        "full"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "full_like",
+      "source_ops": [
+        "full_like"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "ge",
+      "source_ops": [
+        "ge"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [
+        "ge"
+      ],
+      "e2e_spec": null,
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [
+            "ge"
+          ],
+          "supported_ops": [
+            "ge"
+          ],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [
+            "ge"
+          ],
+          "supported_ops": [
+            "ge"
+          ],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [
+            "ge"
+          ],
+          "supported_ops": [
+            "ge"
+          ],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "ge_scalar",
+      "source_ops": [
+        "ge_scalar"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "get_scheduler_metadata",
+      "source_ops": [
+        "get_scheduler_metadata"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "glu",
+      "source_ops": [
+        "glu"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "gt",
+      "source_ops": [
+        "gt"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [
+        "gt"
+      ],
+      "e2e_spec": null,
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [
+            "gt"
+          ],
+          "supported_ops": [
+            "gt"
+          ],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [
+            "gt"
+          ],
+          "supported_ops": [
+            "gt"
+          ],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [
+            "gt"
+          ],
+          "supported_ops": [
+            "gt"
+          ],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "gt_scalar",
+      "source_ops": [
+        "gt_scalar"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "hstack",
+      "source_ops": [
+        "hstack"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "isclose",
+      "source_ops": [
+        "isclose"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "isfinite",
+      "source_ops": [
+        "isfinite"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "isin",
+      "source_ops": [
+        "isin"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "isinf",
+      "source_ops": [
+        "isinf"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "isnan",
+      "source_ops": [
+        "isnan"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "kron",
+      "source_ops": [
+        "kron"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "le",
+      "source_ops": [
+        "le"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [
+        "le"
+      ],
+      "e2e_spec": null,
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [
+            "le"
+          ],
+          "supported_ops": [
+            "le"
+          ],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [
+            "le"
+          ],
+          "supported_ops": [
+            "le"
+          ],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [
+            "le"
+          ],
+          "supported_ops": [
+            "le"
+          ],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "le_scalar",
+      "source_ops": [
+        "le_scalar"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "lerp_scalar",
+      "source_ops": [
+        "lerp_scalar"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "lerp_tensor",
+      "source_ops": [
+        "lerp_tensor"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "linspace",
+      "source_ops": [
+        "linspace"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "log",
+      "source_ops": [
+        "log"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "logical_and",
+      "source_ops": [
+        "logical_and"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "logical_not",
+      "source_ops": [
+        "logical_not"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "logical_or",
+      "source_ops": [
+        "logical_or"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "logical_xor",
+      "source_ops": [
+        "logical_xor"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "logspace",
+      "source_ops": [
+        "logspace"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "lt",
+      "source_ops": [
+        "lt"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [
+        "lt"
+      ],
+      "e2e_spec": null,
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [
+            "lt"
+          ],
+          "supported_ops": [
+            "lt"
+          ],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [
+            "lt"
+          ],
+          "supported_ops": [
+            "lt"
+          ],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [
+            "lt"
+          ],
+          "supported_ops": [
+            "lt"
+          ],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "lt_scalar",
+      "source_ops": [
+        "lt_scalar"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "masked_fill",
+      "source_ops": [
+        "masked_fill"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "max",
+      "source_ops": [
+        "max"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [
+        "max"
+      ],
+      "e2e_spec": null,
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [
+            "max"
+          ],
+          "supported_ops": [
+            "max"
+          ],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [
+            "max"
+          ],
+          "supported_ops": [
+            "max"
+          ],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [
+            "max"
+          ],
+          "supported_ops": [
+            "max"
+          ],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "max_dim",
+      "source_ops": [
+        "max_dim"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "maximum",
+      "source_ops": [
+        "maximum"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "min",
+      "source_ops": [
+        "min"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [
+        "min"
+      ],
+      "e2e_spec": null,
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [
+            "min"
+          ],
+          "supported_ops": [
+            "min"
+          ],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [
+            "min"
+          ],
+          "supported_ops": [
+            "min"
+          ],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [
+            "min"
+          ],
+          "supported_ops": [
+            "min"
+          ],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "min_dim",
+      "source_ops": [
+        "min_dim"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "minimum",
+      "source_ops": [
+        "minimum"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "mse_loss",
+      "source_ops": [
+        "mse_loss"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "mul",
+      "source_ops": [
+        "mul"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [
+        "mul"
+      ],
+      "e2e_spec": null,
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [
+            "mul"
+          ],
+          "supported_ops": [
+            "mul"
+          ],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [
+            "mul"
+          ],
+          "supported_ops": [
+            "mul"
+          ],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [
+            "mul"
+          ],
+          "supported_ops": [
+            "mul"
+          ],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "mv",
+      "source_ops": [
+        "mv"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "nan_to_num",
+      "source_ops": [
+        "nan_to_num"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "ne",
+      "source_ops": [
+        "ne"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [
+        "ne"
+      ],
+      "e2e_spec": null,
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [
+            "ne"
+          ],
+          "supported_ops": [
+            "ne"
+          ],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [
+            "ne"
+          ],
+          "supported_ops": [
+            "ne"
+          ],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [
+            "ne"
+          ],
+          "supported_ops": [
+            "ne"
+          ],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "ne_scalar",
+      "source_ops": [
+        "ne_scalar"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "neg",
+      "source_ops": [
+        "neg"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "nll_loss2d_forward",
+      "source_ops": [
+        "nll_loss2d_forward"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "nll_loss_forward",
+      "source_ops": [
+        "nll_loss_forward"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "nonzero",
+      "source_ops": [
+        "nonzero"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "one_hot",
+      "source_ops": [
+        "one_hot"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "ones",
+      "source_ops": [
+        "ones"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "ones_like",
+      "source_ops": [
+        "ones_like"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "pad",
+      "source_ops": [
+        "pad"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "per_token_group_quant_fp8",
+      "source_ops": [
+        "per_token_group_quant_fp8"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "polar",
+      "source_ops": [
+        "polar"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "pow_scalar",
+      "source_ops": [
+        "pow_scalar"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "pow_tensor_scalar",
+      "source_ops": [
+        "pow_tensor_scalar"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "pow_tensor_tensor",
+      "source_ops": [
+        "pow_tensor_tensor"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "quantile",
+      "source_ops": [
+        "quantile"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "reciprocal",
+      "source_ops": [
+        "reciprocal"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "remainder",
+      "source_ops": [
+        "remainder"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "repeat",
+      "source_ops": [
+        "repeat"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "repeat_interleave_self_int",
+      "source_ops": [
+        "repeat_interleave_self_int"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "repeat_interleave_self_tensor",
+      "source_ops": [
+        "repeat_interleave_self_tensor"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "repeat_interleave_tensor",
+      "source_ops": [
+        "repeat_interleave_tensor"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "resolve_conj",
+      "source_ops": [
+        "resolve_conj"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "resolve_neg",
+      "source_ops": [
+        "resolve_neg"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "rsqrt",
+      "source_ops": [
+        "rsqrt"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [
+        "rsqrt"
+      ],
+      "e2e_spec": null,
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [
+            "rsqrt"
+          ],
+          "supported_ops": [
+            "rsqrt"
+          ],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [
+            "rsqrt"
+          ],
+          "supported_ops": [
+            "rsqrt"
+          ],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [
+            "rsqrt"
+          ],
+          "supported_ops": [
+            "rsqrt"
+          ],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "sin",
+      "source_ops": [
+        "sin"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "sort",
+      "source_ops": [
+        "sort"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "sort_stable",
+      "source_ops": [
+        "sort_stable"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "sqrt",
+      "source_ops": [
+        "sqrt"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "stack",
+      "source_ops": [
+        "stack"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "sub",
+      "source_ops": [
+        "sub"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [
+        "sub"
+      ],
+      "e2e_spec": null,
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [
+            "sub"
+          ],
+          "supported_ops": [
+            "sub"
+          ],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [
+            "sub"
+          ],
+          "supported_ops": [
+            "sub"
+          ],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [
+            "sub"
+          ],
+          "supported_ops": [
+            "sub"
+          ],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "tan",
+      "source_ops": [
+        "tan"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "threshold",
+      "source_ops": [
+        "threshold"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "tile",
+      "source_ops": [
+        "tile"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "to_copy",
+      "source_ops": [
+        "to_copy"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "topk",
+      "source_ops": [
+        "topk"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "trace",
+      "source_ops": [
+        "trace"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "triu",
+      "source_ops": [
+        "triu"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "true_divide",
+      "source_ops": [
+        "true_divide",
+        "true_divide_out"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "unique2",
+      "source_ops": [
+        "_unique2"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "vstack",
+      "source_ops": [
+        "vstack"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "zeros",
+      "source_ops": [
+        "zeros"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "zeros_like",
+      "source_ops": [
+        "zeros_like"
+      ],
+      "family": "elementwise_broadcast",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "all",
+      "source_ops": [
+        "all",
+        "all_dim",
+        "all_dims"
+      ],
+      "family": "reduction",
+      "intent_ops": [
+        "reduce_max"
+      ],
+      "e2e_spec": null,
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [
+            "reduce_max"
+          ],
+          "supported_ops": [
+            "reduce_max"
+          ],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [
+            "reduce_max"
+          ],
+          "supported_ops": [
+            "reduce_max"
+          ],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [
+            "reduce_max"
+          ],
+          "supported_ops": [
+            "reduce_max"
+          ],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "allclose",
+      "source_ops": [
+        "allclose"
+      ],
+      "family": "reduction",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "amax",
+      "source_ops": [
+        "amax"
+      ],
+      "family": "reduction",
+      "intent_ops": [
+        "reduce_max"
+      ],
+      "e2e_spec": null,
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [
+            "reduce_max"
+          ],
+          "supported_ops": [
+            "reduce_max"
+          ],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [
+            "reduce_max"
+          ],
+          "supported_ops": [
+            "reduce_max"
+          ],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [
+            "reduce_max"
+          ],
+          "supported_ops": [
+            "reduce_max"
+          ],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "any",
+      "source_ops": [
+        "any",
+        "any_dim",
+        "any_dims"
+      ],
+      "family": "reduction",
+      "intent_ops": [
+        "reduce_any"
+      ],
+      "e2e_spec": "any_kernel_dim",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [
+            "reduce_any"
+          ],
+          "supported_ops": [
+            "reduce_any"
+          ],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [
+            "reduce_any"
+          ],
+          "supported_ops": [
+            "reduce_any"
+          ],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [
+            "reduce_any"
+          ],
+          "supported_ops": [
+            "reduce_any"
+          ],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "argmax",
+      "source_ops": [
+        "argmax"
+      ],
+      "family": "reduction",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "argmin",
+      "source_ops": [
+        "argmin"
+      ],
+      "family": "reduction",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "cumsum",
+      "source_ops": [
+        "cumsum",
+        "cumsum_out"
+      ],
+      "family": "reduction",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "flash_attn_varlen_func",
+      "source_ops": [
+        "flash_attn_varlen_func"
+      ],
+      "family": "reduction",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "log_softmax",
+      "source_ops": [
+        "log_softmax"
+      ],
+      "family": "reduction",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "mean",
+      "source_ops": [
+        "mean"
+      ],
+      "family": "reduction",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "mean_dim",
+      "source_ops": [
+        "mean_dim"
+      ],
+      "family": "reduction",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "prod",
+      "source_ops": [
+        "prod"
+      ],
+      "family": "reduction",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "prod_dim",
+      "source_ops": [
+        "prod_dim"
+      ],
+      "family": "reduction",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "scaled_softmax_forward",
+      "source_ops": [
+        "scaled_softmax_forward"
+      ],
+      "family": "reduction",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "softmax",
+      "source_ops": [
+        "softmax"
+      ],
+      "family": "reduction",
+      "intent_ops": [
+        "softmax"
+      ],
+      "e2e_spec": "softmax_inner",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [
+            "softmax"
+          ],
+          "supported_ops": [
+            "softmax"
+          ],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [
+            "softmax"
+          ],
+          "supported_ops": [
+            "softmax"
+          ],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [
+            "softmax"
+          ],
+          "supported_ops": [
+            "softmax"
+          ],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "std",
+      "source_ops": [
+        "std"
+      ],
+      "family": "reduction",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "sum",
+      "source_ops": [
+        "sum",
+        "sum_out"
+      ],
+      "family": "reduction",
+      "intent_ops": [
+        "reduce_sum"
+      ],
+      "e2e_spec": null,
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [
+            "reduce_sum"
+          ],
+          "supported_ops": [
+            "reduce_sum"
+          ],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [
+            "reduce_sum"
+          ],
+          "supported_ops": [
+            "reduce_sum"
+          ],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [
+            "reduce_sum"
+          ],
+          "supported_ops": [
+            "reduce_sum"
+          ],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "sum_dim",
+      "source_ops": [
+        "sum_dim",
+        "sum_dim_out"
+      ],
+      "family": "reduction",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "var_mean",
+      "source_ops": [
+        "var_mean"
+      ],
+      "family": "reduction",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "batch_norm",
+      "source_ops": [
+        "batch_norm"
+      ],
+      "family": "norm_activation",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "gelu",
+      "source_ops": [
+        "gelu"
+      ],
+      "family": "norm_activation",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "group_norm",
+      "source_ops": [
+        "group_norm"
+      ],
+      "family": "norm_activation",
+      "intent_ops": [],
+      "e2e_spec": "group_norm_kernel",
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "layer_norm",
+      "source_ops": [
+        "layer_norm"
+      ],
+      "family": "norm_activation",
+      "intent_ops": [
+        "reduce_sum",
+        "sub",
+        "mul",
+        "add",
+        "rsqrt",
+        "broadcast_in_dim",
+        "div"
+      ],
+      "e2e_spec": "layer_norm_persistent",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [
+            "add",
+            "broadcast_in_dim",
+            "div",
+            "mul",
+            "reduce_sum",
+            "rsqrt",
+            "sub"
+          ],
+          "supported_ops": [
+            "add",
+            "broadcast_in_dim",
+            "div",
+            "mul",
+            "reduce_sum",
+            "rsqrt",
+            "sub"
+          ],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [
+            "add",
+            "broadcast_in_dim",
+            "div",
+            "mul",
+            "reduce_sum",
+            "rsqrt",
+            "sub"
+          ],
+          "supported_ops": [
+            "add",
+            "broadcast_in_dim",
+            "div",
+            "mul",
+            "reduce_sum",
+            "rsqrt",
+            "sub"
+          ],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [
+            "add",
+            "broadcast_in_dim",
+            "div",
+            "mul",
+            "reduce_sum",
+            "rsqrt",
+            "sub"
+          ],
+          "supported_ops": [
+            "add",
+            "broadcast_in_dim",
+            "div",
+            "mul",
+            "reduce_sum",
+            "rsqrt",
+            "sub"
+          ],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "log_sigmoid",
+      "source_ops": [
+        "log_sigmoid"
+      ],
+      "family": "norm_activation",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "normed_cumsum",
+      "source_ops": [
+        "normed_cumsum"
+      ],
+      "family": "norm_activation",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "relu",
+      "source_ops": [
+        "relu"
+      ],
+      "family": "norm_activation",
+      "intent_ops": [
+        "relu"
+      ],
+      "e2e_spec": null,
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [
+            "relu"
+          ],
+          "supported_ops": [
+            "relu"
+          ],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [
+            "relu"
+          ],
+          "supported_ops": [
+            "relu"
+          ],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [
+            "relu"
+          ],
+          "supported_ops": [
+            "relu"
+          ],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "rms_norm",
+      "source_ops": [
+        "rms_norm"
+      ],
+      "family": "norm_activation",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "rms_norm_forward",
+      "source_ops": [
+        "rms_norm_forward"
+      ],
+      "family": "norm_activation",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "sigmoid",
+      "source_ops": [
+        "sigmoid"
+      ],
+      "family": "norm_activation",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "silu",
+      "source_ops": [
+        "silu"
+      ],
+      "family": "norm_activation",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "softplus",
+      "source_ops": [
+        "softplus"
+      ],
+      "family": "norm_activation",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "tanh",
+      "source_ops": [
+        "tanh"
+      ],
+      "family": "norm_activation",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "vector_norm",
+      "source_ops": [
+        "vector_norm"
+      ],
+      "family": "norm_activation",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "weight_norm_interface",
+      "source_ops": [
+        "weight_norm_interface"
+      ],
+      "family": "norm_activation",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "flip",
+      "source_ops": [
+        "flip"
+      ],
+      "family": "index_scatter_gather",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "gather",
+      "source_ops": [
+        "gather"
+      ],
+      "family": "index_scatter_gather",
+      "intent_ops": [
+        "gather"
+      ],
+      "e2e_spec": null,
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [
+            "gather"
+          ],
+          "supported_ops": [
+            "gather"
+          ],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [
+            "gather"
+          ],
+          "supported_ops": [
+            "gather"
+          ],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [
+            "gather"
+          ],
+          "supported_ops": [
+            "gather"
+          ],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "index",
+      "source_ops": [
+        "index"
+      ],
+      "family": "index_scatter_gather",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "index_add",
+      "source_ops": [
+        "index_add"
+      ],
+      "family": "index_scatter_gather",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "index_put",
+      "source_ops": [
+        "index_put"
+      ],
+      "family": "index_scatter_gather",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "index_select",
+      "source_ops": [
+        "index_select"
+      ],
+      "family": "index_scatter_gather",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "masked_scatter",
+      "source_ops": [
+        "masked_scatter"
+      ],
+      "family": "index_scatter_gather",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "masked_select",
+      "source_ops": [
+        "masked_select"
+      ],
+      "family": "index_scatter_gather",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "scatter",
+      "source_ops": [
+        "scatter"
+      ],
+      "family": "index_scatter_gather",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "select_scatter",
+      "source_ops": [
+        "select_scatter"
+      ],
+      "family": "index_scatter_gather",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "slice_scatter",
+      "source_ops": [
+        "slice_scatter"
+      ],
+      "family": "index_scatter_gather",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "where_scalar_other",
+      "source_ops": [
+        "where_scalar_other"
+      ],
+      "family": "index_scatter_gather",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "where_scalar_self",
+      "source_ops": [
+        "where_scalar_self"
+      ],
+      "family": "index_scatter_gather",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "where_self",
+      "source_ops": [
+        "where_self",
+        "where_self_out"
+      ],
+      "family": "index_scatter_gather",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "addmm",
+      "source_ops": [
+        "addmm",
+        "addmm_out"
+      ],
+      "family": "matmul_linear",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "baddbmm",
+      "source_ops": [
+        "baddbmm"
+      ],
+      "family": "matmul_linear",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "bmm",
+      "source_ops": [
+        "bmm",
+        "bmm_out"
+      ],
+      "family": "matmul_linear",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "cummax",
+      "source_ops": [
+        "cummax"
+      ],
+      "family": "matmul_linear",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "cummin",
+      "source_ops": [
+        "cummin"
+      ],
+      "family": "matmul_linear",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "dot",
+      "source_ops": [
+        "dot"
+      ],
+      "family": "matmul_linear",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "mm",
+      "source_ops": [
+        "mm",
+        "mm_out"
+      ],
+      "family": "matmul_linear",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "vdot",
+      "source_ops": [
+        "vdot"
+      ],
+      "family": "matmul_linear",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "avg_pool2d",
+      "source_ops": [
+        "avg_pool2d"
+      ],
+      "family": "conv_pool_interp",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "conv1d",
+      "source_ops": [
+        "conv1d"
+      ],
+      "family": "conv_pool_interp",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "conv2d",
+      "source_ops": [
+        "conv2d"
+      ],
+      "family": "conv_pool_interp",
+      "intent_ops": [
+        "conv2d"
+      ],
+      "e2e_spec": null,
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": false,
+          "requested_ops": [
+            "conv2d"
+          ],
+          "supported_ops": [],
+          "missing_ops": [
+            "conv2d"
+          ]
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": false,
+          "requested_ops": [
+            "conv2d"
+          ],
+          "supported_ops": [],
+          "missing_ops": [
+            "conv2d"
+          ]
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": false,
+          "requested_ops": [
+            "conv2d"
+          ],
+          "supported_ops": [],
+          "missing_ops": [
+            "conv2d"
+          ]
+        }
+      }
+    },
+    {
+      "semantic_op": "conv3d",
+      "source_ops": [
+        "conv3d"
+      ],
+      "family": "conv_pool_interp",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "conv_depthwise2d",
+      "source_ops": [
+        "_conv_depthwise2d"
+      ],
+      "family": "conv_pool_interp",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "max_pool2d_with_indices",
+      "source_ops": [
+        "max_pool2d_with_indices"
+      ],
+      "family": "conv_pool_interp",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "upsample_bicubic2d_aa",
+      "source_ops": [
+        "_upsample_bicubic2d_aa"
+      ],
+      "family": "conv_pool_interp",
+      "intent_ops": [
+        "upsample_bicubic2d_aa"
+      ],
+      "e2e_spec": "upsample_bicubic2d_aa",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": false,
+          "requested_ops": [
+            "upsample_bicubic2d_aa"
+          ],
+          "supported_ops": [],
+          "missing_ops": [
+            "upsample_bicubic2d_aa"
+          ]
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": false,
+          "requested_ops": [
+            "upsample_bicubic2d_aa"
+          ],
+          "supported_ops": [],
+          "missing_ops": [
+            "upsample_bicubic2d_aa"
+          ]
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": false,
+          "requested_ops": [
+            "upsample_bicubic2d_aa"
+          ],
+          "supported_ops": [],
+          "missing_ops": [
+            "upsample_bicubic2d_aa"
+          ]
+        }
+      }
+    },
+    {
+      "semantic_op": "upsample_nearest1d",
+      "source_ops": [
+        "upsample_nearest1d"
+      ],
+      "family": "conv_pool_interp",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "upsample_nearest2d",
+      "source_ops": [
+        "upsample_nearest2d"
+      ],
+      "family": "conv_pool_interp",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "ScaleDotProductAttention",
+      "source_ops": [
+        "ScaleDotProductAttention"
+      ],
+      "family": "attention_sequence",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "embedding",
+      "source_ops": [
+        "embedding"
+      ],
+      "family": "attention_sequence",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "flash_attention_forward",
+      "source_ops": [
+        "flash_attention_forward"
+      ],
+      "family": "attention_sequence",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "scaled_dot_product_attention",
+      "source_ops": [
+        "scaled_dot_product_attention"
+      ],
+      "family": "attention_sequence",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    },
+    {
+      "semantic_op": "scaled_dot_product_attention_forward",
+      "source_ops": [
+        "scaled_dot_product_attention_forward"
+      ],
+      "family": "attention_sequence",
+      "intent_ops": [],
+      "e2e_spec": null,
+      "status": "blocked_ir",
+      "status_reason": "no_intentir_mapping",
+      "backend_support": {
+        "rvv": {
+          "target": "rvv",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_h100": {
+          "target": "cuda_h100",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        },
+        "cuda_5090d": {
+          "target": "cuda_5090d",
+          "ok": true,
+          "requested_ops": [],
+          "supported_ops": [],
+          "missing_ops": []
+        }
+      }
+    }
+  ]
+}

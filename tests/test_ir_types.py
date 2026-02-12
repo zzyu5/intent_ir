@@ -93,3 +93,23 @@ def test_layout_blocked_params():
     bad["tensors"]["A"]["layout"] = {"kind": "blocked"}
     with pytest.raises(IntentIRValidationError):
         IntentFunction.from_json_dict(bad)
+
+
+def test_op_meta_roundtrip_and_validation():
+    src = _minimal_intent_json()
+    src["ops"][0]["meta"] = {
+        "provider": "flaggems",
+        "source_op": "add",
+        "capability_state": "dual_pass",
+    }
+    intent = IntentFunction.from_json_dict(src)
+    out = intent.to_json_dict()
+    assert out["ops"][0]["meta"]["provider"] == "flaggems"
+    assert out["ops"][0]["meta"]["source_op"] == "add"
+
+
+def test_function_meta_flaggems_requires_source_and_state():
+    bad = _minimal_intent_json()
+    bad["meta"] = {"provider": "flaggems"}
+    with pytest.raises(IntentIRValidationError):
+        IntentFunction.from_json_dict(bad)

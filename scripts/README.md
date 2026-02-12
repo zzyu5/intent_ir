@@ -7,10 +7,14 @@ importable modules (e.g., `pipeline/triton/core.py`, or backend/verify packages)
 
 - `triton/full_pipeline_verify.py`: run the full Task1–5 Triton pipeline.
   - `--provider native|flaggems` chooses Triton provider (`flaggems` is still Triton, not a separate frontend).
+  - `--flaggems-opset deterministic_forward` selects the FlagGems semantic-op set baseline.
+  - `--backend-target rvv|cuda_h100|cuda_5090d` enables backend capability preflight on generated IntentIR.
   - `--use-llm/--no-use-llm` toggles LLM extraction vs deterministic fallback intents.
   - `--suite smoke|coverage|all`, `--list`, and `--kernel NAME` control kernel selection.
 - `tilelang/full_pipeline_verify.py`: run the TileLang MVP pipeline for the default kernel set.
 - `pipeline/triton/core.py`: reusable Triton pipeline helper library used by `scripts/triton/full_pipeline_verify.py`.
+- `flaggems/generate_registry.py`: generate/freeze `pipeline/triton/flaggems_registry.json` from `flag_gems.ops.__all__`.
+- `flaggems/coverage_report.py`: emit machine-readable FlagGems coverage report JSON for CI/gates.
 - `backend_codegen_smoke.py`: validate Task6 backend codegen locally (no LLM, no remote).
   - `--triton-provider native|flaggems` selects Triton artifact directory for backend smoke.
 - `rvv_remote_run.py`: run Task6 on a remote RVV host and compare with saved baseline.

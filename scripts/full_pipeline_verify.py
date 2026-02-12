@@ -38,6 +38,18 @@ def main() -> None:
         default=True,
         help="Enable LLM extraction in Triton pipeline (default: on). Use --no-use-llm for deterministic fallback intents.",
     )
+    ap.add_argument(
+        "--flaggems-opset",
+        choices=["deterministic_forward"],
+        default="deterministic_forward",
+        help="FlagGems semantic-op set to use (default: deterministic_forward).",
+    )
+    ap.add_argument(
+        "--backend-target",
+        choices=["rvv", "cuda_h100", "cuda_5090d"],
+        default="rvv",
+        help="Backend preflight target for IntentIR capability checks (default: rvv).",
+    )
     ap.add_argument("--out-dir", type=str, default=None)
     args = ap.parse_args()
 
@@ -51,8 +63,18 @@ def main() -> None:
         if provider == "flaggems":
             from pipeline.triton.flaggems_specs import coverage_flaggems_kernel_specs, default_flaggems_kernel_specs
 
-            coverage_kernel_specs = coverage_flaggems_kernel_specs
-            default_kernel_specs = default_flaggems_kernel_specs
+            def coverage_kernel_specs():
+                return coverage_flaggems_kernel_specs(
+                    flaggems_opset=str(args.flaggems_opset),
+                    backend_target=str(args.backend_target),
+                )
+
+            def default_kernel_specs():
+                return default_flaggems_kernel_specs(
+                    flaggems_opset=str(args.flaggems_opset),
+                    backend_target=str(args.backend_target),
+                )
+
             default_out_dir = ROOT / "artifacts" / "flaggems_triton_full_pipeline"
         else:
             from pipeline.triton.core import coverage_kernel_specs, default_kernel_specs
@@ -91,6 +113,8 @@ def main() -> None:
                 out_dir=out_dir,
                 cases_limit=int(args.cases_limit),
                 use_llm=bool(args.use_llm),
+                triton_provider=str(provider),
+                backend_target=str(args.backend_target),
             )
             out_path = _write(spec.name, report)
             diff_ok = bool((report.get("diff") or {}).get("ok"))

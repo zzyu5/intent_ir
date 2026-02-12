@@ -36,6 +36,18 @@ def main() -> None:
         default=True,
         help="Enable LLM extraction (default: on). Use --no-use-llm to force deterministic fallback intents.",
     )
+    ap.add_argument(
+        "--flaggems-opset",
+        choices=["deterministic_forward"],
+        default="deterministic_forward",
+        help="FlagGems semantic-op set to use (default: deterministic_forward).",
+    )
+    ap.add_argument(
+        "--backend-target",
+        choices=["rvv", "cuda_h100", "cuda_5090d"],
+        default="rvv",
+        help="Backend preflight target for IntentIR capability checks (default: rvv).",
+    )
     ap.add_argument("--out-dir", type=str, default=None)
     args = ap.parse_args()
 
@@ -43,9 +55,18 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     suites = {
-        "smoke": default_flaggems_kernel_specs,
-        "coverage": coverage_flaggems_kernel_specs,
-        "all": coverage_flaggems_kernel_specs,
+        "smoke": lambda: default_flaggems_kernel_specs(
+            flaggems_opset=str(args.flaggems_opset),
+            backend_target=str(args.backend_target),
+        ),
+        "coverage": lambda: coverage_flaggems_kernel_specs(
+            flaggems_opset=str(args.flaggems_opset),
+            backend_target=str(args.backend_target),
+        ),
+        "all": lambda: coverage_flaggems_kernel_specs(
+            flaggems_opset=str(args.flaggems_opset),
+            backend_target=str(args.backend_target),
+        ),
     }
     specs = list(suites[str(args.suite)]())
 
@@ -65,6 +86,8 @@ def main() -> None:
                 out_dir=out_dir,
                 cases_limit=int(args.cases_limit),
                 use_llm=bool(args.use_llm),
+                triton_provider="flaggems",
+                backend_target=str(args.backend_target),
             )
         except Exception as e:
             print("Pipeline failed:", e)

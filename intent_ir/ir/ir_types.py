@@ -193,6 +193,7 @@ class Op:
     inputs: List[str]
     output: str
     attrs: Dict[str, Any] = field(default_factory=dict)
+    meta: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -295,6 +296,7 @@ class IntentFunction:
         _validate_axis_roles(self.axis_roles, self.tensors, self.parallel_axes)
         _validate_ops(self.ops, self.tensors)
         _validate_outputs(self.outputs, self.tensors, self.ops)
+        _validate_function_meta(self.meta)
         if self.contract is not None:
             _validate_contract(self.contract)
         _validate_parallel_axes(self.parallel_axes, self.tensors)
@@ -370,6 +372,7 @@ def _op_from_json(data: Dict[str, Any]) -> Op:
     inputs = data.get("inputs") or []
     output = data.get("output")
     attrs = data.get("attrs", {})
+    meta = data.get("meta", {})
     if not isinstance(op, str):
         raise IntentIRValidationError("op.op must be a string")
     if not isinstance(inputs, list):
@@ -380,7 +383,11 @@ def _op_from_json(data: Dict[str, Any]) -> Op:
         attrs = {}
     if not isinstance(attrs, dict):
         raise IntentIRValidationError(f"op.attrs must be an object for op {op}")
-    return Op(op=op, inputs=inputs, output=output, attrs=attrs)
+    if meta is None:
+        meta = {}
+    if not isinstance(meta, dict):
+        raise IntentIRValidationError(f"op.meta must be an object for op {op}")
+    return Op(op=op, inputs=inputs, output=output, attrs=attrs, meta=meta)
 
 
 def _op_to_json(op: Op) -> Dict[str, Any]:
@@ -391,6 +398,8 @@ def _op_to_json(op: Op) -> Dict[str, Any]:
     }
     if op.attrs:
         data["attrs"] = op.attrs
+    if op.meta:
+        data["meta"] = op.meta
     return data
 
 
@@ -529,8 +538,24 @@ def _validate_ops(ops: List[Op], tensors: Dict[str, TensorType]) -> None:
         _validate_op_attrs(op, idx)
         if op.output in produced:
             raise IntentIRValidationError(f"op[{idx}].output duplicates previous op output: {op.output}")
+        _validate_op_meta(op, idx)
         produced.add(op.output)
         available_names.add(op.output)
+
+
+def _validate_op_meta(op: Op, idx: int) -> None:
+    meta = op.meta if hasattr(op, "meta") else {}
+    if meta is None:
+        return
+    if not isinstance(meta, dict):
+        raise IntentIRValidationError(f"op[{idx}].meta must be an object when provided")
+    # Provider metadata contract (optional): keep checks lightweight and forward-compatible.
+    if "provider" in meta and not isinstance(meta.get("provider"), str):
+        raise IntentIRValidationError(f"op[{idx}].meta.provider must be string when provided")
+    if "source_op" in meta and not isinstance(meta.get("source_op"), str):
+        raise IntentIRValidationError(f"op[{idx}].meta.source_op must be string when provided")
+    if "capability_state" in meta and not isinstance(meta.get("capability_state"), str):
+        raise IntentIRValidationError(f"op[{idx}].meta.capability_state must be string when provided")
 
 
 def _validate_op_attrs(op: Op, idx: int) -> None:
@@ -826,3 +851,18 @@ def _validate_schedule(schedule: ScheduleSketch) -> None:
                 raise IntentIRValidationError(
                     f"schedule.memory_hint.residency[{k}] must be string"
                 )
+
+
+def _validate_function_meta(meta: Dict[str, Any]) -> None:
+    if not isinstance(meta, dict):
+        raise IntentIRValidationError("meta must be an object")
+    provider = meta.get("provider")
+    if provider is None:
+        return
+    if not isinstance(provider, str):
+        raise IntentIRValidationError("meta.provider must be string when provided")
+    if provider == "flaggems":
+        if not isinstance(meta.get("source_op"), str):
+            raise IntentIRValidationError("meta.source_op must be string when meta.provider=flaggems")
+        if not isinstance(meta.get("capability_state"), str):
+            raise IntentIRValidationError("meta.capability_state must be string when meta.provider=flaggems")

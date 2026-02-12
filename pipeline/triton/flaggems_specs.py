@@ -16,12 +16,18 @@ import importlib
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import numpy as np
 import torch
 
 from pipeline.triton.core import KernelSpec
+from pipeline.triton.flaggems_registry import (
+    DEFAULT_FLAGGEMS_OPSET,
+    list_supported_e2e_specs,
+    load_registry,
+    load_registry_entry_by_spec,
+)
 from verify.gen_cases import TestCase
 
 
@@ -340,66 +346,147 @@ def _norm_groupnorm(shapes: Dict[str, int]) -> Dict[str, int]:
     return out
 
 
-def default_flaggems_kernel_specs() -> List[KernelSpec]:
-    return [
-        KernelSpec(
-            name="any_kernel_dim",
-            module="pipeline.triton.flaggems_specs",
-            attr="FLAGGEMS_ANY_SRC",
-            runner=_run_flaggems_any_reference,
-            canonical_shapes={"M": 4, "N": 8},
-            vary_axes=["M", "N"],
-        ),
-        KernelSpec(
-            # Keep this semantic name to reuse deterministic fallback if LLM fails.
-            name="add2d",
-            module="pipeline.triton.flaggems_specs",
-            attr="FLAGGEMS_ADD_SRC",
-            runner=_run_flaggems_add2d_reference,
-            canonical_shapes={"M": 4, "N": 64},
-            vary_axes=["M", "N"],
-        ),
-        KernelSpec(
-            name="group_norm_kernel",
-            module="pipeline.triton.flaggems_specs",
-            attr="FLAGGEMS_GROUP_NORM_SRC",
-            runner=_run_flaggems_group_norm_reference,
-            canonical_shapes={"N": 2, "C": 4, "HW": 4, "num_groups": 2},
-            vary_axes=["N", "C", "HW", "num_groups"],
-            exclude_axes=["group_size"],
-            normalize_shapes=_norm_groupnorm,
-        ),
-        KernelSpec(
-            name="layer_norm_persistent",
-            module="pipeline.triton.flaggems_specs",
-            attr="FLAGGEMS_LAYER_NORM_SRC",
-            runner=_run_flaggems_layer_norm_reference,
-            canonical_shapes={"M": 4, "N": 64},
-            vary_axes=["M", "N"],
-        ),
-        KernelSpec(
-            # Keep this semantic name to reuse deterministic fallback if LLM fails.
-            name="softmax_inner",
-            module="pipeline.triton.flaggems_specs",
-            attr="FLAGGEMS_SOFTMAX_SRC",
-            runner=_run_flaggems_softmax_reference,
-            canonical_shapes={"M": 4, "N": 64},
-            vary_axes=["M", "N"],
-        ),
-        KernelSpec(
-            name="upsample_bicubic2d_aa",
-            module="pipeline.triton.flaggems_specs",
-            attr="FLAGGEMS_UPSAMPLE_BICUBIC2D_AA_SRC",
-            runner=_run_flaggems_upsample_bicubic2d_aa_reference,
-            canonical_shapes={"N": 1, "C": 1, "IH": 4, "IW": 4, "OH": 4, "OW": 4},
-            vary_axes=["IH", "IW", "OH", "OW"],
-        ),
-    ]
+_FLAGGEMS_SPEC_BUILDERS = {
+    "any_kernel_dim": lambda: KernelSpec(
+        name="any_kernel_dim",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_ANY_SRC",
+        runner=_run_flaggems_any_reference,
+        canonical_shapes={"M": 4, "N": 8},
+        vary_axes=["M", "N"],
+    ),
+    "add2d": lambda: KernelSpec(
+        # Keep this semantic name to reuse deterministic fallback if LLM fails.
+        name="add2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_ADD_SRC",
+        runner=_run_flaggems_add2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "group_norm_kernel": lambda: KernelSpec(
+        name="group_norm_kernel",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_GROUP_NORM_SRC",
+        runner=_run_flaggems_group_norm_reference,
+        canonical_shapes={"N": 2, "C": 4, "HW": 4, "num_groups": 2},
+        vary_axes=["N", "C", "HW", "num_groups"],
+        exclude_axes=["group_size"],
+        normalize_shapes=_norm_groupnorm,
+    ),
+    "layer_norm_persistent": lambda: KernelSpec(
+        name="layer_norm_persistent",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_LAYER_NORM_SRC",
+        runner=_run_flaggems_layer_norm_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "softmax_inner": lambda: KernelSpec(
+        # Keep this semantic name to reuse deterministic fallback if LLM fails.
+        name="softmax_inner",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_SOFTMAX_SRC",
+        runner=_run_flaggems_softmax_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "upsample_bicubic2d_aa": lambda: KernelSpec(
+        name="upsample_bicubic2d_aa",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_UPSAMPLE_BICUBIC2D_AA_SRC",
+        runner=_run_flaggems_upsample_bicubic2d_aa_reference,
+        canonical_shapes={"N": 1, "C": 1, "IH": 4, "IW": 4, "OH": 4, "OW": 4},
+        vary_axes=["IH", "IW", "OH", "OW"],
+    ),
+}
+
+_FLAGGEMS_SMOKE_ORDER = [
+    "any_kernel_dim",
+    "add2d",
+    "group_norm_kernel",
+    "layer_norm_persistent",
+    "softmax_inner",
+    "upsample_bicubic2d_aa",
+]
 
 
-def coverage_flaggems_kernel_specs() -> List[KernelSpec]:
-    # Placeholder for future expansion (layernorm/dropout/attention subsets).
-    return list(default_flaggems_kernel_specs())
+def _capability_state_for_target(entry: Dict[str, Any], backend_target: str | None) -> str:
+    status = str(entry.get("status") or "blocked_ir")
+    if backend_target is None:
+        return status
+    support = entry.get("backend_support") or {}
+    if str(backend_target) == "rvv":
+        return "supported" if bool(((support.get("rvv") or {}).get("ok"))) else "blocked_backend"
+    if str(backend_target) in {"cuda_h100", "cuda_5090d"}:
+        return "supported" if bool(((support.get(str(backend_target)) or {}).get("ok"))) else "blocked_backend"
+    return status
+
+
+def _attach_registry_meta(spec: KernelSpec, *, entry: Dict[str, Any] | None, backend_target: str | None) -> KernelSpec:
+    setattr(spec, "provider", "flaggems")
+    setattr(spec, "backend_target", (str(backend_target) if backend_target else None))
+    if entry is None:
+        setattr(spec, "source_op", spec.name)
+        setattr(spec, "capability_state", "blocked_ir")
+        setattr(spec, "capability_status", "blocked_ir")
+        setattr(spec, "intent_ops", [])
+        return spec
+
+    semantic_op = str(entry.get("semantic_op") or spec.name)
+    status = str(entry.get("status") or "blocked_ir")
+    setattr(spec, "source_op", semantic_op)
+    setattr(spec, "capability_state", _capability_state_for_target(entry, backend_target))
+    setattr(spec, "capability_status", status)
+    setattr(spec, "intent_ops", list(entry.get("intent_ops") or []))
+    setattr(spec, "status_reason", str(entry.get("status_reason") or ""))
+    setattr(spec, "family", str(entry.get("family") or ""))
+    return spec
+
+
+def _build_specs(
+    spec_names: List[str],
+    *,
+    registry: Dict[str, Any],
+    backend_target: str | None,
+) -> List[KernelSpec]:
+    out: List[KernelSpec] = []
+    for name in spec_names:
+        build = _FLAGGEMS_SPEC_BUILDERS.get(str(name))
+        if build is None:
+            continue
+        spec = build()
+        entry = load_registry_entry_by_spec(registry, spec.name)
+        spec = _attach_registry_meta(spec, entry=entry, backend_target=backend_target)
+        out.append(spec)
+    return out
+
+
+def default_flaggems_kernel_specs(
+    *,
+    flaggems_opset: str = DEFAULT_FLAGGEMS_OPSET,
+    backend_target: str | None = None,
+) -> List[KernelSpec]:
+    # Registry is the source of truth for semantic coverage; the smoke suite
+    # remains a stable ordered subset for fast verification.
+    registry = load_registry()
+    if str(flaggems_opset) != DEFAULT_FLAGGEMS_OPSET:
+        raise ValueError(f"unsupported flaggems opset: {flaggems_opset}")
+    return _build_specs(list(_FLAGGEMS_SMOKE_ORDER), registry=registry, backend_target=backend_target)
+
+
+def coverage_flaggems_kernel_specs(
+    *,
+    flaggems_opset: str = DEFAULT_FLAGGEMS_OPSET,
+    backend_target: str | None = None,
+) -> List[KernelSpec]:
+    registry = load_registry()
+    if str(flaggems_opset) != DEFAULT_FLAGGEMS_OPSET:
+        raise ValueError(f"unsupported flaggems opset: {flaggems_opset}")
+    spec_names = [name for name in list_supported_e2e_specs(registry) if name in _FLAGGEMS_SPEC_BUILDERS]
+    if not spec_names:
+        spec_names = list(_FLAGGEMS_SMOKE_ORDER)
+    return _build_specs(spec_names, registry=registry, backend_target=backend_target)
 
 
 __all__ = [
