@@ -19,6 +19,8 @@ from typing import Any, Dict, List
 
 
 ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_RVV_HOST = os.getenv("INTENTIR_RVV_HOST", "192.168.8.72")
+DEFAULT_RVV_USER = os.getenv("INTENTIR_RVV_USER", "ubuntu")
 
 DEFAULT_KERNELS = [
     "any_kernel_dim",
@@ -29,11 +31,21 @@ DEFAULT_KERNELS = [
     "upsample_bicubic2d_aa",
 ]
 
+FLAGGEMS_KERNELS = [
+    "any_kernel_dim",
+    "add2d",
+    "group_norm_kernel",
+    "layer_norm_persistent",
+    "softmax_inner",
+    "upsample_bicubic2d_aa",
+]
+
 
 def _run_one(
     *,
     kernel: str,
     frontend: str,
+    triton_provider: str,
     host: str,
     user: str,
     port: int,
@@ -70,6 +82,8 @@ def _run_one(
         str(int(bench_warmup)),
         "--json",
     ]
+    if frontend == "triton":
+        cmd += ["--triton-provider", str(triton_provider)]
     if profile:
         cmd += ["--profile", str(profile)]
 
@@ -93,9 +107,23 @@ def _run_one(
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--frontend", choices=["triton", "tilelang", "both"], default="both")
+    ap.add_argument(
+        "--triton-provider",
+        choices=["native", "flaggems"],
+        default="native",
+        help="Triton artifact provider (default: native)",
+    )
     ap.add_argument("--kernel", action="append", default=[], help="repeatable; default runs 6 kernels")
-    ap.add_argument("--host", required=True)
-    ap.add_argument("--user", default="ubuntu")
+    ap.add_argument(
+        "--host",
+        default=DEFAULT_RVV_HOST,
+        help=f"RVV host (default: {DEFAULT_RVV_HOST}; env: INTENTIR_RVV_HOST)",
+    )
+    ap.add_argument(
+        "--user",
+        default=DEFAULT_RVV_USER,
+        help=f"SSH user (default: {DEFAULT_RVV_USER}; env: INTENTIR_RVV_USER)",
+    )
     ap.add_argument("--port", type=int, default=22)
     ap.add_argument("--password", default=None, help="SSH password (prefer env INTENTIR_SSH_PASSWORD)")
     ap.add_argument("--case-index", type=int, default=0)
@@ -107,17 +135,25 @@ def main() -> None:
     ap.add_argument("--out", default=None, help="write JSON report to this path (default: stdout)")
     args = ap.parse_args()
 
-    kernels = args.kernel or list(DEFAULT_KERNELS)
     frontends = ["triton", "tilelang"] if args.frontend == "both" else [str(args.frontend)]
+    explicit_kernels = list(args.kernel or [])
 
     password = args.password or os.getenv("INTENTIR_SSH_PASSWORD")
     results: List[Dict[str, Any]] = []
+    kernels_by_frontend: Dict[str, List[str]] = {}
     for fe in frontends:
+        kernels = (
+            list(explicit_kernels)
+            if explicit_kernels
+            else (list(FLAGGEMS_KERNELS) if fe == "triton" and str(args.triton_provider) == "flaggems" else list(DEFAULT_KERNELS))
+        )
+        kernels_by_frontend[str(fe)] = list(kernels)
         for k in kernels:
             results.append(
                 _run_one(
                     kernel=k,
                     frontend=fe,
+                    triton_provider=str(args.triton_provider),
                     host=str(args.host),
                     user=str(args.user),
                     port=int(args.port),
@@ -131,12 +167,20 @@ def main() -> None:
                 )
             )
 
+    kernels_union: List[str] = []
+    for ks in kernels_by_frontend.values():
+        for k in ks:
+            if k not in kernels_union:
+                kernels_union.append(str(k))
+
     out: Dict[str, Any] = {
         "host": str(args.host),
         "user": str(args.user),
         "port": int(args.port),
         "frontends": frontends,
-        "kernels": kernels,
+        "triton_provider": (str(args.triton_provider) if "triton" in frontends else None),
+        "kernels": kernels_union,
+        "kernels_by_frontend": kernels_by_frontend,
         "tuning": {"mode": str(args.tune_mode), "budget": int(args.tune_budget), "bench_iters": int(args.bench_iters), "bench_warmup": int(args.bench_warmup), "profile": (str(args.profile) if args.profile else None)},
         "results": results,
     }
@@ -150,4 +194,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

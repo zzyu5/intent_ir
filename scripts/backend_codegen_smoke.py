@@ -44,6 +44,28 @@ DEFAULT_KERNELS = [
     "upsample_bicubic2d_aa",
 ]
 
+FLAGGEMS_KERNELS = [
+    "any_kernel_dim",
+    "add2d",
+    "group_norm_kernel",
+    "layer_norm_persistent",
+    "softmax_inner",
+    "upsample_bicubic2d_aa",
+]
+
+
+def _artifact_dir_for_frontend(frontend: str, *, triton_provider: str = "native") -> str:
+    if frontend == "triton":
+        p = str(triton_provider)
+        if p == "flaggems":
+            return "flaggems_triton_full_pipeline"
+        if p == "native":
+            return "full_pipeline_verify"
+        raise ValueError(f"unsupported triton provider: {triton_provider}")
+    if frontend == "tilelang":
+        return "tilelang_full_pipeline"
+    raise ValueError(f"unsupported frontend: {frontend}")
+
 
 def _load_intent(report: dict) -> IntentFunction:
     intent_macro = IntentFunction.from_json_dict(report["intent"])
@@ -82,11 +104,12 @@ def run_one(
     kernel: str,
     *,
     frontend: str = "triton",
+    triton_provider: str = "native",
     keep_tmp: bool = False,
     tune_request: TuningRequest | None = None,
     tune_profile: str | None = None,
 ) -> dict:
-    artifact_dir = "full_pipeline_verify" if frontend == "triton" else "tilelang_full_pipeline"
+    artifact_dir = _artifact_dir_for_frontend(frontend, triton_provider=str(triton_provider))
     report_path = ROOT / "artifacts" / artifact_dir / f"{kernel}.json"
     baseline_npz_path = ROOT / "artifacts" / artifact_dir / f"{kernel}.baseline.npz"
     if not report_path.exists():
@@ -187,6 +210,7 @@ def run_one(
             "gcc",
             "-O2",
             "-std=c11",
+            "-D_POSIX_C_SOURCE=200809L",
             "-I.",
             "-o",
             str(td / "run"),
@@ -220,6 +244,12 @@ def run_one(
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--frontend", choices=["triton", "tilelang"], default="triton")
+    ap.add_argument(
+        "--triton-provider",
+        choices=["native", "flaggems"],
+        default="native",
+        help="Triton artifact provider (default: native)",
+    )
     ap.add_argument("--kernel", action="append", default=[], help="repeatable; default runs 6 kernels")
     ap.add_argument("--keep-tmp", action="store_true", help="keep generated C + binaries in a temp dir")
     ap.add_argument("--tune-mode", choices=["auto", "guided", "locked"], default=None)
@@ -228,7 +258,12 @@ def main() -> None:
     ap.add_argument("--profile", default=None, help="RVV profile name or JSON path (default: generic_rvv_256 when tuning)")
     args = ap.parse_args()
 
-    kernels = args.kernel or DEFAULT_KERNELS
+    if args.kernel:
+        kernels = list(args.kernel)
+    elif str(args.frontend) == "triton" and str(args.triton_provider) == "flaggems":
+        kernels = list(FLAGGEMS_KERNELS)
+    else:
+        kernels = list(DEFAULT_KERNELS)
     tune_req = None
     if args.tune_mode:
         tune_req = TuningRequest(
@@ -243,6 +278,7 @@ def main() -> None:
         r = run_one(
             k,
             frontend=str(args.frontend),
+            triton_provider=str(args.triton_provider),
             keep_tmp=bool(args.keep_tmp),
             tune_request=tune_req,
             tune_profile=str(args.profile) if args.profile else None,

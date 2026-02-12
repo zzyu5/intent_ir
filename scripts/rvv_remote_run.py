@@ -5,11 +5,13 @@ Current support:
 - generic IntentIR ops lowering to a standalone C program (default: C++ codegen).
 
 Usage:
-  INTENTIR_SSH_PASSWORD=... python scripts/rvv_remote_run.py --kernel any_kernel_dim --host <host> --user <user>
+  python scripts/rvv_remote_run.py --kernel any_kernel_dim --use-key
+  INTENTIR_RVV_HOST=192.168.8.72 INTENTIR_RVV_USER=ubuntu python scripts/rvv_remote_run.py --kernel any_kernel_dim --use-key
   # or omit INTENTIR_SSH_PASSWORD and type it when prompted
 Requires: `artifacts/<frontend>_full_pipeline/<kernel>.json` produced beforehand.
 Artifact dirs:
-  - triton:   artifacts/full_pipeline_verify/ (historical)
+  - triton (native):   artifacts/full_pipeline_verify/ (historical)
+  - triton (flaggems): artifacts/flaggems_triton_full_pipeline/
   - tilelang: artifacts/tilelang_full_pipeline/
   - cuda:     artifacts/cuda_full_pipeline/
 """
@@ -47,6 +49,9 @@ from intent_ir.ir import IntentFunction, ScheduleSketch
 from intent_ir.macros import expand_macros
 from verify.gen_cases import TestCase
 from verify.tolerances import infer_tolerances
+
+DEFAULT_RVV_HOST = os.getenv("INTENTIR_RVV_HOST", "192.168.8.72")
+DEFAULT_RVV_USER = os.getenv("INTENTIR_RVV_USER", "ubuntu")
 
 
 def _normalize_io_name(name: str) -> str:
@@ -167,6 +172,21 @@ def _sftp_write_bytes(sftp: paramiko.SFTPClient, path: str, data: bytes) -> None
         f.write(data)
 
 
+def _artifact_dir_for_frontend(frontend: str, *, triton_provider: str = "native") -> str:
+    if frontend == "triton":
+        p = str(triton_provider)
+        if p == "flaggems":
+            return "flaggems_triton_full_pipeline"
+        if p == "native":
+            return "full_pipeline_verify"
+        raise ValueError(f"unsupported triton provider: {triton_provider}")
+    if frontend == "tilelang":
+        return "tilelang_full_pipeline"
+    if frontend == "cuda":
+        return "cuda_full_pipeline"
+    raise ValueError(f"unsupported frontend: {frontend}")
+
+
 def run_remote(
     kernel: str,
     frontend: str,
@@ -191,6 +211,7 @@ def run_remote(
     omp_places: str = "cores",
     gomp_cpu_affinity: str | None = None,
     log: Callable[[str], None] | None = None,
+    triton_provider: str = "native",
 ):
     def _log(msg: str) -> None:
         if log is None:
@@ -200,14 +221,14 @@ def run_remote(
         except Exception:
             pass
 
-    artifact_dirs = {"triton": "full_pipeline_verify", "tilelang": "tilelang_full_pipeline", "cuda": "cuda_full_pipeline"}
-    if frontend not in artifact_dirs:
-        raise ValueError(f"unsupported frontend: {frontend}")
-    artifact_dir = artifact_dirs[frontend]
+    artifact_dir = _artifact_dir_for_frontend(frontend, triton_provider=str(triton_provider))
     report_path = ROOT / "artifacts" / artifact_dir / f"{kernel}.json"
     if not report_path.exists():
+        cmd_hint = f"python scripts/full_pipeline_verify.py --frontend {frontend}"
+        if frontend == "triton" and str(triton_provider) == "flaggems":
+            cmd_hint += " --triton-provider flaggems"
         raise FileNotFoundError(
-            f"artifact not found: {report_path}, please run `python scripts/full_pipeline_verify.py --frontend {frontend}` first"
+            f"artifact not found: {report_path}, please run `{cmd_hint}` first"
         )
     _log(f"[{frontend}:{kernel}] load artifact: {report_path}")
     report = json.loads(report_path.read_text())
@@ -320,9 +341,14 @@ def run_remote(
             _log(f"[{frontend}:{kernel}] baseline npz missing; try live baseline launch")
             try:
                 if frontend == "triton":
-                    from pipeline.triton.core import default_kernel_specs
+                    if str(triton_provider) == "flaggems":
+                        from pipeline.triton.flaggems_specs import default_flaggems_kernel_specs
 
-                    spec_map = {s.name: s for s in default_kernel_specs()}
+                        spec_map = {s.name: s for s in default_flaggems_kernel_specs()}
+                    else:
+                        from pipeline.triton.core import default_kernel_specs
+
+                        spec_map = {s.name: s for s in default_kernel_specs()}
                 elif frontend == "tilelang":
                     from pipeline.tilelang.core import default_kernel_specs, mvp_kernel_specs
 
@@ -338,9 +364,14 @@ def run_remote(
                     bindings = dict(spec.canonical_shapes)
                 baseline = spec.runner(TestCase(shapes=bindings, dtypes={}, seed=0))
             except Exception as e:
+                triton_cmd = "python scripts/full_pipeline_verify.py --frontend triton"
+                if str(triton_provider) == "flaggems":
+                    triton_cmd += " --triton-provider flaggems"
                 raise RuntimeError(
                     "baseline not available: no cached baseline .npz in artifacts and live baseline launch failed. "
-                    "Run `python scripts/full_pipeline_verify.py --frontend <frontend>` on a CUDA machine to produce "
+                    f"Run `{triton_cmd}` (for Triton), "
+                    "`python scripts/full_pipeline_verify.py --frontend tilelang` (for TileLang), or "
+                    "`python scripts/full_pipeline_verify.py --frontend cuda` (for CUDA) on a CUDA machine to produce "
                     "`artifacts/<frontend>_full_pipeline/<kernel>.baseline.npz`, or pass --baseline-npz.\n"
                     f"live launch error: {type(e).__name__}: {e}"
                 ) from e
@@ -950,6 +981,9 @@ def run_remote(
     except Exception:
         baseline_summary = {}
     return {
+        "frontend": str(frontend),
+        "triton_provider": (str(triton_provider) if frontend == "triton" else None),
+        "artifact_dir": str(artifact_dir),
         "backend": backend_used,
         "omp_threads": int(omp_threads),
         "omp": chosen.get("omp"),
@@ -979,8 +1013,22 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--kernel", default="any_kernel_dim")
     ap.add_argument("--frontend", choices=["triton", "tilelang", "cuda"], default="triton")
-    ap.add_argument("--host", required=True)
-    ap.add_argument("--user", default="ubuntu")
+    ap.add_argument(
+        "--triton-provider",
+        choices=["native", "flaggems"],
+        default="native",
+        help="Triton artifact provider (default: native)",
+    )
+    ap.add_argument(
+        "--host",
+        default=DEFAULT_RVV_HOST,
+        help=f"RVV host (default: {DEFAULT_RVV_HOST}; env: INTENTIR_RVV_HOST)",
+    )
+    ap.add_argument(
+        "--user",
+        default=DEFAULT_RVV_USER,
+        help=f"SSH user (default: {DEFAULT_RVV_USER}; env: INTENTIR_RVV_USER)",
+    )
     ap.add_argument("--password", default=None, help="SSH password (prefer env INTENTIR_SSH_PASSWORD or prompt)")
     ap.add_argument("--use-key", action="store_true", help="use SSH key auth (no password prompt)")
     ap.add_argument("--port", type=int, default=22)
@@ -1074,6 +1122,7 @@ def main():
         profile_ops=bool(args.profile_ops),
         bench_only=bool(args.bench_only),
         log=_log,
+        triton_provider=str(args.triton_provider),
     )
     if args.json:
         print(json.dumps(res, indent=2, ensure_ascii=False))

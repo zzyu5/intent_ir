@@ -12,10 +12,15 @@ importable modules (e.g., `pipeline/triton/core.py`, or backend/verify packages)
 - `tilelang/full_pipeline_verify.py`: run the TileLang MVP pipeline for the default kernel set.
 - `pipeline/triton/core.py`: reusable Triton pipeline helper library used by `scripts/triton/full_pipeline_verify.py`.
 - `backend_codegen_smoke.py`: validate Task6 backend codegen locally (no LLM, no remote).
+  - `--triton-provider native|flaggems` selects Triton artifact directory for backend smoke.
 - `rvv_remote_run.py`: run Task6 on a remote RVV host and compare with saved baseline.
+  - `--triton-provider native|flaggems` allows direct remote run from FlagGems Triton artifacts.
+  - Defaults: `--host 192.168.8.72 --user ubuntu` (overridable by `INTENTIR_RVV_HOST`, `INTENTIR_RVV_USER`).
   - `--profile-ops` emits `INTENTIR_PROFILE {..}` per-op timing JSON (from the RVV program stdout).
-- `rvv_remote_suite.py`: run remote RVV tests across the 6-kernel suite (user-facing).
-- `benchmark_suite.py`: run remote RVV perf microbenchmarks (ns/iter) for the 6-kernel suite.
+- `rvv_remote_suite.py`: run remote RVV tests across kernel suites (user-facing).
+  - Supports `--triton-provider native|flaggems`; when using `flaggems`, Triton defaults to the FlagGems kernel suite.
+- `benchmark_suite.py`: run remote RVV perf microbenchmarks (ns/iter) for kernel suites.
+  - Supports `--triton-provider native|flaggems` and the same RVV host/user defaults as `rvv_remote_run.py`.
   - For richer reports: pass `--profile-ops` (per-op timing) + `--tune-debug` (predicted cost-model debug).
 - `analyze_perf.py`: summarize benchmark JSON (predicted vs measured, correlations).
 - `compare_perf.py`: compare two perf JSONs and fail on regressions.

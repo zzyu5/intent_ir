@@ -26,6 +26,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+DEFAULT_RVV_HOST = os.getenv("INTENTIR_RVV_HOST", "192.168.8.72")
+DEFAULT_RVV_USER = os.getenv("INTENTIR_RVV_USER", "ubuntu")
+
 DEFAULT_KERNELS = [
     "any_kernel_dim",
     "group_norm_kernel",
@@ -64,6 +67,27 @@ KERNEL_SUITES = {
     "coverage": list(DEFAULT_KERNELS) + list(P3_COVERAGE_KERNELS),
     "all": list(DEFAULT_KERNELS) + list(P3_COVERAGE_KERNELS),
 }
+
+FLAGGEMS_KERNELS = [
+    "any_kernel_dim",
+    "add2d",
+    "group_norm_kernel",
+    "layer_norm_persistent",
+    "softmax_inner",
+    "upsample_bicubic2d_aa",
+]
+
+FLAGGEMS_KERNEL_SUITES = {
+    "smoke": list(FLAGGEMS_KERNELS),
+    "coverage": list(FLAGGEMS_KERNELS),
+    "all": list(FLAGGEMS_KERNELS),
+}
+
+
+def _suite_kernels_for(frontend: str, *, suite: str, triton_provider: str) -> List[str]:
+    if frontend == "triton" and str(triton_provider) == "flaggems":
+        return list(FLAGGEMS_KERNEL_SUITES[str(suite)])
+    return list(KERNEL_SUITES[str(suite)])
 
 
 def _run_one(cmd: List[str], *, env: Dict[str, str]) -> Dict[str, Any]:
@@ -115,8 +139,22 @@ def main() -> None:
     ap.add_argument("--frontend", choices=["triton", "tilelang", "cuda", "both", "all"], default="both")
     ap.add_argument("--kernel", action="append", default=[], help="repeatable; default runs 6 kernels")
     ap.add_argument("--suite", choices=["smoke", "coverage", "all"], default="smoke", help="Kernel suite (default: smoke)")
-    ap.add_argument("--host", required=True)
-    ap.add_argument("--user", default="ubuntu")
+    ap.add_argument(
+        "--triton-provider",
+        choices=["native", "flaggems"],
+        default="native",
+        help="Triton artifact provider (default: native)",
+    )
+    ap.add_argument(
+        "--host",
+        default=DEFAULT_RVV_HOST,
+        help=f"RVV host (default: {DEFAULT_RVV_HOST}; env: INTENTIR_RVV_HOST)",
+    )
+    ap.add_argument(
+        "--user",
+        default=DEFAULT_RVV_USER,
+        help=f"SSH user (default: {DEFAULT_RVV_USER}; env: INTENTIR_RVV_USER)",
+    )
     ap.add_argument("--port", type=int, default=22)
     ap.add_argument("--password", default=None, help="SSH password (prefer env INTENTIR_SSH_PASSWORD or prompt)")
     ap.add_argument("--use-key", action="store_true", help="use SSH key auth (no password prompt)")
@@ -131,8 +169,7 @@ def main() -> None:
     ap.add_argument("--tune-debug", action="store_true", help="include structured tuning/cost-model debug in JSON output")
     ap.add_argument("--out", default=None, help="write JSON report to this path (default: stdout)")
     args = ap.parse_args()
-
-    kernels = args.kernel or list(KERNEL_SUITES[str(args.suite)])
+    explicit_kernels = list(args.kernel or [])
     if args.frontend == "both":
         frontends = ["triton", "tilelang"]
     elif args.frontend == "all":
@@ -182,8 +219,15 @@ def main() -> None:
             profile_path = None
 
     results: List[Dict[str, Any]] = []
+    kernels_by_frontend: Dict[str, List[str]] = {}
     ok_all = True
     for fe in frontends:
+        kernels = list(explicit_kernels) if explicit_kernels else _suite_kernels_for(
+            str(fe),
+            suite=str(args.suite),
+            triton_provider=str(args.triton_provider),
+        )
+        kernels_by_frontend[str(fe)] = list(kernels)
         for k in kernels:
             cmd: List[str] = [
                 sys.executable,
@@ -210,6 +254,8 @@ def main() -> None:
                 str(int(args.bench_warmup)),
                 "--json",
             ]
+            if fe == "triton":
+                cmd += ["--triton-provider", str(args.triton_provider)]
             if args.profile_ops:
                 cmd.append("--profile-ops")
             if args.tune_debug:
@@ -231,12 +277,20 @@ def main() -> None:
             status = "OK" if r["ok"] else "FAIL"
             print(f"[{fe}:{k}] {status}")
 
+    kernels_union: List[str] = []
+    for ks in kernels_by_frontend.values():
+        for k in ks:
+            if k not in kernels_union:
+                kernels_union.append(str(k))
+
     out: Dict[str, Any] = {
         "host": str(args.host),
         "user": str(args.user),
         "port": int(args.port),
         "frontends": frontends,
-        "kernels": kernels,
+        "triton_provider": (str(args.triton_provider) if "triton" in frontends else None),
+        "kernels": kernels_union,
+        "kernels_by_frontend": kernels_by_frontend,
         "tuning": {
             "enabled": (not bool(args.no_tune)),
             "mode": str(args.tune_mode),

@@ -6,7 +6,7 @@ This is a thin wrapper around `scripts/rvv_remote_suite.py` that:
   - extracts ns_per_iter (and other bench fields) into a compact JSON
 
 Typical usage:
-  PYTHONPATH=. python scripts/benchmark_suite.py --host 192.168.8.149 --user ubuntu --use-key \\
+  PYTHONPATH=. python scripts/benchmark_suite.py --host 192.168.8.72 --user ubuntu --use-key \\
     --frontend both --bench-iters 50 --bench-warmup 5 --out artifacts/perf_latest.json
 """
 
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -26,6 +27,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backends.spmd_rvv.analysis.perf_analysis import extract_remote_suite_rows, summarize_rows  # noqa: E402
+
+DEFAULT_RVV_HOST = os.getenv("INTENTIR_RVV_HOST", "192.168.8.72")
+DEFAULT_RVV_USER = os.getenv("INTENTIR_RVV_USER", "ubuntu")
 
 
 def _git_head() -> str | None:
@@ -42,12 +46,27 @@ def _run_remote_suite(raw_out: Path, argv: List[str]) -> None:
     if rc != 0:
         raise RuntimeError(f"rvv_remote_suite failed (rc={rc})")
 
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--frontend", choices=["triton", "tilelang", "both"], default="both")
     ap.add_argument("--kernel", action="append", default=[], help="repeatable; default runs 6 kernels")
-    ap.add_argument("--host", required=True)
-    ap.add_argument("--user", default="ubuntu")
+    ap.add_argument(
+        "--triton-provider",
+        choices=["native", "flaggems"],
+        default="native",
+        help="Triton artifact provider (default: native)",
+    )
+    ap.add_argument(
+        "--host",
+        default=DEFAULT_RVV_HOST,
+        help=f"RVV host (default: {DEFAULT_RVV_HOST}; env: INTENTIR_RVV_HOST)",
+    )
+    ap.add_argument(
+        "--user",
+        default=DEFAULT_RVV_USER,
+        help=f"SSH user (default: {DEFAULT_RVV_USER}; env: INTENTIR_RVV_USER)",
+    )
     ap.add_argument("--port", type=int, default=22)
     ap.add_argument("--password", default=None)
     ap.add_argument("--use-key", action="store_true")
@@ -72,6 +91,8 @@ def main() -> None:
     argv: List[str] = [
         "--frontend",
         str(args.frontend),
+        "--triton-provider",
+        str(args.triton_provider),
         "--host",
         str(args.host),
         "--user",
@@ -125,11 +146,13 @@ def main() -> None:
             "profile_ops": bool(args.profile_ops),
             "tune_debug": bool(args.tune_debug),
             "case_index": int(args.case_index),
+            "triton_provider": str(args.triton_provider),
         },
         "remote": {
             "host": str(args.host),
             "user": str(args.user),
             "port": int(args.port),
+            "triton_provider": str(args.triton_provider),
             "profile": raw.get("profile") or raw.get("tuning", {}).get("profile"),
         },
         "results": rows,
