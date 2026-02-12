@@ -5,8 +5,10 @@ importable modules (e.g., `pipeline/triton/core.py`, or backend/verify packages)
 
 ## Key scripts
 
-- `triton/full_pipeline_verify.py`: run the full Task1–5 Triton pipeline for the default kernel set.
-  - `--list` lists kernels, `--kernel NAME` runs a subset.
+- `triton/full_pipeline_verify.py`: run the full Task1–5 Triton pipeline.
+  - `--provider native|flaggems` chooses Triton provider (`flaggems` is still Triton, not a separate frontend).
+  - `--use-llm/--no-use-llm` toggles LLM extraction vs deterministic fallback intents.
+  - `--suite smoke|coverage|all`, `--list`, and `--kernel NAME` control kernel selection.
 - `tilelang/full_pipeline_verify.py`: run the TileLang MVP pipeline for the default kernel set.
 - `pipeline/triton/core.py`: reusable Triton pipeline helper library used by `scripts/triton/full_pipeline_verify.py`.
 - `backend_codegen_smoke.py`: validate Task6 backend codegen locally (no LLM, no remote).

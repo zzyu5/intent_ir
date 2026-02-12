@@ -8,4 +8,5 @@ User-facing entrypoints stay in `scripts/` and should remain thin wrappers.
 - `pipeline/registry.py`: frontend adapter registry (`frontend -> adapter`).
 - `pipeline/run.py`: generic frontend runner shell (adapter-only).
 - `pipeline/triton/core.py`: Triton pipeline runner + kernel specs used by `scripts/triton/full_pipeline_verify.py`.
+- `pipeline/triton/flaggems_specs.py`: FlagGems-backed kernel specs/runners that plug into the same Triton pipeline (`run_pipeline_for_spec`), not a new frontend.
 - `pipeline/tilelang/core.py`: TileLang MVP pipeline runner + kernel specs used by `scripts/tilelang/full_pipeline_verify.py`.

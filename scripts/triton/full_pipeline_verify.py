@@ -3,6 +3,10 @@ Triton frontend full pipeline runner (Tasks 1–5).
 
 This file lives under `scripts/triton/` to keep Triton-specific entrypoints
 separate from generic scripts (backend smoke, remote RVV run, etc).
+
+Examples:
+  PYTHONPATH=. python scripts/triton/full_pipeline_verify.py --suite smoke
+  PYTHONPATH=. python scripts/triton/full_pipeline_verify.py --provider flaggems --suite all --no-use-llm
 """
 
 from __future__ import annotations
@@ -16,32 +20,73 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pipeline.triton.core import default_kernel_specs, run_pipeline_for_spec
-
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--provider",
+        choices=["native", "flaggems"],
+        default="native",
+        help="Kernel source/runner provider (default: native)",
+    )
     ap.add_argument("--kernel", action="append", default=None, help="Run a single kernel by name (repeatable)")
+    ap.add_argument("--suite", choices=["smoke", "coverage", "all"], default="smoke")
     ap.add_argument("--list", action="store_true", help="List available kernels and exit")
     ap.add_argument("--cases-limit", type=int, default=8)
+    ap.add_argument(
+        "--use-llm",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable LLM extraction (default: on). Use --no-use-llm for deterministic fallback intents.",
+    )
     ap.add_argument("--out-dir", type=str, default=None)
     args = ap.parse_args()
 
-    out_dir = Path(args.out_dir) if args.out_dir else (ROOT / "artifacts" / "full_pipeline_verify")
+    from pipeline.triton.core import run_pipeline_for_spec
+
+    provider = str(args.provider)
+    if provider == "flaggems":
+        from pipeline.triton.flaggems_specs import coverage_flaggems_kernel_specs, default_flaggems_kernel_specs
+
+        coverage_kernel_specs = coverage_flaggems_kernel_specs
+        default_kernel_specs = default_flaggems_kernel_specs
+        default_out_dir = ROOT / "artifacts" / "flaggems_triton_full_pipeline"
+    else:
+        from pipeline.triton.core import coverage_kernel_specs, default_kernel_specs
+
+        default_out_dir = ROOT / "artifacts" / "full_pipeline_verify"
+
+    out_dir = Path(args.out_dir) if args.out_dir else default_out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    suites = {
+        "smoke": default_kernel_specs,
+        "coverage": coverage_kernel_specs,
+        "all": coverage_kernel_specs,
+    }
     if args.list:
-        for s in default_kernel_specs():
+        for s in suites[str(args.suite)]():
             print(s.name)
         return
     wanted = set(args.kernel or [])
 
-    for spec in default_kernel_specs():
+    if wanted:
+        specs = [s for s in coverage_kernel_specs() if s.name in wanted]
+    else:
+        specs = list(suites[str(args.suite)]())
+
+    for spec in specs:
         if wanted and spec.name not in wanted:
             continue
-        print(f"\n=== {spec.name} ===")
+        prefix = "flaggems:" if provider == "flaggems" else ""
+        print(f"\n=== {prefix}{spec.name} ===")
         try:
-            report = run_pipeline_for_spec(spec, out_dir=out_dir, cases_limit=int(args.cases_limit))
+            report = run_pipeline_for_spec(
+                spec,
+                out_dir=out_dir,
+                cases_limit=int(args.cases_limit),
+                use_llm=bool(args.use_llm),
+            )
         except Exception as e:
             print("Pipeline failed:", e)
             continue

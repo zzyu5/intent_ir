@@ -2263,10 +2263,22 @@ def coverage_kernel_specs() -> List[KernelSpec]:
     return specs
 
 
-def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int = 8) -> Dict[str, object]:
+def run_pipeline_for_spec(
+    spec: KernelSpec,
+    *,
+    out_dir: Path,
+    cases_limit: int = 8,
+    use_llm: bool = True,
+) -> Dict[str, object]:
     """
     Run the full pipeline for a single kernel spec and write artifacts under out_dir.
     Returns the report dict (also written to JSON).
+
+    Args:
+      use_llm:
+        True: normal path (LLM extraction + repair loops).
+        False: skip LLM extraction and rely on deterministic fallback intents
+               (when available for the kernel name).
     """
     report: Dict[str, object] = {"kernel": spec.name}
     adapter = pipeline_registry.get("triton")
@@ -2381,8 +2393,10 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
     else:
         report["ttir_path"] = None
 
-    # 3) LLM -> IntentIR (KernelDescriptor -> CandidateIntent)
-    print(f"[{spec.name}] stage5: LLM -> IntentIR (may take a while)", flush=True)
+    # 3) IntentIR construction (LLM path or deterministic fallback).
+    stage5_mode = "LLM -> IntentIR (may take a while)" if use_llm else "deterministic fallback IntentIR (--no-use-llm)"
+    print(f"[{spec.name}] stage5: {stage5_mode}", flush=True)
+    report["llm_enabled"] = bool(use_llm)
     feedback: List[str] = []
     cand: CandidateIntent | None = None
     cand_expanded: CandidateIntent | None = None
@@ -2430,29 +2444,32 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
         (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
         (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
     else:
-        for attempt in range(2):
-            try:
-                cand = llm_to_intent(desc, feedback=feedback)
-                report["llm_trace"] = dict(cand.llm_trace)
-                _ensure_schedule(cand.intent, kernel_name=spec.name, triton_src=src)
-                enrich_intent_macros(cand.intent)
-                intent_mlir = print_mlir_like(cand.intent)
-                (out_dir / f"{spec.name}.intentir.mlir").write_text(intent_mlir, encoding="utf-8")
-                expanded_intent = expand_macros(cand.intent)
-                cand_expanded = CandidateIntent(
-                    intent=expanded_intent,
-                    problem_params=dict(cand.problem_params),
-                    schedule_params=dict(cand.schedule_params),
-                    raw_json=dict(cand.raw_json),
-                    llm_trace=dict(cand.llm_trace),
-                )
-                (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_intent), encoding="utf-8")
-                break
-            except Exception as e:
-                feedback = [f"Previous failure: {e}"]
-                cand = None
-                cand_expanded = None
-                continue
+        if use_llm:
+            for attempt in range(2):
+                try:
+                    cand = llm_to_intent(desc, feedback=feedback)
+                    report["llm_trace"] = dict(cand.llm_trace)
+                    _ensure_schedule(cand.intent, kernel_name=spec.name, triton_src=src)
+                    enrich_intent_macros(cand.intent)
+                    intent_mlir = print_mlir_like(cand.intent)
+                    (out_dir / f"{spec.name}.intentir.mlir").write_text(intent_mlir, encoding="utf-8")
+                    expanded_intent = expand_macros(cand.intent)
+                    cand_expanded = CandidateIntent(
+                        intent=expanded_intent,
+                        problem_params=dict(cand.problem_params),
+                        schedule_params=dict(cand.schedule_params),
+                        raw_json=dict(cand.raw_json),
+                        llm_trace=dict(cand.llm_trace),
+                    )
+                    (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_intent), encoding="utf-8")
+                    break
+                except Exception as e:
+                    feedback = [f"Previous failure: {e}"]
+                    cand = None
+                    cand_expanded = None
+                    continue
+        else:
+            feedback = ["LLM disabled by caller"]
     if cand is None:
         # Resilience fallback for macro-heavy kernels when providers are unstable.
         if spec.name == "upsample_bicubic2d_aa":
@@ -2518,7 +2535,7 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
             "reasons": list(sv.reasons),
             "obligations": [{"id": o.id, "status": o.status, "detail": o.detail} for o in sv.obligations],
         }
-        if not sv.ok:
+        if use_llm and not sv.ok:
             # One conservative repair round using certificate-derived feedback.
             try:
                 cand = llm_to_intent(desc, feedback=list(sv.reasons))
@@ -2625,7 +2642,7 @@ def run_pipeline_for_spec(spec: KernelSpec, *, out_dir: Path, cases_limit: int =
 
     # If dynamic diff fails, do one bounded LLM repair round using concrete feedback.
     # This is deliberately conservative (1 retry) to respect LLM rate limits.
-    if diffs_in and not all(d.ok for d in diffs_in):
+    if use_llm and diffs_in and not all(d.ok for d in diffs_in):
         worst_summary = (report.get("diff") or {}).get("worst", {}).get("summary")
         ce0 = (report.get("counterexamples") or [{}])[0]
         feedback3: List[str] = []
