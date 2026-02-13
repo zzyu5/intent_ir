@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-13T08:22:55.819276+00:00",
+  "generated_at": "2026-02-13T08:31:36.293124+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -18,9 +18,9 @@
     "source_filtered_ops": 212,
     "semantic_ops": 196,
     "by_status": {
-      "blocked_backend": 35,
+      "blocked_backend": 29,
       "blocked_ir": 84,
-      "dual_pass": 77
+      "dual_pass": 83
     },
     "by_family": {
       "attention_sequence": 5,
@@ -2798,10 +2798,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.lerp_scalar->lerp",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to lerp; mapped as a + w * (b - a); no e2e spec registered",
+      "e2e_spec": "lerp2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to lerp; mapped as a + w * (b - a)",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2863,10 +2863,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.lerp_tensor->lerp",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to lerp; mapped as a + w * (b - a); no e2e spec registered",
+      "e2e_spec": "lerp2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to lerp; mapped as a + w * (b - a)",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6841,10 +6841,10 @@
       ],
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.batch_norm",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as batch normalized arithmetic decomposition; no e2e spec registered",
+      "e2e_spec": "batch_norm2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as batch normalized arithmetic decomposition",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -7365,10 +7365,10 @@
       ],
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.rms_norm",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as x * rsqrt(mean(x*x)+eps); no e2e spec registered",
+      "e2e_spec": "rms_norm2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as x * rsqrt(mean(x*x)+eps)",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -7438,10 +7438,10 @@
       ],
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.rms_norm_forward",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as x * rsqrt(mean(x*x)+eps); no e2e spec registered",
+      "e2e_spec": "rms_norm2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as x * rsqrt(mean(x*x)+eps)",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -7511,10 +7511,10 @@
       ],
       "mapping_kind": "unary_template",
       "intent_pattern_id": "unary.sigmoid_via_exp",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as 1 / (1 + exp(-x)); no e2e spec registered",
+      "e2e_spec": "sigmoid2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as 1 / (1 + exp(-x))",
       "backend_support": {
         "rvv": {
           "target": "rvv",

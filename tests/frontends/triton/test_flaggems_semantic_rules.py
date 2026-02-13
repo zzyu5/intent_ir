@@ -18,6 +18,8 @@ def test_semantic_rule_templates_for_high_yield_ops() -> None:
     assert resolve_semantic_mapping("addmm").intent_ops == ("matmul", "add")
     assert resolve_semantic_mapping("index_select").intent_ops == ("gather",)
     assert resolve_semantic_mapping("group_norm").intent_ops == ("reduce_sum", "sub", "mul", "add", "rsqrt", "broadcast_in_dim", "div")
+    assert resolve_semantic_mapping("batch_norm").intent_ops == ("reduce_sum", "sub", "mul", "add", "rsqrt", "broadcast_in_dim", "div")
+    assert resolve_semantic_mapping("rms_norm").intent_ops == ("mul", "reduce_sum", "add", "rsqrt", "mul")
 
 
 def test_semantic_rule_composite_aliases() -> None:
@@ -35,6 +37,7 @@ def test_semantic_rule_composite_aliases() -> None:
     assert resolve_semantic_mapping("full_like").intent_ops == ("const", "broadcast_in_dim")
     assert resolve_semantic_mapping("pow_scalar").intent_ops == ("pow",)
     assert resolve_semantic_mapping("lerp_scalar").intent_ops == ("sub", "mul", "add")
+    assert resolve_semantic_mapping("rms_norm_forward").intent_ops == ("mul", "reduce_sum", "add", "rsqrt", "mul")
     assert resolve_semantic_mapping("logical_xor").intent_ops == ("or", "and", "not", "and")
     assert resolve_semantic_mapping("log_softmax").intent_ops == ("softmax", "log")
     assert resolve_semantic_mapping("exp2").intent_ops == ("const", "mul", "exp")

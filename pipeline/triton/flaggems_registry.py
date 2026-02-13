@@ -80,6 +80,7 @@ _SEMANTIC_TO_E2E_SPEC: dict[str, str] = {
     "exp2": "exp22d",
     "silu": "silu2d",
     "tanh": "tanh2d",
+    "sigmoid": "sigmoid2d",
     "mm": "mm2d",
     "bmm": "bmm3d",
     "addmm": "addmm2d",
@@ -114,7 +115,10 @@ _SEMANTIC_TO_E2E_SPEC: dict[str, str] = {
     "to_copy": "cast2d",
     "clamp": "clamp2d",
     "group_norm": "group_norm_kernel",
+    "batch_norm": "batch_norm2d",
     "layer_norm": "layer_norm_persistent",
+    "rms_norm": "rms_norm2d",
+    "lerp": "lerp2d",
     "softmax": "softmax_inner",
     "upsample_bicubic2d_aa": "upsample_bicubic2d_aa",
 }
@@ -143,6 +147,9 @@ _SEMANTIC_E2E_ALIASES: dict[str, str] = {
     "zeros_like": "zeros",
     "clamp_min": "maximum",
     "clamp_tensor": "clamp",
+    "lerp_scalar": "lerp",
+    "lerp_tensor": "lerp",
+    "rms_norm_forward": "rms_norm",
     "scaled_softmax_forward": "softmax",
 }
 

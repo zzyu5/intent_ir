@@ -11,6 +11,7 @@ importable modules (e.g., `pipeline/triton/core.py`, or backend/verify packages)
   - `--backend-target rvv|cuda_h100|cuda_5090d` enables backend capability preflight on generated IntentIR.
   - `--use-intent-ir/--no-use-intent-ir` chooses IntentIR pipeline vs traditional provider path.
   - `--intentir-seed-policy auto|force_llm|force_cache` controls Intent seed behavior when IntentIR is enabled.
+  - Default `auto` is "LLM-first-run, cache-next-runs": on cache miss it calls LLM and writes `<out-dir>/<kernel>.intent_seed.json`; later runs replay that seed transparently.
   - Legacy aliases remain: `--use-llm` => `force_llm`; `--no-use-llm` => `--no-use-intent-ir`.
   - `--allow-deterministic-fallback` only applies to `force_cache` when cache is missing.
   - `--suite smoke|coverage|all`, `--list`, and `--kernel NAME` control kernel selection.

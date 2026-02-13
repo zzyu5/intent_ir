@@ -84,6 +84,9 @@ FLAGGEMS_LOGICAL_NOT_SRC = _module_source_text("flag_gems.ops.logical_not")
 FLAGGEMS_LOGICAL_XOR_SRC = _module_source_text("flag_gems.ops.logical_xor")
 FLAGGEMS_GROUP_NORM_SRC = _module_source_text("flag_gems.ops.groupnorm")
 FLAGGEMS_LAYER_NORM_SRC = _module_source_text("flag_gems.ops.layernorm")
+FLAGGEMS_BATCH_NORM_SRC = _module_source_text("flag_gems.ops.batch_norm")
+FLAGGEMS_RMS_NORM_SRC = _module_source_text("flag_gems.ops.rms_norm")
+FLAGGEMS_LERP_SRC = _module_source_text("flag_gems.ops.lerp")
 FLAGGEMS_MM_SRC = _module_source_text("flag_gems.ops.mm")
 FLAGGEMS_BMM_SRC = _module_source_text("flag_gems.ops.bmm")
 FLAGGEMS_ADDMM_SRC = _module_source_text("flag_gems.ops.addmm")
@@ -1198,6 +1201,87 @@ def _run_flaggems_group_norm_reference(case: TestCase) -> Dict[str, np.ndarray]:
     }
 
 
+def _run_flaggems_batch_norm_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = int(case.shapes.get("N", 2))
+    c = int(case.shapes.get("C", 4))
+    hw = int(case.shapes.get("HW", 4))
+    eps = float(case.shapes.get("eps", 1e-5))
+    momentum = float(case.shapes.get("momentum", 0.1))
+    training = bool(case.shapes.get("training", 1))
+    device = str(flag_gems.device)
+
+    if case.inputs and "X" in case.inputs:
+        x = _as_f32_tensor(np.asarray(case.inputs["X"]), device=device)
+    else:
+        x = torch.randn((n, c, hw), device=device, dtype=torch.float32)
+
+    if case.inputs and "W" in case.inputs:
+        w = _as_f32_tensor(np.asarray(case.inputs["W"]), device=device).reshape(c)
+    else:
+        w = torch.ones((c,), device=device, dtype=torch.float32)
+
+    if case.inputs and "B" in case.inputs:
+        b = _as_f32_tensor(np.asarray(case.inputs["B"]), device=device).reshape(c)
+    else:
+        b = torch.zeros((c,), device=device, dtype=torch.float32)
+
+    if case.inputs and "RunningMean" in case.inputs:
+        running_mean = _as_f32_tensor(np.asarray(case.inputs["RunningMean"]), device=device).reshape(c)
+    else:
+        running_mean = torch.zeros((c,), device=device, dtype=torch.float32)
+
+    if case.inputs and "RunningVar" in case.inputs:
+        running_var = _as_f32_tensor(np.asarray(case.inputs["RunningVar"]), device=device).reshape(c)
+    else:
+        running_var = torch.ones((c,), device=device, dtype=torch.float32)
+
+    with flag_gems.use_gems(include=["batch_norm"]):
+        y, mean, inv_std = flag_gems_ops.batch_norm(
+            x,
+            w,
+            b,
+            running_mean,
+            running_var,
+            training,
+            momentum,
+            eps,
+        )
+
+    x_np = _to_np(x)
+    w_np = _to_np(w)
+    b_np = _to_np(b)
+    running_mean_np = _to_np(running_mean)
+    running_var_np = _to_np(running_var)
+    y_np = _to_np(y)
+    mean_np = _to_np(mean)
+    inv_std_np = _to_np(inv_std)
+    return {
+        "X": x_np,
+        "W": w_np,
+        "B": b_np,
+        "RunningMean": running_mean_np,
+        "RunningVar": running_var_np,
+        "Y": y_np,
+        "Mean": mean_np,
+        "InvStd": inv_std_np,
+        "running_mean": running_mean_np,
+        "running_var": running_var_np,
+        "mean": mean_np,
+        "inv_std": inv_std_np,
+        "output_1": y_np,
+        "running_mean_out": running_mean_np,
+        "running_var_out": running_var_np,
+        "eps": np.array(eps, dtype=np.float32),
+        "momentum": np.array(momentum, dtype=np.float32),
+        "training": np.array(1 if training else 0, dtype=np.int32),
+        # Common aliases.
+        "input": x_np,
+        "weight": w_np,
+        "bias": b_np,
+        "output": y_np,
+    }
+
+
 def _run_flaggems_layer_norm_reference(case: TestCase) -> Dict[str, np.ndarray]:
     m = int(case.shapes.get("M", 4))
     n = int(case.shapes.get("N", 64))
@@ -1244,6 +1328,42 @@ def _run_flaggems_layer_norm_reference(case: TestCase) -> Dict[str, np.ndarray]:
         "x": x_np,
         "w": w_np,
         "b": b_np,
+        "output": y_np,
+    }
+
+
+def _run_flaggems_rms_norm_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    eps = float(case.shapes.get("eps", 1e-5))
+    device = str(flag_gems.device)
+
+    if case.inputs and "X" in case.inputs:
+        x = _as_f32_tensor(np.asarray(case.inputs["X"]), device=device)
+    else:
+        x = torch.randn((m, n), device=device, dtype=torch.float32)
+
+    if case.inputs and "W" in case.inputs:
+        w = _as_f32_tensor(np.asarray(case.inputs["W"]), device=device).reshape(n)
+    else:
+        w = torch.ones((n,), device=device, dtype=torch.float32)
+
+    with flag_gems.use_gems(include=["rms_norm", "rms_norm_forward"]):
+        y, inv_rms = flag_gems_ops.rms_norm_forward(x, (n,), w, eps)
+
+    x_np = _to_np(x)
+    w_np = _to_np(w)
+    y_np = _to_np(y)
+    inv_rms_np = _to_np(inv_rms)
+    return {
+        "X": x_np,
+        "W": w_np,
+        "Y": y_np,
+        "InvRms": inv_rms_np,
+        "eps": np.array(eps, dtype=np.float32),
+        # Common aliases.
+        "input": x_np,
+        "weight": w_np,
         "output": y_np,
     }
 
@@ -1368,6 +1488,64 @@ def _run_flaggems_rsqrt2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         "out": out_np,
         "input": inp_np,
         "output": out_np,
+    }
+
+
+def _run_flaggems_lerp2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "A" in case.inputs:
+        a = _as_f32_tensor(np.asarray(case.inputs["A"]), device=device)
+    else:
+        a = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    if case.inputs and "B" in case.inputs:
+        b = _as_f32_tensor(np.asarray(case.inputs["B"]), device=device)
+    else:
+        b = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    weight_array: np.ndarray | None = None
+    if case.inputs:
+        for key in ("W", "weight"):
+            if key in case.inputs:
+                weight_array = np.asarray(case.inputs[key], dtype=np.float32)
+                break
+
+    if weight_array is not None:
+        if weight_array.ndim == 0 or int(weight_array.size) == 1:
+            w_scalar = float(weight_array.reshape(()))
+            with flag_gems.use_gems(include=["lerp_scalar", "lerp_tensor"]):
+                c = torch.lerp(a, b, w_scalar)
+            w_out = np.array(w_scalar, dtype=np.float32)
+        else:
+            w = _as_f32_tensor(weight_array, device=device)
+            with flag_gems.use_gems(include=["lerp_scalar", "lerp_tensor"]):
+                c = torch.lerp(a, b, w)
+            w_out = _to_np(w)
+    else:
+        # Keep scalar in [0, 1] to avoid unstable interpolation branches.
+        w_scalar = float(rg.random())
+        with flag_gems.use_gems(include=["lerp_scalar", "lerp_tensor"]):
+            c = torch.lerp(a, b, w_scalar)
+        w_out = np.array(w_scalar, dtype=np.float32)
+
+    a_np = _to_np(a)
+    b_np = _to_np(b)
+    c_np = _to_np(c)
+    return {
+        "A": a_np,
+        "B": b_np,
+        "W": w_out,
+        "C": c_np,
+        # Common aliases.
+        "input": a_np,
+        "end": b_np,
+        "weight": w_out,
+        "out": c_np,
+        "output": c_np,
     }
 
 
@@ -1810,11 +1988,27 @@ _FLAGGEMS_SPEC_BUILDERS = {
         exclude_axes=["group_size"],
         normalize_shapes=_norm_groupnorm,
     ),
+    "batch_norm2d": lambda: KernelSpec(
+        name="batch_norm2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_BATCH_NORM_SRC",
+        runner=_run_flaggems_batch_norm_reference,
+        canonical_shapes={"N": 2, "C": 4, "HW": 4},
+        vary_axes=["N", "C", "HW"],
+    ),
     "layer_norm_persistent": lambda: KernelSpec(
         name="layer_norm_persistent",
         module="pipeline.triton.flaggems_specs",
         attr="FLAGGEMS_LAYER_NORM_SRC",
         runner=_run_flaggems_layer_norm_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "rms_norm2d": lambda: KernelSpec(
+        name="rms_norm2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_RMS_NORM_SRC",
+        runner=_run_flaggems_rms_norm_reference,
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
     ),
@@ -2017,6 +2211,14 @@ _FLAGGEMS_SPEC_BUILDERS = {
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
     ),
+    "lerp2d": lambda: KernelSpec(
+        name="lerp2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_LERP_SRC",
+        runner=_run_flaggems_lerp2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
     "upsample_bicubic2d_aa": lambda: KernelSpec(
         name="upsample_bicubic2d_aa",
         module="pipeline.triton.flaggems_specs",
@@ -2119,7 +2321,10 @@ __all__ = [
     "FLAGGEMS_ANY_SRC",
     "FLAGGEMS_ADD_SRC",
     "FLAGGEMS_GROUP_NORM_SRC",
+    "FLAGGEMS_BATCH_NORM_SRC",
     "FLAGGEMS_LAYER_NORM_SRC",
+    "FLAGGEMS_RMS_NORM_SRC",
+    "FLAGGEMS_LERP_SRC",
     "FLAGGEMS_SOFTMAX_SRC",
     "FLAGGEMS_RELU_SRC",
     "FLAGGEMS_EXP_SRC",

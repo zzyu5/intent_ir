@@ -45,6 +45,7 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "addmv2d" in names
     assert "sub2d" in names
     assert "mul2d" in names
+    assert "sigmoid2d" in names
     assert "abs2d" in names
     assert "rsqrt2d" in names
     assert "where2d" in names
@@ -59,3 +60,6 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "cast2d" in names
     assert "gather2d" in names
     assert "clamp2d" in names
+    assert "lerp2d" in names
+    assert "batch_norm2d" in names
+    assert "rms_norm2d" in names

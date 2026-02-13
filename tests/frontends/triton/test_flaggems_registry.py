@@ -61,6 +61,7 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
             "exp2",
             "silu",
             "tanh",
+            "sigmoid",
             "logical_and",
             "logical_or",
             "logical_not",
@@ -87,6 +88,11 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
             "to_copy",
             "softmax",
             "group_norm",
+            "batch_norm",
+            "rms_norm",
+            "rms_norm_forward",
+            "lerp_scalar",
+            "lerp_tensor",
             "relu",
             "sum",
             "mean",
@@ -137,6 +143,7 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
     assert "cast2d" in specs
     assert "softmax_inner" in specs
     assert "relu2d" in specs
+    assert "sigmoid2d" in specs
     assert "where2d" in specs
     assert "row_sum" in specs
     assert "row_mean" in specs
@@ -144,6 +151,9 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
     assert "row_max" in specs
     assert "exp2d" in specs
     assert "clamp2d" in specs
+    assert "lerp2d" in specs
+    assert "batch_norm2d" in specs
+    assert "rms_norm2d" in specs
 
 
 def test_build_registry_requires_flaggems_commit() -> None:
