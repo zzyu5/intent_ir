@@ -310,6 +310,13 @@ _INDEX_TEMPLATE: dict[str, SemanticMapping] = {
         pattern_id="index.diag_embed",
         detail="mapped to diag_embed primitive",
     ),
+    "masked_scatter": _mk(
+        "masked_scatter",
+        ("masked_scatter",),
+        mapping_kind="index_template",
+        pattern_id="index.masked_scatter",
+        detail="mapped to masked_scatter primitive",
+    ),
     "where_self": _mk("where_self", ("gt", "where"), mapping_kind="index_template", pattern_id="index.where_self", detail="mapped via compare+where"),
     "where_scalar_self": _mk(
         "where_scalar_self",
@@ -623,6 +630,34 @@ _MACRO_TEMPLATE: dict[str, SemanticMapping] = {
         mapping_kind="macro_template",
         pattern_id="macro.arange_via_iota",
         detail="mapped to iota primitive (range parameters normalized in attrs)",
+    ),
+    "linspace": _mk(
+        "linspace",
+        ("iota", "cast", "sub", "div", "mul", "add"),
+        mapping_kind="macro_template",
+        pattern_id="macro.linspace_via_iota",
+        detail="mapped as start + cast(iota) * ((end-start)/denom)",
+    ),
+    "logspace": _mk(
+        "logspace",
+        ("iota", "cast", "sub", "div", "mul", "add", "mul", "exp"),
+        mapping_kind="macro_template",
+        pattern_id="macro.logspace_via_exp_linspace",
+        detail="mapped as exp((start + cast(iota)*step) * log_base)",
+    ),
+    "isin": _mk(
+        "isin",
+        ("broadcast_in_dim", "broadcast_in_dim", "ne", "not", "reduce_any"),
+        mapping_kind="macro_template",
+        pattern_id="macro.isin_via_broadcast_eq_any",
+        detail="mapped as reduce_any(not(ne(broadcast(x), broadcast(values))))",
+    ),
+    "kron": _mk(
+        "kron",
+        ("kron",),
+        mapping_kind="macro_template",
+        pattern_id="macro.kron",
+        detail="mapped to kron primitive",
     ),
 }
 

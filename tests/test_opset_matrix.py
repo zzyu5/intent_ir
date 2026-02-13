@@ -48,6 +48,8 @@ def test_structure_ops_are_registered() -> None:
         "count_nonzero",
         "diag",
         "diag_embed",
+        "kron",
+        "masked_scatter",
         "glu",
         "cummax",
         "cummin",

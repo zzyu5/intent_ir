@@ -367,12 +367,68 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
 
     def load_tensor(name: str) -> str:
         t = intent.tensors[name]
-        dt = str(t.dtype)
         if t.layout.kind != "row_major":
             raise CudaLoweringError("elementwise lowering supports only row_major tensors")
         in_shape = _shape_values(intent, name)
         idx_expr = _emit_broadcast_index_expr(out_rank=out_rank, in_shape=in_shape, out_idxs=idx_vars, dim_expr=dim_expr)
         return f"{name}[(size_t)({idx_expr})]"
+
+    def _dtype_of(name: str) -> str:
+        n = str(name)
+        if n in value_type:
+            return str(value_type[n])
+        if n in intent.tensors:
+            return str(intent.tensors[n].dtype)
+        return "f32"
+
+    def _infer_const_dtype(attrs: Mapping[str, Any]) -> str:
+        dt = attrs.get("dtype")
+        if isinstance(dt, str) and dt.strip():
+            return str(dt).strip()
+        value = attrs.get("value", 0)
+        if isinstance(value, bool):
+            return "bool"
+        if isinstance(value, int):
+            return "i32"
+        return "f32"
+
+    def _normalize_dtype_name(raw: str) -> str:
+        dt = str(raw).strip()
+        if dt in {"i1", "bool"}:
+            return "bool"
+        return dt
+
+    def _infer_output_dtype(opname: str, outn: str, inputs: Sequence[str], attrs: Mapping[str, Any]) -> str:
+        if outn in intent.tensors:
+            return str(intent.tensors[outn].dtype)
+        if opname == "cast":
+            to = attrs.get("to")
+            if isinstance(to, str) and to.strip():
+                return _normalize_dtype_name(to)
+            return _dtype_of(inputs[0]) if inputs else "f32"
+        if opname == "iota":
+            dt = attrs.get("dtype")
+            if isinstance(dt, str) and dt.strip():
+                return _normalize_dtype_name(dt)
+            return "i32"
+        if opname == "const":
+            return _normalize_dtype_name(_infer_const_dtype(attrs))
+        if opname in {"ne", "lt", "le", "gt", "ge", "and", "or", "not"}:
+            return "bool"
+        if opname == "where":
+            return _dtype_of(inputs[1]) if len(inputs) > 1 else "f32"
+        return _dtype_of(inputs[0]) if inputs else "f32"
+
+    def _output_shape(opname: str, outn: str, attrs: Mapping[str, Any]) -> list[str | int]:
+        if outn in intent.tensors:
+            return _shape_values(intent, outn)
+        if opname == "iota":
+            raw = attrs.get("shape")
+            if isinstance(raw, list) and raw:
+                return [_dim_value(d) for d in raw]
+            raise CudaLoweringError("iota temporary output requires attrs.shape when output tensor is implicit")
+        # Fallback for temporary SSA values in fused elementwise lowering.
+        return list(out_shape)
 
     def val(name: str) -> str:
         n = str(name)
@@ -381,15 +437,15 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
         if n not in intent.tensors:
             raise CudaLoweringError(f"elementwise: unknown value {n}")
         # Base input tensor load.
+        value_type[n] = str(intent.tensors[n].dtype)
         return load_tensor(n)
 
     code_lines: list[str] = []
     for op in intent.ops or []:
         opname = str(op.op)
         outn = str(op.output)
-        if outn not in intent.tensors:
-            raise CudaLoweringError(f"elementwise: op output missing from tensors: {outn}")
-        out_dt = str(intent.tensors[outn].dtype)
+        op_attrs = dict(op.attrs or {})
+        out_dt = _infer_output_dtype(opname, outn, list(op.inputs), op_attrs)
         cty = _c_type(out_dt)
 
         # Helper: declare + assign.
@@ -401,15 +457,15 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
             value_type[outn] = out_dt
 
         if opname == "const":
-            emit_assign(_c_scalar_literal(out_dt, (op.attrs or {}).get("value", 0)))
+            emit_assign(_c_scalar_literal(out_dt, op_attrs.get("value", 0)))
         elif opname == "iota":
             if len(op.inputs) != 0:
                 raise CudaLoweringError("iota expects 0 inputs")
-            op_shape = _shape_values(intent, outn)
+            op_shape = _output_shape(opname, outn, op_attrs)
             op_rank = int(len(op_shape))
             if op_rank <= 0:
                 raise CudaLoweringError("iota expects rank>=1 output")
-            axis = _as_int((op.attrs or {}).get("axis", 0), name="axis")
+            axis = _as_int(op_attrs.get("axis", 0), name="axis")
             if axis < 0:
                 axis += op_rank
             if axis < 0 or axis >= op_rank:

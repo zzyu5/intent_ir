@@ -295,6 +295,121 @@ def _canonical_embedding2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(out)
 
 
+def _canonical_isin1d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "isin1d",
+            "tensors": {
+                "in0": {"dtype": "i32", "shape": ["M"], "layout": "row_major"},
+                "in1": {"dtype": "i32", "shape": ["K"], "layout": "row_major"},
+                "out": {"dtype": "bool", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["in0"],
+                    "output": "in0_mk",
+                    "attrs": {"out_shape": ["M", "K"], "broadcast_dims": [0]},
+                },
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["in1"],
+                    "output": "in1_mk",
+                    "attrs": {"out_shape": ["M", "K"], "broadcast_dims": [1]},
+                },
+                {"op": "ne", "inputs": ["in0_mk", "in1_mk"], "output": "neq_mk"},
+                {"op": "not", "inputs": ["neq_mk"], "output": "eq_mk"},
+                {"op": "reduce_any", "inputs": ["eq_mk"], "output": "out", "attrs": {"dims": [1]}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_kron2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "kron2d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "B": {"dtype": "f32", "shape": ["P", "Q"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["MP", "NQ"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "kron", "inputs": ["A", "B"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_linspace1d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "linspace1d",
+            "tensors": {
+                "start": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "end": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "denom": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "iota", "inputs": [], "output": "idx", "attrs": {"axis": 0, "shape": ["N"], "dtype": "i32"}},
+                {"op": "cast", "inputs": ["idx"], "output": "idx_f", "attrs": {"to": "f32"}},
+                {"op": "sub", "inputs": ["end", "start"], "output": "delta"},
+                {"op": "div", "inputs": ["delta", "denom"], "output": "step"},
+                {"op": "mul", "inputs": ["idx_f", "step"], "output": "scaled"},
+                {"op": "add", "inputs": ["start", "scaled"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_logspace1d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "logspace1d",
+            "tensors": {
+                "start": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "end": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "denom": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "log_base": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "iota", "inputs": [], "output": "idx", "attrs": {"axis": 0, "shape": ["N"], "dtype": "i32"}},
+                {"op": "cast", "inputs": ["idx"], "output": "idx_f", "attrs": {"to": "f32"}},
+                {"op": "sub", "inputs": ["end", "start"], "output": "delta"},
+                {"op": "div", "inputs": ["delta", "denom"], "output": "step"},
+                {"op": "mul", "inputs": ["idx_f", "step"], "output": "scaled"},
+                {"op": "add", "inputs": ["start", "scaled"], "output": "lin"},
+                {"op": "mul", "inputs": ["lin", "log_base"], "output": "exp_arg"},
+                {"op": "exp", "inputs": ["exp_arg"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_masked_scatter2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "masked_scatter2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "mask": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                "source": {"dtype": "f32", "shape": ["L"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "masked_scatter", "inputs": ["inp", "mask", "source"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def _canonical_glu2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -572,6 +687,16 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_flip2d_intent()
     if name == "embedding2d":
         return _canonical_embedding2d_intent()
+    if name == "isin1d":
+        return _canonical_isin1d_intent()
+    if name == "kron2d":
+        return _canonical_kron2d_intent()
+    if name == "linspace1d":
+        return _canonical_linspace1d_intent()
+    if name == "logspace1d":
+        return _canonical_logspace1d_intent()
+    if name == "masked_scatter2d":
+        return _canonical_masked_scatter2d_intent()
     if name == "glu2d":
         return _canonical_glu2d_intent()
     if name == "cummax1d":

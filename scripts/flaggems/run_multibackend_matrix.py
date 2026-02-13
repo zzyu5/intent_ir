@@ -189,6 +189,13 @@ def main() -> None:
         flaggems_opset=str(args.flaggems_opset),
         backend_target=str(args.backend_target),
     )
+    scoped_kernels = list(kernel_filter)
+    if not scoped_kernels:
+        scoped_kernels = _suite_kernel_names(
+            suite=str(effective_suite),
+            flaggems_opset=str(args.flaggems_opset),
+            backend_target=str(args.backend_target),
+        )
 
     def _record(stage: str, rc: int, stdout: str, stderr: str, extra: dict | None = None) -> None:
         row = {
@@ -332,6 +339,8 @@ def main() -> None:
         cmd += ["--rvv-json", str(rvv_json)]
     if cuda_json.is_file():
         cmd += ["--cuda-json", str(cuda_json)]
+    for k in scoped_kernels:
+        cmd += ["--scope-kernels", str(k)]
     if bool(args.write_registry):
         cmd.append("--write-registry")
     rc, out, err = _run(cmd, cwd=ROOT)
@@ -343,6 +352,7 @@ def main() -> None:
         "requested_suite": str(args.suite),
         "suite": str(effective_suite),
         "kernel_filter": list(kernel_filter),
+        "scope_kernels": list(scoped_kernels),
         "flaggems_path": str(args.flaggems_path),
         "intentir_mode": str(args.intentir_mode),
         "flaggems_opset": str(args.flaggems_opset),

@@ -81,6 +81,26 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert [op.op for op in embedding.ops] == ["gather"]
     assert embedding.ops[0].inputs == ["inp", "row_idx", "col_idx"]
 
+    isin = canonical_flaggems_intent_for_spec("isin1d")
+    assert isin is not None
+    assert [op.op for op in isin.ops] == ["broadcast_in_dim", "broadcast_in_dim", "ne", "not", "reduce_any"]
+
+    kron = canonical_flaggems_intent_for_spec("kron2d")
+    assert kron is not None
+    assert [op.op for op in kron.ops] == ["kron"]
+
+    linspace = canonical_flaggems_intent_for_spec("linspace1d")
+    assert linspace is not None
+    assert [op.op for op in linspace.ops] == ["iota", "cast", "sub", "div", "mul", "add"]
+
+    logspace = canonical_flaggems_intent_for_spec("logspace1d")
+    assert logspace is not None
+    assert [op.op for op in logspace.ops] == ["iota", "cast", "sub", "div", "mul", "add", "mul", "exp"]
+
+    masked_scatter = canonical_flaggems_intent_for_spec("masked_scatter2d")
+    assert masked_scatter is not None
+    assert [op.op for op in masked_scatter.ops] == ["masked_scatter"]
+
     glu = canonical_flaggems_intent_for_spec("glu2d")
     assert glu is not None
     assert [op.op for op in glu.ops] == ["glu"]

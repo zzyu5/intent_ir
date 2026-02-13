@@ -147,6 +147,8 @@ def test_new_structure_ops_validate_success() -> None:
             {"op": "bitwise_left_shift", "inputs": ["K", "K"], "output": "BLS"},
             {"op": "bitwise_right_shift", "inputs": ["K", "K"], "output": "BRS"},
             {"op": "avg_pool2d", "inputs": ["X4"], "output": "P2", "attrs": {"kernel_size": [2, 2], "stride": [2, 2]}},
+            {"op": "kron", "inputs": ["X", "Y"], "output": "KRON"},
+            {"op": "masked_scatter", "inputs": ["X", "MASK", "SRC"], "output": "MS"},
         ],
         "outputs": ["Out"],
     }
@@ -161,6 +163,10 @@ def test_new_structure_ops_validate_success() -> None:
     src["tensors"]["CNZ"] = {"dtype": "i64", "shape": ["M"], "layout": "row_major"}
     src["tensors"]["D"] = {"dtype": "f32", "shape": ["M"], "layout": "row_major"}
     src["tensors"]["DE"] = {"dtype": "i32", "shape": ["M", "N", "N"], "layout": "row_major"}
+    src["tensors"]["KRON"] = {"dtype": "f32", "shape": ["MK", "NK"], "layout": "row_major"}
+    src["tensors"]["MASK"] = {"dtype": "i1", "shape": ["M", "N"], "layout": "row_major"}
+    src["tensors"]["SRC"] = {"dtype": "f32", "shape": ["L"], "layout": "row_major"}
+    src["tensors"]["MS"] = {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"}
     intent = IntentFunction.from_json_dict(src)
     assert intent.name == "structure_ok"
 

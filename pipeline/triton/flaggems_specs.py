@@ -114,6 +114,11 @@ FLAGGEMS_MV_SRC = _module_source_text("flag_gems.ops.mv")
 FLAGGEMS_ADDMV_SRC = _module_source_text("flag_gems.ops.addmv")
 FLAGGEMS_FLIP_SRC = _module_source_text("flag_gems.ops.flip")
 FLAGGEMS_EMBEDDING_SRC = _module_source_text("flag_gems.ops.embedding")
+FLAGGEMS_ISIN_SRC = _module_source_text("flag_gems.ops.isin")
+FLAGGEMS_KRON_SRC = _module_source_text("flag_gems.ops.kron")
+FLAGGEMS_LINSPACE_SRC = _module_source_text("flag_gems.ops.linspace")
+FLAGGEMS_LOGSPACE_SRC = _module_source_text("flag_gems.ops.logspace")
+FLAGGEMS_MASKED_SCATTER_SRC = _module_source_text("flag_gems.ops.masked_scatter")
 FLAGGEMS_GLU_SRC = _module_source_text("flag_gems.ops.glu")
 FLAGGEMS_CUMMAX_SRC = _module_source_text("flag_gems.ops.cummax")
 FLAGGEMS_CUMMIN_SRC = _module_source_text("flag_gems.ops.cummin")
@@ -1613,6 +1618,173 @@ def _run_flaggems_embedding2d_reference(case: TestCase) -> Dict[str, np.ndarray]
     }
 
 
+def _run_flaggems_isin1d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 64))
+    k = int(case.shapes.get("K", 16))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "in0" in case.inputs:
+        in0 = _as_i32_tensor(np.asarray(case.inputs["in0"]), device=device).reshape(-1)
+    else:
+        in0 = torch.from_numpy(rg.integers(0, 32, size=(m,), dtype=np.int32)).to(device)
+    if case.inputs and "in1" in case.inputs:
+        in1 = _as_i32_tensor(np.asarray(case.inputs["in1"]), device=device).reshape(-1)
+    else:
+        in1 = torch.from_numpy(rg.integers(0, 32, size=(k,), dtype=np.int32)).to(device)
+
+    with flag_gems.use_gems(include=["isin"]):
+        out = torch.isin(in0, in1, assume_unique=False, invert=False)
+
+    in0_np = _to_np(in0)
+    in1_np = _to_np(in1)
+    out_np = _to_np(out)
+    return {
+        "in0": in0_np,
+        "in1": in1_np,
+        "out": out_np,
+        "input": in0_np,
+        "values": in1_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_kron2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 8))
+    p = int(case.shapes.get("P", 2))
+    q = int(case.shapes.get("Q", 3))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "A" in case.inputs:
+        a = _as_f32_tensor(np.asarray(case.inputs["A"]), device=device)
+    else:
+        a = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+    if case.inputs and "B" in case.inputs:
+        b = _as_f32_tensor(np.asarray(case.inputs["B"]), device=device)
+    else:
+        b = torch.from_numpy(rg.standard_normal((p, q), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["kron"]):
+        out = torch.kron(a, b)
+
+    a_np = _to_np(a)
+    b_np = _to_np(b)
+    out_np = _to_np(out)
+    return {
+        "A": a_np,
+        "B": b_np,
+        "out": out_np,
+        "input": a_np,
+        "other": b_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_linspace1d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = int(case.shapes.get("N", 64))
+    n = max(2, n)
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "start" in case.inputs:
+        start = float(np.asarray(case.inputs["start"], dtype=np.float32).reshape(()))
+    else:
+        start = float(rg.uniform(-2.0, 0.0))
+    if case.inputs and "end" in case.inputs:
+        end = float(np.asarray(case.inputs["end"], dtype=np.float32).reshape(()))
+    else:
+        end = float(rg.uniform(0.5, 2.5))
+
+    with flag_gems.use_gems(include=["linspace"]):
+        out = torch.linspace(start, end, n, device=device, dtype=torch.float32)
+
+    out_np = _to_np(out)
+    denom = float(max(1, n - 1))
+    return {
+        "start": np.array(start, dtype=np.float32),
+        "end": np.array(end, dtype=np.float32),
+        "denom": np.array(denom, dtype=np.float32),
+        "out": out_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_logspace1d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = int(case.shapes.get("N", 64))
+    n = max(2, n)
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "start" in case.inputs:
+        start = float(np.asarray(case.inputs["start"], dtype=np.float32).reshape(()))
+    else:
+        start = float(rg.uniform(-1.0, 0.0))
+    if case.inputs and "end" in case.inputs:
+        end = float(np.asarray(case.inputs["end"], dtype=np.float32).reshape(()))
+    else:
+        end = float(rg.uniform(0.0, 2.0))
+    if case.inputs and "base" in case.inputs:
+        base = float(np.asarray(case.inputs["base"], dtype=np.float32).reshape(()))
+    else:
+        base = 10.0
+
+    with flag_gems.use_gems(include=["logspace"]):
+        out = torch.logspace(start, end, n, base=base, device=device, dtype=torch.float32)
+
+    out_np = _to_np(out)
+    denom = float(max(1, n - 1))
+    log_base = float(np.log(base))
+    return {
+        "start": np.array(start, dtype=np.float32),
+        "end": np.array(end, dtype=np.float32),
+        "denom": np.array(denom, dtype=np.float32),
+        "log_base": np.array(log_base, dtype=np.float32),
+        "out": out_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_masked_scatter2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 16))
+    l = int(case.shapes.get("L", max(1, m * n)))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+    if case.inputs and "mask" in case.inputs:
+        mask = _as_bool_tensor(np.asarray(case.inputs["mask"]), device=device)
+    else:
+        mask = torch.from_numpy((rg.random((m, n)) < 0.3).astype(np.bool_)).to(device)
+    count_true = int(mask.sum().item())
+    src_len = max(int(l), count_true)
+    if case.inputs and "source" in case.inputs:
+        source = _as_f32_tensor(np.asarray(case.inputs["source"]), device=device).reshape(-1)
+    else:
+        source = torch.from_numpy(rg.standard_normal((src_len,), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["masked_scatter"]):
+        out = torch.masked_scatter(inp, mask, source)
+
+    inp_np = _to_np(inp)
+    mask_np = _to_np(mask)
+    source_np = _to_np(source)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "mask": mask_np,
+        "source": source_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
 def _run_flaggems_glu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     m = int(case.shapes.get("M", 4))
     n = int(case.shapes.get("N", 64))
@@ -2885,6 +3057,28 @@ def _norm_glu2d(shapes: Dict[str, int]) -> Dict[str, int]:
     return out
 
 
+def _norm_linspace1d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    out["N"] = max(2, int(out.get("N", 64)))
+    return out
+
+
+def _norm_logspace1d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    out["N"] = max(2, int(out.get("N", 64)))
+    return out
+
+
+def _norm_masked_scatter2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    m = max(1, int(out.get("M", 4)))
+    n = max(1, int(out.get("N", 16)))
+    out["M"] = m
+    out["N"] = n
+    out["L"] = max(1, m * n)
+    return out
+
+
 def _norm_index_put2d(shapes: Dict[str, int]) -> Dict[str, int]:
     out = dict(shapes)
     m = max(1, int(out.get("M", 16)))
@@ -3552,6 +3746,57 @@ _FLAGGEMS_SPEC_BUILDERS = {
         canonical_shapes={"M": 32, "N": 16, "L": 128},
         vary_axes=["M", "N", "L"],
     ),
+    "isin1d": lambda: KernelSpec(
+        name="isin1d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_ISIN_SRC",
+        runner=_run_flaggems_isin1d_reference,
+        canonical_shapes={"M": 64, "K": 16},
+        vary_axes=["M", "K"],
+    ),
+    "kron2d": lambda: KernelSpec(
+        name="kron2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_KRON_SRC",
+        runner=_run_flaggems_kron2d_reference,
+        canonical_shapes={"M": 4, "N": 8, "P": 2, "Q": 3},
+        vary_axes=["M", "N", "P", "Q"],
+        stage_c_max_cases=6,
+        mutation_bounded_max_cases=3,
+    ),
+    "linspace1d": lambda: KernelSpec(
+        name="linspace1d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_LINSPACE_SRC",
+        runner=_run_flaggems_linspace1d_reference,
+        canonical_shapes={"N": 64},
+        vary_axes=["N"],
+        normalize_shapes=_norm_linspace1d,
+        stage_c_max_cases=8,
+        mutation_bounded_max_cases=4,
+    ),
+    "logspace1d": lambda: KernelSpec(
+        name="logspace1d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_LOGSPACE_SRC",
+        runner=_run_flaggems_logspace1d_reference,
+        canonical_shapes={"N": 64},
+        vary_axes=["N"],
+        normalize_shapes=_norm_logspace1d,
+        stage_c_max_cases=8,
+        mutation_bounded_max_cases=4,
+    ),
+    "masked_scatter2d": lambda: KernelSpec(
+        name="masked_scatter2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_MASKED_SCATTER_SRC",
+        runner=_run_flaggems_masked_scatter2d_reference,
+        canonical_shapes={"M": 4, "N": 16, "L": 64},
+        vary_axes=["M", "N"],
+        normalize_shapes=_norm_masked_scatter2d,
+        stage_c_max_cases=6,
+        mutation_bounded_max_cases=3,
+    ),
     "glu2d": lambda: KernelSpec(
         name="glu2d",
         module="pipeline.triton.flaggems_specs",
@@ -3777,6 +4022,11 @@ __all__ = [
     "FLAGGEMS_UPSAMPLE_BICUBIC2D_AA_SRC",
     "FLAGGEMS_EYE_SRC",
     "FLAGGEMS_EYE_M_SRC",
+    "FLAGGEMS_ISIN_SRC",
+    "FLAGGEMS_KRON_SRC",
+    "FLAGGEMS_LINSPACE_SRC",
+    "FLAGGEMS_LOGSPACE_SRC",
+    "FLAGGEMS_MASKED_SCATTER_SRC",
     "FLAGGEMS_GLU_SRC",
     "FLAGGEMS_CUMMAX_SRC",
     "FLAGGEMS_CUMMIN_SRC",

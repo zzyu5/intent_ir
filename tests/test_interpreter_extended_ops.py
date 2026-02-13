@@ -342,3 +342,98 @@ def test_glu_cum_and_index_update_ops_execute() -> None:
     expected_index_put = base.copy()
     expected_index_put[row_idx.astype(np.int64), col_idx.astype(np.int64)] = vals
     assert np.allclose(out["index_put_out"], expected_index_put, atol=1e-6)
+
+
+def test_kron_masked_scatter_and_range_builders_execute() -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "kron_masked_scatter_ranges",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "B": {"dtype": "f32", "shape": ["P", "Q"], "layout": "row_major"},
+                "inp": {"dtype": "f32", "shape": ["X", "Y"], "layout": "row_major"},
+                "mask": {"dtype": "i1", "shape": ["X", "Y"], "layout": "row_major"},
+                "source": {"dtype": "f32", "shape": ["L"], "layout": "row_major"},
+                "start": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "end": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "denom": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "log_base": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "in0": {"dtype": "i32", "shape": ["R"], "layout": "row_major"},
+                "in1": {"dtype": "i32", "shape": ["S"], "layout": "row_major"},
+                "kron_out": {"dtype": "f32", "shape": ["MP", "NQ"], "layout": "row_major"},
+                "masked_out": {"dtype": "f32", "shape": ["X", "Y"], "layout": "row_major"},
+                "linspace_out": {"dtype": "f32", "shape": ["T"], "layout": "row_major"},
+                "logspace_out": {"dtype": "f32", "shape": ["T"], "layout": "row_major"},
+                "isin_out": {"dtype": "i1", "shape": ["R"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "kron", "inputs": ["A", "B"], "output": "kron_out"},
+                {"op": "masked_scatter", "inputs": ["inp", "mask", "source"], "output": "masked_out"},
+                {"op": "iota", "inputs": [], "output": "idx", "attrs": {"axis": 0, "shape": ["T"], "dtype": "i32"}},
+                {"op": "cast", "inputs": ["idx"], "output": "idx_f", "attrs": {"to": "f32"}},
+                {"op": "sub", "inputs": ["end", "start"], "output": "delta"},
+                {"op": "div", "inputs": ["delta", "denom"], "output": "step"},
+                {"op": "mul", "inputs": ["idx_f", "step"], "output": "scaled"},
+                {"op": "add", "inputs": ["start", "scaled"], "output": "linspace_out"},
+                {"op": "mul", "inputs": ["linspace_out", "log_base"], "output": "exp_arg"},
+                {"op": "exp", "inputs": ["exp_arg"], "output": "logspace_out"},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["in0"],
+                    "output": "in0_rs",
+                    "attrs": {"out_shape": ["R", "S"], "broadcast_dims": [0]},
+                },
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["in1"],
+                    "output": "in1_rs",
+                    "attrs": {"out_shape": ["R", "S"], "broadcast_dims": [1]},
+                },
+                {"op": "ne", "inputs": ["in0_rs", "in1_rs"], "output": "neq_rs"},
+                {"op": "not", "inputs": ["neq_rs"], "output": "eq_rs"},
+                {"op": "reduce_any", "inputs": ["eq_rs"], "output": "isin_out", "attrs": {"dims": [1]}},
+            ],
+            "outputs": ["kron_out", "masked_out", "linspace_out", "logspace_out", "isin_out"],
+        }
+    )
+
+    A = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+    B = np.array([[0.5, 1.5, -1.0]], dtype=np.float32)
+    inp = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+    mask = np.array([[True, False], [True, False]], dtype=np.bool_)
+    source = np.array([9.0, -2.0, 7.0], dtype=np.float32)
+    start = np.array(-1.0, dtype=np.float32)
+    end = np.array(2.0, dtype=np.float32)
+    denom = np.array(3.0, dtype=np.float32)
+    log_base = np.array(np.log(10.0), dtype=np.float32)
+    in0 = np.array([1, 4, 2], dtype=np.int32)
+    in1 = np.array([0, 2, 5], dtype=np.int32)
+
+    out = execute_intent(
+        intent,
+        {
+            "A": A,
+            "B": B,
+            "inp": inp,
+            "mask": mask,
+            "source": source,
+            "start": start,
+            "end": end,
+            "denom": denom,
+            "log_base": log_base,
+            "in0": in0,
+            "in1": in1,
+        },
+        shape_bindings={"M": 2, "N": 2, "P": 1, "Q": 3, "MP": 2, "NQ": 6, "X": 2, "Y": 2, "L": 3, "T": 4, "R": 3, "S": 3},
+    )
+
+    assert np.allclose(out["kron_out"], np.kron(A, B), atol=1e-6)
+    masked_expected = inp.copy().reshape(-1)
+    mask_flat = mask.reshape(-1)
+    masked_expected[mask_flat] = source[: int(mask_flat.sum())]
+    assert np.allclose(out["masked_out"], masked_expected.reshape(inp.shape), atol=1e-6)
+    lin_expected = np.linspace(float(start), float(end), 4, dtype=np.float32)
+    assert np.allclose(out["linspace_out"], lin_expected, atol=1e-6)
+    log_expected = np.exp(lin_expected * float(log_base)).astype(np.float32)
+    assert np.allclose(out["logspace_out"], log_expected, atol=1e-6)
+    assert np.array_equal(out["isin_out"], np.isin(in0, in1))

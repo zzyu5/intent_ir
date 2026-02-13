@@ -99,6 +99,8 @@ INTERPRETER_SUPPORTED_OPS: set[str] = set().union(
         "count_nonzero",
         "diag",
         "diag_embed",
+        "kron",
+        "masked_scatter",
         "glu",
         "cummax",
         "cummin",
@@ -464,6 +466,33 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         out[..., rows, cols] = x
         if [d1, d2] != [out_rank - 2, out_rank - 1]:
             out = np.moveaxis(out, [out_rank - 2, out_rank - 1], [d1, d2])
+        return out
+    if op.op == "kron":
+        if len(op.inputs) != 2:
+            raise ValueError("kron requires 2 inputs")
+        a = np.asarray(_get(env, op.inputs[0]))
+        b = np.asarray(_get(env, op.inputs[1]))
+        return np.kron(a, b)
+    if op.op == "masked_scatter":
+        if len(op.inputs) != 3:
+            raise ValueError("masked_scatter requires 3 inputs (inp, mask, source)")
+        inp = np.asarray(_get(env, op.inputs[0]))
+        mask = np.asarray(_get(env, op.inputs[1]), dtype=np.bool_)
+        source = np.asarray(_get(env, op.inputs[2]))
+        if inp.shape != mask.shape:
+            raise ValueError(
+                f"masked_scatter requires inp/mask shape match, got inp={inp.shape}, mask={mask.shape}"
+            )
+        out = np.array(inp, copy=True)
+        out_flat = out.reshape(-1)
+        mask_flat = mask.reshape(-1)
+        src_flat = source.reshape(-1)
+        required = int(mask_flat.sum())
+        if int(src_flat.size) < required:
+            raise ValueError(
+                f"masked_scatter source too small: need {required} values, got {int(src_flat.size)}"
+            )
+        out_flat[mask_flat] = src_flat[:required]
         return out
     if op.op == "glu":
         x = np.asarray(_get(env, op.inputs[0]))

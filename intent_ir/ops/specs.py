@@ -143,6 +143,8 @@ _OP_SPECS: tuple[OpSpec, ...] = (
     OpSpec("count_nonzero", "experimental", "reduction", (1,), attr_schema={"dims": "int_list", "axis": "int_or_int_list", "keepdims": "bool"}),
     OpSpec("diag", "experimental", "transform", (1,), attr_schema={"diagonal": "int"}),
     OpSpec("diag_embed", "experimental", "transform", (1,), attr_schema={"offset": "int", "dim1": "int", "dim2": "int"}),
+    OpSpec("kron", "experimental", "semantic", (2,)),
+    OpSpec("masked_scatter", "experimental", "index", (3,)),
     OpSpec("glu", "experimental", "semantic", (1,), attr_schema={"axis": "int"}),
     OpSpec("cummax", "experimental", "reduction", (1,), attr_schema={"axis": "int"}),
     OpSpec("cummin", "experimental", "reduction", (1,), attr_schema={"axis": "int"}),
