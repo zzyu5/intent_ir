@@ -86,6 +86,8 @@ _OP_SPECS: tuple[OpSpec, ...] = (
     OpSpec("log", "experimental", "elementwise", (1,)),
     OpSpec("sin", "experimental", "elementwise", (1,)),
     OpSpec("cos", "experimental", "elementwise", (1,)),
+    OpSpec("acos", "experimental", "elementwise", (1,)),
+    OpSpec("atan", "experimental", "elementwise", (1,)),
     OpSpec("tan", "experimental", "elementwise", (1,)),
     OpSpec("erf", "experimental", "elementwise", (1,)),
     OpSpec("sqrt", "experimental", "elementwise", (1,)),
@@ -102,6 +104,23 @@ _OP_SPECS: tuple[OpSpec, ...] = (
     OpSpec("argmax", "experimental", "reduction", (1,), attr_schema={"axis": "int"}),
     OpSpec("argmin", "experimental", "reduction", (1,), attr_schema={"axis": "int"}),
     OpSpec("cumsum", "experimental", "reduction", (1,), attr_schema={"axis": "int"}),
+    # Structure / indexing family (staged backend support).
+    OpSpec("concat", "experimental", "transform", (1,), arity_mode="min", attr_schema={"axis": "int"}),
+    OpSpec("stack", "experimental", "transform", (1,), arity_mode="min", attr_schema={"axis": "int"}),
+    OpSpec("tile", "experimental", "transform", (1,), attr_schema={"repeats": "int_or_int_list!"}),
+    OpSpec("repeat", "experimental", "transform", (1,), attr_schema={"repeats": "int_or_int_list!", "axis": "int"}),
+    OpSpec(
+        "repeat_interleave",
+        "experimental",
+        "transform",
+        (1,),
+        attr_schema={"repeats": "int_or_int_list!", "axis": "int"},
+    ),
+    OpSpec("pad", "experimental", "transform", (1,), attr_schema={"pad_width": "object!", "mode": "str", "value": "number"}),
+    OpSpec("sort", "experimental", "transform", (1,), attr_schema={"axis": "int", "descending": "bool", "stable": "bool"}),
+    OpSpec("topk", "experimental", "index", (1,), attr_schema={"k": "int!", "axis": "int", "largest": "bool", "sorted": "bool"}),
+    OpSpec("unique", "experimental", "index", (1,), attr_schema={"axis": "int", "sorted": "bool"}),
+    OpSpec("nonzero", "experimental", "index", (1,)),
     # Macro ops.
     OpSpec("upsample_bicubic2d_aa", "macro", "macro", (1,), attr_schema={"impl": "object"}),
 )

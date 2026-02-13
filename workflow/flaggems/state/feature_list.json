@@ -1,13 +1,14 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-13T10:18:31+00:00",
+  "generated_at": "2026-02-13T11:44:30+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
       "dual_pass": 92,
-      "blocked_ir": 77,
-      "blocked_backend": 27
+      "blocked_backend": 44,
+      "blocked_ir": 59,
+      "rvv_only": 1
     },
     "by_family": {
       "elementwise_broadcast": 126,
@@ -37,12 +38,14 @@
       "id": "flaggems::acos",
       "semantic_op": "acos",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "acos2d",
+      "intent_ops": [
+        "acos"
+      ]
     },
     {
       "id": "flaggems::add",
@@ -119,23 +122,27 @@
       "id": "flaggems::arange",
       "semantic_op": "arange",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "rvv_only",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "cuda_target_missing_ops",
+      "next_action": "none",
+      "e2e_spec": "arange1d",
+      "intent_ops": [
+        "iota"
+      ]
     },
     {
       "id": "flaggems::atan",
       "semantic_op": "atan",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "atan2d",
+      "intent_ops": [
+        "atan"
+      ]
     },
     {
       "id": "flaggems::bitwise_and_scalar",
@@ -240,12 +247,14 @@
       "id": "flaggems::cat",
       "semantic_op": "cat",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "cat2d",
+      "intent_ops": [
+        "concat"
+      ]
     },
     {
       "id": "flaggems::ceil",
@@ -319,12 +328,14 @@
       "id": "flaggems::constant_pad_nd",
       "semantic_op": "constant_pad_nd",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
       "e2e_spec": null,
-      "intent_ops": []
+      "intent_ops": [
+        "pad"
+      ]
     },
     {
       "id": "flaggems::contiguous",
@@ -663,12 +674,14 @@
       "id": "flaggems::hstack",
       "semantic_op": "hstack",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
       "e2e_spec": null,
-      "intent_ops": []
+      "intent_ops": [
+        "concat"
+      ]
     },
     {
       "id": "flaggems::isclose",
@@ -1130,12 +1143,14 @@
       "id": "flaggems::nonzero",
       "semantic_op": "nonzero",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
       "e2e_spec": null,
-      "intent_ops": []
+      "intent_ops": [
+        "nonzero"
+      ]
     },
     {
       "id": "flaggems::one_hot",
@@ -1180,12 +1195,14 @@
       "id": "flaggems::pad",
       "semantic_op": "pad",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
       "e2e_spec": null,
-      "intent_ops": []
+      "intent_ops": [
+        "pad"
+      ]
     },
     {
       "id": "flaggems::per_token_group_quant_fp8",
@@ -1290,45 +1307,53 @@
       "id": "flaggems::repeat",
       "semantic_op": "repeat",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
       "e2e_spec": null,
-      "intent_ops": []
+      "intent_ops": [
+        "repeat"
+      ]
     },
     {
       "id": "flaggems::repeat_interleave_self_int",
       "semantic_op": "repeat_interleave_self_int",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
       "e2e_spec": null,
-      "intent_ops": []
+      "intent_ops": [
+        "repeat_interleave"
+      ]
     },
     {
       "id": "flaggems::repeat_interleave_self_tensor",
       "semantic_op": "repeat_interleave_self_tensor",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
       "e2e_spec": null,
-      "intent_ops": []
+      "intent_ops": [
+        "repeat_interleave"
+      ]
     },
     {
       "id": "flaggems::repeat_interleave_tensor",
       "semantic_op": "repeat_interleave_tensor",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
       "e2e_spec": null,
-      "intent_ops": []
+      "intent_ops": [
+        "repeat_interleave"
+      ]
     },
     {
       "id": "flaggems::resolve_conj",
@@ -1386,23 +1411,27 @@
       "id": "flaggems::sort",
       "semantic_op": "sort",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
       "e2e_spec": null,
-      "intent_ops": []
+      "intent_ops": [
+        "sort"
+      ]
     },
     {
       "id": "flaggems::sort_stable",
       "semantic_op": "sort_stable",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
       "e2e_spec": null,
-      "intent_ops": []
+      "intent_ops": [
+        "sort"
+      ]
     },
     {
       "id": "flaggems::sqrt",
@@ -1422,12 +1451,14 @@
       "id": "flaggems::stack",
       "semantic_op": "stack",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
       "e2e_spec": null,
-      "intent_ops": []
+      "intent_ops": [
+        "stack"
+      ]
     },
     {
       "id": "flaggems::sub",
@@ -1474,12 +1505,14 @@
       "id": "flaggems::tile",
       "semantic_op": "tile",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
       "e2e_spec": null,
-      "intent_ops": []
+      "intent_ops": [
+        "tile"
+      ]
     },
     {
       "id": "flaggems::to_copy",
@@ -1498,12 +1531,14 @@
       "id": "flaggems::topk",
       "semantic_op": "topk",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
       "e2e_spec": null,
-      "intent_ops": []
+      "intent_ops": [
+        "topk"
+      ]
     },
     {
       "id": "flaggems::trace",
@@ -1555,12 +1590,14 @@
       "id": "flaggems::vstack",
       "semantic_op": "vstack",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
       "e2e_spec": null,
-      "intent_ops": []
+      "intent_ops": [
+        "concat"
+      ]
     },
     {
       "id": "flaggems::zeros",

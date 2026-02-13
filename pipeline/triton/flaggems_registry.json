@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-13T09:29:55.369408+00:00",
+  "generated_at": "2026-02-13T11:43:25.012649+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -18,9 +18,10 @@
     "source_filtered_ops": 212,
     "semantic_ops": 196,
     "by_status": {
-      "blocked_backend": 27,
-      "blocked_ir": 77,
-      "dual_pass": 92
+      "blocked_backend": 44,
+      "blocked_ir": 59,
+      "dual_pass": 92,
+      "rvv_only": 1
     },
     "by_family": {
       "attention_sequence": 5,
@@ -55,6 +56,10 @@
           "requested_ops": [
             "abs"
           ],
+          "known_ops": [
+            "abs"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "abs"
           ],
@@ -66,6 +71,10 @@
           "requested_ops": [
             "abs"
           ],
+          "known_ops": [
+            "abs"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "abs"
           ],
@@ -77,6 +86,10 @@
           "requested_ops": [
             "abs"
           ],
+          "known_ops": [
+            "abs"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "abs"
           ],
@@ -90,34 +103,60 @@
         "acos"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "acos"
+      ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.acos",
+      "e2e_spec": "acos2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to acos primitive; rvv_missing=['acos']; cuda_h100_missing=['acos']; cuda_5090d_missing=['acos']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "acos"
+          ],
+          "known_ops": [
+            "acos"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "acos"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "acos"
+          ],
+          "known_ops": [
+            "acos"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "acos"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "acos"
+          ],
+          "known_ops": [
+            "acos"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "acos"
+          ]
         }
       }
     },
@@ -143,6 +182,10 @@
           "requested_ops": [
             "add"
           ],
+          "known_ops": [
+            "add"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add"
           ],
@@ -154,6 +197,10 @@
           "requested_ops": [
             "add"
           ],
+          "known_ops": [
+            "add"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add"
           ],
@@ -165,6 +212,10 @@
           "requested_ops": [
             "add"
           ],
+          "known_ops": [
+            "add"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add"
           ],
@@ -190,6 +241,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -197,6 +250,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -204,6 +259,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -227,6 +284,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -234,6 +293,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -241,6 +302,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -271,6 +334,11 @@
             "add",
             "matmul"
           ],
+          "known_ops": [
+            "add",
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "matmul"
@@ -284,6 +352,11 @@
             "add",
             "matmul"
           ],
+          "known_ops": [
+            "add",
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "matmul"
@@ -297,6 +370,11 @@
             "add",
             "matmul"
           ],
+          "known_ops": [
+            "add",
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "matmul"
@@ -323,6 +401,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -330,6 +410,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -337,6 +419,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -360,6 +444,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -367,6 +453,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -374,6 +462,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -386,34 +476,60 @@
         "arange_start"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "iota"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.arange_via_iota",
+      "e2e_spec": "arange1d",
+      "status": "rvv_only",
+      "status_reason": "cuda_target_missing_ops",
+      "status_reason_detail": "mapped to iota primitive (range parameters normalized in attrs); cuda_h100_missing=['iota']; cuda_5090d_missing=['iota']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "iota"
+          ],
+          "known_ops": [
+            "iota"
+          ],
+          "unknown_ops": [],
+          "supported_ops": [
+            "iota"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "iota"
+          ],
+          "known_ops": [
+            "iota"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "iota"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "iota"
+          ],
+          "known_ops": [
+            "iota"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "iota"
+          ]
         }
       }
     },
@@ -423,34 +539,60 @@
         "atan"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "atan"
+      ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.atan",
+      "e2e_spec": "atan2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to atan primitive; rvv_missing=['atan']; cuda_h100_missing=['atan']; cuda_5090d_missing=['atan']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "atan"
+          ],
+          "known_ops": [
+            "atan"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "atan"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "atan"
+          ],
+          "known_ops": [
+            "atan"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "atan"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "atan"
+          ],
+          "known_ops": [
+            "atan"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "atan"
+          ]
         }
       }
     },
@@ -472,6 +614,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -479,6 +623,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -486,6 +632,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -509,6 +657,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -516,6 +666,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -523,6 +675,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -546,6 +700,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -553,6 +709,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -560,6 +718,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -583,6 +743,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -590,6 +752,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -597,6 +761,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -620,6 +786,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -627,6 +795,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -634,6 +804,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -657,6 +829,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -664,6 +838,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -671,6 +847,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -694,6 +872,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -701,6 +881,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -708,6 +890,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -731,6 +915,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -738,6 +924,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -745,6 +933,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -768,6 +958,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -775,6 +967,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -782,6 +976,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -793,34 +989,60 @@
         "cat"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "concat"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.cat->concat",
+      "e2e_spec": "cat2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to concat; semantic op equals IntentIR op name; rvv_missing=['concat']; cuda_h100_missing=['concat']; cuda_5090d_missing=['concat']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "concat"
+          ],
+          "known_ops": [
+            "concat"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "concat"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "concat"
+          ],
+          "known_ops": [
+            "concat"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "concat"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "concat"
+          ],
+          "known_ops": [
+            "concat"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "concat"
+          ]
         }
       }
     },
@@ -852,6 +1074,12 @@
             "floor",
             "mul"
           ],
+          "known_ops": [
+            "const",
+            "floor",
+            "mul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "const",
             "floor",
@@ -867,6 +1095,12 @@
             "floor",
             "mul"
           ],
+          "known_ops": [
+            "const",
+            "floor",
+            "mul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "const",
             "floor",
@@ -882,6 +1116,12 @@
             "floor",
             "mul"
           ],
+          "known_ops": [
+            "const",
+            "floor",
+            "mul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "const",
             "floor",
@@ -909,6 +1149,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -916,6 +1158,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -923,6 +1167,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -952,6 +1198,11 @@
             "max",
             "min"
           ],
+          "known_ops": [
+            "max",
+            "min"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "max",
             "min"
@@ -965,6 +1216,11 @@
             "max",
             "min"
           ],
+          "known_ops": [
+            "max",
+            "min"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "max",
             "min"
@@ -978,6 +1234,11 @@
             "max",
             "min"
           ],
+          "known_ops": [
+            "max",
+            "min"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "max",
             "min"
@@ -1008,6 +1269,10 @@
           "requested_ops": [
             "max"
           ],
+          "known_ops": [
+            "max"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "max"
           ],
@@ -1019,6 +1284,10 @@
           "requested_ops": [
             "max"
           ],
+          "known_ops": [
+            "max"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "max"
           ],
@@ -1030,6 +1299,10 @@
           "requested_ops": [
             "max"
           ],
+          "known_ops": [
+            "max"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "max"
           ],
@@ -1061,6 +1334,11 @@
             "max",
             "min"
           ],
+          "known_ops": [
+            "max",
+            "min"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "max",
             "min"
@@ -1074,6 +1352,11 @@
             "max",
             "min"
           ],
+          "known_ops": [
+            "max",
+            "min"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "max",
             "min"
@@ -1087,6 +1370,11 @@
             "max",
             "min"
           ],
+          "known_ops": [
+            "max",
+            "min"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "max",
             "min"
@@ -1101,34 +1389,60 @@
         "constant_pad_nd"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "pad"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.constant_pad_nd->pad",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "alias to pad; semantic op equals IntentIR op name; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "pad"
+          ],
+          "known_ops": [
+            "pad"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "pad"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "pad"
+          ],
+          "known_ops": [
+            "pad"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "pad"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "pad"
+          ],
+          "known_ops": [
+            "pad"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "pad"
+          ]
         }
       }
     },
@@ -1154,6 +1468,10 @@
           "requested_ops": [
             "identity"
           ],
+          "known_ops": [
+            "identity"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "identity"
           ],
@@ -1165,6 +1483,10 @@
           "requested_ops": [
             "identity"
           ],
+          "known_ops": [
+            "identity"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "identity"
           ],
@@ -1176,6 +1498,10 @@
           "requested_ops": [
             "identity"
           ],
+          "known_ops": [
+            "identity"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "identity"
           ],
@@ -1205,6 +1531,10 @@
           "requested_ops": [
             "identity"
           ],
+          "known_ops": [
+            "identity"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "identity"
           ],
@@ -1216,6 +1546,10 @@
           "requested_ops": [
             "identity"
           ],
+          "known_ops": [
+            "identity"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "identity"
           ],
@@ -1227,6 +1561,10 @@
           "requested_ops": [
             "identity"
           ],
+          "known_ops": [
+            "identity"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "identity"
           ],
@@ -1256,6 +1594,10 @@
           "requested_ops": [
             "cos"
           ],
+          "known_ops": [
+            "cos"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "cos"
@@ -1267,6 +1609,10 @@
           "requested_ops": [
             "cos"
           ],
+          "known_ops": [
+            "cos"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "cos"
@@ -1278,6 +1624,10 @@
           "requested_ops": [
             "cos"
           ],
+          "known_ops": [
+            "cos"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "cos"
@@ -1303,6 +1653,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -1310,6 +1662,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -1317,6 +1671,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -1340,6 +1696,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -1347,6 +1705,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -1354,6 +1714,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -1377,6 +1739,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -1384,6 +1748,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -1391,6 +1757,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -1418,6 +1786,10 @@
           "requested_ops": [
             "div"
           ],
+          "known_ops": [
+            "div"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "div"
           ],
@@ -1429,6 +1801,10 @@
           "requested_ops": [
             "div"
           ],
+          "known_ops": [
+            "div"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "div"
           ],
@@ -1440,6 +1816,10 @@
           "requested_ops": [
             "div"
           ],
+          "known_ops": [
+            "div"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "div"
           ],
@@ -1465,6 +1845,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -1472,6 +1854,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -1479,6 +1863,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -1508,6 +1894,11 @@
             "ne",
             "not"
           ],
+          "known_ops": [
+            "ne",
+            "not"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ne",
             "not"
@@ -1521,6 +1912,11 @@
             "ne",
             "not"
           ],
+          "known_ops": [
+            "ne",
+            "not"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ne",
             "not"
@@ -1534,6 +1930,11 @@
             "ne",
             "not"
           ],
+          "known_ops": [
+            "ne",
+            "not"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ne",
             "not"
@@ -1566,6 +1967,11 @@
             "ne",
             "not"
           ],
+          "known_ops": [
+            "ne",
+            "not"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ne",
             "not"
@@ -1579,6 +1985,11 @@
             "ne",
             "not"
           ],
+          "known_ops": [
+            "ne",
+            "not"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ne",
             "not"
@@ -1592,6 +2003,11 @@
             "ne",
             "not"
           ],
+          "known_ops": [
+            "ne",
+            "not"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ne",
             "not"
@@ -1624,6 +2040,11 @@
             "ne",
             "not"
           ],
+          "known_ops": [
+            "ne",
+            "not"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ne",
             "not"
@@ -1637,6 +2058,11 @@
             "ne",
             "not"
           ],
+          "known_ops": [
+            "ne",
+            "not"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ne",
             "not"
@@ -1650,6 +2076,11 @@
             "ne",
             "not"
           ],
+          "known_ops": [
+            "ne",
+            "not"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ne",
             "not"
@@ -1680,6 +2111,10 @@
           "requested_ops": [
             "erf"
           ],
+          "known_ops": [
+            "erf"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "erf"
@@ -1691,6 +2126,10 @@
           "requested_ops": [
             "erf"
           ],
+          "known_ops": [
+            "erf"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "erf"
@@ -1702,6 +2141,10 @@
           "requested_ops": [
             "erf"
           ],
+          "known_ops": [
+            "erf"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "erf"
@@ -1732,6 +2175,10 @@
           "requested_ops": [
             "exp"
           ],
+          "known_ops": [
+            "exp"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "exp"
           ],
@@ -1743,6 +2190,10 @@
           "requested_ops": [
             "exp"
           ],
+          "known_ops": [
+            "exp"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "exp"
           ],
@@ -1754,6 +2205,10 @@
           "requested_ops": [
             "exp"
           ],
+          "known_ops": [
+            "exp"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "exp"
           ],
@@ -1787,6 +2242,12 @@
             "exp",
             "mul"
           ],
+          "known_ops": [
+            "const",
+            "exp",
+            "mul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "const",
             "exp",
@@ -1802,6 +2263,12 @@
             "exp",
             "mul"
           ],
+          "known_ops": [
+            "const",
+            "exp",
+            "mul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "const",
             "exp",
@@ -1817,6 +2284,12 @@
             "exp",
             "mul"
           ],
+          "known_ops": [
+            "const",
+            "exp",
+            "mul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "const",
             "exp",
@@ -1844,6 +2317,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -1851,6 +2326,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -1858,6 +2335,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -1881,6 +2360,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -1888,6 +2369,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -1895,6 +2378,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -1924,6 +2409,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -1937,6 +2427,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -1950,6 +2445,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -1982,6 +2482,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -1995,6 +2500,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -2008,6 +2518,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -2038,6 +2553,10 @@
           "requested_ops": [
             "div"
           ],
+          "known_ops": [
+            "div"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "div"
           ],
@@ -2049,6 +2568,10 @@
           "requested_ops": [
             "div"
           ],
+          "known_ops": [
+            "div"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "div"
           ],
@@ -2060,6 +2583,10 @@
           "requested_ops": [
             "div"
           ],
+          "known_ops": [
+            "div"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "div"
           ],
@@ -2091,6 +2618,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -2104,6 +2636,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -2117,6 +2654,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -2149,6 +2691,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -2162,6 +2709,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -2175,6 +2727,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -2205,6 +2762,10 @@
           "requested_ops": [
             "ge"
           ],
+          "known_ops": [
+            "ge"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ge"
           ],
@@ -2216,6 +2777,10 @@
           "requested_ops": [
             "ge"
           ],
+          "known_ops": [
+            "ge"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ge"
           ],
@@ -2227,6 +2792,10 @@
           "requested_ops": [
             "ge"
           ],
+          "known_ops": [
+            "ge"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ge"
           ],
@@ -2256,6 +2825,10 @@
           "requested_ops": [
             "ge"
           ],
+          "known_ops": [
+            "ge"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ge"
           ],
@@ -2267,6 +2840,10 @@
           "requested_ops": [
             "ge"
           ],
+          "known_ops": [
+            "ge"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ge"
           ],
@@ -2278,6 +2855,10 @@
           "requested_ops": [
             "ge"
           ],
+          "known_ops": [
+            "ge"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ge"
           ],
@@ -2303,6 +2884,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -2310,6 +2893,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -2317,6 +2902,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -2344,6 +2931,10 @@
           "requested_ops": [
             "gt"
           ],
+          "known_ops": [
+            "gt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "gt"
           ],
@@ -2355,6 +2946,10 @@
           "requested_ops": [
             "gt"
           ],
+          "known_ops": [
+            "gt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "gt"
           ],
@@ -2366,6 +2961,10 @@
           "requested_ops": [
             "gt"
           ],
+          "known_ops": [
+            "gt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "gt"
           ],
@@ -2395,6 +2994,10 @@
           "requested_ops": [
             "gt"
           ],
+          "known_ops": [
+            "gt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "gt"
           ],
@@ -2406,6 +3009,10 @@
           "requested_ops": [
             "gt"
           ],
+          "known_ops": [
+            "gt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "gt"
           ],
@@ -2417,6 +3024,10 @@
           "requested_ops": [
             "gt"
           ],
+          "known_ops": [
+            "gt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "gt"
           ],
@@ -2430,34 +3041,60 @@
         "hstack"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "concat"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.hstack->concat",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "alias to concat; semantic op equals IntentIR op name; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "concat"
+          ],
+          "known_ops": [
+            "concat"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "concat"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "concat"
+          ],
+          "known_ops": [
+            "concat"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "concat"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "concat"
+          ],
+          "known_ops": [
+            "concat"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "concat"
+          ]
         }
       }
     },
@@ -2492,6 +3129,14 @@
             "mul",
             "sub"
           ],
+          "known_ops": [
+            "abs",
+            "add",
+            "le",
+            "mul",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "abs",
             "add",
@@ -2511,6 +3156,14 @@
             "mul",
             "sub"
           ],
+          "known_ops": [
+            "abs",
+            "add",
+            "le",
+            "mul",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "abs",
             "add",
@@ -2530,6 +3183,14 @@
             "mul",
             "sub"
           ],
+          "known_ops": [
+            "abs",
+            "add",
+            "le",
+            "mul",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "abs",
             "add",
@@ -2567,6 +3228,12 @@
             "const",
             "le"
           ],
+          "known_ops": [
+            "abs",
+            "const",
+            "le"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "abs",
             "const",
@@ -2582,6 +3249,12 @@
             "const",
             "le"
           ],
+          "known_ops": [
+            "abs",
+            "const",
+            "le"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "abs",
             "const",
@@ -2597,6 +3270,12 @@
             "const",
             "le"
           ],
+          "known_ops": [
+            "abs",
+            "const",
+            "le"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "abs",
             "const",
@@ -2624,6 +3303,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -2631,6 +3312,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -2638,6 +3321,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -2669,6 +3354,12 @@
             "const",
             "gt"
           ],
+          "known_ops": [
+            "abs",
+            "const",
+            "gt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "abs",
             "const",
@@ -2684,6 +3375,12 @@
             "const",
             "gt"
           ],
+          "known_ops": [
+            "abs",
+            "const",
+            "gt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "abs",
             "const",
@@ -2699,6 +3396,12 @@
             "const",
             "gt"
           ],
+          "known_ops": [
+            "abs",
+            "const",
+            "gt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "abs",
             "const",
@@ -2730,6 +3433,10 @@
           "requested_ops": [
             "ne"
           ],
+          "known_ops": [
+            "ne"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ne"
           ],
@@ -2741,6 +3448,10 @@
           "requested_ops": [
             "ne"
           ],
+          "known_ops": [
+            "ne"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ne"
           ],
@@ -2752,6 +3463,10 @@
           "requested_ops": [
             "ne"
           ],
+          "known_ops": [
+            "ne"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ne"
           ],
@@ -2777,6 +3492,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -2784,6 +3501,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -2791,6 +3510,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -2818,6 +3539,10 @@
           "requested_ops": [
             "le"
           ],
+          "known_ops": [
+            "le"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "le"
           ],
@@ -2829,6 +3554,10 @@
           "requested_ops": [
             "le"
           ],
+          "known_ops": [
+            "le"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "le"
           ],
@@ -2840,6 +3569,10 @@
           "requested_ops": [
             "le"
           ],
+          "known_ops": [
+            "le"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "le"
           ],
@@ -2869,6 +3602,10 @@
           "requested_ops": [
             "le"
           ],
+          "known_ops": [
+            "le"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "le"
           ],
@@ -2880,6 +3617,10 @@
           "requested_ops": [
             "le"
           ],
+          "known_ops": [
+            "le"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "le"
           ],
@@ -2891,6 +3632,10 @@
           "requested_ops": [
             "le"
           ],
+          "known_ops": [
+            "le"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "le"
           ],
@@ -2924,6 +3669,12 @@
             "mul",
             "sub"
           ],
+          "known_ops": [
+            "add",
+            "mul",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "mul",
@@ -2939,6 +3690,12 @@
             "mul",
             "sub"
           ],
+          "known_ops": [
+            "add",
+            "mul",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "mul",
@@ -2954,6 +3711,12 @@
             "mul",
             "sub"
           ],
+          "known_ops": [
+            "add",
+            "mul",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "mul",
@@ -2989,6 +3752,12 @@
             "mul",
             "sub"
           ],
+          "known_ops": [
+            "add",
+            "mul",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "mul",
@@ -3004,6 +3773,12 @@
             "mul",
             "sub"
           ],
+          "known_ops": [
+            "add",
+            "mul",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "mul",
@@ -3019,6 +3794,12 @@
             "mul",
             "sub"
           ],
+          "known_ops": [
+            "add",
+            "mul",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "mul",
@@ -3046,6 +3827,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -3053,6 +3836,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -3060,6 +3845,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -3087,6 +3874,10 @@
           "requested_ops": [
             "log"
           ],
+          "known_ops": [
+            "log"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "log"
@@ -3098,6 +3889,10 @@
           "requested_ops": [
             "log"
           ],
+          "known_ops": [
+            "log"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "log"
@@ -3109,6 +3904,10 @@
           "requested_ops": [
             "log"
           ],
+          "known_ops": [
+            "log"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "log"
@@ -3138,6 +3937,10 @@
           "requested_ops": [
             "and"
           ],
+          "known_ops": [
+            "and"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "and"
           ],
@@ -3149,6 +3952,10 @@
           "requested_ops": [
             "and"
           ],
+          "known_ops": [
+            "and"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "and"
           ],
@@ -3160,6 +3967,10 @@
           "requested_ops": [
             "and"
           ],
+          "known_ops": [
+            "and"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "and"
           ],
@@ -3189,6 +4000,10 @@
           "requested_ops": [
             "not"
           ],
+          "known_ops": [
+            "not"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "not"
           ],
@@ -3200,6 +4015,10 @@
           "requested_ops": [
             "not"
           ],
+          "known_ops": [
+            "not"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "not"
           ],
@@ -3211,6 +4030,10 @@
           "requested_ops": [
             "not"
           ],
+          "known_ops": [
+            "not"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "not"
           ],
@@ -3240,6 +4063,10 @@
           "requested_ops": [
             "or"
           ],
+          "known_ops": [
+            "or"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "or"
           ],
@@ -3251,6 +4078,10 @@
           "requested_ops": [
             "or"
           ],
+          "known_ops": [
+            "or"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "or"
           ],
@@ -3262,6 +4093,10 @@
           "requested_ops": [
             "or"
           ],
+          "known_ops": [
+            "or"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "or"
           ],
@@ -3296,6 +4131,12 @@
             "not",
             "or"
           ],
+          "known_ops": [
+            "and",
+            "not",
+            "or"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "and",
             "not",
@@ -3311,6 +4152,12 @@
             "not",
             "or"
           ],
+          "known_ops": [
+            "and",
+            "not",
+            "or"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "and",
             "not",
@@ -3326,6 +4173,12 @@
             "not",
             "or"
           ],
+          "known_ops": [
+            "and",
+            "not",
+            "or"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "and",
             "not",
@@ -3353,6 +4206,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -3360,6 +4215,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -3367,6 +4224,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -3394,6 +4253,10 @@
           "requested_ops": [
             "lt"
           ],
+          "known_ops": [
+            "lt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "lt"
           ],
@@ -3405,6 +4268,10 @@
           "requested_ops": [
             "lt"
           ],
+          "known_ops": [
+            "lt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "lt"
           ],
@@ -3416,6 +4283,10 @@
           "requested_ops": [
             "lt"
           ],
+          "known_ops": [
+            "lt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "lt"
           ],
@@ -3445,6 +4316,10 @@
           "requested_ops": [
             "lt"
           ],
+          "known_ops": [
+            "lt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "lt"
           ],
@@ -3456,6 +4331,10 @@
           "requested_ops": [
             "lt"
           ],
+          "known_ops": [
+            "lt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "lt"
           ],
@@ -3467,6 +4346,10 @@
           "requested_ops": [
             "lt"
           ],
+          "known_ops": [
+            "lt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "lt"
           ],
@@ -3496,6 +4379,10 @@
           "requested_ops": [
             "where"
           ],
+          "known_ops": [
+            "where"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "where"
           ],
@@ -3507,6 +4394,10 @@
           "requested_ops": [
             "where"
           ],
+          "known_ops": [
+            "where"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "where"
           ],
@@ -3518,6 +4409,10 @@
           "requested_ops": [
             "where"
           ],
+          "known_ops": [
+            "where"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "where"
           ],
@@ -3547,6 +4442,10 @@
           "requested_ops": [
             "reduce_max"
           ],
+          "known_ops": [
+            "reduce_max"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "reduce_max"
           ],
@@ -3558,6 +4457,10 @@
           "requested_ops": [
             "reduce_max"
           ],
+          "known_ops": [
+            "reduce_max"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "reduce_max"
           ],
@@ -3569,6 +4472,10 @@
           "requested_ops": [
             "reduce_max"
           ],
+          "known_ops": [
+            "reduce_max"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "reduce_max"
           ],
@@ -3598,6 +4505,10 @@
           "requested_ops": [
             "reduce_max"
           ],
+          "known_ops": [
+            "reduce_max"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "reduce_max"
           ],
@@ -3609,6 +4520,10 @@
           "requested_ops": [
             "reduce_max"
           ],
+          "known_ops": [
+            "reduce_max"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "reduce_max"
           ],
@@ -3620,6 +4535,10 @@
           "requested_ops": [
             "reduce_max"
           ],
+          "known_ops": [
+            "reduce_max"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "reduce_max"
           ],
@@ -3649,6 +4568,10 @@
           "requested_ops": [
             "max"
           ],
+          "known_ops": [
+            "max"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "max"
           ],
@@ -3660,6 +4583,10 @@
           "requested_ops": [
             "max"
           ],
+          "known_ops": [
+            "max"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "max"
           ],
@@ -3671,6 +4598,10 @@
           "requested_ops": [
             "max"
           ],
+          "known_ops": [
+            "max"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "max"
           ],
@@ -3700,6 +4631,10 @@
           "requested_ops": [
             "reduce_min"
           ],
+          "known_ops": [
+            "reduce_min"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "reduce_min"
@@ -3711,6 +4646,10 @@
           "requested_ops": [
             "reduce_min"
           ],
+          "known_ops": [
+            "reduce_min"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "reduce_min"
@@ -3722,6 +4661,10 @@
           "requested_ops": [
             "reduce_min"
           ],
+          "known_ops": [
+            "reduce_min"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "reduce_min"
@@ -3751,6 +4694,10 @@
           "requested_ops": [
             "reduce_min"
           ],
+          "known_ops": [
+            "reduce_min"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "reduce_min"
@@ -3762,6 +4709,10 @@
           "requested_ops": [
             "reduce_min"
           ],
+          "known_ops": [
+            "reduce_min"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "reduce_min"
@@ -3773,6 +4724,10 @@
           "requested_ops": [
             "reduce_min"
           ],
+          "known_ops": [
+            "reduce_min"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "reduce_min"
@@ -3802,6 +4757,10 @@
           "requested_ops": [
             "min"
           ],
+          "known_ops": [
+            "min"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "min"
           ],
@@ -3813,6 +4772,10 @@
           "requested_ops": [
             "min"
           ],
+          "known_ops": [
+            "min"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "min"
           ],
@@ -3824,6 +4787,10 @@
           "requested_ops": [
             "min"
           ],
+          "known_ops": [
+            "min"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "min"
           ],
@@ -3849,6 +4816,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -3856,6 +4825,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -3863,6 +4834,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -3890,6 +4863,10 @@
           "requested_ops": [
             "mul"
           ],
+          "known_ops": [
+            "mul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "mul"
           ],
@@ -3901,6 +4878,10 @@
           "requested_ops": [
             "mul"
           ],
+          "known_ops": [
+            "mul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "mul"
           ],
@@ -3912,6 +4893,10 @@
           "requested_ops": [
             "mul"
           ],
+          "known_ops": [
+            "mul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "mul"
           ],
@@ -3941,6 +4926,10 @@
           "requested_ops": [
             "matmul"
           ],
+          "known_ops": [
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "matmul"
           ],
@@ -3952,6 +4941,10 @@
           "requested_ops": [
             "matmul"
           ],
+          "known_ops": [
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "matmul"
           ],
@@ -3963,6 +4956,10 @@
           "requested_ops": [
             "matmul"
           ],
+          "known_ops": [
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "matmul"
           ],
@@ -3988,6 +4985,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -3995,6 +4994,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -4002,6 +5003,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -4029,6 +5032,10 @@
           "requested_ops": [
             "ne"
           ],
+          "known_ops": [
+            "ne"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ne"
           ],
@@ -4040,6 +5047,10 @@
           "requested_ops": [
             "ne"
           ],
+          "known_ops": [
+            "ne"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ne"
           ],
@@ -4051,6 +5062,10 @@
           "requested_ops": [
             "ne"
           ],
+          "known_ops": [
+            "ne"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ne"
           ],
@@ -4080,6 +5095,10 @@
           "requested_ops": [
             "ne"
           ],
+          "known_ops": [
+            "ne"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ne"
           ],
@@ -4091,6 +5110,10 @@
           "requested_ops": [
             "ne"
           ],
+          "known_ops": [
+            "ne"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ne"
           ],
@@ -4102,6 +5125,10 @@
           "requested_ops": [
             "ne"
           ],
+          "known_ops": [
+            "ne"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "ne"
           ],
@@ -4133,6 +5160,11 @@
             "const",
             "mul"
           ],
+          "known_ops": [
+            "const",
+            "mul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "const",
             "mul"
@@ -4146,6 +5178,11 @@
             "const",
             "mul"
           ],
+          "known_ops": [
+            "const",
+            "mul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "const",
             "mul"
@@ -4159,6 +5196,11 @@
             "const",
             "mul"
           ],
+          "known_ops": [
+            "const",
+            "mul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "const",
             "mul"
@@ -4185,6 +5227,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -4192,6 +5236,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -4199,6 +5245,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -4222,6 +5270,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -4229,6 +5279,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -4236,6 +5288,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -4247,34 +5301,60 @@
         "nonzero"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "nonzero"
+      ],
+      "mapping_kind": "direct_supported_op",
+      "intent_pattern_id": "direct.nonzero",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "semantic op equals IntentIR op name; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "nonzero"
+          ],
+          "known_ops": [
+            "nonzero"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "nonzero"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "nonzero"
+          ],
+          "known_ops": [
+            "nonzero"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "nonzero"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "nonzero"
+          ],
+          "known_ops": [
+            "nonzero"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "nonzero"
+          ]
         }
       }
     },
@@ -4296,6 +5376,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -4303,6 +5385,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -4310,6 +5394,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -4339,6 +5425,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -4352,6 +5443,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -4365,6 +5461,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -4397,6 +5498,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -4410,6 +5516,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -4423,6 +5534,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -4437,34 +5553,60 @@
         "pad"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "pad"
+      ],
+      "mapping_kind": "direct_supported_op",
+      "intent_pattern_id": "direct.pad",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "semantic op equals IntentIR op name; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "pad"
+          ],
+          "known_ops": [
+            "pad"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "pad"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "pad"
+          ],
+          "known_ops": [
+            "pad"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "pad"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "pad"
+          ],
+          "known_ops": [
+            "pad"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "pad"
+          ]
         }
       }
     },
@@ -4486,6 +5628,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -4493,6 +5637,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -4500,6 +5646,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -4523,6 +5671,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -4530,6 +5680,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -4537,6 +5689,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -4564,6 +5718,10 @@
           "requested_ops": [
             "pow"
           ],
+          "known_ops": [
+            "pow"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "pow"
@@ -4575,6 +5733,10 @@
           "requested_ops": [
             "pow"
           ],
+          "known_ops": [
+            "pow"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "pow"
@@ -4586,6 +5748,10 @@
           "requested_ops": [
             "pow"
           ],
+          "known_ops": [
+            "pow"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "pow"
@@ -4615,6 +5781,10 @@
           "requested_ops": [
             "pow"
           ],
+          "known_ops": [
+            "pow"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "pow"
@@ -4626,6 +5796,10 @@
           "requested_ops": [
             "pow"
           ],
+          "known_ops": [
+            "pow"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "pow"
@@ -4637,6 +5811,10 @@
           "requested_ops": [
             "pow"
           ],
+          "known_ops": [
+            "pow"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "pow"
@@ -4666,6 +5844,10 @@
           "requested_ops": [
             "pow"
           ],
+          "known_ops": [
+            "pow"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "pow"
@@ -4677,6 +5859,10 @@
           "requested_ops": [
             "pow"
           ],
+          "known_ops": [
+            "pow"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "pow"
@@ -4688,6 +5874,10 @@
           "requested_ops": [
             "pow"
           ],
+          "known_ops": [
+            "pow"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "pow"
@@ -4713,6 +5903,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -4720,6 +5912,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -4727,6 +5921,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -4756,6 +5952,11 @@
             "const",
             "div"
           ],
+          "known_ops": [
+            "const",
+            "div"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "const",
             "div"
@@ -4769,6 +5970,11 @@
             "const",
             "div"
           ],
+          "known_ops": [
+            "const",
+            "div"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "const",
             "div"
@@ -4782,6 +5988,11 @@
             "const",
             "div"
           ],
+          "known_ops": [
+            "const",
+            "div"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "const",
             "div"
@@ -4812,6 +6023,10 @@
           "requested_ops": [
             "remainder"
           ],
+          "known_ops": [
+            "remainder"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "remainder"
@@ -4823,6 +6038,10 @@
           "requested_ops": [
             "remainder"
           ],
+          "known_ops": [
+            "remainder"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "remainder"
@@ -4834,6 +6053,10 @@
           "requested_ops": [
             "remainder"
           ],
+          "known_ops": [
+            "remainder"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "remainder"
@@ -4847,34 +6070,60 @@
         "repeat"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "repeat"
+      ],
+      "mapping_kind": "direct_supported_op",
+      "intent_pattern_id": "direct.repeat",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "semantic op equals IntentIR op name; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "repeat"
+          ],
+          "known_ops": [
+            "repeat"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "repeat"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "repeat"
+          ],
+          "known_ops": [
+            "repeat"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "repeat"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "repeat"
+          ],
+          "known_ops": [
+            "repeat"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "repeat"
+          ]
         }
       }
     },
@@ -4884,34 +6133,60 @@
         "repeat_interleave_self_int"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "repeat_interleave"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.repeat_interleave_self_int->repeat_interleave",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "alias to repeat_interleave; semantic op equals IntentIR op name; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "repeat_interleave"
+          ],
+          "known_ops": [
+            "repeat_interleave"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "repeat_interleave"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "repeat_interleave"
+          ],
+          "known_ops": [
+            "repeat_interleave"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "repeat_interleave"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "repeat_interleave"
+          ],
+          "known_ops": [
+            "repeat_interleave"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "repeat_interleave"
+          ]
         }
       }
     },
@@ -4921,34 +6196,60 @@
         "repeat_interleave_self_tensor"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "repeat_interleave"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.repeat_interleave_self_tensor->repeat_interleave",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "alias to repeat_interleave; semantic op equals IntentIR op name; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "repeat_interleave"
+          ],
+          "known_ops": [
+            "repeat_interleave"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "repeat_interleave"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "repeat_interleave"
+          ],
+          "known_ops": [
+            "repeat_interleave"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "repeat_interleave"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "repeat_interleave"
+          ],
+          "known_ops": [
+            "repeat_interleave"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "repeat_interleave"
+          ]
         }
       }
     },
@@ -4958,34 +6259,60 @@
         "repeat_interleave_tensor"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "repeat_interleave"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.repeat_interleave_tensor->repeat_interleave",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "alias to repeat_interleave; semantic op equals IntentIR op name; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "repeat_interleave"
+          ],
+          "known_ops": [
+            "repeat_interleave"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "repeat_interleave"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "repeat_interleave"
+          ],
+          "known_ops": [
+            "repeat_interleave"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "repeat_interleave"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "repeat_interleave"
+          ],
+          "known_ops": [
+            "repeat_interleave"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "repeat_interleave"
+          ]
         }
       }
     },
@@ -5011,6 +6338,10 @@
           "requested_ops": [
             "identity"
           ],
+          "known_ops": [
+            "identity"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "identity"
           ],
@@ -5022,6 +6353,10 @@
           "requested_ops": [
             "identity"
           ],
+          "known_ops": [
+            "identity"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "identity"
           ],
@@ -5033,6 +6368,10 @@
           "requested_ops": [
             "identity"
           ],
+          "known_ops": [
+            "identity"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "identity"
           ],
@@ -5062,6 +6401,10 @@
           "requested_ops": [
             "identity"
           ],
+          "known_ops": [
+            "identity"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "identity"
           ],
@@ -5073,6 +6416,10 @@
           "requested_ops": [
             "identity"
           ],
+          "known_ops": [
+            "identity"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "identity"
           ],
@@ -5084,6 +6431,10 @@
           "requested_ops": [
             "identity"
           ],
+          "known_ops": [
+            "identity"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "identity"
           ],
@@ -5113,6 +6464,10 @@
           "requested_ops": [
             "rsqrt"
           ],
+          "known_ops": [
+            "rsqrt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "rsqrt"
           ],
@@ -5124,6 +6479,10 @@
           "requested_ops": [
             "rsqrt"
           ],
+          "known_ops": [
+            "rsqrt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "rsqrt"
           ],
@@ -5135,6 +6494,10 @@
           "requested_ops": [
             "rsqrt"
           ],
+          "known_ops": [
+            "rsqrt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "rsqrt"
           ],
@@ -5164,6 +6527,10 @@
           "requested_ops": [
             "sin"
           ],
+          "known_ops": [
+            "sin"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "sin"
@@ -5175,6 +6542,10 @@
           "requested_ops": [
             "sin"
           ],
+          "known_ops": [
+            "sin"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "sin"
@@ -5186,6 +6557,10 @@
           "requested_ops": [
             "sin"
           ],
+          "known_ops": [
+            "sin"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "sin"
@@ -5199,34 +6574,60 @@
         "sort"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "sort"
+      ],
+      "mapping_kind": "direct_supported_op",
+      "intent_pattern_id": "direct.sort",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "semantic op equals IntentIR op name; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "sort"
+          ],
+          "known_ops": [
+            "sort"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "sort"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "sort"
+          ],
+          "known_ops": [
+            "sort"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "sort"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "sort"
+          ],
+          "known_ops": [
+            "sort"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "sort"
+          ]
         }
       }
     },
@@ -5236,34 +6637,60 @@
         "sort_stable"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "sort"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.sort_stable->sort",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "alias to sort; semantic op equals IntentIR op name; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "sort"
+          ],
+          "known_ops": [
+            "sort"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "sort"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "sort"
+          ],
+          "known_ops": [
+            "sort"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "sort"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "sort"
+          ],
+          "known_ops": [
+            "sort"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "sort"
+          ]
         }
       }
     },
@@ -5291,6 +6718,11 @@
             "mul",
             "rsqrt"
           ],
+          "known_ops": [
+            "mul",
+            "rsqrt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "mul",
             "rsqrt"
@@ -5304,6 +6736,11 @@
             "mul",
             "rsqrt"
           ],
+          "known_ops": [
+            "mul",
+            "rsqrt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "mul",
             "rsqrt"
@@ -5317,6 +6754,11 @@
             "mul",
             "rsqrt"
           ],
+          "known_ops": [
+            "mul",
+            "rsqrt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "mul",
             "rsqrt"
@@ -5331,34 +6773,60 @@
         "stack"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "stack"
+      ],
+      "mapping_kind": "direct_supported_op",
+      "intent_pattern_id": "direct.stack",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "semantic op equals IntentIR op name; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "stack"
+          ],
+          "known_ops": [
+            "stack"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "stack"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "stack"
+          ],
+          "known_ops": [
+            "stack"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "stack"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "stack"
+          ],
+          "known_ops": [
+            "stack"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "stack"
+          ]
         }
       }
     },
@@ -5384,6 +6852,10 @@
           "requested_ops": [
             "sub"
           ],
+          "known_ops": [
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "sub"
           ],
@@ -5395,6 +6867,10 @@
           "requested_ops": [
             "sub"
           ],
+          "known_ops": [
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "sub"
           ],
@@ -5406,6 +6882,10 @@
           "requested_ops": [
             "sub"
           ],
+          "known_ops": [
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "sub"
           ],
@@ -5435,6 +6915,10 @@
           "requested_ops": [
             "tan"
           ],
+          "known_ops": [
+            "tan"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "tan"
@@ -5446,6 +6930,10 @@
           "requested_ops": [
             "tan"
           ],
+          "known_ops": [
+            "tan"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "tan"
@@ -5457,6 +6945,10 @@
           "requested_ops": [
             "tan"
           ],
+          "known_ops": [
+            "tan"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "tan"
@@ -5490,6 +6982,12 @@
             "gt",
             "where"
           ],
+          "known_ops": [
+            "const",
+            "gt",
+            "where"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "const",
             "gt",
@@ -5505,6 +7003,12 @@
             "gt",
             "where"
           ],
+          "known_ops": [
+            "const",
+            "gt",
+            "where"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "const",
             "gt",
@@ -5520,6 +7024,12 @@
             "gt",
             "where"
           ],
+          "known_ops": [
+            "const",
+            "gt",
+            "where"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "const",
             "gt",
@@ -5535,34 +7045,60 @@
         "tile"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "tile"
+      ],
+      "mapping_kind": "direct_supported_op",
+      "intent_pattern_id": "direct.tile",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "semantic op equals IntentIR op name; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "tile"
+          ],
+          "known_ops": [
+            "tile"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "tile"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "tile"
+          ],
+          "known_ops": [
+            "tile"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "tile"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "tile"
+          ],
+          "known_ops": [
+            "tile"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "tile"
+          ]
         }
       }
     },
@@ -5588,6 +7124,10 @@
           "requested_ops": [
             "cast"
           ],
+          "known_ops": [
+            "cast"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "cast"
           ],
@@ -5599,6 +7139,10 @@
           "requested_ops": [
             "cast"
           ],
+          "known_ops": [
+            "cast"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "cast"
           ],
@@ -5610,6 +7154,10 @@
           "requested_ops": [
             "cast"
           ],
+          "known_ops": [
+            "cast"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "cast"
           ],
@@ -5623,34 +7171,60 @@
         "topk"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "topk"
+      ],
+      "mapping_kind": "direct_supported_op",
+      "intent_pattern_id": "direct.topk",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "semantic op equals IntentIR op name; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "topk"
+          ],
+          "known_ops": [
+            "topk"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "topk"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "topk"
+          ],
+          "known_ops": [
+            "topk"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "topk"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "topk"
+          ],
+          "known_ops": [
+            "topk"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "topk"
+          ]
         }
       }
     },
@@ -5672,6 +7246,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -5679,6 +7255,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -5686,6 +7264,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -5709,6 +7289,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -5716,6 +7298,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -5723,6 +7307,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -5751,6 +7337,10 @@
           "requested_ops": [
             "div"
           ],
+          "known_ops": [
+            "div"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "div"
           ],
@@ -5762,6 +7352,10 @@
           "requested_ops": [
             "div"
           ],
+          "known_ops": [
+            "div"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "div"
           ],
@@ -5773,6 +7367,10 @@
           "requested_ops": [
             "div"
           ],
+          "known_ops": [
+            "div"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "div"
           ],
@@ -5798,6 +7396,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -5805,6 +7405,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -5812,6 +7414,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -5823,34 +7427,60 @@
         "vstack"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "concat"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.vstack->concat",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "alias to concat; semantic op equals IntentIR op name; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "concat"
+          ],
+          "known_ops": [
+            "concat"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "concat"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "concat"
+          ],
+          "known_ops": [
+            "concat"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "concat"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "concat"
+          ],
+          "known_ops": [
+            "concat"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "concat"
+          ]
         }
       }
     },
@@ -5878,6 +7508,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -5891,6 +7526,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -5904,6 +7544,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -5936,6 +7581,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -5949,6 +7599,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -5962,6 +7617,11 @@
             "broadcast_in_dim",
             "const"
           ],
+          "known_ops": [
+            "broadcast_in_dim",
+            "const"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "broadcast_in_dim",
             "const"
@@ -5997,6 +7657,11 @@
             "not",
             "reduce_any"
           ],
+          "known_ops": [
+            "not",
+            "reduce_any"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "not",
             "reduce_any"
@@ -6010,6 +7675,11 @@
             "not",
             "reduce_any"
           ],
+          "known_ops": [
+            "not",
+            "reduce_any"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "not",
             "reduce_any"
@@ -6023,6 +7693,11 @@
             "not",
             "reduce_any"
           ],
+          "known_ops": [
+            "not",
+            "reduce_any"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "not",
             "reduce_any"
@@ -6067,6 +7742,16 @@
             "reduce_any",
             "sub"
           ],
+          "known_ops": [
+            "abs",
+            "add",
+            "le",
+            "mul",
+            "not",
+            "reduce_any",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "abs",
             "add",
@@ -6090,6 +7775,16 @@
             "reduce_any",
             "sub"
           ],
+          "known_ops": [
+            "abs",
+            "add",
+            "le",
+            "mul",
+            "not",
+            "reduce_any",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "abs",
             "add",
@@ -6113,6 +7808,16 @@
             "reduce_any",
             "sub"
           ],
+          "known_ops": [
+            "abs",
+            "add",
+            "le",
+            "mul",
+            "not",
+            "reduce_any",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "abs",
             "add",
@@ -6148,6 +7853,10 @@
           "requested_ops": [
             "reduce_max"
           ],
+          "known_ops": [
+            "reduce_max"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "reduce_max"
           ],
@@ -6159,6 +7868,10 @@
           "requested_ops": [
             "reduce_max"
           ],
+          "known_ops": [
+            "reduce_max"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "reduce_max"
           ],
@@ -6170,6 +7883,10 @@
           "requested_ops": [
             "reduce_max"
           ],
+          "known_ops": [
+            "reduce_max"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "reduce_max"
           ],
@@ -6201,6 +7918,10 @@
           "requested_ops": [
             "reduce_any"
           ],
+          "known_ops": [
+            "reduce_any"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "reduce_any"
           ],
@@ -6212,6 +7933,10 @@
           "requested_ops": [
             "reduce_any"
           ],
+          "known_ops": [
+            "reduce_any"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "reduce_any"
           ],
@@ -6223,6 +7948,10 @@
           "requested_ops": [
             "reduce_any"
           ],
+          "known_ops": [
+            "reduce_any"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "reduce_any"
           ],
@@ -6252,6 +7981,10 @@
           "requested_ops": [
             "argmax"
           ],
+          "known_ops": [
+            "argmax"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "argmax"
@@ -6263,6 +7996,10 @@
           "requested_ops": [
             "argmax"
           ],
+          "known_ops": [
+            "argmax"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "argmax"
@@ -6274,6 +8011,10 @@
           "requested_ops": [
             "argmax"
           ],
+          "known_ops": [
+            "argmax"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "argmax"
@@ -6303,6 +8044,10 @@
           "requested_ops": [
             "argmin"
           ],
+          "known_ops": [
+            "argmin"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "argmin"
@@ -6314,6 +8059,10 @@
           "requested_ops": [
             "argmin"
           ],
+          "known_ops": [
+            "argmin"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "argmin"
@@ -6325,6 +8074,10 @@
           "requested_ops": [
             "argmin"
           ],
+          "known_ops": [
+            "argmin"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "argmin"
@@ -6355,6 +8108,10 @@
           "requested_ops": [
             "cumsum"
           ],
+          "known_ops": [
+            "cumsum"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "cumsum"
@@ -6366,6 +8123,10 @@
           "requested_ops": [
             "cumsum"
           ],
+          "known_ops": [
+            "cumsum"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "cumsum"
@@ -6377,6 +8138,10 @@
           "requested_ops": [
             "cumsum"
           ],
+          "known_ops": [
+            "cumsum"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "cumsum"
@@ -6409,6 +8174,11 @@
             "matmul",
             "softmax"
           ],
+          "known_ops": [
+            "matmul",
+            "softmax"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "matmul",
             "softmax"
@@ -6422,6 +8192,11 @@
             "matmul",
             "softmax"
           ],
+          "known_ops": [
+            "matmul",
+            "softmax"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "matmul",
             "softmax"
@@ -6435,6 +8210,11 @@
             "matmul",
             "softmax"
           ],
+          "known_ops": [
+            "matmul",
+            "softmax"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "matmul",
             "softmax"
@@ -6467,6 +8247,11 @@
             "log",
             "softmax"
           ],
+          "known_ops": [
+            "log",
+            "softmax"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "softmax"
           ],
@@ -6481,6 +8266,11 @@
             "log",
             "softmax"
           ],
+          "known_ops": [
+            "log",
+            "softmax"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "softmax"
           ],
@@ -6495,6 +8285,11 @@
             "log",
             "softmax"
           ],
+          "known_ops": [
+            "log",
+            "softmax"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "softmax"
           ],
@@ -6528,6 +8323,11 @@
             "div",
             "reduce_sum"
           ],
+          "known_ops": [
+            "div",
+            "reduce_sum"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "div",
             "reduce_sum"
@@ -6541,6 +8341,11 @@
             "div",
             "reduce_sum"
           ],
+          "known_ops": [
+            "div",
+            "reduce_sum"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "div",
             "reduce_sum"
@@ -6554,6 +8359,11 @@
             "div",
             "reduce_sum"
           ],
+          "known_ops": [
+            "div",
+            "reduce_sum"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "div",
             "reduce_sum"
@@ -6586,6 +8396,11 @@
             "div",
             "reduce_sum"
           ],
+          "known_ops": [
+            "div",
+            "reduce_sum"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "div",
             "reduce_sum"
@@ -6599,6 +8414,11 @@
             "div",
             "reduce_sum"
           ],
+          "known_ops": [
+            "div",
+            "reduce_sum"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "div",
             "reduce_sum"
@@ -6612,6 +8432,11 @@
             "div",
             "reduce_sum"
           ],
+          "known_ops": [
+            "div",
+            "reduce_sum"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "div",
             "reduce_sum"
@@ -6642,6 +8467,10 @@
           "requested_ops": [
             "reduce_prod"
           ],
+          "known_ops": [
+            "reduce_prod"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "reduce_prod"
@@ -6653,6 +8482,10 @@
           "requested_ops": [
             "reduce_prod"
           ],
+          "known_ops": [
+            "reduce_prod"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "reduce_prod"
@@ -6664,6 +8497,10 @@
           "requested_ops": [
             "reduce_prod"
           ],
+          "known_ops": [
+            "reduce_prod"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "reduce_prod"
@@ -6693,6 +8530,10 @@
           "requested_ops": [
             "reduce_prod"
           ],
+          "known_ops": [
+            "reduce_prod"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "reduce_prod"
@@ -6704,6 +8545,10 @@
           "requested_ops": [
             "reduce_prod"
           ],
+          "known_ops": [
+            "reduce_prod"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "reduce_prod"
@@ -6715,6 +8560,10 @@
           "requested_ops": [
             "reduce_prod"
           ],
+          "known_ops": [
+            "reduce_prod"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "reduce_prod"
@@ -6744,6 +8593,10 @@
           "requested_ops": [
             "softmax"
           ],
+          "known_ops": [
+            "softmax"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "softmax"
           ],
@@ -6755,6 +8608,10 @@
           "requested_ops": [
             "softmax"
           ],
+          "known_ops": [
+            "softmax"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "softmax"
           ],
@@ -6766,6 +8623,10 @@
           "requested_ops": [
             "softmax"
           ],
+          "known_ops": [
+            "softmax"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "softmax"
           ],
@@ -6795,6 +8656,10 @@
           "requested_ops": [
             "softmax"
           ],
+          "known_ops": [
+            "softmax"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "softmax"
           ],
@@ -6806,6 +8671,10 @@
           "requested_ops": [
             "softmax"
           ],
+          "known_ops": [
+            "softmax"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "softmax"
           ],
@@ -6817,6 +8686,10 @@
           "requested_ops": [
             "softmax"
           ],
+          "known_ops": [
+            "softmax"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "softmax"
           ],
@@ -6846,6 +8719,10 @@
           "requested_ops": [
             "std"
           ],
+          "known_ops": [
+            "std"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "std"
@@ -6857,6 +8734,10 @@
           "requested_ops": [
             "std"
           ],
+          "known_ops": [
+            "std"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "std"
@@ -6868,6 +8749,10 @@
           "requested_ops": [
             "std"
           ],
+          "known_ops": [
+            "std"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "std"
@@ -6898,6 +8783,10 @@
           "requested_ops": [
             "reduce_sum"
           ],
+          "known_ops": [
+            "reduce_sum"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "reduce_sum"
           ],
@@ -6909,6 +8798,10 @@
           "requested_ops": [
             "reduce_sum"
           ],
+          "known_ops": [
+            "reduce_sum"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "reduce_sum"
           ],
@@ -6920,6 +8813,10 @@
           "requested_ops": [
             "reduce_sum"
           ],
+          "known_ops": [
+            "reduce_sum"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "reduce_sum"
           ],
@@ -6950,6 +8847,10 @@
           "requested_ops": [
             "reduce_sum"
           ],
+          "known_ops": [
+            "reduce_sum"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "reduce_sum"
           ],
@@ -6961,6 +8862,10 @@
           "requested_ops": [
             "reduce_sum"
           ],
+          "known_ops": [
+            "reduce_sum"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "reduce_sum"
           ],
@@ -6972,6 +8877,10 @@
           "requested_ops": [
             "reduce_sum"
           ],
+          "known_ops": [
+            "reduce_sum"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "reduce_sum"
           ],
@@ -7003,6 +8912,11 @@
             "mean",
             "var"
           ],
+          "known_ops": [
+            "mean",
+            "var"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "mean",
@@ -7016,6 +8930,11 @@
             "mean",
             "var"
           ],
+          "known_ops": [
+            "mean",
+            "var"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "mean",
@@ -7029,6 +8948,11 @@
             "mean",
             "var"
           ],
+          "known_ops": [
+            "mean",
+            "var"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "mean",
@@ -7071,6 +8995,16 @@
             "rsqrt",
             "sub"
           ],
+          "known_ops": [
+            "add",
+            "broadcast_in_dim",
+            "div",
+            "mul",
+            "reduce_sum",
+            "rsqrt",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "broadcast_in_dim",
@@ -7094,6 +9028,16 @@
             "rsqrt",
             "sub"
           ],
+          "known_ops": [
+            "add",
+            "broadcast_in_dim",
+            "div",
+            "mul",
+            "reduce_sum",
+            "rsqrt",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "broadcast_in_dim",
@@ -7117,6 +9061,16 @@
             "rsqrt",
             "sub"
           ],
+          "known_ops": [
+            "add",
+            "broadcast_in_dim",
+            "div",
+            "mul",
+            "reduce_sum",
+            "rsqrt",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "broadcast_in_dim",
@@ -7160,6 +9114,13 @@
             "erf",
             "mul"
           ],
+          "known_ops": [
+            "add",
+            "const",
+            "erf",
+            "mul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "const",
@@ -7178,6 +9139,13 @@
             "erf",
             "mul"
           ],
+          "known_ops": [
+            "add",
+            "const",
+            "erf",
+            "mul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "const",
@@ -7196,6 +9164,13 @@
             "erf",
             "mul"
           ],
+          "known_ops": [
+            "add",
+            "const",
+            "erf",
+            "mul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "const",
@@ -7241,6 +9216,16 @@
             "rsqrt",
             "sub"
           ],
+          "known_ops": [
+            "add",
+            "broadcast_in_dim",
+            "div",
+            "mul",
+            "reduce_sum",
+            "rsqrt",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "broadcast_in_dim",
@@ -7264,6 +9249,16 @@
             "rsqrt",
             "sub"
           ],
+          "known_ops": [
+            "add",
+            "broadcast_in_dim",
+            "div",
+            "mul",
+            "reduce_sum",
+            "rsqrt",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "broadcast_in_dim",
@@ -7287,6 +9282,16 @@
             "rsqrt",
             "sub"
           ],
+          "known_ops": [
+            "add",
+            "broadcast_in_dim",
+            "div",
+            "mul",
+            "reduce_sum",
+            "rsqrt",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "broadcast_in_dim",
@@ -7334,6 +9339,16 @@
             "rsqrt",
             "sub"
           ],
+          "known_ops": [
+            "add",
+            "broadcast_in_dim",
+            "div",
+            "mul",
+            "reduce_sum",
+            "rsqrt",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "broadcast_in_dim",
@@ -7357,6 +9372,16 @@
             "rsqrt",
             "sub"
           ],
+          "known_ops": [
+            "add",
+            "broadcast_in_dim",
+            "div",
+            "mul",
+            "reduce_sum",
+            "rsqrt",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "broadcast_in_dim",
@@ -7380,6 +9405,16 @@
             "rsqrt",
             "sub"
           ],
+          "known_ops": [
+            "add",
+            "broadcast_in_dim",
+            "div",
+            "mul",
+            "reduce_sum",
+            "rsqrt",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "broadcast_in_dim",
@@ -7417,10 +9452,15 @@
             "log",
             "sigmoid"
           ],
+          "known_ops": [
+            "log"
+          ],
+          "unknown_ops": [
+            "sigmoid"
+          ],
           "supported_ops": [],
           "missing_ops": [
-            "log",
-            "sigmoid"
+            "log"
           ]
         },
         "cuda_h100": {
@@ -7430,10 +9470,15 @@
             "log",
             "sigmoid"
           ],
+          "known_ops": [
+            "log"
+          ],
+          "unknown_ops": [
+            "sigmoid"
+          ],
           "supported_ops": [],
           "missing_ops": [
-            "log",
-            "sigmoid"
+            "log"
           ]
         },
         "cuda_5090d": {
@@ -7443,10 +9488,15 @@
             "log",
             "sigmoid"
           ],
+          "known_ops": [
+            "log"
+          ],
+          "unknown_ops": [
+            "sigmoid"
+          ],
           "supported_ops": [],
           "missing_ops": [
-            "log",
-            "sigmoid"
+            "log"
           ]
         }
       }
@@ -7475,6 +9525,11 @@
             "cumsum",
             "div"
           ],
+          "known_ops": [
+            "cumsum",
+            "div"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "div"
           ],
@@ -7489,6 +9544,11 @@
             "cumsum",
             "div"
           ],
+          "known_ops": [
+            "cumsum",
+            "div"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "div"
           ],
@@ -7503,6 +9563,11 @@
             "cumsum",
             "div"
           ],
+          "known_ops": [
+            "cumsum",
+            "div"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "div"
           ],
@@ -7534,6 +9599,10 @@
           "requested_ops": [
             "relu"
           ],
+          "known_ops": [
+            "relu"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "relu"
           ],
@@ -7545,6 +9614,10 @@
           "requested_ops": [
             "relu"
           ],
+          "known_ops": [
+            "relu"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "relu"
           ],
@@ -7556,6 +9629,10 @@
           "requested_ops": [
             "relu"
           ],
+          "known_ops": [
+            "relu"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "relu"
           ],
@@ -7592,6 +9669,13 @@
             "reduce_sum",
             "rsqrt"
           ],
+          "known_ops": [
+            "add",
+            "mul",
+            "reduce_sum",
+            "rsqrt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "mul",
@@ -7609,6 +9693,13 @@
             "reduce_sum",
             "rsqrt"
           ],
+          "known_ops": [
+            "add",
+            "mul",
+            "reduce_sum",
+            "rsqrt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "mul",
@@ -7626,6 +9717,13 @@
             "reduce_sum",
             "rsqrt"
           ],
+          "known_ops": [
+            "add",
+            "mul",
+            "reduce_sum",
+            "rsqrt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "mul",
@@ -7665,6 +9763,13 @@
             "reduce_sum",
             "rsqrt"
           ],
+          "known_ops": [
+            "add",
+            "mul",
+            "reduce_sum",
+            "rsqrt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "mul",
@@ -7682,6 +9787,13 @@
             "reduce_sum",
             "rsqrt"
           ],
+          "known_ops": [
+            "add",
+            "mul",
+            "reduce_sum",
+            "rsqrt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "mul",
@@ -7699,6 +9811,13 @@
             "reduce_sum",
             "rsqrt"
           ],
+          "known_ops": [
+            "add",
+            "mul",
+            "reduce_sum",
+            "rsqrt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "mul",
@@ -7739,6 +9858,14 @@
             "exp",
             "mul"
           ],
+          "known_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "const",
@@ -7758,6 +9885,14 @@
             "exp",
             "mul"
           ],
+          "known_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "const",
@@ -7777,6 +9912,14 @@
             "exp",
             "mul"
           ],
+          "known_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "const",
@@ -7819,6 +9962,14 @@
             "exp",
             "mul"
           ],
+          "known_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "const",
@@ -7838,6 +9989,14 @@
             "exp",
             "mul"
           ],
+          "known_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "const",
@@ -7857,6 +10016,14 @@
             "exp",
             "mul"
           ],
+          "known_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "const",
@@ -7894,6 +10061,12 @@
             "exp",
             "log"
           ],
+          "known_ops": [
+            "add",
+            "exp",
+            "log"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "exp"
@@ -7910,6 +10083,12 @@
             "exp",
             "log"
           ],
+          "known_ops": [
+            "add",
+            "exp",
+            "log"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "exp"
@@ -7926,6 +10105,12 @@
             "exp",
             "log"
           ],
+          "known_ops": [
+            "add",
+            "exp",
+            "log"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "exp"
@@ -7968,6 +10153,15 @@
             "mul",
             "sub"
           ],
+          "known_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "const",
@@ -7989,6 +10183,15 @@
             "mul",
             "sub"
           ],
+          "known_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "const",
@@ -8010,6 +10213,15 @@
             "mul",
             "sub"
           ],
+          "known_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul",
+            "sub"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "const",
@@ -8048,6 +10260,12 @@
             "reduce_sum",
             "sqrt"
           ],
+          "known_ops": [
+            "mul",
+            "reduce_sum",
+            "sqrt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "mul",
             "reduce_sum"
@@ -8064,6 +10282,12 @@
             "reduce_sum",
             "sqrt"
           ],
+          "known_ops": [
+            "mul",
+            "reduce_sum",
+            "sqrt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "mul",
             "reduce_sum"
@@ -8080,6 +10304,12 @@
             "reduce_sum",
             "sqrt"
           ],
+          "known_ops": [
+            "mul",
+            "reduce_sum",
+            "sqrt"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "mul",
             "reduce_sum"
@@ -8108,6 +10338,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -8115,6 +10347,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -8122,6 +10356,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -8145,6 +10381,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -8152,6 +10390,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -8159,6 +10399,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -8186,6 +10428,10 @@
           "requested_ops": [
             "gather"
           ],
+          "known_ops": [
+            "gather"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "gather"
           ],
@@ -8197,6 +10443,10 @@
           "requested_ops": [
             "gather"
           ],
+          "known_ops": [
+            "gather"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "gather"
           ],
@@ -8208,6 +10458,10 @@
           "requested_ops": [
             "gather"
           ],
+          "known_ops": [
+            "gather"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "gather"
           ],
@@ -8237,6 +10491,10 @@
           "requested_ops": [
             "gather"
           ],
+          "known_ops": [
+            "gather"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "gather"
           ],
@@ -8248,6 +10506,10 @@
           "requested_ops": [
             "gather"
           ],
+          "known_ops": [
+            "gather"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "gather"
           ],
@@ -8259,6 +10521,10 @@
           "requested_ops": [
             "gather"
           ],
+          "known_ops": [
+            "gather"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "gather"
           ],
@@ -8284,6 +10550,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -8291,6 +10559,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -8298,6 +10568,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -8321,6 +10593,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -8328,6 +10602,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -8335,6 +10611,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -8362,6 +10640,10 @@
           "requested_ops": [
             "gather"
           ],
+          "known_ops": [
+            "gather"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "gather"
           ],
@@ -8373,6 +10655,10 @@
           "requested_ops": [
             "gather"
           ],
+          "known_ops": [
+            "gather"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "gather"
           ],
@@ -8384,6 +10670,10 @@
           "requested_ops": [
             "gather"
           ],
+          "known_ops": [
+            "gather"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "gather"
           ],
@@ -8409,6 +10699,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -8416,6 +10708,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -8423,6 +10717,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -8446,6 +10742,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -8453,6 +10751,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -8460,6 +10760,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -8483,6 +10785,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -8490,6 +10794,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -8497,6 +10803,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -8520,6 +10828,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -8527,6 +10837,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -8534,6 +10846,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -8557,6 +10871,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -8564,6 +10880,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -8571,6 +10889,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -8598,6 +10918,10 @@
           "requested_ops": [
             "where"
           ],
+          "known_ops": [
+            "where"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "where"
           ],
@@ -8609,6 +10933,10 @@
           "requested_ops": [
             "where"
           ],
+          "known_ops": [
+            "where"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "where"
           ],
@@ -8620,6 +10948,10 @@
           "requested_ops": [
             "where"
           ],
+          "known_ops": [
+            "where"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "where"
           ],
@@ -8649,6 +10981,10 @@
           "requested_ops": [
             "where"
           ],
+          "known_ops": [
+            "where"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "where"
           ],
@@ -8660,6 +10996,10 @@
           "requested_ops": [
             "where"
           ],
+          "known_ops": [
+            "where"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "where"
           ],
@@ -8671,6 +11011,10 @@
           "requested_ops": [
             "where"
           ],
+          "known_ops": [
+            "where"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "where"
           ],
@@ -8703,6 +11047,11 @@
             "gt",
             "where"
           ],
+          "known_ops": [
+            "gt",
+            "where"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "gt",
             "where"
@@ -8716,6 +11065,11 @@
             "gt",
             "where"
           ],
+          "known_ops": [
+            "gt",
+            "where"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "gt",
             "where"
@@ -8729,6 +11083,11 @@
             "gt",
             "where"
           ],
+          "known_ops": [
+            "gt",
+            "where"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "gt",
             "where"
@@ -8762,6 +11121,11 @@
             "add",
             "matmul"
           ],
+          "known_ops": [
+            "add",
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "matmul"
@@ -8775,6 +11139,11 @@
             "add",
             "matmul"
           ],
+          "known_ops": [
+            "add",
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "matmul"
@@ -8788,6 +11157,11 @@
             "add",
             "matmul"
           ],
+          "known_ops": [
+            "add",
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "matmul"
@@ -8820,6 +11194,11 @@
             "add",
             "matmul"
           ],
+          "known_ops": [
+            "add",
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "matmul"
@@ -8833,6 +11212,11 @@
             "add",
             "matmul"
           ],
+          "known_ops": [
+            "add",
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "matmul"
@@ -8846,6 +11230,11 @@
             "add",
             "matmul"
           ],
+          "known_ops": [
+            "add",
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "add",
             "matmul"
@@ -8877,6 +11266,10 @@
           "requested_ops": [
             "matmul"
           ],
+          "known_ops": [
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "matmul"
           ],
@@ -8888,6 +11281,10 @@
           "requested_ops": [
             "matmul"
           ],
+          "known_ops": [
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "matmul"
           ],
@@ -8899,6 +11296,10 @@
           "requested_ops": [
             "matmul"
           ],
+          "known_ops": [
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "matmul"
           ],
@@ -8924,6 +11325,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -8931,6 +11334,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -8938,6 +11343,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -8961,6 +11368,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -8968,6 +11377,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -8975,6 +11386,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -9002,6 +11415,10 @@
           "requested_ops": [
             "matmul"
           ],
+          "known_ops": [
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "matmul"
           ],
@@ -9013,6 +11430,10 @@
           "requested_ops": [
             "matmul"
           ],
+          "known_ops": [
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "matmul"
           ],
@@ -9024,6 +11445,10 @@
           "requested_ops": [
             "matmul"
           ],
+          "known_ops": [
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "matmul"
           ],
@@ -9054,6 +11479,10 @@
           "requested_ops": [
             "matmul"
           ],
+          "known_ops": [
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "matmul"
           ],
@@ -9065,6 +11494,10 @@
           "requested_ops": [
             "matmul"
           ],
+          "known_ops": [
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "matmul"
           ],
@@ -9076,6 +11509,10 @@
           "requested_ops": [
             "matmul"
           ],
+          "known_ops": [
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "matmul"
           ],
@@ -9105,6 +11542,10 @@
           "requested_ops": [
             "matmul"
           ],
+          "known_ops": [
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "matmul"
           ],
@@ -9116,6 +11557,10 @@
           "requested_ops": [
             "matmul"
           ],
+          "known_ops": [
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "matmul"
           ],
@@ -9127,6 +11572,10 @@
           "requested_ops": [
             "matmul"
           ],
+          "known_ops": [
+            "matmul"
+          ],
+          "unknown_ops": [],
           "supported_ops": [
             "matmul"
           ],
@@ -9152,6 +11601,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9159,6 +11610,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9166,6 +11619,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -9189,6 +11644,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9196,6 +11653,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9203,6 +11662,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -9230,6 +11691,10 @@
           "requested_ops": [
             "conv2d"
           ],
+          "known_ops": [
+            "conv2d"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "conv2d"
@@ -9241,6 +11706,10 @@
           "requested_ops": [
             "conv2d"
           ],
+          "known_ops": [
+            "conv2d"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "conv2d"
@@ -9252,6 +11721,10 @@
           "requested_ops": [
             "conv2d"
           ],
+          "known_ops": [
+            "conv2d"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "conv2d"
@@ -9277,6 +11750,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9284,6 +11759,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9291,6 +11768,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -9314,6 +11793,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9321,6 +11802,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9328,6 +11811,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -9351,6 +11836,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9358,6 +11845,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9365,6 +11854,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -9392,6 +11883,10 @@
           "requested_ops": [
             "upsample_bicubic2d_aa"
           ],
+          "known_ops": [
+            "upsample_bicubic2d_aa"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "upsample_bicubic2d_aa"
@@ -9403,6 +11898,10 @@
           "requested_ops": [
             "upsample_bicubic2d_aa"
           ],
+          "known_ops": [
+            "upsample_bicubic2d_aa"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "upsample_bicubic2d_aa"
@@ -9414,6 +11913,10 @@
           "requested_ops": [
             "upsample_bicubic2d_aa"
           ],
+          "known_ops": [
+            "upsample_bicubic2d_aa"
+          ],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": [
             "upsample_bicubic2d_aa"
@@ -9439,6 +11942,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9446,6 +11951,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9453,6 +11960,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -9476,6 +11985,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9483,6 +11994,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9490,6 +12003,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -9513,6 +12028,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9520,6 +12037,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9527,6 +12046,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -9550,6 +12071,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9557,6 +12080,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9564,6 +12089,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -9587,6 +12114,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9594,6 +12123,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9601,6 +12132,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -9624,6 +12157,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9631,6 +12166,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9638,6 +12175,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }
@@ -9661,6 +12200,8 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9668,6 +12209,8 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         },
@@ -9675,6 +12218,8 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [],
+          "known_ops": [],
+          "unknown_ops": [],
           "supported_ops": [],
           "missing_ops": []
         }

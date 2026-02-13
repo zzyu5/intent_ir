@@ -113,3 +113,55 @@ def test_function_meta_flaggems_requires_source_and_state():
     bad["meta"] = {"provider": "flaggems"}
     with pytest.raises(IntentIRValidationError):
         IntentFunction.from_json_dict(bad)
+
+
+def test_new_structure_ops_validate_success() -> None:
+    src = {
+        "name": "structure_ok",
+        "tensors": {
+            "X": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            "Y": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            "Out": {"dtype": "f32", "shape": ["M2", "N"], "layout": "row_major"},
+        },
+        "ops": [
+            {"op": "concat", "inputs": ["X", "Y"], "output": "Out", "attrs": {"axis": 0}},
+            {"op": "tile", "inputs": ["X"], "output": "T", "attrs": {"repeats": [2, 1]}},
+            {"op": "repeat_interleave", "inputs": ["X"], "output": "R", "attrs": {"repeats": 2, "axis": 1}},
+            {"op": "pad", "inputs": ["X"], "output": "P", "attrs": {"pad_width": {"pairs": [[1, 0], [0, 1]]}}},
+            {"op": "sort", "inputs": ["X"], "output": "S", "attrs": {"axis": 1, "descending": True, "stable": True}},
+            {"op": "topk", "inputs": ["X"], "output": "K", "attrs": {"k": 1, "axis": 1}},
+            {"op": "unique", "inputs": ["K"], "output": "U", "attrs": {"sorted": False}},
+            {"op": "nonzero", "inputs": ["X"], "output": "NZ"},
+        ],
+        "outputs": ["Out"],
+    }
+    intent = IntentFunction.from_json_dict(src)
+    assert intent.name == "structure_ok"
+
+
+def test_topk_requires_non_negative_k() -> None:
+    bad = {
+        "name": "topk_bad",
+        "tensors": {
+            "X": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            "Out": {"dtype": "f32", "shape": ["M", "K"], "layout": "row_major"},
+        },
+        "ops": [{"op": "topk", "inputs": ["X"], "output": "Out", "attrs": {"k": -1, "axis": 1}}],
+        "outputs": ["Out"],
+    }
+    with pytest.raises(IntentIRValidationError):
+        IntentFunction.from_json_dict(bad)
+
+
+def test_pad_requires_valid_pad_width_pairs() -> None:
+    bad = {
+        "name": "pad_bad",
+        "tensors": {
+            "X": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            "Out": {"dtype": "f32", "shape": ["M2", "N2"], "layout": "row_major"},
+        },
+        "ops": [{"op": "pad", "inputs": ["X"], "output": "Out", "attrs": {"pad_width": {"pairs": [[1], [0, 1]]}}}],
+        "outputs": ["Out"],
+    }
+    with pytest.raises(IntentIRValidationError):
+        IntentFunction.from_json_dict(bad)

@@ -72,6 +72,14 @@ _ALIAS_TO_BASE: dict[str, str] = {
     "resolve_conj": "identity",
     "resolve_neg": "identity",
     "to_copy": "cast",
+    "cat": "concat",
+    "hstack": "concat",
+    "vstack": "concat",
+    "constant_pad_nd": "pad",
+    "repeat_interleave_self_int": "repeat_interleave",
+    "repeat_interleave_self_tensor": "repeat_interleave",
+    "repeat_interleave_tensor": "repeat_interleave",
+    "sort_stable": "sort",
     # Reduction aliases.
     "mean_dim": "mean",
     "prod_dim": "prod",
@@ -157,6 +165,8 @@ _UNARY_TEMPLATE: dict[str, SemanticMapping] = {
     "log": _mk("log", ("log",), mapping_kind="unary_template", pattern_id="unary.log", detail="mapped to log primitive"),
     "sin": _mk("sin", ("sin",), mapping_kind="unary_template", pattern_id="unary.sin", detail="mapped to sin primitive"),
     "cos": _mk("cos", ("cos",), mapping_kind="unary_template", pattern_id="unary.cos", detail="mapped to cos primitive"),
+    "acos": _mk("acos", ("acos",), mapping_kind="unary_template", pattern_id="unary.acos", detail="mapped to acos primitive"),
+    "atan": _mk("atan", ("atan",), mapping_kind="unary_template", pattern_id="unary.atan", detail="mapped to atan primitive"),
     "tan": _mk("tan", ("tan",), mapping_kind="unary_template", pattern_id="unary.tan", detail="mapped to tan primitive"),
     "erf": _mk("erf", ("erf",), mapping_kind="unary_template", pattern_id="unary.erf", detail="mapped to erf primitive"),
     "isnan": _mk(
@@ -490,6 +500,13 @@ _MACRO_TEMPLATE: dict[str, SemanticMapping] = {
         mapping_kind="macro_template",
         pattern_id="macro.full",
         detail="mapped as scalar const(value) + broadcast",
+    ),
+    "arange": _mk(
+        "arange",
+        ("iota",),
+        mapping_kind="macro_template",
+        pattern_id="macro.arange_via_iota",
+        detail="mapped to iota primitive (range parameters normalized in attrs)",
     ),
 }
 

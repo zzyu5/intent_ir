@@ -23,6 +23,8 @@ def test_semantic_rule_templates_for_high_yield_ops() -> None:
     assert resolve_semantic_mapping("isnan").intent_ops == ("ne",)
     assert resolve_semantic_mapping("isinf").intent_ops == ("abs", "const", "gt")
     assert resolve_semantic_mapping("isfinite").intent_ops == ("abs", "const", "le")
+    assert resolve_semantic_mapping("acos").intent_ops == ("acos",)
+    assert resolve_semantic_mapping("atan").intent_ops == ("atan",)
 
 
 def test_semantic_rule_composite_aliases() -> None:
@@ -41,6 +43,13 @@ def test_semantic_rule_composite_aliases() -> None:
     assert resolve_semantic_mapping("pow_scalar").intent_ops == ("pow",)
     assert resolve_semantic_mapping("lerp_scalar").intent_ops == ("sub", "mul", "add")
     assert resolve_semantic_mapping("rms_norm_forward").intent_ops == ("mul", "reduce_sum", "add", "rsqrt", "mul")
+    assert resolve_semantic_mapping("cat").intent_ops == ("concat",)
+    assert resolve_semantic_mapping("hstack").intent_ops == ("concat",)
+    assert resolve_semantic_mapping("vstack").intent_ops == ("concat",)
+    assert resolve_semantic_mapping("constant_pad_nd").intent_ops == ("pad",)
+    assert resolve_semantic_mapping("repeat_interleave_self_int").intent_ops == ("repeat_interleave",)
+    assert resolve_semantic_mapping("sort_stable").intent_ops == ("sort",)
+    assert resolve_semantic_mapping("arange").intent_ops == ("iota",)
     assert resolve_semantic_mapping("logical_xor").intent_ops == ("or", "and", "not", "and")
     assert resolve_semantic_mapping("log_softmax").intent_ops == ("softmax", "log")
     assert resolve_semantic_mapping("exp2").intent_ops == ("const", "mul", "exp")

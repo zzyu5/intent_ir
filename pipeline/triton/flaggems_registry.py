@@ -64,8 +64,12 @@ _NON_SEMANTIC_OP_EXACT = {
 _SEMANTIC_TO_E2E_SPEC: dict[str, str] = {
     "any": "any_kernel_dim",
     "add": "add2d",
+    "acos": "acos2d",
     "sub": "sub2d",
     "mul": "mul2d",
+    "atan": "atan2d",
+    "cat": "cat2d",
+    "arange": "arange1d",
     "div": "div2d",
     "eq": "eq2d",
     "ne": "ne2d",

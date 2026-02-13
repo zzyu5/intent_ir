@@ -18,6 +18,10 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "relu2d" in names
     assert "exp2d" in names
     assert "exp22d" in names
+    assert "acos2d" in names
+    assert "atan2d" in names
+    assert "cat2d" in names
+    assert "arange1d" in names
     assert "div2d" in names
     assert "eq2d" in names
     assert "ne2d" in names

@@ -29,18 +29,22 @@ _TARGET_OPSETS: dict[str, set[str]] = {
 class CapabilityResult:
     target: str
     requested_ops: list[str]
+    known_ops: list[str]
+    unknown_ops: list[str]
     supported_ops: list[str]
     missing_ops: list[str]
 
     @property
     def ok(self) -> bool:
-        return not self.missing_ops
+        return not self.missing_ops and not self.unknown_ops
 
     def to_json_dict(self) -> dict:
         return {
             "target": str(self.target),
             "ok": bool(self.ok),
             "requested_ops": list(self.requested_ops),
+            "known_ops": list(self.known_ops),
+            "unknown_ops": list(self.unknown_ops),
             "supported_ops": list(self.supported_ops),
             "missing_ops": list(self.missing_ops),
         }
@@ -55,12 +59,16 @@ def supported_ops_for_target(target: str) -> set[str]:
 
 def check_target_support(target: str, intent_ops: Iterable[str]) -> CapabilityResult:
     requested = sorted({str(op) for op in intent_ops if isinstance(op, str) and op})
+    unknown = sorted(op for op in requested if op not in IR_SUPPORTED_OPS)
+    known = sorted(op for op in requested if op in IR_SUPPORTED_OPS)
     supported = supported_ops_for_target(target)
-    ok_ops = sorted(op for op in requested if op in supported)
-    missing = sorted(op for op in requested if op not in supported)
+    ok_ops = sorted(op for op in known if op in supported)
+    missing = sorted(op for op in known if op not in supported)
     return CapabilityResult(
         target=str(target),
         requested_ops=requested,
+        known_ops=known,
+        unknown_ops=unknown,
         supported_ops=ok_ops,
         missing_ops=missing,
     )

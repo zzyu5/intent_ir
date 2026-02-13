@@ -37,6 +37,8 @@ NUM_UNARY_OPS = {
     "log": np.log,
     "sin": np.sin,
     "cos": np.cos,
+    "acos": np.arccos,
+    "atan": np.arctan,
     "tan": np.tan,
     "erf": lambda x: np.vectorize(math.erf, otypes=[np.float64])(x),
     "identity": lambda x: x,
@@ -68,8 +70,18 @@ INTERPRETER_SUPPORTED_OPS: set[str] = set().union(
     set(BOOL_UNARY_OPS.keys()),
     {
         "broadcast_in_dim",
+        "concat",
+        "stack",
         "transpose",
         "reshape",
+        "tile",
+        "repeat",
+        "repeat_interleave",
+        "pad",
+        "sort",
+        "topk",
+        "unique",
+        "nonzero",
         "layout_cast",
         "cast",
         "iota",
@@ -285,10 +297,106 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         if perm is None:
             raise ValueError("transpose requires attrs.perm")
         return np.transpose(x, axes=perm)
+    if op.op == "concat":
+        if not op.inputs:
+            raise ValueError("concat requires at least one input")
+        xs = [_get(env, name) for name in op.inputs]
+        axis = int(op.attrs.get("axis", 0))
+        return np.concatenate(xs, axis=axis)
+    if op.op == "stack":
+        if not op.inputs:
+            raise ValueError("stack requires at least one input")
+        xs = [_get(env, name) for name in op.inputs]
+        axis = int(op.attrs.get("axis", 0))
+        return np.stack(xs, axis=axis)
     if op.op == "reshape":
         x = _get(env, op.inputs[0])
         shape = _shape_from_attr(op.attrs.get("shape"), shape_bindings)
         return np.reshape(x, shape)
+    if op.op == "tile":
+        x = _get(env, op.inputs[0])
+        repeats = _normalize_repeats(op.attrs.get("repeats"))
+        return np.tile(x, repeats)
+    if op.op in {"repeat", "repeat_interleave"}:
+        x = _get(env, op.inputs[0])
+        repeats_raw = op.attrs.get("repeats")
+        if repeats_raw is None:
+            raise ValueError(f"{op.op} requires attrs.repeats")
+        axis = op.attrs.get("axis")
+        axis_int = None if axis is None else int(axis)
+        repeats = _normalize_repeat_repeats(repeats_raw)
+        return np.repeat(x, repeats, axis=axis_int)
+    if op.op == "pad":
+        x = _get(env, op.inputs[0])
+        pad_width = _normalize_pad_width(op.attrs.get("pad_width"), x.ndim)
+        mode = str(op.attrs.get("mode", "constant"))
+        if mode == "constant":
+            value = op.attrs.get("value", 0)
+            return np.pad(x, pad_width, mode=mode, constant_values=value)
+        return np.pad(x, pad_width, mode=mode)
+    if op.op == "sort":
+        x = _get(env, op.inputs[0])
+        axis = int(op.attrs.get("axis", -1))
+        descending = bool(op.attrs.get("descending", False))
+        stable = bool(op.attrs.get("stable", False))
+        try:
+            out = np.sort(x, axis=axis, kind=("stable" if stable else "quicksort"))
+        except TypeError:
+            out = np.sort(x, axis=axis)
+        if descending:
+            out = np.flip(out, axis=axis)
+        return out
+    if op.op == "topk":
+        x = _get(env, op.inputs[0])
+        k = int(op.attrs.get("k"))
+        axis = int(op.attrs.get("axis", -1))
+        largest = bool(op.attrs.get("largest", True))
+        sorted_out = bool(op.attrs.get("sorted", True))
+        axis_norm = axis if axis >= 0 else x.ndim + axis
+        if axis_norm < 0 or axis_norm >= x.ndim:
+            raise ValueError(f"topk axis out of range: axis={axis} rank={x.ndim}")
+        axis_dim = int(x.shape[axis_norm])
+        if k < 0 or k > axis_dim:
+            raise ValueError(f"topk k out of range: k={k}, axis_dim={axis_dim}")
+        if k == 0:
+            slicer = [slice(None)] * x.ndim
+            slicer[axis_norm] = slice(0, 0)
+            return x[tuple(slicer)]
+        if largest:
+            part = np.argpartition(x, axis_dim - k, axis=axis_norm)
+            idx = np.take(part, np.arange(axis_dim - k, axis_dim), axis=axis_norm)
+            vals = np.take_along_axis(x, idx, axis=axis_norm)
+            if sorted_out:
+                order = np.argsort(vals, axis=axis_norm)
+                order = np.flip(order, axis=axis_norm)
+                vals = np.take_along_axis(vals, order, axis=axis_norm)
+            return vals
+        part = np.argpartition(x, k - 1, axis=axis_norm)
+        idx = np.take(part, np.arange(0, k), axis=axis_norm)
+        vals = np.take_along_axis(x, idx, axis=axis_norm)
+        if sorted_out:
+            order = np.argsort(vals, axis=axis_norm)
+            vals = np.take_along_axis(vals, order, axis=axis_norm)
+        return vals
+    if op.op == "unique":
+        x = _get(env, op.inputs[0])
+        axis = op.attrs.get("axis")
+        sorted_out = bool(op.attrs.get("sorted", True))
+        if axis is not None:
+            # NumPy axis-unique is always sorted lexicographically.
+            return np.unique(x, axis=int(axis))
+        flat = np.ravel(x)
+        if sorted_out:
+            return np.unique(flat)
+        uniq, first_idx = np.unique(flat, return_index=True)
+        order = np.argsort(first_idx)
+        return uniq[order]
+    if op.op == "nonzero":
+        x = _get(env, op.inputs[0])
+        idx = np.nonzero(x)
+        if not idx:
+            return np.zeros((0, 0), dtype=np.int64)
+        return np.stack(idx, axis=-1).astype(np.int64, copy=False)
     if op.op == "layout_cast":
         return _get(env, op.inputs[0])
     if op.op == "cast":
@@ -695,6 +803,41 @@ def _shape_from_attr(shape_attr, bindings: Dict[str, int]):
         else:
             raise ValueError(f"unbound symbolic dim in shape: {s}")
     return tuple(out)
+
+
+def _normalize_repeats(repeats_raw: Any) -> tuple[int, ...]:
+    if isinstance(repeats_raw, (int, np.integer)):
+        return (int(repeats_raw),)
+    if isinstance(repeats_raw, list) and repeats_raw and all(isinstance(x, (int, np.integer)) for x in repeats_raw):
+        return tuple(int(x) for x in repeats_raw)
+    raise ValueError(f"tile.repeats must be int or non-empty list[int], got: {type(repeats_raw).__name__}")
+
+
+def _normalize_repeat_repeats(repeats_raw: Any) -> int | np.ndarray:
+    if isinstance(repeats_raw, (int, np.integer)):
+        return int(repeats_raw)
+    if isinstance(repeats_raw, list) and repeats_raw and all(isinstance(x, (int, np.integer)) for x in repeats_raw):
+        return np.asarray([int(x) for x in repeats_raw], dtype=np.int64)
+    raise ValueError(f"repeat.repeats must be int or non-empty list[int], got: {type(repeats_raw).__name__}")
+
+
+def _normalize_pad_width(pad_raw: Any, rank: int) -> list[tuple[int, int]]:
+    if isinstance(pad_raw, dict):
+        pairs = pad_raw.get("pairs")
+        if isinstance(pairs, list):
+            pad_raw = pairs
+    if isinstance(pad_raw, list):
+        if len(pad_raw) == 2 and all(isinstance(x, (int, np.integer)) for x in pad_raw):
+            pair = (int(pad_raw[0]), int(pad_raw[1]))
+            return [pair for _ in range(int(rank))]
+        if len(pad_raw) == int(rank) and all(isinstance(x, list) and len(x) == 2 for x in pad_raw):
+            out: list[tuple[int, int]] = []
+            for x in pad_raw:
+                if not all(isinstance(v, (int, np.integer)) for v in x):
+                    raise ValueError("pad_width must contain int pairs")
+                out.append((int(x[0]), int(x[1])))
+            return out
+    raise ValueError("pad_width must be {'pairs': [[l,r],...]} or [l,r] or [[l,r], ...]")
 
 
 def _get(env: Dict[str, np.ndarray], name: str) -> np.ndarray:

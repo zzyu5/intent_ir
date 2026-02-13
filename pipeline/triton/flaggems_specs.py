@@ -61,9 +61,13 @@ def _module_source_text(mod_name: str) -> str:
 # Use full module source so LLM/evidence stage has enough context.
 FLAGGEMS_ANY_SRC = _module_source_text("flag_gems.ops.any")
 FLAGGEMS_ADD_SRC = _module_source_text("flag_gems.ops.add")
+FLAGGEMS_ACOS_SRC = _module_source_text("flag_gems.ops.acos")
+FLAGGEMS_ATAN_SRC = _module_source_text("flag_gems.ops.atan")
+FLAGGEMS_ARANGE_SRC = _module_source_text("flag_gems.ops.arange")
 FLAGGEMS_SUB_SRC = _module_source_text("flag_gems.ops.sub")
 FLAGGEMS_MUL_SRC = _module_source_text("flag_gems.ops.mul")
 FLAGGEMS_DIV_SRC = _module_source_text("flag_gems.ops.div")
+FLAGGEMS_CAT_SRC = _module_source_text("flag_gems.ops.cat")
 FLAGGEMS_EQ_SRC = _module_source_text("flag_gems.ops.eq")
 FLAGGEMS_NE_SRC = _module_source_text("flag_gems.ops.ne")
 FLAGGEMS_GT_SRC = _module_source_text("flag_gems.ops.gt")
@@ -403,6 +407,7 @@ def _run_flaggems_unary2d_reference(
     include: List[str],
     op_name: str,
     positive_input: bool = False,
+    clip_unit_input: bool = False,
 ) -> Dict[str, np.ndarray]:
     m = int(case.shapes.get("M", 4))
     n = int(case.shapes.get("N", 64))
@@ -415,10 +420,14 @@ def _run_flaggems_unary2d_reference(
         raw = rg.standard_normal((m, n), dtype=np.float32)
         if positive_input:
             raw = np.abs(raw) + 1e-3
+        if clip_unit_input:
+            raw = np.clip(raw, -0.999, 0.999)
         inp = torch.from_numpy(raw).to(device)
 
     if positive_input:
         inp = torch.where(inp <= 1e-3, torch.full_like(inp, 1e-3), inp)
+    if clip_unit_input:
+        inp = torch.clamp(inp, -0.999, 0.999)
 
     with flag_gems.use_gems(include=include):
         if op_name == "ceil":
@@ -435,6 +444,10 @@ def _run_flaggems_unary2d_reference(
             out = torch.nn.functional.silu(inp)
         elif op_name == "tanh":
             out = torch.tanh(inp)
+        elif op_name == "acos":
+            out = torch.acos(inp)
+        elif op_name == "atan":
+            out = torch.atan(inp)
         else:
             raise ValueError(f"unsupported op_name for unary2d runner: {op_name}")
 
@@ -501,6 +514,23 @@ def _run_flaggems_tanh2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         case,
         include=["tanh"],
         op_name="tanh",
+    )
+
+
+def _run_flaggems_acos2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_unary2d_reference(
+        case,
+        include=["acos"],
+        op_name="acos",
+        clip_unit_input=True,
+    )
+
+
+def _run_flaggems_atan2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_unary2d_reference(
+        case,
+        include=["atan"],
+        op_name="atan",
     )
 
 
@@ -669,6 +699,74 @@ def _run_flaggems_full2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         "output": out_np,
         "value": value_np,
         "fill_value": value_np,
+    }
+
+
+def _run_flaggems_arange1d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+
+    start = 0.0
+    end = float(n)
+    step = 1.0
+    if case.inputs:
+        if "start" in case.inputs:
+            start = float(np.asarray(case.inputs["start"]).reshape(()))
+        if "end" in case.inputs:
+            end = float(np.asarray(case.inputs["end"]).reshape(()))
+        if "step" in case.inputs:
+            step = float(np.asarray(case.inputs["step"]).reshape(()))
+    if step == 0.0:
+        step = 1.0
+
+    with flag_gems.use_gems(include=["arange"]):
+        out = torch.arange(start=start, end=end, step=step, device=device, dtype=torch.float32)
+
+    out_np = _to_np(out)
+    start_np = np.array(start, dtype=np.float32)
+    end_np = np.array(end, dtype=np.float32)
+    step_np = np.array(step, dtype=np.float32)
+    return {
+        "out": out_np,
+        "output": out_np,
+        "start": start_np,
+        "end": end_np,
+        "step": step_np,
+    }
+
+
+def _run_flaggems_cat2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 32))
+    axis = int(case.shapes.get("AXIS", 1))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "A" in case.inputs:
+        a = _as_f32_tensor(np.asarray(case.inputs["A"]), device=device)
+    else:
+        a = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+    if case.inputs and "B" in case.inputs:
+        b = _as_f32_tensor(np.asarray(case.inputs["B"]), device=device)
+    else:
+        b = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+    if axis < -2 or axis >= 2:
+        axis = 1
+
+    with flag_gems.use_gems(include=["cat"]):
+        out = torch.cat([a, b], dim=axis)
+
+    a_np = _to_np(a)
+    b_np = _to_np(b)
+    out_np = _to_np(out)
+    axis_np = np.array(axis, dtype=np.int32)
+    return {
+        "A": a_np,
+        "B": b_np,
+        "out": out_np,
+        "output": out_np,
+        "axis": axis_np,
+        "dim": axis_np,
     }
 
 
@@ -2081,6 +2179,38 @@ _FLAGGEMS_SPEC_BUILDERS = {
         attr="FLAGGEMS_ADD_SRC",
         runner=_run_flaggems_add2d_reference,
         canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "acos2d": lambda: KernelSpec(
+        name="acos2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_ACOS_SRC",
+        runner=_run_flaggems_acos2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "atan2d": lambda: KernelSpec(
+        name="atan2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_ATAN_SRC",
+        runner=_run_flaggems_atan2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "arange1d": lambda: KernelSpec(
+        name="arange1d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_ARANGE_SRC",
+        runner=_run_flaggems_arange1d_reference,
+        canonical_shapes={"N": 64},
+        vary_axes=["N"],
+    ),
+    "cat2d": lambda: KernelSpec(
+        name="cat2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_CAT_SRC",
+        runner=_run_flaggems_cat2d_reference,
+        canonical_shapes={"M": 4, "N": 32, "AXIS": 1},
         vary_axes=["M", "N"],
     ),
     "sub2d": lambda: KernelSpec(

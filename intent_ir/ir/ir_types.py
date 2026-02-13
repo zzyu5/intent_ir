@@ -818,6 +818,88 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
             raise IntentIRValidationError(f"op[{idx}] reshape.shape must be non-empty list")
         for j, d in enumerate(shape):
             parse_dim(d)
+    elif op.op in {"concat", "stack"}:
+        if len(op.inputs) < 1:
+            raise IntentIRValidationError(f"op[{idx}] {op.op} requires at least 1 input")
+        axis = attrs.get("axis")
+        if axis is not None and not isinstance(axis, int):
+            raise IntentIRValidationError(f"op[{idx}] {op.op}.axis must be int when provided")
+    elif op.op in {"tile", "repeat", "repeat_interleave"}:
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] {op.op} requires 1 input")
+        repeats = attrs.get("repeats")
+        if isinstance(repeats, int):
+            if repeats < 0:
+                raise IntentIRValidationError(f"op[{idx}] {op.op}.repeats must be non-negative")
+        elif isinstance(repeats, list) and repeats and all(isinstance(x, int) for x in repeats):
+            if any(x < 0 for x in repeats):
+                raise IntentIRValidationError(f"op[{idx}] {op.op}.repeats must be non-negative list[int]")
+        else:
+            raise IntentIRValidationError(f"op[{idx}] {op.op}.repeats must be int or non-empty list[int]")
+        axis = attrs.get("axis")
+        if axis is not None and not isinstance(axis, int):
+            raise IntentIRValidationError(f"op[{idx}] {op.op}.axis must be int when provided")
+    elif op.op == "pad":
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] pad requires 1 input")
+        pad_width = attrs.get("pad_width")
+        pairs = None
+        if isinstance(pad_width, dict):
+            pairs = pad_width.get("pairs")
+        elif isinstance(pad_width, list):
+            pairs = pad_width
+        if not isinstance(pairs, list) or not pairs:
+            raise IntentIRValidationError(f"op[{idx}] pad.pad_width must provide non-empty list pairs")
+        if len(pairs) == 2 and all(isinstance(v, int) for v in pairs):
+            pass
+        else:
+            if not all(isinstance(pair, list) and len(pair) == 2 and all(isinstance(v, int) for v in pair) for pair in pairs):
+                raise IntentIRValidationError(f"op[{idx}] pad.pad_width must be [l,r] or [[l,r], ...] with ints")
+        mode = attrs.get("mode")
+        if mode is not None and not isinstance(mode, str):
+            raise IntentIRValidationError(f"op[{idx}] pad.mode must be string when provided")
+        value = attrs.get("value")
+        if value is not None and not isinstance(value, (int, float)):
+            raise IntentIRValidationError(f"op[{idx}] pad.value must be number when provided")
+    elif op.op == "sort":
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] sort requires 1 input")
+        axis = attrs.get("axis")
+        if axis is not None and not isinstance(axis, int):
+            raise IntentIRValidationError(f"op[{idx}] sort.axis must be int when provided")
+        descending = attrs.get("descending")
+        if descending is not None and not isinstance(descending, bool):
+            raise IntentIRValidationError(f"op[{idx}] sort.descending must be bool when provided")
+        stable = attrs.get("stable")
+        if stable is not None and not isinstance(stable, bool):
+            raise IntentIRValidationError(f"op[{idx}] sort.stable must be bool when provided")
+    elif op.op == "topk":
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] topk requires 1 input")
+        k = attrs.get("k")
+        if not isinstance(k, int) or k < 0:
+            raise IntentIRValidationError(f"op[{idx}] topk.k must be non-negative int")
+        axis = attrs.get("axis")
+        if axis is not None and not isinstance(axis, int):
+            raise IntentIRValidationError(f"op[{idx}] topk.axis must be int when provided")
+        largest = attrs.get("largest")
+        if largest is not None and not isinstance(largest, bool):
+            raise IntentIRValidationError(f"op[{idx}] topk.largest must be bool when provided")
+        sorted_flag = attrs.get("sorted")
+        if sorted_flag is not None and not isinstance(sorted_flag, bool):
+            raise IntentIRValidationError(f"op[{idx}] topk.sorted must be bool when provided")
+    elif op.op == "unique":
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] unique requires 1 input")
+        axis = attrs.get("axis")
+        if axis is not None and not isinstance(axis, int):
+            raise IntentIRValidationError(f"op[{idx}] unique.axis must be int when provided")
+        sorted_flag = attrs.get("sorted")
+        if sorted_flag is not None and not isinstance(sorted_flag, bool):
+            raise IntentIRValidationError(f"op[{idx}] unique.sorted must be bool when provided")
+    elif op.op == "nonzero":
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] nonzero requires 1 input")
     elif op.op == "layout_cast":
         if len(op.inputs) != 1:
             raise IntentIRValidationError(f"op[{idx}] layout_cast requires 1 input")

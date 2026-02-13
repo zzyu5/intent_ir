@@ -31,3 +31,13 @@ def test_op_tiers_are_disjoint() -> None:
     assert CORE_OPS.isdisjoint(EXPERIMENTAL_OPS)
     assert CORE_OPS.isdisjoint(MACRO_OPS)
     assert EXPERIMENTAL_OPS.isdisjoint(MACRO_OPS)
+
+
+def test_structure_ops_are_registered() -> None:
+    for op in {"concat", "stack", "tile", "repeat", "repeat_interleave", "pad", "sort", "topk", "unique", "nonzero"}:
+        assert op in EXPERIMENTAL_OPS
+
+
+def test_trig_inverse_unary_ops_are_registered() -> None:
+    for op in {"acos", "atan"}:
+        assert op in EXPERIMENTAL_OPS

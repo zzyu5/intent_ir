@@ -6,6 +6,7 @@ all frontends. Frontend-specific prompt construction lives under `frontends/`.
 ## Key modules
 
 - `ir/ir_types.py`: IntentIR dataclasses/types + validation.
+- `ops/specs.py` + `ops/opset.py`: declarative op registry (`OpSpec`) and tiered opset derivation.
 - `parser/parser_llm.py`: robust JSON parser/validator for LLM outputs (Task2).
 - `llm/llm_client.py` + `llm/llm_extract.py`: LLM client + “LLM response → JSON object” helpers (frontend-agnostic).
 - `ir/printer_mlir_like.py`: MLIR-like pretty printer (Task1.5).
@@ -22,3 +23,11 @@ The stable interchange is the IntentIR JSON shape produced by the LLM:
 - `schedule`: optional schedule sketch (tile sizes, axis bindings, memory hints)
 
 The parser enforces schema correctness so later stages can rely on it.
+
+## OpSpec notes
+
+- `OpSpec` is the single source for legal op names, arity mode, and lightweight attr schema.
+- Recent structural experimental ops include:
+  - `concat`, `stack`, `tile`, `repeat`, `repeat_interleave`, `pad`
+  - `sort`, `topk`, `unique`, `nonzero`
+- These ops validate at `ir_types` level and are executable in the NumPy interpreter path; backend lowering can be added incrementally per target.

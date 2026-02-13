@@ -12,8 +12,10 @@ def test_supported_ops_for_target_known_targets() -> None:
 def test_check_target_support_reports_missing() -> None:
     res = check_target_support("rvv", ["add", "nonexistent_op"])
     assert res.ok is False
+    assert "add" in res.known_ops
+    assert "nonexistent_op" in res.unknown_ops
     assert "add" in res.supported_ops
-    assert "nonexistent_op" in res.missing_ops
+    assert "nonexistent_op" not in res.missing_ops
 
 
 def test_check_dual_backend_support_shape() -> None:

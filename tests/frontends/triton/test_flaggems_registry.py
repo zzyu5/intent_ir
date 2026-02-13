@@ -45,6 +45,10 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
     payload = build_registry(
         all_ops=[
             "add",
+            "acos",
+            "atan",
+            "cat",
+            "arange",
             "sub",
             "mul",
             "div",
@@ -115,6 +119,10 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
     )
     specs = list_supported_e2e_specs(payload)
     assert "add2d" in specs
+    assert "acos2d" in specs
+    assert "atan2d" in specs
+    assert "cat2d" in specs
+    assert "arange1d" in specs
     assert "sub2d" in specs
     assert "mul2d" in specs
     assert "div2d" in specs
