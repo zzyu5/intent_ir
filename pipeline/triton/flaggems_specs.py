@@ -63,6 +63,14 @@ FLAGGEMS_ANY_SRC = _module_source_text("flag_gems.ops.any")
 FLAGGEMS_ADD_SRC = _module_source_text("flag_gems.ops.add")
 FLAGGEMS_SUB_SRC = _module_source_text("flag_gems.ops.sub")
 FLAGGEMS_MUL_SRC = _module_source_text("flag_gems.ops.mul")
+FLAGGEMS_DIV_SRC = _module_source_text("flag_gems.ops.div")
+FLAGGEMS_EQ_SRC = _module_source_text("flag_gems.ops.eq")
+FLAGGEMS_NE_SRC = _module_source_text("flag_gems.ops.ne")
+FLAGGEMS_GT_SRC = _module_source_text("flag_gems.ops.gt")
+FLAGGEMS_GE_SRC = _module_source_text("flag_gems.ops.ge")
+FLAGGEMS_LT_SRC = _module_source_text("flag_gems.ops.lt")
+FLAGGEMS_LE_SRC = _module_source_text("flag_gems.ops.le")
+FLAGGEMS_NEG_SRC = _module_source_text("flag_gems.ops.neg")
 FLAGGEMS_GROUP_NORM_SRC = _module_source_text("flag_gems.ops.groupnorm")
 FLAGGEMS_LAYER_NORM_SRC = _module_source_text("flag_gems.ops.layernorm")
 FLAGGEMS_SOFTMAX_SRC = _module_source_text("flag_gems.ops.softmax")
@@ -200,6 +208,147 @@ def _run_flaggems_mul2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         "y": b_np,
         "out": c_np,
         "output": c_np,
+    }
+
+
+def _run_flaggems_binary2d_reference(
+    case: TestCase,
+    *,
+    include: List[str],
+    op_name: str,
+) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "A" in case.inputs:
+        a = _as_f32_tensor(np.asarray(case.inputs["A"]), device=device)
+    else:
+        a = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    if case.inputs and "B" in case.inputs:
+        b = _as_f32_tensor(np.asarray(case.inputs["B"]), device=device)
+    else:
+        b = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    if op_name == "div":
+        # Stabilize division to avoid accidental inf/nan from near-zero denominator.
+        b = torch.where(torch.abs(b) < 1e-3, b + 1e-3, b)
+
+    with flag_gems.use_gems(include=include):
+        if op_name == "div":
+            c = torch.div(a, b)
+        elif op_name == "eq":
+            c = torch.eq(a, b)
+        elif op_name == "ne":
+            c = torch.ne(a, b)
+        elif op_name == "gt":
+            c = torch.gt(a, b)
+        elif op_name == "ge":
+            c = torch.ge(a, b)
+        elif op_name == "lt":
+            c = torch.lt(a, b)
+        elif op_name == "le":
+            c = torch.le(a, b)
+        else:
+            raise ValueError(f"unsupported op_name for binary2d runner: {op_name}")
+
+    a_np = _to_np(a)
+    b_np = _to_np(b)
+    c_np = _to_np(c)
+    return {
+        "A": a_np,
+        "B": b_np,
+        "C": c_np,
+        "a": a_np,
+        "b": b_np,
+        "x": a_np,
+        "y": b_np,
+        "out": c_np,
+        "output": c_np,
+    }
+
+
+def _run_flaggems_div2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_binary2d_reference(
+        case,
+        include=["div", "div_mode", "true_divide", "floor_divide"],
+        op_name="div",
+    )
+
+
+def _run_flaggems_eq2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_binary2d_reference(
+        case,
+        include=["eq", "equal", "eq_scalar"],
+        op_name="eq",
+    )
+
+
+def _run_flaggems_ne2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_binary2d_reference(
+        case,
+        include=["ne", "ne_scalar"],
+        op_name="ne",
+    )
+
+
+def _run_flaggems_gt2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_binary2d_reference(
+        case,
+        include=["gt", "gt_scalar"],
+        op_name="gt",
+    )
+
+
+def _run_flaggems_ge2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_binary2d_reference(
+        case,
+        include=["ge", "ge_scalar"],
+        op_name="ge",
+    )
+
+
+def _run_flaggems_lt2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_binary2d_reference(
+        case,
+        include=["lt", "lt_scalar"],
+        op_name="lt",
+    )
+
+
+def _run_flaggems_le2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_binary2d_reference(
+        case,
+        include=["le", "le_scalar"],
+        op_name="le",
+    )
+
+
+def _run_flaggems_neg2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["neg"]):
+        out = torch.neg(inp)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "A": inp_np,
+        "Out": out_np,
+        "inp": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
     }
 
 
@@ -714,6 +863,70 @@ _FLAGGEMS_SPEC_BUILDERS = {
         module="pipeline.triton.flaggems_specs",
         attr="FLAGGEMS_MUL_SRC",
         runner=_run_flaggems_mul2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "div2d": lambda: KernelSpec(
+        name="div2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_DIV_SRC",
+        runner=_run_flaggems_div2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "eq2d": lambda: KernelSpec(
+        name="eq2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_EQ_SRC",
+        runner=_run_flaggems_eq2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "ne2d": lambda: KernelSpec(
+        name="ne2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_NE_SRC",
+        runner=_run_flaggems_ne2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "gt2d": lambda: KernelSpec(
+        name="gt2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_GT_SRC",
+        runner=_run_flaggems_gt2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "ge2d": lambda: KernelSpec(
+        name="ge2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_GE_SRC",
+        runner=_run_flaggems_ge2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "lt2d": lambda: KernelSpec(
+        name="lt2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_LT_SRC",
+        runner=_run_flaggems_lt2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "le2d": lambda: KernelSpec(
+        name="le2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_LE_SRC",
+        runner=_run_flaggems_le2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "neg2d": lambda: KernelSpec(
+        name="neg2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_NEG_SRC",
+        runner=_run_flaggems_neg2d_reference,
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
     ),

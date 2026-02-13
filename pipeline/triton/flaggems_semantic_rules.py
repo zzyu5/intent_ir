@@ -64,7 +64,7 @@ _ALIAS_TO_BASE: dict[str, str] = {
     "true_divide": "div",
     "div_mode": "div",
     "floor_divide": "div",
-    "clamp_min": "max",
+    "clamp_min": "maximum",
     "clamp_tensor": "clamp",
     # Shape/layout alias-like ops.
     "copy": "identity",
@@ -76,6 +76,11 @@ _ALIAS_TO_BASE: dict[str, str] = {
     "mean_dim": "mean",
     "prod_dim": "prod",
     "min_dim": "reduce_min",
+    "lerp_scalar": "lerp",
+    "lerp_tensor": "lerp",
+    "pow_scalar": "pow",
+    "pow_tensor_scalar": "pow",
+    "pow_tensor_tensor": "pow",
     # Creation aliases.
     "fill_scalar": "full",
     "fill_tensor": "full",
@@ -159,8 +164,7 @@ _BINARY_TEMPLATE: dict[str, SemanticMapping] = {
     "sub": _mk("sub", ("sub",), mapping_kind="binary_template", pattern_id="binary.sub", detail="mapped by binary template"),
     "mul": _mk("mul", ("mul",), mapping_kind="binary_template", pattern_id="binary.mul", detail="mapped by binary template"),
     "div": _mk("div", ("div",), mapping_kind="binary_template", pattern_id="binary.div", detail="mapped by binary template"),
-    "max": _mk("max", ("max",), mapping_kind="binary_template", pattern_id="binary.max", detail="mapped by binary template"),
-    "min": _mk("min", ("min",), mapping_kind="binary_template", pattern_id="binary.min", detail="mapped by binary template"),
+    "min": _mk("min", ("reduce_min",), mapping_kind="reduce_template", pattern_id="reduce.min", detail="mapped to reduce_min"),
 }
 
 _CMP_TEMPLATE: dict[str, SemanticMapping] = {
@@ -183,6 +187,13 @@ _CMP_TEMPLATE: dict[str, SemanticMapping] = {
         pattern_id="cmp.equal_via_not_ne",
         detail="mapped as not(ne(x, y))",
     ),
+    "logical_xor": _mk(
+        "logical_xor",
+        ("or", "and", "not", "and"),
+        mapping_kind="cmp_template",
+        pattern_id="cmp.logical_xor_via_or_and_not",
+        detail="mapped as (a or b) and not(a and b)",
+    ),
 }
 
 _REDUCE_TEMPLATE: dict[str, SemanticMapping] = {
@@ -190,6 +201,7 @@ _REDUCE_TEMPLATE: dict[str, SemanticMapping] = {
     "sum": _mk("sum", ("reduce_sum",), mapping_kind="reduce_template", pattern_id="reduce.sum", detail="mapped to reduce_sum"),
     "sum_dim": _mk("sum_dim", ("reduce_sum",), mapping_kind="reduce_template", pattern_id="reduce.sum_dim", detail="mapped to reduce_sum with dims"),
     "amax": _mk("amax", ("reduce_max",), mapping_kind="reduce_template", pattern_id="reduce.amax", detail="mapped to reduce_max"),
+    "max": _mk("max", ("reduce_max",), mapping_kind="reduce_template", pattern_id="reduce.max", detail="mapped to reduce_max"),
     "max_dim": _mk("max_dim", ("reduce_max",), mapping_kind="reduce_template", pattern_id="reduce.max_dim", detail="mapped to reduce_max with dims"),
     "mean": _mk("mean", ("reduce_sum", "div"), mapping_kind="reduce_template", pattern_id="reduce.mean_via_sum", detail="mapped as reduce_sum / num_elements"),
     "prod": _mk("prod", ("reduce_prod",), mapping_kind="reduce_template", pattern_id="reduce.prod", detail="mapped to reduce_prod"),
@@ -236,6 +248,13 @@ _MACRO_TEMPLATE: dict[str, SemanticMapping] = {
         detail="mapped as normalized arithmetic decomposition",
     ),
     "softmax": _mk("softmax", ("softmax",), mapping_kind="macro_template", pattern_id="macro.softmax", detail="mapped to softmax primitive"),
+    "log_softmax": _mk(
+        "log_softmax",
+        ("softmax", "log"),
+        mapping_kind="macro_template",
+        pattern_id="macro.log_softmax",
+        detail="mapped as log(softmax(x))",
+    ),
     "clamp": _mk("clamp", ("max", "min"), mapping_kind="macro_template", pattern_id="macro.clamp", detail="mapped as max/min composition"),
     "maximum": _mk(
         "maximum",
@@ -250,6 +269,34 @@ _MACRO_TEMPLATE: dict[str, SemanticMapping] = {
         mapping_kind="macro_template",
         pattern_id="macro.minimum",
         detail="mapped to min primitive",
+    ),
+    "lerp": _mk(
+        "lerp",
+        ("sub", "mul", "add"),
+        mapping_kind="macro_template",
+        pattern_id="macro.lerp",
+        detail="mapped as a + w * (b - a)",
+    ),
+    "softplus": _mk(
+        "softplus",
+        ("exp", "add", "log"),
+        mapping_kind="macro_template",
+        pattern_id="macro.softplus",
+        detail="mapped as log(1 + exp(x))",
+    ),
+    "gelu": _mk(
+        "gelu",
+        ("const", "mul", "erf", "add", "mul", "mul"),
+        mapping_kind="macro_template",
+        pattern_id="macro.gelu",
+        detail="mapped as 0.5 * x * (1 + erf(x / sqrt(2)))",
+    ),
+    "log_sigmoid": _mk(
+        "log_sigmoid",
+        ("sigmoid", "log"),
+        mapping_kind="macro_template",
+        pattern_id="macro.log_sigmoid",
+        detail="mapped as log(sigmoid(x))",
     ),
     "upsample_bicubic2d_aa": _mk(
         "upsample_bicubic2d_aa",

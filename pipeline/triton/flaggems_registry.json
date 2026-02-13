@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-13T02:57:29.737532+00:00",
+  "generated_at": "2026-02-13T03:39:16.947346+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -18,9 +18,9 @@
     "source_filtered_ops": 212,
     "semantic_ops": 196,
     "by_status": {
-      "blocked_backend": 63,
-      "blocked_ir": 113,
-      "dual_pass": 20
+      "blocked_backend": 56,
+      "blocked_ir": 103,
+      "dual_pass": 37
     },
     "by_family": {
       "attention_sequence": 5,
@@ -975,11 +975,11 @@
         "max"
       ],
       "mapping_kind": "alias",
-      "intent_pattern_id": "alias.clamp_min->max",
+      "intent_pattern_id": "alias.clamp_min->maximum",
       "e2e_spec": null,
       "status": "blocked_backend",
       "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to max; mapped by binary template; no e2e spec registered",
+      "status_reason_detail": "alias to maximum; mapped to max primitive; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1386,10 +1386,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.div_mode->div",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to div; mapped by binary template; no e2e spec registered",
+      "e2e_spec": "div2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to div; mapped by binary template",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1475,10 +1475,10 @@
       ],
       "mapping_kind": "cmp_template",
       "intent_pattern_id": "cmp.eq_via_not_ne",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as not(ne(x, y)); no e2e spec registered",
+      "e2e_spec": "eq2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as not(ne(x, y))",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1533,10 +1533,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.eq_scalar->eq",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to eq; mapped as not(ne(x, y)); no e2e spec registered",
+      "e2e_spec": "eq2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to eq; mapped as not(ne(x, y))",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1591,10 +1591,10 @@
       ],
       "mapping_kind": "cmp_template",
       "intent_pattern_id": "cmp.equal_via_not_ne",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as not(ne(x, y)); no e2e spec registered",
+      "e2e_spec": "eq2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as not(ne(x, y))",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2006,10 +2006,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.floor_divide->div",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to div; mapped by binary template; no e2e spec registered",
+      "e2e_spec": "div2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to div; mapped by binary template",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2173,10 +2173,10 @@
       ],
       "mapping_kind": "cmp_template",
       "intent_pattern_id": "cmp.ge",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped by comparison template; no e2e spec registered",
+      "e2e_spec": "ge2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped by comparison template",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2224,10 +2224,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.ge_scalar->ge",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to ge; mapped by comparison template; no e2e spec registered",
+      "e2e_spec": "ge2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to ge; mapped by comparison template",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2312,10 +2312,10 @@
       ],
       "mapping_kind": "cmp_template",
       "intent_pattern_id": "cmp.gt",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped by comparison template; no e2e spec registered",
+      "e2e_spec": "gt2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped by comparison template",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2363,10 +2363,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.gt_scalar->gt",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to gt; mapped by comparison template; no e2e spec registered",
+      "e2e_spec": "gt2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to gt; mapped by comparison template",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2673,10 +2673,10 @@
       ],
       "mapping_kind": "cmp_template",
       "intent_pattern_id": "cmp.le",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped by comparison template; no e2e spec registered",
+      "e2e_spec": "le2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped by comparison template",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2724,10 +2724,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.le_scalar->le",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to le; mapped by comparison template; no e2e spec registered",
+      "e2e_spec": "le2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to le; mapped by comparison template",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2770,33 +2770,61 @@
         "lerp_scalar"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "sub",
+        "mul",
+        "add"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.lerp_scalar->lerp",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "alias to lerp; mapped as a + w * (b - a); no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "mul",
+            "sub"
+          ],
+          "supported_ops": [
+            "add",
+            "mul",
+            "sub"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "mul",
+            "sub"
+          ],
+          "supported_ops": [
+            "add",
+            "mul",
+            "sub"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "mul",
+            "sub"
+          ],
+          "supported_ops": [
+            "add",
+            "mul",
+            "sub"
+          ],
           "missing_ops": []
         }
       }
@@ -2807,33 +2835,61 @@
         "lerp_tensor"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "sub",
+        "mul",
+        "add"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.lerp_tensor->lerp",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "alias to lerp; mapped as a + w * (b - a); no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "mul",
+            "sub"
+          ],
+          "supported_ops": [
+            "add",
+            "mul",
+            "sub"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "mul",
+            "sub"
+          ],
+          "supported_ops": [
+            "add",
+            "mul",
+            "sub"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "mul",
+            "sub"
+          ],
+          "supported_ops": [
+            "add",
+            "mul",
+            "sub"
+          ],
           "missing_ops": []
         }
       }
@@ -3085,33 +3141,62 @@
         "logical_xor"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "or",
+        "and",
+        "not",
+        "and"
+      ],
+      "mapping_kind": "cmp_template",
+      "intent_pattern_id": "cmp.logical_xor_via_or_and_not",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped as (a or b) and not(a and b); no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "and",
+            "not",
+            "or"
+          ],
+          "supported_ops": [
+            "and",
+            "not",
+            "or"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "and",
+            "not",
+            "or"
+          ],
+          "supported_ops": [
+            "and",
+            "not",
+            "or"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "and",
+            "not",
+            "or"
+          ],
+          "supported_ops": [
+            "and",
+            "not",
+            "or"
+          ],
           "missing_ops": []
         }
       }
@@ -3164,10 +3249,10 @@
       ],
       "mapping_kind": "cmp_template",
       "intent_pattern_id": "cmp.lt",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped by comparison template; no e2e spec registered",
+      "e2e_spec": "lt2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped by comparison template",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3215,10 +3300,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.lt_scalar->lt",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to lt; mapped by comparison template; no e2e spec registered",
+      "e2e_spec": "lt2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to lt; mapped by comparison template",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3299,23 +3384,23 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [
-        "max"
+        "reduce_max"
       ],
-      "mapping_kind": "binary_template",
-      "intent_pattern_id": "binary.max",
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.max",
       "e2e_spec": "row_max",
       "status": "dual_pass",
       "status_reason": "all_targets_supported_with_e2e_spec",
-      "status_reason_detail": "mapped by binary template",
+      "status_reason_detail": "mapped to reduce_max",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
-            "max"
+            "reduce_max"
           ],
           "supported_ops": [
-            "max"
+            "reduce_max"
           ],
           "missing_ops": []
         },
@@ -3323,10 +3408,10 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
-            "max"
+            "reduce_max"
           ],
           "supported_ops": [
-            "max"
+            "reduce_max"
           ],
           "missing_ops": []
         },
@@ -3334,10 +3419,10 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
-            "max"
+            "reduce_max"
           ],
           "supported_ops": [
-            "max"
+            "reduce_max"
           ],
           "missing_ops": []
         }
@@ -3452,47 +3537,47 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [
-        "min"
+        "reduce_min"
       ],
-      "mapping_kind": "binary_template",
-      "intent_pattern_id": "binary.min",
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.min",
       "e2e_spec": null,
       "status": "blocked_backend",
       "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped by binary template; no e2e spec registered",
+      "status_reason_detail": "mapped to reduce_min; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
+          "ok": false,
           "requested_ops": [
-            "min"
+            "reduce_min"
           ],
-          "supported_ops": [
-            "min"
-          ],
-          "missing_ops": []
+          "supported_ops": [],
+          "missing_ops": [
+            "reduce_min"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
+          "ok": false,
           "requested_ops": [
-            "min"
+            "reduce_min"
           ],
-          "supported_ops": [
-            "min"
-          ],
-          "missing_ops": []
+          "supported_ops": [],
+          "missing_ops": [
+            "reduce_min"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
+          "ok": false,
           "requested_ops": [
-            "min"
+            "reduce_min"
           ],
-          "supported_ops": [
-            "min"
-          ],
-          "missing_ops": []
+          "supported_ops": [],
+          "missing_ops": [
+            "reduce_min"
+          ]
         }
       }
     },
@@ -3771,10 +3856,10 @@
       ],
       "mapping_kind": "cmp_template",
       "intent_pattern_id": "cmp.ne",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped by comparison template; no e2e spec registered",
+      "e2e_spec": "ne2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped by comparison template",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3822,10 +3907,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.ne_scalar->ne",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to ne; mapped by comparison template; no e2e spec registered",
+      "e2e_spec": "ne2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to ne; mapped by comparison template",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3874,10 +3959,10 @@
       ],
       "mapping_kind": "unary_template",
       "intent_pattern_id": "unary.neg_via_mul",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as x * (-1); no e2e spec registered",
+      "e2e_spec": "neg2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as x * (-1)",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4301,34 +4386,48 @@
         "pow_scalar"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "pow"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.pow_scalar->pow",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "alias to pow; semantic op equals IntentIR op name; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "pow"
+          ],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "pow"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "pow"
+          ],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "pow"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "pow"
+          ],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "pow"
+          ]
         }
       }
     },
@@ -4338,34 +4437,48 @@
         "pow_tensor_scalar"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "pow"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.pow_tensor_scalar->pow",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "alias to pow; semantic op equals IntentIR op name; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "pow"
+          ],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "pow"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "pow"
+          ],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "pow"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "pow"
+          ],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "pow"
+          ]
         }
       }
     },
@@ -4375,34 +4488,48 @@
         "pow_tensor_tensor"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "pow"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.pow_tensor_tensor->pow",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "alias to pow; semantic op equals IntentIR op name; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "pow"
+          ],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "pow"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "pow"
+          ],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "pow"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "pow"
+          ],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "pow"
+          ]
         }
       }
     },
@@ -5423,10 +5550,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.true_divide->div",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to div; mapped by binary template; no e2e spec registered",
+      "e2e_spec": "div2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to div; mapped by binary template",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6052,34 +6179,58 @@
         "log_softmax"
       ],
       "family": "reduction",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "softmax",
+        "log"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.log_softmax",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped as log(softmax(x)); no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
-          "missing_ops": []
+          "ok": false,
+          "requested_ops": [
+            "log",
+            "softmax"
+          ],
+          "supported_ops": [
+            "softmax"
+          ],
+          "missing_ops": [
+            "log"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
-          "missing_ops": []
+          "ok": false,
+          "requested_ops": [
+            "log",
+            "softmax"
+          ],
+          "supported_ops": [
+            "softmax"
+          ],
+          "missing_ops": [
+            "log"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
-          "missing_ops": []
+          "ok": false,
+          "requested_ops": [
+            "log",
+            "softmax"
+          ],
+          "supported_ops": [
+            "softmax"
+          ],
+          "missing_ops": [
+            "log"
+          ]
         }
       }
     },
@@ -6624,34 +6775,74 @@
         "gelu"
       ],
       "family": "norm_activation",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "const",
+        "mul",
+        "erf",
+        "add",
+        "mul",
+        "mul"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.gelu",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped as 0.5 * x * (1 + erf(x / sqrt(2))); no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
-          "missing_ops": []
+          "ok": false,
+          "requested_ops": [
+            "add",
+            "const",
+            "erf",
+            "mul"
+          ],
+          "supported_ops": [
+            "add",
+            "const",
+            "mul"
+          ],
+          "missing_ops": [
+            "erf"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
-          "missing_ops": []
+          "ok": false,
+          "requested_ops": [
+            "add",
+            "const",
+            "erf",
+            "mul"
+          ],
+          "supported_ops": [
+            "add",
+            "const",
+            "mul"
+          ],
+          "missing_ops": [
+            "erf"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
-          "missing_ops": []
+          "ok": false,
+          "requested_ops": [
+            "add",
+            "const",
+            "erf",
+            "mul"
+          ],
+          "supported_ops": [
+            "add",
+            "const",
+            "mul"
+          ],
+          "missing_ops": [
+            "erf"
+          ]
         }
       }
     },
@@ -6791,34 +6982,55 @@
         "log_sigmoid"
       ],
       "family": "norm_activation",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "sigmoid",
+        "log"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.log_sigmoid",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped as log(sigmoid(x)); no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "log",
+            "sigmoid"
+          ],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "log",
+            "sigmoid"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "log",
+            "sigmoid"
+          ],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "log",
+            "sigmoid"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "log",
+            "sigmoid"
+          ],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "log",
+            "sigmoid"
+          ]
         }
       }
     },
@@ -7149,34 +7361,65 @@
         "softplus"
       ],
       "family": "norm_activation",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "exp",
+        "add",
+        "log"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.softplus",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped as log(1 + exp(x)); no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
-          "missing_ops": []
+          "ok": false,
+          "requested_ops": [
+            "add",
+            "exp",
+            "log"
+          ],
+          "supported_ops": [
+            "add",
+            "exp"
+          ],
+          "missing_ops": [
+            "log"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
-          "missing_ops": []
+          "ok": false,
+          "requested_ops": [
+            "add",
+            "exp",
+            "log"
+          ],
+          "supported_ops": [
+            "add",
+            "exp"
+          ],
+          "missing_ops": [
+            "log"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
-          "missing_ops": []
+          "ok": false,
+          "requested_ops": [
+            "add",
+            "exp",
+            "log"
+          ],
+          "supported_ops": [
+            "add",
+            "exp"
+          ],
+          "missing_ops": [
+            "log"
+          ]
         }
       }
     },
