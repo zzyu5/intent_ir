@@ -4314,7 +4314,30 @@ json emit_gather2d_f32(const Intent& intent, const json& bindings) {
 
   const int64_t M = binding_int(bindings, "M").value_or(-1);
   const int64_t N = binding_int(bindings, "N").value_or(-1);
-  const int64_t L = binding_int(bindings, "L").value_or(-1);
+  int64_t L = binding_int(bindings, "L").value_or(-1);
+  if (L <= 0) {
+    auto out_it = intent.tensors.find(out_name);
+    if (out_it == intent.tensors.end()) fail("gather: output tensor not found in intent.tensors");
+    const auto resolve_dim = [&](const json& d) -> int64_t {
+      if (d.is_number_integer()) return d.get<int64_t>();
+      if (d.is_number()) return static_cast<int64_t>(d.get<double>());
+      if (d.is_string()) {
+        auto b = binding_int(bindings, d.get<std::string>());
+        if (!b.has_value()) fail("gather missing binding for output dim: " + d.get<std::string>());
+        return *b;
+      }
+      fail("gather invalid output dim token");
+      return -1;
+    };
+    const auto& out_shape = out_it->second.shape;
+    if (out_shape.size() == 1) {
+      L = resolve_dim(out_shape[0]);
+    } else if (out_shape.size() == 2) {
+      L = resolve_dim(out_shape[0]) * resolve_dim(out_shape[1]);
+    } else {
+      fail("gather2d MVP supports output rank<=2");
+    }
+  }
   if (M <= 0 || N <= 0 || L <= 0) fail("gather missing/invalid bindings: M/N/L");
 
   int64_t block_x = resolve_schedule_int(intent, bindings, "tile_n", 256);
@@ -4360,7 +4383,9 @@ json emit_gather2d_f32(const Intent& intent, const json& bindings) {
       /*arg_names=*/{inp_name, row_name, col_name, out_name, "M", "N", "L"});
   out["launch"] = {{"grid", {grid_x, 1, 1}}, {"block", {block_x, 1, 1}}, {"shared_mem", 0}};
   out["output_names"] = {out_name};
-  out["bindings"] = bindings;
+  json out_bindings = bindings;
+  out_bindings["L"] = L;
+  out["bindings"] = out_bindings;
   return out;
 }
 

@@ -113,6 +113,7 @@ FLAGGEMS_VDOT_SRC = _module_source_text("flag_gems.ops.vdot")
 FLAGGEMS_MV_SRC = _module_source_text("flag_gems.ops.mv")
 FLAGGEMS_ADDMV_SRC = _module_source_text("flag_gems.ops.addmv")
 FLAGGEMS_FLIP_SRC = _module_source_text("flag_gems.ops.flip")
+FLAGGEMS_EMBEDDING_SRC = _module_source_text("flag_gems.ops.embedding")
 FLAGGEMS_INDEX_SELECT_SRC = _module_source_text("flag_gems.ops.index_select")
 FLAGGEMS_SOFTMAX_SRC = _module_source_text("flag_gems.ops.softmax")
 FLAGGEMS_RELU_SRC = _module_source_text("flag_gems.ops.relu")
@@ -1553,13 +1554,57 @@ def _run_flaggems_flip2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
 
     inp_np = _to_np(inp)
     out_np = _to_np(out)
+    row_idx = np.broadcast_to(np.arange(m, dtype=np.int32).reshape(m, 1), (m, n))
+    col_idx = np.broadcast_to(np.arange(n - 1, -1, -1, dtype=np.int32).reshape(1, n), (m, n))
     return {
         "A": inp_np,
         "Out": out_np,
         "inp": inp_np,
+        "row_idx": row_idx,
+        "col_idx": col_idx,
         "out": out_np,
         "input": inp_np,
         "output": out_np,
+    }
+
+
+def _run_flaggems_embedding2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 32))
+    n = int(case.shapes.get("N", 16))
+    l = int(case.shapes.get("L", 128))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    q = max(1, (l + max(1, n) - 1) // max(1, n))
+    if case.inputs and "index" in case.inputs:
+        index = torch.as_tensor(np.asarray(case.inputs["index"]), device=device, dtype=torch.int64).reshape(-1)
+    else:
+        index = torch.from_numpy(rg.integers(0, max(1, m), size=(q,), dtype=np.int64)).to(device)
+    if index.numel() == 0:
+        index = torch.zeros((1,), device=device, dtype=torch.int64)
+
+    with flag_gems.use_gems(include=["embedding"]):
+        out = torch.nn.functional.embedding(index, inp)
+
+    inp_np = _to_np(inp)
+    index_np = _to_np(index).astype(np.int32, copy=False).reshape(-1)
+    out_np = _to_np(out)
+    out_flat = out_np.reshape(-1)[:l]
+    row_idx = np.repeat(index_np, n)[:l].astype(np.int32, copy=False)
+    col_idx = np.tile(np.arange(n, dtype=np.int32), int(index_np.size))[:l].astype(np.int32, copy=False)
+    return {
+        "inp": inp_np,
+        "index": index_np,
+        "row_idx": row_idx,
+        "col_idx": col_idx,
+        "out": out_flat,
+        "input": inp_np,
+        "output": out_flat,
     }
 
 
@@ -3277,6 +3322,14 @@ _FLAGGEMS_SPEC_BUILDERS = {
         runner=_run_flaggems_flip2d_reference,
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
+    ),
+    "embedding2d": lambda: KernelSpec(
+        name="embedding2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_EMBEDDING_SRC",
+        runner=_run_flaggems_embedding2d_reference,
+        canonical_shapes={"M": 32, "N": 16, "L": 128},
+        vary_axes=["M", "N", "L"],
     ),
     "index_select2d": lambda: KernelSpec(
         name="index_select2d",

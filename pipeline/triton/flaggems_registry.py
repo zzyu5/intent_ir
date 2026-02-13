@@ -124,6 +124,8 @@ _SEMANTIC_TO_E2E_SPEC: dict[str, str] = {
     "masked_fill": "masked_fill2d",
     "threshold": "threshold2d",
     "where_self": "where2d",
+    "flip": "flip2d",
+    "embedding": "embedding2d",
     "gather": "gather2d",
     "index": "index_select2d",
     "index_select": "index_select2d",

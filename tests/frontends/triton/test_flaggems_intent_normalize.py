@@ -71,6 +71,16 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert [op.op for op in index_select.ops] == ["gather"]
     assert index_select.ops[0].inputs == ["inp", "row_idx", "col_idx"]
 
+    flip = canonical_flaggems_intent_for_spec("flip2d")
+    assert flip is not None
+    assert [op.op for op in flip.ops] == ["gather"]
+    assert flip.ops[0].inputs == ["inp", "row_idx", "col_idx"]
+
+    embedding = canonical_flaggems_intent_for_spec("embedding2d")
+    assert embedding is not None
+    assert [op.op for op in embedding.ops] == ["gather"]
+    assert embedding.ops[0].inputs == ["inp", "row_idx", "col_idx"]
+
     count_nonzero = canonical_flaggems_intent_for_spec("count_nonzero2d")
     assert count_nonzero is not None
     assert [op.op for op in count_nonzero.ops] == ["const", "ne", "cast", "reduce_sum"]

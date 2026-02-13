@@ -1794,7 +1794,8 @@ extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(const floa
 
 def _kernel_gather2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
     """
-    Pattern: gather(inp[M,N], row_idx[L], col_idx[L]) -> out[L]
+    Pattern: gather(inp[M,N], row_idx[...], col_idx[...]) -> out[...]
+    MVP supports output rank 1 or 2 and flattens row/col/output indexing.
     """
     gather_ops = [o for o in (intent.ops or []) if o.op == "gather"]
     if len(gather_ops) != 1:
@@ -1808,7 +1809,15 @@ def _kernel_gather2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cu
 
     M = _as_int(bindings.get("M"), name="M")
     N = _as_int(bindings.get("N"), name="N")
-    L = _as_int(bindings.get("L"), name="L")
+    out_shape = _shape_values(intent, out_name)
+    if len(out_shape) == 1:
+        L = _resolve_dim_int(out_shape[0], bindings, name="L")
+    elif len(out_shape) == 2:
+        d0 = _resolve_dim_int(out_shape[0], bindings, name="out_dim0")
+        d1 = _resolve_dim_int(out_shape[1], bindings, name="out_dim1")
+        L = int(d0) * int(d1)
+    else:
+        raise CudaLoweringError("gather2d MVP supports output rank<=2")
     sched = intent.schedule or ScheduleSketch()
     block_x = _resolve_schedule_int(sched.tile_n, bindings, default=256)
     if block_x <= 0:
@@ -1838,6 +1847,8 @@ extern "C" __global__ void {intent.name}(
 }}
 """.lstrip()
 
+    lowered_bindings = dict(bindings)
+    lowered_bindings["L"] = int(L)
     io_spec = _io_spec_from_args(
         intent,
         tensor_args=[inp_name, row_name, col_name, out_name],
@@ -1845,7 +1856,7 @@ extern "C" __global__ void {intent.name}(
         arg_names=[inp_name, row_name, col_name, out_name, "M", "N", "L"],
     )
     launch = CudaLaunch(grid=(grid_x, 1, 1), block=(block_x, 1, 1), shared_mem=0)
-    return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=dict(bindings))
+    return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=lowered_bindings)
 
 
 def _kernel_resize_bilinear2x_i8(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:

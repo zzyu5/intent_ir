@@ -3007,20 +3007,58 @@ def run_pipeline_for_spec(
                 cand_fix = llm_to_intent(desc, feedback=feedback3)
                 llm_generated = True
                 report["llm_trace"] = dict(cand_fix.llm_trace)
-                cand = cand_fix
-                _ensure_schedule(cand_fix.intent, kernel_name=spec.name, triton_src=src)
-                (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand_fix.intent), encoding="utf-8")
                 expanded_fix = expand_macros(cand_fix.intent)
-                (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_fix), encoding="utf-8")
-                report["intent"] = cand_fix.intent.to_json_dict()
-                report["intent_expanded"] = expanded_fix.to_json_dict()
-                cand_expanded = CandidateIntent(
+                cand_fix_expanded = CandidateIntent(
                     intent=expanded_fix,
                     problem_params=dict(cand_fix.problem_params),
                     schedule_params=dict(cand_fix.schedule_params),
                     raw_json=dict(cand_fix.raw_json),
                     llm_trace=dict(cand_fix.llm_trace),
                 )
+                cand_fix, cand_fix_expanded, repair_norm_info = provider_plugin.maybe_normalize_candidate(
+                    spec_name=str(spec.name),
+                    candidate=cand_fix,
+                    candidate_expanded=cand_fix_expanded,
+                )
+                if repair_norm_info is not None:
+                    report["provider_intent_normalization"] = dict(repair_norm_info)
+                    if provider_name == "flaggems":
+                        report["flaggems_intent_normalization"] = dict(repair_norm_info)
+
+                cand = cand_fix
+                cand_expanded = cand_fix_expanded
+                _ensure_schedule(cand_fix.intent, kernel_name=spec.name, triton_src=src)
+                _attach_access_witness_meta(cand_fix.intent, cert_v2=cert_v2, canonical_shapes=dict(spec.canonical_shapes))
+                provider_plugin.annotate_intent_meta(
+                    cand_fix.intent,
+                    source_op=(str(provider_source_op) if provider_source_op is not None else None),
+                    capability_state=(str(provider_capability_state) if provider_capability_state is not None else None),
+                    backend_target=backend_target,
+                )
+                (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand_fix.intent), encoding="utf-8")
+                if cand_fix_expanded is None:
+                    expanded_fix = expand_macros(cand_fix.intent)
+                    cand_fix_expanded = CandidateIntent(
+                        intent=expanded_fix,
+                        problem_params=dict(cand_fix.problem_params),
+                        schedule_params=dict(cand_fix.schedule_params),
+                        raw_json=dict(cand_fix.raw_json),
+                        llm_trace=dict(cand_fix.llm_trace),
+                    )
+                else:
+                    expanded_fix = cand_fix_expanded.intent
+                _ensure_schedule(expanded_fix, kernel_name=spec.name, triton_src=src)
+                _attach_access_witness_meta(expanded_fix, cert_v2=cert_v2, canonical_shapes=dict(spec.canonical_shapes))
+                provider_plugin.annotate_intent_meta(
+                    expanded_fix,
+                    source_op=(str(provider_source_op) if provider_source_op is not None else None),
+                    capability_state=(str(provider_capability_state) if provider_capability_state is not None else None),
+                    backend_target=backend_target,
+                )
+                (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_fix), encoding="utf-8")
+                report["provider_meta_validation"] = provider_plugin.validate_intent_meta(cand_fix.intent)
+                report["intent"] = cand_fix.intent.to_json_dict()
+                report["intent_expanded"] = expanded_fix.to_json_dict()
                 cand_for_run = cand_expanded
                 # Re-run diff with a small case set to confirm the repair.
                 cases_fix_pack = make_cases(

@@ -13,6 +13,8 @@ _ALWAYS_CANONICAL_SPECS = frozenset(
         "count_nonzero2d",
         "diag2d",
         "diag_embed2d",
+        "flip2d",
+        "embedding2d",
         "celu2d",
         "elu2d",
         "eye2d",

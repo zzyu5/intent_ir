@@ -86,6 +86,8 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "minimum2d" in names
     assert "identity2d" in names
     assert "cast2d" in names
+    assert "flip2d" in names
+    assert "embedding2d" in names
     assert "gather2d" in names
     assert "index_select2d" in names
     assert "clamp2d" in names

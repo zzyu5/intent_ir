@@ -14,6 +14,8 @@ def test_semantic_rule_templates_for_high_yield_ops() -> None:
     assert resolve_semantic_mapping("where_scalar_self").intent_ops == ("where",)
     assert resolve_semantic_mapping("where_scalar_other").intent_ops == ("where",)
     assert resolve_semantic_mapping("gather").intent_ops == ("gather",)
+    assert resolve_semantic_mapping("flip").intent_ops == ("gather",)
+    assert resolve_semantic_mapping("embedding").intent_ops == ("gather",)
     assert resolve_semantic_mapping("mm").intent_ops == ("matmul",)
     assert resolve_semantic_mapping("addmm").intent_ops == ("matmul", "add")
     assert resolve_semantic_mapping("addcmul").intent_ops == ("const", "mul", "mul", "add")

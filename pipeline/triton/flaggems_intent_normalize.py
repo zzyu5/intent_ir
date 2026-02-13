@@ -271,6 +271,30 @@ def _canonical_index_select2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_flip2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "flip2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "row_idx": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "col_idx": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "gather", "inputs": ["inp", "row_idx", "col_idx"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_embedding2d_intent() -> IntentFunction:
+    out = _canonical_gather2d_intent().to_json_dict()
+    out["name"] = "embedding2d"
+    return IntentFunction.from_json_dict(out)
+
+
 def _canonical_masked_fill2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -454,6 +478,10 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_gather2d_intent()
     if name == "index_select2d":
         return _canonical_index_select2d_intent()
+    if name == "flip2d":
+        return _canonical_flip2d_intent()
+    if name == "embedding2d":
+        return _canonical_embedding2d_intent()
     if name == "masked_fill2d":
         return _canonical_masked_fill2d_intent()
     if name == "count_nonzero2d":

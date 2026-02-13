@@ -288,6 +288,20 @@ _INDEX_TEMPLATE: dict[str, SemanticMapping] = {
     "gather": _mk("gather", ("gather",), mapping_kind="index_template", pattern_id="index.gather", detail="mapped by index template"),
     "index": _mk("index", ("gather",), mapping_kind="index_template", pattern_id="index.index_via_gather", detail="mapped to gather primitive"),
     "index_select": _mk("index_select", ("gather",), mapping_kind="index_template", pattern_id="index.index_select_via_gather", detail="mapped to gather primitive"),
+    "embedding": _mk(
+        "embedding",
+        ("gather",),
+        mapping_kind="index_template",
+        pattern_id="index.embedding_via_gather",
+        detail="mapped to gather primitive with row/col index expansion",
+    ),
+    "flip": _mk(
+        "flip",
+        ("gather",),
+        mapping_kind="index_template",
+        pattern_id="index.flip_via_gather",
+        detail="mapped to gather primitive with reversed column indices",
+    ),
     "diag": _mk("diag", ("diag",), mapping_kind="index_template", pattern_id="index.diag", detail="mapped to diag primitive"),
     "diag_embed": _mk(
         "diag_embed",
