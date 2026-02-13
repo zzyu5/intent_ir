@@ -7,6 +7,7 @@ reduce_sum, softmax, and basic elemwise ops.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 import numpy as np
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -20,6 +21,8 @@ NUM_BIN_OPS = {
     "div": np.divide,
     "max": np.maximum,
     "min": np.minimum,
+    "remainder": np.remainder,
+    "pow": np.power,
 }
 
 NUM_UNARY_OPS = {
@@ -28,11 +31,20 @@ NUM_UNARY_OPS = {
     "rsqrt": lambda x: 1.0 / np.sqrt(x),
     "abs": np.abs,
     "floor": np.floor,
+    "ceil": np.ceil,
+    "sqrt": np.sqrt,
+    "neg": np.negative,
+    "log": np.log,
+    "sin": np.sin,
+    "cos": np.cos,
+    "tan": np.tan,
+    "erf": lambda x: np.vectorize(math.erf, otypes=[np.float64])(x),
     "identity": lambda x: x,
 }
 
 CMP_BIN_OPS = {
     "ne": np.not_equal,
+    "eq": np.equal,
     "lt": np.less,
     "le": np.less_equal,
     "gt": np.greater,
@@ -71,6 +83,14 @@ INTERPRETER_SUPPORTED_OPS: set[str] = set().union(
         "reduce_sum",
         "reduce_any",
         "reduce_max",
+        "reduce_min",
+        "reduce_prod",
+        "mean",
+        "var",
+        "std",
+        "argmax",
+        "argmin",
+        "cumsum",
         "softmax",
         "matmul",
         "const",
@@ -498,6 +518,54 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         dims = _resolve_dims(dims_raw, x)
         keepdims = bool(op.attrs.get("keepdims", False))
         return np.max(x, axis=dims, keepdims=keepdims)
+    if op.op == "reduce_min":
+        x = _get(env, op.inputs[0])
+        dims_raw = op.attrs.get("axes", op.attrs.get("dims", op.attrs.get("axis")))
+        dims = _resolve_dims(dims_raw, x)
+        keepdims = bool(op.attrs.get("keepdims", False))
+        return np.min(x, axis=dims, keepdims=keepdims)
+    if op.op == "reduce_prod":
+        x = _get(env, op.inputs[0])
+        dims_raw = op.attrs.get("axes", op.attrs.get("dims", op.attrs.get("axis")))
+        dims = _resolve_dims(dims_raw, x)
+        keepdims = bool(op.attrs.get("keepdims", False))
+        return np.prod(x, axis=dims, keepdims=keepdims)
+    if op.op == "mean":
+        x = _get(env, op.inputs[0])
+        dims_raw = op.attrs.get("axes", op.attrs.get("dims", op.attrs.get("axis")))
+        dims = _resolve_dims(dims_raw, x)
+        keepdims = bool(op.attrs.get("keepdims", False))
+        return np.mean(x, axis=dims, keepdims=keepdims)
+    if op.op == "var":
+        x = _get(env, op.inputs[0])
+        dims_raw = op.attrs.get("axes", op.attrs.get("dims", op.attrs.get("axis")))
+        dims = _resolve_dims(dims_raw, x)
+        keepdims = bool(op.attrs.get("keepdims", False))
+        return np.var(x, axis=dims, keepdims=keepdims)
+    if op.op == "std":
+        x = _get(env, op.inputs[0])
+        dims_raw = op.attrs.get("axes", op.attrs.get("dims", op.attrs.get("axis")))
+        dims = _resolve_dims(dims_raw, x)
+        keepdims = bool(op.attrs.get("keepdims", False))
+        return np.std(x, axis=dims, keepdims=keepdims)
+    if op.op == "argmax":
+        x = _get(env, op.inputs[0])
+        axis = op.attrs.get("axis", -1)
+        if axis is None:
+            axis = -1
+        return np.argmax(x, axis=int(axis))
+    if op.op == "argmin":
+        x = _get(env, op.inputs[0])
+        axis = op.attrs.get("axis", -1)
+        if axis is None:
+            axis = -1
+        return np.argmin(x, axis=int(axis))
+    if op.op == "cumsum":
+        x = _get(env, op.inputs[0])
+        axis = op.attrs.get("axis", -1)
+        if axis is None:
+            axis = -1
+        return np.cumsum(x, axis=int(axis))
     if op.op == "softmax":
         x = _get(env, op.inputs[0])
         axis = op.attrs.get("axis", -1)

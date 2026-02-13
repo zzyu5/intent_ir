@@ -61,11 +61,15 @@ def _module_source_text(mod_name: str) -> str:
 # Use full module source so LLM/evidence stage has enough context.
 FLAGGEMS_ANY_SRC = _module_source_text("flag_gems.ops.any")
 FLAGGEMS_ADD_SRC = _module_source_text("flag_gems.ops.add")
+FLAGGEMS_SUB_SRC = _module_source_text("flag_gems.ops.sub")
+FLAGGEMS_MUL_SRC = _module_source_text("flag_gems.ops.mul")
 FLAGGEMS_GROUP_NORM_SRC = _module_source_text("flag_gems.ops.groupnorm")
 FLAGGEMS_LAYER_NORM_SRC = _module_source_text("flag_gems.ops.layernorm")
 FLAGGEMS_SOFTMAX_SRC = _module_source_text("flag_gems.ops.softmax")
 FLAGGEMS_RELU_SRC = _module_source_text("flag_gems.ops.relu")
 FLAGGEMS_EXP_SRC = _module_source_text("flag_gems.ops.exp")
+FLAGGEMS_ABS_SRC = _module_source_text("flag_gems.ops.abs")
+FLAGGEMS_RSQRT_SRC = _module_source_text("flag_gems.ops.rsqrt")
 FLAGGEMS_GATHER_SRC = _module_source_text("flag_gems.ops.gather")
 FLAGGEMS_WHERE_SRC = _module_source_text("flag_gems.ops.where")
 FLAGGEMS_SUM_SRC = _module_source_text("flag_gems.ops.sum")
@@ -120,6 +124,76 @@ def _run_flaggems_add2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         "C": c_np,
         "alpha": alpha,
         # Common aliases for parser/runtime naming variance.
+        "a": a_np,
+        "b": b_np,
+        "x": a_np,
+        "y": b_np,
+        "out": c_np,
+        "output": c_np,
+    }
+
+
+def _run_flaggems_sub2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "A" in case.inputs:
+        a = _as_f32_tensor(np.asarray(case.inputs["A"]), device=device)
+    else:
+        a = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    if case.inputs and "B" in case.inputs:
+        b = _as_f32_tensor(np.asarray(case.inputs["B"]), device=device)
+    else:
+        b = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["sub"]):
+        c = a - b
+
+    a_np = _to_np(a)
+    b_np = _to_np(b)
+    c_np = _to_np(c)
+    return {
+        "A": a_np,
+        "B": b_np,
+        "C": c_np,
+        "a": a_np,
+        "b": b_np,
+        "x": a_np,
+        "y": b_np,
+        "out": c_np,
+        "output": c_np,
+    }
+
+
+def _run_flaggems_mul2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "A" in case.inputs:
+        a = _as_f32_tensor(np.asarray(case.inputs["A"]), device=device)
+    else:
+        a = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    if case.inputs and "B" in case.inputs:
+        b = _as_f32_tensor(np.asarray(case.inputs["B"]), device=device)
+    else:
+        b = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["mul"]):
+        c = a * b
+
+    a_np = _to_np(a)
+    b_np = _to_np(b)
+    c_np = _to_np(c)
+    return {
+        "A": a_np,
+        "B": b_np,
+        "C": c_np,
         "a": a_np,
         "b": b_np,
         "x": a_np,
@@ -330,6 +404,55 @@ def _run_flaggems_exp2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
 
     with flag_gems.use_gems(include=["exp"]):
         out = torch.exp(inp)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_abs2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["abs"]):
+        out = torch.abs(inp)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_rsqrt2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        # keep positive values for rsqrt numerical stability
+        inp = torch.from_numpy(np.abs(rg.standard_normal((m, n), dtype=np.float32)) + 1e-3).to(device)
+
+    with flag_gems.use_gems(include=["rsqrt"]):
+        out = torch.rsqrt(inp)
 
     inp_np = _to_np(inp)
     out_np = _to_np(out)
@@ -578,6 +701,22 @@ _FLAGGEMS_SPEC_BUILDERS = {
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
     ),
+    "sub2d": lambda: KernelSpec(
+        name="sub2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_SUB_SRC",
+        runner=_run_flaggems_sub2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "mul2d": lambda: KernelSpec(
+        name="mul2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_MUL_SRC",
+        runner=_run_flaggems_mul2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
     "group_norm_kernel": lambda: KernelSpec(
         name="group_norm_kernel",
         module="pipeline.triton.flaggems_specs",
@@ -618,6 +757,22 @@ _FLAGGEMS_SPEC_BUILDERS = {
         module="pipeline.triton.flaggems_specs",
         attr="FLAGGEMS_EXP_SRC",
         runner=_run_flaggems_exp2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "abs2d": lambda: KernelSpec(
+        name="abs2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_ABS_SRC",
+        runner=_run_flaggems_abs2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "rsqrt2d": lambda: KernelSpec(
+        name="rsqrt2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_RSQRT_SRC",
+        runner=_run_flaggems_rsqrt2d_reference,
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
     ),

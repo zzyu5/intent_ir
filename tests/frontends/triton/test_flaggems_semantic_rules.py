@@ -19,3 +19,8 @@ def test_semantic_rule_composite_aliases() -> None:
     assert resolve_semantic_mapping("equal").intent_ops == ("ne", "not")
     assert resolve_semantic_mapping("maximum").intent_ops == ("max",)
     assert resolve_semantic_mapping("minimum").intent_ops == ("min",)
+    assert resolve_semantic_mapping("ge_scalar").intent_ops == ("ge",)
+    assert resolve_semantic_mapping("logical_and").intent_ops == ("and",)
+    assert resolve_semantic_mapping("logical_not").intent_ops == ("not",)
+    assert resolve_semantic_mapping("clamp_min").intent_ops == ("max",)
+    assert resolve_semantic_mapping("zeros_like").intent_ops == ("const", "broadcast_in_dim")

@@ -48,6 +48,43 @@ def _mk(
     )
 
 
+_ALIAS_TO_BASE: dict[str, str] = {
+    # Scalar/tensor alias forms.
+    "eq_scalar": "eq",
+    "ge_scalar": "ge",
+    "gt_scalar": "gt",
+    "le_scalar": "le",
+    "lt_scalar": "lt",
+    "ne_scalar": "ne",
+    # Logical op naming aliases.
+    "logical_and": "and",
+    "logical_or": "or",
+    "logical_not": "not",
+    # Arithmetic alias forms.
+    "true_divide": "div",
+    "div_mode": "div",
+    "floor_divide": "div",
+    "clamp_min": "max",
+    "clamp_tensor": "clamp",
+    # Shape/layout alias-like ops.
+    "copy": "identity",
+    "contiguous": "identity",
+    "resolve_conj": "identity",
+    "resolve_neg": "identity",
+    "to_copy": "cast",
+    # Reduction aliases.
+    "mean_dim": "mean",
+    "prod_dim": "prod",
+    "min_dim": "reduce_min",
+    # Creation aliases.
+    "fill_scalar": "full",
+    "fill_tensor": "full",
+    "ones_like": "ones",
+    "zeros_like": "zeros",
+    "full_like": "full",
+}
+
+
 _UNARY_TEMPLATE: dict[str, SemanticMapping] = {
     "abs": _mk("abs", ("abs",), mapping_kind="unary_template", pattern_id="unary.abs", detail="mapped by unary template"),
     "exp": _mk("exp", ("exp",), mapping_kind="unary_template", pattern_id="unary.exp", detail="mapped by unary template"),
@@ -103,6 +140,18 @@ _UNARY_TEMPLATE: dict[str, SemanticMapping] = {
         pattern_id="unary.exp2_via_exp",
         detail="mapped as exp(x * ln(2))",
     ),
+    "reciprocal": _mk(
+        "reciprocal",
+        ("const", "div"),
+        mapping_kind="unary_template",
+        pattern_id="unary.reciprocal_via_div",
+        detail="mapped as 1 / x",
+    ),
+    "log": _mk("log", ("log",), mapping_kind="unary_template", pattern_id="unary.log", detail="mapped to log primitive"),
+    "sin": _mk("sin", ("sin",), mapping_kind="unary_template", pattern_id="unary.sin", detail="mapped to sin primitive"),
+    "cos": _mk("cos", ("cos",), mapping_kind="unary_template", pattern_id="unary.cos", detail="mapped to cos primitive"),
+    "tan": _mk("tan", ("tan",), mapping_kind="unary_template", pattern_id="unary.tan", detail="mapped to tan primitive"),
+    "erf": _mk("erf", ("erf",), mapping_kind="unary_template", pattern_id="unary.erf", detail="mapped to erf primitive"),
 }
 
 _BINARY_TEMPLATE: dict[str, SemanticMapping] = {
@@ -110,7 +159,7 @@ _BINARY_TEMPLATE: dict[str, SemanticMapping] = {
     "sub": _mk("sub", ("sub",), mapping_kind="binary_template", pattern_id="binary.sub", detail="mapped by binary template"),
     "mul": _mk("mul", ("mul",), mapping_kind="binary_template", pattern_id="binary.mul", detail="mapped by binary template"),
     "div": _mk("div", ("div",), mapping_kind="binary_template", pattern_id="binary.div", detail="mapped by binary template"),
-    "max": _mk("max", ("reduce_max",), mapping_kind="reduce_template", pattern_id="reduce.max", detail="mapped to reduce_max over explicit axes"),
+    "max": _mk("max", ("max",), mapping_kind="binary_template", pattern_id="binary.max", detail="mapped by binary template"),
     "min": _mk("min", ("min",), mapping_kind="binary_template", pattern_id="binary.min", detail="mapped by binary template"),
 }
 
@@ -142,6 +191,13 @@ _REDUCE_TEMPLATE: dict[str, SemanticMapping] = {
     "sum_dim": _mk("sum_dim", ("reduce_sum",), mapping_kind="reduce_template", pattern_id="reduce.sum_dim", detail="mapped to reduce_sum with dims"),
     "amax": _mk("amax", ("reduce_max",), mapping_kind="reduce_template", pattern_id="reduce.amax", detail="mapped to reduce_max"),
     "max_dim": _mk("max_dim", ("reduce_max",), mapping_kind="reduce_template", pattern_id="reduce.max_dim", detail="mapped to reduce_max with dims"),
+    "mean": _mk("mean", ("reduce_sum", "div"), mapping_kind="reduce_template", pattern_id="reduce.mean_via_sum", detail="mapped as reduce_sum / num_elements"),
+    "prod": _mk("prod", ("reduce_prod",), mapping_kind="reduce_template", pattern_id="reduce.prod", detail="mapped to reduce_prod"),
+    "argmax": _mk("argmax", ("argmax",), mapping_kind="reduce_template", pattern_id="reduce.argmax", detail="mapped to argmax primitive"),
+    "argmin": _mk("argmin", ("argmin",), mapping_kind="reduce_template", pattern_id="reduce.argmin", detail="mapped to argmin primitive"),
+    "cumsum": _mk("cumsum", ("cumsum",), mapping_kind="reduce_template", pattern_id="reduce.cumsum", detail="mapped to cumsum primitive"),
+    "var": _mk("var", ("var",), mapping_kind="reduce_template", pattern_id="reduce.var", detail="mapped to var primitive"),
+    "std": _mk("std", ("std",), mapping_kind="reduce_template", pattern_id="reduce.std", detail="mapped to std primitive"),
     # all(x) == not(any(not(x)))
     "all": _mk(
         "all",
@@ -202,6 +258,27 @@ _MACRO_TEMPLATE: dict[str, SemanticMapping] = {
         pattern_id="macro.upsample_bicubic2d_aa",
         detail="mapped to macro op (expanded before backend lowering)",
     ),
+    "zeros": _mk(
+        "zeros",
+        ("const", "broadcast_in_dim"),
+        mapping_kind="macro_template",
+        pattern_id="macro.zeros",
+        detail="mapped as scalar const(0) + broadcast",
+    ),
+    "ones": _mk(
+        "ones",
+        ("const", "broadcast_in_dim"),
+        mapping_kind="macro_template",
+        pattern_id="macro.ones",
+        detail="mapped as scalar const(1) + broadcast",
+    ),
+    "full": _mk(
+        "full",
+        ("const", "broadcast_in_dim"),
+        mapping_kind="macro_template",
+        pattern_id="macro.full",
+        detail="mapped as scalar const(value) + broadcast",
+    ),
 }
 
 
@@ -217,6 +294,16 @@ def _direct_supported_mapping(semantic_op: str) -> SemanticMapping:
 
 def resolve_semantic_mapping(semantic_op: str) -> SemanticMapping:
     s = str(semantic_op)
+    if s in _ALIAS_TO_BASE:
+        base = str(_ALIAS_TO_BASE[s])
+        m = resolve_semantic_mapping(base)
+        return _mk(
+            s,
+            m.intent_ops,
+            mapping_kind="alias",
+            pattern_id=f"alias.{s}->{base}",
+            detail=f"alias to {base}; {m.status_reason_detail}",
+        )
     if s in _UNARY_TEMPLATE:
         return _UNARY_TEMPLATE[s]
     if s in _BINARY_TEMPLATE:

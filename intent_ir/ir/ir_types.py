@@ -730,7 +730,7 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
         # shorthands here; use a semantic op (e.g., rope) or explicit gather/reshape.
         if attrs:
             raise IntentIRValidationError(f"op[{idx}] identity must not have attrs (slice/assign_slice unsupported)")
-    elif op.op in {"add", "sub", "mul", "div", "max", "min"}:
+    elif op.op in {"add", "sub", "mul", "div", "max", "min", "remainder", "pow"}:
         # Canonical form is binary; allow a small set of legacy shorthands
         # (1 input + scalar attr) for compatibility with older LLM outputs.
         if len(op.inputs) == 2:
@@ -747,16 +747,16 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
             if op.op in {"max", "min"} and ("other" in attrs):
                 return
         raise IntentIRValidationError(f"op[{idx}] {op.op} requires 2 inputs (or 1+scalar attr)")
-    elif op.op == "ne":
+    elif op.op in {"ne", "eq"}:
         if len(op.inputs) != 2:
-            raise IntentIRValidationError(f"op[{idx}] ne requires 2 inputs")
-    elif op.op in {"abs", "floor", "not", "exp", "relu", "rsqrt"}:
+            raise IntentIRValidationError(f"op[{idx}] {op.op} requires 2 inputs")
+    elif op.op in {"abs", "floor", "ceil", "sqrt", "neg", "not", "exp", "log", "sin", "cos", "tan", "erf", "relu", "rsqrt"}:
         if len(op.inputs) != 1:
             raise IntentIRValidationError(f"op[{idx}] {op.op} requires 1 input")
     elif op.op in {"lt", "le", "gt", "ge", "and", "or"}:
         if len(op.inputs) != 2:
             raise IntentIRValidationError(f"op[{idx}] {op.op} requires 2 inputs")
-    elif op.op in {"reduce_sum", "reduce_max", "reduce_any"}:
+    elif op.op in {"reduce_sum", "reduce_max", "reduce_min", "reduce_prod", "reduce_any", "mean", "var", "std"}:
         if len(op.inputs) != 1:
             raise IntentIRValidationError(f"op[{idx}] {op.op} requires 1 input")
         dims = attrs.get("dims")
@@ -771,6 +771,12 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
             raise IntentIRValidationError(f"op[{idx}] {op.op} requires dims or axis")
         if not isinstance(dims, list) or not dims or not all(isinstance(x, int) for x in dims):
             raise IntentIRValidationError(f"op[{idx}] {op.op}.dims must be list[int]")
+    elif op.op in {"argmax", "argmin", "cumsum"}:
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] {op.op} requires 1 input")
+        axis = attrs.get("axis")
+        if axis is not None and not isinstance(axis, int):
+            raise IntentIRValidationError(f"op[{idx}] {op.op}.axis must be int when provided")
     elif op.op == "softmax":
         if len(op.inputs) != 1:
             raise IntentIRValidationError(f"op[{idx}] softmax requires 1 input")

@@ -17,6 +17,10 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     names = {str(s.name) for s in specs}
     assert "relu2d" in names
     assert "exp2d" in names
+    assert "sub2d" in names
+    assert "mul2d" in names
+    assert "abs2d" in names
+    assert "rsqrt2d" in names
     assert "where2d" in names
     assert "row_sum" in names
     assert "row_max" in names
