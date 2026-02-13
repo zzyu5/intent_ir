@@ -1,13 +1,12 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-13T17:12:09+00:00",
+  "generated_at": "2026-02-13T17:32:27+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
-      "dual_pass": 97,
+      "dual_pass": 100,
       "blocked_backend": 58,
-      "rvv_only": 3,
       "blocked_ir": 38
     },
     "by_family": {
@@ -141,9 +140,9 @@
       "id": "flaggems::arange",
       "semantic_op": "arange",
       "family": "elementwise_broadcast",
-      "status": "rvv_only",
-      "passes": false,
-      "reason_code": "cuda_target_missing_ops",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
       "next_action": "none",
       "e2e_spec": "arange1d",
       "intent_ops": [
@@ -564,9 +563,9 @@
       "id": "flaggems::eye",
       "semantic_op": "eye",
       "family": "elementwise_broadcast",
-      "status": "rvv_only",
-      "passes": false,
-      "reason_code": "cuda_target_missing_ops",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
       "next_action": "none",
       "e2e_spec": "eye2d",
       "intent_ops": [
@@ -581,9 +580,9 @@
       "id": "flaggems::eye_m",
       "semantic_op": "eye_m",
       "family": "elementwise_broadcast",
-      "status": "rvv_only",
-      "passes": false,
-      "reason_code": "cuda_target_missing_ops",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
       "next_action": "none",
       "e2e_spec": "eye_m2d",
       "intent_ops": [
