@@ -1,0 +1,32 @@
+{
+  "schema_version": "flaggems_roadmap_v1",
+  "generated_at": "2026-02-13T12:18:00+00:00",
+  "milestones": [
+    {
+      "id": "M1",
+      "target": "blocked_ir<=50 + e2e_specs>=75 + workflow hard gate",
+      "status": "in_progress"
+    },
+    {
+      "id": "M2",
+      "target": "blocked_ir<=35 + wave-a batch leaves blocked_ir",
+      "status": "pending"
+    },
+    {
+      "id": "M3",
+      "target": "blocked_ir<=20 + reason_code standardized",
+      "status": "pending"
+    },
+    {
+      "id": "M4",
+      "target": "blocked_ir==0",
+      "status": "pending"
+    },
+    {
+      "id": "M5",
+      "target": "blocked_backend<=15 + cuda determinism>=95%",
+      "status": "pending"
+    }
+  ],
+  "notes": "Update milestone status as phases converge; do not delete history."
+}

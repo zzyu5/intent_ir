@@ -1,9 +1,9 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-13T11:49:19+00:00
-- Commit: `aad3bf3291fec5acd192cdc69653bc47f86b1636`
-- Summary: Batch-2: landed addcdiv/addcmul/addr semantic rules + e2e specs; registry converged to dual_pass=95, blocked_ir=56.
-- Batch Ops (10): ScaleDotProductAttention, angle, avg_pool2d, bitwise_and_scalar, bitwise_and_scalar_tensor, bitwise_and_tensor, bitwise_left_shift, bitwise_not, bitwise_or_scalar, bitwise_or_scalar_tensor
-- Run Summary: (none)
-- Status Converged: (none)
-- Next Focus: Wave-A next: angle + bitwise_* + avg_pool2d intent mapping and staged backend verdicts.
+- Timestamp: 2026-02-13T12:18:37+00:00
+- Commit: `6d0f0e35e3183f7a2ce93984c52faa83295a26d8`
+- Summary: Phase1+Phase2 delivered: hard-gate scripts, execution policy bridge, and Wave-A angle/bitwise/avg_pool2d mapping/spec integration.
+- Batch Ops (10): ScaleDotProductAttention, celu, conv1d, conv3d, conv_depthwise2d, count_nonzero, cummax, cummin, diag, diag_embed
+- Run Summary: `artifacts/flaggems_matrix/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/status_converged.json`
+- Next Focus: Execute active_batch (ScaleDotProductAttention, celu, conv1d/3d, conv_depthwise2d, count_nonzero, cummax/cummin, diag/diag_embed) to drive blocked_ir from 45 toward <=35.

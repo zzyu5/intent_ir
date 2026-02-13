@@ -1,14 +1,14 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-13T11:48:31+00:00",
+  "generated_at": "2026-02-13T12:18:00+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
       "dual_pass": 95,
-      "blocked_backend": 44,
-      "blocked_ir": 56,
-      "rvv_only": 1
+      "blocked_backend": 55,
+      "rvv_only": 1,
+      "blocked_ir": 45
     },
     "by_family": {
       "elementwise_broadcast": 126,
@@ -128,12 +128,14 @@
       "id": "flaggems::angle",
       "semantic_op": "angle",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "angle2d",
+      "intent_ops": [
+        "angle"
+      ]
     },
     {
       "id": "flaggems::arange",
@@ -165,100 +167,118 @@
       "id": "flaggems::bitwise_and_scalar",
       "semantic_op": "bitwise_and_scalar",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "bitwise_and2d",
+      "intent_ops": [
+        "bitwise_and"
+      ]
     },
     {
       "id": "flaggems::bitwise_and_scalar_tensor",
       "semantic_op": "bitwise_and_scalar_tensor",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "bitwise_and2d",
+      "intent_ops": [
+        "bitwise_and"
+      ]
     },
     {
       "id": "flaggems::bitwise_and_tensor",
       "semantic_op": "bitwise_and_tensor",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "bitwise_and2d",
+      "intent_ops": [
+        "bitwise_and"
+      ]
     },
     {
       "id": "flaggems::bitwise_left_shift",
       "semantic_op": "bitwise_left_shift",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "bitwise_left_shift2d",
+      "intent_ops": [
+        "bitwise_left_shift"
+      ]
     },
     {
       "id": "flaggems::bitwise_not",
       "semantic_op": "bitwise_not",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "bitwise_not2d",
+      "intent_ops": [
+        "bitwise_not"
+      ]
     },
     {
       "id": "flaggems::bitwise_or_scalar",
       "semantic_op": "bitwise_or_scalar",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "bitwise_or2d",
+      "intent_ops": [
+        "bitwise_or"
+      ]
     },
     {
       "id": "flaggems::bitwise_or_scalar_tensor",
       "semantic_op": "bitwise_or_scalar_tensor",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "bitwise_or2d",
+      "intent_ops": [
+        "bitwise_or"
+      ]
     },
     {
       "id": "flaggems::bitwise_or_tensor",
       "semantic_op": "bitwise_or_tensor",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "bitwise_or2d",
+      "intent_ops": [
+        "bitwise_or"
+      ]
     },
     {
       "id": "flaggems::bitwise_right_shift",
       "semantic_op": "bitwise_right_shift",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "bitwise_right_shift2d",
+      "intent_ops": [
+        "bitwise_right_shift"
+      ]
     },
     {
       "id": "flaggems::cat",
@@ -2424,12 +2444,14 @@
       "id": "flaggems::avg_pool2d",
       "semantic_op": "avg_pool2d",
       "family": "conv_pool_interp",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "avg_pool2d_nchw",
+      "intent_ops": [
+        "avg_pool2d"
+      ]
     },
     {
       "id": "flaggems::conv1d",
