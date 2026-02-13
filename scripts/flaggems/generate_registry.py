@@ -36,6 +36,10 @@ def main() -> None:
 
     all_ops = load_flaggems_all_ops(flaggems_src=args.flaggems_src)
     commit = str(args.flaggems_commit) if args.flaggems_commit else infer_flaggems_commit_from_src(args.flaggems_src)
+    if not commit:
+        raise RuntimeError(
+            f"unable to resolve FlagGems commit from {args.flaggems_src}; pass --flaggems-commit explicitly"
+        )
     payload = build_registry(
         all_ops=all_ops,
         flaggems_commit=commit,

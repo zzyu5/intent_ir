@@ -25,14 +25,16 @@ def _load_json(path: Path | None) -> dict | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _load_result_map(summary: dict | None) -> tuple[dict[str, bool], bool]:
+def _load_result_map(summary: dict | None) -> tuple[dict[str, bool], dict[str, dict[str, Any]], bool, str | None]:
     if not isinstance(summary, dict):
-        return {}, False
+        return {}, {}, False, None
     skipped = bool(summary.get("skipped"))
+    skip_reason = str(summary.get("skip_reason")) if summary.get("skip_reason") is not None else None
     results = summary.get("results")
     if not isinstance(results, list):
-        return {}, skipped
+        return {}, {}, skipped, skip_reason
     out: dict[str, bool] = {}
+    details: dict[str, dict[str, Any]] = {}
     for r in results:
         if not isinstance(r, dict):
             continue
@@ -40,7 +42,8 @@ def _load_result_map(summary: dict | None) -> tuple[dict[str, bool], bool]:
         if not isinstance(k, str) or not k:
             continue
         out[k] = bool(r.get("ok"))
-    return out, skipped
+        details[k] = dict(r)
+    return out, details, skipped, skip_reason
 
 
 def _provider_report_state(report_path: Path) -> dict[str, Any]:
@@ -73,11 +76,80 @@ def _derive_status(
     cuda_pass = cuda == "pass"
     if rvv_pass and cuda_pass:
         return "dual_pass", "runtime_dual_backend_pass"
-    if rvv_pass and cuda in {"fail", "unknown"}:
-        return "rvv_only", ("runtime_cuda_fail" if cuda == "fail" else "runtime_cuda_unknown")
-    if cuda_pass and rvv in {"fail", "unknown"}:
-        return "cuda_only", ("runtime_rvv_fail" if rvv == "fail" else "runtime_rvv_unknown")
+    if rvv_pass and cuda in {"fail", "unknown", "skip"}:
+        if cuda == "fail":
+            return "rvv_only", "runtime_cuda_fail"
+        if cuda == "skip":
+            return "rvv_only", "runtime_cuda_skip"
+        return "rvv_only", "runtime_cuda_unknown"
+    if cuda_pass and rvv in {"fail", "unknown", "skip"}:
+        if rvv == "fail":
+            return "cuda_only", "runtime_rvv_fail"
+        if rvv == "skip":
+            return "cuda_only", "runtime_rvv_skip"
+        return "cuda_only", "runtime_rvv_unknown"
     return "blocked_backend", "runtime_backend_fail"
+
+
+def _classify_runtime_reason(state: str, detail: dict[str, Any], *, skip_reason: str | None) -> tuple[str, str]:
+    s = str(state)
+    if s == "pass":
+        return "ok", "backend runtime passed"
+    if s == "skip":
+        reason = str(skip_reason or "env_unavailable")
+        return "env_unavailable", f"backend skipped: {reason}"
+    if s == "unknown":
+        return "runtime_unknown", "missing result for kernel in backend summary"
+
+    err = detail.get("error")
+    msg_parts: list[str] = []
+    if isinstance(err, dict):
+        et = err.get("type")
+        em = err.get("message")
+        if et is not None:
+            msg_parts.append(str(et))
+        if em is not None:
+            msg_parts.append(str(em))
+    for key in ("stderr", "stdout"):
+        val = detail.get(key)
+        if isinstance(val, str) and val.strip():
+            msg_parts.append(val.strip())
+    msg = " | ".join(msg_parts).lower()
+    if "timeout" in msg:
+        return "runtime_timeout", "backend runtime timeout"
+    if "unsupported op" in msg or "unsupported" in msg or "lowering" in msg:
+        return "lowering_missing_op", "backend lowering does not support one or more ops"
+    if "diff" in msg or "mismatch" in msg:
+        return "diff_fail", "numerical diff failed"
+    return "runtime_fail", ("backend runtime failed" if not msg_parts else " | ".join(msg_parts))
+
+
+def _derive_reason_code(
+    *,
+    status_reason: str,
+    provider_state: dict[str, Any],
+    rvv_reason_code: str,
+    cuda_reason_code: str,
+) -> str:
+    reason = str(status_reason)
+    if reason == "pipeline_diff_failed_or_missing":
+        if not bool(provider_state.get("exists")):
+            return "provider_report_missing"
+        if bool(provider_state.get("parse_error")):
+            return "provider_report_parse_error"
+        return "diff_fail"
+    if reason in {"runtime_cuda_unknown", "runtime_rvv_unknown", "runtime_backend_fail"}:
+        if rvv_reason_code == "runtime_timeout" or cuda_reason_code == "runtime_timeout":
+            return "runtime_timeout"
+        if rvv_reason_code == "env_unavailable" or cuda_reason_code == "env_unavailable":
+            return "env_unavailable"
+        if rvv_reason_code == "lowering_missing_op" or cuda_reason_code == "lowering_missing_op":
+            return "lowering_missing_op"
+        if rvv_reason_code == "diff_fail" or cuda_reason_code == "diff_fail":
+            return "diff_fail"
+    if reason == "runtime_cuda_skip" or reason == "runtime_rvv_skip":
+        return "env_unavailable"
+    return reason
 
 
 def main() -> None:
@@ -97,8 +169,8 @@ def main() -> None:
 
     rvv_summary = _load_json(args.rvv_json)
     cuda_summary = _load_json(args.cuda_json)
-    rvv_map, rvv_skipped = _load_result_map(rvv_summary)
-    cuda_map, cuda_skipped = _load_result_map(cuda_summary)
+    rvv_map, rvv_detail_map, rvv_skipped, rvv_skip_reason = _load_result_map(rvv_summary)
+    cuda_map, cuda_detail_map, cuda_skipped, cuda_skip_reason = _load_result_map(cuda_summary)
 
     converged_entries: list[dict[str, Any]] = []
     counts: dict[str, int] = {}
@@ -115,7 +187,7 @@ def main() -> None:
             if kernel is None:
                 return "unknown"
             if skipped:
-                return "unknown"
+                return "skip"
             if kernel not in result_map:
                 return "unknown"
             return "pass" if bool(result_map[kernel]) else "fail"
@@ -133,6 +205,28 @@ def main() -> None:
         )
         out["status"] = status
         out["status_reason"] = reason
+        rvv_detail = dict(rvv_detail_map.get(kernel, {})) if kernel is not None else {}
+        cuda_detail = dict(cuda_detail_map.get(kernel, {})) if kernel is not None else {}
+        rvv_reason_code, rvv_reason_detail = _classify_runtime_reason(
+            rvv_state,
+            rvv_detail,
+            skip_reason=rvv_skip_reason,
+        )
+        cuda_reason_code, cuda_reason_detail = _classify_runtime_reason(
+            cuda_state,
+            cuda_detail,
+            skip_reason=cuda_skip_reason,
+        )
+        out["reason_code"] = _derive_reason_code(
+            status_reason=reason,
+            provider_state=provider_state,
+            rvv_reason_code=rvv_reason_code,
+            cuda_reason_code=cuda_reason_code,
+        )
+        out["runtime_detail"] = {
+            "rvv": {"reason_code": rvv_reason_code, "reason_detail": rvv_reason_detail},
+            "cuda": {"reason_code": cuda_reason_code, "reason_detail": cuda_reason_detail},
+        }
         out["runtime"] = {
             "provider": provider_state,
             "rvv": rvv_state,
@@ -142,7 +236,7 @@ def main() -> None:
         counts[status] = counts.get(status, 0) + 1
 
     result = {
-        "schema_version": "flaggems_registry_converged_v1",
+        "schema_version": "flaggems_registry_converged_v2",
         "registry_path": str(args.registry),
         "provider_report_dir": str(args.provider_report_dir),
         "rvv_json": (str(args.rvv_json) if args.rvv_json else None),

@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import multiprocessing as mp
 import shutil
 import sys
 from pathlib import Path
@@ -245,10 +246,91 @@ def run_one(
     return {
         "kernel": str(kernel),
         "ok": bool(ok_all),
+        "reason_code": ("ok" if ok_all else "diff_fail"),
         "atol": float(atol),
         "rtol": float(rtol),
         "checks": checks,
         "bindings": dict(bindings),
+    }
+
+
+def _reason_code_for_exception(e: Exception) -> str:
+    if isinstance(e, CudaLoweringError):
+        return "lowering_missing_op"
+    if isinstance(e, CudaRuntimeError):
+        msg = str(e).lower()
+        if "timeout" in msg:
+            return "runtime_timeout"
+        return "runtime_fail"
+    if isinstance(e, FileNotFoundError):
+        return "artifact_missing"
+    if isinstance(e, RuntimeError):
+        return "runtime_fail"
+    if isinstance(e, ValueError):
+        return "runtime_fail"
+    return "runtime_fail"
+
+
+def _run_one_with_timeout(
+    kernel: str,
+    *,
+    frontend: str,
+    triton_provider: str,
+    timeout_sec: int,
+) -> dict[str, Any]:
+    if int(timeout_sec) <= 0:
+        return run_one(kernel, frontend=frontend, triton_provider=triton_provider)
+
+    ctx = mp.get_context("fork")
+    q: mp.Queue = ctx.Queue()
+
+    def _worker(queue: mp.Queue) -> None:
+        try:
+            res = run_one(kernel, frontend=frontend, triton_provider=triton_provider)
+            queue.put({"ok": True, "result": res})
+        except Exception as ex:  # noqa: BLE001
+            queue.put(
+                {
+                    "ok": False,
+                    "error": {
+                        "type": type(ex).__name__,
+                        "message": str(ex),
+                        "reason_code": _reason_code_for_exception(ex),
+                    },
+                }
+            )
+
+    proc = ctx.Process(target=_worker, args=(q,))
+    proc.start()
+    proc.join(timeout=float(timeout_sec))
+    if proc.is_alive():
+        proc.terminate()
+        proc.join(timeout=2.0)
+        return {
+            "kernel": str(kernel),
+            "ok": False,
+            "error": {
+                "type": "TimeoutError",
+                "message": f"kernel execution exceeded timeout_sec={int(timeout_sec)}",
+            },
+            "reason_code": "runtime_timeout",
+        }
+    if q.empty():
+        return {
+            "kernel": str(kernel),
+            "ok": False,
+            "error": {"type": "RuntimeError", "message": "no result returned from worker process"},
+            "reason_code": "runtime_fail",
+        }
+    payload = q.get()
+    if bool(payload.get("ok")):
+        return dict(payload.get("result") or {})
+    err = payload.get("error") or {}
+    return {
+        "kernel": str(kernel),
+        "ok": False,
+        "error": {"type": str(err.get("type")), "message": str(err.get("message"))},
+        "reason_code": str(err.get("reason_code") or "runtime_fail"),
     }
 
 
@@ -286,6 +368,12 @@ def main() -> None:
         choices=["rvv", "cuda_h100", "cuda_5090d"],
         default="cuda_h100",
         help="Capability target passed to FlagGems spec registry when selecting defaults.",
+    )
+    ap.add_argument(
+        "--timeout-sec",
+        type=int,
+        default=120,
+        help="Per-kernel timeout in seconds (<=0 disables timeout wrapper).",
     )
     ap.add_argument("--allow-skip", action="store_true", help="exit 0 with ok=false when CUDA environment is unavailable")
     ap.add_argument("--json", action="store_true", help="print machine-readable summary JSON")
@@ -327,17 +415,21 @@ def main() -> None:
     ok_all = True
     for k in kernels:
         try:
-            r = run_one(
+            r = _run_one_with_timeout(
                 str(k),
                 frontend=str(args.frontend),
                 triton_provider=str(args.triton_provider),
+                timeout_sec=int(args.timeout_sec),
             )
         except (CudaLoweringError, CudaRuntimeError, FileNotFoundError, RuntimeError, ValueError) as e:
             r = {
                 "kernel": str(k),
                 "ok": False,
+                "reason_code": _reason_code_for_exception(e),
                 "error": {"type": type(e).__name__, "message": str(e)},
             }
+        if "reason_code" not in r:
+            r["reason_code"] = ("ok" if bool(r.get("ok")) else "runtime_fail")
         results.append(r)
         ok_all = ok_all and bool(r.get("ok"))
         if not args.json:
@@ -350,6 +442,7 @@ def main() -> None:
         "triton_provider": (str(args.triton_provider) if str(args.frontend) == "triton" else None),
         "flaggems_opset": str(args.flaggems_opset),
         "backend_target": str(args.backend_target),
+        "timeout_sec": int(args.timeout_sec),
         "kernels": list(kernels),
         "results": results,
         "ok": bool(ok_all),

@@ -66,6 +66,7 @@ FLAGGEMS_LAYER_NORM_SRC = _module_source_text("flag_gems.ops.layernorm")
 FLAGGEMS_SOFTMAX_SRC = _module_source_text("flag_gems.ops.softmax")
 FLAGGEMS_RELU_SRC = _module_source_text("flag_gems.ops.relu")
 FLAGGEMS_EXP_SRC = _module_source_text("flag_gems.ops.exp")
+FLAGGEMS_GATHER_SRC = _module_source_text("flag_gems.ops.gather")
 FLAGGEMS_WHERE_SRC = _module_source_text("flag_gems.ops.where")
 FLAGGEMS_SUM_SRC = _module_source_text("flag_gems.ops.sum")
 FLAGGEMS_MAX_SRC = _module_source_text("flag_gems.ops.max")
@@ -423,6 +424,43 @@ def _run_flaggems_row_max_reference(case: TestCase) -> Dict[str, np.ndarray]:
     }
 
 
+def _run_flaggems_gather2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 64))
+    n = int(case.shapes.get("N", 64))
+    l = int(case.shapes.get("L", 256))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+    if case.inputs and "row_idx" in case.inputs:
+        row_idx = torch.as_tensor(np.asarray(case.inputs["row_idx"]), device=device, dtype=torch.int64)
+    else:
+        row_idx = torch.from_numpy(rg.integers(0, max(1, m), size=(l,), dtype=np.int64)).to(device)
+    if case.inputs and "col_idx" in case.inputs:
+        col_idx = torch.as_tensor(np.asarray(case.inputs["col_idx"]), device=device, dtype=torch.int64)
+    else:
+        col_idx = torch.from_numpy(rg.integers(0, max(1, n), size=(l,), dtype=np.int64)).to(device)
+
+    with flag_gems.use_gems(include=["gather"]):
+        out = inp[row_idx, col_idx]
+
+    inp_np = _to_np(inp)
+    row_idx_np = _to_np(row_idx).astype(np.int32, copy=False)
+    col_idx_np = _to_np(col_idx).astype(np.int32, copy=False)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "row_idx": row_idx_np,
+        "col_idx": col_idx_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
 def _run_flaggems_clamp2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     m = int(case.shapes.get("M", 4))
     n = int(case.shapes.get("N", 64))
@@ -612,6 +650,14 @@ _FLAGGEMS_SPEC_BUILDERS = {
         runner=_run_flaggems_row_max_reference,
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
+    ),
+    "gather2d": lambda: KernelSpec(
+        name="gather2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_GATHER_SRC",
+        runner=_run_flaggems_gather2d_reference,
+        canonical_shapes={"M": 64, "N": 64, "L": 256},
+        vary_axes=["M", "N", "L"],
     ),
     "clamp2d": lambda: KernelSpec(
         name="clamp2d",

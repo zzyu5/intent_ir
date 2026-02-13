@@ -3,12 +3,13 @@ from __future__ import annotations
 from backends.spmd_rvv.opset import SPMD_RVV_SUPPORTED_OPS
 from intent_ir.ir.ir_types import SUPPORTED_OPS as IR_SUPPORTED_OPS
 from intent_ir.macros.macro_lowering.registry import supports_macro
-from intent_ir.ops import CORE_OPS, EXPERIMENTAL_OPS, MACRO_OPS, SUPPORTED_OPS
+from intent_ir.ops import CORE_OPS, EXPERIMENTAL_OPS, MACRO_OPS, OP_SPEC_INDEX, SUPPORTED_OPS
 from verify.interpreter import INTERPRETER_SUPPORTED_OPS
 
 
 def test_opset_is_single_source_of_truth() -> None:
     assert SUPPORTED_OPS == IR_SUPPORTED_OPS
+    assert SUPPORTED_OPS == set(OP_SPEC_INDEX.keys())
 
 
 def test_core_ops_supported_by_interpreter() -> None:

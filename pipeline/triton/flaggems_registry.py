@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from backends.capability import check_dual_backend_support
-from intent_ir.ops import SUPPORTED_OPS
+from pipeline.triton.flaggems_semantic_rules import resolve_semantic_mapping
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -48,25 +48,16 @@ _RANDOM_OP_HINTS = {
     "exponential",
 }
 
-# Semantic op -> IntentIR primitive/macro ops.
-_SEMANTIC_TO_INTENT_OPS: dict[str, list[str]] = {
-    "any": ["reduce_any"],
-    "all": ["reduce_max"],
-    "sum": ["reduce_sum"],
-    "sum_dim": ["reduce_sum"],
-    "amax": ["reduce_max"],
-    "amin": ["reduce_max"],
-    "max": ["reduce_max"],
-    "max_dim": ["reduce_max"],
-    "relu": ["relu"],
-    "exp": ["exp"],
-    "where_self": ["gt", "where"],
-    "where_scalar_self": ["where"],
-    "where_scalar_other": ["where"],
-    "clamp": ["max", "min"],
-    "softmax": ["softmax"],
-    "layer_norm": ["reduce_sum", "sub", "mul", "add", "rsqrt", "broadcast_in_dim", "div"],
-    "upsample_bicubic2d_aa": ["upsample_bicubic2d_aa"],
+_NON_SEMANTIC_OP_HINTS = {
+    "scheduler",
+    "metadata",
+    "meta",
+    "capability",
+    "registry",
+}
+
+_NON_SEMANTIC_OP_EXACT = {
+    "get_scheduler_metadata",
 }
 
 # Semantic op -> implemented Triton KernelSpec (if any).
@@ -76,6 +67,7 @@ _SEMANTIC_TO_E2E_SPEC: dict[str, str] = {
     "relu": "relu2d",
     "exp": "exp2d",
     "where_self": "where2d",
+    "gather": "gather2d",
     "sum": "row_sum",
     "max": "row_max",
     "clamp": "clamp2d",
@@ -83,6 +75,14 @@ _SEMANTIC_TO_E2E_SPEC: dict[str, str] = {
     "layer_norm": "layer_norm_persistent",
     "softmax": "softmax_inner",
     "upsample_bicubic2d_aa": "upsample_bicubic2d_aa",
+}
+
+_SEMANTIC_E2E_ALIASES: dict[str, str] = {
+    "sum_dim": "sum",
+    "amax": "max",
+    "max_dim": "max",
+    "where_scalar_self": "where_self",
+    "where_scalar_other": "where_self",
 }
 
 _E2E_SPEC_TO_SEMANTIC: dict[str, str] = {v: k for k, v in _SEMANTIC_TO_E2E_SPEC.items()}
@@ -142,9 +142,13 @@ def is_deterministic_forward_op(op_name: str) -> bool:
     if not name:
         return False
     low = name.lower()
+    if low in _NON_SEMANTIC_OP_EXACT:
+        return False
     if "backward" in low:
         return False
     if low.endswith("_"):
+        return False
+    if any(tok in low for tok in _NON_SEMANTIC_OP_HINTS):
         return False
     if any(tok in low for tok in _RANDOM_OP_HINTS):
         return False
@@ -188,16 +192,17 @@ def classify_semantic_family(semantic_op: str) -> str:
 
 
 def semantic_to_intent_ops(semantic_op: str) -> list[str]:
-    s = str(semantic_op)
-    if s in _SEMANTIC_TO_INTENT_OPS:
-        return list(_SEMANTIC_TO_INTENT_OPS[s])
-    if s in SUPPORTED_OPS:
-        return [s]
-    return []
+    return list(resolve_semantic_mapping(semantic_op).intent_ops)
 
 
 def e2e_spec_for_semantic(semantic_op: str) -> str | None:
-    return _SEMANTIC_TO_E2E_SPEC.get(str(semantic_op))
+    s = str(semantic_op)
+    if s in _SEMANTIC_TO_E2E_SPEC:
+        return _SEMANTIC_TO_E2E_SPEC[s]
+    alias = _SEMANTIC_E2E_ALIASES.get(s)
+    if alias is not None:
+        return _SEMANTIC_TO_E2E_SPEC.get(alias)
+    return None
 
 
 def semantic_for_e2e_spec(spec_name: str) -> str | None:
@@ -239,6 +244,8 @@ def build_registry(
 ) -> dict:
     if str(opset) != DEFAULT_FLAGGEMS_OPSET:
         raise ValueError(f"unsupported flaggems opset: {opset}")
+    if not isinstance(flaggems_commit, str) or not flaggems_commit.strip():
+        raise ValueError("flaggems_commit must be provided when building registry")
 
     filtered: list[str] = []
     for name in all_ops:
@@ -256,7 +263,8 @@ def build_registry(
     entries: list[dict[str, Any]] = []
     for sem, source_ops in grouped.items():
         family = classify_semantic_family(sem)
-        intent_ops = semantic_to_intent_ops(sem)
+        mapping = resolve_semantic_mapping(sem)
+        intent_ops = list(mapping.intent_ops)
         backend_support = check_dual_backend_support(intent_ops)
         e2e_spec = e2e_spec_for_semantic(sem)
         status, reason = _derive_status(
@@ -264,6 +272,22 @@ def build_registry(
             has_e2e_spec=bool(e2e_spec),
             backend_support=backend_support,
         )
+        detail = mapping.status_reason_detail
+        if reason == "missing_e2e_spec":
+            detail = f"{detail}; no e2e spec registered"
+        elif reason in {"cuda_target_missing_ops", "rvv_target_missing_ops", "backend_missing_ops"}:
+            missing_detail: list[str] = []
+            rvv_missing = list(((backend_support.get("rvv") or {}).get("missing_ops") or []))
+            h100_missing = list(((backend_support.get("cuda_h100") or {}).get("missing_ops") or []))
+            g5090_missing = list(((backend_support.get("cuda_5090d") or {}).get("missing_ops") or []))
+            if rvv_missing:
+                missing_detail.append(f"rvv_missing={rvv_missing}")
+            if h100_missing:
+                missing_detail.append(f"cuda_h100_missing={h100_missing}")
+            if g5090_missing:
+                missing_detail.append(f"cuda_5090d_missing={g5090_missing}")
+            if missing_detail:
+                detail = f"{detail}; " + "; ".join(missing_detail)
         if status not in STATUS_VALUES:
             raise RuntimeError(f"invalid status generated: {status}")
         entries.append(
@@ -272,9 +296,12 @@ def build_registry(
                 "source_ops": sorted(set(source_ops)),
                 "family": family,
                 "intent_ops": list(intent_ops),
+                "mapping_kind": mapping.mapping_kind,
+                "intent_pattern_id": mapping.intent_pattern_id,
                 "e2e_spec": e2e_spec,
                 "status": status,
                 "status_reason": reason,
+                "status_reason_detail": detail,
                 "backend_support": backend_support,
             }
         )
@@ -291,10 +318,10 @@ def build_registry(
         counts_by_family[f] = counts_by_family.get(f, 0) + 1
 
     return {
-        "schema_version": "flaggems_registry_v1",
+        "schema_version": "flaggems_registry_v2",
         "generated_at": generated_at or datetime.now(timezone.utc).isoformat(),
         "opset": str(opset),
-        "flaggems_commit": (str(flaggems_commit) if flaggems_commit else None),
+        "flaggems_commit": str(flaggems_commit),
         "flaggems_source": (str(flaggems_source) if flaggems_source else None),
         "family_order": list(FAMILY_ORDER),
         "counts": {
@@ -319,8 +346,12 @@ def load_registry(path: str | Path | None = None) -> dict:
     p = Path(path) if path is not None else DEFAULT_REGISTRY_PATH
     if p.is_file():
         return json.loads(p.read_text(encoding="utf-8"))
-    all_ops = load_flaggems_all_ops()
-    return build_registry(all_ops=all_ops)
+    default_src = ROOT / "experiment" / "FlagGems" / "src"
+    all_ops = load_flaggems_all_ops(flaggems_src=default_src)
+    commit = infer_flaggems_commit_from_src(default_src)
+    if not commit:
+        raise RuntimeError(f"unable to infer FlagGems commit from {default_src}")
+    return build_registry(all_ops=all_ops, flaggems_commit=commit, flaggems_source=str(default_src))
 
 
 def load_registry_entry_by_semantic(registry: dict, semantic_op: str) -> dict | None:

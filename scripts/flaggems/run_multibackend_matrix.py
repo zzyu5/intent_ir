@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -37,10 +38,31 @@ def main() -> None:
     ap.add_argument("--skip-rvv", action="store_true")
     ap.add_argument("--skip-cuda", action="store_true")
     ap.add_argument(
+        "--run-rvv-remote",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Also run RVV remote suite via SSH after local RVV stage.",
+    )
+    ap.add_argument("--rvv-host", default=os.getenv("INTENTIR_RVV_HOST", "192.168.8.72"))
+    ap.add_argument("--rvv-user", default=os.getenv("INTENTIR_RVV_USER", "ubuntu"))
+    ap.add_argument("--rvv-port", type=int, default=22)
+    ap.add_argument(
+        "--rvv-use-key",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use SSH key auth for rvv_remote_suite (default true).",
+    )
+    ap.add_argument(
         "--allow-cuda-skip",
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Allow CUDA stage to exit 0 with skipped status when CUDA env is unavailable.",
+    )
+    ap.add_argument(
+        "--cuda-timeout-sec",
+        type=int,
+        default=120,
+        help="Per-kernel timeout passed to cuda_backend_smoke.py.",
     )
     ap.add_argument("--out-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_matrix"))
     ap.add_argument("--write-registry", action="store_true")
@@ -123,6 +145,37 @@ def main() -> None:
         rc, out, err = _run(cmd, cwd=ROOT)
         _record("rvv_local", rc, out, err, extra={"cmd": cmd, "json_path": str(rvv_json)})
 
+    rvv_remote_json = out_dir / "rvv_remote.json"
+    if bool(args.run_rvv_remote) and not bool(args.skip_rvv):
+        cmd = [
+            sys.executable,
+            "scripts/rvv_remote_suite.py",
+            "--frontend",
+            "triton",
+            "--suite",
+            str(args.suite),
+            "--triton-provider",
+            "flaggems",
+            "--flaggems-opset",
+            str(args.flaggems_opset),
+            "--backend-target",
+            "rvv",
+            "--host",
+            str(args.rvv_host),
+            "--user",
+            str(args.rvv_user),
+            "--port",
+            str(int(args.rvv_port)),
+            "--out",
+            str(rvv_remote_json),
+        ]
+        if bool(args.rvv_use_key):
+            cmd.append("--use-key")
+        for k in kernel_filter:
+            cmd += ["--kernel", str(k)]
+        rc, out, err = _run(cmd, cwd=ROOT)
+        _record("rvv_remote", rc, out, err, extra={"cmd": cmd, "json_path": str(rvv_remote_json)})
+
     cuda_json = out_dir / "cuda_local.json"
     if not bool(args.skip_cuda):
         cmd = [
@@ -136,6 +189,8 @@ def main() -> None:
             str(args.flaggems_opset),
             "--backend-target",
             "cuda_h100",
+            "--timeout-sec",
+            str(int(args.cuda_timeout_sec)),
             "--json",
             "--out",
             str(cuda_json),
@@ -156,7 +211,9 @@ def main() -> None:
         "--out",
         str(converged),
     ]
-    if rvv_json.is_file():
+    if rvv_remote_json.is_file():
+        cmd += ["--rvv-json", str(rvv_remote_json)]
+    elif rvv_json.is_file():
         cmd += ["--rvv-json", str(rvv_json)]
     if cuda_json.is_file():
         cmd += ["--cuda-json", str(cuda_json)]

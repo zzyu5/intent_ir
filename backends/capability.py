@@ -13,6 +13,7 @@ from typing import Iterable, Literal
 
 from backends.cuda.opset import CUDA_SUPPORTED_OPS
 from backends.spmd_rvv.opset import SPMD_RVV_SUPPORTED_OPS
+from intent_ir.ops import SUPPORTED_OPS as IR_SUPPORTED_OPS
 
 
 BackendTarget = Literal["rvv", "cuda_h100", "cuda_5090d"]
@@ -76,10 +77,28 @@ def check_dual_backend_support(intent_ops: Iterable[str]) -> dict:
     }
 
 
+def capability_matrix_for_target(target: str) -> dict[str, str]:
+    supported = supported_ops_for_target(target)
+    matrix: dict[str, str] = {}
+    for op in sorted(IR_SUPPORTED_OPS):
+        matrix[op] = "supported" if op in supported else "missing"
+    return matrix
+
+
+def capability_matrix_all_targets() -> dict[str, dict[str, str]]:
+    return {
+        "rvv": capability_matrix_for_target("rvv"),
+        "cuda_h100": capability_matrix_for_target("cuda_h100"),
+        "cuda_5090d": capability_matrix_for_target("cuda_5090d"),
+    }
+
+
 __all__ = [
     "BackendTarget",
     "CapabilityResult",
     "supported_ops_for_target",
     "check_target_support",
     "check_dual_backend_support",
+    "capability_matrix_for_target",
+    "capability_matrix_all_targets",
 ]

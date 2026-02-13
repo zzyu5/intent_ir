@@ -1,6 +1,6 @@
 {
-  "schema_version": "flaggems_registry_v1",
-  "generated_at": "2026-02-13T01:08:14.115571+00:00",
+  "schema_version": "flaggems_registry_v2",
+  "generated_at": "2026-02-13T02:01:51.263929+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -15,17 +15,17 @@
   ],
   "counts": {
     "source_all_ops": 302,
-    "source_filtered_ops": 213,
-    "semantic_ops": 197,
+    "source_filtered_ops": 212,
+    "semantic_ops": 196,
     "by_status": {
-      "blocked_backend": 19,
-      "blocked_ir": 168,
-      "dual_pass": 10
+      "blocked_backend": 24,
+      "blocked_ir": 156,
+      "dual_pass": 16
     },
     "by_family": {
       "attention_sequence": 5,
       "conv_pool_interp": 9,
-      "elementwise_broadcast": 127,
+      "elementwise_broadcast": 126,
       "index_scatter_gather": 14,
       "matmul_linear": 8,
       "norm_activation": 15,
@@ -42,9 +42,12 @@
       "intent_ops": [
         "abs"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.abs",
       "e2e_spec": null,
       "status": "blocked_backend",
       "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped by unary template; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -88,9 +91,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -124,9 +130,12 @@
       "intent_ops": [
         "add"
       ],
+      "mapping_kind": "binary_template",
+      "intent_pattern_id": "binary.add",
       "e2e_spec": "add2d",
       "status": "dual_pass",
       "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped by binary template",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -170,9 +179,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -204,9 +216,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -239,9 +254,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -273,9 +291,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -307,9 +328,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -342,9 +366,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -376,9 +403,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -410,9 +440,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -444,9 +477,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -478,9 +514,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -512,9 +551,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -546,9 +588,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -580,9 +625,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -614,9 +662,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -648,9 +699,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -682,9 +736,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -716,9 +773,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -750,30 +810,62 @@
         "ceil_out"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
+      "intent_ops": [
+        "const",
+        "mul",
+        "floor",
+        "mul"
+      ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.ceil_via_floor",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped as -floor(-x); no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "const",
+            "floor",
+            "mul"
+          ],
+          "supported_ops": [
+            "const",
+            "floor",
+            "mul"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "const",
+            "floor",
+            "mul"
+          ],
+          "supported_ops": [
+            "const",
+            "floor",
+            "mul"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "const",
+            "floor",
+            "mul"
+          ],
+          "supported_ops": [
+            "const",
+            "floor",
+            "mul"
+          ],
           "missing_ops": []
         }
       }
@@ -785,9 +877,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -822,9 +917,12 @@
         "max",
         "min"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.clamp",
       "e2e_spec": "clamp2d",
       "status": "dual_pass",
       "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as max/min composition",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -874,9 +972,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -908,9 +1009,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -942,9 +1046,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -976,9 +1083,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1010,9 +1120,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1044,9 +1157,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1078,9 +1194,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1112,9 +1231,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1146,9 +1268,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1180,9 +1305,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1214,9 +1342,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1247,30 +1378,54 @@
         "eq"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
+      "intent_ops": [
+        "ne",
+        "not"
+      ],
+      "mapping_kind": "cmp_template",
+      "intent_pattern_id": "cmp.eq_via_not_ne",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped as not(ne(x, y)); no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "ne",
+            "not"
+          ],
+          "supported_ops": [
+            "ne",
+            "not"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "ne",
+            "not"
+          ],
+          "supported_ops": [
+            "ne",
+            "not"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "ne",
+            "not"
+          ],
+          "supported_ops": [
+            "ne",
+            "not"
+          ],
           "missing_ops": []
         }
       }
@@ -1282,9 +1437,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1315,30 +1473,54 @@
         "equal"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
+      "intent_ops": [
+        "ne",
+        "not"
+      ],
+      "mapping_kind": "cmp_template",
+      "intent_pattern_id": "cmp.equal_via_not_ne",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped as not(ne(x, y)); no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "ne",
+            "not"
+          ],
+          "supported_ops": [
+            "ne",
+            "not"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "ne",
+            "not"
+          ],
+          "supported_ops": [
+            "ne",
+            "not"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "ne",
+            "not"
+          ],
+          "supported_ops": [
+            "ne",
+            "not"
+          ],
           "missing_ops": []
         }
       }
@@ -1350,9 +1532,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1387,9 +1572,12 @@
       "intent_ops": [
         "exp"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.exp",
       "e2e_spec": "exp2d",
       "status": "dual_pass",
       "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped by unary template",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1432,30 +1620,61 @@
         "exp2"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
+      "intent_ops": [
+        "const",
+        "mul",
+        "exp"
+      ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.exp2_via_exp",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped as exp(x * ln(2)); no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "const",
+            "exp",
+            "mul"
+          ],
+          "supported_ops": [
+            "const",
+            "exp",
+            "mul"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "const",
+            "exp",
+            "mul"
+          ],
+          "supported_ops": [
+            "const",
+            "exp",
+            "mul"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "const",
+            "exp",
+            "mul"
+          ],
+          "supported_ops": [
+            "const",
+            "exp",
+            "mul"
+          ],
           "missing_ops": []
         }
       }
@@ -1467,9 +1686,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1501,9 +1723,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1535,9 +1760,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1569,9 +1797,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1603,9 +1834,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1637,9 +1871,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1671,9 +1908,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1707,9 +1947,12 @@
       "intent_ops": [
         "ge"
       ],
+      "mapping_kind": "cmp_template",
+      "intent_pattern_id": "cmp.ge",
       "e2e_spec": null,
       "status": "blocked_backend",
       "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped by comparison template; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1753,43 +1996,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
-      "backend_support": {
-        "rvv": {
-          "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
-          "missing_ops": []
-        },
-        "cuda_h100": {
-          "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
-          "missing_ops": []
-        },
-        "cuda_5090d": {
-          "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
-          "missing_ops": []
-        }
-      }
-    },
-    {
-      "semantic_op": "get_scheduler_metadata",
-      "source_ops": [
-        "get_scheduler_metadata"
-      ],
-      "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1821,9 +2033,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1857,9 +2072,12 @@
       "intent_ops": [
         "gt"
       ],
+      "mapping_kind": "cmp_template",
+      "intent_pattern_id": "cmp.gt",
       "e2e_spec": null,
       "status": "blocked_backend",
       "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped by comparison template; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1903,9 +2121,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1937,9 +2158,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1971,9 +2195,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2005,9 +2232,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2039,9 +2269,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2073,9 +2306,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2107,9 +2343,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2141,9 +2380,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2177,9 +2419,12 @@
       "intent_ops": [
         "le"
       ],
+      "mapping_kind": "cmp_template",
+      "intent_pattern_id": "cmp.le",
       "e2e_spec": null,
       "status": "blocked_backend",
       "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped by comparison template; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2223,9 +2468,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2257,9 +2505,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2291,9 +2542,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2325,9 +2579,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2359,9 +2616,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2393,9 +2653,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2427,9 +2690,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2461,9 +2727,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2495,9 +2764,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2529,9 +2801,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2565,9 +2840,12 @@
       "intent_ops": [
         "lt"
       ],
+      "mapping_kind": "cmp_template",
+      "intent_pattern_id": "cmp.lt",
       "e2e_spec": null,
       "status": "blocked_backend",
       "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped by comparison template; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2611,9 +2889,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2645,9 +2926,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2681,9 +2965,12 @@
       "intent_ops": [
         "reduce_max"
       ],
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.max",
       "e2e_spec": "row_max",
       "status": "dual_pass",
       "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped to reduce_max over explicit axes",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2729,9 +3016,12 @@
       "intent_ops": [
         "reduce_max"
       ],
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.max_dim",
+      "e2e_spec": "row_max",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped to reduce_max with dims",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2774,30 +3064,47 @@
         "maximum"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
+      "intent_ops": [
+        "max"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.maximum",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped to max primitive; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "max"
+          ],
+          "supported_ops": [
+            "max"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "max"
+          ],
+          "supported_ops": [
+            "max"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "max"
+          ],
+          "supported_ops": [
+            "max"
+          ],
           "missing_ops": []
         }
       }
@@ -2811,9 +3118,12 @@
       "intent_ops": [
         "min"
       ],
+      "mapping_kind": "binary_template",
+      "intent_pattern_id": "binary.min",
       "e2e_spec": null,
       "status": "blocked_backend",
       "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped by binary template; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2857,9 +3167,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2890,30 +3203,47 @@
         "minimum"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
+      "intent_ops": [
+        "min"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.minimum",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped to min primitive; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "min"
+          ],
+          "supported_ops": [
+            "min"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "min"
+          ],
+          "supported_ops": [
+            "min"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "min"
+          ],
+          "supported_ops": [
+            "min"
+          ],
           "missing_ops": []
         }
       }
@@ -2925,9 +3255,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2961,9 +3294,12 @@
       "intent_ops": [
         "mul"
       ],
+      "mapping_kind": "binary_template",
+      "intent_pattern_id": "binary.mul",
       "e2e_spec": null,
       "status": "blocked_backend",
       "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped by binary template; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3007,9 +3343,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3041,9 +3380,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3077,9 +3419,12 @@
       "intent_ops": [
         "ne"
       ],
+      "mapping_kind": "cmp_template",
+      "intent_pattern_id": "cmp.ne",
       "e2e_spec": null,
       "status": "blocked_backend",
       "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped by comparison template; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3123,9 +3468,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3156,30 +3504,54 @@
         "neg"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
+      "intent_ops": [
+        "const",
+        "mul"
+      ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.neg_via_mul",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped as x * (-1); no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "const",
+            "mul"
+          ],
+          "supported_ops": [
+            "const",
+            "mul"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "const",
+            "mul"
+          ],
+          "supported_ops": [
+            "const",
+            "mul"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "const",
+            "mul"
+          ],
+          "supported_ops": [
+            "const",
+            "mul"
+          ],
           "missing_ops": []
         }
       }
@@ -3191,9 +3563,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3225,9 +3600,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3259,9 +3637,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3293,9 +3674,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3327,9 +3711,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3361,9 +3748,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3395,9 +3785,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3429,9 +3822,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3463,9 +3859,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3497,9 +3896,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3531,9 +3933,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3565,9 +3970,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3599,9 +4007,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3633,9 +4044,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3667,9 +4081,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3701,9 +4118,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3735,9 +4155,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3769,9 +4192,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3803,9 +4229,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3837,9 +4266,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3871,9 +4303,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3907,9 +4342,12 @@
       "intent_ops": [
         "rsqrt"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.rsqrt",
       "e2e_spec": null,
       "status": "blocked_backend",
       "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped by unary template; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3953,9 +4391,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3987,9 +4428,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4021,9 +4465,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4054,30 +4501,54 @@
         "sqrt"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
+      "intent_ops": [
+        "rsqrt",
+        "mul"
+      ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.sqrt_via_rsqrt",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped as x * rsqrt(x); no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "mul",
+            "rsqrt"
+          ],
+          "supported_ops": [
+            "mul",
+            "rsqrt"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "mul",
+            "rsqrt"
+          ],
+          "supported_ops": [
+            "mul",
+            "rsqrt"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "mul",
+            "rsqrt"
+          ],
+          "supported_ops": [
+            "mul",
+            "rsqrt"
+          ],
           "missing_ops": []
         }
       }
@@ -4089,9 +4560,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4125,9 +4599,12 @@
       "intent_ops": [
         "sub"
       ],
+      "mapping_kind": "binary_template",
+      "intent_pattern_id": "binary.sub",
       "e2e_spec": null,
       "status": "blocked_backend",
       "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped by binary template; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4171,9 +4648,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4205,9 +4685,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4239,9 +4722,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4273,9 +4759,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4307,9 +4796,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4341,9 +4833,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4375,9 +4870,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4410,9 +4908,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4444,9 +4945,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4478,9 +4982,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4512,9 +5019,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4546,9 +5056,12 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4582,20 +5095,27 @@
       ],
       "family": "reduction",
       "intent_ops": [
-        "reduce_max"
+        "not",
+        "reduce_any",
+        "not"
       ],
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.all_via_not_any",
       "e2e_spec": null,
       "status": "blocked_backend",
       "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped as not(reduce_any(not(x))); no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
-            "reduce_max"
+            "not",
+            "reduce_any"
           ],
           "supported_ops": [
-            "reduce_max"
+            "not",
+            "reduce_any"
           ],
           "missing_ops": []
         },
@@ -4603,10 +5123,12 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
-            "reduce_max"
+            "not",
+            "reduce_any"
           ],
           "supported_ops": [
-            "reduce_max"
+            "not",
+            "reduce_any"
           ],
           "missing_ops": []
         },
@@ -4614,10 +5136,12 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
-            "reduce_max"
+            "not",
+            "reduce_any"
           ],
           "supported_ops": [
-            "reduce_max"
+            "not",
+            "reduce_any"
           ],
           "missing_ops": []
         }
@@ -4630,9 +5154,12 @@
       ],
       "family": "reduction",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4666,9 +5193,12 @@
       "intent_ops": [
         "reduce_max"
       ],
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.amax",
+      "e2e_spec": "row_max",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped to reduce_max",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4716,9 +5246,12 @@
       "intent_ops": [
         "reduce_any"
       ],
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.any",
       "e2e_spec": "any_kernel_dim",
       "status": "dual_pass",
       "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped to reduce_any",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4762,9 +5295,12 @@
       ],
       "family": "reduction",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4796,9 +5332,12 @@
       ],
       "family": "reduction",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4831,9 +5370,12 @@
       ],
       "family": "reduction",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4865,9 +5407,12 @@
       ],
       "family": "reduction",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4899,9 +5444,12 @@
       ],
       "family": "reduction",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4933,9 +5481,12 @@
       ],
       "family": "reduction",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4967,9 +5518,12 @@
       ],
       "family": "reduction",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5001,9 +5555,12 @@
       ],
       "family": "reduction",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5035,9 +5592,12 @@
       ],
       "family": "reduction",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5069,9 +5629,12 @@
       ],
       "family": "reduction",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5105,9 +5668,12 @@
       "intent_ops": [
         "softmax"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.softmax",
       "e2e_spec": "softmax_inner",
       "status": "dual_pass",
       "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped to softmax primitive",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5151,9 +5717,12 @@
       ],
       "family": "reduction",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5188,9 +5757,12 @@
       "intent_ops": [
         "reduce_sum"
       ],
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.sum",
       "e2e_spec": "row_sum",
       "status": "dual_pass",
       "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped to reduce_sum",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5237,9 +5809,12 @@
       "intent_ops": [
         "reduce_sum"
       ],
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.sum_dim",
+      "e2e_spec": "row_sum",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped to reduce_sum with dims",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5283,9 +5858,12 @@
       ],
       "family": "reduction",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5317,9 +5895,12 @@
       ],
       "family": "norm_activation",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5351,9 +5932,12 @@
       ],
       "family": "norm_activation",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5385,9 +5969,12 @@
       ],
       "family": "norm_activation",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": "group_norm_kernel",
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5427,9 +6014,12 @@
         "broadcast_in_dim",
         "div"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.layer_norm",
       "e2e_spec": "layer_norm_persistent",
       "status": "dual_pass",
       "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as normalized arithmetic decomposition",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5509,9 +6099,12 @@
       ],
       "family": "norm_activation",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5543,9 +6136,12 @@
       ],
       "family": "norm_activation",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5579,9 +6175,12 @@
       "intent_ops": [
         "relu"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.relu",
       "e2e_spec": "relu2d",
       "status": "dual_pass",
       "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped by unary template",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5625,9 +6224,12 @@
       ],
       "family": "norm_activation",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5659,9 +6261,12 @@
       ],
       "family": "norm_activation",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5692,30 +6297,75 @@
         "sigmoid"
       ],
       "family": "norm_activation",
-      "intent_ops": [],
+      "intent_ops": [
+        "const",
+        "mul",
+        "exp",
+        "add",
+        "div"
+      ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.sigmoid_via_exp",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped as 1 / (1 + exp(-x)); no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul"
+          ],
+          "supported_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul"
+          ],
+          "supported_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul"
+          ],
+          "supported_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul"
+          ],
           "missing_ops": []
         }
       }
@@ -5726,30 +6376,76 @@
         "silu"
       ],
       "family": "norm_activation",
-      "intent_ops": [],
+      "intent_ops": [
+        "const",
+        "mul",
+        "exp",
+        "add",
+        "div",
+        "mul"
+      ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.silu_via_sigmoid",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped as x * sigmoid(x); no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul"
+          ],
+          "supported_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul"
+          ],
+          "supported_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul"
+          ],
+          "supported_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul"
+          ],
           "missing_ops": []
         }
       }
@@ -5761,9 +6457,12 @@
       ],
       "family": "norm_activation",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5794,30 +6493,82 @@
         "tanh"
       ],
       "family": "norm_activation",
-      "intent_ops": [],
+      "intent_ops": [
+        "const",
+        "mul",
+        "exp",
+        "sub",
+        "add",
+        "div"
+      ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.tanh_via_exp",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped as (exp(2x)-1)/(exp(2x)+1); no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul",
+            "sub"
+          ],
+          "supported_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul",
+            "sub"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul",
+            "sub"
+          ],
+          "supported_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul",
+            "sub"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul",
+            "sub"
+          ],
+          "supported_ops": [
+            "add",
+            "const",
+            "div",
+            "exp",
+            "mul",
+            "sub"
+          ],
           "missing_ops": []
         }
       }
@@ -5829,9 +6580,12 @@
       ],
       "family": "norm_activation",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5863,9 +6617,12 @@
       ],
       "family": "norm_activation",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5897,9 +6654,12 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5933,9 +6693,12 @@
       "intent_ops": [
         "gather"
       ],
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.gather",
+      "e2e_spec": "gather2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped by index template",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5979,9 +6742,12 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6013,9 +6779,12 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6047,9 +6816,12 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6081,9 +6853,12 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6115,9 +6890,12 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6149,9 +6927,12 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6183,9 +6964,12 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6217,9 +7001,12 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6251,9 +7038,12 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6287,9 +7077,12 @@
       "intent_ops": [
         "where"
       ],
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.where_scalar_other",
+      "e2e_spec": "where2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped to where with scalar broadcast",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6335,9 +7128,12 @@
       "intent_ops": [
         "where"
       ],
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.where_scalar_self",
+      "e2e_spec": "where2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped to where with scalar broadcast",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6385,9 +7181,12 @@
         "gt",
         "where"
       ],
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.where_self",
       "e2e_spec": "where2d",
       "status": "dual_pass",
       "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped via compare+where",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6438,9 +7237,12 @@
       ],
       "family": "matmul_linear",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6472,9 +7274,12 @@
       ],
       "family": "matmul_linear",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6507,9 +7312,12 @@
       ],
       "family": "matmul_linear",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6541,9 +7349,12 @@
       ],
       "family": "matmul_linear",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6575,9 +7386,12 @@
       ],
       "family": "matmul_linear",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6609,9 +7423,12 @@
       ],
       "family": "matmul_linear",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6644,9 +7461,12 @@
       ],
       "family": "matmul_linear",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6678,9 +7498,12 @@
       ],
       "family": "matmul_linear",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6712,9 +7535,12 @@
       ],
       "family": "conv_pool_interp",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6746,9 +7572,12 @@
       ],
       "family": "conv_pool_interp",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6782,9 +7611,12 @@
       "intent_ops": [
         "conv2d"
       ],
+      "mapping_kind": "direct_supported_op",
+      "intent_pattern_id": "direct.conv2d",
       "e2e_spec": null,
       "status": "blocked_backend",
       "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "semantic op equals IntentIR op name; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6828,9 +7660,12 @@
       ],
       "family": "conv_pool_interp",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6862,9 +7697,12 @@
       ],
       "family": "conv_pool_interp",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6896,9 +7734,12 @@
       ],
       "family": "conv_pool_interp",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6932,9 +7773,12 @@
       "intent_ops": [
         "upsample_bicubic2d_aa"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.upsample_bicubic2d_aa",
       "e2e_spec": "upsample_bicubic2d_aa",
       "status": "blocked_backend",
       "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to macro op (expanded before backend lowering); rvv_missing=['upsample_bicubic2d_aa']; cuda_h100_missing=['upsample_bicubic2d_aa']; cuda_5090d_missing=['upsample_bicubic2d_aa']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6978,9 +7822,12 @@
       ],
       "family": "conv_pool_interp",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -7012,9 +7859,12 @@
       ],
       "family": "conv_pool_interp",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -7046,9 +7896,12 @@
       ],
       "family": "attention_sequence",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -7080,9 +7933,12 @@
       ],
       "family": "attention_sequence",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -7114,9 +7970,12 @@
       ],
       "family": "attention_sequence",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -7148,9 +8007,12 @@
       ],
       "family": "attention_sequence",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -7182,9 +8044,12 @@
       ],
       "family": "attention_sequence",
       "intent_ops": [],
+      "mapping_kind": "unmapped",
+      "intent_pattern_id": "none",
       "e2e_spec": null,
       "status": "blocked_ir",
       "status_reason": "no_intentir_mapping",
+      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
       "backend_support": {
         "rvv": {
           "target": "rvv",

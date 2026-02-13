@@ -26,11 +26,14 @@ def test_build_registry_resolves_all_statuses() -> None:
             "softmax",
             "upsample_bicubic2d_aa",
             "randn",  # filtered out in deterministic_forward opset
-        ]
+        ],
+        flaggems_commit="a" * 40,
     )
     entries = payload["entries"]
     assert entries
     assert all(str(e["status"]) in STATUS_VALUES for e in entries)
+    assert all(isinstance(e.get("mapping_kind"), str) for e in entries)
+    assert all(isinstance(e.get("intent_pattern_id"), str) for e in entries)
     # deterministic_forward filter should drop random ops.
     semantic_names = {str(e["semantic_op"]) for e in entries}
     assert "randn" not in semantic_names
@@ -39,7 +42,10 @@ def test_build_registry_resolves_all_statuses() -> None:
 
 
 def test_list_supported_e2e_specs_uses_registry_entries() -> None:
-    payload = build_registry(all_ops=["add", "softmax", "group_norm", "relu", "sum", "max", "where_self", "exp", "clamp"])
+    payload = build_registry(
+        all_ops=["add", "softmax", "group_norm", "relu", "sum", "max", "where_self", "exp", "clamp"],
+        flaggems_commit="b" * 40,
+    )
     specs = list_supported_e2e_specs(payload)
     assert "add2d" in specs
     assert "softmax_inner" in specs
@@ -49,3 +55,12 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
     assert "row_max" in specs
     assert "exp2d" in specs
     assert "clamp2d" in specs
+
+
+def test_build_registry_requires_flaggems_commit() -> None:
+    try:
+        build_registry(all_ops=["add"])
+    except ValueError as e:
+        assert "flaggems_commit" in str(e)
+    else:
+        raise AssertionError("expected ValueError for missing flaggems_commit")

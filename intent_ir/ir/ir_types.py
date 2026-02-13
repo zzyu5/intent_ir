@@ -14,7 +14,7 @@ import re
 from typing import Any, Dict, List, Literal, Optional
 
 from intent_ir.diagnostics import closest_match, format_op_snippet
-from intent_ir.ops import SUPPORTED_OPS
+from intent_ir.ops import SUPPORTED_OPS, op_spec_for
 
 
 __all__ = [
@@ -482,6 +482,78 @@ def _validate_axis_roles(axis_roles: Dict[str, str], tensors: Dict[str, TensorTy
         # without failing validation.
 
 
+def _expected_arity_text(op_name: str) -> str:
+    spec = op_spec_for(op_name)
+    if spec is None or not spec.arity:
+        return "any"
+    if spec.arity_mode == "min":
+        return f">= {min(spec.arity)}"
+    if len(spec.arity) == 1:
+        return str(spec.arity[0])
+    return "one of " + ", ".join(str(x) for x in sorted(set(spec.arity)))
+
+
+def _validate_opspec_attrs(op: Op, idx: int) -> None:
+    spec = op_spec_for(op.op)
+    if spec is None or not spec.attr_schema:
+        return
+
+    attrs = op.attrs or {}
+    for key, schema_raw in spec.attr_schema.items():
+        schema = str(schema_raw)
+        required = schema.endswith("!")
+        kind = schema[:-1] if required else schema
+        has_key = key in attrs
+        if required and not has_key:
+            raise IntentIRValidationError(f"op[{idx}] {op.op} requires attrs.{key}")
+        if not has_key:
+            continue
+
+        val = attrs.get(key)
+        if kind == "any":
+            continue
+        if kind == "dtype":
+            if not isinstance(val, str) or val not in SUPPORTED_DTYPES:
+                raise IntentIRValidationError(f"op[{idx}] {op.op}.attrs.{key} must be supported dtype")
+            continue
+        if kind == "int":
+            if not isinstance(val, int):
+                raise IntentIRValidationError(f"op[{idx}] {op.op}.attrs.{key} must be int")
+            continue
+        if kind == "bool":
+            if not isinstance(val, bool):
+                raise IntentIRValidationError(f"op[{idx}] {op.op}.attrs.{key} must be bool")
+            continue
+        if kind == "str":
+            if not isinstance(val, str):
+                raise IntentIRValidationError(f"op[{idx}] {op.op}.attrs.{key} must be string")
+            continue
+        if kind == "number":
+            if not isinstance(val, (int, float)):
+                raise IntentIRValidationError(f"op[{idx}] {op.op}.attrs.{key} must be number")
+            continue
+        if kind == "shape":
+            if not isinstance(val, list) or not val:
+                raise IntentIRValidationError(f"op[{idx}] {op.op}.attrs.{key} must be non-empty list")
+            for d in val:
+                parse_dim(d)
+            continue
+        if kind == "int_list":
+            if not isinstance(val, list) or not all(isinstance(x, int) for x in val):
+                raise IntentIRValidationError(f"op[{idx}] {op.op}.attrs.{key} must be list[int]")
+            continue
+        if kind == "int_or_int_list":
+            if isinstance(val, int):
+                continue
+            if isinstance(val, list) and all(isinstance(x, int) for x in val):
+                continue
+            raise IntentIRValidationError(f"op[{idx}] {op.op}.attrs.{key} must be int or list[int]")
+        if kind == "object":
+            if not isinstance(val, dict):
+                raise IntentIRValidationError(f"op[{idx}] {op.op}.attrs.{key} must be object")
+            continue
+
+
 def _validate_ops(ops: List[Op], tensors: Dict[str, TensorType]) -> None:
     if not ops:
         raise IntentIRValidationError("ops must not be empty")
@@ -492,6 +564,13 @@ def _validate_ops(ops: List[Op], tensors: Dict[str, TensorType]) -> None:
     for idx, op in enumerate(ops):
         if op.op not in SUPPORTED_OPS:
             raise IntentIRValidationError(f"op[{idx}].op unsupported: {op.op}")
+        spec = op_spec_for(op.op)
+        if spec is not None and not spec.allows_input_count(len(op.inputs)):
+            exp = _expected_arity_text(op.op)
+            raise IntentIRValidationError(
+                f"op[{idx}] {op.op} requires input count {exp}, got {len(op.inputs)}"
+            )
+        _validate_opspec_attrs(op, idx)
         for i, inp in enumerate(op.inputs):
             if inp not in available_names:
                 # Rich, user-friendly diagnostic text (Clang-like).
