@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-13T15:08:49+00:00",
+  "generated_at": "2026-02-13T15:51:01+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,

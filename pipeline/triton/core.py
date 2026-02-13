@@ -39,11 +39,7 @@ from verify.metamorphic import run_bounded_exhaustive, run_metamorphic_suite
 from verify.mutation import run_mutation_kill
 from verify.tolerances import infer_tolerances
 from pipeline.triton.execution_policy import ExecutionPathPolicy, make_policy_from_legacy_flags
-from pipeline.triton.provider_hooks import (
-    annotate_provider_intent_meta,
-    maybe_normalize_provider_candidate,
-    validate_provider_intent_meta,
-)
+from pipeline.triton.providers import get_provider_plugin
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -2787,11 +2783,11 @@ def run_pipeline_for_spec(
             (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
             (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
     # Ensure schedule is attached even if the LLM emits only partial schedule fields.
-    provider_name = str(triton_provider)
+    provider_name = str(triton_provider).strip().lower()
+    provider_plugin = get_provider_plugin(provider_name)
     provider_source_op = getattr(spec, "source_op", getattr(spec, "name", None))
     provider_capability_state = getattr(spec, "capability_state", getattr(spec, "capability_status", None))
-    cand, cand_expanded, norm_info = maybe_normalize_provider_candidate(
-        provider=provider_name,
+    cand, cand_expanded, norm_info = provider_plugin.maybe_normalize_candidate(
         spec_name=str(spec.name),
         candidate=cand,
         candidate_expanded=cand_expanded,
@@ -2807,25 +2803,19 @@ def run_pipeline_for_spec(
             )
     _ensure_schedule(cand.intent, kernel_name=spec.name, triton_src=src)
     _attach_access_witness_meta(cand.intent, cert_v2=cert_v2, canonical_shapes=dict(spec.canonical_shapes))
-    annotate_provider_intent_meta(
+    provider_plugin.annotate_intent_meta(
         cand.intent,
-        provider=provider_name,
         source_op=(str(provider_source_op) if provider_source_op is not None else None),
         capability_state=(str(provider_capability_state) if provider_capability_state is not None else None),
         backend_target=backend_target,
     )
-    report["provider_meta_validation"] = validate_provider_intent_meta(
-        cand.intent,
-        provider=provider_name,
-        require_source_and_state=(provider_name == "flaggems"),
-    )
+    report["provider_meta_validation"] = provider_plugin.validate_intent_meta(cand.intent)
     report["intent"] = cand.intent.to_json_dict()
     if cand_expanded is not None:
         _ensure_schedule(cand_expanded.intent, kernel_name=spec.name, triton_src=src)
         _attach_access_witness_meta(cand_expanded.intent, cert_v2=cert_v2, canonical_shapes=dict(spec.canonical_shapes))
-        annotate_provider_intent_meta(
+        provider_plugin.annotate_intent_meta(
             cand_expanded.intent,
-            provider=provider_name,
             source_op=(str(provider_source_op) if provider_source_op is not None else None),
             capability_state=(str(provider_capability_state) if provider_capability_state is not None else None),
             backend_target=backend_target,
@@ -2872,8 +2862,7 @@ def run_pipeline_for_spec(
                     raw_json=dict(cand.raw_json),
                     llm_trace=dict(cand.llm_trace),
                 )
-                cand, cand_expanded, repair_norm_info = maybe_normalize_provider_candidate(
-                    provider=provider_name,
+                cand, cand_expanded, repair_norm_info = provider_plugin.maybe_normalize_candidate(
                     spec_name=str(spec.name),
                     candidate=cand,
                     candidate_expanded=cand_expanded,
@@ -2885,9 +2874,8 @@ def run_pipeline_for_spec(
 
                 _ensure_schedule(cand.intent, kernel_name=spec.name, triton_src=src)
                 _attach_access_witness_meta(cand.intent, cert_v2=cert_v2, canonical_shapes=dict(spec.canonical_shapes))
-                annotate_provider_intent_meta(
+                provider_plugin.annotate_intent_meta(
                     cand.intent,
-                    provider=provider_name,
                     source_op=(str(provider_source_op) if provider_source_op is not None else None),
                     capability_state=(str(provider_capability_state) if provider_capability_state is not None else None),
                     backend_target=backend_target,
@@ -2895,9 +2883,8 @@ def run_pipeline_for_spec(
                 (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
                 _ensure_schedule(cand_expanded.intent, kernel_name=spec.name, triton_src=src)
                 _attach_access_witness_meta(cand_expanded.intent, cert_v2=cert_v2, canonical_shapes=dict(spec.canonical_shapes))
-                annotate_provider_intent_meta(
+                provider_plugin.annotate_intent_meta(
                     cand_expanded.intent,
-                    provider=provider_name,
                     source_op=(str(provider_source_op) if provider_source_op is not None else None),
                     capability_state=(str(provider_capability_state) if provider_capability_state is not None else None),
                     backend_target=backend_target,
@@ -2905,11 +2892,7 @@ def run_pipeline_for_spec(
                 (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(
                     print_mlir_like(cand_expanded.intent), encoding="utf-8"
                 )
-                report["provider_meta_validation"] = validate_provider_intent_meta(
-                    cand.intent,
-                    provider=provider_name,
-                    require_source_and_state=(provider_name == "flaggems"),
-                )
+                report["provider_meta_validation"] = provider_plugin.validate_intent_meta(cand.intent)
                 report["intent"] = cand.intent.to_json_dict()
                 report["intent_expanded"] = cand_expanded.intent.to_json_dict()
                 sv = static_validate((cand_expanded.intent if cand_expanded is not None else cand.intent), sv_cert)

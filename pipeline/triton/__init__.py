@@ -2,5 +2,4 @@
 Triton-specific pipeline orchestration.
 """
 
-__all__ = ["core"]
-
+__all__ = ["core", "providers"]

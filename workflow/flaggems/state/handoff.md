@@ -1,9 +1,9 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-13T15:08:41+00:00
-- Commit: `7c9d9dda34b6f8593acdbe9e53fc1e749980aa30`
-- Summary: Refactored provider hooks to de-specialize core path; added count_nonzero/diag/diag_embed IR+mapping+spec with tests; matrix run completed for 3 kernels (pipeline diff fail; RVV codegen blockers captured).
-- Batch Ops (10): ScaleDotProductAttention, celu, conv1d, conv3d, conv_depthwise2d, count_nonzero, cummax, cummin, diag, diag_embed
-- Run Summary: `artifacts/flaggems_matrix/daily/20260213/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260213/status_converged.json`
-- Next Focus: Fix count_nonzero/diag/diag_embed IntentIR generation to deterministic patterns and resolve RVV lowering blockers for diag/diag_embed.
+- Timestamp: 2026-02-13T15:50:54+00:00
+- Commit: `3b97f7fb3c8c0b091ca1697d6c112876db9f2497`
+- Summary: Provider architecture refactored to plugin registry (core decoupled from flaggems branches) and backend tests executed (RVV local+remote, CUDA local) for count_nonzero/diag/diag_embed.
+- Batch Ops (10): ScaleDotProductAttention, celu, conv1d, conv3d, conv_depthwise2d, cummax, cummin, elu, embedding, eye
+- Run Summary: `artifacts/flaggems_matrix/daily/20260213/run_summary_plugin.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260213/status_converged_plugin.json`
+- Next Focus: Fix IntentIR deterministic mapping for count_nonzero/diag/diag_embed and resolve RVV/CUDA lowering blockers (diag_len/M symbols + timeout).
