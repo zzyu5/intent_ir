@@ -37,6 +37,7 @@ from frontends.triton.contract import evaluate_contract_v2
 from verify.metamorphic import run_bounded_exhaustive, run_metamorphic_suite
 from verify.mutation import run_mutation_kill
 from verify.tolerances import infer_tolerances
+from pipeline.triton.flaggems_intent_normalize import maybe_normalize_flaggems_candidate
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -2799,6 +2800,19 @@ def run_pipeline_for_spec(
             (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
             (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
     # Ensure schedule is attached even if the LLM emits only partial schedule fields.
+    if str(triton_provider) == "flaggems":
+        cand, cand_expanded, norm_info = maybe_normalize_flaggems_candidate(
+            spec_name=str(spec.name),
+            candidate=cand,
+            candidate_expanded=cand_expanded,
+        )
+        if norm_info is not None:
+            report["flaggems_intent_normalization"] = dict(norm_info)
+            (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
+            if cand_expanded is not None:
+                (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(
+                    print_mlir_like(cand_expanded.intent), encoding="utf-8"
+                )
     _ensure_schedule(cand.intent, kernel_name=spec.name, triton_src=src)
     _attach_access_witness_meta(cand.intent, cert_v2=cert_v2, canonical_shapes=dict(spec.canonical_shapes))
     if str(triton_provider) == "flaggems":

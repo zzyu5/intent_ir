@@ -12,6 +12,7 @@ importable modules (e.g., `pipeline/triton/core.py`, or backend/verify packages)
   - `--use-intent-ir/--no-use-intent-ir` chooses IntentIR pipeline vs traditional provider path.
   - `--intentir-seed-policy auto|force_llm|force_cache` controls Intent seed behavior when IntentIR is enabled.
   - Default `auto` is "LLM-first-run, cache-next-runs": on cache miss it calls LLM and writes `<out-dir>/<kernel>.intent_seed.json`; later runs replay that seed transparently.
+  - For selected unstable FlagGems kernels (currently `sigmoid2d`, `batch_norm2d`), pipeline applies a canonical intent normalization pass after LLM/cache loading to keep IR/backends deterministic.
   - Legacy aliases remain: `--use-llm` => `force_llm`; `--no-use-llm` => `--no-use-intent-ir`.
   - `--allow-deterministic-fallback` only applies to `force_cache` when cache is missing.
   - `--suite smoke|coverage|all`, `--list`, and `--kernel NAME` control kernel selection.

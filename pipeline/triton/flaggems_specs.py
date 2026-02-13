@@ -1208,6 +1208,8 @@ def _run_flaggems_batch_norm_reference(case: TestCase) -> Dict[str, np.ndarray]:
     eps = float(case.shapes.get("eps", 1e-5))
     momentum = float(case.shapes.get("momentum", 0.1))
     training = bool(case.shapes.get("training", 1))
+    n_elements = float(max(1, n * hw))
+    n_minus_1 = float(max(1, (n * hw) - 1))
     device = str(flag_gems.device)
 
     if case.inputs and "X" in case.inputs:
@@ -1234,6 +1236,8 @@ def _run_flaggems_batch_norm_reference(case: TestCase) -> Dict[str, np.ndarray]:
         running_var = _as_f32_tensor(np.asarray(case.inputs["RunningVar"]), device=device).reshape(c)
     else:
         running_var = torch.ones((c,), device=device, dtype=torch.float32)
+    running_mean_in = running_mean.clone()
+    running_var_in = running_var.clone()
 
     with flag_gems.use_gems(include=["batch_norm"]):
         y, mean, inv_std = flag_gems_ops.batch_norm(
@@ -1250,8 +1254,10 @@ def _run_flaggems_batch_norm_reference(case: TestCase) -> Dict[str, np.ndarray]:
     x_np = _to_np(x)
     w_np = _to_np(w)
     b_np = _to_np(b)
-    running_mean_np = _to_np(running_mean)
-    running_var_np = _to_np(running_var)
+    running_mean_in_np = _to_np(running_mean_in)
+    running_var_in_np = _to_np(running_var_in)
+    running_mean_out_np = _to_np(running_mean)
+    running_var_out_np = _to_np(running_var)
     y_np = _to_np(y)
     mean_np = _to_np(mean)
     inv_std_np = _to_np(inv_std)
@@ -1259,18 +1265,22 @@ def _run_flaggems_batch_norm_reference(case: TestCase) -> Dict[str, np.ndarray]:
         "X": x_np,
         "W": w_np,
         "B": b_np,
-        "RunningMean": running_mean_np,
-        "RunningVar": running_var_np,
+        "RunningMean": running_mean_in_np,
+        "RunningVar": running_var_in_np,
+        "RunningMeanOut": running_mean_out_np,
+        "RunningVarOut": running_var_out_np,
         "Y": y_np,
         "Mean": mean_np,
         "InvStd": inv_std_np,
-        "running_mean": running_mean_np,
-        "running_var": running_var_np,
+        "running_mean": running_mean_in_np,
+        "running_var": running_var_in_np,
         "mean": mean_np,
         "inv_std": inv_std_np,
         "output_1": y_np,
-        "running_mean_out": running_mean_np,
-        "running_var_out": running_var_np,
+        "running_mean_out": running_mean_out_np,
+        "running_var_out": running_var_out_np,
+        "n_elements": np.array(n_elements, dtype=np.float32),
+        "n_minus_1": np.array(n_minus_1, dtype=np.float32),
         "eps": np.array(eps, dtype=np.float32),
         "momentum": np.array(momentum, dtype=np.float32),
         "training": np.array(1 if training else 0, dtype=np.int32),
@@ -1768,6 +1778,21 @@ def _norm_groupnorm(shapes: Dict[str, int]) -> Dict[str, int]:
     return out
 
 
+def _norm_batch_norm_2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    n = max(1, int(out.get("N", 2)))
+    hw = max(1, int(out.get("HW", 4)))
+    # Training-mode batch norm with N*HW==1 is statistically degenerate
+    # (variance correction can produce non-finite results). Keep >=2.
+    if n * hw < 2:
+        hw = 2
+    out["N"] = n
+    out["HW"] = hw
+    if "C" in out:
+        out["C"] = max(1, int(out["C"]))
+    return out
+
+
 _FLAGGEMS_SPEC_BUILDERS = {
     "any_kernel_dim": lambda: KernelSpec(
         name="any_kernel_dim",
@@ -1995,6 +2020,7 @@ _FLAGGEMS_SPEC_BUILDERS = {
         runner=_run_flaggems_batch_norm_reference,
         canonical_shapes={"N": 2, "C": 4, "HW": 4},
         vary_axes=["N", "C", "HW"],
+        normalize_shapes=_norm_batch_norm_2d,
     ),
     "layer_norm_persistent": lambda: KernelSpec(
         name="layer_norm_persistent",
