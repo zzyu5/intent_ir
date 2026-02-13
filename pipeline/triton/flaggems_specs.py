@@ -74,9 +74,14 @@ FLAGGEMS_NEG_SRC = _module_source_text("flag_gems.ops.neg")
 FLAGGEMS_CEIL_SRC = _module_source_text("flag_gems.ops.ceil")
 FLAGGEMS_RECIPROCAL_SRC = _module_source_text("flag_gems.ops.reciprocal")
 FLAGGEMS_SQRT_SRC = _module_source_text("flag_gems.ops.sqrt")
+FLAGGEMS_EXP2_SRC = _module_source_text("flag_gems.ops.exp2")
 FLAGGEMS_SIGMOID_SRC = _module_source_text("flag_gems.ops.sigmoid")
 FLAGGEMS_SILU_SRC = _module_source_text("flag_gems.ops.silu")
 FLAGGEMS_TANH_SRC = _module_source_text("flag_gems.ops.tanh")
+FLAGGEMS_LOGICAL_AND_SRC = _module_source_text("flag_gems.ops.logical_and")
+FLAGGEMS_LOGICAL_OR_SRC = _module_source_text("flag_gems.ops.logical_or")
+FLAGGEMS_LOGICAL_NOT_SRC = _module_source_text("flag_gems.ops.logical_not")
+FLAGGEMS_LOGICAL_XOR_SRC = _module_source_text("flag_gems.ops.logical_xor")
 FLAGGEMS_GROUP_NORM_SRC = _module_source_text("flag_gems.ops.groupnorm")
 FLAGGEMS_LAYER_NORM_SRC = _module_source_text("flag_gems.ops.layernorm")
 FLAGGEMS_SOFTMAX_SRC = _module_source_text("flag_gems.ops.softmax")
@@ -90,6 +95,11 @@ FLAGGEMS_SUM_SRC = _module_source_text("flag_gems.ops.sum")
 FLAGGEMS_MAX_SRC = _module_source_text("flag_gems.ops.max")
 FLAGGEMS_MEAN_SRC = _module_source_text("flag_gems.ops.mean")
 FLAGGEMS_ALL_SRC = _module_source_text("flag_gems.ops.all")
+FLAGGEMS_MAXIMUM_SRC = _module_source_text("flag_gems.ops.maximum")
+FLAGGEMS_MINIMUM_SRC = _module_source_text("flag_gems.ops.minimum")
+FLAGGEMS_FULL_SRC = _module_source_text("flag_gems.ops.full")
+FLAGGEMS_COPY_SRC = _module_source_text("flag_gems.ops.copy")
+FLAGGEMS_TO_COPY_SRC = _module_source_text("flag_gems.ops.to")
 FLAGGEMS_CLAMP_SRC = _module_source_text("flag_gems.ops.clamp")
 FLAGGEMS_UPSAMPLE_BICUBIC2D_AA_SRC = _module_source_text("flag_gems.ops.upsample_bicubic2d_aa")
 
@@ -247,6 +257,10 @@ def _run_flaggems_binary2d_reference(
     with flag_gems.use_gems(include=include):
         if op_name == "div":
             c = torch.div(a, b)
+        elif op_name == "max":
+            c = torch.maximum(a, b)
+        elif op_name == "min":
+            c = torch.minimum(a, b)
         elif op_name == "eq":
             c = torch.eq(a, b)
         elif op_name == "ne":
@@ -390,6 +404,8 @@ def _run_flaggems_unary2d_reference(
             out = torch.reciprocal(inp)
         elif op_name == "sqrt":
             out = torch.sqrt(inp)
+        elif op_name == "exp2":
+            out = torch.exp2(inp)
         elif op_name == "sigmoid":
             out = torch.sigmoid(inp)
         elif op_name == "silu":
@@ -438,6 +454,14 @@ def _run_flaggems_sigmoid2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         case,
         include=["sigmoid"],
         op_name="sigmoid",
+    )
+
+
+def _run_flaggems_exp22d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_unary2d_reference(
+        case,
+        include=["exp2"],
+        op_name="exp2",
     )
 
 
@@ -498,6 +522,204 @@ def _run_flaggems_row_all_reference(case: TestCase) -> Dict[str, np.ndarray]:
     inp_np = _to_np(inp)
     out_np = _to_np(out)
     return {
+        "inp": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_logical_binary2d_reference(
+    case: TestCase,
+    *,
+    include: List[str],
+    op_name: str,
+) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "A" in case.inputs:
+        a = torch.as_tensor(np.asarray(case.inputs["A"]), device=device, dtype=torch.bool)
+    else:
+        a = torch.from_numpy((rg.random((m, n), dtype=np.float32) > 0.5)).to(device=device, dtype=torch.bool)
+
+    if case.inputs and "B" in case.inputs:
+        b = torch.as_tensor(np.asarray(case.inputs["B"]), device=device, dtype=torch.bool)
+    else:
+        b = torch.from_numpy((rg.random((m, n), dtype=np.float32) > 0.5)).to(device=device, dtype=torch.bool)
+
+    with flag_gems.use_gems(include=include):
+        if op_name == "logical_and":
+            c = torch.logical_and(a, b)
+        elif op_name == "logical_or":
+            c = torch.logical_or(a, b)
+        elif op_name == "logical_xor":
+            c = torch.logical_xor(a, b)
+        else:
+            raise ValueError(f"unsupported op_name for logical binary runner: {op_name}")
+
+    a_np = _to_np(a)
+    b_np = _to_np(b)
+    c_np = _to_np(c)
+    return {
+        "A": a_np,
+        "B": b_np,
+        "C": c_np,
+        "a": a_np,
+        "b": b_np,
+        "x": a_np,
+        "y": b_np,
+        "out": c_np,
+        "output": c_np,
+    }
+
+
+def _run_flaggems_logical_and2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_logical_binary2d_reference(
+        case,
+        include=["logical_and"],
+        op_name="logical_and",
+    )
+
+
+def _run_flaggems_logical_or2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_logical_binary2d_reference(
+        case,
+        include=["logical_or"],
+        op_name="logical_or",
+    )
+
+
+def _run_flaggems_logical_xor2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_logical_binary2d_reference(
+        case,
+        include=["logical_xor"],
+        op_name="logical_xor",
+    )
+
+
+def _run_flaggems_logical_not2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = torch.as_tensor(np.asarray(case.inputs["inp"]), device=device, dtype=torch.bool)
+    else:
+        inp = torch.from_numpy((rg.random((m, n), dtype=np.float32) > 0.5)).to(device=device, dtype=torch.bool)
+
+    with flag_gems.use_gems(include=["logical_not"]):
+        out = torch.logical_not(inp)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "A": inp_np,
+        "Out": out_np,
+        "inp": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_full2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+
+    if case.inputs and "value" in case.inputs:
+        value = float(np.asarray(case.inputs["value"], dtype=np.float32).reshape(()))
+    else:
+        value = 0.25
+
+    with flag_gems.use_gems(include=["full", "full_like", "ones", "ones_like", "zeros", "zeros_like", "fill_scalar", "fill_tensor"]):
+        out = torch.full((m, n), value, device=device, dtype=torch.float32)
+
+    out_np = _to_np(out)
+    value_np = np.array(value, dtype=np.float32)
+    return {
+        "out": out_np,
+        "output": out_np,
+        "value": value_np,
+        "fill_value": value_np,
+    }
+
+
+def _run_flaggems_maximum2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_binary2d_reference(
+        case,
+        include=["maximum", "clamp_min"],
+        op_name="max",
+    )
+
+
+def _run_flaggems_minimum2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_binary2d_reference(
+        case,
+        include=["minimum"],
+        op_name="min",
+    )
+
+
+def _run_flaggems_identity2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "src" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["src"]), device=device)
+    elif case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        # Make the input non-contiguous so contiguous/copy path is exercised.
+        base = torch.from_numpy(rg.standard_normal((n, m), dtype=np.float32)).to(device)
+        inp = base.transpose(0, 1)
+
+    with flag_gems.use_gems(include=["copy", "contiguous", "resolve_conj", "resolve_neg"]):
+        template = torch.empty_like(inp)
+        out = flag_gems_ops.copy(template, inp)
+        out = flag_gems_ops.contiguous(out)
+        out = flag_gems_ops.resolve_conj(out)
+        out = flag_gems_ops.resolve_neg(out)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "src": inp_np,
+        "dst": out_np,
+        "A": inp_np,
+        "Out": out_np,
+        "inp": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_cast2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = torch.as_tensor(np.asarray(case.inputs["inp"]), device=device, dtype=torch.float16)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device=device, dtype=torch.float16)
+
+    with flag_gems.use_gems(include=["to_copy"]):
+        out = torch.ops.aten._to_copy(inp, dtype=torch.float32)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "A": inp_np,
+        "Out": out_np,
         "inp": inp_np,
         "out": out_np,
         "input": inp_np,
@@ -1174,6 +1396,14 @@ _FLAGGEMS_SPEC_BUILDERS = {
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
     ),
+    "exp22d": lambda: KernelSpec(
+        name="exp22d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_EXP2_SRC",
+        runner=_run_flaggems_exp22d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
     "abs2d": lambda: KernelSpec(
         name="abs2d",
         module="pipeline.triton.flaggems_specs",
@@ -1233,6 +1463,78 @@ _FLAGGEMS_SPEC_BUILDERS = {
         module="pipeline.triton.flaggems_specs",
         attr="FLAGGEMS_ALL_SRC",
         runner=_run_flaggems_row_all_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "logical_and2d": lambda: KernelSpec(
+        name="logical_and2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_LOGICAL_AND_SRC",
+        runner=_run_flaggems_logical_and2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "logical_or2d": lambda: KernelSpec(
+        name="logical_or2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_LOGICAL_OR_SRC",
+        runner=_run_flaggems_logical_or2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "logical_not2d": lambda: KernelSpec(
+        name="logical_not2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_LOGICAL_NOT_SRC",
+        runner=_run_flaggems_logical_not2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "logical_xor2d": lambda: KernelSpec(
+        name="logical_xor2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_LOGICAL_XOR_SRC",
+        runner=_run_flaggems_logical_xor2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "maximum2d": lambda: KernelSpec(
+        name="maximum2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_MAXIMUM_SRC",
+        runner=_run_flaggems_maximum2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "minimum2d": lambda: KernelSpec(
+        name="minimum2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_MINIMUM_SRC",
+        runner=_run_flaggems_minimum2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "full2d": lambda: KernelSpec(
+        name="full2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_FULL_SRC",
+        runner=_run_flaggems_full2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "identity2d": lambda: KernelSpec(
+        name="identity2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_COPY_SRC",
+        runner=_run_flaggems_identity2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "cast2d": lambda: KernelSpec(
+        name="cast2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_TO_COPY_SRC",
+        runner=_run_flaggems_cast2d_reference,
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
     ),

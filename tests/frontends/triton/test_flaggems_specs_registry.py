@@ -17,6 +17,7 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     names = {str(s.name) for s in specs}
     assert "relu2d" in names
     assert "exp2d" in names
+    assert "exp22d" in names
     assert "div2d" in names
     assert "eq2d" in names
     assert "ne2d" in names
@@ -30,6 +31,10 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "sqrt2d" in names
     assert "silu2d" in names
     assert "tanh2d" in names
+    assert "logical_and2d" in names
+    assert "logical_or2d" in names
+    assert "logical_not2d" in names
+    assert "logical_xor2d" in names
     assert "sub2d" in names
     assert "mul2d" in names
     assert "abs2d" in names
@@ -39,5 +44,10 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "row_mean" in names
     assert "row_all" in names
     assert "row_max" in names
+    assert "full2d" in names
+    assert "maximum2d" in names
+    assert "minimum2d" in names
+    assert "identity2d" in names
+    assert "cast2d" in names
     assert "gather2d" in names
     assert "clamp2d" in names

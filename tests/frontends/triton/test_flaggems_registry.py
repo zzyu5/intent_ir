@@ -58,10 +58,25 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
             "ceil",
             "reciprocal",
             "sqrt",
+            "exp2",
             "silu",
             "tanh",
+            "logical_and",
+            "logical_or",
+            "logical_not",
+            "logical_xor",
             "abs",
             "rsqrt",
+            "full",
+            "ones",
+            "zeros",
+            "maximum",
+            "minimum",
+            "copy",
+            "contiguous",
+            "resolve_conj",
+            "resolve_neg",
+            "to_copy",
             "softmax",
             "group_norm",
             "relu",
@@ -90,10 +105,20 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
     assert "ceil2d" in specs
     assert "reciprocal2d" in specs
     assert "sqrt2d" in specs
+    assert "exp22d" in specs
     assert "silu2d" in specs
     assert "tanh2d" in specs
+    assert "logical_and2d" in specs
+    assert "logical_or2d" in specs
+    assert "logical_not2d" in specs
+    assert "logical_xor2d" in specs
     assert "abs2d" in specs
     assert "rsqrt2d" in specs
+    assert "full2d" in specs
+    assert "maximum2d" in specs
+    assert "minimum2d" in specs
+    assert "identity2d" in specs
+    assert "cast2d" in specs
     assert "softmax_inner" in specs
     assert "relu2d" in specs
     assert "where2d" in specs

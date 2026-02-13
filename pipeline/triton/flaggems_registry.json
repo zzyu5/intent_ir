@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-13T04:12:40.254919+00:00",
+  "generated_at": "2026-02-13T04:31:10.826190+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -18,9 +18,9 @@
     "source_filtered_ops": 212,
     "semantic_ops": 196,
     "by_status": {
-      "blocked_backend": 48,
+      "blocked_backend": 26,
       "blocked_ir": 103,
-      "dual_pass": 45
+      "dual_pass": 67
     },
     "by_family": {
       "attention_sequence": 5,
@@ -976,10 +976,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.clamp_min->maximum",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to maximum; mapped to max primitive; no e2e spec registered",
+      "e2e_spec": "maximum2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to maximum; mapped to max primitive",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1028,10 +1028,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.clamp_tensor->clamp",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to clamp; mapped as max/min composition; no e2e spec registered",
+      "e2e_spec": "clamp2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to clamp; mapped as max/min composition",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1122,10 +1122,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.contiguous->identity",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to identity; semantic op equals IntentIR op name; no e2e spec registered",
+      "e2e_spec": "identity2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to identity; semantic op equals IntentIR op name",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1173,10 +1173,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.copy->identity",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to identity; semantic op equals IntentIR op name; no e2e spec registered",
+      "e2e_spec": "identity2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to identity; semantic op equals IntentIR op name",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1753,10 +1753,10 @@
       ],
       "mapping_kind": "unary_template",
       "intent_pattern_id": "unary.exp2_via_exp",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as exp(x * ln(2)); no e2e spec registered",
+      "e2e_spec": "exp22d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as exp(x * ln(2))",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1891,10 +1891,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.fill_scalar->full",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to full; mapped as scalar const(value) + broadcast; no e2e spec registered",
+      "e2e_spec": "full2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to full; mapped as scalar const(value) + broadcast",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1949,10 +1949,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.fill_tensor->full",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to full; mapped as scalar const(value) + broadcast; no e2e spec registered",
+      "e2e_spec": "full2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to full; mapped as scalar const(value) + broadcast",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2058,10 +2058,10 @@
       ],
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.full",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as scalar const(value) + broadcast; no e2e spec registered",
+      "e2e_spec": "full2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as scalar const(value) + broadcast",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2116,10 +2116,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.full_like->full",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to full; mapped as scalar const(value) + broadcast; no e2e spec registered",
+      "e2e_spec": "full2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to full; mapped as scalar const(value) + broadcast",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2993,10 +2993,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.logical_and->and",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to and; semantic op equals IntentIR op name; no e2e spec registered",
+      "e2e_spec": "logical_and2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to and; semantic op equals IntentIR op name",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3044,10 +3044,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.logical_not->not",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to not; semantic op equals IntentIR op name; no e2e spec registered",
+      "e2e_spec": "logical_not2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to not; semantic op equals IntentIR op name",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3095,10 +3095,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.logical_or->or",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to or; semantic op equals IntentIR op name; no e2e spec registered",
+      "e2e_spec": "logical_or2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to or; semantic op equals IntentIR op name",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3149,10 +3149,10 @@
       ],
       "mapping_kind": "cmp_template",
       "intent_pattern_id": "cmp.logical_xor_via_or_and_not",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as (a or b) and not(a and b); no e2e spec registered",
+      "e2e_spec": "logical_xor2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as (a or b) and not(a and b)",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3490,10 +3490,10 @@
       ],
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.maximum",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped to max primitive; no e2e spec registered",
+      "e2e_spec": "maximum2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped to max primitive",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -3643,10 +3643,10 @@
       ],
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.minimum",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped to min primitive; no e2e spec registered",
+      "e2e_spec": "minimum2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped to min primitive",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4165,10 +4165,10 @@
       ],
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.ones",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as scalar const(1) + broadcast; no e2e spec registered",
+      "e2e_spec": "full2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as scalar const(1) + broadcast",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4223,10 +4223,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.ones_like->ones",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to ones; mapped as scalar const(1) + broadcast; no e2e spec registered",
+      "e2e_spec": "full2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to ones; mapped as scalar const(1) + broadcast",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4838,10 +4838,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.resolve_conj->identity",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to identity; semantic op equals IntentIR op name; no e2e spec registered",
+      "e2e_spec": "identity2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to identity; semantic op equals IntentIR op name",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4889,10 +4889,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.resolve_neg->identity",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to identity; semantic op equals IntentIR op name; no e2e spec registered",
+      "e2e_spec": "identity2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to identity; semantic op equals IntentIR op name",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5387,10 +5387,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.to_copy->cast",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to cast; semantic op equals IntentIR op name; no e2e spec registered",
+      "e2e_spec": "cast2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to cast; semantic op equals IntentIR op name",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5676,10 +5676,10 @@
       ],
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.zeros",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as scalar const(0) + broadcast; no e2e spec registered",
+      "e2e_spec": "full2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as scalar const(0) + broadcast",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5734,10 +5734,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.zeros_like->zeros",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to zeros; mapped as scalar const(0) + broadcast; no e2e spec registered",
+      "e2e_spec": "full2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to zeros; mapped as scalar const(0) + broadcast",
       "backend_support": {
         "rvv": {
           "target": "rvv",
