@@ -74,3 +74,13 @@ def test_flaggems_plugin_forces_deterministic_overrides_for_known_unstable_specs
     assert info.get("enabled_by") == "provider_required_deterministic_override"
     assert out.intent.name == "diag2d"
     assert out_exp is not None
+
+    out2, out2_exp, info2 = plugin.maybe_normalize_candidate(
+        spec_name="elu2d",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info2 is not None
+    assert info2.get("enabled_by") == "provider_required_deterministic_override"
+    assert out2.intent.name == "elu2d"
+    assert out2_exp is not None

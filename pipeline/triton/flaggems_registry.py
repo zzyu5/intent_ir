@@ -113,6 +113,7 @@ _SEMANTIC_TO_E2E_SPEC: dict[str, str] = {
     "abs": "abs2d",
     "rsqrt": "rsqrt2d",
     "relu": "relu2d",
+    "elu": "elu2d",
     "exp": "exp2d",
     "isclose": "isclose2d",
     "allclose": "allclose2d",

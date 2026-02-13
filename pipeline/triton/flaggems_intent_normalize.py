@@ -354,6 +354,32 @@ def _canonical_diag_embed2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_elu2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "elu2d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "zero_const": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "one_const": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "pos_mask": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                "exp_x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "neg_branch": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "output": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "const", "inputs": [], "output": "zero_const", "attrs": {"value": 0.0}},
+                {"op": "const", "inputs": [], "output": "one_const", "attrs": {"value": 1.0}},
+                {"op": "gt", "inputs": ["x", "zero_const"], "output": "pos_mask"},
+                {"op": "exp", "inputs": ["x"], "output": "exp_x"},
+                {"op": "sub", "inputs": ["exp_x", "one_const"], "output": "neg_branch"},
+                {"op": "where", "inputs": ["pos_mask", "x", "neg_branch"], "output": "output"},
+            ],
+            "outputs": ["output"],
+        }
+    )
+
+
 def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
     name = str(spec_name)
     if name == "sigmoid2d":
@@ -384,6 +410,8 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_diag2d_intent()
     if name == "diag_embed2d":
         return _canonical_diag_embed2d_intent()
+    if name == "elu2d":
+        return _canonical_elu2d_intent()
     return None
 
 

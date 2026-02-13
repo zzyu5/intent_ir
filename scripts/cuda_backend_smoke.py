@@ -15,6 +15,7 @@ import argparse
 import json
 import math
 import multiprocessing as mp
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -280,30 +281,18 @@ def _run_one_with_timeout(
     triton_provider: str,
     artifact_dir: str | None,
     timeout_sec: int,
+    codegen_mode: str,
 ) -> dict[str, Any]:
     if int(timeout_sec) <= 0:
         return run_one(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
 
-    ctx = mp.get_context("fork")
+    ctx = mp.get_context("spawn")
     q: mp.Queue = ctx.Queue()
 
-    def _worker(queue: mp.Queue) -> None:
-        try:
-            res = run_one(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
-            queue.put({"ok": True, "result": res})
-        except Exception as ex:  # noqa: BLE001
-            queue.put(
-                {
-                    "ok": False,
-                    "error": {
-                        "type": type(ex).__name__,
-                        "message": str(ex),
-                        "reason_code": _reason_code_for_exception(ex),
-                    },
-                }
-            )
-
-    proc = ctx.Process(target=_worker, args=(q,))
+    proc = ctx.Process(
+        target=_cuda_worker,
+        args=(q, str(kernel), str(frontend), str(triton_provider), artifact_dir, str(codegen_mode)),
+    )
     proc.start()
     proc.join(timeout=float(timeout_sec))
     if proc.is_alive():
@@ -334,6 +323,87 @@ def _run_one_with_timeout(
         "ok": False,
         "error": {"type": str(err.get("type")), "message": str(err.get("message"))},
         "reason_code": str(err.get("reason_code") or "runtime_fail"),
+    }
+
+
+def _cuda_worker(
+    queue: mp.Queue,
+    kernel: str,
+    frontend: str,
+    triton_provider: str,
+    artifact_dir: str | None,
+    codegen_mode: str,
+) -> None:
+    mode = str(codegen_mode).strip().lower()
+    if mode in {"py", "cpp"}:
+        os.environ["INTENTIR_CUDA_CODEGEN"] = mode
+    else:
+        os.environ.pop("INTENTIR_CUDA_CODEGEN", None)
+    try:
+        res = run_one(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
+        queue.put({"ok": True, "result": res})
+    except Exception as ex:  # noqa: BLE001
+        queue.put(
+            {
+                "ok": False,
+                "error": {
+                    "type": type(ex).__name__,
+                    "message": str(ex),
+                    "reason_code": _reason_code_for_exception(ex),
+                },
+            }
+        )
+
+
+def _refine_timeout_reason(
+    *,
+    kernel: str,
+    frontend: str,
+    triton_provider: str,
+    artifact_dir: str | None,
+    timeout_sec: int,
+) -> dict[str, Any] | None:
+    """
+    Best-effort second pass for timeout cases.
+
+    The default (C++ codegen) path can hang for unsupported ops in some envs.
+    Retry once with Python codegen to produce an actionable reason code.
+    """
+    probe = _run_one_with_timeout(
+        kernel=kernel,
+        frontend=frontend,
+        triton_provider=triton_provider,
+        artifact_dir=artifact_dir,
+        timeout_sec=max(1, min(int(timeout_sec), 30)),
+        codegen_mode="py",
+    )
+    if bool(probe.get("ok")):
+        return {
+            "reason_code": "runtime_timeout",
+            "error": {
+                "type": "TimeoutError",
+                "message": "cpp codegen path timed out; py codegen path passed",
+            },
+            "refined_by": "py_codegen_probe",
+            "refined_result": {
+                "ok": True,
+            },
+        }
+    probe_reason = str(probe.get("reason_code") or "")
+    if probe_reason == "runtime_timeout":
+        return None
+    probe_error = probe.get("error") if isinstance(probe.get("error"), dict) else {}
+    return {
+        "reason_code": probe_reason or "runtime_timeout",
+        "error": {
+            "type": str(probe_error.get("type") or "RuntimeError"),
+            "message": str(probe_error.get("message") or "timeout refined by py_codegen_probe"),
+        },
+        "refined_by": "py_codegen_probe",
+        "refined_result": {
+            "ok": False,
+            "reason_code": probe_reason or "runtime_fail",
+        },
     }
 
 
@@ -377,6 +447,18 @@ def main() -> None:
         type=int,
         default=120,
         help="Per-kernel timeout in seconds (<=0 disables timeout wrapper).",
+    )
+    ap.add_argument(
+        "--codegen-mode",
+        choices=["auto", "cpp", "py"],
+        default="auto",
+        help="CUDA codegen mode for smoke run (default: auto).",
+    )
+    ap.add_argument(
+        "--refine-timeout-reason",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="When timeout happens under auto mode, retry once with py codegen to classify reason.",
     )
     ap.add_argument("--artifact-dir", default=None, help="Override artifact report directory.")
     ap.add_argument("--allow-skip", action="store_true", help="exit 0 with ok=false when CUDA environment is unavailable")
@@ -426,6 +508,7 @@ def main() -> None:
                 triton_provider=str(args.triton_provider),
                 artifact_dir=(str(args.artifact_dir) if args.artifact_dir else None),
                 timeout_sec=int(args.timeout_sec),
+                codegen_mode=str(args.codegen_mode),
             )
         except (CudaLoweringError, CudaRuntimeError, FileNotFoundError, RuntimeError, ValueError) as e:
             r = {
@@ -434,6 +517,24 @@ def main() -> None:
                 "reason_code": _reason_code_for_exception(e),
                 "error": {"type": type(e).__name__, "message": str(e)},
             }
+        if (
+            (not bool(r.get("ok")))
+            and str(r.get("reason_code") or "") == "runtime_timeout"
+            and str(args.codegen_mode) == "auto"
+            and bool(args.refine_timeout_reason)
+        ):
+            refined = _refine_timeout_reason(
+                kernel=str(k),
+                frontend=str(args.frontend),
+                triton_provider=str(args.triton_provider),
+                artifact_dir=(str(args.artifact_dir) if args.artifact_dir else None),
+                timeout_sec=int(args.timeout_sec),
+            )
+            if refined is not None:
+                r["reason_code"] = str(refined.get("reason_code") or r.get("reason_code"))
+                r["error"] = dict(refined.get("error") or r.get("error") or {})
+                r["refined_by"] = str(refined.get("refined_by") or "py_codegen_probe")
+                r["refined_result"] = dict(refined.get("refined_result") or {})
         if "reason_code" not in r:
             r["reason_code"] = ("ok" if bool(r.get("ok")) else "runtime_fail")
         results.append(r)
@@ -456,7 +557,9 @@ def main() -> None:
         "skipped": False,
     }
     if args.out:
-        Path(args.out).write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+        out_path = Path(args.out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     if args.json:
         print(json.dumps(summary, ensure_ascii=False))
     raise SystemExit(0 if ok_all else 1)

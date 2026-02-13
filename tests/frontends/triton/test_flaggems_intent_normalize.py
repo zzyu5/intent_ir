@@ -83,6 +83,10 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert diag_embed is not None
     assert [op.op for op in diag_embed.ops] == ["const", "broadcast_in_dim", "iota", "iota", "iota", "ne", "not", "gather", "where"]
 
+    elu = canonical_flaggems_intent_for_spec("elu2d")
+    assert elu is not None
+    assert [op.op for op in elu.ops] == ["const", "const", "gt", "exp", "sub", "where"]
+
 
 def test_maybe_normalize_flaggems_candidate_overrides_known_spec() -> None:
     cand = _dummy_candidate("old")

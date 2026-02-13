@@ -16,6 +16,7 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     specs = coverage_flaggems_kernel_specs(flaggems_opset="deterministic_forward", backend_target="rvv")
     names = {str(s.name) for s in specs}
     assert "relu2d" in names
+    assert "elu2d" in names
     assert "exp2d" in names
     assert "exp22d" in names
     assert "acos2d" in names

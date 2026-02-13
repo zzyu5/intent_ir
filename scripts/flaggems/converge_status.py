@@ -148,7 +148,13 @@ def _derive_reason_code(
         if bool(provider_state.get("parse_error")):
             return "provider_report_parse_error"
         return "diff_fail"
-    if reason in {"runtime_cuda_unknown", "runtime_rvv_unknown", "runtime_backend_fail"}:
+    if reason in {
+        "runtime_cuda_unknown",
+        "runtime_rvv_unknown",
+        "runtime_backend_fail",
+        "runtime_cuda_fail",
+        "runtime_rvv_fail",
+    }:
         if rvv_reason_code == "runtime_timeout" or cuda_reason_code == "runtime_timeout":
             return "runtime_timeout"
         if rvv_reason_code == "env_unavailable" or cuda_reason_code == "env_unavailable":

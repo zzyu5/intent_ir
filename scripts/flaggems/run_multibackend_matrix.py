@@ -84,6 +84,12 @@ def main() -> None:
         default=120,
         help="Per-kernel timeout passed to cuda_backend_smoke.py.",
     )
+    ap.add_argument(
+        "--cuda-codegen-mode",
+        choices=["auto", "cpp", "py"],
+        default="auto",
+        help="Codegen mode passed to cuda_backend_smoke.py (default: auto).",
+    )
     date_tag = datetime.now(timezone.utc).strftime("%Y%m%d")
     ap.add_argument("--out-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_matrix" / "daily" / date_tag))
     ap.add_argument("--write-registry", action="store_true")
@@ -228,6 +234,8 @@ def main() -> None:
             str(pipeline_out_dir),
             "--timeout-sec",
             str(int(args.cuda_timeout_sec)),
+            "--codegen-mode",
+            str(args.cuda_codegen_mode),
             "--json",
             "--out",
             str(cuda_json),

@@ -116,6 +116,7 @@ FLAGGEMS_FLIP_SRC = _module_source_text("flag_gems.ops.flip")
 FLAGGEMS_INDEX_SELECT_SRC = _module_source_text("flag_gems.ops.index_select")
 FLAGGEMS_SOFTMAX_SRC = _module_source_text("flag_gems.ops.softmax")
 FLAGGEMS_RELU_SRC = _module_source_text("flag_gems.ops.relu")
+FLAGGEMS_ELU_SRC = _module_source_text("flag_gems.ops.elu")
 FLAGGEMS_EXP_SRC = _module_source_text("flag_gems.ops.exp")
 FLAGGEMS_ISCLOSE_SRC = _module_source_text("flag_gems.ops.isclose")
 FLAGGEMS_ISFINITE_SRC = _module_source_text("flag_gems.ops.isfinite")
@@ -1931,6 +1932,30 @@ def _run_flaggems_relu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     }
 
 
+def _run_flaggems_elu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["elu"]):
+        out = torch.nn.functional.elu(inp, alpha=1.0)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
 def _run_flaggems_exp2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     m = int(case.shapes.get("M", 4))
     n = int(case.shapes.get("N", 64))
@@ -2955,6 +2980,14 @@ _FLAGGEMS_SPEC_BUILDERS = {
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
     ),
+    "elu2d": lambda: KernelSpec(
+        name="elu2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_ELU_SRC",
+        runner=_run_flaggems_elu2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
     "exp2d": lambda: KernelSpec(
         name="exp2d",
         module="pipeline.triton.flaggems_specs",
@@ -3326,6 +3359,7 @@ __all__ = [
     "FLAGGEMS_LERP_SRC",
     "FLAGGEMS_SOFTMAX_SRC",
     "FLAGGEMS_RELU_SRC",
+    "FLAGGEMS_ELU_SRC",
     "FLAGGEMS_EXP_SRC",
     "FLAGGEMS_ISCLOSE_SRC",
     "FLAGGEMS_ISFINITE_SRC",

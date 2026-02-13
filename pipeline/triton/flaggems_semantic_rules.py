@@ -400,6 +400,13 @@ _MACRO_TEMPLATE: dict[str, SemanticMapping] = {
         pattern_id="macro.softplus",
         detail="mapped as log(1 + exp(x))",
     ),
+    "elu": _mk(
+        "elu",
+        ("const", "gt", "exp", "const", "sub", "where"),
+        mapping_kind="macro_template",
+        pattern_id="macro.elu",
+        detail="mapped as where(x > 0, x, alpha * (exp(x) - 1)) with alpha=1",
+    ),
     "gelu": _mk(
         "gelu",
         ("const", "mul", "erf", "add", "mul", "mul"),

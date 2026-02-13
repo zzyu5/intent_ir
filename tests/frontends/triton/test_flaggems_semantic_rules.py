@@ -38,6 +38,7 @@ def test_semantic_rule_templates_for_high_yield_ops() -> None:
     assert resolve_semantic_mapping("diag").intent_ops == ("diag",)
     assert resolve_semantic_mapping("diag_embed").intent_ops == ("diag_embed",)
     assert resolve_semantic_mapping("avg_pool2d").intent_ops == ("avg_pool2d",)
+    assert resolve_semantic_mapping("elu").intent_ops == ("const", "gt", "exp", "const", "sub", "where")
 
 
 def test_semantic_rule_composite_aliases() -> None:

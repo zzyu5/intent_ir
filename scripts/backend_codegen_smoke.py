@@ -348,7 +348,9 @@ def main() -> None:
         "ok": bool(ok_all),
     }
     if args.out:
-        Path(args.out).write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+        out_path = Path(args.out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     if bool(args.json):
         print(json.dumps(summary, ensure_ascii=False))
     raise SystemExit(0 if ok_all else 1)
