@@ -6,8 +6,10 @@ separate from generic scripts (backend smoke, remote RVV run, etc).
 
 Examples:
   PYTHONPATH=. python scripts/triton/full_pipeline_verify.py --suite smoke
-  PYTHONPATH=. python scripts/triton/full_pipeline_verify.py --provider flaggems --suite all --use-intent-ir --intentir-seed-policy auto
-  PYTHONPATH=. python scripts/triton/full_pipeline_verify.py --provider flaggems --suite smoke --no-use-intent-ir
+  PYTHONPATH=. python scripts/triton/full_pipeline_verify.py --provider flaggems --suite all
+
+For FlagGems-specific execution controls (`flaggems-path`, `intentir-mode`),
+use `scripts/triton/flaggems_full_pipeline_verify.py`.
 """
 
 from __future__ import annotations
@@ -34,61 +36,8 @@ def main() -> None:
     ap.add_argument("--suite", choices=["smoke", "coverage", "all"], default="smoke")
     ap.add_argument("--list", action="store_true", help="List available kernels and exit")
     ap.add_argument("--cases-limit", type=int, default=8)
-    ap.add_argument(
-        "--use-intent-ir",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Enable IntentIR pipeline (default: on). Use --no-use-intent-ir for traditional provider path.",
-    )
-    ap.add_argument(
-        "--intentir-seed-policy",
-        choices=["auto", "force_llm", "force_cache"],
-        default="auto",
-        help="IntentIR seed policy: auto(cache->llm), force_llm, or force_cache.",
-    )
-    legacy_llm = ap.add_mutually_exclusive_group()
-    legacy_llm.add_argument(
-        "--use-llm",
-        dest="legacy_llm_switch",
-        action="store_const",
-        const="force_llm",
-        help="Legacy alias: equivalent to --use-intent-ir --intentir-seed-policy force_llm.",
-    )
-    legacy_llm.add_argument(
-        "--no-use-llm",
-        dest="legacy_llm_switch",
-        action="store_const",
-        const="traditional",
-        help="Legacy alias: equivalent to --no-use-intent-ir.",
-    )
-    ap.set_defaults(legacy_llm_switch=None)
-    ap.add_argument(
-        "--allow-deterministic-fallback",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="When IntentIR cache policy is force_cache and cache is missing, allow deterministic fallback intents.",
-    )
-    ap.add_argument(
-        "--flaggems-opset",
-        choices=["deterministic_forward"],
-        default="deterministic_forward",
-        help="FlagGems semantic-op set to use (default: deterministic_forward).",
-    )
-    ap.add_argument(
-        "--backend-target",
-        choices=["rvv", "cuda_h100", "cuda_5090d"],
-        default="rvv",
-        help="Backend preflight target for IntentIR capability checks (default: rvv).",
-    )
     ap.add_argument("--out-dir", type=str, default=None)
     args = ap.parse_args()
-    use_intent_ir = bool(args.use_intent_ir)
-    seed_policy = str(args.intentir_seed_policy)
-    if args.legacy_llm_switch == "force_llm":
-        use_intent_ir = True
-        seed_policy = "force_llm"
-    elif args.legacy_llm_switch == "traditional":
-        use_intent_ir = False
 
     from pipeline.triton.core import run_pipeline_for_spec
 
@@ -97,16 +46,10 @@ def main() -> None:
         from pipeline.triton.flaggems_specs import coverage_flaggems_kernel_specs, default_flaggems_kernel_specs
 
         def coverage_kernel_specs():
-            return coverage_flaggems_kernel_specs(
-                flaggems_opset=str(args.flaggems_opset),
-                backend_target=str(args.backend_target),
-            )
+            return coverage_flaggems_kernel_specs()
 
         def default_kernel_specs():
-            return default_flaggems_kernel_specs(
-                flaggems_opset=str(args.flaggems_opset),
-                backend_target=str(args.backend_target),
-            )
+            return default_flaggems_kernel_specs()
 
         default_out_dir = ROOT / "artifacts" / "flaggems_triton_full_pipeline"
     else:
@@ -143,12 +86,7 @@ def main() -> None:
                 spec,
                 out_dir=out_dir,
                 cases_limit=int(args.cases_limit),
-                use_llm=bool(seed_policy != "force_cache"),
-                allow_deterministic_fallback=bool(args.allow_deterministic_fallback),
-                use_intent_ir=bool(use_intent_ir),
-                intentir_seed_policy=str(seed_policy),
                 triton_provider=str(provider),
-                backend_target=str(args.backend_target),
             )
         except Exception as e:
             print("Pipeline failed:", e)

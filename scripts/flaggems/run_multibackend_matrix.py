@@ -32,39 +32,19 @@ def main() -> None:
     ap.add_argument("--kernel", action="append", default=[], help="repeatable; optional kernel filter")
     ap.add_argument("--cases-limit", type=int, default=8)
     ap.add_argument(
-        "--use-intent-ir",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Enable IntentIR pipeline for Triton stage (default: on).",
+        "--flaggems-path",
+        choices=["original", "intentir"],
+        default="intentir",
+        help="Execution path for FlagGems pipeline stage.",
     )
     ap.add_argument(
-        "--intentir-seed-policy",
-        choices=["auto", "force_llm", "force_cache"],
+        "--intentir-mode",
+        choices=["auto", "force_compile", "force_cache"],
         default="auto",
-        help="IntentIR seed policy for Triton stage.",
+        help="IntentIR mode (only valid when --flaggems-path=intentir).",
     )
-    legacy_llm = ap.add_mutually_exclusive_group()
-    legacy_llm.add_argument(
-        "--use-llm",
-        dest="legacy_llm_switch",
-        action="store_const",
-        const="force_llm",
-        help="Legacy alias: equivalent to --use-intent-ir --intentir-seed-policy force_llm.",
-    )
-    legacy_llm.add_argument(
-        "--no-use-llm",
-        dest="legacy_llm_switch",
-        action="store_const",
-        const="traditional",
-        help="Legacy alias: equivalent to --no-use-intent-ir.",
-    )
-    ap.set_defaults(legacy_llm_switch=None)
-    ap.add_argument(
-        "--allow-deterministic-fallback",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="When intentir-seed-policy is force_cache and seed cache is missing, allow deterministic fallback intents.",
-    )
+    ap.add_argument("--seed-cache-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_seed_cache"))
+    ap.add_argument("--pipeline-out-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_triton_full_pipeline"))
     ap.add_argument("--flaggems-opset", choices=["deterministic_forward"], default="deterministic_forward")
     ap.add_argument("--backend-target", choices=["rvv", "cuda_h100", "cuda_5090d"], default="rvv")
     ap.add_argument("--skip-pipeline", action="store_true")
@@ -100,16 +80,15 @@ def main() -> None:
     ap.add_argument("--out-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_matrix"))
     ap.add_argument("--write-registry", action="store_true")
     args = ap.parse_args()
-    use_intent_ir = bool(args.use_intent_ir)
-    seed_policy = str(args.intentir_seed_policy)
-    if args.legacy_llm_switch == "force_llm":
-        use_intent_ir = True
-        seed_policy = "force_llm"
-    elif args.legacy_llm_switch == "traditional":
-        use_intent_ir = False
+    if str(args.flaggems_path) == "original" and str(args.intentir_mode) != "auto":
+        raise SystemExit("--intentir-mode is only valid when --flaggems-path=intentir")
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    pipeline_out_dir = Path(args.pipeline_out_dir)
+    pipeline_out_dir.mkdir(parents=True, exist_ok=True)
+    seed_cache_dir = Path(args.seed_cache_dir)
+    seed_cache_dir.mkdir(parents=True, exist_ok=True)
 
     stage_results: list[dict[str, Any]] = []
     kernel_filter = [str(k) for k in (args.kernel or []) if str(k).strip()]
@@ -142,9 +121,7 @@ def main() -> None:
     if not bool(args.skip_pipeline):
         cmd = [
             sys.executable,
-            "scripts/triton/full_pipeline_verify.py",
-            "--provider",
-            "flaggems",
+            "scripts/triton/flaggems_full_pipeline_verify.py",
             "--suite",
             str(args.suite),
             "--cases-limit",
@@ -153,16 +130,15 @@ def main() -> None:
             str(args.flaggems_opset),
             "--backend-target",
             str(args.backend_target),
+            "--flaggems-path",
+            str(args.flaggems_path),
+            "--intentir-mode",
+            str(args.intentir_mode),
+            "--seed-cache-dir",
+            str(seed_cache_dir),
+            "--out-dir",
+            str(pipeline_out_dir),
         ]
-        if bool(use_intent_ir):
-            cmd.append("--use-intent-ir")
-        else:
-            cmd.append("--no-use-intent-ir")
-        cmd += ["--intentir-seed-policy", str(seed_policy)]
-        if bool(args.allow_deterministic_fallback):
-            cmd.append("--allow-deterministic-fallback")
-        else:
-            cmd.append("--no-allow-deterministic-fallback")
         for k in kernel_filter:
             cmd += ["--kernel", str(k)]
         rc, out, err = _run(cmd, cwd=ROOT)
@@ -181,6 +157,8 @@ def main() -> None:
             str(args.flaggems_opset),
             "--backend-target",
             "rvv",
+            "--artifact-dir",
+            str(pipeline_out_dir),
             "--json",
             "--out",
             str(rvv_json),
@@ -205,6 +183,8 @@ def main() -> None:
             str(args.flaggems_opset),
             "--backend-target",
             "rvv",
+            "--artifact-dir",
+            str(pipeline_out_dir),
             "--host",
             str(args.rvv_host),
             "--user",
@@ -234,6 +214,8 @@ def main() -> None:
             str(args.flaggems_opset),
             "--backend-target",
             "cuda_h100",
+            "--artifact-dir",
+            str(pipeline_out_dir),
             "--timeout-sec",
             str(int(args.cuda_timeout_sec)),
             "--json",
@@ -252,7 +234,7 @@ def main() -> None:
         sys.executable,
         "scripts/flaggems/converge_status.py",
         "--provider-report-dir",
-        str(ROOT / "artifacts" / "flaggems_triton_full_pipeline"),
+        str(pipeline_out_dir),
         "--out",
         str(converged),
     ]
@@ -272,8 +254,12 @@ def main() -> None:
         "ok": bool(ok),
         "suite": str(args.suite),
         "kernel_filter": list(kernel_filter),
+        "flaggems_path": str(args.flaggems_path),
+        "intentir_mode": str(args.intentir_mode),
         "flaggems_opset": str(args.flaggems_opset),
         "backend_target": str(args.backend_target),
+        "seed_cache_dir": str(seed_cache_dir),
+        "pipeline_out_dir": str(pipeline_out_dir),
         "stages": stage_results,
         "out_dir": str(out_dir),
     }

@@ -1,0 +1,12 @@
+{
+  "schema_version": "flaggems_baseline_v1",
+  "captured_at": "2026-02-13T10:18:31+00:00",
+  "metrics": {
+    "semantic_ops": 196,
+    "dual_pass": 92,
+    "blocked_ir": 77,
+    "blocked_backend": 27,
+    "coverage_specs": 62
+  },
+  "status_converged_path": "artifacts/flaggems_matrix/status_converged.json"
+}

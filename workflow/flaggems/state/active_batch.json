@@ -1,0 +1,13 @@
+{
+  "schema_version": "flaggems_active_batch_v1",
+  "generated_at": "",
+  "branch": "",
+  "batch_size": 0,
+  "selection_policy": [
+    "blocked_ir",
+    "missing_e2e_spec",
+    "backend_missing_ops"
+  ],
+  "items": [],
+  "context": {}
+}

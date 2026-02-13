@@ -1,9 +1,13 @@
 """
 FlagGems-backed Triton full pipeline runner (reuses Triton frontend pipeline).
 
-This script does not introduce a new frontend. It only swaps the kernel spec
-source/runner to FlagGems implementations while keeping the existing Triton
-Task4/Task5 flow unchanged.
+This script is FlagGems-specific and intentionally owns FlagGems execution
+controls:
+- --flaggems-path original|intentir
+- --intentir-mode auto|force_compile|force_cache
+
+`original` means "run native FlagGems path without IntentIR".
+`intentir` means "run through IntentIR path".
 """
 
 from __future__ import annotations
@@ -18,6 +22,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from pipeline.triton.core import run_pipeline_for_spec
+from pipeline.triton.flaggems_execution import (
+    sync_seed_back_to_cache,
+    sync_seed_into_run_dir,
+    resolve_flaggems_execution,
+)
 from pipeline.triton.flaggems_specs import (
     coverage_flaggems_kernel_specs,
     default_flaggems_kernel_specs,
@@ -31,33 +40,23 @@ def main() -> None:
     ap.add_argument("--list", action="store_true", help="List available kernels and exit")
     ap.add_argument("--cases-limit", type=int, default=8)
     ap.add_argument(
-        "--use-intent-ir",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Enable IntentIR pipeline (default: on). Use --no-use-intent-ir for traditional provider path.",
+        "--flaggems-path",
+        choices=["original", "intentir"],
+        default="intentir",
+        help="Execution path: original FlagGems or IntentIR-integrated path (default: intentir).",
     )
     ap.add_argument(
-        "--intentir-seed-policy",
-        choices=["auto", "force_llm", "force_cache"],
+        "--intentir-mode",
+        choices=["auto", "force_compile", "force_cache"],
         default="auto",
-        help="IntentIR seed policy: auto(cache->llm), force_llm, or force_cache.",
+        help="IntentIR mode (only valid for --flaggems-path=intentir): auto, force_compile, force_cache.",
     )
-    legacy_llm = ap.add_mutually_exclusive_group()
-    legacy_llm.add_argument(
-        "--use-llm",
-        dest="legacy_llm_switch",
-        action="store_const",
-        const="force_llm",
-        help="Legacy alias: equivalent to --use-intent-ir --intentir-seed-policy force_llm.",
+    ap.add_argument(
+        "--seed-cache-dir",
+        type=Path,
+        default=(ROOT / "artifacts" / "flaggems_seed_cache"),
+        help="Shared seed cache directory for intentir mode.",
     )
-    legacy_llm.add_argument(
-        "--no-use-llm",
-        dest="legacy_llm_switch",
-        action="store_const",
-        const="traditional",
-        help="Legacy alias: equivalent to --no-use-intent-ir.",
-    )
-    ap.set_defaults(legacy_llm_switch=None)
     ap.add_argument(
         "--flaggems-opset",
         choices=["deterministic_forward"],
@@ -72,16 +71,15 @@ def main() -> None:
     )
     ap.add_argument("--out-dir", type=str, default=None)
     args = ap.parse_args()
-    use_intent_ir = bool(args.use_intent_ir)
-    seed_policy = str(args.intentir_seed_policy)
-    if args.legacy_llm_switch == "force_llm":
-        use_intent_ir = True
-        seed_policy = "force_llm"
-    elif args.legacy_llm_switch == "traditional":
-        use_intent_ir = False
+    config = resolve_flaggems_execution(
+        flaggems_path=str(args.flaggems_path),
+        intentir_mode=str(args.intentir_mode),
+    )
 
     out_dir = Path(args.out_dir) if args.out_dir else (ROOT / "artifacts" / "flaggems_triton_full_pipeline")
     out_dir.mkdir(parents=True, exist_ok=True)
+    seed_cache_dir = Path(args.seed_cache_dir)
+    seed_cache_dir.mkdir(parents=True, exist_ok=True)
 
     suites = {
         "smoke": lambda: default_flaggems_kernel_specs(
@@ -109,20 +107,49 @@ def main() -> None:
         if wanted and spec.name not in wanted:
             continue
         print(f"\n=== flaggems:{spec.name} ===")
+        if config.use_intent_ir:
+            cache_event = sync_seed_into_run_dir(
+                spec_name=str(spec.name),
+                seed_cache_dir=seed_cache_dir,
+                run_out_dir=out_dir,
+                intentir_mode=config.intentir_mode,
+            )
+            if cache_event == "hit":
+                print(f"[{spec.name}] intent seed cache hit: {seed_cache_dir / f'{spec.name}.intent_seed.json'}")
+            elif cache_event == "miss":
+                print(f"[{spec.name}] intent seed cache miss: {seed_cache_dir / f'{spec.name}.intent_seed.json'}")
+        else:
+            # Ensure original path does not accidentally consume stale per-run seed.
+            run_seed = out_dir / f"{spec.name}.intent_seed.json"
+            if run_seed.is_file():
+                try:
+                    run_seed.unlink()
+                except OSError:
+                    pass
         try:
             report = run_pipeline_for_spec(
                 spec,
                 out_dir=out_dir,
                 cases_limit=int(args.cases_limit),
-                use_llm=bool(seed_policy != "force_cache"),
-                use_intent_ir=bool(use_intent_ir),
-                intentir_seed_policy=str(seed_policy),
+                use_llm=bool(config.intentir_seed_policy != "force_cache"),
+                use_intent_ir=bool(config.use_intent_ir),
+                intentir_seed_policy=str(config.intentir_seed_policy),
+                allow_deterministic_fallback=False,
                 triton_provider="flaggems",
                 backend_target=str(args.backend_target),
             )
         except Exception as e:
             print("Pipeline failed:", e)
             continue
+        if config.use_intent_ir:
+            wrote = sync_seed_back_to_cache(
+                spec_name=str(spec.name),
+                seed_cache_dir=seed_cache_dir,
+                run_out_dir=out_dir,
+                intentir_mode=config.intentir_mode,
+            )
+            if wrote:
+                print(f"[{spec.name}] intent seed cached: {seed_cache_dir / f'{spec.name}.intent_seed.json'}")
 
         contract_level = (report.get("contract") or {}).get("level")
         diff = report.get("diff") or {}
@@ -132,6 +159,9 @@ def main() -> None:
         out_path = out_dir / f"{spec.name}.json"
         out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
         print("Report:", out_path)
+    print(f"Generated pipeline artifacts: {out_dir}")
+    if config.use_intent_ir:
+        print(f"Intent seed cache dir: {seed_cache_dir}")
 
 
 if __name__ == "__main__":

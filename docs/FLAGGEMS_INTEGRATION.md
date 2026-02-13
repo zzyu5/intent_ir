@@ -23,14 +23,15 @@ Registry states are normalized into exactly five values:
 
 ## Pipeline Entry
 
-Run Triton full pipeline with FlagGems provider:
+Run FlagGems Triton pipeline (FlagGems-only entry with explicit path/mode):
 
 ```bash
-PYTHONPATH=. python scripts/triton/full_pipeline_verify.py \
-  --provider flaggems \
+PYTHONPATH=. python scripts/triton/flaggems_full_pipeline_verify.py \
+  --flaggems-path intentir \
+  --intentir-mode auto \
   --flaggems-opset deterministic_forward \
   --backend-target rvv \
-  --no-use-llm
+  --suite smoke
 ```
 
 Equivalent unified entry:
@@ -39,9 +40,15 @@ Equivalent unified entry:
 PYTHONPATH=. python scripts/full_pipeline_verify.py \
   --frontend triton \
   --triton-provider flaggems \
-  --flaggems-opset deterministic_forward \
-  --backend-target cuda_h100
+  --suite smoke
 ```
+
+FlagGems path semantics:
+
+- `--flaggems-path original`: run original FlagGems path (does not use IntentIR).
+- `--flaggems-path intentir --intentir-mode auto`: cache-first; compile on miss; write cache.
+- `--flaggems-path intentir --intentir-mode force_compile`: always recompile and refresh cache.
+- `--flaggems-path intentir --intentir-mode force_cache`: only use cache; miss fails fast.
 
 ## Metadata and Preflight
 

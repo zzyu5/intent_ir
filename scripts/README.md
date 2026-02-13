@@ -7,14 +7,15 @@ importable modules (e.g., `pipeline/triton/core.py`, or backend/verify packages)
 
 - `triton/full_pipeline_verify.py`: run the full Task1–5 Triton pipeline.
   - `--provider native|flaggems` chooses Triton provider (`flaggems` is still Triton, not a separate frontend).
-  - `--flaggems-opset deterministic_forward` selects the FlagGems semantic-op set baseline.
-  - `--backend-target rvv|cuda_h100|cuda_5090d` enables backend capability preflight on generated IntentIR.
-  - `--use-intent-ir/--no-use-intent-ir` chooses IntentIR pipeline vs traditional provider path.
-  - `--intentir-seed-policy auto|force_llm|force_cache` controls Intent seed behavior when IntentIR is enabled.
-  - Default `auto` is "LLM-first-run, cache-next-runs": on cache miss it calls LLM and writes `<out-dir>/<kernel>.intent_seed.json`; later runs replay that seed transparently.
-  - For selected unstable FlagGems kernels (currently `sigmoid2d`, `batch_norm2d`), pipeline applies a canonical intent normalization pass after LLM/cache loading to keep IR/backends deterministic.
-  - Legacy aliases remain: `--use-llm` => `force_llm`; `--no-use-llm` => `--no-use-intent-ir`.
-  - `--allow-deterministic-fallback` only applies to `force_cache` when cache is missing.
+  - Generic entry only keeps common controls (`--suite`, `--kernel`, `--cases-limit`, `--out-dir`).
+- `triton/flaggems_full_pipeline_verify.py`: FlagGems-only Triton pipeline entry.
+  - `--flaggems-path original|intentir` selects original FlagGems path vs IntentIR path.
+  - `--intentir-mode auto|force_compile|force_cache` controls IntentIR behavior when `flaggems-path=intentir`.
+  - `auto`: cache-first, miss triggers compile and cache writeback.
+  - `force_compile`: always compile and refresh cache.
+  - `force_cache`: cache-only, miss fails fast.
+  - `--seed-cache-dir` controls centralized seed cache location.
+  - `--flaggems-opset deterministic_forward` and `--backend-target rvv|cuda_h100|cuda_5090d` keep coverage/selection aligned with registry metadata.
   - `--suite smoke|coverage|all`, `--list`, and `--kernel NAME` control kernel selection.
 - `tilelang/full_pipeline_verify.py`: run the TileLang MVP pipeline for the default kernel set.
 - `pipeline/triton/core.py`: reusable Triton pipeline helper library used by `scripts/triton/full_pipeline_verify.py`.
@@ -22,6 +23,11 @@ importable modules (e.g., `pipeline/triton/core.py`, or backend/verify packages)
 - `flaggems/coverage_report.py`: emit machine-readable FlagGems coverage report JSON for CI/gates.
 - `flaggems/converge_status.py`: merge provider + RVV + CUDA execution results into converged status matrix (`dual_pass|rvv_only|cuda_only|blocked_ir|blocked_backend`).
 - `flaggems/run_multibackend_matrix.py`: one-command runner for pipeline + RVV local smoke + CUDA local smoke + status convergence.
+  - Uses the same FlagGems controls as `triton/flaggems_full_pipeline_verify.py`:
+    - `--flaggems-path`
+    - `--intentir-mode`
+    - `--seed-cache-dir`
+    - `--pipeline-out-dir`
 - `backend_codegen_smoke.py`: validate Task6 backend codegen locally (no LLM, no remote).
   - `--triton-provider native|flaggems` selects Triton artifact directory for backend smoke.
   - `--flaggems-opset deterministic_forward` and `--backend-target rvv|cuda_h100|cuda_5090d` align default kernel selection with registry/spec metadata.

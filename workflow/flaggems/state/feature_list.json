@@ -1,0 +1,2528 @@
+{
+  "schema_version": "flaggems_feature_list_v1",
+  "generated_at": "2026-02-13T10:18:31+00:00",
+  "source_registry_path": "pipeline/triton/flaggems_registry.json",
+  "summary": {
+    "semantic_ops": 196,
+    "by_status": {
+      "dual_pass": 92,
+      "blocked_ir": 77,
+      "blocked_backend": 27
+    },
+    "by_family": {
+      "elementwise_broadcast": 126,
+      "reduction": 19,
+      "norm_activation": 15,
+      "index_scatter_gather": 14,
+      "matmul_linear": 8,
+      "conv_pool_interp": 9,
+      "attention_sequence": 5
+    }
+  },
+  "features": [
+    {
+      "id": "flaggems::abs",
+      "semantic_op": "abs",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "abs2d",
+      "intent_ops": [
+        "abs"
+      ]
+    },
+    {
+      "id": "flaggems::acos",
+      "semantic_op": "acos",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::add",
+      "semantic_op": "add",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "add2d",
+      "intent_ops": [
+        "add"
+      ]
+    },
+    {
+      "id": "flaggems::addcdiv",
+      "semantic_op": "addcdiv",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::addcmul",
+      "semantic_op": "addcmul",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::addmv",
+      "semantic_op": "addmv",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "addmv2d",
+      "intent_ops": [
+        "matmul",
+        "add"
+      ]
+    },
+    {
+      "id": "flaggems::addr",
+      "semantic_op": "addr",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::angle",
+      "semantic_op": "angle",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::arange",
+      "semantic_op": "arange",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::atan",
+      "semantic_op": "atan",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::bitwise_and_scalar",
+      "semantic_op": "bitwise_and_scalar",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::bitwise_and_scalar_tensor",
+      "semantic_op": "bitwise_and_scalar_tensor",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::bitwise_and_tensor",
+      "semantic_op": "bitwise_and_tensor",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::bitwise_left_shift",
+      "semantic_op": "bitwise_left_shift",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::bitwise_not",
+      "semantic_op": "bitwise_not",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::bitwise_or_scalar",
+      "semantic_op": "bitwise_or_scalar",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::bitwise_or_scalar_tensor",
+      "semantic_op": "bitwise_or_scalar_tensor",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::bitwise_or_tensor",
+      "semantic_op": "bitwise_or_tensor",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::bitwise_right_shift",
+      "semantic_op": "bitwise_right_shift",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::cat",
+      "semantic_op": "cat",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::ceil",
+      "semantic_op": "ceil",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "ceil2d",
+      "intent_ops": [
+        "const",
+        "mul",
+        "floor",
+        "mul"
+      ]
+    },
+    {
+      "id": "flaggems::celu",
+      "semantic_op": "celu",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::clamp",
+      "semantic_op": "clamp",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "clamp2d",
+      "intent_ops": [
+        "max",
+        "min"
+      ]
+    },
+    {
+      "id": "flaggems::clamp_min",
+      "semantic_op": "clamp_min",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "maximum2d",
+      "intent_ops": [
+        "max"
+      ]
+    },
+    {
+      "id": "flaggems::clamp_tensor",
+      "semantic_op": "clamp_tensor",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "clamp2d",
+      "intent_ops": [
+        "max",
+        "min"
+      ]
+    },
+    {
+      "id": "flaggems::constant_pad_nd",
+      "semantic_op": "constant_pad_nd",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::contiguous",
+      "semantic_op": "contiguous",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "identity2d",
+      "intent_ops": [
+        "identity"
+      ]
+    },
+    {
+      "id": "flaggems::copy",
+      "semantic_op": "copy",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "identity2d",
+      "intent_ops": [
+        "identity"
+      ]
+    },
+    {
+      "id": "flaggems::cos",
+      "semantic_op": "cos",
+      "family": "elementwise_broadcast",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "cos"
+      ]
+    },
+    {
+      "id": "flaggems::count_nonzero",
+      "semantic_op": "count_nonzero",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::diag",
+      "semantic_op": "diag",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::diag_embed",
+      "semantic_op": "diag_embed",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::div_mode",
+      "semantic_op": "div_mode",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "div2d",
+      "intent_ops": [
+        "div"
+      ]
+    },
+    {
+      "id": "flaggems::elu",
+      "semantic_op": "elu",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::eq",
+      "semantic_op": "eq",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "eq2d",
+      "intent_ops": [
+        "ne",
+        "not"
+      ]
+    },
+    {
+      "id": "flaggems::eq_scalar",
+      "semantic_op": "eq_scalar",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "eq2d",
+      "intent_ops": [
+        "ne",
+        "not"
+      ]
+    },
+    {
+      "id": "flaggems::equal",
+      "semantic_op": "equal",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "eq2d",
+      "intent_ops": [
+        "ne",
+        "not"
+      ]
+    },
+    {
+      "id": "flaggems::erf",
+      "semantic_op": "erf",
+      "family": "elementwise_broadcast",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "erf"
+      ]
+    },
+    {
+      "id": "flaggems::exp",
+      "semantic_op": "exp",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "exp2d",
+      "intent_ops": [
+        "exp"
+      ]
+    },
+    {
+      "id": "flaggems::exp2",
+      "semantic_op": "exp2",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "exp22d",
+      "intent_ops": [
+        "const",
+        "mul",
+        "exp"
+      ]
+    },
+    {
+      "id": "flaggems::eye",
+      "semantic_op": "eye",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::eye_m",
+      "semantic_op": "eye_m",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::fill_scalar",
+      "semantic_op": "fill_scalar",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "full2d",
+      "intent_ops": [
+        "const",
+        "broadcast_in_dim"
+      ]
+    },
+    {
+      "id": "flaggems::fill_tensor",
+      "semantic_op": "fill_tensor",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "full2d",
+      "intent_ops": [
+        "const",
+        "broadcast_in_dim"
+      ]
+    },
+    {
+      "id": "flaggems::floor_divide",
+      "semantic_op": "floor_divide",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "div2d",
+      "intent_ops": [
+        "div"
+      ]
+    },
+    {
+      "id": "flaggems::full",
+      "semantic_op": "full",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "full2d",
+      "intent_ops": [
+        "const",
+        "broadcast_in_dim"
+      ]
+    },
+    {
+      "id": "flaggems::full_like",
+      "semantic_op": "full_like",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "full2d",
+      "intent_ops": [
+        "const",
+        "broadcast_in_dim"
+      ]
+    },
+    {
+      "id": "flaggems::ge",
+      "semantic_op": "ge",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "ge2d",
+      "intent_ops": [
+        "ge"
+      ]
+    },
+    {
+      "id": "flaggems::ge_scalar",
+      "semantic_op": "ge_scalar",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "ge2d",
+      "intent_ops": [
+        "ge"
+      ]
+    },
+    {
+      "id": "flaggems::glu",
+      "semantic_op": "glu",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::gt",
+      "semantic_op": "gt",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "gt2d",
+      "intent_ops": [
+        "gt"
+      ]
+    },
+    {
+      "id": "flaggems::gt_scalar",
+      "semantic_op": "gt_scalar",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "gt2d",
+      "intent_ops": [
+        "gt"
+      ]
+    },
+    {
+      "id": "flaggems::hstack",
+      "semantic_op": "hstack",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::isclose",
+      "semantic_op": "isclose",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "isclose2d",
+      "intent_ops": [
+        "sub",
+        "abs",
+        "abs",
+        "mul",
+        "add",
+        "le"
+      ]
+    },
+    {
+      "id": "flaggems::isfinite",
+      "semantic_op": "isfinite",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "isfinite2d",
+      "intent_ops": [
+        "abs",
+        "const",
+        "le"
+      ]
+    },
+    {
+      "id": "flaggems::isin",
+      "semantic_op": "isin",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::isinf",
+      "semantic_op": "isinf",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "isinf2d",
+      "intent_ops": [
+        "abs",
+        "const",
+        "gt"
+      ]
+    },
+    {
+      "id": "flaggems::isnan",
+      "semantic_op": "isnan",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "isnan2d",
+      "intent_ops": [
+        "ne"
+      ]
+    },
+    {
+      "id": "flaggems::kron",
+      "semantic_op": "kron",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::le",
+      "semantic_op": "le",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "le2d",
+      "intent_ops": [
+        "le"
+      ]
+    },
+    {
+      "id": "flaggems::le_scalar",
+      "semantic_op": "le_scalar",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "le2d",
+      "intent_ops": [
+        "le"
+      ]
+    },
+    {
+      "id": "flaggems::lerp_scalar",
+      "semantic_op": "lerp_scalar",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "lerp2d",
+      "intent_ops": [
+        "sub",
+        "mul",
+        "add"
+      ]
+    },
+    {
+      "id": "flaggems::lerp_tensor",
+      "semantic_op": "lerp_tensor",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "lerp2d",
+      "intent_ops": [
+        "sub",
+        "mul",
+        "add"
+      ]
+    },
+    {
+      "id": "flaggems::linspace",
+      "semantic_op": "linspace",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::log",
+      "semantic_op": "log",
+      "family": "elementwise_broadcast",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "log"
+      ]
+    },
+    {
+      "id": "flaggems::logical_and",
+      "semantic_op": "logical_and",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "logical_and2d",
+      "intent_ops": [
+        "and"
+      ]
+    },
+    {
+      "id": "flaggems::logical_not",
+      "semantic_op": "logical_not",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "logical_not2d",
+      "intent_ops": [
+        "not"
+      ]
+    },
+    {
+      "id": "flaggems::logical_or",
+      "semantic_op": "logical_or",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "logical_or2d",
+      "intent_ops": [
+        "or"
+      ]
+    },
+    {
+      "id": "flaggems::logical_xor",
+      "semantic_op": "logical_xor",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "logical_xor2d",
+      "intent_ops": [
+        "or",
+        "and",
+        "not",
+        "and"
+      ]
+    },
+    {
+      "id": "flaggems::logspace",
+      "semantic_op": "logspace",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::lt",
+      "semantic_op": "lt",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "lt2d",
+      "intent_ops": [
+        "lt"
+      ]
+    },
+    {
+      "id": "flaggems::lt_scalar",
+      "semantic_op": "lt_scalar",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "lt2d",
+      "intent_ops": [
+        "lt"
+      ]
+    },
+    {
+      "id": "flaggems::masked_fill",
+      "semantic_op": "masked_fill",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "masked_fill2d",
+      "intent_ops": [
+        "where"
+      ]
+    },
+    {
+      "id": "flaggems::max",
+      "semantic_op": "max",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "row_max",
+      "intent_ops": [
+        "reduce_max"
+      ]
+    },
+    {
+      "id": "flaggems::max_dim",
+      "semantic_op": "max_dim",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "row_max",
+      "intent_ops": [
+        "reduce_max"
+      ]
+    },
+    {
+      "id": "flaggems::maximum",
+      "semantic_op": "maximum",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "maximum2d",
+      "intent_ops": [
+        "max"
+      ]
+    },
+    {
+      "id": "flaggems::min",
+      "semantic_op": "min",
+      "family": "elementwise_broadcast",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "reduce_min"
+      ]
+    },
+    {
+      "id": "flaggems::min_dim",
+      "semantic_op": "min_dim",
+      "family": "elementwise_broadcast",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "reduce_min"
+      ]
+    },
+    {
+      "id": "flaggems::minimum",
+      "semantic_op": "minimum",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "minimum2d",
+      "intent_ops": [
+        "min"
+      ]
+    },
+    {
+      "id": "flaggems::mse_loss",
+      "semantic_op": "mse_loss",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::mul",
+      "semantic_op": "mul",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "mul2d",
+      "intent_ops": [
+        "mul"
+      ]
+    },
+    {
+      "id": "flaggems::mv",
+      "semantic_op": "mv",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "mv2d",
+      "intent_ops": [
+        "matmul"
+      ]
+    },
+    {
+      "id": "flaggems::nan_to_num",
+      "semantic_op": "nan_to_num",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::ne",
+      "semantic_op": "ne",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "ne2d",
+      "intent_ops": [
+        "ne"
+      ]
+    },
+    {
+      "id": "flaggems::ne_scalar",
+      "semantic_op": "ne_scalar",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "ne2d",
+      "intent_ops": [
+        "ne"
+      ]
+    },
+    {
+      "id": "flaggems::neg",
+      "semantic_op": "neg",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "neg2d",
+      "intent_ops": [
+        "const",
+        "mul"
+      ]
+    },
+    {
+      "id": "flaggems::nll_loss2d_forward",
+      "semantic_op": "nll_loss2d_forward",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::nll_loss_forward",
+      "semantic_op": "nll_loss_forward",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::nonzero",
+      "semantic_op": "nonzero",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::one_hot",
+      "semantic_op": "one_hot",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::ones",
+      "semantic_op": "ones",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "full2d",
+      "intent_ops": [
+        "const",
+        "broadcast_in_dim"
+      ]
+    },
+    {
+      "id": "flaggems::ones_like",
+      "semantic_op": "ones_like",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "full2d",
+      "intent_ops": [
+        "const",
+        "broadcast_in_dim"
+      ]
+    },
+    {
+      "id": "flaggems::pad",
+      "semantic_op": "pad",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::per_token_group_quant_fp8",
+      "semantic_op": "per_token_group_quant_fp8",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::polar",
+      "semantic_op": "polar",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::pow_scalar",
+      "semantic_op": "pow_scalar",
+      "family": "elementwise_broadcast",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "pow"
+      ]
+    },
+    {
+      "id": "flaggems::pow_tensor_scalar",
+      "semantic_op": "pow_tensor_scalar",
+      "family": "elementwise_broadcast",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "pow"
+      ]
+    },
+    {
+      "id": "flaggems::pow_tensor_tensor",
+      "semantic_op": "pow_tensor_tensor",
+      "family": "elementwise_broadcast",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "pow"
+      ]
+    },
+    {
+      "id": "flaggems::quantile",
+      "semantic_op": "quantile",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::reciprocal",
+      "semantic_op": "reciprocal",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "reciprocal2d",
+      "intent_ops": [
+        "const",
+        "div"
+      ]
+    },
+    {
+      "id": "flaggems::remainder",
+      "semantic_op": "remainder",
+      "family": "elementwise_broadcast",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "remainder"
+      ]
+    },
+    {
+      "id": "flaggems::repeat",
+      "semantic_op": "repeat",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::repeat_interleave_self_int",
+      "semantic_op": "repeat_interleave_self_int",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::repeat_interleave_self_tensor",
+      "semantic_op": "repeat_interleave_self_tensor",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::repeat_interleave_tensor",
+      "semantic_op": "repeat_interleave_tensor",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::resolve_conj",
+      "semantic_op": "resolve_conj",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "identity2d",
+      "intent_ops": [
+        "identity"
+      ]
+    },
+    {
+      "id": "flaggems::resolve_neg",
+      "semantic_op": "resolve_neg",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "identity2d",
+      "intent_ops": [
+        "identity"
+      ]
+    },
+    {
+      "id": "flaggems::rsqrt",
+      "semantic_op": "rsqrt",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "rsqrt2d",
+      "intent_ops": [
+        "rsqrt"
+      ]
+    },
+    {
+      "id": "flaggems::sin",
+      "semantic_op": "sin",
+      "family": "elementwise_broadcast",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "sin"
+      ]
+    },
+    {
+      "id": "flaggems::sort",
+      "semantic_op": "sort",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::sort_stable",
+      "semantic_op": "sort_stable",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::sqrt",
+      "semantic_op": "sqrt",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "sqrt2d",
+      "intent_ops": [
+        "rsqrt",
+        "mul"
+      ]
+    },
+    {
+      "id": "flaggems::stack",
+      "semantic_op": "stack",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::sub",
+      "semantic_op": "sub",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "sub2d",
+      "intent_ops": [
+        "sub"
+      ]
+    },
+    {
+      "id": "flaggems::tan",
+      "semantic_op": "tan",
+      "family": "elementwise_broadcast",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "tan"
+      ]
+    },
+    {
+      "id": "flaggems::threshold",
+      "semantic_op": "threshold",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "threshold2d",
+      "intent_ops": [
+        "const",
+        "gt",
+        "where"
+      ]
+    },
+    {
+      "id": "flaggems::tile",
+      "semantic_op": "tile",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::to_copy",
+      "semantic_op": "to_copy",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "cast2d",
+      "intent_ops": [
+        "cast"
+      ]
+    },
+    {
+      "id": "flaggems::topk",
+      "semantic_op": "topk",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::trace",
+      "semantic_op": "trace",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::triu",
+      "semantic_op": "triu",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::true_divide",
+      "semantic_op": "true_divide",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "div2d",
+      "intent_ops": [
+        "div"
+      ]
+    },
+    {
+      "id": "flaggems::unique2",
+      "semantic_op": "unique2",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::vstack",
+      "semantic_op": "vstack",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::zeros",
+      "semantic_op": "zeros",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "full2d",
+      "intent_ops": [
+        "const",
+        "broadcast_in_dim"
+      ]
+    },
+    {
+      "id": "flaggems::zeros_like",
+      "semantic_op": "zeros_like",
+      "family": "elementwise_broadcast",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "full2d",
+      "intent_ops": [
+        "const",
+        "broadcast_in_dim"
+      ]
+    },
+    {
+      "id": "flaggems::all",
+      "semantic_op": "all",
+      "family": "reduction",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "row_all",
+      "intent_ops": [
+        "not",
+        "reduce_any",
+        "not"
+      ]
+    },
+    {
+      "id": "flaggems::allclose",
+      "semantic_op": "allclose",
+      "family": "reduction",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "allclose2d",
+      "intent_ops": [
+        "sub",
+        "abs",
+        "abs",
+        "mul",
+        "add",
+        "le",
+        "not",
+        "reduce_any",
+        "not"
+      ]
+    },
+    {
+      "id": "flaggems::amax",
+      "semantic_op": "amax",
+      "family": "reduction",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "row_max",
+      "intent_ops": [
+        "reduce_max"
+      ]
+    },
+    {
+      "id": "flaggems::any",
+      "semantic_op": "any",
+      "family": "reduction",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "any_kernel_dim",
+      "intent_ops": [
+        "reduce_any"
+      ]
+    },
+    {
+      "id": "flaggems::argmax",
+      "semantic_op": "argmax",
+      "family": "reduction",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "argmax"
+      ]
+    },
+    {
+      "id": "flaggems::argmin",
+      "semantic_op": "argmin",
+      "family": "reduction",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "argmin"
+      ]
+    },
+    {
+      "id": "flaggems::cumsum",
+      "semantic_op": "cumsum",
+      "family": "reduction",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "cumsum"
+      ]
+    },
+    {
+      "id": "flaggems::flash_attn_varlen_func",
+      "semantic_op": "flash_attn_varlen_func",
+      "family": "reduction",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "matmul",
+        "softmax",
+        "matmul"
+      ]
+    },
+    {
+      "id": "flaggems::log_softmax",
+      "semantic_op": "log_softmax",
+      "family": "reduction",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "softmax",
+        "log"
+      ]
+    },
+    {
+      "id": "flaggems::mean",
+      "semantic_op": "mean",
+      "family": "reduction",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "row_mean",
+      "intent_ops": [
+        "reduce_sum",
+        "div"
+      ]
+    },
+    {
+      "id": "flaggems::mean_dim",
+      "semantic_op": "mean_dim",
+      "family": "reduction",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "row_mean",
+      "intent_ops": [
+        "reduce_sum",
+        "div"
+      ]
+    },
+    {
+      "id": "flaggems::prod",
+      "semantic_op": "prod",
+      "family": "reduction",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "reduce_prod"
+      ]
+    },
+    {
+      "id": "flaggems::prod_dim",
+      "semantic_op": "prod_dim",
+      "family": "reduction",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "reduce_prod"
+      ]
+    },
+    {
+      "id": "flaggems::scaled_softmax_forward",
+      "semantic_op": "scaled_softmax_forward",
+      "family": "reduction",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "softmax_inner",
+      "intent_ops": [
+        "softmax"
+      ]
+    },
+    {
+      "id": "flaggems::softmax",
+      "semantic_op": "softmax",
+      "family": "reduction",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "softmax_inner",
+      "intent_ops": [
+        "softmax"
+      ]
+    },
+    {
+      "id": "flaggems::std",
+      "semantic_op": "std",
+      "family": "reduction",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "std"
+      ]
+    },
+    {
+      "id": "flaggems::sum",
+      "semantic_op": "sum",
+      "family": "reduction",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "row_sum",
+      "intent_ops": [
+        "reduce_sum"
+      ]
+    },
+    {
+      "id": "flaggems::sum_dim",
+      "semantic_op": "sum_dim",
+      "family": "reduction",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "row_sum",
+      "intent_ops": [
+        "reduce_sum"
+      ]
+    },
+    {
+      "id": "flaggems::var_mean",
+      "semantic_op": "var_mean",
+      "family": "reduction",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "var",
+        "mean"
+      ]
+    },
+    {
+      "id": "flaggems::batch_norm",
+      "semantic_op": "batch_norm",
+      "family": "norm_activation",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "batch_norm2d",
+      "intent_ops": [
+        "reduce_sum",
+        "sub",
+        "mul",
+        "add",
+        "rsqrt",
+        "broadcast_in_dim",
+        "div"
+      ]
+    },
+    {
+      "id": "flaggems::gelu",
+      "semantic_op": "gelu",
+      "family": "norm_activation",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "const",
+        "mul",
+        "erf",
+        "add",
+        "mul",
+        "mul"
+      ]
+    },
+    {
+      "id": "flaggems::group_norm",
+      "semantic_op": "group_norm",
+      "family": "norm_activation",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "group_norm_kernel",
+      "intent_ops": [
+        "reduce_sum",
+        "sub",
+        "mul",
+        "add",
+        "rsqrt",
+        "broadcast_in_dim",
+        "div"
+      ]
+    },
+    {
+      "id": "flaggems::layer_norm",
+      "semantic_op": "layer_norm",
+      "family": "norm_activation",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "layer_norm_persistent",
+      "intent_ops": [
+        "reduce_sum",
+        "sub",
+        "mul",
+        "add",
+        "rsqrt",
+        "broadcast_in_dim",
+        "div"
+      ]
+    },
+    {
+      "id": "flaggems::log_sigmoid",
+      "semantic_op": "log_sigmoid",
+      "family": "norm_activation",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "sigmoid",
+        "log"
+      ]
+    },
+    {
+      "id": "flaggems::normed_cumsum",
+      "semantic_op": "normed_cumsum",
+      "family": "norm_activation",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "cumsum",
+        "div"
+      ]
+    },
+    {
+      "id": "flaggems::relu",
+      "semantic_op": "relu",
+      "family": "norm_activation",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "relu2d",
+      "intent_ops": [
+        "relu"
+      ]
+    },
+    {
+      "id": "flaggems::rms_norm",
+      "semantic_op": "rms_norm",
+      "family": "norm_activation",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "rms_norm2d",
+      "intent_ops": [
+        "mul",
+        "reduce_sum",
+        "add",
+        "rsqrt",
+        "mul"
+      ]
+    },
+    {
+      "id": "flaggems::rms_norm_forward",
+      "semantic_op": "rms_norm_forward",
+      "family": "norm_activation",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "rms_norm2d",
+      "intent_ops": [
+        "mul",
+        "reduce_sum",
+        "add",
+        "rsqrt",
+        "mul"
+      ]
+    },
+    {
+      "id": "flaggems::sigmoid",
+      "semantic_op": "sigmoid",
+      "family": "norm_activation",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "sigmoid2d",
+      "intent_ops": [
+        "const",
+        "mul",
+        "exp",
+        "add",
+        "div"
+      ]
+    },
+    {
+      "id": "flaggems::silu",
+      "semantic_op": "silu",
+      "family": "norm_activation",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "silu2d",
+      "intent_ops": [
+        "const",
+        "mul",
+        "exp",
+        "add",
+        "div",
+        "mul"
+      ]
+    },
+    {
+      "id": "flaggems::softplus",
+      "semantic_op": "softplus",
+      "family": "norm_activation",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "exp",
+        "add",
+        "log"
+      ]
+    },
+    {
+      "id": "flaggems::tanh",
+      "semantic_op": "tanh",
+      "family": "norm_activation",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "tanh2d",
+      "intent_ops": [
+        "const",
+        "mul",
+        "exp",
+        "sub",
+        "add",
+        "div"
+      ]
+    },
+    {
+      "id": "flaggems::vector_norm",
+      "semantic_op": "vector_norm",
+      "family": "norm_activation",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "mul",
+        "reduce_sum",
+        "sqrt"
+      ]
+    },
+    {
+      "id": "flaggems::weight_norm_interface",
+      "semantic_op": "weight_norm_interface",
+      "family": "norm_activation",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::flip",
+      "semantic_op": "flip",
+      "family": "index_scatter_gather",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::gather",
+      "semantic_op": "gather",
+      "family": "index_scatter_gather",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "gather2d",
+      "intent_ops": [
+        "gather"
+      ]
+    },
+    {
+      "id": "flaggems::index",
+      "semantic_op": "index",
+      "family": "index_scatter_gather",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "index_select2d",
+      "intent_ops": [
+        "gather"
+      ]
+    },
+    {
+      "id": "flaggems::index_add",
+      "semantic_op": "index_add",
+      "family": "index_scatter_gather",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::index_put",
+      "semantic_op": "index_put",
+      "family": "index_scatter_gather",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::index_select",
+      "semantic_op": "index_select",
+      "family": "index_scatter_gather",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "index_select2d",
+      "intent_ops": [
+        "gather"
+      ]
+    },
+    {
+      "id": "flaggems::masked_scatter",
+      "semantic_op": "masked_scatter",
+      "family": "index_scatter_gather",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::masked_select",
+      "semantic_op": "masked_select",
+      "family": "index_scatter_gather",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::scatter",
+      "semantic_op": "scatter",
+      "family": "index_scatter_gather",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::select_scatter",
+      "semantic_op": "select_scatter",
+      "family": "index_scatter_gather",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::slice_scatter",
+      "semantic_op": "slice_scatter",
+      "family": "index_scatter_gather",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::where_scalar_other",
+      "semantic_op": "where_scalar_other",
+      "family": "index_scatter_gather",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "where2d",
+      "intent_ops": [
+        "where"
+      ]
+    },
+    {
+      "id": "flaggems::where_scalar_self",
+      "semantic_op": "where_scalar_self",
+      "family": "index_scatter_gather",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "where2d",
+      "intent_ops": [
+        "where"
+      ]
+    },
+    {
+      "id": "flaggems::where_self",
+      "semantic_op": "where_self",
+      "family": "index_scatter_gather",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "where2d",
+      "intent_ops": [
+        "gt",
+        "where"
+      ]
+    },
+    {
+      "id": "flaggems::addmm",
+      "semantic_op": "addmm",
+      "family": "matmul_linear",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "addmm2d",
+      "intent_ops": [
+        "matmul",
+        "add"
+      ]
+    },
+    {
+      "id": "flaggems::baddbmm",
+      "semantic_op": "baddbmm",
+      "family": "matmul_linear",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "baddbmm3d",
+      "intent_ops": [
+        "matmul",
+        "add"
+      ]
+    },
+    {
+      "id": "flaggems::bmm",
+      "semantic_op": "bmm",
+      "family": "matmul_linear",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "bmm3d",
+      "intent_ops": [
+        "matmul"
+      ]
+    },
+    {
+      "id": "flaggems::cummax",
+      "semantic_op": "cummax",
+      "family": "matmul_linear",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::cummin",
+      "semantic_op": "cummin",
+      "family": "matmul_linear",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::dot",
+      "semantic_op": "dot",
+      "family": "matmul_linear",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "dot1d",
+      "intent_ops": [
+        "matmul"
+      ]
+    },
+    {
+      "id": "flaggems::mm",
+      "semantic_op": "mm",
+      "family": "matmul_linear",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "mm2d",
+      "intent_ops": [
+        "matmul"
+      ]
+    },
+    {
+      "id": "flaggems::vdot",
+      "semantic_op": "vdot",
+      "family": "matmul_linear",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "vdot1d",
+      "intent_ops": [
+        "matmul"
+      ]
+    },
+    {
+      "id": "flaggems::avg_pool2d",
+      "semantic_op": "avg_pool2d",
+      "family": "conv_pool_interp",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::conv1d",
+      "semantic_op": "conv1d",
+      "family": "conv_pool_interp",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::conv2d",
+      "semantic_op": "conv2d",
+      "family": "conv_pool_interp",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "conv2d"
+      ]
+    },
+    {
+      "id": "flaggems::conv3d",
+      "semantic_op": "conv3d",
+      "family": "conv_pool_interp",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::conv_depthwise2d",
+      "semantic_op": "conv_depthwise2d",
+      "family": "conv_pool_interp",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::max_pool2d_with_indices",
+      "semantic_op": "max_pool2d_with_indices",
+      "family": "conv_pool_interp",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::upsample_bicubic2d_aa",
+      "semantic_op": "upsample_bicubic2d_aa",
+      "family": "conv_pool_interp",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "upsample_bicubic2d_aa",
+      "intent_ops": [
+        "upsample_bicubic2d_aa"
+      ]
+    },
+    {
+      "id": "flaggems::upsample_nearest1d",
+      "semantic_op": "upsample_nearest1d",
+      "family": "conv_pool_interp",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::upsample_nearest2d",
+      "semantic_op": "upsample_nearest2d",
+      "family": "conv_pool_interp",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::ScaleDotProductAttention",
+      "semantic_op": "ScaleDotProductAttention",
+      "family": "attention_sequence",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::embedding",
+      "semantic_op": "embedding",
+      "family": "attention_sequence",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::flash_attention_forward",
+      "semantic_op": "flash_attention_forward",
+      "family": "attention_sequence",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::scaled_dot_product_attention",
+      "semantic_op": "scaled_dot_product_attention",
+      "family": "attention_sequence",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::scaled_dot_product_attention_forward",
+      "semantic_op": "scaled_dot_product_attention_forward",
+      "family": "attention_sequence",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    }
+  ]
+}

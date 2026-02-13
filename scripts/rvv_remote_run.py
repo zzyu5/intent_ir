@@ -212,6 +212,7 @@ def run_remote(
     gomp_cpu_affinity: str | None = None,
     log: Callable[[str], None] | None = None,
     triton_provider: str = "native",
+    artifact_dir: str | None = None,
 ):
     def _log(msg: str) -> None:
         if log is None:
@@ -221,8 +222,9 @@ def run_remote(
         except Exception:
             pass
 
-    artifact_dir = _artifact_dir_for_frontend(frontend, triton_provider=str(triton_provider))
-    report_path = ROOT / "artifacts" / artifact_dir / f"{kernel}.json"
+    artifact_rel = _artifact_dir_for_frontend(frontend, triton_provider=str(triton_provider))
+    artifact_root = (Path(artifact_dir) if artifact_dir else (ROOT / "artifacts" / artifact_rel)).resolve()
+    report_path = artifact_root / f"{kernel}.json"
     if not report_path.exists():
         cmd_hint = f"python scripts/full_pipeline_verify.py --frontend {frontend}"
         if frontend == "triton" and str(triton_provider) == "flaggems":
@@ -1019,6 +1021,7 @@ def main():
         default="native",
         help="Triton artifact provider (default: native)",
     )
+    ap.add_argument("--artifact-dir", default=None, help="Override artifact report directory.")
     ap.add_argument(
         "--host",
         default=DEFAULT_RVV_HOST,
@@ -1123,6 +1126,7 @@ def main():
         bench_only=bool(args.bench_only),
         log=_log,
         triton_provider=str(args.triton_provider),
+        artifact_dir=(str(args.artifact_dir) if args.artifact_dir else None),
     )
     if args.json:
         print(json.dumps(res, indent=2, ensure_ascii=False))

@@ -116,13 +116,15 @@ def run_one(
     *,
     frontend: str = "triton",
     triton_provider: str = "native",
+    artifact_dir: str | None = None,
     keep_tmp: bool = False,
     tune_request: TuningRequest | None = None,
     tune_profile: str | None = None,
 ) -> dict:
-    artifact_dir = _artifact_dir_for_frontend(frontend, triton_provider=str(triton_provider))
-    report_path = ROOT / "artifacts" / artifact_dir / f"{kernel}.json"
-    baseline_npz_path = ROOT / "artifacts" / artifact_dir / f"{kernel}.baseline.npz"
+    artifact_rel = _artifact_dir_for_frontend(frontend, triton_provider=str(triton_provider))
+    artifact_root = (Path(artifact_dir) if artifact_dir else (ROOT / "artifacts" / artifact_rel)).resolve()
+    report_path = artifact_root / f"{kernel}.json"
+    baseline_npz_path = artifact_root / f"{kernel}.baseline.npz"
     if not report_path.exists():
         raise FileNotFoundError(f"missing artifact report: {report_path}")
     if not baseline_npz_path.exists():
@@ -274,6 +276,7 @@ def main() -> None:
         default="rvv",
         help="Capability target passed to FlagGems spec registry when selecting defaults.",
     )
+    ap.add_argument("--artifact-dir", default=None, help="Override artifact report directory.")
     ap.add_argument("--keep-tmp", action="store_true", help="keep generated C + binaries in a temp dir")
     ap.add_argument("--tune-mode", choices=["auto", "guided", "locked"], default=None)
     ap.add_argument("--lock", action="append", default=[], help="repeatable; e.g. --lock tile_n=128")
@@ -308,6 +311,7 @@ def main() -> None:
                 k,
                 frontend=str(args.frontend),
                 triton_provider=str(args.triton_provider),
+                artifact_dir=(str(args.artifact_dir) if args.artifact_dir else None),
                 keep_tmp=bool(args.keep_tmp),
                 tune_request=tune_req,
                 tune_profile=str(args.profile) if args.profile else None,
@@ -338,6 +342,7 @@ def main() -> None:
         "triton_provider": (str(args.triton_provider) if str(args.frontend) == "triton" else None),
         "flaggems_opset": str(args.flaggems_opset),
         "backend_target": str(args.backend_target),
+        "artifact_dir": (str(args.artifact_dir) if args.artifact_dir else None),
         "kernels": list(kernels),
         "results": results,
         "ok": bool(ok_all),

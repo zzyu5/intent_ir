@@ -182,10 +182,12 @@ def run_one(
     *,
     frontend: str = "triton",
     triton_provider: str = "native",
+    artifact_dir: str | None = None,
 ) -> dict:
-    artifact_dir = _artifact_dir_for_frontend(frontend, triton_provider=str(triton_provider))
-    report_path = ROOT / "artifacts" / artifact_dir / f"{kernel}.json"
-    baseline_npz_path = ROOT / "artifacts" / artifact_dir / f"{kernel}.baseline.npz"
+    artifact_rel = _artifact_dir_for_frontend(frontend, triton_provider=str(triton_provider))
+    artifact_root = (Path(artifact_dir) if artifact_dir else (ROOT / "artifacts" / artifact_rel)).resolve()
+    report_path = artifact_root / f"{kernel}.json"
+    baseline_npz_path = artifact_root / f"{kernel}.baseline.npz"
     if not report_path.exists():
         raise FileNotFoundError(f"missing artifact report: {report_path}")
     if not baseline_npz_path.exists():
@@ -276,17 +278,18 @@ def _run_one_with_timeout(
     *,
     frontend: str,
     triton_provider: str,
+    artifact_dir: str | None,
     timeout_sec: int,
 ) -> dict[str, Any]:
     if int(timeout_sec) <= 0:
-        return run_one(kernel, frontend=frontend, triton_provider=triton_provider)
+        return run_one(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
 
     ctx = mp.get_context("fork")
     q: mp.Queue = ctx.Queue()
 
     def _worker(queue: mp.Queue) -> None:
         try:
-            res = run_one(kernel, frontend=frontend, triton_provider=triton_provider)
+            res = run_one(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
             queue.put({"ok": True, "result": res})
         except Exception as ex:  # noqa: BLE001
             queue.put(
@@ -375,6 +378,7 @@ def main() -> None:
         default=120,
         help="Per-kernel timeout in seconds (<=0 disables timeout wrapper).",
     )
+    ap.add_argument("--artifact-dir", default=None, help="Override artifact report directory.")
     ap.add_argument("--allow-skip", action="store_true", help="exit 0 with ok=false when CUDA environment is unavailable")
     ap.add_argument("--json", action="store_true", help="print machine-readable summary JSON")
     ap.add_argument("--out", default=None, help="write summary JSON to this path")
@@ -397,6 +401,7 @@ def main() -> None:
             "triton_provider": (str(args.triton_provider) if str(args.frontend) == "triton" else None),
             "flaggems_opset": str(args.flaggems_opset),
             "backend_target": str(args.backend_target),
+            "artifact_dir": (str(args.artifact_dir) if args.artifact_dir else None),
             "kernels": list(kernels),
             "results": [],
             "ok": False,
@@ -419,6 +424,7 @@ def main() -> None:
                 str(k),
                 frontend=str(args.frontend),
                 triton_provider=str(args.triton_provider),
+                artifact_dir=(str(args.artifact_dir) if args.artifact_dir else None),
                 timeout_sec=int(args.timeout_sec),
             )
         except (CudaLoweringError, CudaRuntimeError, FileNotFoundError, RuntimeError, ValueError) as e:
@@ -442,6 +448,7 @@ def main() -> None:
         "triton_provider": (str(args.triton_provider) if str(args.frontend) == "triton" else None),
         "flaggems_opset": str(args.flaggems_opset),
         "backend_target": str(args.backend_target),
+        "artifact_dir": (str(args.artifact_dir) if args.artifact_dir else None),
         "timeout_sec": int(args.timeout_sec),
         "kernels": list(kernels),
         "results": results,

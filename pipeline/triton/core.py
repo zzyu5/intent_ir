@@ -2669,7 +2669,7 @@ def run_pipeline_for_spec(
         if not allow_deterministic_fallback:
             raise RuntimeError(
                 f"no cached intent seed for {spec.name}: {seed_path}. "
-                "Run once with --use-intent-ir --intentir-seed-policy force_llm to create cache."
+                "Run once with IntentIR compile mode (for FlagGems: --flaggems-path intentir --intentir-mode force_compile) to create cache."
             )
         feedback = ["IntentIR force_cache requested but cache missing; deterministic fallback enabled by caller"]
         report["intent_seed"]["used"] = False

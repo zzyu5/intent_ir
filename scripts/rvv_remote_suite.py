@@ -182,6 +182,7 @@ def main() -> None:
         default="rvv",
         help="Capability target used when resolving FlagGems default kernels.",
     )
+    ap.add_argument("--artifact-dir", default=None, help="Override artifact report directory.")
     ap.add_argument(
         "--host",
         default=DEFAULT_RVV_HOST,
@@ -295,6 +296,8 @@ def main() -> None:
             ]
             if fe == "triton":
                 cmd += ["--triton-provider", str(args.triton_provider)]
+            if args.artifact_dir:
+                cmd += ["--artifact-dir", str(args.artifact_dir)]
             if args.profile_ops:
                 cmd.append("--profile-ops")
             if args.tune_debug:
