@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_active_batch_v1",
-  "generated_at": "2026-02-13T16:54:04+00:00",
+  "generated_at": "2026-02-13T17:12:13+00:00",
   "branch": "flaggems",
   "batch_size": 10,
   "selection_policy": [
@@ -13,17 +13,6 @@
       "id": "flaggems::ScaleDotProductAttention",
       "semantic_op": "ScaleDotProductAttention",
       "family": "attention_sequence",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
-    },
-    {
-      "id": "flaggems::celu",
-      "semantic_op": "celu",
-      "family": "elementwise_broadcast",
       "status": "blocked_ir",
       "passes": false,
       "reason_code": "no_intentir_mapping",
@@ -98,9 +87,9 @@
       "intent_ops": []
     },
     {
-      "id": "flaggems::eye",
-      "semantic_op": "eye",
-      "family": "elementwise_broadcast",
+      "id": "flaggems::flash_attention_forward",
+      "semantic_op": "flash_attention_forward",
+      "family": "attention_sequence",
       "status": "blocked_ir",
       "passes": false,
       "reason_code": "no_intentir_mapping",
@@ -109,8 +98,19 @@
       "intent_ops": []
     },
     {
-      "id": "flaggems::eye_m",
-      "semantic_op": "eye_m",
+      "id": "flaggems::flip",
+      "semantic_op": "flip",
+      "family": "index_scatter_gather",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::glu",
+      "semantic_op": "glu",
       "family": "elementwise_broadcast",
       "status": "blocked_ir",
       "passes": false,
@@ -123,7 +123,7 @@
   "context": {
     "feature_list_path": "workflow/flaggems/state/feature_list.json",
     "progress_log_path": "workflow/flaggems/state/progress_log.jsonl",
-    "git_log": "944df3a workflow: record scoped batch status for diag/count_nonzero wave\n4c12936 flaggems: add scoped convergence gates and provider package boundary\n8ed8a36 triton: move provider behavior to plugins and run rvv/cuda backend validation\n3b97f7f triton: de-specialize provider path and add diag/count_nonzero intentir wave\n7c9d9dd workflow: sync baseline/roadmap/metrics and replan active batch\n5b3b914 flaggems: add hard-gate workflow and execution policy bridge\n6d0f0e3 workflow: log batch-2 progress and next blocked-ir focus\naad3bf3 flaggems: add addcdiv/addcmul/addr mappings and e2e specs\n714e772 workflow: record flaggems session progress and handoff\ne9ac3d3 intentir: expand structural ops and converge flaggems mappings\n5f4d6a2 flaggems: converge path-mode CLI and add long-run workflow harness\n2d6a582 flaggems: stabilize bool/index kernels and expand registry coverage\n3b1d5e6 flaggems: canonicalize unstable intent seeds for sigmoid and batch norm\n14abd9e flaggems: add lerp/rms_norm/batch_norm specs and expand registry mappings\na95e938 flaggems: extend norm/index mappings and stabilize matmul specs\n766a2c2 flaggems: add matmul-family mappings and e2e specs\nd3c77b8 flaggems: expand logical/full/identity specs and alias coverage\nb833e29 flaggems: add unary/reduction specs and stabilize intent replay\n75d2627 flaggems: add compare/div specs and expand semantic mappings\nf1d5c19 flaggems: expand semantic rules, opset, and coverage specs",
+    "git_log": "0a0923f workflow: sync feature batch after elu integration and backend reruns\n4673f27 flaggems: add elu mapping/spec and refine cuda timeout diagnostics\n944df3a workflow: record scoped batch status for diag/count_nonzero wave\n4c12936 flaggems: add scoped convergence gates and provider package boundary\n8ed8a36 triton: move provider behavior to plugins and run rvv/cuda backend validation\n3b97f7f triton: de-specialize provider path and add diag/count_nonzero intentir wave\n7c9d9dd workflow: sync baseline/roadmap/metrics and replan active batch\n5b3b914 flaggems: add hard-gate workflow and execution policy bridge\n6d0f0e3 workflow: log batch-2 progress and next blocked-ir focus\naad3bf3 flaggems: add addcdiv/addcmul/addr mappings and e2e specs\n714e772 workflow: record flaggems session progress and handoff\ne9ac3d3 intentir: expand structural ops and converge flaggems mappings\n5f4d6a2 flaggems: converge path-mode CLI and add long-run workflow harness\n2d6a582 flaggems: stabilize bool/index kernels and expand registry coverage\n3b1d5e6 flaggems: canonicalize unstable intent seeds for sigmoid and batch norm\n14abd9e flaggems: add lerp/rms_norm/batch_norm specs and expand registry mappings\na95e938 flaggems: extend norm/index mappings and stabilize matmul specs\n766a2c2 flaggems: add matmul-family mappings and e2e specs\nd3c77b8 flaggems: expand logical/full/identity specs and alias coverage\nb833e29 flaggems: add unary/reduction specs and stabilize intent replay",
     "progress_tail": [
       "{\"ts\": \"2026-02-13T12:18:37+00:00\", \"commit\": \"6d0f0e35e3183f7a2ce93984c52faa83295a26d8\", \"summary\": \"Phase1+Phase2 delivered: hard-gate scripts, execution policy bridge, and Wave-A angle/bitwise/avg_pool2d mapping/spec integration.\", \"batch_ops\": [\"ScaleDotProductAttention\", \"celu\", \"conv1d\", \"conv3d\", \"conv_depthwise2d\", \"count_nonzero\", \"cummax\", \"cummin\", \"diag\", \"diag_embed\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/status_converged.json\", \"next_focus\": \"Execute active_batch (ScaleDotProductAttention, celu, conv1d/3d, conv_depthwise2d, count_nonzero, cummax/cummin, diag/diag_embed) to drive blocked_ir from 45 toward <=35.\", \"run_ok\": true, \"run_out_dir\": \"/home/kingdom/intentir/artifacts/flaggems_matrix\", \"counts_by_status\": {\"blocked_backend\": 84, \"blocked_ir\": 95, \"rvv_only\": 17}}",
       "{\"ts\": \"2026-02-13T15:08:41+00:00\", \"commit\": \"7c9d9dda34b6f8593acdbe9e53fc1e749980aa30\", \"summary\": \"Refactored provider hooks to de-specialize core path; added count_nonzero/diag/diag_embed IR+mapping+spec with tests; matrix run completed for 3 kernels (pipeline diff fail; RVV codegen blockers captured).\", \"batch_ops\": [\"ScaleDotProductAttention\", \"celu\", \"conv1d\", \"conv3d\", \"conv_depthwise2d\", \"count_nonzero\", \"cummax\", \"cummin\", \"diag\", \"diag_embed\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260213/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260213/status_converged.json\", \"next_focus\": \"Fix count_nonzero/diag/diag_embed IntentIR generation to deterministic patterns and resolve RVV lowering blockers for diag/diag_embed.\", \"run_ok\": false, \"run_out_dir\": \"/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260213\", \"counts_by_status\": {\"blocked_backend\": 154, \"blocked_ir\": 42}}",
