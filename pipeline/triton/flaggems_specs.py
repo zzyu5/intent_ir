@@ -114,6 +114,11 @@ FLAGGEMS_MV_SRC = _module_source_text("flag_gems.ops.mv")
 FLAGGEMS_ADDMV_SRC = _module_source_text("flag_gems.ops.addmv")
 FLAGGEMS_FLIP_SRC = _module_source_text("flag_gems.ops.flip")
 FLAGGEMS_EMBEDDING_SRC = _module_source_text("flag_gems.ops.embedding")
+FLAGGEMS_GLU_SRC = _module_source_text("flag_gems.ops.glu")
+FLAGGEMS_CUMMAX_SRC = _module_source_text("flag_gems.ops.cummax")
+FLAGGEMS_CUMMIN_SRC = _module_source_text("flag_gems.ops.cummin")
+FLAGGEMS_INDEX_ADD_SRC = _module_source_text("flag_gems.ops.index_add")
+FLAGGEMS_INDEX_PUT_SRC = _module_source_text("flag_gems.ops.index_put")
 FLAGGEMS_INDEX_SELECT_SRC = _module_source_text("flag_gems.ops.index_select")
 FLAGGEMS_SOFTMAX_SRC = _module_source_text("flag_gems.ops.softmax")
 FLAGGEMS_RELU_SRC = _module_source_text("flag_gems.ops.relu")
@@ -1608,6 +1613,198 @@ def _run_flaggems_embedding2d_reference(case: TestCase) -> Dict[str, np.ndarray]
     }
 
 
+def _run_flaggems_glu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    axis = int(case.shapes.get("AXIS", 1))
+    if axis not in {-2, -1, 0, 1}:
+        axis = 1
+    if n % 2 != 0:
+        n = n + 1
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "x" in case.inputs:
+        x = _as_f32_tensor(np.asarray(case.inputs["x"]), device=device)
+    elif case.inputs and "inp" in case.inputs:
+        x = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        x = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["glu"]):
+        out = torch.nn.functional.glu(x, dim=int(axis))
+
+    x_np = _to_np(x)
+    out_np = _to_np(out)
+    return {
+        "x": x_np,
+        "inp": x_np,
+        "axis": np.array(axis, dtype=np.int32),
+        "out": out_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_cummax1d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = int(case.shapes.get("N", 64))
+    axis = int(case.shapes.get("AXIS", 0))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "x" in case.inputs:
+        x = _as_f32_tensor(np.asarray(case.inputs["x"]), device=device).reshape(-1)
+    elif case.inputs and "inp" in case.inputs:
+        x = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device).reshape(-1)
+    else:
+        x = torch.from_numpy(rg.standard_normal((n,), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["cummax"]):
+        out = torch.cummax(x, dim=int(axis)).values
+
+    x_np = _to_np(x)
+    out_np = _to_np(out)
+    return {
+        "x": x_np,
+        "inp": x_np,
+        "axis": np.array(axis, dtype=np.int32),
+        "out": out_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_cummin1d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = int(case.shapes.get("N", 64))
+    axis = int(case.shapes.get("AXIS", 0))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "x" in case.inputs:
+        x = _as_f32_tensor(np.asarray(case.inputs["x"]), device=device).reshape(-1)
+    elif case.inputs and "inp" in case.inputs:
+        x = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device).reshape(-1)
+    else:
+        x = torch.from_numpy(rg.standard_normal((n,), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["cummin"]):
+        out = torch.cummin(x, dim=int(axis)).values
+
+    x_np = _to_np(x)
+    out_np = _to_np(out)
+    return {
+        "x": x_np,
+        "inp": x_np,
+        "axis": np.array(axis, dtype=np.int32),
+        "out": out_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_index_add2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 16))
+    n = int(case.shapes.get("N", 32))
+    l = int(case.shapes.get("L", 8))
+    axis = int(case.shapes.get("AXIS", 0))
+    alpha = float(case.shapes.get("ALPHA", 1.0))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "base" in case.inputs:
+        base = _as_f32_tensor(np.asarray(case.inputs["base"]), device=device)
+    elif case.inputs and "inp" in case.inputs:
+        base = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        base = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    if case.inputs and "index" in case.inputs:
+        index = torch.as_tensor(np.asarray(case.inputs["index"]), device=device, dtype=torch.int64).reshape(-1)
+    else:
+        index = torch.from_numpy(rg.integers(0, max(1, m), size=(l,), dtype=np.int64)).to(device)
+
+    src_shape = (int(index.numel()), n) if axis in {0, -2} else (m, int(index.numel()))
+    if case.inputs and "src" in case.inputs:
+        src = _as_f32_tensor(np.asarray(case.inputs["src"]), device=device)
+    else:
+        src = torch.from_numpy(rg.standard_normal(src_shape, dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["index_add"]):
+        out = torch.index_add(base, dim=int(axis), index=index, source=src, alpha=float(alpha))
+
+    base_np = _to_np(base)
+    index_np = _to_np(index).astype(np.int32, copy=False)
+    src_np = _to_np(src)
+    out_np = _to_np(out)
+    return {
+        "base": base_np,
+        "index": index_np,
+        "src": src_np,
+        "axis": np.array(axis, dtype=np.int32),
+        "alpha": np.array(alpha, dtype=np.float32),
+        "out": out_np,
+        "inp": base_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_index_put2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 16))
+    n = int(case.shapes.get("N", 32))
+    l = int(case.shapes.get("L", 16))
+    accumulate = bool(case.shapes.get("ACCUMULATE", False))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "base" in case.inputs:
+        base = _as_f32_tensor(np.asarray(case.inputs["base"]), device=device)
+    elif case.inputs and "inp" in case.inputs:
+        base = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        base = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    if case.inputs and "row_idx" in case.inputs:
+        row_idx = torch.as_tensor(np.asarray(case.inputs["row_idx"]), device=device, dtype=torch.int64).reshape(-1)
+    elif case.inputs and "col_idx" in case.inputs:
+        row_idx = torch.from_numpy(rg.integers(0, max(1, m), size=(l,), dtype=np.int64)).to(device)
+    else:
+        # Avoid duplicate coordinates when accumulate=False; repeated writes can
+        # have implementation-defined ordering across runtimes.
+        max_coords = max(1, m * n)
+        l_eff = min(max(1, l), max_coords)
+        flat = rg.choice(max_coords, size=(l_eff,), replace=False)
+        row_idx = torch.from_numpy((flat // max(1, n)).astype(np.int64, copy=False)).to(device)
+    if case.inputs and "col_idx" in case.inputs:
+        col_idx = torch.as_tensor(np.asarray(case.inputs["col_idx"]), device=device, dtype=torch.int64).reshape(-1)
+    elif case.inputs and "row_idx" in case.inputs:
+        col_idx = torch.from_numpy(rg.integers(0, max(1, n), size=(int(row_idx.numel()),), dtype=np.int64)).to(device)
+    else:
+        col_idx = torch.from_numpy((flat % max(1, n)).astype(np.int64, copy=False)).to(device)
+
+    if case.inputs and "values" in case.inputs:
+        values = _as_f32_tensor(np.asarray(case.inputs["values"]), device=device).reshape(-1)
+    elif case.inputs and "value" in case.inputs:
+        values = _as_f32_tensor(np.asarray(case.inputs["value"]), device=device).reshape(-1)
+    else:
+        values = torch.from_numpy(rg.standard_normal((int(row_idx.numel()),), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["index_put"]):
+        out = torch.index_put(base, (row_idx, col_idx), values, accumulate=bool(accumulate))
+
+    base_np = _to_np(base)
+    row_idx_np = _to_np(row_idx).astype(np.int32, copy=False)
+    col_idx_np = _to_np(col_idx).astype(np.int32, copy=False)
+    values_np = _to_np(values)
+    out_np = _to_np(out)
+    return {
+        "base": base_np,
+        "row_idx": row_idx_np,
+        "col_idx": col_idx_np,
+        "values": values_np,
+        "accumulate": np.array(bool(accumulate), dtype=np.bool_),
+        "out": out_np,
+        "inp": base_np,
+        "output": out_np,
+    }
+
+
 def _run_flaggems_index_select2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     m = int(case.shapes.get("M", 16))
     n = int(case.shapes.get("N", 32))
@@ -2677,6 +2874,30 @@ def _norm_diag_embed2d(shapes: Dict[str, int]) -> Dict[str, int]:
     return out
 
 
+def _norm_glu2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    out["M"] = max(1, int(out.get("M", 4)))
+    n = max(2, int(out.get("N", 64)))
+    if n % 2 != 0:
+        n += 1
+    out["N"] = n
+    out["AXIS"] = 1
+    return out
+
+
+def _norm_index_put2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    m = max(1, int(out.get("M", 16)))
+    n = max(1, int(out.get("N", 32)))
+    max_l = max(1, m * n)
+    l = max(1, int(out.get("L", 16)))
+    out["M"] = m
+    out["N"] = n
+    out["L"] = min(l, max_l)
+    out["ACCUMULATE"] = int(bool(out.get("ACCUMULATE", 0)))
+    return out
+
+
 _FLAGGEMS_SPEC_BUILDERS = {
     "any_kernel_dim": lambda: KernelSpec(
         name="any_kernel_dim",
@@ -3331,6 +3552,58 @@ _FLAGGEMS_SPEC_BUILDERS = {
         canonical_shapes={"M": 32, "N": 16, "L": 128},
         vary_axes=["M", "N", "L"],
     ),
+    "glu2d": lambda: KernelSpec(
+        name="glu2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_GLU_SRC",
+        runner=_run_flaggems_glu2d_reference,
+        canonical_shapes={"M": 4, "N": 64, "AXIS": 1},
+        vary_axes=["M", "N"],
+        normalize_shapes=_norm_glu2d,
+        stage_c_max_cases=8,
+        mutation_bounded_max_cases=4,
+    ),
+    "cummax1d": lambda: KernelSpec(
+        name="cummax1d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_CUMMAX_SRC",
+        runner=_run_flaggems_cummax1d_reference,
+        canonical_shapes={"N": 64, "AXIS": 0},
+        vary_axes=["N"],
+        stage_c_max_cases=8,
+        mutation_bounded_max_cases=4,
+    ),
+    "cummin1d": lambda: KernelSpec(
+        name="cummin1d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_CUMMIN_SRC",
+        runner=_run_flaggems_cummin1d_reference,
+        canonical_shapes={"N": 64, "AXIS": 0},
+        vary_axes=["N"],
+        stage_c_max_cases=8,
+        mutation_bounded_max_cases=4,
+    ),
+    "index_add2d": lambda: KernelSpec(
+        name="index_add2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_INDEX_ADD_SRC",
+        runner=_run_flaggems_index_add2d_reference,
+        canonical_shapes={"M": 16, "N": 32, "L": 8, "AXIS": 0, "ALPHA": 1},
+        vary_axes=["M", "N", "L"],
+        stage_c_max_cases=6,
+        mutation_bounded_max_cases=3,
+    ),
+    "index_put2d": lambda: KernelSpec(
+        name="index_put2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_INDEX_PUT_SRC",
+        runner=_run_flaggems_index_put2d_reference,
+        canonical_shapes={"M": 16, "N": 32, "L": 16, "ACCUMULATE": 0},
+        vary_axes=["M", "N", "L"],
+        normalize_shapes=_norm_index_put2d,
+        stage_c_max_cases=6,
+        mutation_bounded_max_cases=3,
+    ),
     "index_select2d": lambda: KernelSpec(
         name="index_select2d",
         module="pipeline.triton.flaggems_specs",
@@ -3504,6 +3777,11 @@ __all__ = [
     "FLAGGEMS_UPSAMPLE_BICUBIC2D_AA_SRC",
     "FLAGGEMS_EYE_SRC",
     "FLAGGEMS_EYE_M_SRC",
+    "FLAGGEMS_GLU_SRC",
+    "FLAGGEMS_CUMMAX_SRC",
+    "FLAGGEMS_CUMMIN_SRC",
+    "FLAGGEMS_INDEX_ADD_SRC",
+    "FLAGGEMS_INDEX_PUT_SRC",
     "default_flaggems_kernel_specs",
     "coverage_flaggems_kernel_specs",
 ]

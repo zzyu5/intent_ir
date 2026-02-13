@@ -48,6 +48,11 @@ def test_structure_ops_are_registered() -> None:
         "count_nonzero",
         "diag",
         "diag_embed",
+        "glu",
+        "cummax",
+        "cummin",
+        "index_add",
+        "index_put",
     }:
         assert op in EXPERIMENTAL_OPS
 

@@ -277,3 +277,68 @@ def test_count_nonzero_diag_and_diag_embed_execute() -> None:
     expected_de = np.zeros((2, 4, 4), dtype=np.float32)
     expected_de[:, np.arange(3), np.arange(3) + 1] = v
     assert np.allclose(out["de"], expected_de, atol=1e-6)
+
+
+def test_glu_cum_and_index_update_ops_execute() -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "glu_cum_index",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "v": {"dtype": "f32", "shape": ["K"], "layout": "row_major"},
+                "base": {"dtype": "f32", "shape": ["M", "P"], "layout": "row_major"},
+                "idx": {"dtype": "i32", "shape": ["L"], "layout": "row_major"},
+                "src": {"dtype": "f32", "shape": ["L", "P"], "layout": "row_major"},
+                "row_idx": {"dtype": "i32", "shape": ["L"], "layout": "row_major"},
+                "col_idx": {"dtype": "i32", "shape": ["L"], "layout": "row_major"},
+                "vals": {"dtype": "f32", "shape": ["L"], "layout": "row_major"},
+                "glu_out": {"dtype": "f32", "shape": ["M", "NH"], "layout": "row_major"},
+                "cummax_out": {"dtype": "f32", "shape": ["K"], "layout": "row_major"},
+                "cummin_out": {"dtype": "f32", "shape": ["K"], "layout": "row_major"},
+                "index_add_out": {"dtype": "f32", "shape": ["M", "P"], "layout": "row_major"},
+                "index_put_out": {"dtype": "f32", "shape": ["M", "P"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "glu", "inputs": ["x"], "output": "glu_out", "attrs": {"axis": 1}},
+                {"op": "cummax", "inputs": ["v"], "output": "cummax_out", "attrs": {"axis": 0}},
+                {"op": "cummin", "inputs": ["v"], "output": "cummin_out", "attrs": {"axis": 0}},
+                {"op": "index_add", "inputs": ["base", "idx", "src"], "output": "index_add_out", "attrs": {"axis": 0, "alpha": 1.0}},
+                {
+                    "op": "index_put",
+                    "inputs": ["base", "row_idx", "col_idx", "vals"],
+                    "output": "index_put_out",
+                    "attrs": {"accumulate": False},
+                },
+            ],
+            "outputs": ["glu_out", "cummax_out", "cummin_out", "index_add_out", "index_put_out"],
+        }
+    )
+
+    x = np.array([[1.0, 2.0, -1.0, 0.5], [0.25, -0.75, 1.5, -2.0]], dtype=np.float32)
+    v = np.array([1.0, 0.5, 2.0, -1.0], dtype=np.float32)
+    base = np.array([[1.0, 0.0], [2.0, 3.0], [4.0, 5.0]], dtype=np.float32)
+    idx = np.array([0, 2], dtype=np.int32)
+    src = np.array([[10.0, 11.0], [12.0, 13.0]], dtype=np.float32)
+    row_idx = np.array([1, 0], dtype=np.int32)
+    col_idx = np.array([0, 1], dtype=np.int32)
+    vals = np.array([-3.0, 7.0], dtype=np.float32)
+
+    out = execute_intent(
+        intent,
+        {"x": x, "v": v, "base": base, "idx": idx, "src": src, "row_idx": row_idx, "col_idx": col_idx, "vals": vals},
+        shape_bindings={"M": 3, "N": 4, "NH": 2, "K": 4, "P": 2, "L": 2},
+    )
+
+    lhs, rhs = np.split(x, 2, axis=1)
+    expected_glu = lhs * (1.0 / (1.0 + np.exp(-rhs)))
+    assert np.allclose(out["glu_out"], expected_glu, atol=1e-6)
+    assert np.allclose(out["cummax_out"], np.maximum.accumulate(v), atol=1e-6)
+    assert np.allclose(out["cummin_out"], np.minimum.accumulate(v), atol=1e-6)
+
+    expected_index_add = base.copy()
+    np.add.at(expected_index_add, idx.astype(np.int64), src)
+    assert np.allclose(out["index_add_out"], expected_index_add, atol=1e-6)
+
+    expected_index_put = base.copy()
+    expected_index_put[row_idx.astype(np.int64), col_idx.astype(np.int64)] = vals
+    assert np.allclose(out["index_put_out"], expected_index_put, atol=1e-6)

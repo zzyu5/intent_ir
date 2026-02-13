@@ -219,3 +219,34 @@ def test_diag_embed_requires_distinct_dims() -> None:
     }
     with pytest.raises(IntentIRValidationError):
         IntentFunction.from_json_dict(bad)
+
+
+def test_glu_cum_index_update_ops_validate_success() -> None:
+    src = {
+        "name": "glu_cum_index_ok",
+        "tensors": {
+            "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            "v": {"dtype": "f32", "shape": ["K"], "layout": "row_major"},
+            "base": {"dtype": "f32", "shape": ["M", "P"], "layout": "row_major"},
+            "idx": {"dtype": "i32", "shape": ["L"], "layout": "row_major"},
+            "src": {"dtype": "f32", "shape": ["L", "P"], "layout": "row_major"},
+            "row_idx": {"dtype": "i32", "shape": ["L"], "layout": "row_major"},
+            "col_idx": {"dtype": "i32", "shape": ["L"], "layout": "row_major"},
+            "vals": {"dtype": "f32", "shape": ["L"], "layout": "row_major"},
+            "g": {"dtype": "f32", "shape": ["M", "NH"], "layout": "row_major"},
+            "mx": {"dtype": "f32", "shape": ["K"], "layout": "row_major"},
+            "mn": {"dtype": "f32", "shape": ["K"], "layout": "row_major"},
+            "a": {"dtype": "f32", "shape": ["M", "P"], "layout": "row_major"},
+            "p": {"dtype": "f32", "shape": ["M", "P"], "layout": "row_major"},
+        },
+        "ops": [
+            {"op": "glu", "inputs": ["x"], "output": "g", "attrs": {"axis": 1}},
+            {"op": "cummax", "inputs": ["v"], "output": "mx", "attrs": {"axis": 0}},
+            {"op": "cummin", "inputs": ["v"], "output": "mn", "attrs": {"axis": 0}},
+            {"op": "index_add", "inputs": ["base", "idx", "src"], "output": "a", "attrs": {"axis": 0, "alpha": 1.0}},
+            {"op": "index_put", "inputs": ["base", "row_idx", "col_idx", "vals"], "output": "p", "attrs": {"accumulate": False}},
+        ],
+        "outputs": ["g", "mx", "mn", "a", "p"],
+    }
+    intent = IntentFunction.from_json_dict(src)
+    assert intent.name == "glu_cum_index_ok"

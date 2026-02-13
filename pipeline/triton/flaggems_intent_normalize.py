@@ -295,6 +295,96 @@ def _canonical_embedding2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(out)
 
 
+def _canonical_glu2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "glu2d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N_HALF"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "glu", "inputs": ["x"], "output": "out", "attrs": {"axis": 1}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_cummax1d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "cummax1d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cummax", "inputs": ["x"], "output": "out", "attrs": {"axis": 0}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_cummin1d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "cummin1d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cummin", "inputs": ["x"], "output": "out", "attrs": {"axis": 0}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_index_add2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "index_add2d",
+            "tensors": {
+                "base": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "index": {"dtype": "i32", "shape": ["L"], "layout": "row_major"},
+                "src": {"dtype": "f32", "shape": ["L", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "index_add", "inputs": ["base", "index", "src"], "output": "out", "attrs": {"axis": 0, "alpha": 1.0}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_index_put2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "index_put2d",
+            "tensors": {
+                "base": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "row_idx": {"dtype": "i32", "shape": ["L"], "layout": "row_major"},
+                "col_idx": {"dtype": "i32", "shape": ["L"], "layout": "row_major"},
+                "values": {"dtype": "f32", "shape": ["L"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "index_put",
+                    "inputs": ["base", "row_idx", "col_idx", "values"],
+                    "output": "out",
+                    "attrs": {"accumulate": False},
+                },
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def _canonical_masked_fill2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -482,6 +572,16 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_flip2d_intent()
     if name == "embedding2d":
         return _canonical_embedding2d_intent()
+    if name == "glu2d":
+        return _canonical_glu2d_intent()
+    if name == "cummax1d":
+        return _canonical_cummax1d_intent()
+    if name == "cummin1d":
+        return _canonical_cummin1d_intent()
+    if name == "index_add2d":
+        return _canonical_index_add2d_intent()
+    if name == "index_put2d":
+        return _canonical_index_put2d_intent()
     if name == "masked_fill2d":
         return _canonical_masked_fill2d_intent()
     if name == "count_nonzero2d":

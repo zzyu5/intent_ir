@@ -88,6 +88,11 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "cast2d" in names
     assert "flip2d" in names
     assert "embedding2d" in names
+    assert "glu2d" in names
+    assert "cummax1d" in names
+    assert "cummin1d" in names
+    assert "index_add2d" in names
+    assert "index_put2d" in names
     assert "gather2d" in names
     assert "index_select2d" in names
     assert "clamp2d" in names

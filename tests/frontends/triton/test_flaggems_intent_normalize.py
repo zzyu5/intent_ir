@@ -81,6 +81,26 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert [op.op for op in embedding.ops] == ["gather"]
     assert embedding.ops[0].inputs == ["inp", "row_idx", "col_idx"]
 
+    glu = canonical_flaggems_intent_for_spec("glu2d")
+    assert glu is not None
+    assert [op.op for op in glu.ops] == ["glu"]
+
+    cummax = canonical_flaggems_intent_for_spec("cummax1d")
+    assert cummax is not None
+    assert [op.op for op in cummax.ops] == ["cummax"]
+
+    cummin = canonical_flaggems_intent_for_spec("cummin1d")
+    assert cummin is not None
+    assert [op.op for op in cummin.ops] == ["cummin"]
+
+    index_add = canonical_flaggems_intent_for_spec("index_add2d")
+    assert index_add is not None
+    assert [op.op for op in index_add.ops] == ["index_add"]
+
+    index_put = canonical_flaggems_intent_for_spec("index_put2d")
+    assert index_put is not None
+    assert [op.op for op in index_put.ops] == ["index_put"]
+
     count_nonzero = canonical_flaggems_intent_for_spec("count_nonzero2d")
     assert count_nonzero is not None
     assert [op.op for op in count_nonzero.ops] == ["const", "ne", "cast", "reduce_sum"]

@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-13T17:40:01.770224+00:00",
+  "generated_at": "2026-02-13T18:27:27.742577+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -18,8 +18,8 @@
     "source_filtered_ops": 212,
     "semantic_ops": 196,
     "by_status": {
-      "blocked_backend": 58,
-      "blocked_ir": 36,
+      "blocked_backend": 63,
+      "blocked_ir": 31,
       "dual_pass": 102
     },
     "by_family": {
@@ -3435,40 +3435,60 @@
         "glu"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "glu"
+      ],
+      "mapping_kind": "direct_supported_op",
+      "intent_pattern_id": "direct.glu",
+      "e2e_spec": "glu2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "semantic op equals IntentIR op name; rvv_missing=['glu']; cuda_h100_missing=['glu']; cuda_5090d_missing=['glu']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "glu"
+          ],
+          "known_ops": [
+            "glu"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "glu"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "glu"
+          ],
+          "known_ops": [
+            "glu"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "glu"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "glu"
+          ],
+          "known_ops": [
+            "glu"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "glu"
+          ]
         }
       }
     },
@@ -11184,40 +11204,60 @@
         "index_add"
       ],
       "family": "index_scatter_gather",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "index_add"
+      ],
+      "mapping_kind": "direct_supported_op",
+      "intent_pattern_id": "direct.index_add",
+      "e2e_spec": "index_add2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "semantic op equals IntentIR op name; rvv_missing=['index_add']; cuda_h100_missing=['index_add']; cuda_5090d_missing=['index_add']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "index_add"
+          ],
+          "known_ops": [
+            "index_add"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "index_add"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "index_add"
+          ],
+          "known_ops": [
+            "index_add"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "index_add"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "index_add"
+          ],
+          "known_ops": [
+            "index_add"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "index_add"
+          ]
         }
       }
     },
@@ -11227,40 +11267,60 @@
         "index_put"
       ],
       "family": "index_scatter_gather",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "index_put"
+      ],
+      "mapping_kind": "direct_supported_op",
+      "intent_pattern_id": "direct.index_put",
+      "e2e_spec": "index_put2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "semantic op equals IntentIR op name; rvv_missing=['index_put']; cuda_h100_missing=['index_put']; cuda_5090d_missing=['index_put']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "index_put"
+          ],
+          "known_ops": [
+            "index_put"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "index_put"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "index_put"
+          ],
+          "known_ops": [
+            "index_put"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "index_put"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "index_put"
+          ],
+          "known_ops": [
+            "index_put"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "index_put"
+          ]
         }
       }
     },
@@ -11959,40 +12019,60 @@
         "cummax"
       ],
       "family": "matmul_linear",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "cummax"
+      ],
+      "mapping_kind": "direct_supported_op",
+      "intent_pattern_id": "direct.cummax",
+      "e2e_spec": "cummax1d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "semantic op equals IntentIR op name; rvv_missing=['cummax']; cuda_h100_missing=['cummax']; cuda_5090d_missing=['cummax']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "cummax"
+          ],
+          "known_ops": [
+            "cummax"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "cummax"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "cummax"
+          ],
+          "known_ops": [
+            "cummax"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "cummax"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "cummax"
+          ],
+          "known_ops": [
+            "cummax"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "cummax"
+          ]
         }
       }
     },
@@ -12002,40 +12082,60 @@
         "cummin"
       ],
       "family": "matmul_linear",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "cummin"
+      ],
+      "mapping_kind": "direct_supported_op",
+      "intent_pattern_id": "direct.cummin",
+      "e2e_spec": "cummin1d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "semantic op equals IntentIR op name; rvv_missing=['cummin']; cuda_h100_missing=['cummin']; cuda_5090d_missing=['cummin']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "cummin"
+          ],
+          "known_ops": [
+            "cummin"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "cummin"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "cummin"
+          ],
+          "known_ops": [
+            "cummin"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "cummin"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "cummin"
+          ],
+          "known_ops": [
+            "cummin"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "cummin"
+          ]
         }
       }
     },

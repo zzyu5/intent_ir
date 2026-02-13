@@ -99,6 +99,11 @@ INTERPRETER_SUPPORTED_OPS: set[str] = set().union(
         "count_nonzero",
         "diag",
         "diag_embed",
+        "glu",
+        "cummax",
+        "cummin",
+        "index_add",
+        "index_put",
         "layout_cast",
         "cast",
         "iota",
@@ -460,6 +465,66 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         if [d1, d2] != [out_rank - 2, out_rank - 1]:
             out = np.moveaxis(out, [out_rank - 2, out_rank - 1], [d1, d2])
         return out
+    if op.op == "glu":
+        x = np.asarray(_get(env, op.inputs[0]))
+        axis = int(op.attrs.get("axis", -1))
+        axis_norm = axis if axis >= 0 else x.ndim + axis
+        if axis_norm < 0 or axis_norm >= x.ndim:
+            raise ValueError(f"glu axis out of range: axis={axis} rank={x.ndim}")
+        axis_extent = int(x.shape[axis_norm])
+        if axis_extent % 2 != 0:
+            raise ValueError(f"glu requires even extent along axis={axis_norm}, got {axis_extent}")
+        lhs, rhs = np.split(x, 2, axis=axis_norm)
+        return lhs * (1.0 / (1.0 + np.exp(-rhs)))
+    if op.op == "cummax":
+        x = np.asarray(_get(env, op.inputs[0]))
+        axis = int(op.attrs.get("axis", -1))
+        return np.maximum.accumulate(x, axis=axis)
+    if op.op == "cummin":
+        x = np.asarray(_get(env, op.inputs[0]))
+        axis = int(op.attrs.get("axis", -1))
+        return np.minimum.accumulate(x, axis=axis)
+    if op.op == "index_add":
+        if len(op.inputs) != 3:
+            raise ValueError("index_add requires 3 inputs (base, index, src)")
+        base = np.array(_get(env, op.inputs[0]), copy=True)
+        index = np.asarray(_get(env, op.inputs[1]), dtype=np.int64).reshape(-1)
+        src = np.asarray(_get(env, op.inputs[2]), dtype=base.dtype)
+        axis = int(op.attrs.get("axis", 0))
+        axis_norm = axis if axis >= 0 else base.ndim + axis
+        if axis_norm < 0 or axis_norm >= base.ndim:
+            raise ValueError(f"index_add axis out of range: axis={axis} rank={base.ndim}")
+        expected_shape = list(base.shape)
+        expected_shape[axis_norm] = int(index.shape[0])
+        if tuple(src.shape) != tuple(expected_shape):
+            raise ValueError(
+                f"index_add src shape mismatch: expected {tuple(expected_shape)} got {tuple(src.shape)}"
+            )
+        alpha = float(op.attrs.get("alpha", 1.0))
+        src = np.asarray(src * alpha, dtype=base.dtype)
+        base_mv = np.moveaxis(base, axis_norm, 0)
+        src_mv = np.moveaxis(src, axis_norm, 0)
+        np.add.at(base_mv, index, src_mv)
+        return base
+    if op.op == "index_put":
+        if len(op.inputs) < 3:
+            raise ValueError("index_put requires at least 3 inputs (base, indices..., values)")
+        base = np.array(_get(env, op.inputs[0]), copy=True)
+        idx_inputs = list(op.inputs[1:-1])
+        value = np.asarray(_get(env, op.inputs[-1]), dtype=base.dtype)
+        if not idx_inputs:
+            raise ValueError("index_put requires at least one index tensor")
+        idx_arrays = [np.asarray(_get(env, name), dtype=np.int64) for name in idx_inputs]
+        idx_b = [np.asarray(arr, dtype=np.int64) for arr in np.broadcast_arrays(*idx_arrays)]
+        idx_shape = tuple(int(x) for x in idx_b[0].shape)
+        if value.shape != idx_shape:
+            value = np.broadcast_to(value, idx_shape)
+        accumulate = bool(op.attrs.get("accumulate", False))
+        if accumulate:
+            np.add.at(base, tuple(idx_b), value)
+        else:
+            base[tuple(idx_b)] = value
+        return base
     if op.op == "avg_pool2d":
         x = np.asarray(_get(env, op.inputs[0]), dtype=np.float32)
         if x.ndim != 4:
