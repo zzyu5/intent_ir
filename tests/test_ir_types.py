@@ -132,9 +132,24 @@ def test_new_structure_ops_validate_success() -> None:
             {"op": "topk", "inputs": ["X"], "output": "K", "attrs": {"k": 1, "axis": 1}},
             {"op": "unique", "inputs": ["K"], "output": "U", "attrs": {"sorted": False}},
             {"op": "nonzero", "inputs": ["X"], "output": "NZ"},
+            {"op": "angle", "inputs": ["X"], "output": "ANG"},
+            {"op": "bitwise_not", "inputs": ["K"], "output": "BN"},
+            {"op": "bitwise_and", "inputs": ["K", "K"], "output": "BA"},
+            {"op": "bitwise_or", "inputs": ["K", "K"], "output": "BO"},
+            {"op": "bitwise_left_shift", "inputs": ["K", "K"], "output": "BLS"},
+            {"op": "bitwise_right_shift", "inputs": ["K", "K"], "output": "BRS"},
+            {"op": "avg_pool2d", "inputs": ["X4"], "output": "P2", "attrs": {"kernel_size": [2, 2], "stride": [2, 2]}},
         ],
         "outputs": ["Out"],
     }
+    src["tensors"]["X4"] = {"dtype": "f32", "shape": ["N", "C", "H", "W"], "layout": "row_major"}
+    src["tensors"]["P2"] = {"dtype": "f32", "shape": ["N", "C", "OH", "OW"], "layout": "row_major"}
+    src["tensors"]["ANG"] = {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"}
+    src["tensors"]["BN"] = {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"}
+    src["tensors"]["BA"] = {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"}
+    src["tensors"]["BO"] = {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"}
+    src["tensors"]["BLS"] = {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"}
+    src["tensors"]["BRS"] = {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"}
     intent = IntentFunction.from_json_dict(src)
     assert intent.name == "structure_ok"
 
@@ -162,6 +177,20 @@ def test_pad_requires_valid_pad_width_pairs() -> None:
         },
         "ops": [{"op": "pad", "inputs": ["X"], "output": "Out", "attrs": {"pad_width": {"pairs": [[1], [0, 1]]}}}],
         "outputs": ["Out"],
+    }
+    with pytest.raises(IntentIRValidationError):
+        IntentFunction.from_json_dict(bad)
+
+
+def test_avg_pool2d_requires_valid_kernel_size() -> None:
+    bad = {
+        "name": "pool_bad",
+        "tensors": {
+            "X": {"dtype": "f32", "shape": ["N", "C", "H", "W"], "layout": "row_major"},
+            "Y": {"dtype": "f32", "shape": ["N", "C", "OH", "OW"], "layout": "row_major"},
+        },
+        "ops": [{"op": "avg_pool2d", "inputs": ["X"], "output": "Y", "attrs": {"kernel_size": "2"}}],
+        "outputs": ["Y"],
     }
     with pytest.raises(IntentIRValidationError):
         IntentFunction.from_json_dict(bad)

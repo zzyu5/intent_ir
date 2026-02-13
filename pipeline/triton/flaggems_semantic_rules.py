@@ -80,6 +80,13 @@ _ALIAS_TO_BASE: dict[str, str] = {
     "repeat_interleave_self_tensor": "repeat_interleave",
     "repeat_interleave_tensor": "repeat_interleave",
     "sort_stable": "sort",
+    # Bitwise aliases.
+    "bitwise_and_scalar": "bitwise_and",
+    "bitwise_and_scalar_tensor": "bitwise_and",
+    "bitwise_and_tensor": "bitwise_and",
+    "bitwise_or_scalar": "bitwise_or",
+    "bitwise_or_scalar_tensor": "bitwise_or",
+    "bitwise_or_tensor": "bitwise_or",
     # Reduction aliases.
     "mean_dim": "mean",
     "prod_dim": "prod",
@@ -167,6 +174,7 @@ _UNARY_TEMPLATE: dict[str, SemanticMapping] = {
     "cos": _mk("cos", ("cos",), mapping_kind="unary_template", pattern_id="unary.cos", detail="mapped to cos primitive"),
     "acos": _mk("acos", ("acos",), mapping_kind="unary_template", pattern_id="unary.acos", detail="mapped to acos primitive"),
     "atan": _mk("atan", ("atan",), mapping_kind="unary_template", pattern_id="unary.atan", detail="mapped to atan primitive"),
+    "angle": _mk("angle", ("angle",), mapping_kind="unary_template", pattern_id="unary.angle", detail="mapped to angle primitive"),
     "tan": _mk("tan", ("tan",), mapping_kind="unary_template", pattern_id="unary.tan", detail="mapped to tan primitive"),
     "erf": _mk("erf", ("erf",), mapping_kind="unary_template", pattern_id="unary.erf", detail="mapped to erf primitive"),
     "isnan": _mk(
@@ -197,6 +205,22 @@ _BINARY_TEMPLATE: dict[str, SemanticMapping] = {
     "sub": _mk("sub", ("sub",), mapping_kind="binary_template", pattern_id="binary.sub", detail="mapped by binary template"),
     "mul": _mk("mul", ("mul",), mapping_kind="binary_template", pattern_id="binary.mul", detail="mapped by binary template"),
     "div": _mk("div", ("div",), mapping_kind="binary_template", pattern_id="binary.div", detail="mapped by binary template"),
+    "bitwise_and": _mk("bitwise_and", ("bitwise_and",), mapping_kind="binary_template", pattern_id="binary.bitwise_and", detail="mapped to bitwise_and primitive"),
+    "bitwise_or": _mk("bitwise_or", ("bitwise_or",), mapping_kind="binary_template", pattern_id="binary.bitwise_or", detail="mapped to bitwise_or primitive"),
+    "bitwise_left_shift": _mk(
+        "bitwise_left_shift",
+        ("bitwise_left_shift",),
+        mapping_kind="binary_template",
+        pattern_id="binary.bitwise_left_shift",
+        detail="mapped to bitwise_left_shift primitive",
+    ),
+    "bitwise_right_shift": _mk(
+        "bitwise_right_shift",
+        ("bitwise_right_shift",),
+        mapping_kind="binary_template",
+        pattern_id="binary.bitwise_right_shift",
+        detail="mapped to bitwise_right_shift primitive",
+    ),
     "min": _mk("min", ("reduce_min",), mapping_kind="reduce_template", pattern_id="reduce.min", detail="mapped to reduce_min"),
 }
 
@@ -521,6 +545,20 @@ _MACRO_TEMPLATE: dict[str, SemanticMapping] = {
         mapping_kind="macro_template",
         pattern_id="macro.full",
         detail="mapped as scalar const(value) + broadcast",
+    ),
+    "bitwise_not": _mk(
+        "bitwise_not",
+        ("bitwise_not",),
+        mapping_kind="macro_template",
+        pattern_id="macro.bitwise_not",
+        detail="mapped to bitwise_not primitive",
+    ),
+    "avg_pool2d": _mk(
+        "avg_pool2d",
+        ("avg_pool2d",),
+        mapping_kind="macro_template",
+        pattern_id="macro.avg_pool2d",
+        detail="mapped to avg_pool2d primitive",
     ),
     "arange": _mk(
         "arange",

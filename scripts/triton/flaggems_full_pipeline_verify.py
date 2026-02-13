@@ -58,6 +58,12 @@ def main() -> None:
         help="Shared seed cache directory for intentir mode.",
     )
     ap.add_argument(
+        "--fallback-policy",
+        choices=["deterministic", "strict"],
+        default="deterministic",
+        help="IntentIR fallback policy when cache/LLM paths fail (default: deterministic).",
+    )
+    ap.add_argument(
         "--flaggems-opset",
         choices=["deterministic_forward"],
         default="deterministic_forward",
@@ -71,15 +77,18 @@ def main() -> None:
     )
     ap.add_argument("--out-dir", type=str, default=None)
     args = ap.parse_args()
+
+    seed_cache_dir = Path(args.seed_cache_dir)
+    seed_cache_dir.mkdir(parents=True, exist_ok=True)
     config = resolve_flaggems_execution(
         flaggems_path=str(args.flaggems_path),
         intentir_mode=str(args.intentir_mode),
+        seed_cache_dir=seed_cache_dir,
+        fallback_policy=str(args.fallback_policy),
     )
 
     out_dir = Path(args.out_dir) if args.out_dir else (ROOT / "artifacts" / "flaggems_triton_full_pipeline")
     out_dir.mkdir(parents=True, exist_ok=True)
-    seed_cache_dir = Path(args.seed_cache_dir)
-    seed_cache_dir.mkdir(parents=True, exist_ok=True)
 
     suites = {
         "smoke": lambda: default_flaggems_kernel_specs(
@@ -131,10 +140,7 @@ def main() -> None:
                 spec,
                 out_dir=out_dir,
                 cases_limit=int(args.cases_limit),
-                use_llm=bool(config.intentir_seed_policy != "force_cache"),
-                use_intent_ir=bool(config.use_intent_ir),
-                intentir_seed_policy=str(config.intentir_seed_policy),
-                allow_deterministic_fallback=False,
+                execution_policy=config.execution_policy,
                 triton_provider="flaggems",
                 backend_target=str(args.backend_target),
             )

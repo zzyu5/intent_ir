@@ -17,6 +17,8 @@ def test_resolve_flaggems_execution_original_path() -> None:
     assert cfg.intentir_mode == "auto"
     assert cfg.use_intent_ir is False
     assert cfg.intentir_seed_policy == "auto"
+    assert cfg.execution_policy.path == "traditional"
+    assert cfg.execution_policy.use_llm is False
 
 
 def test_resolve_flaggems_execution_intentir_modes() -> None:
@@ -26,6 +28,9 @@ def test_resolve_flaggems_execution_intentir_modes() -> None:
     assert auto.use_intent_ir is True and auto.intentir_seed_policy == "auto"
     assert force_compile.use_intent_ir is True and force_compile.intentir_seed_policy == "force_llm"
     assert force_cache.use_intent_ir is True and force_cache.intentir_seed_policy == "force_cache"
+    assert auto.execution_policy.path == "intentir"
+    assert force_compile.execution_policy.intentir_mode == "force_compile"
+    assert force_cache.execution_policy.use_llm is False
 
 
 def test_resolve_flaggems_execution_rejects_invalid_combo() -> None:

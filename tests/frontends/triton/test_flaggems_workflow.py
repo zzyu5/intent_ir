@@ -5,11 +5,14 @@ from pathlib import Path
 
 from pipeline.triton.flaggems_workflow import (
     append_progress_log,
+    append_metrics_history,
+    build_active_batch_payload,
     build_feature_list_payload,
     freeze_baseline_snapshot,
     load_json,
     select_next_batch,
     summarize_registry,
+    validate_feature_list_sync,
     write_handoff,
 )
 
@@ -74,6 +77,35 @@ def test_feature_list_payload_and_batch_priority() -> None:
 
     batch = select_next_batch(feature_payload=payload, batch_size=3)
     assert [str(x["semantic_op"]) for x in batch] == ["acos", "argmax", "cumsum"]
+    ok, errs = validate_feature_list_sync(
+        feature_payload=payload,
+        registry_payload=_sample_registry_payload(),
+        expected_source_registry_path="pipeline/triton/flaggems_registry.json",
+    )
+    assert ok is True
+    assert errs == []
+
+    mismatch_payload = dict(payload)
+    mismatch_payload["source_registry_path"] = "wrong/path.json"
+    ok2, errs2 = validate_feature_list_sync(
+        feature_payload=mismatch_payload,
+        registry_payload=_sample_registry_payload(),
+        expected_source_registry_path="pipeline/triton/flaggems_registry.json",
+    )
+    assert ok2 is False
+    assert errs2
+
+    active = build_active_batch_payload(
+        batch=batch,
+        branch="flaggems",
+        batch_size=3,
+        feature_list_path="workflow/flaggems/state/feature_list.json",
+        progress_log_path="workflow/flaggems/state/progress_log.jsonl",
+        git_log="abc",
+        progress_tail=[],
+    )
+    assert active["schema_version"] == "flaggems_active_batch_v1"
+    assert [str(x["semantic_op"]) for x in active["items"]] == ["acos", "argmax", "cumsum"]
 
 
 def test_freeze_baseline_snapshot_writes_latest_and_stamped(tmp_path: Path) -> None:
@@ -111,3 +143,9 @@ def test_progress_log_append_and_handoff_write(tmp_path: Path) -> None:
     handoff = tmp_path / "handoff.md"
     write_handoff(handoff_path=handoff, content="# Handoff\n- done\n")
     assert handoff.read_text(encoding="utf-8") == "# Handoff\n- done\n"
+
+    metrics = tmp_path / "metrics_history.jsonl"
+    append_metrics_history(metrics_history_path=metrics, entry={"semantic_ops": 4})
+    lines = metrics.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["semantic_ops"] == 4

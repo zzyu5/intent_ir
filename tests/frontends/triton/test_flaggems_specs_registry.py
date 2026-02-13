@@ -20,11 +20,18 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "exp22d" in names
     assert "acos2d" in names
     assert "atan2d" in names
+    assert "angle2d" in names
     assert "cat2d" in names
     assert "arange1d" in names
     assert "addcmul2d" in names
     assert "addcdiv2d" in names
     assert "addr2d" in names
+    assert "bitwise_and2d" in names
+    assert "bitwise_or2d" in names
+    assert "bitwise_not2d" in names
+    assert "bitwise_left_shift2d" in names
+    assert "bitwise_right_shift2d" in names
+    assert "avg_pool2d_nchw" in names
     assert "div2d" in names
     assert "eq2d" in names
     assert "ne2d" in names

@@ -14,9 +14,15 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from pipeline.triton.execution_policy import (
+    ExecutionPathPolicy,
+    INTENTIR_MODE_VALUES as POLICY_INTENTIR_MODE_VALUES,
+    make_execution_policy,
+)
+
 
 FLAGGEMS_PATH_VALUES = ("original", "intentir")
-INTENTIR_MODE_VALUES = ("auto", "force_compile", "force_cache")
+INTENTIR_MODE_VALUES = POLICY_INTENTIR_MODE_VALUES
 
 
 @dataclass(frozen=True)
@@ -25,9 +31,16 @@ class FlaggemsExecutionConfig:
     intentir_mode: str
     use_intent_ir: bool
     intentir_seed_policy: str
+    execution_policy: ExecutionPathPolicy
 
 
-def resolve_flaggems_execution(*, flaggems_path: str, intentir_mode: str) -> FlaggemsExecutionConfig:
+def resolve_flaggems_execution(
+    *,
+    flaggems_path: str,
+    intentir_mode: str,
+    seed_cache_dir: Path | None = None,
+    fallback_policy: str = "deterministic",
+) -> FlaggemsExecutionConfig:
     path = str(flaggems_path).strip().lower()
     mode = str(intentir_mode).strip().lower()
     if path not in FLAGGEMS_PATH_VALUES:
@@ -38,11 +51,18 @@ def resolve_flaggems_execution(*, flaggems_path: str, intentir_mode: str) -> Fla
     if path == "original":
         if mode != "auto":
             raise ValueError("--intentir-mode is only valid when --flaggems-path=intentir")
+        policy = make_execution_policy(
+            path="traditional",
+            intentir_mode="auto",
+            seed_cache_dir=seed_cache_dir,
+            fallback_policy=fallback_policy,
+        )
         return FlaggemsExecutionConfig(
             flaggems_path=path,
             intentir_mode=mode,
             use_intent_ir=False,
             intentir_seed_policy="auto",
+            execution_policy=policy,
         )
 
     # path == intentir
@@ -51,11 +71,18 @@ def resolve_flaggems_execution(*, flaggems_path: str, intentir_mode: str) -> Fla
         "force_compile": "force_llm",
         "force_cache": "force_cache",
     }[mode]
+    policy = make_execution_policy(
+        path="intentir",
+        intentir_mode=mode,
+        seed_cache_dir=seed_cache_dir,
+        fallback_policy=fallback_policy,
+    )
     return FlaggemsExecutionConfig(
         flaggems_path=path,
         intentir_mode=mode,
         use_intent_ir=True,
         intentir_seed_policy=seed_policy,
+        execution_policy=policy,
     )
 
 
@@ -101,4 +128,3 @@ def sync_seed_back_to_cache(*, spec_name: str, seed_cache_dir: Path, run_out_dir
     cache_seed.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(run_seed, cache_seed)
     return True
-

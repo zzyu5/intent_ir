@@ -47,11 +47,22 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
             "add",
             "acos",
             "atan",
+            "angle",
             "cat",
             "arange",
             "addcmul",
             "addcdiv",
             "addr",
+            "bitwise_and",
+            "bitwise_or",
+            "bitwise_not",
+            "bitwise_left_shift",
+            "bitwise_right_shift",
+            "avg_pool2d",
+            "bitwise_and_scalar",
+            "bitwise_and_tensor",
+            "bitwise_or_scalar",
+            "bitwise_or_tensor",
             "sub",
             "mul",
             "div",
@@ -124,11 +135,18 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
     assert "add2d" in specs
     assert "acos2d" in specs
     assert "atan2d" in specs
+    assert "angle2d" in specs
     assert "cat2d" in specs
     assert "arange1d" in specs
     assert "addcmul2d" in specs
     assert "addcdiv2d" in specs
     assert "addr2d" in specs
+    assert "bitwise_and2d" in specs
+    assert "bitwise_or2d" in specs
+    assert "bitwise_not2d" in specs
+    assert "bitwise_left_shift2d" in specs
+    assert "bitwise_right_shift2d" in specs
+    assert "avg_pool2d_nchw" in specs
     assert "sub2d" in specs
     assert "mul2d" in specs
     assert "div2d" in specs

@@ -39,5 +39,10 @@ def test_structure_ops_are_registered() -> None:
 
 
 def test_trig_inverse_unary_ops_are_registered() -> None:
-    for op in {"acos", "atan"}:
+    for op in {"acos", "atan", "angle"}:
+        assert op in EXPERIMENTAL_OPS
+
+
+def test_bitwise_and_pool_ops_are_registered() -> None:
+    for op in {"bitwise_and", "bitwise_or", "bitwise_not", "bitwise_left_shift", "bitwise_right_shift", "avg_pool2d"}:
         assert op in EXPERIMENTAL_OPS

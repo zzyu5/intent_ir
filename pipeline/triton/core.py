@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +38,7 @@ from frontends.triton.contract import evaluate_contract_v2
 from verify.metamorphic import run_bounded_exhaustive, run_metamorphic_suite
 from verify.mutation import run_mutation_kill
 from verify.tolerances import infer_tolerances
+from pipeline.triton.execution_policy import ExecutionPathPolicy, make_policy_from_legacy_flags
 from pipeline.triton.flaggems_intent_normalize import maybe_normalize_flaggems_candidate
 
 
@@ -2446,6 +2448,7 @@ def run_pipeline_for_spec(
     *,
     out_dir: Path,
     cases_limit: int = 8,
+    execution_policy: ExecutionPathPolicy | None = None,
     use_llm: bool = True,
     allow_deterministic_fallback: bool = False,
     use_intent_ir: bool = True,
@@ -2462,15 +2465,20 @@ def run_pipeline_for_spec(
     Returns the report dict (also written to JSON).
 
     Args:
+      execution_policy:
+        Preferred execution-path configuration object. When set, this policy
+        takes precedence over legacy switches.
       use_llm:
-        Legacy compatibility switch. Prefer `intentir_seed_policy`.
+        Legacy compatibility switch. Prefer `execution_policy`.
       allow_deterministic_fallback:
+        Legacy fallback behavior. Prefer `execution_policy.fallback_policy`.
         When `intentir_seed_policy=force_cache` and no cached seed is available, allow legacy
         deterministic fallback intents instead of failing fast.
       use_intent_ir:
-        True: run IntentIR pipeline.
+        Legacy switch. True: run IntentIR pipeline.
         False: skip IntentIR generation and use traditional provider path.
       intentir_seed_policy:
+        Legacy seed behavior switch.
         Seed behavior when `use_intent_ir=True`:
         - `auto`: replay cache if available, otherwise call LLM and save cache.
         - `force_llm`: always call LLM and overwrite cache.
@@ -2481,6 +2489,33 @@ def run_pipeline_for_spec(
         "triton_provider": str(triton_provider),
         "backend_target": (str(backend_target) if backend_target is not None else None),
     }
+    if execution_policy is not None:
+        if (
+            bool(use_llm) is not True
+            or bool(allow_deterministic_fallback) is not False
+            or bool(use_intent_ir) is not True
+            or str(intentir_seed_policy) != "auto"
+        ):
+            warnings.warn(
+                "execution_policy is set; legacy switches (use_llm/use_intent_ir/"
+                "intentir_seed_policy/allow_deterministic_fallback) are ignored.",
+                stacklevel=2,
+            )
+        effective_policy = execution_policy
+    else:
+        effective_policy = make_policy_from_legacy_flags(
+            use_intent_ir=bool(use_intent_ir),
+            use_llm=bool(use_llm),
+            intentir_seed_policy=str(intentir_seed_policy),
+            allow_deterministic_fallback=bool(allow_deterministic_fallback),
+        )
+
+    use_intent_ir = bool(effective_policy.use_intent_ir)
+    use_llm = bool(effective_policy.use_llm)
+    intentir_seed_policy = str(effective_policy.intentir_seed_policy)
+    allow_deterministic_fallback = bool(effective_policy.allow_deterministic_fallback)
+    report["execution_policy"] = effective_policy.to_json_dict()
+
     adapter = pipeline_registry.get("triton")
     print(f"[{spec.name}] stage1: prepare triton dump/cache", flush=True)
     dump_dir, cache_dir = prepare_dump_and_cache_dirs(out_dir, spec.name, clean=True)
@@ -2602,7 +2637,7 @@ def run_pipeline_for_spec(
         report["ttir_path"] = None
 
     if not bool(use_intent_ir):
-        print(f"[{spec.name}] stage5: traditional provider path (--no-use-intent-ir)", flush=True)
+        print(f"[{spec.name}] stage5: traditional provider path (execution_policy.path=traditional)", flush=True)
         report["intentir"] = {
             "enabled": False,
             "mode": "traditional_provider_path",
@@ -2629,9 +2664,6 @@ def run_pipeline_for_spec(
     seed_policy = str(intentir_seed_policy).strip().lower()
     if seed_policy not in {"auto", "force_llm", "force_cache"}:
         raise ValueError(f"unsupported intentir_seed_policy: {intentir_seed_policy}")
-    # Backward compatibility: explicit use_llm=False historically meant no live LLM.
-    if seed_policy == "auto" and not bool(use_llm):
-        seed_policy = "force_cache"
 
     # 3) IntentIR construction (cache/LLM/fallback policy).
     if seed_policy == "force_cache":

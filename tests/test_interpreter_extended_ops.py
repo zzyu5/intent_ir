@@ -192,3 +192,57 @@ def test_extended_structure_ops_execute() -> None:
     assert np.allclose(out["topk_out"], np.flip(np.sort(x, axis=1)[:, -2:], axis=1), atol=1e-6)
     assert np.array_equal(out["unique_out"], np.array([3, 1, 2], dtype=np.int32))
     assert np.array_equal(out["nonzero_out"], np.stack(np.nonzero(mask), axis=-1))
+
+
+def test_bitwise_angle_avg_pool_ops_execute() -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "bitwise_angle_pool",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "a": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "b": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "img": {"dtype": "f32", "shape": ["B", "C", "H", "W"], "layout": "row_major"},
+                "x_ang": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "ab_and": {"dtype": "i64", "shape": ["M", "N"], "layout": "row_major"},
+                "ab_or": {"dtype": "i64", "shape": ["M", "N"], "layout": "row_major"},
+                "a_not": {"dtype": "i64", "shape": ["M", "N"], "layout": "row_major"},
+                "a_lshift": {"dtype": "i64", "shape": ["M", "N"], "layout": "row_major"},
+                "a_rshift": {"dtype": "i64", "shape": ["M", "N"], "layout": "row_major"},
+                "img_pool": {"dtype": "f32", "shape": ["B", "C", "OH", "OW"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "angle", "inputs": ["x"], "output": "x_ang"},
+                {"op": "bitwise_and", "inputs": ["a", "b"], "output": "ab_and"},
+                {"op": "bitwise_or", "inputs": ["a", "b"], "output": "ab_or"},
+                {"op": "bitwise_not", "inputs": ["a"], "output": "a_not"},
+                {"op": "bitwise_left_shift", "inputs": ["a", "b"], "output": "a_lshift"},
+                {"op": "bitwise_right_shift", "inputs": ["a", "b"], "output": "a_rshift"},
+                {
+                    "op": "avg_pool2d",
+                    "inputs": ["img"],
+                    "output": "img_pool",
+                    "attrs": {"kernel_size": [2, 2], "stride": [2, 2], "padding": [0, 0]},
+                },
+            ],
+            "outputs": ["x_ang", "ab_and", "ab_or", "a_not", "a_lshift", "a_rshift", "img_pool"],
+        }
+    )
+    x = np.array([[1.0, -2.0], [0.5, -0.25]], dtype=np.float32)
+    a = np.array([[1, 2], [3, 4]], dtype=np.int32)
+    b = np.array([[1, 1], [0, 2]], dtype=np.int32)
+    img = np.arange(1, 17, dtype=np.float32).reshape(1, 1, 4, 4)
+    out = execute_intent(
+        intent,
+        {"x": x, "a": a, "b": b, "img": img},
+        shape_bindings={"M": 2, "N": 2, "B": 1, "C": 1, "H": 4, "W": 4},
+    )
+
+    assert np.allclose(out["x_ang"], np.angle(x), atol=1e-6)
+    assert np.array_equal(out["ab_and"], np.bitwise_and(a, b))
+    assert np.array_equal(out["ab_or"], np.bitwise_or(a, b))
+    assert np.array_equal(out["a_not"], np.bitwise_not(a.astype(np.int64)))
+    assert np.array_equal(out["a_lshift"], np.left_shift(a.astype(np.int64), b.astype(np.int64)))
+    assert np.array_equal(out["a_rshift"], np.right_shift(a.astype(np.int64), b.astype(np.int64)))
+    expected_pool = np.array([[[[(1 + 2 + 5 + 6) / 4.0, (3 + 4 + 7 + 8) / 4.0], [(9 + 10 + 13 + 14) / 4.0, (11 + 12 + 15 + 16) / 4.0]]]], dtype=np.float32)
+    assert np.allclose(out["img_pool"], expected_pool, atol=1e-6)

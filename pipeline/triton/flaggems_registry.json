@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-13T11:48:07.144687+00:00",
+  "generated_at": "2026-02-13T12:17:04.078083+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -18,8 +18,8 @@
     "source_filtered_ops": 212,
     "semantic_ops": 196,
     "by_status": {
-      "blocked_backend": 44,
-      "blocked_ir": 56,
+      "blocked_backend": 55,
+      "blocked_ir": 45,
       "dual_pass": 95,
       "rvv_only": 1
     },
@@ -575,40 +575,60 @@
         "angle"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "angle"
+      ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.angle",
+      "e2e_spec": "angle2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to angle primitive; rvv_missing=['angle']; cuda_h100_missing=['angle']; cuda_5090d_missing=['angle']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "angle"
+          ],
+          "known_ops": [
+            "angle"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "angle"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "angle"
+          ],
+          "known_ops": [
+            "angle"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "angle"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "angle"
+          ],
+          "known_ops": [
+            "angle"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "angle"
+          ]
         }
       }
     },
@@ -745,40 +765,60 @@
         "bitwise_and_scalar"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "bitwise_and"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.bitwise_and_scalar->bitwise_and",
+      "e2e_spec": "bitwise_and2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to bitwise_and; mapped to bitwise_and primitive; rvv_missing=['bitwise_and']; cuda_h100_missing=['bitwise_and']; cuda_5090d_missing=['bitwise_and']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_and"
+          ],
+          "known_ops": [
+            "bitwise_and"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_and"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_and"
+          ],
+          "known_ops": [
+            "bitwise_and"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_and"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_and"
+          ],
+          "known_ops": [
+            "bitwise_and"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_and"
+          ]
         }
       }
     },
@@ -788,40 +828,60 @@
         "bitwise_and_scalar_tensor"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "bitwise_and"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.bitwise_and_scalar_tensor->bitwise_and",
+      "e2e_spec": "bitwise_and2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to bitwise_and; mapped to bitwise_and primitive; rvv_missing=['bitwise_and']; cuda_h100_missing=['bitwise_and']; cuda_5090d_missing=['bitwise_and']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_and"
+          ],
+          "known_ops": [
+            "bitwise_and"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_and"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_and"
+          ],
+          "known_ops": [
+            "bitwise_and"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_and"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_and"
+          ],
+          "known_ops": [
+            "bitwise_and"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_and"
+          ]
         }
       }
     },
@@ -831,40 +891,60 @@
         "bitwise_and_tensor"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "bitwise_and"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.bitwise_and_tensor->bitwise_and",
+      "e2e_spec": "bitwise_and2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to bitwise_and; mapped to bitwise_and primitive; rvv_missing=['bitwise_and']; cuda_h100_missing=['bitwise_and']; cuda_5090d_missing=['bitwise_and']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_and"
+          ],
+          "known_ops": [
+            "bitwise_and"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_and"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_and"
+          ],
+          "known_ops": [
+            "bitwise_and"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_and"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_and"
+          ],
+          "known_ops": [
+            "bitwise_and"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_and"
+          ]
         }
       }
     },
@@ -874,40 +954,60 @@
         "bitwise_left_shift"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "bitwise_left_shift"
+      ],
+      "mapping_kind": "binary_template",
+      "intent_pattern_id": "binary.bitwise_left_shift",
+      "e2e_spec": "bitwise_left_shift2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to bitwise_left_shift primitive; rvv_missing=['bitwise_left_shift']; cuda_h100_missing=['bitwise_left_shift']; cuda_5090d_missing=['bitwise_left_shift']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_left_shift"
+          ],
+          "known_ops": [
+            "bitwise_left_shift"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_left_shift"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_left_shift"
+          ],
+          "known_ops": [
+            "bitwise_left_shift"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_left_shift"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_left_shift"
+          ],
+          "known_ops": [
+            "bitwise_left_shift"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_left_shift"
+          ]
         }
       }
     },
@@ -917,40 +1017,60 @@
         "bitwise_not"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "bitwise_not"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.bitwise_not",
+      "e2e_spec": "bitwise_not2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to bitwise_not primitive; rvv_missing=['bitwise_not']; cuda_h100_missing=['bitwise_not']; cuda_5090d_missing=['bitwise_not']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_not"
+          ],
+          "known_ops": [
+            "bitwise_not"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_not"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_not"
+          ],
+          "known_ops": [
+            "bitwise_not"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_not"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_not"
+          ],
+          "known_ops": [
+            "bitwise_not"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_not"
+          ]
         }
       }
     },
@@ -960,40 +1080,60 @@
         "bitwise_or_scalar"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "bitwise_or"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.bitwise_or_scalar->bitwise_or",
+      "e2e_spec": "bitwise_or2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to bitwise_or; mapped to bitwise_or primitive; rvv_missing=['bitwise_or']; cuda_h100_missing=['bitwise_or']; cuda_5090d_missing=['bitwise_or']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_or"
+          ],
+          "known_ops": [
+            "bitwise_or"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_or"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_or"
+          ],
+          "known_ops": [
+            "bitwise_or"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_or"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_or"
+          ],
+          "known_ops": [
+            "bitwise_or"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_or"
+          ]
         }
       }
     },
@@ -1003,40 +1143,60 @@
         "bitwise_or_scalar_tensor"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "bitwise_or"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.bitwise_or_scalar_tensor->bitwise_or",
+      "e2e_spec": "bitwise_or2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to bitwise_or; mapped to bitwise_or primitive; rvv_missing=['bitwise_or']; cuda_h100_missing=['bitwise_or']; cuda_5090d_missing=['bitwise_or']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_or"
+          ],
+          "known_ops": [
+            "bitwise_or"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_or"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_or"
+          ],
+          "known_ops": [
+            "bitwise_or"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_or"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_or"
+          ],
+          "known_ops": [
+            "bitwise_or"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_or"
+          ]
         }
       }
     },
@@ -1046,40 +1206,60 @@
         "bitwise_or_tensor"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "bitwise_or"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.bitwise_or_tensor->bitwise_or",
+      "e2e_spec": "bitwise_or2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to bitwise_or; mapped to bitwise_or primitive; rvv_missing=['bitwise_or']; cuda_h100_missing=['bitwise_or']; cuda_5090d_missing=['bitwise_or']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_or"
+          ],
+          "known_ops": [
+            "bitwise_or"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_or"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_or"
+          ],
+          "known_ops": [
+            "bitwise_or"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_or"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_or"
+          ],
+          "known_ops": [
+            "bitwise_or"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_or"
+          ]
         }
       }
     },
@@ -1089,40 +1269,60 @@
         "bitwise_right_shift"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "bitwise_right_shift"
+      ],
+      "mapping_kind": "binary_template",
+      "intent_pattern_id": "binary.bitwise_right_shift",
+      "e2e_spec": "bitwise_right_shift2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to bitwise_right_shift primitive; rvv_missing=['bitwise_right_shift']; cuda_h100_missing=['bitwise_right_shift']; cuda_5090d_missing=['bitwise_right_shift']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_right_shift"
+          ],
+          "known_ops": [
+            "bitwise_right_shift"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_right_shift"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_right_shift"
+          ],
+          "known_ops": [
+            "bitwise_right_shift"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_right_shift"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "bitwise_right_shift"
+          ],
+          "known_ops": [
+            "bitwise_right_shift"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "bitwise_right_shift"
+          ]
         }
       }
     },
@@ -11732,40 +11932,60 @@
         "avg_pool2d"
       ],
       "family": "conv_pool_interp",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "avg_pool2d"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.avg_pool2d",
+      "e2e_spec": "avg_pool2d_nchw",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to avg_pool2d primitive; rvv_missing=['avg_pool2d']; cuda_h100_missing=['avg_pool2d']; cuda_5090d_missing=['avg_pool2d']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "avg_pool2d"
+          ],
+          "known_ops": [
+            "avg_pool2d"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "avg_pool2d"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "avg_pool2d"
+          ],
+          "known_ops": [
+            "avg_pool2d"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "avg_pool2d"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "avg_pool2d"
+          ],
+          "known_ops": [
+            "avg_pool2d"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "avg_pool2d"
+          ]
         }
       }
     },

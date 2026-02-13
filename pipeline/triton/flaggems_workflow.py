@@ -83,6 +83,57 @@ def build_feature_list_payload(*, registry_payload: dict[str, Any], source_regis
     }
 
 
+def validate_feature_list_sync(
+    *,
+    feature_payload: dict[str, Any],
+    registry_payload: dict[str, Any],
+    expected_source_registry_path: str | None = None,
+) -> tuple[bool, list[str]]:
+    errors: list[str] = []
+    feat_summary = dict(feature_payload.get("summary") or {})
+    reg_summary = summarize_registry(registry_payload)
+    if int(feat_summary.get("semantic_ops", -1)) != int(reg_summary.get("semantic_ops", -2)):
+        errors.append("feature_list.summary.semantic_ops mismatches registry")
+    if dict(feat_summary.get("by_status") or {}) != dict(reg_summary.get("by_status") or {}):
+        errors.append("feature_list.summary.by_status mismatches registry")
+    if dict(feat_summary.get("by_family") or {}) != dict(reg_summary.get("by_family") or {}):
+        errors.append("feature_list.summary.by_family mismatches registry")
+    if expected_source_registry_path is not None:
+        src = str(feature_payload.get("source_registry_path") or "")
+        if src != str(expected_source_registry_path):
+            errors.append(
+                "feature_list.source_registry_path mismatches expected source "
+                f"(expected={expected_source_registry_path}, got={src})"
+            )
+    return (len(errors) == 0), errors
+
+
+def build_active_batch_payload(
+    *,
+    batch: list[dict[str, Any]],
+    branch: str,
+    batch_size: int,
+    feature_list_path: str,
+    progress_log_path: str,
+    git_log: str,
+    progress_tail: list[str],
+) -> dict[str, Any]:
+    return {
+        "schema_version": "flaggems_active_batch_v1",
+        "generated_at": utc_now_iso(),
+        "branch": str(branch),
+        "batch_size": int(batch_size),
+        "selection_policy": ["blocked_ir", "missing_e2e_spec", "backend_missing_ops"],
+        "items": list(batch),
+        "context": {
+            "feature_list_path": str(feature_list_path),
+            "progress_log_path": str(progress_log_path),
+            "git_log": str(git_log),
+            "progress_tail": list(progress_tail),
+        },
+    }
+
+
 def select_next_batch(*, feature_payload: dict[str, Any], batch_size: int) -> list[dict[str, Any]]:
     feats = list(feature_payload.get("features") or [])
     n = max(1, int(batch_size))
@@ -171,9 +222,16 @@ def append_progress_log(*, progress_log_path: Path, entry: dict[str, Any]) -> No
         f.write(line + "\n")
 
 
+def append_metrics_history(*, metrics_history_path: Path, entry: dict[str, Any]) -> None:
+    p = Path(metrics_history_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(entry, ensure_ascii=False)
+    with p.open("a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+
 def write_handoff(*, handoff_path: Path, content: str) -> Path:
     p = Path(handoff_path)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
     return p
-

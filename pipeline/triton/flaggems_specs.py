@@ -66,11 +66,18 @@ FLAGGEMS_ADDCDIV_SRC = _module_source_text("flag_gems.ops.addcdiv")
 FLAGGEMS_ADDR_SRC = _module_source_text("flag_gems.ops.addr")
 FLAGGEMS_ACOS_SRC = _module_source_text("flag_gems.ops.acos")
 FLAGGEMS_ATAN_SRC = _module_source_text("flag_gems.ops.atan")
+FLAGGEMS_ANGLE_SRC = _module_source_text("flag_gems.ops.angle")
 FLAGGEMS_ARANGE_SRC = _module_source_text("flag_gems.ops.arange")
 FLAGGEMS_SUB_SRC = _module_source_text("flag_gems.ops.sub")
 FLAGGEMS_MUL_SRC = _module_source_text("flag_gems.ops.mul")
 FLAGGEMS_DIV_SRC = _module_source_text("flag_gems.ops.div")
 FLAGGEMS_CAT_SRC = _module_source_text("flag_gems.ops.cat")
+FLAGGEMS_BITWISE_AND_SRC = _module_source_text("flag_gems.ops.bitwise_and")
+FLAGGEMS_BITWISE_OR_SRC = _module_source_text("flag_gems.ops.bitwise_or")
+FLAGGEMS_BITWISE_NOT_SRC = _module_source_text("flag_gems.ops.bitwise_not")
+FLAGGEMS_BITWISE_LEFT_SHIFT_SRC = _module_source_text("flag_gems.ops.bitwise_left_shift")
+FLAGGEMS_BITWISE_RIGHT_SHIFT_SRC = _module_source_text("flag_gems.ops.bitwise_right_shift")
+FLAGGEMS_AVG_POOL2D_SRC = _module_source_text("flag_gems.ops.avg_pool2d")
 FLAGGEMS_EQ_SRC = _module_source_text("flag_gems.ops.eq")
 FLAGGEMS_NE_SRC = _module_source_text("flag_gems.ops.ne")
 FLAGGEMS_GT_SRC = _module_source_text("flag_gems.ops.gt")
@@ -147,6 +154,10 @@ def _as_f32_tensor(x: np.ndarray, *, device: str) -> torch.Tensor:
 
 def _as_bool_tensor(x: np.ndarray, *, device: str) -> torch.Tensor:
     return torch.as_tensor(x, device=device, dtype=torch.bool)
+
+
+def _as_i32_tensor(x: np.ndarray, *, device: str) -> torch.Tensor:
+    return torch.as_tensor(x, device=device, dtype=torch.int32)
 
 
 def _run_flaggems_add2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
@@ -656,6 +667,136 @@ def _run_flaggems_atan2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     )
 
 
+def _run_flaggems_angle2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["angle"]):
+        out = torch.angle(inp)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "A": inp_np,
+        "Out": out_np,
+        "inp": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_bitwise_binary2d_reference(
+    case: TestCase,
+    *,
+    include: List[str],
+    op_name: str,
+) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "A" in case.inputs:
+        a = _as_i32_tensor(np.asarray(case.inputs["A"]), device=device)
+    else:
+        a = torch.from_numpy(rg.integers(-7, 8, size=(m, n), dtype=np.int32)).to(device=device, dtype=torch.int32)
+
+    if case.inputs and "B" in case.inputs:
+        b = _as_i32_tensor(np.asarray(case.inputs["B"]), device=device)
+    else:
+        if op_name in {"bitwise_left_shift", "bitwise_right_shift"}:
+            b = torch.from_numpy(rg.integers(0, 4, size=(m, n), dtype=np.int32)).to(device=device, dtype=torch.int32)
+        else:
+            b = torch.from_numpy(rg.integers(-7, 8, size=(m, n), dtype=np.int32)).to(device=device, dtype=torch.int32)
+
+    with flag_gems.use_gems(include=include):
+        if op_name == "bitwise_and":
+            out = torch.bitwise_and(a, b)
+        elif op_name == "bitwise_or":
+            out = torch.bitwise_or(a, b)
+        elif op_name == "bitwise_left_shift":
+            out = torch.bitwise_left_shift(a, b)
+        elif op_name == "bitwise_right_shift":
+            out = torch.bitwise_right_shift(a, b)
+        else:
+            raise ValueError(f"unsupported op_name for bitwise binary runner: {op_name}")
+
+    a_np = _to_np(a)
+    b_np = _to_np(b)
+    out_np = _to_np(out)
+    return {
+        "A": a_np,
+        "B": b_np,
+        "out": out_np,
+        "output": out_np,
+        "input": a_np,
+        "other": b_np,
+    }
+
+
+def _run_flaggems_bitwise_and2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_bitwise_binary2d_reference(
+        case,
+        include=["bitwise_and_scalar", "bitwise_and_scalar_tensor", "bitwise_and_tensor"],
+        op_name="bitwise_and",
+    )
+
+
+def _run_flaggems_bitwise_or2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_bitwise_binary2d_reference(
+        case,
+        include=["bitwise_or_scalar", "bitwise_or_scalar_tensor", "bitwise_or_tensor"],
+        op_name="bitwise_or",
+    )
+
+
+def _run_flaggems_bitwise_left_shift2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_bitwise_binary2d_reference(
+        case,
+        include=["bitwise_left_shift"],
+        op_name="bitwise_left_shift",
+    )
+
+
+def _run_flaggems_bitwise_right_shift2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_bitwise_binary2d_reference(
+        case,
+        include=["bitwise_right_shift"],
+        op_name="bitwise_right_shift",
+    )
+
+
+def _run_flaggems_bitwise_not2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_i32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.integers(-7, 8, size=(m, n), dtype=np.int32)).to(device=device, dtype=torch.int32)
+    with flag_gems.use_gems(include=["bitwise_not"]):
+        out = torch.bitwise_not(inp)
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "A": inp_np,
+        "Out": out_np,
+        "inp": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
 def _run_flaggems_row_mean_reference(case: TestCase) -> Dict[str, np.ndarray]:
     m = int(case.shapes.get("M", 4))
     n = int(case.shapes.get("N", 64))
@@ -889,6 +1030,38 @@ def _run_flaggems_cat2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         "output": out_np,
         "axis": axis_np,
         "dim": axis_np,
+    }
+
+
+def _run_flaggems_avg_pool2d_nchw_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = int(case.shapes.get("N", 1))
+    c = int(case.shapes.get("C", 3))
+    h = int(case.shapes.get("H", 8))
+    w = int(case.shapes.get("W", 8))
+    k = int(case.shapes.get("K", 2))
+    s = int(case.shapes.get("S", 2))
+    p = int(case.shapes.get("P", 0))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((n, c, h, w), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["avg_pool2d"]):
+        out = torch.nn.functional.avg_pool2d(inp, kernel_size=(k, k), stride=(s, s), padding=(p, p))
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+        "kernel_size": np.array([k, k], dtype=np.int32),
+        "stride": np.array([s, s], dtype=np.int32),
+        "padding": np.array([p, p], dtype=np.int32),
     }
 
 
@@ -2303,6 +2476,14 @@ _FLAGGEMS_SPEC_BUILDERS = {
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
     ),
+    "angle2d": lambda: KernelSpec(
+        name="angle2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_ANGLE_SRC",
+        runner=_run_flaggems_angle2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
     "addcmul2d": lambda: KernelSpec(
         name="addcmul2d",
         module="pipeline.triton.flaggems_specs",
@@ -2325,6 +2506,46 @@ _FLAGGEMS_SPEC_BUILDERS = {
         attr="FLAGGEMS_ADDR_SRC",
         runner=_run_flaggems_addr2d_reference,
         canonical_shapes={"M": 8, "N": 16},
+        vary_axes=["M", "N"],
+    ),
+    "bitwise_and2d": lambda: KernelSpec(
+        name="bitwise_and2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_BITWISE_AND_SRC",
+        runner=_run_flaggems_bitwise_and2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "bitwise_or2d": lambda: KernelSpec(
+        name="bitwise_or2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_BITWISE_OR_SRC",
+        runner=_run_flaggems_bitwise_or2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "bitwise_not2d": lambda: KernelSpec(
+        name="bitwise_not2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_BITWISE_NOT_SRC",
+        runner=_run_flaggems_bitwise_not2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "bitwise_left_shift2d": lambda: KernelSpec(
+        name="bitwise_left_shift2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_BITWISE_LEFT_SHIFT_SRC",
+        runner=_run_flaggems_bitwise_left_shift2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "bitwise_right_shift2d": lambda: KernelSpec(
+        name="bitwise_right_shift2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_BITWISE_RIGHT_SHIFT_SRC",
+        runner=_run_flaggems_bitwise_right_shift2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
     ),
     "acos2d": lambda: KernelSpec(
@@ -2358,6 +2579,14 @@ _FLAGGEMS_SPEC_BUILDERS = {
         runner=_run_flaggems_cat2d_reference,
         canonical_shapes={"M": 4, "N": 32, "AXIS": 1},
         vary_axes=["M", "N"],
+    ),
+    "avg_pool2d_nchw": lambda: KernelSpec(
+        name="avg_pool2d_nchw",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_AVG_POOL2D_SRC",
+        runner=_run_flaggems_avg_pool2d_nchw_reference,
+        canonical_shapes={"N": 1, "C": 3, "H": 8, "W": 8, "K": 2, "S": 2, "P": 0},
+        vary_axes=["N", "C", "H", "W"],
     ),
     "sub2d": lambda: KernelSpec(
         name="sub2d",
@@ -2953,6 +3182,13 @@ __all__ = [
     "FLAGGEMS_ADDCMUL_SRC",
     "FLAGGEMS_ADDCDIV_SRC",
     "FLAGGEMS_ADDR_SRC",
+    "FLAGGEMS_ANGLE_SRC",
+    "FLAGGEMS_BITWISE_AND_SRC",
+    "FLAGGEMS_BITWISE_OR_SRC",
+    "FLAGGEMS_BITWISE_NOT_SRC",
+    "FLAGGEMS_BITWISE_LEFT_SHIFT_SRC",
+    "FLAGGEMS_BITWISE_RIGHT_SHIFT_SRC",
+    "FLAGGEMS_AVG_POOL2D_SRC",
     "FLAGGEMS_ACOS_SRC",
     "FLAGGEMS_ATAN_SRC",
     "FLAGGEMS_ARANGE_SRC",

@@ -39,6 +39,7 @@ NUM_UNARY_OPS = {
     "cos": np.cos,
     "acos": np.arccos,
     "atan": np.arctan,
+    "angle": np.angle,
     "tan": np.tan,
     "erf": lambda x: np.vectorize(math.erf, otypes=[np.float64])(x),
     "identity": lambda x: x,
@@ -62,12 +63,25 @@ BOOL_UNARY_OPS = {
     "not": np.logical_not,
 }
 
+BITWISE_BIN_OPS = {
+    "bitwise_and": np.bitwise_and,
+    "bitwise_or": np.bitwise_or,
+    "bitwise_left_shift": np.left_shift,
+    "bitwise_right_shift": np.right_shift,
+}
+
+BITWISE_UNARY_OPS = {
+    "bitwise_not": np.bitwise_not,
+}
+
 INTERPRETER_SUPPORTED_OPS: set[str] = set().union(
     set(NUM_BIN_OPS.keys()),
     set(NUM_UNARY_OPS.keys()),
     set(CMP_BIN_OPS.keys()),
     set(BOOL_BIN_OPS.keys()),
     set(BOOL_UNARY_OPS.keys()),
+    set(BITWISE_BIN_OPS.keys()),
+    set(BITWISE_UNARY_OPS.keys()),
     {
         "broadcast_in_dim",
         "concat",
@@ -286,6 +300,16 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
     if op.op in BOOL_UNARY_OPS:
         x = _get(env, op.inputs[0]).astype(bool)
         return BOOL_UNARY_OPS[op.op](x)
+    if op.op in BITWISE_BIN_OPS:
+        a_name = op.inputs[0]
+        b_name = op.inputs[1]
+        a = _get(env, a_name).astype(np.int64, copy=False)
+        b = _get(env, b_name).astype(np.int64, copy=False)
+        a, b = _align_shapes_for_elemwise_named(intent, a_name, a, b_name, b, shape_bindings)
+        return BITWISE_BIN_OPS[op.op](a, b)
+    if op.op in BITWISE_UNARY_OPS:
+        x = _get(env, op.inputs[0]).astype(np.int64, copy=False)
+        return BITWISE_UNARY_OPS[op.op](x)
     if op.op == "broadcast_in_dim":
         x = _get(env, op.inputs[0])
         out_shape = _shape_from_attr(op.attrs.get("out_shape"), shape_bindings)
@@ -397,6 +421,57 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         if not idx:
             return np.zeros((0, 0), dtype=np.int64)
         return np.stack(idx, axis=-1).astype(np.int64, copy=False)
+    if op.op == "avg_pool2d":
+        x = np.asarray(_get(env, op.inputs[0]), dtype=np.float32)
+        if x.ndim != 4:
+            raise ValueError(f"avg_pool2d expects rank-4 NCHW tensor, got shape={x.shape}")
+
+        def _pair(v: Any, *, default: tuple[int, int] | None = None) -> tuple[int, int]:
+            if v is None:
+                if default is None:
+                    raise ValueError("avg_pool2d requires non-null pair")
+                return default
+            if isinstance(v, int):
+                return (int(v), int(v))
+            if isinstance(v, list) and len(v) == 2 and all(isinstance(t, int) for t in v):
+                return (int(v[0]), int(v[1]))
+            raise ValueError(f"avg_pool2d pair attr must be int or list[int,int], got: {v!r}")
+
+        kernel_h, kernel_w = _pair(op.attrs.get("kernel_size"))
+        stride_h, stride_w = _pair(op.attrs.get("stride"), default=(kernel_h, kernel_w))
+        pad_h, pad_w = _pair(op.attrs.get("padding"), default=(0, 0))
+        ceil_mode = bool(op.attrs.get("ceil_mode", False))
+        count_include_pad = bool(op.attrs.get("count_include_pad", True))
+
+        n, c, h, w = [int(v) for v in x.shape]
+        out_h_f = ((h + 2 * pad_h - kernel_h) / stride_h) + 1.0
+        out_w_f = ((w + 2 * pad_w - kernel_w) / stride_w) + 1.0
+        out_h = int(np.ceil(out_h_f) if ceil_mode else np.floor(out_h_f))
+        out_w = int(np.ceil(out_w_f) if ceil_mode else np.floor(out_w_f))
+        out_h = max(0, out_h)
+        out_w = max(0, out_w)
+
+        x_pad = np.pad(x, ((0, 0), (0, 0), (pad_h, pad_h), (pad_w, pad_w)), mode="constant", constant_values=0.0)
+        mask = np.pad(
+            np.ones((n, c, h, w), dtype=np.float32),
+            ((0, 0), (0, 0), (pad_h, pad_h), (pad_w, pad_w)),
+            mode="constant",
+            constant_values=0.0,
+        )
+        out = np.empty((n, c, out_h, out_w), dtype=np.float32)
+        for oy in range(out_h):
+            iy = oy * stride_h
+            for ox in range(out_w):
+                ix = ox * stride_w
+                window = x_pad[:, :, iy : iy + kernel_h, ix : ix + kernel_w]
+                if count_include_pad:
+                    denom = float(kernel_h * kernel_w)
+                    out[:, :, oy, ox] = np.sum(window, axis=(2, 3)) / denom
+                else:
+                    m = mask[:, :, iy : iy + kernel_h, ix : ix + kernel_w]
+                    denom = np.sum(m, axis=(2, 3))
+                    out[:, :, oy, ox] = np.sum(window, axis=(2, 3)) / np.maximum(denom, 1.0)
+        return out
     if op.op == "layout_cast":
         return _get(env, op.inputs[0])
     if op.op == "cast":

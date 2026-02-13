@@ -11,6 +11,7 @@ Stages:
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import os
 import subprocess
@@ -42,6 +43,12 @@ def main() -> None:
         choices=["auto", "force_compile", "force_cache"],
         default="auto",
         help="IntentIR mode (only valid when --flaggems-path=intentir).",
+    )
+    ap.add_argument(
+        "--fallback-policy",
+        choices=["deterministic", "strict"],
+        default="deterministic",
+        help="IntentIR fallback policy passed to FlagGems full pipeline script.",
     )
     ap.add_argument("--seed-cache-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_seed_cache"))
     ap.add_argument("--pipeline-out-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_triton_full_pipeline"))
@@ -77,7 +84,8 @@ def main() -> None:
         default=120,
         help="Per-kernel timeout passed to cuda_backend_smoke.py.",
     )
-    ap.add_argument("--out-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_matrix"))
+    date_tag = datetime.now(timezone.utc).strftime("%Y%m%d")
+    ap.add_argument("--out-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_matrix" / "daily" / date_tag))
     ap.add_argument("--write-registry", action="store_true")
     args = ap.parse_args()
     if str(args.flaggems_path) == "original" and str(args.intentir_mode) != "auto":
@@ -134,6 +142,8 @@ def main() -> None:
             str(args.flaggems_path),
             "--intentir-mode",
             str(args.intentir_mode),
+            "--fallback-policy",
+            str(args.fallback_policy),
             "--seed-cache-dir",
             str(seed_cache_dir),
             "--out-dir",

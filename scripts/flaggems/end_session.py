@@ -45,12 +45,17 @@ def main() -> None:
     ap.add_argument("--active-batch", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch.json"))
     ap.add_argument("--progress-log", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "progress_log.jsonl"))
     ap.add_argument("--handoff", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "handoff.md"))
-    ap.add_argument("--run-summary", type=Path, default=None)
-    ap.add_argument("--status-converged", type=Path, default=None)
+    ap.add_argument("--run-summary", type=Path, required=True)
+    ap.add_argument("--status-converged", type=Path, required=True)
     ap.add_argument("--summary", required=True, help="One-line summary for this session.")
     ap.add_argument("--next-focus", default="", help="Optional explicit next focus.")
     ap.add_argument("--commit", default=None, help="Override commit SHA (default: HEAD).")
     args = ap.parse_args()
+
+    if not args.run_summary.is_file():
+        raise FileNotFoundError(f"run summary not found: {args.run_summary}")
+    if not args.status_converged.is_file():
+        raise FileNotFoundError(f"status converged not found: {args.status_converged}")
 
     active = load_json(args.active_batch) if args.active_batch.is_file() else {"items": []}
     run_summary = _load_optional_json(args.run_summary)
@@ -66,8 +71,8 @@ def main() -> None:
         "summary": str(args.summary),
         "batch_ops": item_names,
         "active_batch_path": _to_repo_rel(args.active_batch),
-        "run_summary_path": (_to_repo_rel(args.run_summary) if args.run_summary else None),
-        "status_converged_path": (_to_repo_rel(args.status_converged) if args.status_converged else None),
+        "run_summary_path": _to_repo_rel(args.run_summary),
+        "status_converged_path": _to_repo_rel(args.status_converged),
         "next_focus": str(args.next_focus or ""),
     }
     if isinstance(run_summary, dict):
@@ -85,8 +90,8 @@ def main() -> None:
         f"- Commit: `{commit}`",
         f"- Summary: {args.summary}",
         f"- Batch Ops ({len(item_names)}): {', '.join(item_names) if item_names else '(none)'}",
-        f"- Run Summary: `{args.run_summary}`" if args.run_summary else "- Run Summary: (none)",
-        f"- Status Converged: `{args.status_converged}`" if args.status_converged else "- Status Converged: (none)",
+        f"- Run Summary: `{args.run_summary}`",
+        f"- Status Converged: `{args.status_converged}`",
     ]
     if str(args.next_focus or "").strip():
         handoff.append(f"- Next Focus: {args.next_focus}")

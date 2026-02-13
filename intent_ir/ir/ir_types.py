@@ -750,10 +750,40 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
     elif op.op in {"ne", "eq"}:
         if len(op.inputs) != 2:
             raise IntentIRValidationError(f"op[{idx}] {op.op} requires 2 inputs")
-    elif op.op in {"abs", "floor", "ceil", "sqrt", "neg", "not", "exp", "log", "sin", "cos", "tan", "erf", "relu", "rsqrt"}:
+    elif op.op in {
+        "abs",
+        "floor",
+        "ceil",
+        "sqrt",
+        "neg",
+        "not",
+        "exp",
+        "log",
+        "sin",
+        "cos",
+        "tan",
+        "erf",
+        "relu",
+        "rsqrt",
+        "acos",
+        "atan",
+        "angle",
+        "bitwise_not",
+    }:
         if len(op.inputs) != 1:
             raise IntentIRValidationError(f"op[{idx}] {op.op} requires 1 input")
-    elif op.op in {"lt", "le", "gt", "ge", "and", "or"}:
+    elif op.op in {
+        "lt",
+        "le",
+        "gt",
+        "ge",
+        "and",
+        "or",
+        "bitwise_and",
+        "bitwise_or",
+        "bitwise_left_shift",
+        "bitwise_right_shift",
+    }:
         if len(op.inputs) != 2:
             raise IntentIRValidationError(f"op[{idx}] {op.op} requires 2 inputs")
     elif op.op in {"reduce_sum", "reduce_max", "reduce_min", "reduce_prod", "reduce_any", "mean", "var", "std"}:
@@ -900,6 +930,32 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
     elif op.op == "nonzero":
         if len(op.inputs) != 1:
             raise IntentIRValidationError(f"op[{idx}] nonzero requires 1 input")
+    elif op.op == "avg_pool2d":
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] avg_pool2d requires 1 input")
+        kernel_size = attrs.get("kernel_size")
+        stride = attrs.get("stride")
+        padding = attrs.get("padding")
+        ceil_mode = attrs.get("ceil_mode")
+        count_include_pad = attrs.get("count_include_pad")
+
+        def _valid_pair(v: object) -> bool:
+            if isinstance(v, int):
+                return v >= 0
+            if isinstance(v, list) and len(v) == 2 and all(isinstance(x, int) and x >= 0 for x in v):
+                return True
+            return False
+
+        if not _valid_pair(kernel_size):
+            raise IntentIRValidationError(f"op[{idx}] avg_pool2d.kernel_size must be int>=0 or list[int,int]")
+        if stride is not None and not _valid_pair(stride):
+            raise IntentIRValidationError(f"op[{idx}] avg_pool2d.stride must be int>=0 or list[int,int] when provided")
+        if padding is not None and not _valid_pair(padding):
+            raise IntentIRValidationError(f"op[{idx}] avg_pool2d.padding must be int>=0 or list[int,int] when provided")
+        if ceil_mode is not None and not isinstance(ceil_mode, bool):
+            raise IntentIRValidationError(f"op[{idx}] avg_pool2d.ceil_mode must be bool when provided")
+        if count_include_pad is not None and not isinstance(count_include_pad, bool):
+            raise IntentIRValidationError(f"op[{idx}] avg_pool2d.count_include_pad must be bool when provided")
     elif op.op == "layout_cast":
         if len(op.inputs) != 1:
             raise IntentIRValidationError(f"op[{idx}] layout_cast requires 1 input")

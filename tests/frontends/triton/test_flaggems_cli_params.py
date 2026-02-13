@@ -23,6 +23,7 @@ def test_flaggems_pipeline_cli_uses_new_path_mode_flags() -> None:
     text = _help_text("scripts/triton/flaggems_full_pipeline_verify.py")
     assert "--flaggems-path" in text
     assert "--intentir-mode" in text
+    assert "--fallback-policy" in text
     assert "--seed-cache-dir" in text
     assert "--use-llm" not in text
     assert "--no-use-llm" not in text

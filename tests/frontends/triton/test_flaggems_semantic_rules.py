@@ -28,6 +28,13 @@ def test_semantic_rule_templates_for_high_yield_ops() -> None:
     assert resolve_semantic_mapping("isfinite").intent_ops == ("abs", "const", "le")
     assert resolve_semantic_mapping("acos").intent_ops == ("acos",)
     assert resolve_semantic_mapping("atan").intent_ops == ("atan",)
+    assert resolve_semantic_mapping("angle").intent_ops == ("angle",)
+    assert resolve_semantic_mapping("bitwise_and").intent_ops == ("bitwise_and",)
+    assert resolve_semantic_mapping("bitwise_or").intent_ops == ("bitwise_or",)
+    assert resolve_semantic_mapping("bitwise_not").intent_ops == ("bitwise_not",)
+    assert resolve_semantic_mapping("bitwise_left_shift").intent_ops == ("bitwise_left_shift",)
+    assert resolve_semantic_mapping("bitwise_right_shift").intent_ops == ("bitwise_right_shift",)
+    assert resolve_semantic_mapping("avg_pool2d").intent_ops == ("avg_pool2d",)
 
 
 def test_semantic_rule_composite_aliases() -> None:
@@ -53,6 +60,10 @@ def test_semantic_rule_composite_aliases() -> None:
     assert resolve_semantic_mapping("repeat_interleave_self_int").intent_ops == ("repeat_interleave",)
     assert resolve_semantic_mapping("sort_stable").intent_ops == ("sort",)
     assert resolve_semantic_mapping("arange").intent_ops == ("iota",)
+    assert resolve_semantic_mapping("bitwise_and_scalar").intent_ops == ("bitwise_and",)
+    assert resolve_semantic_mapping("bitwise_and_tensor").intent_ops == ("bitwise_and",)
+    assert resolve_semantic_mapping("bitwise_or_scalar").intent_ops == ("bitwise_or",)
+    assert resolve_semantic_mapping("bitwise_or_tensor").intent_ops == ("bitwise_or",)
     assert resolve_semantic_mapping("logical_xor").intent_ops == ("or", "and", "not", "and")
     assert resolve_semantic_mapping("log_softmax").intent_ops == ("softmax", "log")
     assert resolve_semantic_mapping("exp2").intent_ops == ("const", "mul", "exp")

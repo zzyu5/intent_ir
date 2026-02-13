@@ -16,10 +16,12 @@ if str(ROOT) not in sys.path:
 from pipeline.triton.flaggems_registry import DEFAULT_REGISTRY_PATH
 from pipeline.triton.flaggems_specs import coverage_flaggems_kernel_specs
 from pipeline.triton.flaggems_workflow import (
+    append_metrics_history,
     build_feature_list_payload,
     dump_json,
     freeze_baseline_snapshot,
     load_json,
+    utc_now_iso,
 )
 
 
@@ -35,6 +37,16 @@ def main() -> None:
     ap.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY_PATH)
     ap.add_argument("--feature-out", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "feature_list.json"))
     ap.add_argument("--baselines-dir", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "baselines"))
+    ap.add_argument(
+        "--metrics-history",
+        type=Path,
+        default=(ROOT / "workflow" / "flaggems" / "state" / "metrics_history.jsonl"),
+    )
+    ap.add_argument(
+        "--roadmap",
+        type=Path,
+        default=(ROOT / "workflow" / "flaggems" / "state" / "roadmap.json"),
+    )
     ap.add_argument(
         "--status-converged",
         type=Path,
@@ -79,6 +91,35 @@ def main() -> None:
             status_converged_path=status_path,
         )
         print(f"Baseline snapshot frozen: {baseline_path}")
+
+    summary = dict(feature_payload.get("summary") or {})
+    append_metrics_history(
+        metrics_history_path=args.metrics_history,
+        entry={
+            "ts": utc_now_iso(),
+            "source_registry_path": _to_repo_rel(args.registry),
+            "semantic_ops": int(summary.get("semantic_ops") or 0),
+            "by_status": dict(summary.get("by_status") or {}),
+            "by_family": dict(summary.get("by_family") or {}),
+        },
+    )
+    print(f"Metrics history appended: {args.metrics_history}")
+
+    if not args.roadmap.is_file():
+        roadmap = {
+            "schema_version": "flaggems_roadmap_v1",
+            "generated_at": utc_now_iso(),
+            "milestones": [
+                {"id": "M1", "target": "blocked_ir<=50 + e2e_specs>=75 + workflow hard gate", "status": "in_progress"},
+                {"id": "M2", "target": "blocked_ir<=35 + wave-a batch leaves blocked_ir", "status": "pending"},
+                {"id": "M3", "target": "blocked_ir<=20 + reason_code standardized", "status": "pending"},
+                {"id": "M4", "target": "blocked_ir==0", "status": "pending"},
+                {"id": "M5", "target": "blocked_backend<=15 + cuda determinism>=95%", "status": "pending"},
+            ],
+            "notes": "Update milestone status as phases converge; do not delete history.",
+        }
+        dump_json(args.roadmap, roadmap)
+        print(f"Roadmap initialized: {args.roadmap}")
 
 
 if __name__ == "__main__":
