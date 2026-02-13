@@ -16,6 +16,8 @@ def test_semantic_rule_templates_for_high_yield_ops() -> None:
     assert resolve_semantic_mapping("gather").intent_ops == ("gather",)
     assert resolve_semantic_mapping("mm").intent_ops == ("matmul",)
     assert resolve_semantic_mapping("addmm").intent_ops == ("matmul", "add")
+    assert resolve_semantic_mapping("index_select").intent_ops == ("gather",)
+    assert resolve_semantic_mapping("group_norm").intent_ops == ("reduce_sum", "sub", "mul", "add", "rsqrt", "broadcast_in_dim", "div")
 
 
 def test_semantic_rule_composite_aliases() -> None:
@@ -36,5 +38,6 @@ def test_semantic_rule_composite_aliases() -> None:
     assert resolve_semantic_mapping("logical_xor").intent_ops == ("or", "and", "not", "and")
     assert resolve_semantic_mapping("log_softmax").intent_ops == ("softmax", "log")
     assert resolve_semantic_mapping("exp2").intent_ops == ("const", "mul", "exp")
+    assert resolve_semantic_mapping("scaled_softmax_forward").intent_ops == ("softmax",)
     assert resolve_semantic_mapping("sigmoid").intent_ops == ("const", "mul", "exp", "add", "div")
     assert resolve_semantic_mapping("softplus").intent_ops == ("exp", "add", "log")

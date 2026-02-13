@@ -87,6 +87,8 @@ _ALIAS_TO_BASE: dict[str, str] = {
     "ones_like": "ones",
     "zeros_like": "zeros",
     "full_like": "full",
+    # Attention/reduction aliases.
+    "scaled_softmax_forward": "softmax",
 }
 
 
@@ -222,6 +224,8 @@ _REDUCE_TEMPLATE: dict[str, SemanticMapping] = {
 
 _INDEX_TEMPLATE: dict[str, SemanticMapping] = {
     "gather": _mk("gather", ("gather",), mapping_kind="index_template", pattern_id="index.gather", detail="mapped by index template"),
+    "index": _mk("index", ("gather",), mapping_kind="index_template", pattern_id="index.index_via_gather", detail="mapped to gather primitive"),
+    "index_select": _mk("index_select", ("gather",), mapping_kind="index_template", pattern_id="index.index_select_via_gather", detail="mapped to gather primitive"),
     "where_self": _mk("where_self", ("gt", "where"), mapping_kind="index_template", pattern_id="index.where_self", detail="mapped via compare+where"),
     "where_scalar_self": _mk(
         "where_scalar_self",
@@ -246,6 +250,20 @@ _MACRO_TEMPLATE: dict[str, SemanticMapping] = {
         mapping_kind="macro_template",
         pattern_id="macro.layer_norm",
         detail="mapped as normalized arithmetic decomposition",
+    ),
+    "group_norm": _mk(
+        "group_norm",
+        ("reduce_sum", "sub", "mul", "add", "rsqrt", "broadcast_in_dim", "div"),
+        mapping_kind="macro_template",
+        pattern_id="macro.group_norm",
+        detail="mapped as grouped normalized arithmetic decomposition",
+    ),
+    "batch_norm": _mk(
+        "batch_norm",
+        ("reduce_sum", "sub", "mul", "add", "rsqrt", "broadcast_in_dim", "div"),
+        mapping_kind="macro_template",
+        pattern_id="macro.batch_norm",
+        detail="mapped as batch normalized arithmetic decomposition",
     ),
     "softmax": _mk("softmax", ("softmax",), mapping_kind="macro_template", pattern_id="macro.softmax", detail="mapped to softmax primitive"),
     "log_softmax": _mk(
@@ -297,6 +315,48 @@ _MACRO_TEMPLATE: dict[str, SemanticMapping] = {
         mapping_kind="macro_template",
         pattern_id="macro.log_sigmoid",
         detail="mapped as log(sigmoid(x))",
+    ),
+    "rms_norm": _mk(
+        "rms_norm",
+        ("mul", "reduce_sum", "add", "rsqrt", "mul"),
+        mapping_kind="macro_template",
+        pattern_id="macro.rms_norm",
+        detail="mapped as x * rsqrt(mean(x*x)+eps)",
+    ),
+    "rms_norm_forward": _mk(
+        "rms_norm_forward",
+        ("mul", "reduce_sum", "add", "rsqrt", "mul"),
+        mapping_kind="macro_template",
+        pattern_id="macro.rms_norm_forward",
+        detail="mapped as x * rsqrt(mean(x*x)+eps)",
+    ),
+    "vector_norm": _mk(
+        "vector_norm",
+        ("mul", "reduce_sum", "sqrt"),
+        mapping_kind="macro_template",
+        pattern_id="macro.vector_norm",
+        detail="mapped as sqrt(reduce_sum(x*x))",
+    ),
+    "var_mean": _mk(
+        "var_mean",
+        ("var", "mean"),
+        mapping_kind="macro_template",
+        pattern_id="macro.var_mean",
+        detail="mapped to var/mean primitives",
+    ),
+    "normed_cumsum": _mk(
+        "normed_cumsum",
+        ("cumsum", "div"),
+        mapping_kind="macro_template",
+        pattern_id="macro.normed_cumsum",
+        detail="mapped as cumsum normalized by scalar divisor",
+    ),
+    "flash_attn_varlen_func": _mk(
+        "flash_attn_varlen_func",
+        ("matmul", "softmax", "matmul"),
+        mapping_kind="macro_template",
+        pattern_id="macro.flash_attn_varlen",
+        detail="mapped as attention core decomposition",
     ),
     "mm": _mk(
         "mm",

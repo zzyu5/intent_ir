@@ -92,6 +92,8 @@ FLAGGEMS_DOT_SRC = _module_source_text("flag_gems.ops.dot")
 FLAGGEMS_VDOT_SRC = _module_source_text("flag_gems.ops.vdot")
 FLAGGEMS_MV_SRC = _module_source_text("flag_gems.ops.mv")
 FLAGGEMS_ADDMV_SRC = _module_source_text("flag_gems.ops.addmv")
+FLAGGEMS_FLIP_SRC = _module_source_text("flag_gems.ops.flip")
+FLAGGEMS_INDEX_SELECT_SRC = _module_source_text("flag_gems.ops.index_select")
 FLAGGEMS_SOFTMAX_SRC = _module_source_text("flag_gems.ops.softmax")
 FLAGGEMS_RELU_SRC = _module_source_text("flag_gems.ops.relu")
 FLAGGEMS_EXP_SRC = _module_source_text("flag_gems.ops.exp")
@@ -1046,6 +1048,68 @@ def _run_flaggems_addmv2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     }
 
 
+def _run_flaggems_flip2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["flip"]):
+        out = torch.flip(inp, dims=[1])
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "A": inp_np,
+        "Out": out_np,
+        "inp": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_index_select2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 16))
+    n = int(case.shapes.get("N", 32))
+    l = int(case.shapes.get("L", 8))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    if case.inputs and "index" in case.inputs:
+        index = torch.as_tensor(np.asarray(case.inputs["index"]), device=device, dtype=torch.int64).reshape(-1)
+    else:
+        # Most extracted intents for index_select choose row axis first.
+        index = torch.from_numpy(rg.integers(0, max(1, m), size=(l,), dtype=np.int64)).to(device)
+
+    if index.numel() == 0:
+        index = torch.zeros((1,), device=device, dtype=torch.int64)
+
+    with flag_gems.use_gems(include=["index_select"]):
+        out = torch.index_select(inp, dim=0, index=index)
+
+    inp_np = _to_np(inp)
+    index_np = _to_np(index).astype(np.int32, copy=False)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "index": index_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
 def _run_flaggems_any_reference(case: TestCase) -> Dict[str, np.ndarray]:
     m = int(case.shapes.get("M", 4))
     n = int(case.shapes.get("N", 8))
@@ -1920,6 +1984,22 @@ _FLAGGEMS_SPEC_BUILDERS = {
         runner=_run_flaggems_cast2d_reference,
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
+    ),
+    "flip2d": lambda: KernelSpec(
+        name="flip2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_FLIP_SRC",
+        runner=_run_flaggems_flip2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "index_select2d": lambda: KernelSpec(
+        name="index_select2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_INDEX_SELECT_SRC",
+        runner=_run_flaggems_index_select2d_reference,
+        canonical_shapes={"M": 16, "N": 32, "L": 8},
+        vary_axes=["M", "N", "L"],
     ),
     "gather2d": lambda: KernelSpec(
         name="gather2d",

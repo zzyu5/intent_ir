@@ -143,6 +143,7 @@ _SEMANTIC_E2E_ALIASES: dict[str, str] = {
     "zeros_like": "zeros",
     "clamp_min": "maximum",
     "clamp_tensor": "clamp",
+    "scaled_softmax_forward": "softmax",
 }
 
 _E2E_SPEC_TO_SEMANTIC: dict[str, str] = {v: k for k, v in _SEMANTIC_TO_E2E_SPEC.items()}
