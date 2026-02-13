@@ -1,13 +1,13 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-13T18:44:48+00:00",
+  "generated_at": "2026-02-13T19:18:58+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
-      "dual_pass": 102,
-      "blocked_backend": 63,
-      "blocked_ir": 31
+      "dual_pass": 105,
+      "blocked_backend": 65,
+      "blocked_ir": 26
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -777,12 +777,18 @@
       "id": "flaggems::isin",
       "semantic_op": "isin",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "isin1d",
+      "intent_ops": [
+        "broadcast_in_dim",
+        "broadcast_in_dim",
+        "ne",
+        "not",
+        "reduce_any"
+      ]
     },
     {
       "id": "flaggems::isinf",
@@ -816,12 +822,14 @@
       "id": "flaggems::kron",
       "semantic_op": "kron",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "kron2d",
+      "intent_ops": [
+        "kron"
+      ]
     },
     {
       "id": "flaggems::le",
@@ -883,12 +891,19 @@
       "id": "flaggems::linspace",
       "semantic_op": "linspace",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "linspace1d",
+      "intent_ops": [
+        "iota",
+        "cast",
+        "sub",
+        "div",
+        "mul",
+        "add"
+      ]
     },
     {
       "id": "flaggems::log",
@@ -962,12 +977,21 @@
       "id": "flaggems::logspace",
       "semantic_op": "logspace",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "logspace1d",
+      "intent_ops": [
+        "iota",
+        "cast",
+        "sub",
+        "div",
+        "mul",
+        "add",
+        "mul",
+        "exp"
+      ]
     },
     {
       "id": "flaggems::lt",
@@ -2286,12 +2310,14 @@
       "id": "flaggems::masked_scatter",
       "semantic_op": "masked_scatter",
       "family": "index_scatter_gather",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "masked_scatter2d",
+      "intent_ops": [
+        "masked_scatter"
+      ]
     },
     {
       "id": "flaggems::masked_select",
