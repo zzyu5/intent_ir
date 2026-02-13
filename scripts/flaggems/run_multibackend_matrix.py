@@ -31,7 +31,13 @@ def main() -> None:
     ap.add_argument("--suite", choices=["smoke", "coverage", "all"], default="smoke")
     ap.add_argument("--kernel", action="append", default=[], help="repeatable; optional kernel filter")
     ap.add_argument("--cases-limit", type=int, default=8)
-    ap.add_argument("--use-llm", action=argparse.BooleanOptionalAction, default=False)
+    ap.add_argument("--use-llm", action=argparse.BooleanOptionalAction, default=True)
+    ap.add_argument(
+        "--allow-deterministic-fallback",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="When --no-use-llm and seed cache is missing, allow deterministic fallback intents.",
+    )
     ap.add_argument("--flaggems-opset", choices=["deterministic_forward"], default="deterministic_forward")
     ap.add_argument("--backend-target", choices=["rvv", "cuda_h100", "cuda_5090d"], default="rvv")
     ap.add_argument("--skip-pipeline", action="store_true")
@@ -118,6 +124,10 @@ def main() -> None:
             cmd.append("--use-llm")
         else:
             cmd.append("--no-use-llm")
+        if bool(args.allow_deterministic_fallback):
+            cmd.append("--allow-deterministic-fallback")
+        else:
+            cmd.append("--no-allow-deterministic-fallback")
         for k in kernel_filter:
             cmd += ["--kernel", str(k)]
         rc, out, err = _run(cmd, cwd=ROOT)

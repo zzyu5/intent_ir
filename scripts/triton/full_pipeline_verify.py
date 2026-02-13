@@ -37,7 +37,13 @@ def main() -> None:
         "--use-llm",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Enable LLM extraction (default: on). Use --no-use-llm for deterministic fallback intents.",
+        help="Enable LLM extraction (default: on). Use --no-use-llm to replay cached intent seeds.",
+    )
+    ap.add_argument(
+        "--allow-deterministic-fallback",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="When --no-use-llm and cache is missing, allow legacy deterministic fallback intents.",
     )
     ap.add_argument(
         "--flaggems-opset",
@@ -108,6 +114,7 @@ def main() -> None:
                 out_dir=out_dir,
                 cases_limit=int(args.cases_limit),
                 use_llm=bool(args.use_llm),
+                allow_deterministic_fallback=bool(args.allow_deterministic_fallback),
                 triton_provider=str(provider),
                 backend_target=str(args.backend_target),
             )

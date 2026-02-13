@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
@@ -17,7 +18,7 @@ import numpy as np
 import torch
 import triton
 
-from intent_ir.ir import ScheduleSketch
+from intent_ir.ir import IntentFunction, ScheduleSketch
 from frontends.triton.dump import find_latest_ttir, prepare_dump_and_cache_dirs
 from intent_ir.llm import LLMIntentHub
 from intent_ir.macros import expand_macros, enrich_intent_macros
@@ -129,6 +130,68 @@ def llm_to_intent(desc, feedback: Optional[List[str]] = None) -> CandidateIntent
     Backward-compatible helper: lift a KernelDescriptor into a CandidateIntent.
     """
     return _LLM_HUB.lift(desc, feedback=list(feedback or []))
+
+
+def _intent_seed_path(out_dir: Path, kernel_name: str) -> Path:
+    return Path(out_dir) / f"{str(kernel_name)}.intent_seed.json"
+
+
+def _save_intent_seed(
+    *,
+    seed_path: Path,
+    kernel_name: str,
+    triton_provider: str,
+    backend_target: str | None,
+    candidate: CandidateIntent,
+    candidate_expanded: CandidateIntent | None,
+) -> None:
+    payload = {
+        "schema_version": "intent_seed_v1",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "kernel": str(kernel_name),
+        "triton_provider": str(triton_provider),
+        "backend_target": (str(backend_target) if backend_target is not None else None),
+        "intent": candidate.intent.to_json_dict(),
+        "intent_expanded": (candidate_expanded.intent.to_json_dict() if candidate_expanded is not None else None),
+        "problem_params": dict(candidate.problem_params or {}),
+        "schedule_params": dict(candidate.schedule_params or {}),
+        "raw_json": dict(candidate.raw_json or {}),
+        "llm_trace": dict(candidate.llm_trace or {}),
+    }
+    seed_path.parent.mkdir(parents=True, exist_ok=True)
+    seed_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _load_intent_seed(seed_path: Path) -> tuple[CandidateIntent, CandidateIntent | None]:
+    payload = json.loads(seed_path.read_text(encoding="utf-8"))
+    intent_json = payload.get("intent")
+    if not isinstance(intent_json, dict):
+        raise ValueError(f"invalid intent seed format: missing intent object in {seed_path}")
+    cand = CandidateIntent(
+        intent=IntentFunction.from_json_dict(intent_json),
+        problem_params=dict(payload.get("problem_params") or {}),
+        schedule_params=dict(payload.get("schedule_params") or {}),
+        raw_json=dict(payload.get("raw_json") or {}),
+        llm_trace=dict(payload.get("llm_trace") or {}),
+    )
+    exp_json = payload.get("intent_expanded")
+    if isinstance(exp_json, dict):
+        cand_expanded = CandidateIntent(
+            intent=IntentFunction.from_json_dict(exp_json),
+            problem_params=dict(payload.get("problem_params") or {}),
+            schedule_params=dict(payload.get("schedule_params") or {}),
+            raw_json=dict(payload.get("raw_json") or {}),
+            llm_trace=dict(payload.get("llm_trace") or {}),
+        )
+    else:
+        cand_expanded = CandidateIntent(
+            intent=expand_macros(cand.intent),
+            problem_params=dict(cand.problem_params),
+            schedule_params=dict(cand.schedule_params),
+            raw_json=dict(cand.raw_json),
+            llm_trace=dict(cand.llm_trace),
+        )
+    return cand, cand_expanded
 
 
 def _ensure_schedule(intent, *, kernel_name: str, triton_src: str) -> None:
@@ -2338,6 +2401,7 @@ def run_pipeline_for_spec(
     out_dir: Path,
     cases_limit: int = 8,
     use_llm: bool = True,
+    allow_deterministic_fallback: bool = False,
     triton_provider: str = "native",
     backend_target: str | None = None,
     enable_stage_c: bool = True,
@@ -2352,8 +2416,10 @@ def run_pipeline_for_spec(
     Args:
       use_llm:
         True: normal path (LLM extraction + repair loops).
-        False: skip LLM extraction and rely on deterministic fallback intents
-               (when available for the kernel name).
+        False: replay cached IntentIR seeds produced by prior LLM runs.
+      allow_deterministic_fallback:
+        When `use_llm=False` and no cached seed is available, allow legacy
+        deterministic fallback intents instead of failing fast.
     """
     report: Dict[str, object] = {
         "kernel": spec.name,
@@ -2480,22 +2546,52 @@ def run_pipeline_for_spec(
     else:
         report["ttir_path"] = None
 
-    # 3) IntentIR construction (LLM path or deterministic fallback).
-    stage5_mode = "LLM -> IntentIR (may take a while)" if use_llm else "deterministic fallback IntentIR (--no-use-llm)"
+    # 3) IntentIR construction (LLM path or seed replay / fallback).
+    stage5_mode = "LLM -> IntentIR (may take a while)" if use_llm else "replay cached IntentIR seed (--no-use-llm)"
     print(f"[{spec.name}] stage5: {stage5_mode}", flush=True)
     report["llm_enabled"] = bool(use_llm)
     feedback: List[str] = []
     cand: CandidateIntent | None = None
     cand_expanded: CandidateIntent | None = None
+    llm_generated = False
+    seed_path = _intent_seed_path(out_dir, spec.name)
+    report["intent_seed"] = {
+        "path": str(seed_path),
+        "mode": ("record" if use_llm else "replay"),
+        "used": False,
+    }
+    if not use_llm:
+        if seed_path.is_file():
+            cand, cand_expanded = _load_intent_seed(seed_path)
+            report["intent_seed"]["used"] = True
+            report["intent_seed"]["source"] = "cache"
+            (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
+            if cand_expanded is not None:
+                (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(
+                    print_mlir_like(cand_expanded.intent), encoding="utf-8"
+                )
+        elif not allow_deterministic_fallback:
+            raise RuntimeError(
+                f"no cached intent seed for {spec.name}: {seed_path}. "
+                "Run once with --use-llm to create seed cache, or pass --allow-deterministic-fallback."
+            )
+        else:
+            feedback = ["LLM disabled and seed cache missing; deterministic fallback enabled by caller"]
+            report["intent_seed"]["used"] = False
+            report["intent_seed"]["reason"] = "cache_missing_fallback_enabled"
     # Some macro/complex kernels can easily trigger provider instability or long
     # waits. Keep the default full pipeline usable by allowing deterministic
     # fallbacks, while still permitting LLM forcing via env vars.
-    use_llm_for_macro = str(os.getenv("INTENTIR_TRITON_UPSAMPLE_USE_LLM", "0")).strip() in {"1", "true", "yes", "on"}
-    use_llm_for_attn = str(os.getenv("INTENTIR_TRITON_ATTN_USE_LLM", "0")).strip() in {"1", "true", "yes", "on"}
-    if spec.name == "upsample_bicubic2d_aa" and not use_llm_for_macro:
+    use_llm_for_macro = str(os.getenv("INTENTIR_TRITON_UPSAMPLE_USE_LLM", "1")).strip() in {"1", "true", "yes", "on"}
+    use_llm_for_attn = str(os.getenv("INTENTIR_TRITON_ATTN_USE_LLM", "1")).strip() in {"1", "true", "yes", "on"}
+    if cand is None and spec.name == "upsample_bicubic2d_aa" and not use_llm_for_macro:
         fb_intent = _upsample_bicubic2d_aa_fallback_intent()
         cand = CandidateIntent(intent=fb_intent, problem_params={}, schedule_params={}, raw_json={"fallback": True}, llm_trace={})
-        report["llm_fallback"] = {"used": True, "kind": "macro_deterministic", "reason": "default (set INTENTIR_TRITON_UPSAMPLE_USE_LLM=1 to force LLM)"}
+        report["llm_fallback"] = {
+            "used": True,
+            "kind": "macro_deterministic",
+            "reason": "set INTENTIR_TRITON_UPSAMPLE_USE_LLM=1 to force LLM",
+        }
         enrich_intent_macros(cand.intent)
         mlir_txt = print_mlir_like(cand.intent)
         (out_dir / f"{spec.name}.intentir.mlir").write_text(mlir_txt, encoding="utf-8")
@@ -2511,10 +2607,14 @@ def run_pipeline_for_spec(
         exp_txt = print_mlir_like(expanded_intent)
         (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
         (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
-    elif spec.name == "_attn_fwd" and not use_llm_for_attn:
+    elif cand is None and spec.name == "_attn_fwd" and not use_llm_for_attn:
         fb_intent = _attn_fwd_fallback_intent()
         cand = CandidateIntent(intent=fb_intent, problem_params={}, schedule_params={}, raw_json={"fallback": True}, llm_trace={})
-        report["llm_fallback"] = {"used": True, "kind": "deterministic_attn", "reason": "default (set INTENTIR_TRITON_ATTN_USE_LLM=1 to force LLM)"}
+        report["llm_fallback"] = {
+            "used": True,
+            "kind": "deterministic_attn",
+            "reason": "set INTENTIR_TRITON_ATTN_USE_LLM=1 to force LLM",
+        }
         enrich_intent_macros(cand.intent)
         mlir_txt = print_mlir_like(cand.intent)
         (out_dir / f"{spec.name}.intentir.mlir").write_text(mlir_txt, encoding="utf-8")
@@ -2530,11 +2630,12 @@ def run_pipeline_for_spec(
         exp_txt = print_mlir_like(expanded_intent)
         (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
         (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
-    else:
+    elif cand is None:
         if use_llm:
             for attempt in range(2):
                 try:
                     cand = llm_to_intent(desc, feedback=feedback)
+                    llm_generated = True
                     report["llm_trace"] = dict(cand.llm_trace)
                     _ensure_schedule(cand.intent, kernel_name=spec.name, triton_src=src)
                     enrich_intent_macros(cand.intent)
@@ -2555,7 +2656,7 @@ def run_pipeline_for_spec(
                     cand = None
                     cand_expanded = None
                     continue
-        else:
+        elif not feedback:
             feedback = ["LLM disabled by caller"]
     if cand is None:
         # Resilience fallback for macro-heavy kernels when providers are unstable.
@@ -2641,6 +2742,7 @@ def run_pipeline_for_spec(
             # One conservative repair round using certificate-derived feedback.
             try:
                 cand = llm_to_intent(desc, feedback=list(sv.reasons))
+                llm_generated = True
                 report["llm_trace"] = dict(cand.llm_trace)
                 _ensure_schedule(cand.intent, kernel_name=spec.name, triton_src=src)
                 enrich_intent_macros(cand.intent)
@@ -2768,6 +2870,7 @@ def run_pipeline_for_spec(
         if feedback3:
             try:
                 cand_fix = llm_to_intent(desc, feedback=feedback3)
+                llm_generated = True
                 report["llm_trace"] = dict(cand_fix.llm_trace)
                 cand = cand_fix
                 _ensure_schedule(cand_fix.intent, kernel_name=spec.name, triton_src=src)
@@ -2959,6 +3062,22 @@ def run_pipeline_for_spec(
                 }
             else:
                 report["mutation_kill"] = {"skipped": True, "reason": "disabled_by_kernel_or_cli"}
+
+    if llm_generated:
+        try:
+            _save_intent_seed(
+                seed_path=seed_path,
+                kernel_name=spec.name,
+                triton_provider=str(triton_provider),
+                backend_target=backend_target,
+                candidate=cand,
+                candidate_expanded=cand_expanded,
+            )
+            report["intent_seed"]["saved"] = True
+            report["intent_seed"]["source"] = "llm"
+        except Exception as e:
+            report["intent_seed"]["saved"] = False
+            report["intent_seed"]["error"] = f"{type(e).__name__}: {e}"
 
     # Persist baseline IO aligned to the final macro intent, so Task6 tools can
     # reuse the same snapshot without re-launching Triton.
