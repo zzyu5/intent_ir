@@ -1,13 +1,13 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-13T17:32:27+00:00",
+  "generated_at": "2026-02-13T17:54:02+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
-      "dual_pass": 100,
+      "dual_pass": 102,
       "blocked_backend": 58,
-      "blocked_ir": 38
+      "blocked_ir": 36
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -2206,12 +2206,14 @@
       "id": "flaggems::flip",
       "semantic_op": "flip",
       "family": "index_scatter_gather",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "flip2d",
+      "intent_ops": [
+        "gather"
+      ]
     },
     {
       "id": "flaggems::gather",
@@ -2591,12 +2593,14 @@
       "id": "flaggems::embedding",
       "semantic_op": "embedding",
       "family": "attention_sequence",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "embedding2d",
+      "intent_ops": [
+        "gather"
+      ]
     },
     {
       "id": "flaggems::flash_attention_forward",
