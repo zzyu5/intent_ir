@@ -39,7 +39,12 @@ def test_build_registry_resolves_all_statuses() -> None:
 
 
 def test_list_supported_e2e_specs_uses_registry_entries() -> None:
-    payload = build_registry(all_ops=["add", "softmax", "group_norm"])
+    payload = build_registry(all_ops=["add", "softmax", "group_norm", "relu", "sum", "max", "where_self", "exp", "clamp"])
     specs = list_supported_e2e_specs(payload)
     assert "add2d" in specs
     assert "softmax_inner" in specs
+    assert "relu2d" in specs
+    assert "row_sum" in specs
+    assert "row_max" in specs
+    assert "exp2d" in specs
+    assert "clamp2d" in specs

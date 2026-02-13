@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v1",
-  "generated_at": "2026-02-12T16:35:02.367616+00:00",
+  "generated_at": "2026-02-13T00:35:21.729788+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -18,9 +18,9 @@
     "source_filtered_ops": 213,
     "semantic_ops": 197,
     "by_status": {
-      "blocked_backend": 19,
-      "blocked_ir": 174,
-      "dual_pass": 4
+      "blocked_backend": 20,
+      "blocked_ir": 168,
+      "dual_pass": 9
     },
     "by_family": {
       "attention_sequence": 5,
@@ -818,30 +818,51 @@
         "clamp"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
+      "intent_ops": [
+        "max",
+        "min"
+      ],
+      "e2e_spec": "clamp2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "max",
+            "min"
+          ],
+          "supported_ops": [
+            "max",
+            "min"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "max",
+            "min"
+          ],
+          "supported_ops": [
+            "max",
+            "min"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "max",
+            "min"
+          ],
+          "supported_ops": [
+            "max",
+            "min"
+          ],
           "missing_ops": []
         }
       }
@@ -1366,9 +1387,9 @@
       "intent_ops": [
         "exp"
       ],
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
+      "e2e_spec": "exp2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2658,20 +2679,20 @@
       ],
       "family": "elementwise_broadcast",
       "intent_ops": [
-        "max"
+        "reduce_max"
       ],
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
+      "e2e_spec": "row_max",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
-            "max"
+            "reduce_max"
           ],
           "supported_ops": [
-            "max"
+            "reduce_max"
           ],
           "missing_ops": []
         },
@@ -2679,10 +2700,10 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
-            "max"
+            "reduce_max"
           ],
           "supported_ops": [
-            "max"
+            "reduce_max"
           ],
           "missing_ops": []
         },
@@ -2690,10 +2711,10 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
-            "max"
+            "reduce_max"
           ],
           "supported_ops": [
-            "max"
+            "reduce_max"
           ],
           "missing_ops": []
         }
@@ -2705,30 +2726,44 @@
         "max_dim"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
+      "intent_ops": [
+        "reduce_max"
+      ],
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "reduce_max"
+          ],
+          "supported_ops": [
+            "reduce_max"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "reduce_max"
+          ],
+          "supported_ops": [
+            "reduce_max"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "reduce_max"
+          ],
+          "supported_ops": [
+            "reduce_max"
+          ],
           "missing_ops": []
         }
       }
@@ -5153,9 +5188,9 @@
       "intent_ops": [
         "reduce_sum"
       ],
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
+      "e2e_spec": "row_sum",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5199,30 +5234,44 @@
         "sum_dim_out"
       ],
       "family": "reduction",
-      "intent_ops": [],
+      "intent_ops": [
+        "reduce_sum"
+      ],
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "reduce_sum"
+          ],
+          "supported_ops": [
+            "reduce_sum"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "reduce_sum"
+          ],
+          "supported_ops": [
+            "reduce_sum"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "reduce_sum"
+          ],
+          "supported_ops": [
+            "reduce_sum"
+          ],
           "missing_ops": []
         }
       }
@@ -5530,9 +5579,9 @@
       "intent_ops": [
         "relu"
       ],
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
+      "e2e_spec": "relu2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6235,30 +6284,44 @@
         "where_scalar_other"
       ],
       "family": "index_scatter_gather",
-      "intent_ops": [],
+      "intent_ops": [
+        "where"
+      ],
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "where"
+          ],
+          "supported_ops": [
+            "where"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "where"
+          ],
+          "supported_ops": [
+            "where"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "where"
+          ],
+          "supported_ops": [
+            "where"
+          ],
           "missing_ops": []
         }
       }
@@ -6269,30 +6332,44 @@
         "where_scalar_self"
       ],
       "family": "index_scatter_gather",
-      "intent_ops": [],
+      "intent_ops": [
+        "where"
+      ],
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "where"
+          ],
+          "supported_ops": [
+            "where"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "where"
+          ],
+          "supported_ops": [
+            "where"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "where"
+          ],
+          "supported_ops": [
+            "where"
+          ],
           "missing_ops": []
         }
       }
@@ -6304,30 +6381,51 @@
         "where_self_out"
       ],
       "family": "index_scatter_gather",
-      "intent_ops": [],
+      "intent_ops": [
+        "gt",
+        "where"
+      ],
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "gt",
+            "where"
+          ],
+          "supported_ops": [
+            "gt",
+            "where"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "gt",
+            "where"
+          ],
+          "supported_ops": [
+            "gt",
+            "where"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "gt",
+            "where"
+          ],
+          "supported_ops": [
+            "gt",
+            "where"
+          ],
           "missing_ops": []
         }
       }

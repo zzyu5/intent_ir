@@ -64,6 +64,12 @@ FLAGGEMS_ADD_SRC = _module_source_text("flag_gems.ops.add")
 FLAGGEMS_GROUP_NORM_SRC = _module_source_text("flag_gems.ops.groupnorm")
 FLAGGEMS_LAYER_NORM_SRC = _module_source_text("flag_gems.ops.layernorm")
 FLAGGEMS_SOFTMAX_SRC = _module_source_text("flag_gems.ops.softmax")
+FLAGGEMS_RELU_SRC = _module_source_text("flag_gems.ops.relu")
+FLAGGEMS_EXP_SRC = _module_source_text("flag_gems.ops.exp")
+FLAGGEMS_WHERE_SRC = _module_source_text("flag_gems.ops.where")
+FLAGGEMS_SUM_SRC = _module_source_text("flag_gems.ops.sum")
+FLAGGEMS_MAX_SRC = _module_source_text("flag_gems.ops.max")
+FLAGGEMS_CLAMP_SRC = _module_source_text("flag_gems.ops.clamp")
 FLAGGEMS_UPSAMPLE_BICUBIC2D_AA_SRC = _module_source_text("flag_gems.ops.upsample_bicubic2d_aa")
 
 
@@ -286,6 +292,176 @@ def _run_flaggems_softmax_reference(case: TestCase) -> Dict[str, np.ndarray]:
     }
 
 
+def _run_flaggems_relu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["relu"]):
+        out = torch.relu(inp)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_exp2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["exp"]):
+        out = torch.exp(inp)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_where2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "A" in case.inputs:
+        a = _as_f32_tensor(np.asarray(case.inputs["A"]), device=device)
+    else:
+        a = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+    if case.inputs and "B" in case.inputs:
+        b = _as_f32_tensor(np.asarray(case.inputs["B"]), device=device)
+    else:
+        b = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["gt", "where_self", "where_scalar_self", "where_scalar_other"]):
+        cond = torch.gt(a, b)
+        c = torch.where(cond, a, b)
+
+    a_np = _to_np(a)
+    b_np = _to_np(b)
+    cond_np = _to_np(cond)
+    c_np = _to_np(c)
+    return {
+        "A": a_np,
+        "B": b_np,
+        "cond": cond_np,
+        "C": c_np,
+        "a": a_np,
+        "b": b_np,
+        "out": c_np,
+        "output": c_np,
+    }
+
+
+def _run_flaggems_row_sum_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["sum", "sum_dim", "sum_out", "sum_dim_out"]):
+        out = torch.sum(inp, dim=1)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_row_max_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["max", "max_dim"]):
+        out = torch.max(inp, dim=1).values
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_clamp2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    if case.inputs and "lo" in case.inputs:
+        lo = float(np.asarray(case.inputs["lo"], dtype=np.float32).reshape(()))
+    else:
+        lo = -0.5
+    if case.inputs and "hi" in case.inputs:
+        hi = float(np.asarray(case.inputs["hi"], dtype=np.float32).reshape(()))
+    else:
+        hi = 0.5
+    if hi < lo:
+        lo, hi = hi, lo
+
+    with flag_gems.use_gems(include=["clamp", "maximum", "minimum"]):
+        out = torch.clamp(inp, min=float(lo), max=float(hi))
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    lo_np = np.array(lo, dtype=np.float32)
+    hi_np = np.array(hi, dtype=np.float32)
+    return {
+        "inp": inp_np,
+        "lo": lo_np,
+        "hi": hi_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
 def _run_flaggems_upsample_bicubic2d_aa_reference(case: TestCase) -> Dict[str, np.ndarray]:
     n = int(case.shapes.get("N", 1))
     c = int(case.shapes.get("C", 1))
@@ -388,6 +564,56 @@ _FLAGGEMS_SPEC_BUILDERS = {
         module="pipeline.triton.flaggems_specs",
         attr="FLAGGEMS_SOFTMAX_SRC",
         runner=_run_flaggems_softmax_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "relu2d": lambda: KernelSpec(
+        name="relu2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_RELU_SRC",
+        runner=_run_flaggems_relu2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "exp2d": lambda: KernelSpec(
+        name="exp2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_EXP_SRC",
+        runner=_run_flaggems_exp2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "where2d": lambda: KernelSpec(
+        name="where2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_WHERE_SRC",
+        runner=_run_flaggems_where2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        # Keep fixed-shape for now; some FlagGems where variants can be slow on
+        # large auto-generated edge cases during Stage7 diff.
+        vary_axes=[],
+    ),
+    "row_sum": lambda: KernelSpec(
+        name="row_sum",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_SUM_SRC",
+        runner=_run_flaggems_row_sum_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "row_max": lambda: KernelSpec(
+        name="row_max",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_MAX_SRC",
+        runner=_run_flaggems_row_max_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "clamp2d": lambda: KernelSpec(
+        name="clamp2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_CLAMP_SRC",
+        runner=_run_flaggems_clamp2d_reference,
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
     ),
@@ -495,6 +721,12 @@ __all__ = [
     "FLAGGEMS_GROUP_NORM_SRC",
     "FLAGGEMS_LAYER_NORM_SRC",
     "FLAGGEMS_SOFTMAX_SRC",
+    "FLAGGEMS_RELU_SRC",
+    "FLAGGEMS_EXP_SRC",
+    "FLAGGEMS_WHERE_SRC",
+    "FLAGGEMS_SUM_SRC",
+    "FLAGGEMS_MAX_SRC",
+    "FLAGGEMS_CLAMP_SRC",
     "FLAGGEMS_UPSAMPLE_BICUBIC2D_AA_SRC",
     "default_flaggems_kernel_specs",
     "coverage_flaggems_kernel_specs",
