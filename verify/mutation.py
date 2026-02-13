@@ -95,6 +95,7 @@ def run_mutation_kill(
     atol: float = 1e-3,
     rtol: float = 1e-3,
     include_bounded: bool = True,
+    bounded_max_cases: int | None = None,
     diff_stop_on_first_fail: bool = False,
 ) -> MutationReport:
     mutants = generate_mutants(intent, n=n_mutants, seed=seed)
@@ -225,7 +226,13 @@ def run_mutation_kill(
         if include_bounded:
             try:
                 bounded = run_bounded_exhaustive(
-                    kernel_name, m, run_ref_fn, atol=atol, rtol=rtol, max_cases=None, rng_seed=seed + mid + 101
+                    kernel_name,
+                    m,
+                    run_ref_fn,
+                    atol=atol,
+                    rtol=rtol,
+                    max_cases=bounded_max_cases,
+                    rng_seed=seed + mid + 101,
                 )
             except Exception as e:
                 killed_by["C_bounded"] += 1

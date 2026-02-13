@@ -55,6 +55,11 @@ class KernelSpec:
     constexpr: Dict[str, int] = field(default_factory=dict)
     exclude_axes: Optional[List[str]] = None
     normalize_shapes: Optional[Callable[[Dict[str, int]], Dict[str, int]]] = None
+    # Stage-C/Mutation controls for kernels with combinatorial bounded domains.
+    enable_stage_c: bool = True
+    stage_c_max_cases: Optional[int] = None
+    enable_mutation_kill: bool = True
+    mutation_bounded_max_cases: Optional[int] = None
 
 
 def _annotate_flaggems_intent_meta(
@@ -2335,6 +2340,10 @@ def run_pipeline_for_spec(
     use_llm: bool = True,
     triton_provider: str = "native",
     backend_target: str | None = None,
+    enable_stage_c: bool = True,
+    stage_c_max_cases: int | None = None,
+    enable_mutation_kill: bool = True,
+    mutation_bounded_max_cases: int | None = None,
 ) -> Dict[str, object]:
     """
     Run the full pipeline for a single kernel spec and write artifacts under out_dir.
@@ -2832,62 +2841,124 @@ def run_pipeline_for_spec(
             report["diff_debug"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
     # 5) Stage C + mutation-kill if Stage B passed
-    if diffs_in and all(d.ok for d in diffs_in):
-        meta = run_metamorphic_suite(spec.name, cand_for_run.intent, spec.runner, base_case=cases_in[0], atol=tol["atol"], rtol=tol["rtol"])
-        bounded = run_bounded_exhaustive(spec.name, cand_for_run.intent, spec.runner, atol=tol["atol"], rtol=tol["rtol"])
-        report["stage_c"] = {
-            "metamorphic": {
-                "ok": bool(meta.ok),
-                "results": [{"relation": r.relation, "ok": bool(r.ok), "detail": r.detail} for r in meta.results],
-            },
-            "bounded_exhaustive": {
-                "ok": bool(bounded.ok),
-                "checked": int(bounded.checked),
-                "total": int(bounded.total),
-                "detail": bounded.detail,
-                "first_failure": (dict(bounded.first_failure_case.shapes) if bounded.first_failure_case else None),
-                "first_failure_summary": bounded.first_failure_summary,
-            },
-        }
+    def _safe_optional_int(v: object | None) -> int | None:
+        if v is None:
+            return None
         try:
-            from verify.numerical_stability import run_numerical_stability_suite
+            return int(v)
+        except Exception:
+            return None
 
-            report["stage_c"]["numerical_stability"] = run_numerical_stability_suite(
-                spec.name, cand_for_run.intent, spec.runner, base_case=cases_in[0], tolerances=tol
-            ).to_json_dict()
-        except Exception as e:
-            report["stage_c"]["numerical_stability"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
-        if cert is not None:
-            mut = run_mutation_kill(
+    stage_c_enabled = bool(getattr(spec, "enable_stage_c", enable_stage_c))
+    stage_c_max_cases_eff = _safe_optional_int(getattr(spec, "stage_c_max_cases", stage_c_max_cases))
+    mutation_enabled = bool(getattr(spec, "enable_mutation_kill", enable_mutation_kill))
+    mutation_bounded_max_cases_eff = _safe_optional_int(
+        getattr(spec, "mutation_bounded_max_cases", mutation_bounded_max_cases)
+    )
+    if mutation_bounded_max_cases_eff is None:
+        mutation_bounded_max_cases_eff = stage_c_max_cases_eff
+
+    report["verification_config"] = {
+        "stage_c_enabled": bool(stage_c_enabled),
+        "stage_c_max_cases": stage_c_max_cases_eff,
+        "mutation_kill_enabled": bool(mutation_enabled),
+        "mutation_bounded_max_cases": mutation_bounded_max_cases_eff,
+    }
+
+    if diffs_in and all(d.ok for d in diffs_in):
+        if stage_c_enabled:
+            meta = run_metamorphic_suite(
                 spec.name,
-                intent=cand_for_run.intent,
-                run_ref_fn=spec.runner,
-                diff_cases=cases_in[:2],
-                metamorphic_base_case=cases_in[0],
-                static_validate_fn=(lambda m, _cert=cert: static_validate(m, _cert)),
-                n_mutants=16,
-                seed=0,
-                atol=float(tol["atol"]),
-                rtol=float(tol["rtol"]),
+                cand_for_run.intent,
+                spec.runner,
+                base_case=cases_in[0],
+                atol=tol["atol"],
+                rtol=tol["rtol"],
             )
-            report["mutation_kill"] = {
-                "kill_rate": float(mut.kill_rate),
-                "total": int(mut.total),
-                "killed": int(mut.killed),
-                "survived": int(mut.survived),
-                "killed_by_stage": dict(mut.killed_by_stage),
-                "mutation_breakdown": dict(mut.mutation_breakdown),
-                "outcomes": [
-                    {
-                        "mutant_id": o.mutant_id,
-                        "mutation_type": o.mutation_type,
-                        "killed_by": o.killed_by,
-                        "detail": o.detail,
-                        "diff_summary": o.diff_summary,
-                    }
-                    for o in mut.outcomes
-                ],
+            if stage_c_max_cases_eff is not None and stage_c_max_cases_eff <= 0:
+                bounded = run_bounded_exhaustive(
+                    spec.name,
+                    cand_for_run.intent,
+                    spec.runner,
+                    atol=tol["atol"],
+                    rtol=tol["rtol"],
+                    max_cases=0,
+                )
+            else:
+                bounded = run_bounded_exhaustive(
+                    spec.name,
+                    cand_for_run.intent,
+                    spec.runner,
+                    atol=tol["atol"],
+                    rtol=tol["rtol"],
+                    max_cases=stage_c_max_cases_eff,
+                )
+            report["stage_c"] = {
+                "metamorphic": {
+                    "ok": bool(meta.ok),
+                    "results": [{"relation": r.relation, "ok": bool(r.ok), "detail": r.detail} for r in meta.results],
+                },
+                "bounded_exhaustive": {
+                    "ok": bool(bounded.ok),
+                    "checked": int(bounded.checked),
+                    "total": int(bounded.total),
+                    "detail": bounded.detail,
+                    "first_failure": (dict(bounded.first_failure_case.shapes) if bounded.first_failure_case else None),
+                    "first_failure_summary": bounded.first_failure_summary,
+                },
             }
+            try:
+                from verify.numerical_stability import run_numerical_stability_suite
+
+                report["stage_c"]["numerical_stability"] = run_numerical_stability_suite(
+                    spec.name, cand_for_run.intent, spec.runner, base_case=cases_in[0], tolerances=tol
+                ).to_json_dict()
+            except Exception as e:
+                report["stage_c"]["numerical_stability"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        else:
+            report["stage_c"] = {"ok": True, "skipped": True, "reason": "disabled_by_kernel_or_cli"}
+
+        if cert is not None:
+            if mutation_enabled:
+                bounded_limit = mutation_bounded_max_cases_eff
+                include_bounded = True
+                if bounded_limit is not None and bounded_limit <= 0:
+                    include_bounded = False
+                    bounded_limit = None
+                mut = run_mutation_kill(
+                    spec.name,
+                    intent=cand_for_run.intent,
+                    run_ref_fn=spec.runner,
+                    diff_cases=cases_in[:2],
+                    metamorphic_base_case=cases_in[0],
+                    static_validate_fn=(lambda m, _cert=cert: static_validate(m, _cert)),
+                    n_mutants=16,
+                    seed=0,
+                    atol=float(tol["atol"]),
+                    rtol=float(tol["rtol"]),
+                    include_bounded=include_bounded,
+                    bounded_max_cases=bounded_limit,
+                )
+                report["mutation_kill"] = {
+                    "kill_rate": float(mut.kill_rate),
+                    "total": int(mut.total),
+                    "killed": int(mut.killed),
+                    "survived": int(mut.survived),
+                    "killed_by_stage": dict(mut.killed_by_stage),
+                    "mutation_breakdown": dict(mut.mutation_breakdown),
+                    "outcomes": [
+                        {
+                            "mutant_id": o.mutant_id,
+                            "mutation_type": o.mutation_type,
+                            "killed_by": o.killed_by,
+                            "detail": o.detail,
+                            "diff_summary": o.diff_summary,
+                        }
+                        for o in mut.outcomes
+                    ],
+                }
+            else:
+                report["mutation_kill"] = {"skipped": True, "reason": "disabled_by_kernel_or_cli"}
 
     # Persist baseline IO aligned to the final macro intent, so Task6 tools can
     # reuse the same snapshot without re-launching Triton.

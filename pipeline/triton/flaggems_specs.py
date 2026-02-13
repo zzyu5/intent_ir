@@ -592,6 +592,10 @@ _FLAGGEMS_SPEC_BUILDERS = {
         # Keep fixed-shape for now; some FlagGems where variants can be slow on
         # large auto-generated edge cases during Stage7 diff.
         vary_axes=[],
+        # where2d bounded exhaustive space is combinatorial (3^18). Cap Stage C.
+        stage_c_max_cases=64,
+        # Stage-B diff is the gate for first-pass coverage; skip mutation kill.
+        enable_mutation_kill=False,
     ),
     "row_sum": lambda: KernelSpec(
         name="row_sum",

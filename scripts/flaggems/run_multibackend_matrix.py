@@ -50,6 +50,20 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     stage_results: list[dict[str, Any]] = []
+    kernel_filter = [str(k) for k in (args.kernel or []) if str(k).strip()]
+
+    # For coverage/all, backend smoke should use the same e2e kernel set as
+    # provider pipeline, not the small default smoke list.
+    if not kernel_filter and str(args.suite) in {"coverage", "all"}:
+        from pipeline.triton.flaggems_specs import coverage_flaggems_kernel_specs  # noqa: PLC0415
+
+        kernel_filter = [
+            str(s.name)
+            for s in coverage_flaggems_kernel_specs(
+                flaggems_opset=str(args.flaggems_opset),
+                backend_target=str(args.backend_target),
+            )
+        ]
 
     def _record(stage: str, rc: int, stdout: str, stderr: str, extra: dict | None = None) -> None:
         row = {
@@ -82,7 +96,7 @@ def main() -> None:
             cmd.append("--use-llm")
         else:
             cmd.append("--no-use-llm")
-        for k in (args.kernel or []):
+        for k in kernel_filter:
             cmd += ["--kernel", str(k)]
         rc, out, err = _run(cmd, cwd=ROOT)
         _record("pipeline", rc, out, err, extra={"cmd": cmd})
@@ -104,7 +118,7 @@ def main() -> None:
             "--out",
             str(rvv_json),
         ]
-        for k in (args.kernel or []):
+        for k in kernel_filter:
             cmd += ["--kernel", str(k)]
         rc, out, err = _run(cmd, cwd=ROOT)
         _record("rvv_local", rc, out, err, extra={"cmd": cmd, "json_path": str(rvv_json)})
@@ -128,7 +142,7 @@ def main() -> None:
         ]
         if bool(args.allow_cuda_skip):
             cmd.append("--allow-skip")
-        for k in (args.kernel or []):
+        for k in kernel_filter:
             cmd += ["--kernel", str(k)]
         rc, out, err = _run(cmd, cwd=ROOT)
         _record("cuda_local", rc, out, err, extra={"cmd": cmd, "json_path": str(cuda_json)})
@@ -155,7 +169,7 @@ def main() -> None:
     summary = {
         "ok": bool(ok),
         "suite": str(args.suite),
-        "kernel_filter": list(args.kernel or []),
+        "kernel_filter": list(kernel_filter),
         "flaggems_opset": str(args.flaggems_opset),
         "backend_target": str(args.backend_target),
         "stages": stage_results,

@@ -44,6 +44,7 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
     assert "add2d" in specs
     assert "softmax_inner" in specs
     assert "relu2d" in specs
+    assert "where2d" in specs
     assert "row_sum" in specs
     assert "row_max" in specs
     assert "exp2d" in specs

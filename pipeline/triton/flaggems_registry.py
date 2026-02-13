@@ -75,6 +75,7 @@ _SEMANTIC_TO_E2E_SPEC: dict[str, str] = {
     "add": "add2d",
     "relu": "relu2d",
     "exp": "exp2d",
+    "where_self": "where2d",
     "sum": "row_sum",
     "max": "row_max",
     "clamp": "clamp2d",

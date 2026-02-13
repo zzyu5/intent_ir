@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v1",
-  "generated_at": "2026-02-13T00:35:21.729788+00:00",
+  "generated_at": "2026-02-13T01:08:14.115571+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -18,9 +18,9 @@
     "source_filtered_ops": 213,
     "semantic_ops": 197,
     "by_status": {
-      "blocked_backend": 20,
+      "blocked_backend": 19,
       "blocked_ir": 168,
-      "dual_pass": 9
+      "dual_pass": 10
     },
     "by_family": {
       "attention_sequence": 5,
@@ -6385,9 +6385,9 @@
         "gt",
         "where"
       ],
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
+      "e2e_spec": "where2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
       "backend_support": {
         "rvv": {
           "target": "rvv",
