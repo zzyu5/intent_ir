@@ -22,6 +22,7 @@ CUDA_SUPPORTED_OPS: set[str] = {
     "gather",
     # Core primitives covered by pattern + fused elementwise lowerings.
     "const",
+    "iota",
     "identity",
     "broadcast_in_dim",
     "cast",

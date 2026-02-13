@@ -7,6 +7,9 @@ def test_supported_ops_for_target_known_targets() -> None:
     assert "add" in supported_ops_for_target("rvv")
     assert "add" in supported_ops_for_target("cuda_h100")
     assert "add" in supported_ops_for_target("cuda_5090d")
+    assert "iota" in supported_ops_for_target("rvv")
+    assert "iota" in supported_ops_for_target("cuda_h100")
+    assert "iota" in supported_ops_for_target("cuda_5090d")
 
 
 def test_check_target_support_reports_missing() -> None:

@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-13T16:59:56.629747+00:00",
+  "generated_at": "2026-02-13T17:32:15.864980+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -20,8 +20,7 @@
     "by_status": {
       "blocked_backend": 58,
       "blocked_ir": 38,
-      "dual_pass": 97,
-      "rvv_only": 3
+      "dual_pass": 100
     },
     "by_family": {
       "attention_sequence": 5,
@@ -645,9 +644,9 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.arange_via_iota",
       "e2e_spec": "arange1d",
-      "status": "rvv_only",
-      "status_reason": "cuda_target_missing_ops",
-      "status_reason_detail": "mapped to iota primitive (range parameters normalized in attrs); cuda_h100_missing=['iota']; cuda_5090d_missing=['iota']",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped to iota primitive (range parameters normalized in attrs)",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -666,7 +665,7 @@
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "iota"
           ],
@@ -674,14 +673,14 @@
             "iota"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
+          "supported_ops": [
             "iota"
-          ]
+          ],
+          "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "iota"
           ],
@@ -689,10 +688,10 @@
             "iota"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
+          "supported_ops": [
             "iota"
-          ]
+          ],
+          "missing_ops": []
         }
       }
     },
@@ -2777,9 +2776,9 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.eye",
       "e2e_spec": "eye2d",
-      "status": "rvv_only",
-      "status_reason": "cuda_target_missing_ops",
-      "status_reason_detail": "mapped as cast(not(ne(iota_row, iota_col))); cuda_h100_missing=['iota']; cuda_5090d_missing=['iota']",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as cast(not(ne(iota_row, iota_col)))",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2807,7 +2806,7 @@
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "cast",
             "iota",
@@ -2823,16 +2822,15 @@
           "unknown_ops": [],
           "supported_ops": [
             "cast",
+            "iota",
             "ne",
             "not"
           ],
-          "missing_ops": [
-            "iota"
-          ]
+          "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "cast",
             "iota",
@@ -2848,12 +2846,11 @@
           "unknown_ops": [],
           "supported_ops": [
             "cast",
+            "iota",
             "ne",
             "not"
           ],
-          "missing_ops": [
-            "iota"
-          ]
+          "missing_ops": []
         }
       }
     },
@@ -2873,9 +2870,9 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.eye_m",
       "e2e_spec": "eye_m2d",
-      "status": "rvv_only",
-      "status_reason": "cuda_target_missing_ops",
-      "status_reason_detail": "mapped as cast(not(ne(iota_row, iota_col))) on rectangular shape; cuda_h100_missing=['iota']; cuda_5090d_missing=['iota']",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as cast(not(ne(iota_row, iota_col))) on rectangular shape",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -2903,7 +2900,7 @@
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "cast",
             "iota",
@@ -2919,16 +2916,15 @@
           "unknown_ops": [],
           "supported_ops": [
             "cast",
+            "iota",
             "ne",
             "not"
           ],
-          "missing_ops": [
-            "iota"
-          ]
+          "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "cast",
             "iota",
@@ -2944,12 +2940,11 @@
           "unknown_ops": [],
           "supported_ops": [
             "cast",
+            "iota",
             "ne",
             "not"
           ],
-          "missing_ops": [
-            "iota"
-          ]
+          "missing_ops": []
         }
       }
     },

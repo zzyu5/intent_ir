@@ -402,6 +402,22 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
 
         if opname == "const":
             emit_assign(_c_scalar_literal(out_dt, (op.attrs or {}).get("value", 0)))
+        elif opname == "iota":
+            if len(op.inputs) != 0:
+                raise CudaLoweringError("iota expects 0 inputs")
+            op_shape = _shape_values(intent, outn)
+            op_rank = int(len(op_shape))
+            if op_rank <= 0:
+                raise CudaLoweringError("iota expects rank>=1 output")
+            axis = _as_int((op.attrs or {}).get("axis", 0), name="axis")
+            if axis < 0:
+                axis += op_rank
+            if axis < 0 or axis >= op_rank:
+                raise CudaLoweringError("iota axis out of range")
+            shift = int(out_rank - op_rank)
+            if shift < 0:
+                raise CudaLoweringError("iota output rank cannot exceed final output rank")
+            emit_assign(f"({cty})({idx_vars[shift + axis]})")
         elif opname == "identity":
             if len(op.inputs) != 1:
                 raise CudaLoweringError("identity expects 1 input")
@@ -2171,6 +2187,7 @@ def lower_intent_to_cuda_kernel(
     # This is intentionally conservative: only elementwise/broadcast/const/where/cast ops.
     elem_ops = {
         "const",
+        "iota",
         "identity",
         "broadcast_in_dim",
         "cast",

@@ -4593,6 +4593,17 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
     if (opname == "const") {
       json v = op.attrs.is_object() ? op.attrs.value("value", json(0)) : json(0);
       emit_assign(c_scalar_literal(out_dt, v));
+    } else if (opname == "iota") {
+      if (!op.inputs.empty()) fail("iota expects 0 inputs");
+      int axis = 0;
+      if (op.attrs.is_object() && op.attrs.contains("axis")) axis = op.attrs["axis"].get<int>();
+      const int op_rank = static_cast<int>(outt_it->second.shape.size());
+      if (op_rank <= 0) fail("iota expects rank>=1 output");
+      if (axis < 0) axis += op_rank;
+      if (axis < 0 || axis >= op_rank) fail("iota axis out of range");
+      const int shift = out_rank - op_rank;
+      if (shift < 0) fail("iota output rank cannot exceed final output rank");
+      emit_assign("(" + cty + ")(" + idx_vars.at(static_cast<size_t>(shift + axis)) + ")");
     } else if (opname == "identity") {
       if (op.inputs.size() != 1) fail("identity expects 1 input");
       emit_assign(val(op.inputs[0]));
@@ -5828,10 +5839,11 @@ json lower_intent_to_cuda(const Intent& intent, const json& bindings_json) {
   {
     auto is_elem_op = [](const std::string& op) -> bool {
       static const std::unordered_map<std::string, bool> k = {
-          {"const", true}, {"identity", true}, {"broadcast_in_dim", true}, {"cast", true}, {"add", true},   {"sub", true},
-          {"mul", true},   {"div", true},      {"max", true},              {"min", true},  {"relu", true},  {"abs", true},
-          {"exp", true},   {"floor", true},    {"rsqrt", true},            {"ne", true},   {"lt", true},    {"le", true},
-          {"gt", true},    {"ge", true},       {"and", true},              {"or", true},   {"not", true},   {"where", true},
+          {"const", true}, {"iota", true},     {"identity", true},         {"broadcast_in_dim", true}, {"cast", true},
+          {"add", true},   {"sub", true},      {"mul", true},              {"div", true},              {"max", true},
+          {"min", true},   {"relu", true},     {"abs", true},              {"exp", true},              {"floor", true},
+          {"rsqrt", true}, {"ne", true},       {"lt", true},               {"le", true},               {"gt", true},
+          {"ge", true},    {"and", true},      {"or", true},               {"not", true},              {"where", true},
       };
       return k.find(op) != k.end();
     };
