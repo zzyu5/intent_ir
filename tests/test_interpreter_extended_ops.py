@@ -437,3 +437,71 @@ def test_kron_masked_scatter_and_range_builders_execute() -> None:
     log_expected = np.exp(lin_expected * float(log_base)).astype(np.float32)
     assert np.allclose(out["logspace_out"], log_expected, atol=1e-6)
     assert np.array_equal(out["isin_out"], np.isin(in0, in1))
+
+
+def test_masked_select_mse_nan_to_num_and_nll_loss_execute() -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "masked_select_mse_nan_nll",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "mask": {"dtype": "i1", "shape": ["M", "N"], "layout": "row_major"},
+                "target": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "xnan": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "logits": {"dtype": "f32", "shape": ["B", "C", "H", "W"], "layout": "row_major"},
+                "labels": {"dtype": "i64", "shape": ["B", "H", "W"], "layout": "row_major"},
+                "weight": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "masked_out": {"dtype": "f32", "shape": ["L"], "layout": "row_major"},
+                "mse_out": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "nan_out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "nll_out": {"dtype": "f32", "shape": [], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "masked_select", "inputs": ["inp", "mask"], "output": "masked_out"},
+                {"op": "mse_loss", "inputs": ["inp", "target"], "output": "mse_out", "attrs": {"reduction": 1}},
+                {"op": "nan_to_num", "inputs": ["xnan"], "output": "nan_out", "attrs": {"nan": 0.0, "posinf": 9.0, "neginf": -9.0}},
+                {
+                    "op": "nll_loss2d_forward",
+                    "inputs": ["logits", "labels", "weight"],
+                    "output": "nll_out",
+                    "attrs": {"reduction": 1, "ignore_index": -100},
+                },
+            ],
+            "outputs": ["masked_out", "mse_out", "nan_out", "nll_out"],
+        }
+    )
+
+    inp = np.array([[1.0, -2.0, 3.0], [0.5, 4.0, -1.5]], dtype=np.float32)
+    mask = np.array([[True, False, True], [False, True, False]], dtype=np.bool_)
+    target = np.array([[0.5, -1.5, 2.0], [1.0, 2.5, -2.0]], dtype=np.float32)
+    xnan = np.array([[np.nan, np.inf, -np.inf], [1.0, -2.0, 3.5]], dtype=np.float32)
+
+    logits = np.log(
+        np.array(
+            [
+                [
+                    [[0.7, 0.2], [0.1, 0.6]],
+                    [[0.2, 0.3], [0.6, 0.2]],
+                    [[0.1, 0.5], [0.3, 0.2]],
+                ]
+            ],
+            dtype=np.float32,
+        )
+    )
+    labels = np.array([[[0, 2], [1, 0]]], dtype=np.int64)
+    weight = np.array([1.0, 2.0, 0.5], dtype=np.float32)
+
+    out = execute_intent(
+        intent,
+        {"inp": inp, "mask": mask, "target": target, "xnan": xnan, "logits": logits, "labels": labels, "weight": weight},
+        shape_bindings={"M": 2, "N": 3, "L": 3, "B": 1, "C": 3, "H": 2, "W": 2},
+    )
+
+    assert np.array_equal(out["masked_out"], inp[mask].reshape(-1))
+    assert np.allclose(out["mse_out"], np.mean((inp - target) ** 2), atol=1e-6)
+    assert np.allclose(out["nan_out"], np.nan_to_num(xnan, nan=0.0, posinf=9.0, neginf=-9.0), atol=1e-6)
+
+    picked = np.array([logits[0, 0, 0, 0], logits[0, 2, 0, 1], logits[0, 1, 1, 0], logits[0, 0, 1, 1]], dtype=np.float32)
+    cls = np.array([0, 2, 1, 0], dtype=np.int64)
+    expected_nll = float(np.sum((-picked) * weight[cls]) / np.sum(weight[cls]))
+    assert np.allclose(out["nll_out"], np.array(expected_nll, dtype=np.float32), atol=1e-6)

@@ -148,7 +148,16 @@ def test_new_structure_ops_validate_success() -> None:
             {"op": "bitwise_right_shift", "inputs": ["K", "K"], "output": "BRS"},
             {"op": "avg_pool2d", "inputs": ["X4"], "output": "P2", "attrs": {"kernel_size": [2, 2], "stride": [2, 2]}},
             {"op": "kron", "inputs": ["X", "Y"], "output": "KRON"},
+            {"op": "masked_select", "inputs": ["X", "MASK"], "output": "SEL"},
             {"op": "masked_scatter", "inputs": ["X", "MASK", "SRC"], "output": "MS"},
+            {"op": "mse_loss", "inputs": ["X", "Y"], "output": "LOSS", "attrs": {"reduction": 1}},
+            {"op": "nan_to_num", "inputs": ["X"], "output": "N2N", "attrs": {"nan": 0.0, "posinf": 9.0, "neginf": -9.0}},
+            {
+                "op": "nll_loss2d_forward",
+                "inputs": ["LOGITS", "TARGET2", "WEIGHT2"],
+                "output": "NLL_OUT",
+                "attrs": {"reduction": 1, "ignore_index": -100},
+            },
         ],
         "outputs": ["Out"],
     }
@@ -166,7 +175,14 @@ def test_new_structure_ops_validate_success() -> None:
     src["tensors"]["KRON"] = {"dtype": "f32", "shape": ["MK", "NK"], "layout": "row_major"}
     src["tensors"]["MASK"] = {"dtype": "i1", "shape": ["M", "N"], "layout": "row_major"}
     src["tensors"]["SRC"] = {"dtype": "f32", "shape": ["L"], "layout": "row_major"}
+    src["tensors"]["SEL"] = {"dtype": "f32", "shape": ["L"], "layout": "row_major"}
     src["tensors"]["MS"] = {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"}
+    src["tensors"]["LOSS"] = {"dtype": "f32", "shape": [], "layout": "row_major"}
+    src["tensors"]["N2N"] = {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"}
+    src["tensors"]["LOGITS"] = {"dtype": "f32", "shape": ["NB", "CB", "HB", "WB"], "layout": "row_major"}
+    src["tensors"]["TARGET2"] = {"dtype": "i64", "shape": ["NB", "HB", "WB"], "layout": "row_major"}
+    src["tensors"]["WEIGHT2"] = {"dtype": "f32", "shape": ["CB"], "layout": "row_major"}
+    src["tensors"]["NLL_OUT"] = {"dtype": "f32", "shape": [], "layout": "row_major"}
     intent = IntentFunction.from_json_dict(src)
     assert intent.name == "structure_ok"
 

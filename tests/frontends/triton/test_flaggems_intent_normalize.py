@@ -101,6 +101,22 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert masked_scatter is not None
     assert [op.op for op in masked_scatter.ops] == ["masked_scatter"]
 
+    masked_select = canonical_flaggems_intent_for_spec("masked_select2d")
+    assert masked_select is not None
+    assert [op.op for op in masked_select.ops] == ["masked_select"]
+
+    mse_loss = canonical_flaggems_intent_for_spec("mse_loss2d")
+    assert mse_loss is not None
+    assert [op.op for op in mse_loss.ops] == ["mse_loss"]
+
+    nan_to_num = canonical_flaggems_intent_for_spec("nan_to_num2d")
+    assert nan_to_num is not None
+    assert [op.op for op in nan_to_num.ops] == ["nan_to_num"]
+
+    nll_loss = canonical_flaggems_intent_for_spec("nll_loss2d_forward")
+    assert nll_loss is not None
+    assert [op.op for op in nll_loss.ops] == ["nll_loss2d_forward"]
+
     glu = canonical_flaggems_intent_for_spec("glu2d")
     assert glu is not None
     assert [op.op for op in glu.ops] == ["glu"]

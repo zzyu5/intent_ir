@@ -317,6 +317,13 @@ _INDEX_TEMPLATE: dict[str, SemanticMapping] = {
         pattern_id="index.masked_scatter",
         detail="mapped to masked_scatter primitive",
     ),
+    "masked_select": _mk(
+        "masked_select",
+        ("masked_select",),
+        mapping_kind="index_template",
+        pattern_id="index.masked_select",
+        detail="mapped to masked_select primitive",
+    ),
     "where_self": _mk("where_self", ("gt", "where"), mapping_kind="index_template", pattern_id="index.where_self", detail="mapped via compare+where"),
     "where_scalar_self": _mk(
         "where_scalar_self",
@@ -658,6 +665,27 @@ _MACRO_TEMPLATE: dict[str, SemanticMapping] = {
         mapping_kind="macro_template",
         pattern_id="macro.kron",
         detail="mapped to kron primitive",
+    ),
+    "mse_loss": _mk(
+        "mse_loss",
+        ("mse_loss",),
+        mapping_kind="macro_template",
+        pattern_id="macro.mse_loss",
+        detail="mapped to mse_loss primitive",
+    ),
+    "nan_to_num": _mk(
+        "nan_to_num",
+        ("nan_to_num",),
+        mapping_kind="macro_template",
+        pattern_id="macro.nan_to_num",
+        detail="mapped to nan_to_num primitive",
+    ),
+    "nll_loss2d_forward": _mk(
+        "nll_loss2d_forward",
+        ("nll_loss2d_forward",),
+        mapping_kind="macro_template",
+        pattern_id="macro.nll_loss2d_forward",
+        detail="mapped to nll_loss2d_forward primitive",
     ),
 }
 

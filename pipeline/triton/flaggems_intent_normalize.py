@@ -410,6 +410,84 @@ def _canonical_masked_scatter2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_masked_select2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "masked_select2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "mask": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["L"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "masked_select", "inputs": ["inp", "mask"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_mse_loss2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "mse_loss2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "target": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": [], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "mse_loss", "inputs": ["inp", "target"], "output": "out", "attrs": {"reduction": 1}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_nan_to_num2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "nan_to_num2d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "nan_to_num",
+                    "inputs": ["A"],
+                    "output": "out",
+                    "attrs": {"nan": 0.0, "posinf": 9.0, "neginf": -9.0},
+                },
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_nll_loss2d_forward_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "nll_loss2d_forward",
+            "tensors": {
+                "self": {"dtype": "f32", "shape": ["N", "C", "H", "W"], "layout": "row_major"},
+                "target": {"dtype": "i64", "shape": ["N", "H", "W"], "layout": "row_major"},
+                "weight": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "output": {"dtype": "f32", "shape": [], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "nll_loss2d_forward",
+                    "inputs": ["self", "target", "weight"],
+                    "output": "output",
+                    "attrs": {"reduction": 1, "ignore_index": -100},
+                },
+            ],
+            "outputs": ["output"],
+        }
+    )
+
+
 def _canonical_glu2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -695,8 +773,16 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_linspace1d_intent()
     if name == "logspace1d":
         return _canonical_logspace1d_intent()
+    if name == "masked_select2d":
+        return _canonical_masked_select2d_intent()
     if name == "masked_scatter2d":
         return _canonical_masked_scatter2d_intent()
+    if name == "mse_loss2d":
+        return _canonical_mse_loss2d_intent()
+    if name == "nan_to_num2d":
+        return _canonical_nan_to_num2d_intent()
+    if name == "nll_loss2d_forward":
+        return _canonical_nll_loss2d_forward_intent()
     if name == "glu2d":
         return _canonical_glu2d_intent()
     if name == "cummax1d":

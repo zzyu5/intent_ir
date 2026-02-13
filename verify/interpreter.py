@@ -100,7 +100,11 @@ INTERPRETER_SUPPORTED_OPS: set[str] = set().union(
         "diag",
         "diag_embed",
         "kron",
+        "masked_select",
         "masked_scatter",
+        "mse_loss",
+        "nan_to_num",
+        "nll_loss2d_forward",
         "glu",
         "cummax",
         "cummin",
@@ -473,6 +477,17 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         a = np.asarray(_get(env, op.inputs[0]))
         b = np.asarray(_get(env, op.inputs[1]))
         return np.kron(a, b)
+    if op.op == "masked_select":
+        if len(op.inputs) != 2:
+            raise ValueError("masked_select requires 2 inputs (inp, mask)")
+        inp = np.asarray(_get(env, op.inputs[0]))
+        mask = np.asarray(_get(env, op.inputs[1]), dtype=np.bool_)
+        if inp.shape != mask.shape:
+            raise ValueError(
+                f"masked_select requires inp/mask shape match, got inp={inp.shape}, mask={mask.shape}"
+            )
+        # PyTorch semantics: flatten selected values in row-major order.
+        return inp[mask].reshape(-1)
     if op.op == "masked_scatter":
         if len(op.inputs) != 3:
             raise ValueError("masked_scatter requires 3 inputs (inp, mask, source)")
@@ -494,6 +509,75 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
             )
         out_flat[mask_flat] = src_flat[:required]
         return out
+    if op.op == "mse_loss":
+        if len(op.inputs) != 2:
+            raise ValueError("mse_loss requires 2 inputs (inp, target)")
+        inp_name = op.inputs[0]
+        tgt_name = op.inputs[1]
+        inp = np.asarray(_get(env, inp_name))
+        tgt = np.asarray(_get(env, tgt_name))
+        inp, tgt = _align_shapes_for_elemwise_named(intent, inp_name, inp, tgt_name, tgt, shape_bindings)
+        sq = np.square(inp - tgt)
+        reduction = int(op.attrs.get("reduction", 1))
+        if reduction == 0:
+            return np.asarray(sq, dtype=np.float32)
+        if reduction == 1:
+            return np.asarray(np.mean(sq), dtype=np.float32)
+        if reduction == 2:
+            return np.asarray(np.sum(sq), dtype=np.float32)
+        raise ValueError(f"mse_loss reduction must be 0|1|2, got {reduction}")
+    if op.op == "nan_to_num":
+        if len(op.inputs) != 1:
+            raise ValueError("nan_to_num requires 1 input")
+        x = np.asarray(_get(env, op.inputs[0]))
+        nan = op.attrs.get("nan", 0.0)
+        posinf = op.attrs.get("posinf", None)
+        neginf = op.attrs.get("neginf", None)
+        return np.nan_to_num(x, nan=nan, posinf=posinf, neginf=neginf)
+    if op.op == "nll_loss2d_forward":
+        if len(op.inputs) < 2:
+            raise ValueError("nll_loss2d_forward requires at least 2 inputs (self, target)")
+        logits = np.asarray(_get(env, op.inputs[0]), dtype=np.float32)
+        target = np.asarray(_get(env, op.inputs[1]), dtype=np.int64)
+        if logits.ndim != 4:
+            raise ValueError(f"nll_loss2d_forward expects logits rank=4 [N,C,H,W], got shape={logits.shape}")
+        if target.ndim != 3:
+            raise ValueError(f"nll_loss2d_forward expects target rank=3 [N,H,W], got shape={target.shape}")
+        n, c, h, w = [int(v) for v in logits.shape]
+        if tuple(int(v) for v in target.shape) != (n, h, w):
+            raise ValueError(
+                f"nll_loss2d_forward target shape mismatch: expect {(n, h, w)}, got {tuple(int(v) for v in target.shape)}"
+            )
+        weight = None
+        if len(op.inputs) >= 3:
+            weight = np.asarray(_get(env, op.inputs[2]), dtype=np.float32).reshape(-1)
+            if int(weight.shape[0]) != c:
+                raise ValueError(f"nll_loss2d_forward weight shape mismatch: expect ({c},), got {tuple(weight.shape)}")
+        reduction = int(op.attrs.get("reduction", 1))
+        ignore_index = int(op.attrs.get("ignore_index", -100))
+
+        valid = target != ignore_index
+        clamped = np.clip(target, 0, max(0, c - 1))
+        n_idx = np.arange(n, dtype=np.int64)[:, None, None]
+        h_idx = np.arange(h, dtype=np.int64)[None, :, None]
+        w_idx = np.arange(w, dtype=np.int64)[None, None, :]
+        picked = logits[n_idx, clamped, h_idx, w_idx]
+        losses = -picked
+        if weight is not None:
+            losses = losses * weight[clamped]
+            total_weight = float(np.sum(weight[clamped][valid]))
+        else:
+            total_weight = float(np.sum(valid.astype(np.float32)))
+        losses = np.where(valid, losses, np.zeros_like(losses))
+
+        if reduction == 0:
+            return np.asarray(losses, dtype=np.float32)
+        if reduction == 1:
+            denom = max(total_weight, 1e-12)
+            return np.asarray(np.sum(losses) / denom, dtype=np.float32)
+        if reduction == 2:
+            return np.asarray(np.sum(losses), dtype=np.float32)
+        raise ValueError(f"nll_loss2d_forward reduction must be 0|1|2, got {reduction}")
     if op.op == "glu":
         x = np.asarray(_get(env, op.inputs[0]))
         axis = int(op.attrs.get("axis", -1))

@@ -124,3 +124,13 @@ def test_flaggems_plugin_forces_deterministic_overrides_for_known_unstable_specs
     assert info6.get("enabled_by") == "provider_required_deterministic_override"
     assert out6.intent.name == "linspace1d"
     assert out6_exp is not None
+
+    out7, out7_exp, info7 = plugin.maybe_normalize_candidate(
+        spec_name="nll_loss2d_forward",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info7 is not None
+    assert info7.get("enabled_by") == "provider_required_deterministic_override"
+    assert out7.intent.name == "nll_loss2d_forward"
+    assert out7_exp is not None

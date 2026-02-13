@@ -118,7 +118,11 @@ FLAGGEMS_ISIN_SRC = _module_source_text("flag_gems.ops.isin")
 FLAGGEMS_KRON_SRC = _module_source_text("flag_gems.ops.kron")
 FLAGGEMS_LINSPACE_SRC = _module_source_text("flag_gems.ops.linspace")
 FLAGGEMS_LOGSPACE_SRC = _module_source_text("flag_gems.ops.logspace")
+FLAGGEMS_MASKED_SELECT_SRC = _module_source_text("flag_gems.ops.masked_select")
 FLAGGEMS_MASKED_SCATTER_SRC = _module_source_text("flag_gems.ops.masked_scatter")
+FLAGGEMS_MSE_LOSS_SRC = _module_source_text("flag_gems.ops.mse_loss")
+FLAGGEMS_NAN_TO_NUM_SRC = _module_source_text("flag_gems.ops.nan_to_num")
+FLAGGEMS_NLL_LOSS_SRC = _module_source_text("flag_gems.ops.nllloss")
 FLAGGEMS_GLU_SRC = _module_source_text("flag_gems.ops.glu")
 FLAGGEMS_CUMMAX_SRC = _module_source_text("flag_gems.ops.cummax")
 FLAGGEMS_CUMMIN_SRC = _module_source_text("flag_gems.ops.cummin")
@@ -1785,6 +1789,165 @@ def _run_flaggems_masked_scatter2d_reference(case: TestCase) -> Dict[str, np.nda
     }
 
 
+def _run_flaggems_masked_select2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 16))
+    l = int(case.shapes.get("L", max(1, (m * n) // 2)))
+    l = max(1, min(l, max(1, m * n)))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+    if case.inputs and "mask" in case.inputs:
+        mask = _as_bool_tensor(np.asarray(case.inputs["mask"]), device=device)
+    else:
+        idx = rg.permutation(m * n)
+        mask_np = np.zeros((m * n,), dtype=np.bool_)
+        mask_np[idx[:l]] = True
+        mask = torch.from_numpy(mask_np.reshape(m, n)).to(device)
+
+    with flag_gems.use_gems(include=["masked_select"]):
+        out = flag_gems_ops.masked_select(inp, mask)
+
+    inp_np = _to_np(inp)
+    mask_np = _to_np(mask)
+    out_np = _to_np(out).reshape(-1)
+    return {
+        "inp": inp_np,
+        "mask": mask_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_mse_loss2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 16))
+    reduction = int(case.shapes.get("reduction", 1))
+    if reduction not in {0, 1, 2}:
+        reduction = 1
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+    if case.inputs and "target" in case.inputs:
+        target = _as_f32_tensor(np.asarray(case.inputs["target"]), device=device)
+    else:
+        target = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["mse_loss"]):
+        out = flag_gems_ops.mse_loss(inp, target, reduction=reduction)
+
+    inp_np = _to_np(inp)
+    target_np = _to_np(target)
+    out_np = np.asarray(_to_np(out), dtype=np.float32)
+    return {
+        "inp": inp_np,
+        "target": target_np,
+        "reduction": np.array(reduction, dtype=np.int32),
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_nan_to_num2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 16))
+    nan = float(case.shapes.get("nan", 0.0))
+    posinf = float(case.shapes.get("posinf", 9.0))
+    neginf = float(case.shapes.get("neginf", -9.0))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "A" in case.inputs:
+        a = _as_f32_tensor(np.asarray(case.inputs["A"]), device=device)
+    elif case.inputs and "inp" in case.inputs:
+        a = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        a_np = rg.standard_normal((m, n), dtype=np.float32)
+        a_np.reshape(-1)[::5] = np.nan
+        a_np.reshape(-1)[1::7] = np.inf
+        a_np.reshape(-1)[2::11] = -np.inf
+        a = torch.from_numpy(a_np).to(device)
+
+    with flag_gems.use_gems(include=["nan_to_num"]):
+        out = flag_gems_ops.nan_to_num(a, nan=nan, posinf=posinf, neginf=neginf)
+
+    a_np = _to_np(a)
+    out_np = _to_np(out)
+    return {
+        "A": a_np,
+        "inp": a_np,
+        "nan": np.array(nan, dtype=np.float32),
+        "posinf": np.array(posinf, dtype=np.float32),
+        "neginf": np.array(neginf, dtype=np.float32),
+        "out": out_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_nll_loss2d_forward_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = int(case.shapes.get("N", 2))
+    c = int(case.shapes.get("C", 4))
+    h = int(case.shapes.get("H", 4))
+    w = int(case.shapes.get("W", 4))
+    reduction = int(case.shapes.get("reduction", 1))
+    if reduction not in {0, 1, 2}:
+        reduction = 1
+    ignore_index = int(case.shapes.get("ignore_index", -100))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "self" in case.inputs:
+        self_t = _as_f32_tensor(np.asarray(case.inputs["self"]), device=device)
+    else:
+        logits = torch.from_numpy(rg.standard_normal((n, c, h, w), dtype=np.float32)).to(device)
+        self_t = torch.log_softmax(logits, dim=1)
+
+    if case.inputs and "target" in case.inputs:
+        target = torch.as_tensor(np.asarray(case.inputs["target"]), device=device, dtype=torch.int64)
+    else:
+        target_np = rg.integers(0, max(1, c), size=(n, h, w), dtype=np.int64)
+        target = torch.from_numpy(target_np).to(device)
+    if case.inputs and "weight" in case.inputs:
+        weight = _as_f32_tensor(np.asarray(case.inputs["weight"]), device=device).reshape(c)
+    else:
+        weight = torch.from_numpy(np.abs(rg.standard_normal((c,), dtype=np.float32)) + 0.1).to(device)
+
+    with flag_gems.use_gems(include=["nll_loss2d_forward"]):
+        out, total_weight = flag_gems_ops.nll_loss2d_forward(
+            self_t,
+            target,
+            weight=weight,
+            reduction=reduction,
+            ignore_index=ignore_index,
+        )
+
+    self_np = _to_np(self_t)
+    target_np = _to_np(target).astype(np.int64, copy=False)
+    weight_np = _to_np(weight)
+    out_np = np.asarray(_to_np(out), dtype=np.float32)
+    tw_np = np.asarray(_to_np(total_weight), dtype=np.float32)
+    return {
+        "self": self_np,
+        "target": target_np,
+        "weight": weight_np,
+        "reduction": np.array(reduction, dtype=np.int32),
+        "ignore_index": np.array(ignore_index, dtype=np.int32),
+        "output": out_np,
+        "total_weight": tw_np,
+        "out": out_np,
+    }
+
+
 def _run_flaggems_glu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     m = int(case.shapes.get("M", 4))
     n = int(case.shapes.get("N", 64))
@@ -3079,6 +3242,30 @@ def _norm_masked_scatter2d(shapes: Dict[str, int]) -> Dict[str, int]:
     return out
 
 
+def _norm_masked_select2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    m = max(1, int(out.get("M", 4)))
+    n = max(1, int(out.get("N", 16)))
+    max_l = max(1, m * n)
+    l = max(1, int(out.get("L", max_l // 2)))
+    out["M"] = m
+    out["N"] = n
+    out["L"] = min(l, max_l)
+    return out
+
+
+def _norm_nll_loss2d_forward(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    out["N"] = max(1, int(out.get("N", 2)))
+    out["C"] = max(2, int(out.get("C", 4)))
+    out["H"] = max(1, int(out.get("H", 4)))
+    out["W"] = max(1, int(out.get("W", 4)))
+    reduction = int(out.get("reduction", 1))
+    out["reduction"] = reduction if reduction in {0, 1, 2} else 1
+    out["ignore_index"] = int(out.get("ignore_index", -100))
+    return out
+
+
 def _norm_index_put2d(shapes: Dict[str, int]) -> Dict[str, int]:
     out = dict(shapes)
     m = max(1, int(out.get("M", 16)))
@@ -3786,6 +3973,17 @@ _FLAGGEMS_SPEC_BUILDERS = {
         stage_c_max_cases=8,
         mutation_bounded_max_cases=4,
     ),
+    "masked_select2d": lambda: KernelSpec(
+        name="masked_select2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_MASKED_SELECT_SRC",
+        runner=_run_flaggems_masked_select2d_reference,
+        canonical_shapes={"M": 4, "N": 16, "L": 24},
+        vary_axes=["M", "N"],
+        normalize_shapes=_norm_masked_select2d,
+        stage_c_max_cases=6,
+        mutation_bounded_max_cases=3,
+    ),
     "masked_scatter2d": lambda: KernelSpec(
         name="masked_scatter2d",
         module="pipeline.triton.flaggems_specs",
@@ -3796,6 +3994,37 @@ _FLAGGEMS_SPEC_BUILDERS = {
         normalize_shapes=_norm_masked_scatter2d,
         stage_c_max_cases=6,
         mutation_bounded_max_cases=3,
+    ),
+    "mse_loss2d": lambda: KernelSpec(
+        name="mse_loss2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_MSE_LOSS_SRC",
+        runner=_run_flaggems_mse_loss2d_reference,
+        canonical_shapes={"M": 4, "N": 16, "reduction": 1},
+        vary_axes=["M", "N"],
+        stage_c_max_cases=6,
+        mutation_bounded_max_cases=3,
+    ),
+    "nan_to_num2d": lambda: KernelSpec(
+        name="nan_to_num2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_NAN_TO_NUM_SRC",
+        runner=_run_flaggems_nan_to_num2d_reference,
+        canonical_shapes={"M": 4, "N": 16, "nan": 0, "posinf": 9, "neginf": -9},
+        vary_axes=["M", "N"],
+        stage_c_max_cases=6,
+        mutation_bounded_max_cases=3,
+    ),
+    "nll_loss2d_forward": lambda: KernelSpec(
+        name="nll_loss2d_forward",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_NLL_LOSS_SRC",
+        runner=_run_flaggems_nll_loss2d_forward_reference,
+        canonical_shapes={"N": 2, "C": 4, "H": 4, "W": 4, "reduction": 1, "ignore_index": -100},
+        vary_axes=["N", "C", "H", "W"],
+        normalize_shapes=_norm_nll_loss2d_forward,
+        stage_c_max_cases=4,
+        mutation_bounded_max_cases=2,
     ),
     "glu2d": lambda: KernelSpec(
         name="glu2d",
@@ -4026,7 +4255,11 @@ __all__ = [
     "FLAGGEMS_KRON_SRC",
     "FLAGGEMS_LINSPACE_SRC",
     "FLAGGEMS_LOGSPACE_SRC",
+    "FLAGGEMS_MASKED_SELECT_SRC",
     "FLAGGEMS_MASKED_SCATTER_SRC",
+    "FLAGGEMS_MSE_LOSS_SRC",
+    "FLAGGEMS_NAN_TO_NUM_SRC",
+    "FLAGGEMS_NLL_LOSS_SRC",
     "FLAGGEMS_GLU_SRC",
     "FLAGGEMS_CUMMAX_SRC",
     "FLAGGEMS_CUMMIN_SRC",
