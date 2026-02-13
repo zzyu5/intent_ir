@@ -159,6 +159,27 @@ _UNARY_TEMPLATE: dict[str, SemanticMapping] = {
     "cos": _mk("cos", ("cos",), mapping_kind="unary_template", pattern_id="unary.cos", detail="mapped to cos primitive"),
     "tan": _mk("tan", ("tan",), mapping_kind="unary_template", pattern_id="unary.tan", detail="mapped to tan primitive"),
     "erf": _mk("erf", ("erf",), mapping_kind="unary_template", pattern_id="unary.erf", detail="mapped to erf primitive"),
+    "isnan": _mk(
+        "isnan",
+        ("ne",),
+        mapping_kind="unary_template",
+        pattern_id="unary.isnan_via_ne_self",
+        detail="mapped as ne(x, x)",
+    ),
+    "isinf": _mk(
+        "isinf",
+        ("abs", "const", "gt"),
+        mapping_kind="unary_template",
+        pattern_id="unary.isinf_via_abs_gt_finite_max",
+        detail="mapped as abs(x) > f32_max",
+    ),
+    "isfinite": _mk(
+        "isfinite",
+        ("abs", "const", "le"),
+        mapping_kind="unary_template",
+        pattern_id="unary.isfinite_via_abs_le_finite_max",
+        detail="mapped as abs(x) <= f32_max",
+    ),
 }
 
 _BINARY_TEMPLATE: dict[str, SemanticMapping] = {
@@ -294,6 +315,34 @@ _MACRO_TEMPLATE: dict[str, SemanticMapping] = {
         mapping_kind="macro_template",
         pattern_id="macro.lerp",
         detail="mapped as a + w * (b - a)",
+    ),
+    "isclose": _mk(
+        "isclose",
+        ("sub", "abs", "abs", "mul", "add", "le"),
+        mapping_kind="macro_template",
+        pattern_id="macro.isclose",
+        detail="mapped as abs(a-b) <= atol + rtol * abs(b)",
+    ),
+    "allclose": _mk(
+        "allclose",
+        ("sub", "abs", "abs", "mul", "add", "le", "not", "reduce_any", "not"),
+        mapping_kind="macro_template",
+        pattern_id="macro.allclose",
+        detail="mapped as not(reduce_any(not(isclose(a,b))))",
+    ),
+    "threshold": _mk(
+        "threshold",
+        ("const", "gt", "where"),
+        mapping_kind="macro_template",
+        pattern_id="macro.threshold",
+        detail="mapped as where(x > threshold, x, value)",
+    ),
+    "masked_fill": _mk(
+        "masked_fill",
+        ("where",),
+        mapping_kind="macro_template",
+        pattern_id="macro.masked_fill",
+        detail="mapped as where(mask, value, input)",
     ),
     "softplus": _mk(
         "softplus",

@@ -15,6 +15,8 @@ from intent_ir.ir import IntentFunction
 from intent_ir.macros import expand_macros
 from intent_ir.parser import CandidateIntent
 
+_F32_FINITE_MAX = 3.4028234663852886e38
+
 
 def _canonical_sigmoid2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
@@ -111,12 +113,206 @@ def _canonical_batch_norm2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_isnan2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "isnan2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "output": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "ne", "inputs": ["inp", "inp"], "output": "output"},
+            ],
+            "outputs": ["output"],
+        }
+    )
+
+
+def _canonical_isinf2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "isinf2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "output": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "abs", "inputs": ["inp"], "output": "abs_inp"},
+                {"op": "const", "inputs": [], "output": "finite_max", "attrs": {"value": _F32_FINITE_MAX}},
+                {"op": "gt", "inputs": ["abs_inp", "finite_max"], "output": "output"},
+            ],
+            "outputs": ["output"],
+        }
+    )
+
+
+def _canonical_isfinite2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "isfinite2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "output": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "abs", "inputs": ["inp"], "output": "abs_inp"},
+                {"op": "const", "inputs": [], "output": "finite_max", "attrs": {"value": _F32_FINITE_MAX}},
+                {"op": "le", "inputs": ["abs_inp", "finite_max"], "output": "output"},
+            ],
+            "outputs": ["output"],
+        }
+    )
+
+
+def _canonical_isclose2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "isclose2d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "B": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "rtol": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "atol": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "out": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "sub", "inputs": ["A", "B"], "output": "diff"},
+                {"op": "abs", "inputs": ["diff"], "output": "abs_diff"},
+                {"op": "abs", "inputs": ["B"], "output": "abs_b"},
+                {"op": "mul", "inputs": ["rtol", "abs_b"], "output": "rtol_term"},
+                {"op": "add", "inputs": ["atol", "rtol_term"], "output": "tol"},
+                {"op": "le", "inputs": ["abs_diff", "tol"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_allclose2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "allclose2d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "B": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "rtol": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "atol": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "output": {"dtype": "bool", "shape": [], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "sub", "inputs": ["A", "B"], "output": "diff"},
+                {"op": "abs", "inputs": ["diff"], "output": "abs_diff"},
+                {"op": "abs", "inputs": ["B"], "output": "abs_b"},
+                {"op": "mul", "inputs": ["rtol", "abs_b"], "output": "rtol_term"},
+                {"op": "add", "inputs": ["atol", "rtol_term"], "output": "tol"},
+                {"op": "le", "inputs": ["abs_diff", "tol"], "output": "close_mask"},
+                {"op": "not", "inputs": ["close_mask"], "output": "not_close"},
+                {"op": "reduce_any", "inputs": ["not_close"], "output": "any_not_close", "attrs": {"dims": [0, 1]}},
+                {"op": "not", "inputs": ["any_not_close"], "output": "output"},
+            ],
+            "outputs": ["output"],
+        }
+    )
+
+
+def _canonical_threshold2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "threshold2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "threshold": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "value": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "output": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "gt", "inputs": ["inp", "threshold"], "output": "keep_mask"},
+                {"op": "where", "inputs": ["keep_mask", "inp", "value"], "output": "output"},
+            ],
+            "outputs": ["output"],
+        }
+    )
+
+
+def _canonical_gather2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "gather2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "row_idx": {"dtype": "i32", "shape": ["L"], "layout": "row_major"},
+                "col_idx": {"dtype": "i32", "shape": ["L"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["L"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "gather", "inputs": ["inp", "row_idx", "col_idx"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_index_select2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "index_select2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "row_idx": {"dtype": "i32", "shape": ["L", "N"], "layout": "row_major"},
+                "col_idx": {"dtype": "i32", "shape": ["L", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["L", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "gather", "inputs": ["inp", "row_idx", "col_idx"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_masked_fill2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "masked_fill2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "mask": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                "value": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "output": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "where", "inputs": ["mask", "value", "inp"], "output": "output"},
+            ],
+            "outputs": ["output"],
+        }
+    )
+
+
 def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
     name = str(spec_name)
     if name == "sigmoid2d":
         return _canonical_sigmoid2d_intent()
     if name == "batch_norm2d":
         return _canonical_batch_norm2d_intent()
+    if name == "isnan2d":
+        return _canonical_isnan2d_intent()
+    if name == "isinf2d":
+        return _canonical_isinf2d_intent()
+    if name == "isfinite2d":
+        return _canonical_isfinite2d_intent()
+    if name == "isclose2d":
+        return _canonical_isclose2d_intent()
+    if name == "allclose2d":
+        return _canonical_allclose2d_intent()
+    if name == "threshold2d":
+        return _canonical_threshold2d_intent()
+    if name == "gather2d":
+        return _canonical_gather2d_intent()
+    if name == "index_select2d":
+        return _canonical_index_select2d_intent()
+    if name == "masked_fill2d":
+        return _canonical_masked_fill2d_intent()
     return None
 
 

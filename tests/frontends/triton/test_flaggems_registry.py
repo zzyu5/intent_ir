@@ -97,8 +97,17 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
             "sum",
             "mean",
             "all",
+            "allclose",
+            "isclose",
+            "isfinite",
+            "isinf",
+            "isnan",
+            "masked_fill",
             "max",
             "where_self",
+            "index",
+            "index_select",
+            "threshold",
             "exp",
             "clamp",
         ],
@@ -145,11 +154,19 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
     assert "relu2d" in specs
     assert "sigmoid2d" in specs
     assert "where2d" in specs
+    assert "index_select2d" in specs
     assert "row_sum" in specs
     assert "row_mean" in specs
     assert "row_all" in specs
     assert "row_max" in specs
     assert "exp2d" in specs
+    assert "allclose2d" in specs
+    assert "isclose2d" in specs
+    assert "isfinite2d" in specs
+    assert "isinf2d" in specs
+    assert "isnan2d" in specs
+    assert "masked_fill2d" in specs
+    assert "threshold2d" in specs
     assert "clamp2d" in specs
     assert "lerp2d" in specs
     assert "batch_norm2d" in specs

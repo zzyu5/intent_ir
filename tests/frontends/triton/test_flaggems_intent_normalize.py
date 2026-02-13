@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from intent_ir.ir import IntentFunction
 from intent_ir.parser import CandidateIntent
 from pipeline.triton.flaggems_intent_normalize import (
@@ -38,6 +40,37 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert any(op.op == "reduce_sum" for op in batch_norm.ops)
     assert any(op.op == "rsqrt" for op in batch_norm.ops)
 
+    isnan = canonical_flaggems_intent_for_spec("isnan2d")
+    assert isnan is not None
+    assert [op.op for op in isnan.ops] == ["ne"]
+
+    isinf = canonical_flaggems_intent_for_spec("isinf2d")
+    assert isinf is not None
+    assert [op.op for op in isinf.ops] == ["abs", "const", "gt"]
+    const_val = [op.attrs["value"] for op in isinf.ops if op.op == "const"][0]
+    assert math.isfinite(float(const_val))
+
+    isfinite = canonical_flaggems_intent_for_spec("isfinite2d")
+    assert isfinite is not None
+    assert [op.op for op in isfinite.ops] == ["abs", "const", "le"]
+    const_val = [op.attrs["value"] for op in isfinite.ops if op.op == "const"][0]
+    assert math.isfinite(float(const_val))
+
+    masked_fill = canonical_flaggems_intent_for_spec("masked_fill2d")
+    assert masked_fill is not None
+    assert [op.op for op in masked_fill.ops] == ["where"]
+    assert "eq" not in [op.op for op in masked_fill.ops]
+
+    gather = canonical_flaggems_intent_for_spec("gather2d")
+    assert gather is not None
+    assert [op.op for op in gather.ops] == ["gather"]
+    assert gather.ops[0].inputs == ["inp", "row_idx", "col_idx"]
+
+    index_select = canonical_flaggems_intent_for_spec("index_select2d")
+    assert index_select is not None
+    assert [op.op for op in index_select.ops] == ["gather"]
+    assert index_select.ops[0].inputs == ["inp", "row_idx", "col_idx"]
+
 
 def test_maybe_normalize_flaggems_candidate_overrides_known_spec() -> None:
     cand = _dummy_candidate("old")
@@ -50,6 +83,16 @@ def test_maybe_normalize_flaggems_candidate_overrides_known_spec() -> None:
     assert out.intent.name == "sigmoid2d"
     assert out_expanded is not None
     assert out.raw_json.get("normalized_by") == "flaggems_canonical"
+
+    out2, out2_expanded, info2 = maybe_normalize_flaggems_candidate(
+        spec_name="masked_fill2d",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info2 is not None and info2.get("applied") is True
+    assert out2.intent.name == "masked_fill2d"
+    assert out2_expanded is not None
+    assert [op.op for op in out2.intent.ops] == ["where"]
 
 
 def test_maybe_normalize_flaggems_candidate_noop_for_other_specs() -> None:

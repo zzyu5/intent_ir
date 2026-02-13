@@ -53,12 +53,20 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "row_mean" in names
     assert "row_all" in names
     assert "row_max" in names
+    assert "allclose2d" in names
+    assert "isclose2d" in names
+    assert "isfinite2d" in names
+    assert "isinf2d" in names
+    assert "isnan2d" in names
+    assert "masked_fill2d" in names
+    assert "threshold2d" in names
     assert "full2d" in names
     assert "maximum2d" in names
     assert "minimum2d" in names
     assert "identity2d" in names
     assert "cast2d" in names
     assert "gather2d" in names
+    assert "index_select2d" in names
     assert "clamp2d" in names
     assert "lerp2d" in names
     assert "batch_norm2d" in names

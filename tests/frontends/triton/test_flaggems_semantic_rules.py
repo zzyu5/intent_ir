@@ -20,6 +20,9 @@ def test_semantic_rule_templates_for_high_yield_ops() -> None:
     assert resolve_semantic_mapping("group_norm").intent_ops == ("reduce_sum", "sub", "mul", "add", "rsqrt", "broadcast_in_dim", "div")
     assert resolve_semantic_mapping("batch_norm").intent_ops == ("reduce_sum", "sub", "mul", "add", "rsqrt", "broadcast_in_dim", "div")
     assert resolve_semantic_mapping("rms_norm").intent_ops == ("mul", "reduce_sum", "add", "rsqrt", "mul")
+    assert resolve_semantic_mapping("isnan").intent_ops == ("ne",)
+    assert resolve_semantic_mapping("isinf").intent_ops == ("abs", "const", "gt")
+    assert resolve_semantic_mapping("isfinite").intent_ops == ("abs", "const", "le")
 
 
 def test_semantic_rule_composite_aliases() -> None:
@@ -44,3 +47,7 @@ def test_semantic_rule_composite_aliases() -> None:
     assert resolve_semantic_mapping("scaled_softmax_forward").intent_ops == ("softmax",)
     assert resolve_semantic_mapping("sigmoid").intent_ops == ("const", "mul", "exp", "add", "div")
     assert resolve_semantic_mapping("softplus").intent_ops == ("exp", "add", "log")
+    assert resolve_semantic_mapping("isclose").intent_ops == ("sub", "abs", "abs", "mul", "add", "le")
+    assert resolve_semantic_mapping("allclose").intent_ops == ("sub", "abs", "abs", "mul", "add", "le", "not", "reduce_any", "not")
+    assert resolve_semantic_mapping("masked_fill").intent_ops == ("where",)
+    assert resolve_semantic_mapping("threshold").intent_ops == ("const", "gt", "where")
