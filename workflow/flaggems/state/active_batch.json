@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_active_batch_v1",
-  "generated_at": "2026-02-13T17:54:12+00:00",
+  "generated_at": "2026-02-13T18:44:48+00:00",
   "branch": "flaggems",
   "batch_size": 10,
   "selection_policy": [
@@ -54,28 +54,6 @@
       "intent_ops": []
     },
     {
-      "id": "flaggems::cummax",
-      "semantic_op": "cummax",
-      "family": "matmul_linear",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
-    },
-    {
-      "id": "flaggems::cummin",
-      "semantic_op": "cummin",
-      "family": "matmul_linear",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
-    },
-    {
       "id": "flaggems::flash_attention_forward",
       "semantic_op": "flash_attention_forward",
       "family": "attention_sequence",
@@ -87,8 +65,8 @@
       "intent_ops": []
     },
     {
-      "id": "flaggems::glu",
-      "semantic_op": "glu",
+      "id": "flaggems::isin",
+      "semantic_op": "isin",
       "family": "elementwise_broadcast",
       "status": "blocked_ir",
       "passes": false,
@@ -98,9 +76,9 @@
       "intent_ops": []
     },
     {
-      "id": "flaggems::index_add",
-      "semantic_op": "index_add",
-      "family": "index_scatter_gather",
+      "id": "flaggems::kron",
+      "semantic_op": "kron",
+      "family": "elementwise_broadcast",
       "status": "blocked_ir",
       "passes": false,
       "reason_code": "no_intentir_mapping",
@@ -109,8 +87,30 @@
       "intent_ops": []
     },
     {
-      "id": "flaggems::index_put",
-      "semantic_op": "index_put",
+      "id": "flaggems::linspace",
+      "semantic_op": "linspace",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::logspace",
+      "semantic_op": "logspace",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::masked_scatter",
+      "semantic_op": "masked_scatter",
       "family": "index_scatter_gather",
       "status": "blocked_ir",
       "passes": false,
@@ -123,13 +123,13 @@
   "context": {
     "feature_list_path": "workflow/flaggems/state/feature_list.json",
     "progress_log_path": "workflow/flaggems/state/progress_log.jsonl",
-    "git_log": "7a68432 workflow: record cuda-iota batch and refresh blocked-ir queue\n6de906a cuda: add iota lowering support for eye-style intents\n8c9511f workflow: record celu-eye batch results and replan blocked-ir queue\n59804e7 flaggems: add celu/eye mappings and stabilize matrix suite selection\n0a0923f workflow: sync feature batch after elu integration and backend reruns\n4673f27 flaggems: add elu mapping/spec and refine cuda timeout diagnostics\n944df3a workflow: record scoped batch status for diag/count_nonzero wave\n4c12936 flaggems: add scoped convergence gates and provider package boundary\n8ed8a36 triton: move provider behavior to plugins and run rvv/cuda backend validation\n3b97f7f triton: de-specialize provider path and add diag/count_nonzero intentir wave\n7c9d9dd workflow: sync baseline/roadmap/metrics and replan active batch\n5b3b914 flaggems: add hard-gate workflow and execution policy bridge\n6d0f0e3 workflow: log batch-2 progress and next blocked-ir focus\naad3bf3 flaggems: add addcdiv/addcmul/addr mappings and e2e specs\n714e772 workflow: record flaggems session progress and handoff\ne9ac3d3 intentir: expand structural ops and converge flaggems mappings\n5f4d6a2 flaggems: converge path-mode CLI and add long-run workflow harness\n2d6a582 flaggems: stabilize bool/index kernels and expand registry coverage\n3b1d5e6 flaggems: canonicalize unstable intent seeds for sigmoid and batch norm\n14abd9e flaggems: add lerp/rms_norm/batch_norm specs and expand registry mappings",
+    "git_log": "430aee5 workflow: record flip-embedding batch progress and refresh queue\n79f8253 flaggems: map flip/embedding and preserve canonical override in llm repair\n7a68432 workflow: record cuda-iota batch and refresh blocked-ir queue\n6de906a cuda: add iota lowering support for eye-style intents\n8c9511f workflow: record celu-eye batch results and replan blocked-ir queue\n59804e7 flaggems: add celu/eye mappings and stabilize matrix suite selection\n0a0923f workflow: sync feature batch after elu integration and backend reruns\n4673f27 flaggems: add elu mapping/spec and refine cuda timeout diagnostics\n944df3a workflow: record scoped batch status for diag/count_nonzero wave\n4c12936 flaggems: add scoped convergence gates and provider package boundary\n8ed8a36 triton: move provider behavior to plugins and run rvv/cuda backend validation\n3b97f7f triton: de-specialize provider path and add diag/count_nonzero intentir wave\n7c9d9dd workflow: sync baseline/roadmap/metrics and replan active batch\n5b3b914 flaggems: add hard-gate workflow and execution policy bridge\n6d0f0e3 workflow: log batch-2 progress and next blocked-ir focus\naad3bf3 flaggems: add addcdiv/addcmul/addr mappings and e2e specs\n714e772 workflow: record flaggems session progress and handoff\ne9ac3d3 intentir: expand structural ops and converge flaggems mappings\n5f4d6a2 flaggems: converge path-mode CLI and add long-run workflow harness\n2d6a582 flaggems: stabilize bool/index kernels and expand registry coverage",
     "progress_tail": [
-      "{\"ts\": \"2026-02-13T15:50:54+00:00\", \"commit\": \"3b97f7fb3c8c0b091ca1697d6c112876db9f2497\", \"summary\": \"Provider architecture refactored to plugin registry (core decoupled from flaggems branches) and backend tests executed (RVV local+remote, CUDA local) for count_nonzero/diag/diag_embed.\", \"batch_ops\": [\"ScaleDotProductAttention\", \"celu\", \"conv1d\", \"conv3d\", \"conv_depthwise2d\", \"cummax\", \"cummin\", \"elu\", \"embedding\", \"eye\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260213/run_summary_plugin.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260213/status_converged_plugin.json\", \"next_focus\": \"Fix IntentIR deterministic mapping for count_nonzero/diag/diag_embed and resolve RVV/CUDA lowering blockers (diag_len/M symbols + timeout).\", \"run_ok\": false, \"run_out_dir\": null, \"counts_by_status\": {\"blocked_backend\": 154, \"blocked_ir\": 42}}",
       "{\"ts\": \"2026-02-13T16:35:20+00:00\", \"commit\": \"8ed8a36bde043652419234e417d395c226c73202\", \"summary\": \"Phase0 scoped convergence + provider package refactor + deterministic overrides for count_nonzero/diag/diag_embed; RVV local+remote pass, CUDA timeout classified.\", \"batch_ops\": [\"count_nonzero\", \"diag\", \"diag_embed\"], \"active_batch_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_diag_scope_fix/active_batch_fix.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_diag_scope_fix/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_diag_scope_fix/status_converged_scoped.json\", \"next_focus\": \"Fix CUDA timeout for count_nonzero2d/diag2d/diag_embed2d and then continue blocked_ir active_batch (ScaleDotProductAttention, conv1d/3d, conv_depthwise2d, cummax/cummin, elu, embedding, eye).\", \"run_ok\": false, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260213/batch_diag_scope_fix\", \"counts_by_status\": {\"blocked_backend\": 151, \"blocked_ir\": 42, \"rvv_only\": 3}}",
       "{\"ts\": \"2026-02-13T16:53:35+00:00\", \"commit\": \"944df3a14c0d3765bb3ad2e129f9ec3049e5d575\", \"summary\": \"Added ELU semantic rule+spec and canonical IntentIR override; ELU now leaves blocked_ir with pipeline+RVV(local/remote) pass, CUDA still timeout-classified.\", \"batch_ops\": [\"elu\"], \"active_batch_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_elu/active_batch_elu.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_elu/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_elu/status_converged_scoped.json\", \"next_focus\": \"Continue active blocked_ir batch (ScaleDotProductAttention, conv1d/3d, conv_depthwise2d, cummax/cummin, embedding, eye) and keep CUDA failures classified via refined reason codes.\", \"run_ok\": false, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260213/batch_elu\", \"counts_by_status\": {\"blocked_backend\": 154, \"blocked_ir\": 41, \"rvv_only\": 1}}",
       "{\"ts\": \"2026-02-13T17:12:40+00:00\", \"commit\": \"59804e7\", \"summary\": \"Added celu/eye/eye_m IntentIR mappings+specs; pipeline and RVV(local+remote) pass; CUDA classified as runtime_timeout or lowering_missing_op.\", \"batch_ops\": [\"celu\", \"eye\", \"eye_m\"], \"active_batch_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_celu_eye_v2/active_batch_celu_eye.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_celu_eye_v2/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_celu_eye_v2/status_converged_scoped.json\", \"next_focus\": \"Fix CUDA path for celu timeout and add CUDA iota lowering for eye/eye_m, then continue blocked_ir batch (ScaleDotProductAttention, conv1d/conv3d/conv_depthwise2d, cummax/cummin, embedding, flash_attention_forward, flip, glu).\", \"run_ok\": false, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260213/batch_celu_eye_v2\", \"counts_by_status\": {\"blocked_backend\": 155, \"blocked_ir\": 38, \"rvv_only\": 3}}",
-      "{\"ts\": \"2026-02-13T17:32:56+00:00\", \"commit\": \"6de906a\", \"summary\": \"Added CUDA iota lowering (py+cpp) for eye-style intents; eye/eye_m CUDA reason moved from lowering_missing_op to runtime_timeout.\", \"batch_ops\": [\"celu\", \"eye\", \"eye_m\"], \"active_batch_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_celu_eye_v3_after_iota/active_batch_celu_eye.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_celu_eye_v3_after_iota/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_celu_eye_v3_after_iota/status_converged_scoped.json\", \"next_focus\": \"Investigate CUDA runtime timeout for celu/eye/eye_m execution path, then continue blocked_ir batch (ScaleDotProductAttention, conv1d/conv3d/conv_depthwise2d, cummax/cummin, embedding, flash_attention_forward, flip, glu).\", \"run_ok\": false, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260213/batch_celu_eye_v3_after_iota\", \"counts_by_status\": {\"blocked_backend\": 155, \"blocked_ir\": 38, \"rvv_only\": 3}}"
+      "{\"ts\": \"2026-02-13T17:32:56+00:00\", \"commit\": \"6de906a\", \"summary\": \"Added CUDA iota lowering (py+cpp) for eye-style intents; eye/eye_m CUDA reason moved from lowering_missing_op to runtime_timeout.\", \"batch_ops\": [\"celu\", \"eye\", \"eye_m\"], \"active_batch_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_celu_eye_v3_after_iota/active_batch_celu_eye.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_celu_eye_v3_after_iota/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_celu_eye_v3_after_iota/status_converged_scoped.json\", \"next_focus\": \"Investigate CUDA runtime timeout for celu/eye/eye_m execution path, then continue blocked_ir batch (ScaleDotProductAttention, conv1d/conv3d/conv_depthwise2d, cummax/cummin, embedding, flash_attention_forward, flip, glu).\", \"run_ok\": false, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260213/batch_celu_eye_v3_after_iota\", \"counts_by_status\": {\"blocked_backend\": 155, \"blocked_ir\": 38, \"rvv_only\": 3}}",
+      "{\"ts\": \"2026-02-13T17:54:39+00:00\", \"commit\": \"79f8253\", \"summary\": \"Mapped flip/embedding to gather with canonical specs; fixed provider canonical retention in LLM repair; pipeline+RVV(local/remote) pass for flip2d/embedding2d.\", \"batch_ops\": [\"flip\", \"embedding\"], \"active_batch_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_flip_embedding_v2/active_batch_flip_embedding.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_flip_embedding_v2/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_flip_embedding_v2/status_converged_scoped.json\", \"next_focus\": \"Investigate CUDA runtime_timeout for flip2d/embedding2d/celu2d; continue blocked_ir batch (ScaleDotProductAttention, conv1d/conv3d/conv_depthwise2d, cummax/cummin, flash_attention_forward, glu, index_add, index_put).\", \"run_ok\": false, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260213/batch_flip_embedding_v2\", \"counts_by_status\": {\"blocked_backend\": 158, \"blocked_ir\": 36, \"rvv_only\": 2}}"
     ]
   }
 }

@@ -1,13 +1,13 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-13T17:54:02+00:00",
+  "generated_at": "2026-02-13T18:44:48+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
       "dual_pass": 102,
-      "blocked_backend": 58,
-      "blocked_ir": 36
+      "blocked_backend": 63,
+      "blocked_ir": 31
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -692,12 +692,14 @@
       "id": "flaggems::glu",
       "semantic_op": "glu",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "glu2d",
+      "intent_ops": [
+        "glu"
+      ]
     },
     {
       "id": "flaggems::gt",
@@ -2245,23 +2247,27 @@
       "id": "flaggems::index_add",
       "semantic_op": "index_add",
       "family": "index_scatter_gather",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "index_add2d",
+      "intent_ops": [
+        "index_add"
+      ]
     },
     {
       "id": "flaggems::index_put",
       "semantic_op": "index_put",
       "family": "index_scatter_gather",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "index_put2d",
+      "intent_ops": [
+        "index_put"
+      ]
     },
     {
       "id": "flaggems::index_select",
@@ -2416,23 +2422,27 @@
       "id": "flaggems::cummax",
       "semantic_op": "cummax",
       "family": "matmul_linear",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "cummax1d",
+      "intent_ops": [
+        "cummax"
+      ]
     },
     {
       "id": "flaggems::cummin",
       "semantic_op": "cummin",
       "family": "matmul_linear",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "cummin1d",
+      "intent_ops": [
+        "cummin"
+      ]
     },
     {
       "id": "flaggems::dot",
