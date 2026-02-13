@@ -1,13 +1,13 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-13T19:37:16+00:00",
+  "generated_at": "2026-02-13T20:02:16+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
-      "dual_pass": 105,
-      "blocked_backend": 69,
-      "blocked_ir": 22
+      "dual_pass": 106,
+      "blocked_backend": 71,
+      "blocked_ir": 19
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -1219,12 +1219,14 @@
       "id": "flaggems::nll_loss_forward",
       "semantic_op": "nll_loss_forward",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "nll_loss_forward",
+      "intent_ops": [
+        "nll_loss_forward"
+      ]
     },
     {
       "id": "flaggems::nonzero",
@@ -1243,12 +1245,18 @@
       "id": "flaggems::one_hot",
       "semantic_op": "one_hot",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "one_hot2d",
+      "intent_ops": [
+        "iota",
+        "broadcast_in_dim",
+        "ne",
+        "not",
+        "cast"
+      ]
     },
     {
       "id": "flaggems::ones",
@@ -2580,12 +2588,15 @@
       "id": "flaggems::max_pool2d_with_indices",
       "semantic_op": "max_pool2d_with_indices",
       "family": "conv_pool_interp",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "max_pool2d_with_indices_nchw",
+      "intent_ops": [
+        "max_pool2d_with_indices",
+        "max_pool2d_with_indices"
+      ]
     },
     {
       "id": "flaggems::upsample_bicubic2d_aa",
