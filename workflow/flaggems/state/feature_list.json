@@ -1,13 +1,13 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-13T19:18:58+00:00",
+  "generated_at": "2026-02-13T19:37:16+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
       "dual_pass": 105,
-      "blocked_backend": 65,
-      "blocked_ir": 26
+      "blocked_backend": 69,
+      "blocked_ir": 22
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -1114,12 +1114,14 @@
       "id": "flaggems::mse_loss",
       "semantic_op": "mse_loss",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "mse_loss2d",
+      "intent_ops": [
+        "mse_loss"
+      ]
     },
     {
       "id": "flaggems::mul",
@@ -1151,12 +1153,14 @@
       "id": "flaggems::nan_to_num",
       "semantic_op": "nan_to_num",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "nan_to_num2d",
+      "intent_ops": [
+        "nan_to_num"
+      ]
     },
     {
       "id": "flaggems::ne",
@@ -1202,12 +1206,14 @@
       "id": "flaggems::nll_loss2d_forward",
       "semantic_op": "nll_loss2d_forward",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "nll_loss2d_forward",
+      "intent_ops": [
+        "nll_loss2d_forward"
+      ]
     },
     {
       "id": "flaggems::nll_loss_forward",
@@ -2323,12 +2329,14 @@
       "id": "flaggems::masked_select",
       "semantic_op": "masked_select",
       "family": "index_scatter_gather",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "masked_select2d",
+      "intent_ops": [
+        "masked_select"
+      ]
     },
     {
       "id": "flaggems::scatter",
