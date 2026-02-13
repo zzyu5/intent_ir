@@ -38,6 +38,9 @@ def test_semantic_rule_templates_for_high_yield_ops() -> None:
     assert resolve_semantic_mapping("diag").intent_ops == ("diag",)
     assert resolve_semantic_mapping("diag_embed").intent_ops == ("diag_embed",)
     assert resolve_semantic_mapping("avg_pool2d").intent_ops == ("avg_pool2d",)
+    assert resolve_semantic_mapping("eye").intent_ops == ("iota", "iota", "ne", "not", "cast")
+    assert resolve_semantic_mapping("eye_m").intent_ops == ("iota", "iota", "ne", "not", "cast")
+    assert resolve_semantic_mapping("celu").intent_ops == ("const", "gt", "exp", "const", "sub", "where")
     assert resolve_semantic_mapping("elu").intent_ops == ("const", "gt", "exp", "const", "sub", "where")
 
 

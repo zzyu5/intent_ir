@@ -8,7 +8,17 @@ from intent_ir.parser import CandidateIntent
 from pipeline.triton.providers.base import TritonProviderPlugin
 from pipeline.triton.providers.flaggems.intent_normalize import maybe_normalize_flaggems_candidate
 
-_ALWAYS_CANONICAL_SPECS = frozenset({"count_nonzero2d", "diag2d", "diag_embed2d", "elu2d"})
+_ALWAYS_CANONICAL_SPECS = frozenset(
+    {
+        "count_nonzero2d",
+        "diag2d",
+        "diag_embed2d",
+        "celu2d",
+        "elu2d",
+        "eye2d",
+        "eye_m2d",
+    }
+)
 
 
 def _truthy_env(name: str, default: str = "0") -> bool:

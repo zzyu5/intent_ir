@@ -16,6 +16,7 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     specs = coverage_flaggems_kernel_specs(flaggems_opset="deterministic_forward", backend_target="rvv")
     names = {str(s.name) for s in specs}
     assert "relu2d" in names
+    assert "celu2d" in names
     assert "elu2d" in names
     assert "exp2d" in names
     assert "exp22d" in names
@@ -79,6 +80,8 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "masked_fill2d" in names
     assert "threshold2d" in names
     assert "full2d" in names
+    assert "eye2d" in names
+    assert "eye_m2d" in names
     assert "maximum2d" in names
     assert "minimum2d" in names
     assert "identity2d" in names

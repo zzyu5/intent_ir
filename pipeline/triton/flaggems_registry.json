@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-13T16:45:43.526807+00:00",
+  "generated_at": "2026-02-13T16:59:56.629747+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -19,9 +19,9 @@
     "semantic_ops": 196,
     "by_status": {
       "blocked_backend": 58,
-      "blocked_ir": 41,
-      "dual_pass": 96,
-      "rvv_only": 1
+      "blocked_ir": 38,
+      "dual_pass": 97,
+      "rvv_only": 3
     },
     "by_family": {
       "attention_sequence": 5,
@@ -1480,39 +1480,100 @@
         "celu"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "const",
+        "gt",
+        "exp",
+        "const",
+        "sub",
+        "where"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.celu",
+      "e2e_spec": "celu2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as where(x > 0, x, alpha * (exp(x/alpha) - 1)) with alpha=1",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "requested_ops": [
+            "const",
+            "exp",
+            "gt",
+            "sub",
+            "where"
+          ],
+          "known_ops": [
+            "const",
+            "exp",
+            "gt",
+            "sub",
+            "where"
+          ],
           "unknown_ops": [],
-          "supported_ops": [],
+          "supported_ops": [
+            "const",
+            "exp",
+            "gt",
+            "sub",
+            "where"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "requested_ops": [
+            "const",
+            "exp",
+            "gt",
+            "sub",
+            "where"
+          ],
+          "known_ops": [
+            "const",
+            "exp",
+            "gt",
+            "sub",
+            "where"
+          ],
           "unknown_ops": [],
-          "supported_ops": [],
+          "supported_ops": [
+            "const",
+            "exp",
+            "gt",
+            "sub",
+            "where"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "requested_ops": [
+            "const",
+            "exp",
+            "gt",
+            "sub",
+            "where"
+          ],
+          "known_ops": [
+            "const",
+            "exp",
+            "gt",
+            "sub",
+            "where"
+          ],
           "unknown_ops": [],
-          "supported_ops": [],
+          "supported_ops": [
+            "const",
+            "exp",
+            "gt",
+            "sub",
+            "where"
+          ],
           "missing_ops": []
         }
       }
@@ -2706,40 +2767,93 @@
         "eye"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "iota",
+        "iota",
+        "ne",
+        "not",
+        "cast"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.eye",
+      "e2e_spec": "eye2d",
+      "status": "rvv_only",
+      "status_reason": "cuda_target_missing_ops",
+      "status_reason_detail": "mapped as cast(not(ne(iota_row, iota_col))); cuda_h100_missing=['iota']; cuda_5090d_missing=['iota']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "requested_ops": [
+            "cast",
+            "iota",
+            "ne",
+            "not"
+          ],
+          "known_ops": [
+            "cast",
+            "iota",
+            "ne",
+            "not"
+          ],
           "unknown_ops": [],
-          "supported_ops": [],
+          "supported_ops": [
+            "cast",
+            "iota",
+            "ne",
+            "not"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "cast",
+            "iota",
+            "ne",
+            "not"
+          ],
+          "known_ops": [
+            "cast",
+            "iota",
+            "ne",
+            "not"
+          ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": []
+          "supported_ops": [
+            "cast",
+            "ne",
+            "not"
+          ],
+          "missing_ops": [
+            "iota"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "cast",
+            "iota",
+            "ne",
+            "not"
+          ],
+          "known_ops": [
+            "cast",
+            "iota",
+            "ne",
+            "not"
+          ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": []
+          "supported_ops": [
+            "cast",
+            "ne",
+            "not"
+          ],
+          "missing_ops": [
+            "iota"
+          ]
         }
       }
     },
@@ -2749,40 +2863,93 @@
         "eye_m"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "iota",
+        "iota",
+        "ne",
+        "not",
+        "cast"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.eye_m",
+      "e2e_spec": "eye_m2d",
+      "status": "rvv_only",
+      "status_reason": "cuda_target_missing_ops",
+      "status_reason_detail": "mapped as cast(not(ne(iota_row, iota_col))) on rectangular shape; cuda_h100_missing=['iota']; cuda_5090d_missing=['iota']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "requested_ops": [
+            "cast",
+            "iota",
+            "ne",
+            "not"
+          ],
+          "known_ops": [
+            "cast",
+            "iota",
+            "ne",
+            "not"
+          ],
           "unknown_ops": [],
-          "supported_ops": [],
+          "supported_ops": [
+            "cast",
+            "iota",
+            "ne",
+            "not"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "cast",
+            "iota",
+            "ne",
+            "not"
+          ],
+          "known_ops": [
+            "cast",
+            "iota",
+            "ne",
+            "not"
+          ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": []
+          "supported_ops": [
+            "cast",
+            "ne",
+            "not"
+          ],
+          "missing_ops": [
+            "iota"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "cast",
+            "iota",
+            "ne",
+            "not"
+          ],
+          "known_ops": [
+            "cast",
+            "iota",
+            "ne",
+            "not"
+          ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": []
+          "supported_ops": [
+            "cast",
+            "ne",
+            "not"
+          ],
+          "missing_ops": [
+            "iota"
+          ]
         }
       }
     },

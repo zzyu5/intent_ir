@@ -87,6 +87,18 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert elu is not None
     assert [op.op for op in elu.ops] == ["const", "const", "gt", "exp", "sub", "where"]
 
+    celu = canonical_flaggems_intent_for_spec("celu2d")
+    assert celu is not None
+    assert [op.op for op in celu.ops] == ["const", "const", "gt", "exp", "sub", "where"]
+
+    eye = canonical_flaggems_intent_for_spec("eye2d")
+    assert eye is not None
+    assert [op.op for op in eye.ops] == ["iota", "iota", "ne", "not", "cast"]
+
+    eye_m = canonical_flaggems_intent_for_spec("eye_m2d")
+    assert eye_m is not None
+    assert [op.op for op in eye_m.ops] == ["iota", "iota", "ne", "not", "cast"]
+
 
 def test_maybe_normalize_flaggems_candidate_overrides_known_spec() -> None:
     cand = _dummy_candidate("old")

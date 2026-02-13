@@ -380,6 +380,58 @@ def _canonical_elu2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_celu2d_intent() -> IntentFunction:
+    out = _canonical_elu2d_intent().to_json_dict()
+    out["name"] = "celu2d"
+    return IntentFunction.from_json_dict(out)
+
+
+def _canonical_eye2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "eye2d",
+            "tensors": {
+                "idx_row": {"dtype": "i32", "shape": ["N", "N"], "layout": "row_major"},
+                "idx_col": {"dtype": "i32", "shape": ["N", "N"], "layout": "row_major"},
+                "offdiag_mask": {"dtype": "bool", "shape": ["N", "N"], "layout": "row_major"},
+                "diag_mask": {"dtype": "bool", "shape": ["N", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "iota", "inputs": [], "output": "idx_row", "attrs": {"axis": 0, "shape": ["N", "N"]}},
+                {"op": "iota", "inputs": [], "output": "idx_col", "attrs": {"axis": 1, "shape": ["N", "N"]}},
+                {"op": "ne", "inputs": ["idx_row", "idx_col"], "output": "offdiag_mask"},
+                {"op": "not", "inputs": ["offdiag_mask"], "output": "diag_mask"},
+                {"op": "cast", "inputs": ["diag_mask"], "output": "out", "attrs": {"to": "f32"}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_eye_m2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "eye_m2d",
+            "tensors": {
+                "idx_row": {"dtype": "i32", "shape": ["N", "M"], "layout": "row_major"},
+                "idx_col": {"dtype": "i32", "shape": ["N", "M"], "layout": "row_major"},
+                "offdiag_mask": {"dtype": "bool", "shape": ["N", "M"], "layout": "row_major"},
+                "diag_mask": {"dtype": "bool", "shape": ["N", "M"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N", "M"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "iota", "inputs": [], "output": "idx_row", "attrs": {"axis": 0, "shape": ["N", "M"]}},
+                {"op": "iota", "inputs": [], "output": "idx_col", "attrs": {"axis": 1, "shape": ["N", "M"]}},
+                {"op": "ne", "inputs": ["idx_row", "idx_col"], "output": "offdiag_mask"},
+                {"op": "not", "inputs": ["offdiag_mask"], "output": "diag_mask"},
+                {"op": "cast", "inputs": ["diag_mask"], "output": "out", "attrs": {"to": "f32"}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
     name = str(spec_name)
     if name == "sigmoid2d":
@@ -410,8 +462,14 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_diag2d_intent()
     if name == "diag_embed2d":
         return _canonical_diag_embed2d_intent()
+    if name == "celu2d":
+        return _canonical_celu2d_intent()
     if name == "elu2d":
         return _canonical_elu2d_intent()
+    if name == "eye2d":
+        return _canonical_eye2d_intent()
+    if name == "eye_m2d":
+        return _canonical_eye_m2d_intent()
     return None
 
 

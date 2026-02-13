@@ -113,6 +113,7 @@ _SEMANTIC_TO_E2E_SPEC: dict[str, str] = {
     "abs": "abs2d",
     "rsqrt": "rsqrt2d",
     "relu": "relu2d",
+    "celu": "celu2d",
     "elu": "elu2d",
     "exp": "exp2d",
     "isclose": "isclose2d",
@@ -148,6 +149,8 @@ _SEMANTIC_TO_E2E_SPEC: dict[str, str] = {
     "lerp": "lerp2d",
     "softmax": "softmax_inner",
     "upsample_bicubic2d_aa": "upsample_bicubic2d_aa",
+    "eye": "eye2d",
+    "eye_m": "eye_m2d",
 }
 
 _SEMANTIC_E2E_ALIASES: dict[str, str] = {

@@ -20,11 +20,89 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 def _run(cmd: list[str], *, cwd: Path) -> tuple[int, str, str]:
     p = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True)
     return int(p.returncode), str(p.stdout or ""), str(p.stderr or "")
+
+
+def _suite_kernel_names(*, suite: str, flaggems_opset: str, backend_target: str) -> list[str]:
+    if str(suite) == "smoke":
+        from pipeline.triton.providers.flaggems.specs import default_flaggems_kernel_specs  # noqa: PLC0415
+
+        specs = default_flaggems_kernel_specs(
+            flaggems_opset=str(flaggems_opset),
+            backend_target=str(backend_target),
+        )
+    else:
+        from pipeline.triton.providers.flaggems.specs import coverage_flaggems_kernel_specs  # noqa: PLC0415
+
+        specs = coverage_flaggems_kernel_specs(
+            flaggems_opset=str(flaggems_opset),
+            backend_target=str(backend_target),
+        )
+    return [str(s.name) for s in specs]
+
+
+def _resolve_suite_and_kernel_filter(
+    *,
+    requested_suite: str,
+    requested_kernels: list[str],
+    flaggems_opset: str,
+    backend_target: str,
+) -> tuple[str, list[str]]:
+    suite = str(requested_suite)
+    kernels = [str(k) for k in (requested_kernels or []) if str(k).strip()]
+
+    if not kernels:
+        if suite in {"coverage", "all"}:
+            return "coverage", _suite_kernel_names(
+                suite="coverage",
+                flaggems_opset=str(flaggems_opset),
+                backend_target=str(backend_target),
+            )
+        return suite, []
+
+    if suite == "smoke":
+        smoke = set(
+            _suite_kernel_names(
+                suite="smoke",
+                flaggems_opset=str(flaggems_opset),
+                backend_target=str(backend_target),
+            )
+        )
+        missing_from_smoke = [k for k in kernels if k not in smoke]
+        if not missing_from_smoke:
+            return "smoke", kernels
+
+        coverage = set(
+            _suite_kernel_names(
+                suite="coverage",
+                flaggems_opset=str(flaggems_opset),
+                backend_target=str(backend_target),
+            )
+        )
+        unknown = [k for k in missing_from_smoke if k not in coverage]
+        if unknown:
+            raise SystemExit(
+                f"unknown kernel(s) for deterministic_forward opset: {', '.join(sorted(set(unknown)))}"
+            )
+        return "coverage", kernels
+
+    coverage = set(
+        _suite_kernel_names(
+            suite="coverage",
+            flaggems_opset=str(flaggems_opset),
+            backend_target=str(backend_target),
+        )
+    )
+    unknown = [k for k in kernels if k not in coverage]
+    if unknown:
+        raise SystemExit(f"unknown kernel(s) for deterministic_forward opset: {', '.join(sorted(set(unknown)))}")
+    return "coverage", kernels
 
 
 def main() -> None:
@@ -105,20 +183,12 @@ def main() -> None:
     seed_cache_dir.mkdir(parents=True, exist_ok=True)
 
     stage_results: list[dict[str, Any]] = []
-    kernel_filter = [str(k) for k in (args.kernel or []) if str(k).strip()]
-
-    # For coverage/all, backend smoke should use the same e2e kernel set as
-    # provider pipeline, not the small default smoke list.
-    if not kernel_filter and str(args.suite) in {"coverage", "all"}:
-        from pipeline.triton.providers.flaggems.specs import coverage_flaggems_kernel_specs  # noqa: PLC0415
-
-        kernel_filter = [
-            str(s.name)
-            for s in coverage_flaggems_kernel_specs(
-                flaggems_opset=str(args.flaggems_opset),
-                backend_target=str(args.backend_target),
-            )
-        ]
+    effective_suite, kernel_filter = _resolve_suite_and_kernel_filter(
+        requested_suite=str(args.suite),
+        requested_kernels=[str(k) for k in (args.kernel or [])],
+        flaggems_opset=str(args.flaggems_opset),
+        backend_target=str(args.backend_target),
+    )
 
     def _record(stage: str, rc: int, stdout: str, stderr: str, extra: dict | None = None) -> None:
         row = {
@@ -137,7 +207,7 @@ def main() -> None:
             sys.executable,
             "scripts/triton/flaggems_full_pipeline_verify.py",
             "--suite",
-            str(args.suite),
+            str(effective_suite),
             "--cases-limit",
             str(int(args.cases_limit)),
             "--flaggems-opset",
@@ -192,7 +262,7 @@ def main() -> None:
             "--frontend",
             "triton",
             "--suite",
-            str(args.suite),
+            str(effective_suite),
             "--triton-provider",
             "flaggems",
             "--flaggems-opset",
@@ -270,7 +340,8 @@ def main() -> None:
     ok = all(bool(r.get("ok")) for r in stage_results)
     summary = {
         "ok": bool(ok),
-        "suite": str(args.suite),
+        "requested_suite": str(args.suite),
+        "suite": str(effective_suite),
         "kernel_filter": list(kernel_filter),
         "flaggems_path": str(args.flaggems_path),
         "intentir_mode": str(args.intentir_mode),

@@ -400,12 +400,33 @@ _MACRO_TEMPLATE: dict[str, SemanticMapping] = {
         pattern_id="macro.softplus",
         detail="mapped as log(1 + exp(x))",
     ),
+    "celu": _mk(
+        "celu",
+        ("const", "gt", "exp", "const", "sub", "where"),
+        mapping_kind="macro_template",
+        pattern_id="macro.celu",
+        detail="mapped as where(x > 0, x, alpha * (exp(x/alpha) - 1)) with alpha=1",
+    ),
     "elu": _mk(
         "elu",
         ("const", "gt", "exp", "const", "sub", "where"),
         mapping_kind="macro_template",
         pattern_id="macro.elu",
         detail="mapped as where(x > 0, x, alpha * (exp(x) - 1)) with alpha=1",
+    ),
+    "eye": _mk(
+        "eye",
+        ("iota", "iota", "ne", "not", "cast"),
+        mapping_kind="macro_template",
+        pattern_id="macro.eye",
+        detail="mapped as cast(not(ne(iota_row, iota_col)))",
+    ),
+    "eye_m": _mk(
+        "eye_m",
+        ("iota", "iota", "ne", "not", "cast"),
+        mapping_kind="macro_template",
+        pattern_id="macro.eye_m",
+        detail="mapped as cast(not(ne(iota_row, iota_col))) on rectangular shape",
     ),
     "gelu": _mk(
         "gelu",

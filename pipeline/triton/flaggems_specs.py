@@ -116,6 +116,7 @@ FLAGGEMS_FLIP_SRC = _module_source_text("flag_gems.ops.flip")
 FLAGGEMS_INDEX_SELECT_SRC = _module_source_text("flag_gems.ops.index_select")
 FLAGGEMS_SOFTMAX_SRC = _module_source_text("flag_gems.ops.softmax")
 FLAGGEMS_RELU_SRC = _module_source_text("flag_gems.ops.relu")
+FLAGGEMS_CELU_SRC = _module_source_text("flag_gems.ops.celu")
 FLAGGEMS_ELU_SRC = _module_source_text("flag_gems.ops.elu")
 FLAGGEMS_EXP_SRC = _module_source_text("flag_gems.ops.exp")
 FLAGGEMS_ISCLOSE_SRC = _module_source_text("flag_gems.ops.isclose")
@@ -139,6 +140,8 @@ FLAGGEMS_TO_COPY_SRC = _module_source_text("flag_gems.ops.to")
 FLAGGEMS_CLAMP_SRC = _module_source_text("flag_gems.ops.clamp")
 FLAGGEMS_THRESHOLD_SRC = _module_source_text("flag_gems.ops.threshold")
 FLAGGEMS_UPSAMPLE_BICUBIC2D_AA_SRC = _module_source_text("flag_gems.ops.upsample_bicubic2d_aa")
+FLAGGEMS_EYE_SRC = _module_source_text("flag_gems.ops.eye")
+FLAGGEMS_EYE_M_SRC = _module_source_text("flag_gems.ops.eye_m")
 
 
 def _rng(seed: int) -> np.random.Generator:
@@ -1932,6 +1935,30 @@ def _run_flaggems_relu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     }
 
 
+def _run_flaggems_celu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["celu"]):
+        out = torch.nn.functional.celu(inp, alpha=1.0)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
 def _run_flaggems_elu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     m = int(case.shapes.get("M", 4))
     n = int(case.shapes.get("N", 64))
@@ -1952,6 +1979,31 @@ def _run_flaggems_elu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         "inp": inp_np,
         "out": out_np,
         "input": inp_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_eye2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = int(case.shapes.get("N", 8))
+    device = str(flag_gems.device)
+    with flag_gems.use_gems(include=["eye"]):
+        out = torch.eye(n, device=device, dtype=torch.float32)
+    out_np = _to_np(out)
+    return {
+        "out": out_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_eye_m2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = int(case.shapes.get("N", 8))
+    m = int(case.shapes.get("M", 6))
+    device = str(flag_gems.device)
+    with flag_gems.use_gems(include=["eye_m"]):
+        out = torch.eye(n, m, device=device, dtype=torch.float32)
+    out_np = _to_np(out)
+    return {
+        "out": out_np,
         "output": out_np,
     }
 
@@ -2980,6 +3032,14 @@ _FLAGGEMS_SPEC_BUILDERS = {
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
     ),
+    "celu2d": lambda: KernelSpec(
+        name="celu2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_CELU_SRC",
+        runner=_run_flaggems_celu2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
     "elu2d": lambda: KernelSpec(
         name="elu2d",
         module="pipeline.triton.flaggems_specs",
@@ -3178,6 +3238,22 @@ _FLAGGEMS_SPEC_BUILDERS = {
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
     ),
+    "eye2d": lambda: KernelSpec(
+        name="eye2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_EYE_SRC",
+        runner=_run_flaggems_eye2d_reference,
+        canonical_shapes={"N": 8},
+        vary_axes=["N"],
+    ),
+    "eye_m2d": lambda: KernelSpec(
+        name="eye_m2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_EYE_M_SRC",
+        runner=_run_flaggems_eye_m2d_reference,
+        canonical_shapes={"N": 8, "M": 6},
+        vary_axes=["N", "M"],
+    ),
     "identity2d": lambda: KernelSpec(
         name="identity2d",
         module="pipeline.triton.flaggems_specs",
@@ -3359,6 +3435,7 @@ __all__ = [
     "FLAGGEMS_LERP_SRC",
     "FLAGGEMS_SOFTMAX_SRC",
     "FLAGGEMS_RELU_SRC",
+    "FLAGGEMS_CELU_SRC",
     "FLAGGEMS_ELU_SRC",
     "FLAGGEMS_EXP_SRC",
     "FLAGGEMS_ISCLOSE_SRC",
@@ -3372,6 +3449,8 @@ __all__ = [
     "FLAGGEMS_CLAMP_SRC",
     "FLAGGEMS_THRESHOLD_SRC",
     "FLAGGEMS_UPSAMPLE_BICUBIC2D_AA_SRC",
+    "FLAGGEMS_EYE_SRC",
+    "FLAGGEMS_EYE_M_SRC",
     "default_flaggems_kernel_specs",
     "coverage_flaggems_kernel_specs",
 ]
