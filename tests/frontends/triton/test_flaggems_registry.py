@@ -49,6 +49,9 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
             "atan",
             "cat",
             "arange",
+            "addcmul",
+            "addcdiv",
+            "addr",
             "sub",
             "mul",
             "div",
@@ -123,6 +126,9 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
     assert "atan2d" in specs
     assert "cat2d" in specs
     assert "arange1d" in specs
+    assert "addcmul2d" in specs
+    assert "addcdiv2d" in specs
+    assert "addr2d" in specs
     assert "sub2d" in specs
     assert "mul2d" in specs
     assert "div2d" in specs

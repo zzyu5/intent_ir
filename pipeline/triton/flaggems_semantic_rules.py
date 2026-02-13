@@ -473,6 +473,27 @@ _MACRO_TEMPLATE: dict[str, SemanticMapping] = {
         pattern_id="macro.addmv",
         detail="mapped as add(input, matmul(mat, vec))",
     ),
+    "addcmul": _mk(
+        "addcmul",
+        ("const", "mul", "mul", "add"),
+        mapping_kind="macro_template",
+        pattern_id="macro.addcmul",
+        detail="mapped as input + value * tensor1 * tensor2",
+    ),
+    "addcdiv": _mk(
+        "addcdiv",
+        ("const", "mul", "div", "add"),
+        mapping_kind="macro_template",
+        pattern_id="macro.addcdiv",
+        detail="mapped as input + value * tensor1 / tensor2",
+    ),
+    "addr": _mk(
+        "addr",
+        ("const", "mul", "matmul", "const", "mul", "add"),
+        mapping_kind="macro_template",
+        pattern_id="macro.addr",
+        detail="mapped as beta*input + alpha*outer(vec1, vec2) via matmul decomposition",
+    ),
     "upsample_bicubic2d_aa": _mk(
         "upsample_bicubic2d_aa",
         ("upsample_bicubic2d_aa",),

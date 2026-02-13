@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-13T11:43:25.012649+00:00",
+  "generated_at": "2026-02-13T11:48:07.144687+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -19,8 +19,8 @@
     "semantic_ops": 196,
     "by_status": {
       "blocked_backend": 44,
-      "blocked_ir": 59,
-      "dual_pass": 92,
+      "blocked_ir": 56,
+      "dual_pass": 95,
       "rvv_only": 1
     },
     "by_family": {
@@ -229,39 +229,89 @@
         "addcdiv"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "const",
+        "mul",
+        "div",
+        "add"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.addcdiv",
+      "e2e_spec": "addcdiv2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as input + value * tensor1 / tensor2",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "requested_ops": [
+            "add",
+            "const",
+            "div",
+            "mul"
+          ],
+          "known_ops": [
+            "add",
+            "const",
+            "div",
+            "mul"
+          ],
           "unknown_ops": [],
-          "supported_ops": [],
+          "supported_ops": [
+            "add",
+            "const",
+            "div",
+            "mul"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "requested_ops": [
+            "add",
+            "const",
+            "div",
+            "mul"
+          ],
+          "known_ops": [
+            "add",
+            "const",
+            "div",
+            "mul"
+          ],
           "unknown_ops": [],
-          "supported_ops": [],
+          "supported_ops": [
+            "add",
+            "const",
+            "div",
+            "mul"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "requested_ops": [
+            "add",
+            "const",
+            "div",
+            "mul"
+          ],
+          "known_ops": [
+            "add",
+            "const",
+            "div",
+            "mul"
+          ],
           "unknown_ops": [],
-          "supported_ops": [],
+          "supported_ops": [
+            "add",
+            "const",
+            "div",
+            "mul"
+          ],
           "missing_ops": []
         }
       }
@@ -272,39 +322,80 @@
         "addcmul"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "const",
+        "mul",
+        "mul",
+        "add"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.addcmul",
+      "e2e_spec": "addcmul2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as input + value * tensor1 * tensor2",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "requested_ops": [
+            "add",
+            "const",
+            "mul"
+          ],
+          "known_ops": [
+            "add",
+            "const",
+            "mul"
+          ],
           "unknown_ops": [],
-          "supported_ops": [],
+          "supported_ops": [
+            "add",
+            "const",
+            "mul"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "requested_ops": [
+            "add",
+            "const",
+            "mul"
+          ],
+          "known_ops": [
+            "add",
+            "const",
+            "mul"
+          ],
           "unknown_ops": [],
-          "supported_ops": [],
+          "supported_ops": [
+            "add",
+            "const",
+            "mul"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "requested_ops": [
+            "add",
+            "const",
+            "mul"
+          ],
+          "known_ops": [
+            "add",
+            "const",
+            "mul"
+          ],
           "unknown_ops": [],
-          "supported_ops": [],
+          "supported_ops": [
+            "add",
+            "const",
+            "mul"
+          ],
           "missing_ops": []
         }
       }
@@ -389,39 +480,91 @@
         "addr"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "const",
+        "mul",
+        "matmul",
+        "const",
+        "mul",
+        "add"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.addr",
+      "e2e_spec": "addr2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as beta*input + alpha*outer(vec1, vec2) via matmul decomposition",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "requested_ops": [
+            "add",
+            "const",
+            "matmul",
+            "mul"
+          ],
+          "known_ops": [
+            "add",
+            "const",
+            "matmul",
+            "mul"
+          ],
           "unknown_ops": [],
-          "supported_ops": [],
+          "supported_ops": [
+            "add",
+            "const",
+            "matmul",
+            "mul"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "requested_ops": [
+            "add",
+            "const",
+            "matmul",
+            "mul"
+          ],
+          "known_ops": [
+            "add",
+            "const",
+            "matmul",
+            "mul"
+          ],
           "unknown_ops": [],
-          "supported_ops": [],
+          "supported_ops": [
+            "add",
+            "const",
+            "matmul",
+            "mul"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "requested_ops": [
+            "add",
+            "const",
+            "matmul",
+            "mul"
+          ],
+          "known_ops": [
+            "add",
+            "const",
+            "matmul",
+            "mul"
+          ],
           "unknown_ops": [],
-          "supported_ops": [],
+          "supported_ops": [
+            "add",
+            "const",
+            "matmul",
+            "mul"
+          ],
           "missing_ops": []
         }
       }

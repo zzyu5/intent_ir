@@ -61,6 +61,9 @@ def _module_source_text(mod_name: str) -> str:
 # Use full module source so LLM/evidence stage has enough context.
 FLAGGEMS_ANY_SRC = _module_source_text("flag_gems.ops.any")
 FLAGGEMS_ADD_SRC = _module_source_text("flag_gems.ops.add")
+FLAGGEMS_ADDCMUL_SRC = _module_source_text("flag_gems.ops.addcmul")
+FLAGGEMS_ADDCDIV_SRC = _module_source_text("flag_gems.ops.addcdiv")
+FLAGGEMS_ADDR_SRC = _module_source_text("flag_gems.ops.addr")
 FLAGGEMS_ACOS_SRC = _module_source_text("flag_gems.ops.acos")
 FLAGGEMS_ATAN_SRC = _module_source_text("flag_gems.ops.atan")
 FLAGGEMS_ARANGE_SRC = _module_source_text("flag_gems.ops.arange")
@@ -316,6 +319,125 @@ def _run_flaggems_binary2d_reference(
         "y": b_np,
         "out": c_np,
         "output": c_np,
+    }
+
+
+def _run_flaggems_addc2d_reference(
+    case: TestCase,
+    *,
+    include: List[str],
+    op_name: str,
+) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "A" in case.inputs:
+        a = _as_f32_tensor(np.asarray(case.inputs["A"]), device=device)
+    else:
+        a = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    if case.inputs and "B" in case.inputs:
+        b = _as_f32_tensor(np.asarray(case.inputs["B"]), device=device)
+    else:
+        b = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    if case.inputs and "C" in case.inputs:
+        c = _as_f32_tensor(np.asarray(case.inputs["C"]), device=device)
+    else:
+        c = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    if op_name == "addcdiv":
+        c = torch.where(torch.abs(c) < 1e-3, c + 1e-3, c)
+
+    if case.inputs and "value" in case.inputs:
+        value = float(np.asarray(case.inputs["value"], dtype=np.float32).reshape(()))
+    else:
+        value = 0.5
+
+    with flag_gems.use_gems(include=include):
+        if op_name == "addcmul":
+            out = torch.addcmul(a, b, c, value=float(value))
+        elif op_name == "addcdiv":
+            out = torch.addcdiv(a, b, c, value=float(value))
+        else:
+            raise ValueError(f"unsupported op_name for addc2d runner: {op_name}")
+
+    a_np = _to_np(a)
+    b_np = _to_np(b)
+    c_np = _to_np(c)
+    out_np = _to_np(out)
+    value_np = np.array(value, dtype=np.float32)
+    return {
+        "A": a_np,
+        "B": b_np,
+        "C": c_np,
+        "out": out_np,
+        "output": out_np,
+        "input": a_np,
+        "tensor1": b_np,
+        "tensor2": c_np,
+        "value": value_np,
+    }
+
+
+def _run_flaggems_addcmul2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_addc2d_reference(case, include=["addcmul"], op_name="addcmul")
+
+
+def _run_flaggems_addcdiv2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_addc2d_reference(case, include=["addcdiv"], op_name="addcdiv")
+
+
+def _run_flaggems_addr2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 8))
+    n = int(case.shapes.get("N", 16))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "A" in case.inputs:
+        a = _as_f32_tensor(np.asarray(case.inputs["A"]), device=device)
+    else:
+        a = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    if case.inputs and "vec1" in case.inputs:
+        vec1 = _as_f32_tensor(np.asarray(case.inputs["vec1"]), device=device).reshape(-1)
+    else:
+        vec1 = torch.from_numpy(rg.standard_normal((m,), dtype=np.float32)).to(device)
+
+    if case.inputs and "vec2" in case.inputs:
+        vec2 = _as_f32_tensor(np.asarray(case.inputs["vec2"]), device=device).reshape(-1)
+    else:
+        vec2 = torch.from_numpy(rg.standard_normal((n,), dtype=np.float32)).to(device)
+
+    if case.inputs and "alpha" in case.inputs:
+        alpha = float(np.asarray(case.inputs["alpha"], dtype=np.float32).reshape(()))
+    else:
+        alpha = 1.0
+    if case.inputs and "beta" in case.inputs:
+        beta = float(np.asarray(case.inputs["beta"], dtype=np.float32).reshape(()))
+    else:
+        beta = 1.0
+
+    with flag_gems.use_gems(include=["addr"]):
+        out = torch.addr(a, vec1, vec2, beta=float(beta), alpha=float(alpha))
+
+    a_np = _to_np(a)
+    vec1_np = _to_np(vec1)
+    vec2_np = _to_np(vec2)
+    out_np = _to_np(out)
+    alpha_np = np.array(alpha, dtype=np.float32)
+    beta_np = np.array(beta, dtype=np.float32)
+    return {
+        "A": a_np,
+        "vec1": vec1_np,
+        "vec2": vec2_np,
+        "out": out_np,
+        "output": out_np,
+        "input": a_np,
+        "alpha": alpha_np,
+        "beta": beta_np,
     }
 
 
@@ -2181,6 +2303,30 @@ _FLAGGEMS_SPEC_BUILDERS = {
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
     ),
+    "addcmul2d": lambda: KernelSpec(
+        name="addcmul2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_ADDCMUL_SRC",
+        runner=_run_flaggems_addcmul2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "addcdiv2d": lambda: KernelSpec(
+        name="addcdiv2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_ADDCDIV_SRC",
+        runner=_run_flaggems_addcdiv2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "addr2d": lambda: KernelSpec(
+        name="addr2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_ADDR_SRC",
+        runner=_run_flaggems_addr2d_reference,
+        canonical_shapes={"M": 8, "N": 16},
+        vary_axes=["M", "N"],
+    ),
     "acos2d": lambda: KernelSpec(
         name="acos2d",
         module="pipeline.triton.flaggems_specs",
@@ -2804,6 +2950,13 @@ def coverage_flaggems_kernel_specs(
 __all__ = [
     "FLAGGEMS_ANY_SRC",
     "FLAGGEMS_ADD_SRC",
+    "FLAGGEMS_ADDCMUL_SRC",
+    "FLAGGEMS_ADDCDIV_SRC",
+    "FLAGGEMS_ADDR_SRC",
+    "FLAGGEMS_ACOS_SRC",
+    "FLAGGEMS_ATAN_SRC",
+    "FLAGGEMS_ARANGE_SRC",
+    "FLAGGEMS_CAT_SRC",
     "FLAGGEMS_GROUP_NORM_SRC",
     "FLAGGEMS_BATCH_NORM_SRC",
     "FLAGGEMS_LAYER_NORM_SRC",

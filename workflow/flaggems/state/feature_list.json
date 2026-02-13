@@ -1,13 +1,13 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-13T11:44:30+00:00",
+  "generated_at": "2026-02-13T11:48:31+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
-      "dual_pass": 92,
+      "dual_pass": 95,
       "blocked_backend": 44,
-      "blocked_ir": 59,
+      "blocked_ir": 56,
       "rvv_only": 1
     },
     "by_family": {
@@ -64,23 +64,33 @@
       "id": "flaggems::addcdiv",
       "semantic_op": "addcdiv",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "addcdiv2d",
+      "intent_ops": [
+        "const",
+        "mul",
+        "div",
+        "add"
+      ]
     },
     {
       "id": "flaggems::addcmul",
       "semantic_op": "addcmul",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "addcmul2d",
+      "intent_ops": [
+        "const",
+        "mul",
+        "mul",
+        "add"
+      ]
     },
     {
       "id": "flaggems::addmv",
@@ -100,12 +110,19 @@
       "id": "flaggems::addr",
       "semantic_op": "addr",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "addr2d",
+      "intent_ops": [
+        "const",
+        "mul",
+        "matmul",
+        "const",
+        "mul",
+        "add"
+      ]
     },
     {
       "id": "flaggems::angle",

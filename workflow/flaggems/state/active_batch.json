@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_active_batch_v1",
-  "generated_at": "2026-02-13T11:44:39+00:00",
+  "generated_at": "2026-02-13T11:49:02+00:00",
   "branch": "flaggems",
   "batch_size": 10,
   "selection_policy": [
@@ -13,39 +13,6 @@
       "id": "flaggems::ScaleDotProductAttention",
       "semantic_op": "ScaleDotProductAttention",
       "family": "attention_sequence",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
-    },
-    {
-      "id": "flaggems::addcdiv",
-      "semantic_op": "addcdiv",
-      "family": "elementwise_broadcast",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
-    },
-    {
-      "id": "flaggems::addcmul",
-      "semantic_op": "addcmul",
-      "family": "elementwise_broadcast",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
-    },
-    {
-      "id": "flaggems::addr",
-      "semantic_op": "addr",
-      "family": "elementwise_broadcast",
       "status": "blocked_ir",
       "passes": false,
       "reason_code": "no_intentir_mapping",
@@ -118,12 +85,47 @@
       "next_action": "semantic_mapping",
       "e2e_spec": null,
       "intent_ops": []
+    },
+    {
+      "id": "flaggems::bitwise_not",
+      "semantic_op": "bitwise_not",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::bitwise_or_scalar",
+      "semantic_op": "bitwise_or_scalar",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
+    },
+    {
+      "id": "flaggems::bitwise_or_scalar_tensor",
+      "semantic_op": "bitwise_or_scalar_tensor",
+      "family": "elementwise_broadcast",
+      "status": "blocked_ir",
+      "passes": false,
+      "reason_code": "no_intentir_mapping",
+      "next_action": "semantic_mapping",
+      "e2e_spec": null,
+      "intent_ops": []
     }
   ],
   "context": {
     "feature_list_path": "workflow/flaggems/state/feature_list.json",
     "progress_log_path": "workflow/flaggems/state/progress_log.jsonl",
-    "git_log": "5f4d6a2 flaggems: converge path-mode CLI and add long-run workflow harness\n2d6a582 flaggems: stabilize bool/index kernels and expand registry coverage\n3b1d5e6 flaggems: canonicalize unstable intent seeds for sigmoid and batch norm\n14abd9e flaggems: add lerp/rms_norm/batch_norm specs and expand registry mappings\na95e938 flaggems: extend norm/index mappings and stabilize matmul specs\n766a2c2 flaggems: add matmul-family mappings and e2e specs\nd3c77b8 flaggems: expand logical/full/identity specs and alias coverage\nb833e29 flaggems: add unary/reduction specs and stabilize intent replay\n75d2627 flaggems: add compare/div specs and expand semantic mappings\nf1d5c19 flaggems: expand semantic rules, opset, and coverage specs\n3f1733d triton: split traditional vs intent-ir paths and add seed policy controls\n523a4df triton: make no-llm path replay cached intent seeds by default\n106e4f7 flaggems: refactor opset+mapping and tighten multibackend status convergence\n3f0125f verify: fix relu/upsample metamorphic relation handlers\n059f55e flaggems: cap stage-c search and restore where coverage\n153ee8c flaggems: expand provider coverage specs with relu/exp/reduce/clamp\nfd328a4 flaggems: allow disabling cuda-skip in matrix runner\n76ffa29 flaggems: add multi-backend matrix runners and status convergence\n1790f40 flaggems: add registry-driven integration and multi-backend capability preflight\nb7d93d6 experiments: propagate triton provider and rvv defaults",
-    "progress_tail": []
+    "git_log": "714e772 workflow: record flaggems session progress and handoff\ne9ac3d3 intentir: expand structural ops and converge flaggems mappings\n5f4d6a2 flaggems: converge path-mode CLI and add long-run workflow harness\n2d6a582 flaggems: stabilize bool/index kernels and expand registry coverage\n3b1d5e6 flaggems: canonicalize unstable intent seeds for sigmoid and batch norm\n14abd9e flaggems: add lerp/rms_norm/batch_norm specs and expand registry mappings\na95e938 flaggems: extend norm/index mappings and stabilize matmul specs\n766a2c2 flaggems: add matmul-family mappings and e2e specs\nd3c77b8 flaggems: expand logical/full/identity specs and alias coverage\nb833e29 flaggems: add unary/reduction specs and stabilize intent replay\n75d2627 flaggems: add compare/div specs and expand semantic mappings\nf1d5c19 flaggems: expand semantic rules, opset, and coverage specs\n3f1733d triton: split traditional vs intent-ir paths and add seed policy controls\n523a4df triton: make no-llm path replay cached intent seeds by default\n106e4f7 flaggems: refactor opset+mapping and tighten multibackend status convergence\n3f0125f verify: fix relu/upsample metamorphic relation handlers\n059f55e flaggems: cap stage-c search and restore where coverage\n153ee8c flaggems: expand provider coverage specs with relu/exp/reduce/clamp\nfd328a4 flaggems: allow disabling cuda-skip in matrix runner\n76ffa29 flaggems: add multi-backend matrix runners and status convergence",
+    "progress_tail": [
+      "{\"ts\": \"2026-02-13T11:45:53+00:00\", \"commit\": \"e9ac3d361cbd50bb11d711ca5a552fb412e4892c\", \"summary\": \"Expanded IntentIR structural+trig ops and converged FlagGems mapping/spec registry (blocked_ir 77->59).\", \"batch_ops\": [\"ScaleDotProductAttention\", \"addcdiv\", \"addcmul\", \"addr\", \"angle\", \"avg_pool2d\", \"bitwise_and_scalar\", \"bitwise_and_scalar_tensor\", \"bitwise_and_tensor\", \"bitwise_left_shift\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": null, \"status_converged_path\": null, \"next_focus\": \"Wave-A blocked_ir batch: addcdiv/addcmul/addr + bitwise family + avg_pool2d mapping/specs.\"}"
+    ]
   }
 }
