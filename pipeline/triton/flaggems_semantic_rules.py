@@ -687,6 +687,27 @@ _MACRO_TEMPLATE: dict[str, SemanticMapping] = {
         pattern_id="macro.nll_loss2d_forward",
         detail="mapped to nll_loss2d_forward primitive",
     ),
+    "nll_loss_forward": _mk(
+        "nll_loss_forward",
+        ("nll_loss_forward",),
+        mapping_kind="macro_template",
+        pattern_id="macro.nll_loss_forward",
+        detail="mapped to nll_loss_forward primitive",
+    ),
+    "one_hot": _mk(
+        "one_hot",
+        ("iota", "broadcast_in_dim", "ne", "not", "cast"),
+        mapping_kind="macro_template",
+        pattern_id="macro.one_hot_via_iota_eq",
+        detail="mapped as cast(not(ne(iota_class, broadcast(index))))",
+    ),
+    "max_pool2d_with_indices": _mk(
+        "max_pool2d_with_indices",
+        ("max_pool2d_with_indices", "max_pool2d_with_indices"),
+        mapping_kind="macro_template",
+        pattern_id="macro.max_pool2d_with_indices",
+        detail="mapped as dual value/index extraction with max_pool2d_with_indices primitive",
+    ),
 }
 
 

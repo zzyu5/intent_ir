@@ -134,3 +134,23 @@ def test_flaggems_plugin_forces_deterministic_overrides_for_known_unstable_specs
     assert info7.get("enabled_by") == "provider_required_deterministic_override"
     assert out7.intent.name == "nll_loss2d_forward"
     assert out7_exp is not None
+
+    out8, out8_exp, info8 = plugin.maybe_normalize_candidate(
+        spec_name="one_hot2d",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info8 is not None
+    assert info8.get("enabled_by") == "provider_required_deterministic_override"
+    assert out8.intent.name == "one_hot2d"
+    assert out8_exp is not None
+
+    out9, out9_exp, info9 = plugin.maybe_normalize_candidate(
+        spec_name="max_pool2d_with_indices_nchw",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info9 is not None
+    assert info9.get("enabled_by") == "provider_required_deterministic_override"
+    assert out9.intent.name == "max_pool2d_with_indices_nchw"
+    assert out9_exp is not None

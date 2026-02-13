@@ -120,9 +120,11 @@ FLAGGEMS_LINSPACE_SRC = _module_source_text("flag_gems.ops.linspace")
 FLAGGEMS_LOGSPACE_SRC = _module_source_text("flag_gems.ops.logspace")
 FLAGGEMS_MASKED_SELECT_SRC = _module_source_text("flag_gems.ops.masked_select")
 FLAGGEMS_MASKED_SCATTER_SRC = _module_source_text("flag_gems.ops.masked_scatter")
+FLAGGEMS_MAX_POOL2D_WITH_INDICES_SRC = _module_source_text("flag_gems.ops.max_pool2d_with_indices")
 FLAGGEMS_MSE_LOSS_SRC = _module_source_text("flag_gems.ops.mse_loss")
 FLAGGEMS_NAN_TO_NUM_SRC = _module_source_text("flag_gems.ops.nan_to_num")
 FLAGGEMS_NLL_LOSS_SRC = _module_source_text("flag_gems.ops.nllloss")
+FLAGGEMS_ONE_HOT_SRC = _module_source_text("flag_gems.ops.one_hot")
 FLAGGEMS_GLU_SRC = _module_source_text("flag_gems.ops.glu")
 FLAGGEMS_CUMMAX_SRC = _module_source_text("flag_gems.ops.cummax")
 FLAGGEMS_CUMMIN_SRC = _module_source_text("flag_gems.ops.cummin")
@@ -1948,6 +1950,135 @@ def _run_flaggems_nll_loss2d_forward_reference(case: TestCase) -> Dict[str, np.n
     }
 
 
+def _run_flaggems_nll_loss_forward_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = int(case.shapes.get("N", 16))
+    c = int(case.shapes.get("C", 8))
+    reduction = int(case.shapes.get("reduction", 1))
+    if reduction not in {0, 1, 2}:
+        reduction = 1
+    ignore_index = int(case.shapes.get("ignore_index", -100))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "self" in case.inputs:
+        self_t = _as_f32_tensor(np.asarray(case.inputs["self"]), device=device)
+    else:
+        logits = torch.from_numpy(rg.standard_normal((n, c), dtype=np.float32)).to(device)
+        self_t = torch.log_softmax(logits, dim=1)
+
+    if case.inputs and "target" in case.inputs:
+        target = torch.as_tensor(np.asarray(case.inputs["target"]), device=device, dtype=torch.int64).reshape(-1)
+    else:
+        target = torch.from_numpy(rg.integers(0, max(1, c), size=(n,), dtype=np.int64)).to(device)
+    if case.inputs and "weight" in case.inputs:
+        weight = _as_f32_tensor(np.asarray(case.inputs["weight"]), device=device).reshape(c)
+    else:
+        weight = torch.from_numpy(np.abs(rg.standard_normal((c,), dtype=np.float32)) + 0.1).to(device)
+
+    with flag_gems.use_gems(include=["nll_loss_forward"]):
+        out, total_weight = flag_gems_ops.nll_loss_forward(
+            self_t,
+            target,
+            weight=weight,
+            reduction=reduction,
+            ignore_index=ignore_index,
+        )
+
+    self_np = _to_np(self_t)
+    target_np = _to_np(target).astype(np.int64, copy=False)
+    weight_np = _to_np(weight)
+    out_np = np.asarray(_to_np(out), dtype=np.float32)
+    tw_np = np.asarray(_to_np(total_weight), dtype=np.float32)
+    return {
+        "self": self_np,
+        "target": target_np,
+        "weight": weight_np,
+        "reduction": np.array(reduction, dtype=np.int32),
+        "ignore_index": np.array(ignore_index, dtype=np.int32),
+        "output": out_np,
+        "total_weight": tw_np,
+        "out": out_np,
+    }
+
+
+def _run_flaggems_one_hot2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 16))
+    c = int(case.shapes.get("C", 8))
+    m = max(1, m)
+    c = max(1, c)
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "tensor" in case.inputs:
+        tensor = torch.as_tensor(np.asarray(case.inputs["tensor"]), device=device, dtype=torch.int64).reshape(-1)
+    else:
+        tensor = torch.from_numpy(rg.integers(0, c, size=(m,), dtype=np.int64)).to(device)
+
+    with flag_gems.use_gems(include=["one_hot"]):
+        out = flag_gems_ops.one_hot(tensor, num_classes=c)
+
+    tensor_np = _to_np(tensor).astype(np.int64, copy=False)
+    out_np = _to_np(out).astype(np.int64, copy=False)
+    return {
+        "tensor": tensor_np,
+        "num_classes": np.array(c, dtype=np.int32),
+        "out": out_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_max_pool2d_with_indices_nchw_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = int(case.shapes.get("N", 1))
+    c = int(case.shapes.get("C", 1))
+    h = int(case.shapes.get("H", 4))
+    w = int(case.shapes.get("W", 4))
+    kh = int(case.shapes.get("KH", 2))
+    kw = int(case.shapes.get("KW", 2))
+    sh = int(case.shapes.get("SH", 2))
+    sw = int(case.shapes.get("SW", 2))
+    ph = int(case.shapes.get("PH", 0))
+    pw = int(case.shapes.get("PW", 0))
+    dh = int(case.shapes.get("DH", 1))
+    dw = int(case.shapes.get("DW", 1))
+    ceil_mode = bool(case.shapes.get("CEIL_MODE", 0))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "input" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["input"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((n, c, h, w), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["max_pool2d_with_indices"]):
+        out, indices = flag_gems_ops.max_pool2d_with_indices(
+            inp,
+            kernel_size=(kh, kw),
+            stride=(sh, sw),
+            padding=(ph, pw),
+            dilation=(dh, dw),
+            ceil_mode=ceil_mode,
+        )
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    indices_np = _to_np(indices).astype(np.int64, copy=False)
+    return {
+        "input": inp_np,
+        "out": out_np,
+        "output": out_np,
+        "indices": indices_np,
+        "kernel_h": np.array(kh, dtype=np.int32),
+        "kernel_w": np.array(kw, dtype=np.int32),
+        "stride_h": np.array(sh, dtype=np.int32),
+        "stride_w": np.array(sw, dtype=np.int32),
+        "pad_h": np.array(ph, dtype=np.int32),
+        "pad_w": np.array(pw, dtype=np.int32),
+        "dilation_h": np.array(dh, dtype=np.int32),
+        "dilation_w": np.array(dw, dtype=np.int32),
+        "ceil_mode": np.array(1 if ceil_mode else 0, dtype=np.int32),
+    }
+
+
 def _run_flaggems_glu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     m = int(case.shapes.get("M", 4))
     n = int(case.shapes.get("N", 64))
@@ -3266,6 +3397,53 @@ def _norm_nll_loss2d_forward(shapes: Dict[str, int]) -> Dict[str, int]:
     return out
 
 
+def _norm_nll_loss_forward(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    out["N"] = max(1, int(out.get("N", 16)))
+    out["C"] = max(2, int(out.get("C", 8)))
+    reduction = int(out.get("reduction", 1))
+    out["reduction"] = reduction if reduction in {0, 1, 2} else 1
+    out["ignore_index"] = int(out.get("ignore_index", -100))
+    return out
+
+
+def _norm_one_hot2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    out["M"] = max(1, int(out.get("M", 16)))
+    out["C"] = max(2, int(out.get("C", 8)))
+    return out
+
+
+def _norm_max_pool2d_with_indices_nchw(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    out["N"] = max(1, int(out.get("N", 1)))
+    out["C"] = max(1, int(out.get("C", 1)))
+    kh = max(1, int(out.get("KH", 2)))
+    kw = max(1, int(out.get("KW", 2)))
+    dh = max(1, int(out.get("DH", 1)))
+    dw = max(1, int(out.get("DW", 1)))
+    ph = max(0, int(out.get("PH", 0)))
+    pw = max(0, int(out.get("PW", 0)))
+    sh = max(1, int(out.get("SH", kh)))
+    sw = max(1, int(out.get("SW", kw)))
+    eff_h = dh * (kh - 1) + 1
+    eff_w = dw * (kw - 1) + 1
+    min_h = max(1, eff_h - (2 * ph))
+    min_w = max(1, eff_w - (2 * pw))
+    out["H"] = max(min_h, int(out.get("H", 8)))
+    out["W"] = max(min_w, int(out.get("W", 8)))
+    out["KH"] = kh
+    out["KW"] = kw
+    out["SH"] = sh
+    out["SW"] = sw
+    out["PH"] = ph
+    out["PW"] = pw
+    out["DH"] = dh
+    out["DW"] = dw
+    out["CEIL_MODE"] = int(bool(out.get("CEIL_MODE", 0)))
+    return out
+
+
 def _norm_index_put2d(shapes: Dict[str, int]) -> Dict[str, int]:
     out = dict(shapes)
     m = max(1, int(out.get("M", 16)))
@@ -4026,6 +4204,39 @@ _FLAGGEMS_SPEC_BUILDERS = {
         stage_c_max_cases=4,
         mutation_bounded_max_cases=2,
     ),
+    "nll_loss_forward": lambda: KernelSpec(
+        name="nll_loss_forward",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_NLL_LOSS_SRC",
+        runner=_run_flaggems_nll_loss_forward_reference,
+        canonical_shapes={"N": 16, "C": 8, "reduction": 1, "ignore_index": -100},
+        vary_axes=["N", "C"],
+        normalize_shapes=_norm_nll_loss_forward,
+        stage_c_max_cases=4,
+        mutation_bounded_max_cases=2,
+    ),
+    "one_hot2d": lambda: KernelSpec(
+        name="one_hot2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_ONE_HOT_SRC",
+        runner=_run_flaggems_one_hot2d_reference,
+        canonical_shapes={"M": 16, "C": 8},
+        vary_axes=["M", "C"],
+        normalize_shapes=_norm_one_hot2d,
+        stage_c_max_cases=6,
+        mutation_bounded_max_cases=3,
+    ),
+    "max_pool2d_with_indices_nchw": lambda: KernelSpec(
+        name="max_pool2d_with_indices_nchw",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_MAX_POOL2D_WITH_INDICES_SRC",
+        runner=_run_flaggems_max_pool2d_with_indices_nchw_reference,
+        canonical_shapes={"N": 1, "C": 1, "H": 8, "W": 8, "KH": 2, "KW": 2, "SH": 2, "SW": 2, "PH": 0, "PW": 0, "DH": 1, "DW": 1, "CEIL_MODE": 0},
+        vary_axes=["N", "C", "H", "W"],
+        normalize_shapes=_norm_max_pool2d_with_indices_nchw,
+        stage_c_max_cases=4,
+        mutation_bounded_max_cases=2,
+    ),
     "glu2d": lambda: KernelSpec(
         name="glu2d",
         module="pipeline.triton.flaggems_specs",
@@ -4260,6 +4471,8 @@ __all__ = [
     "FLAGGEMS_MSE_LOSS_SRC",
     "FLAGGEMS_NAN_TO_NUM_SRC",
     "FLAGGEMS_NLL_LOSS_SRC",
+    "FLAGGEMS_ONE_HOT_SRC",
+    "FLAGGEMS_MAX_POOL2D_WITH_INDICES_SRC",
     "FLAGGEMS_GLU_SRC",
     "FLAGGEMS_CUMMAX_SRC",
     "FLAGGEMS_CUMMIN_SRC",

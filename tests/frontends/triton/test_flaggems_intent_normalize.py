@@ -117,6 +117,18 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert nll_loss is not None
     assert [op.op for op in nll_loss.ops] == ["nll_loss2d_forward"]
 
+    nll_loss_1d = canonical_flaggems_intent_for_spec("nll_loss_forward")
+    assert nll_loss_1d is not None
+    assert [op.op for op in nll_loss_1d.ops] == ["nll_loss_forward"]
+
+    one_hot = canonical_flaggems_intent_for_spec("one_hot2d")
+    assert one_hot is not None
+    assert [op.op for op in one_hot.ops] == ["iota", "broadcast_in_dim", "ne", "not", "cast"]
+
+    pool_idx = canonical_flaggems_intent_for_spec("max_pool2d_with_indices_nchw")
+    assert pool_idx is not None
+    assert [op.op for op in pool_idx.ops] == ["max_pool2d_with_indices", "max_pool2d_with_indices"]
+
     glu = canonical_flaggems_intent_for_spec("glu2d")
     assert glu is not None
     assert [op.op for op in glu.ops] == ["glu"]
@@ -187,6 +199,15 @@ def test_maybe_normalize_flaggems_candidate_overrides_known_spec() -> None:
     assert out2.intent.name == "masked_fill2d"
     assert out2_expanded is not None
     assert [op.op for op in out2.intent.ops] == ["where"]
+
+    out3, out3_expanded, info3 = maybe_normalize_flaggems_candidate(
+        spec_name="one_hot2d",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info3 is not None and info3.get("applied") is True
+    assert out3.intent.name == "one_hot2d"
+    assert out3_expanded is not None
 
 
 def test_maybe_normalize_flaggems_candidate_noop_for_other_specs() -> None:

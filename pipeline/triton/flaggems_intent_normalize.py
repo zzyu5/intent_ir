@@ -488,6 +488,96 @@ def _canonical_nll_loss2d_forward_intent() -> IntentFunction:
     )
 
 
+def _canonical_nll_loss_forward_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "nll_loss_forward",
+            "tensors": {
+                "self": {"dtype": "f32", "shape": ["N", "C"], "layout": "row_major"},
+                "target": {"dtype": "i64", "shape": ["N"], "layout": "row_major"},
+                "weight": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "output": {"dtype": "f32", "shape": [], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "nll_loss_forward",
+                    "inputs": ["self", "target", "weight"],
+                    "output": "output",
+                    "attrs": {"reduction": 1, "ignore_index": -100},
+                },
+            ],
+            "outputs": ["output"],
+        }
+    )
+
+
+def _canonical_one_hot2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "one_hot2d",
+            "tensors": {
+                "tensor": {"dtype": "i64", "shape": ["M"], "layout": "row_major"},
+                "out": {"dtype": "i64", "shape": ["M", "C"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "iota", "inputs": [], "output": "class_idx", "attrs": {"axis": 1, "shape": ["M", "C"], "dtype": "i32"}},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["tensor"],
+                    "output": "token_idx",
+                    "attrs": {"out_shape": ["M", "C"], "broadcast_dims": [0]},
+                },
+                {"op": "ne", "inputs": ["token_idx", "class_idx"], "output": "neq_mask"},
+                {"op": "not", "inputs": ["neq_mask"], "output": "eq_mask"},
+                {"op": "cast", "inputs": ["eq_mask"], "output": "out", "attrs": {"to": "i64"}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_max_pool2d_with_indices_nchw_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "max_pool2d_with_indices_nchw",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["N", "C", "H", "W"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N", "C", "OH", "OW"], "layout": "row_major"},
+                "indices": {"dtype": "i64", "shape": ["N", "C", "OH", "OW"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "max_pool2d_with_indices",
+                    "inputs": ["input"],
+                    "output": "out",
+                    "attrs": {
+                        "kernel_size": [2, 2],
+                        "stride": [2, 2],
+                        "padding": [0, 0],
+                        "dilation": [1, 1],
+                        "ceil_mode": False,
+                        "select": "values",
+                    },
+                },
+                {
+                    "op": "max_pool2d_with_indices",
+                    "inputs": ["input"],
+                    "output": "indices",
+                    "attrs": {
+                        "kernel_size": [2, 2],
+                        "stride": [2, 2],
+                        "padding": [0, 0],
+                        "dilation": [1, 1],
+                        "ceil_mode": False,
+                        "select": "indices",
+                    },
+                },
+            ],
+            "outputs": ["out", "indices"],
+        }
+    )
+
+
 def _canonical_glu2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -783,6 +873,12 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_nan_to_num2d_intent()
     if name == "nll_loss2d_forward":
         return _canonical_nll_loss2d_forward_intent()
+    if name == "nll_loss_forward":
+        return _canonical_nll_loss_forward_intent()
+    if name == "one_hot2d":
+        return _canonical_one_hot2d_intent()
+    if name == "max_pool2d_with_indices_nchw":
+        return _canonical_max_pool2d_with_indices_nchw_intent()
     if name == "glu2d":
         return _canonical_glu2d_intent()
     if name == "cummax1d":

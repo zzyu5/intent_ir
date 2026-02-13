@@ -158,6 +158,24 @@ def test_new_structure_ops_validate_success() -> None:
                 "output": "NLL_OUT",
                 "attrs": {"reduction": 1, "ignore_index": -100},
             },
+            {
+                "op": "nll_loss_forward",
+                "inputs": ["LOGITS1", "TARGET1", "WEIGHT1"],
+                "output": "NLL1_OUT",
+                "attrs": {"reduction": 1, "ignore_index": -100},
+            },
+            {
+                "op": "max_pool2d_with_indices",
+                "inputs": ["X4"],
+                "output": "P2V",
+                "attrs": {"kernel_size": [2, 2], "stride": [2, 2], "padding": [0, 0], "select": "values"},
+            },
+            {
+                "op": "max_pool2d_with_indices",
+                "inputs": ["X4"],
+                "output": "P2I",
+                "attrs": {"kernel_size": [2, 2], "stride": [2, 2], "padding": [0, 0], "select": "indices"},
+            },
         ],
         "outputs": ["Out"],
     }
@@ -183,6 +201,12 @@ def test_new_structure_ops_validate_success() -> None:
     src["tensors"]["TARGET2"] = {"dtype": "i64", "shape": ["NB", "HB", "WB"], "layout": "row_major"}
     src["tensors"]["WEIGHT2"] = {"dtype": "f32", "shape": ["CB"], "layout": "row_major"}
     src["tensors"]["NLL_OUT"] = {"dtype": "f32", "shape": [], "layout": "row_major"}
+    src["tensors"]["LOGITS1"] = {"dtype": "f32", "shape": ["NB1", "CB1"], "layout": "row_major"}
+    src["tensors"]["TARGET1"] = {"dtype": "i64", "shape": ["NB1"], "layout": "row_major"}
+    src["tensors"]["WEIGHT1"] = {"dtype": "f32", "shape": ["CB1"], "layout": "row_major"}
+    src["tensors"]["NLL1_OUT"] = {"dtype": "f32", "shape": [], "layout": "row_major"}
+    src["tensors"]["P2V"] = {"dtype": "f32", "shape": ["N", "C", "OH", "OW"], "layout": "row_major"}
+    src["tensors"]["P2I"] = {"dtype": "i64", "shape": ["N", "C", "OH", "OW"], "layout": "row_major"}
     intent = IntentFunction.from_json_dict(src)
     assert intent.name == "structure_ok"
 

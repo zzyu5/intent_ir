@@ -146,8 +146,17 @@ _OP_SPECS: tuple[OpSpec, ...] = (
     OpSpec("kron", "experimental", "semantic", (2,)),
     OpSpec("masked_select", "experimental", "index", (2,)),
     OpSpec("masked_scatter", "experimental", "index", (3,)),
+    OpSpec("max_pool2d_with_indices", "experimental", "semantic", (1,), attr_schema={"kernel_size": "int_or_int_list!", "stride": "int_or_int_list", "padding": "int_or_int_list", "dilation": "int_or_int_list", "ceil_mode": "bool", "select": "str"}),
     OpSpec("mse_loss", "experimental", "semantic", (2,), attr_schema={"reduction": "int"}),
     OpSpec("nan_to_num", "experimental", "elementwise", (1,), attr_schema={"nan": "number", "posinf": "number", "neginf": "number"}),
+    OpSpec(
+        "nll_loss_forward",
+        "experimental",
+        "semantic",
+        (2,),
+        arity_mode="min",
+        attr_schema={"reduction": "int", "ignore_index": "int"},
+    ),
     OpSpec(
         "nll_loss2d_forward",
         "experimental",

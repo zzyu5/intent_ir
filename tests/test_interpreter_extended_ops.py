@@ -505,3 +505,89 @@ def test_masked_select_mse_nan_to_num_and_nll_loss_execute() -> None:
     cls = np.array([0, 2, 1, 0], dtype=np.int64)
     expected_nll = float(np.sum((-picked) * weight[cls]) / np.sum(weight[cls]))
     assert np.allclose(out["nll_out"], np.array(expected_nll, dtype=np.float32), atol=1e-6)
+
+
+def test_nll_loss_forward_and_max_pool2d_with_indices_execute() -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "nll1d_and_pool_indices",
+            "tensors": {
+                "logits": {"dtype": "f32", "shape": ["N", "C"], "layout": "row_major"},
+                "target": {"dtype": "i64", "shape": ["N"], "layout": "row_major"},
+                "weight": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "img": {"dtype": "f32", "shape": ["B", "CH", "H", "W"], "layout": "row_major"},
+                "loss": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "pool_vals": {"dtype": "f32", "shape": ["B", "CH", "OH", "OW"], "layout": "row_major"},
+                "pool_idx": {"dtype": "i64", "shape": ["B", "CH", "OH", "OW"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "nll_loss_forward",
+                    "inputs": ["logits", "target", "weight"],
+                    "output": "loss",
+                    "attrs": {"reduction": 1, "ignore_index": -100},
+                },
+                {
+                    "op": "max_pool2d_with_indices",
+                    "inputs": ["img"],
+                    "output": "pool_vals",
+                    "attrs": {
+                        "kernel_size": [2, 2],
+                        "stride": [2, 2],
+                        "padding": [0, 0],
+                        "dilation": [1, 1],
+                        "ceil_mode": False,
+                        "select": "values",
+                    },
+                },
+                {
+                    "op": "max_pool2d_with_indices",
+                    "inputs": ["img"],
+                    "output": "pool_idx",
+                    "attrs": {
+                        "kernel_size": [2, 2],
+                        "stride": [2, 2],
+                        "padding": [0, 0],
+                        "dilation": [1, 1],
+                        "ceil_mode": False,
+                        "select": "indices",
+                    },
+                },
+            ],
+            "outputs": ["loss", "pool_vals", "pool_idx"],
+        }
+    )
+
+    logits = np.log(
+        np.array(
+            [
+                [0.6, 0.3, 0.1],
+                [0.2, 0.5, 0.3],
+                [0.1, 0.7, 0.2],
+                [0.3, 0.3, 0.4],
+            ],
+            dtype=np.float32,
+        )
+    )
+    target = np.array([0, 2, -100, 1], dtype=np.int64)
+    weight = np.array([1.0, 2.0, 0.5], dtype=np.float32)
+    img = np.arange(1, 17, dtype=np.float32).reshape(1, 1, 4, 4)
+
+    out = execute_intent(
+        intent,
+        {"logits": logits, "target": target, "weight": weight, "img": img},
+        shape_bindings={"N": 4, "C": 3, "B": 1, "CH": 1, "H": 4, "W": 4, "OH": 2, "OW": 2},
+    )
+
+    valid = target != -100
+    clamped = np.clip(target, 0, logits.shape[1] - 1)
+    picked = -logits[np.arange(logits.shape[0], dtype=np.int64), clamped]
+    weighted = np.where(valid, picked * weight[clamped], 0.0)
+    denom = np.sum(weight[clamped][valid])
+    expected_loss = np.sum(weighted) / max(float(denom), 1e-12)
+    assert np.allclose(out["loss"], np.array(expected_loss, dtype=np.float32), atol=1e-6)
+
+    expected_vals = np.array([[[[6.0, 8.0], [14.0, 16.0]]]], dtype=np.float32)
+    expected_idx = np.array([[[[5, 7], [13, 15]]]], dtype=np.int64)
+    assert np.allclose(out["pool_vals"], expected_vals, atol=1e-6)
+    assert np.array_equal(out["pool_idx"], expected_idx)

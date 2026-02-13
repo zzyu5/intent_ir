@@ -102,8 +102,10 @@ INTERPRETER_SUPPORTED_OPS: set[str] = set().union(
         "kron",
         "masked_select",
         "masked_scatter",
+        "max_pool2d_with_indices",
         "mse_loss",
         "nan_to_num",
+        "nll_loss_forward",
         "nll_loss2d_forward",
         "glu",
         "cummax",
@@ -534,6 +536,45 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         posinf = op.attrs.get("posinf", None)
         neginf = op.attrs.get("neginf", None)
         return np.nan_to_num(x, nan=nan, posinf=posinf, neginf=neginf)
+    if op.op == "nll_loss_forward":
+        if len(op.inputs) < 2:
+            raise ValueError("nll_loss_forward requires at least 2 inputs (self, target)")
+        logits = np.asarray(_get(env, op.inputs[0]), dtype=np.float32)
+        target = np.asarray(_get(env, op.inputs[1]), dtype=np.int64)
+        if logits.ndim != 2:
+            raise ValueError(f"nll_loss_forward expects logits rank=2 [N,C], got shape={logits.shape}")
+        if target.ndim != 1:
+            raise ValueError(f"nll_loss_forward expects target rank=1 [N], got shape={target.shape}")
+        n, c = [int(v) for v in logits.shape]
+        if int(target.shape[0]) != n:
+            raise ValueError(f"nll_loss_forward target shape mismatch: expect ({n},), got {tuple(int(v) for v in target.shape)}")
+        weight = None
+        if len(op.inputs) >= 3:
+            weight = np.asarray(_get(env, op.inputs[2]), dtype=np.float32).reshape(-1)
+            if int(weight.shape[0]) != c:
+                raise ValueError(f"nll_loss_forward weight shape mismatch: expect ({c},), got {tuple(weight.shape)}")
+        reduction = int(op.attrs.get("reduction", 1))
+        ignore_index = int(op.attrs.get("ignore_index", -100))
+
+        valid = target != ignore_index
+        clamped = np.clip(target, 0, max(0, c - 1))
+        picked = logits[np.arange(n, dtype=np.int64), clamped]
+        losses = -picked
+        if weight is not None:
+            losses = losses * weight[clamped]
+            total_weight = float(np.sum(weight[clamped][valid]))
+        else:
+            total_weight = float(np.sum(valid.astype(np.float32)))
+        losses = np.where(valid, losses, np.zeros_like(losses))
+
+        if reduction == 0:
+            return np.asarray(losses, dtype=np.float32)
+        if reduction == 1:
+            denom = max(total_weight, 1e-12)
+            return np.asarray(np.sum(losses) / denom, dtype=np.float32)
+        if reduction == 2:
+            return np.asarray(np.sum(losses), dtype=np.float32)
+        raise ValueError(f"nll_loss_forward reduction must be 0|1|2, got {reduction}")
     if op.op == "nll_loss2d_forward":
         if len(op.inputs) < 2:
             raise ValueError("nll_loss2d_forward requires at least 2 inputs (self, target)")
@@ -689,6 +730,70 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
                     denom = np.sum(m, axis=(2, 3))
                     out[:, :, oy, ox] = np.sum(window, axis=(2, 3)) / np.maximum(denom, 1.0)
         return out
+    if op.op == "max_pool2d_with_indices":
+        x = np.asarray(_get(env, op.inputs[0]), dtype=np.float32)
+        if x.ndim != 4:
+            raise ValueError(f"max_pool2d_with_indices expects rank-4 NCHW tensor, got shape={x.shape}")
+
+        def _pair(v: Any, *, default: tuple[int, int] | None = None) -> tuple[int, int]:
+            if v is None:
+                if default is None:
+                    raise ValueError("max_pool2d_with_indices requires non-null pair")
+                return default
+            if isinstance(v, int):
+                return (int(v), int(v))
+            if isinstance(v, list) and len(v) == 2 and all(isinstance(t, int) for t in v):
+                return (int(v[0]), int(v[1]))
+            raise ValueError(f"max_pool2d_with_indices pair attr must be int or list[int,int], got: {v!r}")
+
+        kernel_h, kernel_w = _pair(op.attrs.get("kernel_size"))
+        stride_h, stride_w = _pair(op.attrs.get("stride"), default=(kernel_h, kernel_w))
+        pad_h, pad_w = _pair(op.attrs.get("padding"), default=(0, 0))
+        dil_h, dil_w = _pair(op.attrs.get("dilation"), default=(1, 1))
+        ceil_mode = bool(op.attrs.get("ceil_mode", False))
+        select = str(op.attrs.get("select", "values")).strip().lower()
+
+        n, c, h, w = [int(v) for v in x.shape]
+        out_h_f = ((h + 2 * pad_h - dil_h * (kernel_h - 1) - 1) / stride_h) + 1.0
+        out_w_f = ((w + 2 * pad_w - dil_w * (kernel_w - 1) - 1) / stride_w) + 1.0
+        out_h = int(np.ceil(out_h_f) if ceil_mode else np.floor(out_h_f))
+        out_w = int(np.ceil(out_w_f) if ceil_mode else np.floor(out_w_f))
+        out_h = max(0, out_h)
+        out_w = max(0, out_w)
+
+        vals = np.full((n, c, out_h, out_w), -np.inf, dtype=np.float32)
+        idxs = np.full((n, c, out_h, out_w), -1, dtype=np.int64)
+        x_pad = np.full((n, c, h + 2 * pad_h, w + 2 * pad_w), -np.inf, dtype=np.float32)
+        i_pad = np.full((n, c, h + 2 * pad_h, w + 2 * pad_w), -1, dtype=np.int64)
+        x_pad[:, :, pad_h : pad_h + h, pad_w : pad_w + w] = x
+        base_idx = np.arange(h * w, dtype=np.int64).reshape(h, w)
+        i_pad[:, :, pad_h : pad_h + h, pad_w : pad_w + w] = base_idx
+
+        for oy in range(out_h):
+            iy0 = oy * stride_h
+            for ox in range(out_w):
+                ix0 = ox * stride_w
+                best_val = np.full((n, c), -np.inf, dtype=np.float32)
+                best_idx = np.full((n, c), -1, dtype=np.int64)
+                for ky in range(kernel_h):
+                    sy = iy0 + ky * dil_h
+                    if sy < 0 or sy >= x_pad.shape[2]:
+                        continue
+                    for kx in range(kernel_w):
+                        sx = ix0 + kx * dil_w
+                        if sx < 0 or sx >= x_pad.shape[3]:
+                            continue
+                        cand_val = x_pad[:, :, sy, sx]
+                        cand_idx = i_pad[:, :, sy, sx]
+                        better = cand_val > best_val
+                        best_val = np.where(better, cand_val, best_val)
+                        best_idx = np.where(better, cand_idx, best_idx)
+                vals[:, :, oy, ox] = best_val
+                idxs[:, :, oy, ox] = best_idx
+
+        if select in {"indices", "index"}:
+            return idxs
+        return vals
     if op.op == "layout_cast":
         return _get(env, op.inputs[0])
     if op.op == "cast":
