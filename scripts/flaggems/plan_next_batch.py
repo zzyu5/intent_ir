@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pipeline.triton.flaggems_workflow import (  # noqa: E402
+from pipeline.triton.providers.flaggems.workflow import (  # noqa: E402
     build_active_batch_payload,
     dump_json,
     load_json,

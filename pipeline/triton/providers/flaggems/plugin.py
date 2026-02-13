@@ -6,6 +6,9 @@ from typing import Any
 
 from intent_ir.parser import CandidateIntent
 from pipeline.triton.providers.base import TritonProviderPlugin
+from pipeline.triton.providers.flaggems.intent_normalize import maybe_normalize_flaggems_candidate
+
+_ALWAYS_CANONICAL_SPECS = frozenset({"count_nonzero2d", "diag2d", "diag_embed2d"})
 
 
 def _truthy_env(name: str, default: str = "0") -> bool:
@@ -32,10 +35,9 @@ class FlaggemsProviderPlugin(TritonProviderPlugin):
         candidate: CandidateIntent,
         candidate_expanded: CandidateIntent | None,
     ) -> tuple[CandidateIntent, CandidateIntent | None, dict[str, Any] | None]:
-        if not flaggems_canonical_normalization_enabled():
+        force_canonical = str(spec_name) in _ALWAYS_CANONICAL_SPECS
+        if not force_canonical and not flaggems_canonical_normalization_enabled():
             return candidate, candidate_expanded, None
-
-        from pipeline.triton.flaggems_intent_normalize import maybe_normalize_flaggems_candidate  # noqa: PLC0415
 
         out, out_expanded, info = maybe_normalize_flaggems_candidate(
             spec_name=str(spec_name),
@@ -46,7 +48,11 @@ class FlaggemsProviderPlugin(TritonProviderPlugin):
             return out, out_expanded, None
         wrapped = dict(info)
         wrapped["provider"] = "flaggems"
-        wrapped["enabled_by"] = "INTENTIR_TRITON_FLAGGEMS_CANONICAL_NORMALIZE"
+        wrapped["enabled_by"] = (
+            "provider_required_deterministic_override"
+            if force_canonical
+            else "INTENTIR_TRITON_FLAGGEMS_CANONICAL_NORMALIZE"
+        )
         return out, out_expanded, wrapped
 
 

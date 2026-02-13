@@ -53,7 +53,7 @@ def _default_kernels_for(
     backend_target: str,
 ) -> list[str]:
     if str(frontend) == "triton" and str(triton_provider) == "flaggems":
-        from pipeline.triton.flaggems_specs import default_flaggems_kernel_specs  # noqa: PLC0415
+        from pipeline.triton.providers.flaggems.specs import default_flaggems_kernel_specs  # noqa: PLC0415
 
         return [
             str(s.name)

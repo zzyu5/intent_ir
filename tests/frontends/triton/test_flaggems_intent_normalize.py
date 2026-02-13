@@ -71,6 +71,18 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert [op.op for op in index_select.ops] == ["gather"]
     assert index_select.ops[0].inputs == ["inp", "row_idx", "col_idx"]
 
+    count_nonzero = canonical_flaggems_intent_for_spec("count_nonzero2d")
+    assert count_nonzero is not None
+    assert [op.op for op in count_nonzero.ops] == ["const", "ne", "cast", "reduce_sum"]
+
+    diag = canonical_flaggems_intent_for_spec("diag2d")
+    assert diag is not None
+    assert [op.op for op in diag.ops] == ["iota", "gather"]
+
+    diag_embed = canonical_flaggems_intent_for_spec("diag_embed2d")
+    assert diag_embed is not None
+    assert [op.op for op in diag_embed.ops] == ["const", "broadcast_in_dim", "iota", "iota", "iota", "ne", "not", "gather", "where"]
+
 
 def test_maybe_normalize_flaggems_candidate_overrides_known_spec() -> None:
     cand = _dummy_candidate("old")

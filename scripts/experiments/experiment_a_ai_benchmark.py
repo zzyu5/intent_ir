@@ -146,7 +146,7 @@ def _artifact_dir_for_provider(triton_provider: str) -> Path:
 
 def _coverage_specs_for_provider(triton_provider: str) -> list:
     if str(triton_provider) == "flaggems":
-        from pipeline.triton.flaggems_specs import coverage_flaggems_kernel_specs  # noqa: PLC0415
+        from pipeline.triton.providers.flaggems.specs import coverage_flaggems_kernel_specs  # noqa: PLC0415
 
         return list(coverage_flaggems_kernel_specs())
     from pipeline.triton.core import coverage_kernel_specs  # noqa: PLC0415

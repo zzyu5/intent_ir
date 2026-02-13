@@ -52,20 +52,36 @@ def main() -> None:
     checks.append(_check("run_summary.ok", run_ok, "run summary reports ok=true" if run_ok else "run summary reports failure"))
 
     entries = [e for e in (status_converged.get("entries") or []) if isinstance(e, dict)]
-    reason_complete = bool(entries) and all(isinstance(e.get("reason_code"), str) and str(e.get("reason_code")).strip() for e in entries)
+    scope_enabled = bool(status_converged.get("scope_enabled"))
+    scoped_entries = [e for e in (status_converged.get("scoped_entries") or []) if isinstance(e, dict)]
+    if not scoped_entries and scope_enabled:
+        scoped_entries = [e for e in entries if bool(e.get("in_scope"))]
+    gate_entries = scoped_entries if scope_enabled else entries
+
+    reason_complete = bool(gate_entries) and all(
+        isinstance(e.get("reason_code"), str) and str(e.get("reason_code")).strip() for e in gate_entries
+    )
     checks.append(
         _check(
             "status_converged.reason_code_complete",
             reason_complete,
-            "all entries have non-empty reason_code" if reason_complete else "missing reason_code detected",
+            "all gate entries have non-empty reason_code" if reason_complete else "missing reason_code detected in gate scope",
         )
     )
 
     active_items = [e for e in (active.get("items") or []) if isinstance(e, dict)]
     active_ops = [str(e.get("semantic_op") or "") for e in active_items if str(e.get("semantic_op") or "")]
-    status_map = {str(e.get("semantic_op")): e for e in entries if isinstance(e.get("semantic_op"), str)}
+    status_map = {str(e.get("semantic_op")): e for e in gate_entries if isinstance(e.get("semantic_op"), str)}
     covered = all(op in status_map for op in active_ops)
-    checks.append(_check("active_batch.covered_by_status", covered, "all active ops present in status report" if covered else "active op missing in status report"))
+    checks.append(
+        _check(
+            "active_batch.covered_by_status",
+            covered,
+            "all active ops present in scoped status report"
+            if (covered and scope_enabled)
+            else ("all active ops present in status report" if covered else "active op missing in gate status scope"),
+        )
+    )
 
     left_blocked_ir = [op for op in active_ops if str((status_map.get(op) or {}).get("status")) == "blocked_ir"]
     checks.append(

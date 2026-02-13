@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pipeline.triton.flaggems_workflow import append_progress_log, load_json, utc_now_iso, write_handoff
+from pipeline.triton.providers.flaggems.workflow import append_progress_log, load_json, utc_now_iso, write_handoff
 
 
 def _to_repo_rel(path: Path) -> str:

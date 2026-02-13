@@ -94,7 +94,7 @@ def _suite_kernels_for(
 ) -> List[str]:
     if frontend == "triton" and str(triton_provider) == "flaggems":
         try:
-            from pipeline.triton.flaggems_specs import coverage_flaggems_kernel_specs, default_flaggems_kernel_specs  # noqa: PLC0415
+            from pipeline.triton.providers.flaggems.specs import coverage_flaggems_kernel_specs, default_flaggems_kernel_specs  # noqa: PLC0415
 
             if str(suite) == "smoke":
                 specs = default_flaggems_kernel_specs(

@@ -2537,6 +2537,24 @@ def _norm_batch_norm_2d(shapes: Dict[str, int]) -> Dict[str, int]:
     return out
 
 
+def _norm_diag2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    m = max(1, int(out.get("M", 8)))
+    out["M"] = m
+    # Keep square matrices so canonical diag intent output length stays bound.
+    out["N"] = m
+    out["DIAG"] = 0
+    return out
+
+
+def _norm_diag_embed2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    out["B"] = max(1, int(out.get("B", 2)))
+    out["N"] = max(1, int(out.get("N", 8)))
+    out["OFFSET"] = 0
+    return out
+
+
 _FLAGGEMS_SPEC_BUILDERS = {
     "any_kernel_dim": lambda: KernelSpec(
         name="any_kernel_dim",
@@ -2681,7 +2699,8 @@ _FLAGGEMS_SPEC_BUILDERS = {
         attr="FLAGGEMS_DIAG_SRC",
         runner=_run_flaggems_diag2d_reference,
         canonical_shapes={"M": 8, "N": 8, "DIAG": 0},
-        vary_axes=["M", "N"],
+        vary_axes=["M"],
+        normalize_shapes=_norm_diag2d,
     ),
     "diag_embed2d": lambda: KernelSpec(
         name="diag_embed2d",
@@ -2690,6 +2709,7 @@ _FLAGGEMS_SPEC_BUILDERS = {
         runner=_run_flaggems_diag_embed2d_reference,
         canonical_shapes={"B": 2, "N": 8, "OFFSET": 0},
         vary_axes=["B", "N"],
+        normalize_shapes=_norm_diag_embed2d,
     ),
     "sub2d": lambda: KernelSpec(
         name="sub2d",

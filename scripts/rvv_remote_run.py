@@ -344,7 +344,7 @@ def run_remote(
             try:
                 if frontend == "triton":
                     if str(triton_provider) == "flaggems":
-                        from pipeline.triton.flaggems_specs import default_flaggems_kernel_specs
+                        from pipeline.triton.providers.flaggems.specs import default_flaggems_kernel_specs
 
                         spec_map = {s.name: s for s in default_flaggems_kernel_specs()}
                     else:

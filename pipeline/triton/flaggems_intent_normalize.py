@@ -289,6 +289,71 @@ def _canonical_masked_fill2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_count_nonzero2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "count_nonzero2d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "i64", "shape": [], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "const", "inputs": [], "output": "zero_const", "attrs": {"value": 0.0}},
+                {"op": "ne", "inputs": ["x", "zero_const"], "output": "is_nonzero_bool"},
+                {"op": "cast", "inputs": ["is_nonzero_bool"], "output": "is_nonzero_i64", "attrs": {"to": "i64"}},
+                {"op": "reduce_sum", "inputs": ["is_nonzero_i64"], "output": "out", "attrs": {"dims": [0, 1]}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_diag2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "diag2d",
+            "tensors": {
+                "data": {"dtype": "f32", "shape": ["M", "M"], "layout": "row_major"},
+                "output": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "iota", "inputs": [], "output": "diag_idx", "attrs": {"axis": 0, "shape": ["M"]}},
+                {"op": "gather", "inputs": ["data", "diag_idx", "diag_idx"], "output": "output"},
+            ],
+            "outputs": ["output"],
+        }
+    )
+
+
+def _canonical_diag_embed2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "diag_embed2d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["B", "N"], "layout": "row_major"},
+                "y": {"dtype": "f32", "shape": ["B", "N", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "const", "inputs": [], "output": "zero_scalar", "attrs": {"value": 0.0}},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["zero_scalar"],
+                    "output": "y_zeros",
+                    "attrs": {"broadcast_dims": [], "out_shape": ["B", "N", "N"]},
+                },
+                {"op": "iota", "inputs": [], "output": "idx_b", "attrs": {"axis": 0, "shape": ["B", "N", "N"]}},
+                {"op": "iota", "inputs": [], "output": "idx_row", "attrs": {"axis": 1, "shape": ["B", "N", "N"]}},
+                {"op": "iota", "inputs": [], "output": "idx_col", "attrs": {"axis": 2, "shape": ["B", "N", "N"]}},
+                {"op": "ne", "inputs": ["idx_row", "idx_col"], "output": "offdiag_mask"},
+                {"op": "not", "inputs": ["offdiag_mask"], "output": "diag_mask"},
+                {"op": "gather", "inputs": ["x", "idx_b", "idx_col"], "output": "diag_values"},
+                {"op": "where", "inputs": ["diag_mask", "diag_values", "y_zeros"], "output": "y"},
+            ],
+            "outputs": ["y"],
+        }
+    )
+
+
 def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
     name = str(spec_name)
     if name == "sigmoid2d":
@@ -313,6 +378,12 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_index_select2d_intent()
     if name == "masked_fill2d":
         return _canonical_masked_fill2d_intent()
+    if name == "count_nonzero2d":
+        return _canonical_count_nonzero2d_intent()
+    if name == "diag2d":
+        return _canonical_diag2d_intent()
+    if name == "diag_embed2d":
+        return _canonical_diag_embed2d_intent()
     return None
 
 

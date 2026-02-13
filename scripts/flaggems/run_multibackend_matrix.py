@@ -104,7 +104,7 @@ def main() -> None:
     # For coverage/all, backend smoke should use the same e2e kernel set as
     # provider pipeline, not the small default smoke list.
     if not kernel_filter and str(args.suite) in {"coverage", "all"}:
-        from pipeline.triton.flaggems_specs import coverage_flaggems_kernel_specs  # noqa: PLC0415
+        from pipeline.triton.providers.flaggems.specs import coverage_flaggems_kernel_specs  # noqa: PLC0415
 
         kernel_filter = [
             str(s.name)

@@ -46,7 +46,7 @@ def main() -> None:
 
         provider = str(args.triton_provider)
         if provider == "flaggems":
-            from pipeline.triton.flaggems_specs import coverage_flaggems_kernel_specs, default_flaggems_kernel_specs
+            from pipeline.triton.providers.flaggems.specs import coverage_flaggems_kernel_specs, default_flaggems_kernel_specs
 
             def coverage_kernel_specs():
                 return coverage_flaggems_kernel_specs()

@@ -13,9 +13,9 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pipeline.triton.flaggems_registry import DEFAULT_REGISTRY_PATH
-from pipeline.triton.flaggems_specs import coverage_flaggems_kernel_specs
-from pipeline.triton.flaggems_workflow import (
+from pipeline.triton.providers.flaggems.registry import DEFAULT_REGISTRY_PATH
+from pipeline.triton.providers.flaggems.specs import coverage_flaggems_kernel_specs
+from pipeline.triton.providers.flaggems.workflow import (
     append_metrics_history,
     build_feature_list_payload,
     dump_json,

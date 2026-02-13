@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pipeline.triton.flaggems_workflow import load_json, validate_feature_list_sync  # noqa: E402
+from pipeline.triton.providers.flaggems.workflow import load_json, validate_feature_list_sync  # noqa: E402
 
 
 def _to_repo_rel(path: Path) -> str:

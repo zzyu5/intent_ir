@@ -22,12 +22,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from pipeline.triton.core import run_pipeline_for_spec
-from pipeline.triton.flaggems_execution import (
+from pipeline.triton.providers.flaggems.execution import (
     sync_seed_back_to_cache,
     sync_seed_into_run_dir,
     resolve_flaggems_execution,
 )
-from pipeline.triton.flaggems_specs import (
+from pipeline.triton.providers.flaggems.specs import (
     coverage_flaggems_kernel_specs,
     default_flaggems_kernel_specs,
 )
