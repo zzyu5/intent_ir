@@ -74,6 +74,11 @@ _SEMANTIC_TO_E2E_SPEC: dict[str, str] = {
     "lt": "lt2d",
     "le": "le2d",
     "neg": "neg2d",
+    "ceil": "ceil2d",
+    "reciprocal": "reciprocal2d",
+    "sqrt": "sqrt2d",
+    "silu": "silu2d",
+    "tanh": "tanh2d",
     "abs": "abs2d",
     "rsqrt": "rsqrt2d",
     "relu": "relu2d",
@@ -81,6 +86,8 @@ _SEMANTIC_TO_E2E_SPEC: dict[str, str] = {
     "where_self": "where2d",
     "gather": "gather2d",
     "sum": "row_sum",
+    "mean": "row_mean",
+    "all": "row_all",
     "max": "row_max",
     "clamp": "clamp2d",
     "group_norm": "group_norm_kernel",
@@ -91,6 +98,7 @@ _SEMANTIC_TO_E2E_SPEC: dict[str, str] = {
 
 _SEMANTIC_E2E_ALIASES: dict[str, str] = {
     "sum_dim": "sum",
+    "mean_dim": "mean",
     "amax": "max",
     "max_dim": "max",
     "where_scalar_self": "where_self",

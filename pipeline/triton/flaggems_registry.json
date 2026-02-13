@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-13T03:39:16.947346+00:00",
+  "generated_at": "2026-02-13T04:12:40.254919+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -18,9 +18,9 @@
     "source_filtered_ops": 212,
     "semantic_ops": 196,
     "by_status": {
-      "blocked_backend": 56,
+      "blocked_backend": 48,
       "blocked_ir": 103,
-      "dual_pass": 37
+      "dual_pass": 45
     },
     "by_family": {
       "attention_sequence": 5,
@@ -818,10 +818,10 @@
       ],
       "mapping_kind": "unary_template",
       "intent_pattern_id": "unary.ceil_via_floor",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as -floor(-x); no e2e spec registered",
+      "e2e_spec": "ceil2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as -floor(-x)",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -4582,10 +4582,10 @@
       ],
       "mapping_kind": "unary_template",
       "intent_pattern_id": "unary.reciprocal_via_div",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as 1 / x; no e2e spec registered",
+      "e2e_spec": "reciprocal2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as 1 / x",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5117,10 +5117,10 @@
       ],
       "mapping_kind": "unary_template",
       "intent_pattern_id": "unary.sqrt_via_rsqrt",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as x * rsqrt(x); no e2e spec registered",
+      "e2e_spec": "sqrt2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as x * rsqrt(x)",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5795,10 +5795,10 @@
       ],
       "mapping_kind": "reduce_template",
       "intent_pattern_id": "reduce.all_via_not_any",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as not(reduce_any(not(x))); no e2e spec registered",
+      "e2e_spec": "row_all",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as not(reduce_any(not(x)))",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6246,10 +6246,10 @@
       ],
       "mapping_kind": "reduce_template",
       "intent_pattern_id": "reduce.mean_via_sum",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as reduce_sum / num_elements; no e2e spec registered",
+      "e2e_spec": "row_mean",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as reduce_sum / num_elements",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6304,10 +6304,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.mean_dim->mean",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to mean; mapped as reduce_sum / num_elements; no e2e spec registered",
+      "e2e_spec": "row_mean",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to mean; mapped as reduce_sum / num_elements",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -7291,10 +7291,10 @@
       ],
       "mapping_kind": "unary_template",
       "intent_pattern_id": "unary.silu_via_sigmoid",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as x * sigmoid(x); no e2e spec registered",
+      "e2e_spec": "silu2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as x * sigmoid(x)",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -7439,10 +7439,10 @@
       ],
       "mapping_kind": "unary_template",
       "intent_pattern_id": "unary.tanh_via_exp",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as (exp(2x)-1)/(exp(2x)+1); no e2e spec registered",
+      "e2e_spec": "tanh2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as (exp(2x)-1)/(exp(2x)+1)",
       "backend_support": {
         "rvv": {
           "target": "rvv",

@@ -252,6 +252,10 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         return NUM_BIN_OPS[op.op](a, b)
     if op.op in NUM_UNARY_OPS:
         x = _get(env, op.inputs[0])
+        if op.op == "exp":
+            base = op.attrs.get("base")
+            if base is not None and str(base) in {"2", "2.0"}:
+                return np.exp2(x)
         return NUM_UNARY_OPS[op.op](x)
     if op.op in CMP_BIN_OPS:
         a_name = op.inputs[0]
@@ -511,6 +515,9 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         dims_raw = op.attrs.get("axes", op.attrs.get("dims", op.attrs.get("axis")))
         dims = _resolve_dims(dims_raw, x)
         keepdims = bool(op.attrs.get("keepdims", False))
+        combine_fn = str(op.attrs.get("combine_fn", "")).strip().lower()
+        if combine_fn in {"and", "all"}:
+            return np.all(x, axis=dims, keepdims=keepdims)
         return np.any(x, axis=dims, keepdims=keepdims)
     if op.op == "reduce_max":
         x = _get(env, op.inputs[0])

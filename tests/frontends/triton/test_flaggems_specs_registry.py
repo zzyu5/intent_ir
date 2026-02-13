@@ -25,12 +25,19 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "lt2d" in names
     assert "le2d" in names
     assert "neg2d" in names
+    assert "ceil2d" in names
+    assert "reciprocal2d" in names
+    assert "sqrt2d" in names
+    assert "silu2d" in names
+    assert "tanh2d" in names
     assert "sub2d" in names
     assert "mul2d" in names
     assert "abs2d" in names
     assert "rsqrt2d" in names
     assert "where2d" in names
     assert "row_sum" in names
+    assert "row_mean" in names
+    assert "row_all" in names
     assert "row_max" in names
     assert "gather2d" in names
     assert "clamp2d" in names

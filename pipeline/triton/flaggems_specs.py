@@ -71,6 +71,12 @@ FLAGGEMS_GE_SRC = _module_source_text("flag_gems.ops.ge")
 FLAGGEMS_LT_SRC = _module_source_text("flag_gems.ops.lt")
 FLAGGEMS_LE_SRC = _module_source_text("flag_gems.ops.le")
 FLAGGEMS_NEG_SRC = _module_source_text("flag_gems.ops.neg")
+FLAGGEMS_CEIL_SRC = _module_source_text("flag_gems.ops.ceil")
+FLAGGEMS_RECIPROCAL_SRC = _module_source_text("flag_gems.ops.reciprocal")
+FLAGGEMS_SQRT_SRC = _module_source_text("flag_gems.ops.sqrt")
+FLAGGEMS_SIGMOID_SRC = _module_source_text("flag_gems.ops.sigmoid")
+FLAGGEMS_SILU_SRC = _module_source_text("flag_gems.ops.silu")
+FLAGGEMS_TANH_SRC = _module_source_text("flag_gems.ops.tanh")
 FLAGGEMS_GROUP_NORM_SRC = _module_source_text("flag_gems.ops.groupnorm")
 FLAGGEMS_LAYER_NORM_SRC = _module_source_text("flag_gems.ops.layernorm")
 FLAGGEMS_SOFTMAX_SRC = _module_source_text("flag_gems.ops.softmax")
@@ -82,6 +88,8 @@ FLAGGEMS_GATHER_SRC = _module_source_text("flag_gems.ops.gather")
 FLAGGEMS_WHERE_SRC = _module_source_text("flag_gems.ops.where")
 FLAGGEMS_SUM_SRC = _module_source_text("flag_gems.ops.sum")
 FLAGGEMS_MAX_SRC = _module_source_text("flag_gems.ops.max")
+FLAGGEMS_MEAN_SRC = _module_source_text("flag_gems.ops.mean")
+FLAGGEMS_ALL_SRC = _module_source_text("flag_gems.ops.all")
 FLAGGEMS_CLAMP_SRC = _module_source_text("flag_gems.ops.clamp")
 FLAGGEMS_UPSAMPLE_BICUBIC2D_AA_SRC = _module_source_text("flag_gems.ops.upsample_bicubic2d_aa")
 
@@ -345,6 +353,151 @@ def _run_flaggems_neg2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     return {
         "A": inp_np,
         "Out": out_np,
+        "inp": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_unary2d_reference(
+    case: TestCase,
+    *,
+    include: List[str],
+    op_name: str,
+    positive_input: bool = False,
+) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        raw = rg.standard_normal((m, n), dtype=np.float32)
+        if positive_input:
+            raw = np.abs(raw) + 1e-3
+        inp = torch.from_numpy(raw).to(device)
+
+    if positive_input:
+        inp = torch.where(inp <= 1e-3, torch.full_like(inp, 1e-3), inp)
+
+    with flag_gems.use_gems(include=include):
+        if op_name == "ceil":
+            out = torch.ceil(inp)
+        elif op_name == "reciprocal":
+            out = torch.reciprocal(inp)
+        elif op_name == "sqrt":
+            out = torch.sqrt(inp)
+        elif op_name == "sigmoid":
+            out = torch.sigmoid(inp)
+        elif op_name == "silu":
+            out = torch.nn.functional.silu(inp)
+        elif op_name == "tanh":
+            out = torch.tanh(inp)
+        else:
+            raise ValueError(f"unsupported op_name for unary2d runner: {op_name}")
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "A": inp_np,
+        "Out": out_np,
+        "inp": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_ceil2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_unary2d_reference(case, include=["ceil"], op_name="ceil")
+
+
+def _run_flaggems_reciprocal2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_unary2d_reference(
+        case,
+        include=["reciprocal"],
+        op_name="reciprocal",
+        positive_input=True,
+    )
+
+
+def _run_flaggems_sqrt2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_unary2d_reference(
+        case,
+        include=["sqrt"],
+        op_name="sqrt",
+        positive_input=True,
+    )
+
+
+def _run_flaggems_sigmoid2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_unary2d_reference(
+        case,
+        include=["sigmoid"],
+        op_name="sigmoid",
+    )
+
+
+def _run_flaggems_silu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_unary2d_reference(
+        case,
+        include=["silu"],
+        op_name="silu",
+    )
+
+
+def _run_flaggems_tanh2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    return _run_flaggems_unary2d_reference(
+        case,
+        include=["tanh"],
+        op_name="tanh",
+    )
+
+
+def _run_flaggems_row_mean_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["mean", "mean_dim"]):
+        out = torch.mean(inp, dim=1)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_row_all_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = torch.as_tensor(np.asarray(case.inputs["inp"]), device=device, dtype=torch.bool)
+    else:
+        inp = torch.from_numpy((rg.random((m, n), dtype=np.float32) > 0.3)).to(device=device, dtype=torch.bool)
+
+    with flag_gems.use_gems(include=["all", "all_dim", "all_dims"]):
+        out = torch.all(inp, dim=1)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
         "inp": inp_np,
         "out": out_np,
         "input": inp_np,
@@ -930,6 +1083,54 @@ _FLAGGEMS_SPEC_BUILDERS = {
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
     ),
+    "ceil2d": lambda: KernelSpec(
+        name="ceil2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_CEIL_SRC",
+        runner=_run_flaggems_ceil2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "reciprocal2d": lambda: KernelSpec(
+        name="reciprocal2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_RECIPROCAL_SRC",
+        runner=_run_flaggems_reciprocal2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "sqrt2d": lambda: KernelSpec(
+        name="sqrt2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_SQRT_SRC",
+        runner=_run_flaggems_sqrt2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "sigmoid2d": lambda: KernelSpec(
+        name="sigmoid2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_SIGMOID_SRC",
+        runner=_run_flaggems_sigmoid2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "silu2d": lambda: KernelSpec(
+        name="silu2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_SILU_SRC",
+        runner=_run_flaggems_silu2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "tanh2d": lambda: KernelSpec(
+        name="tanh2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_TANH_SRC",
+        runner=_run_flaggems_tanh2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
     "group_norm_kernel": lambda: KernelSpec(
         name="group_norm_kernel",
         module="pipeline.triton.flaggems_specs",
@@ -1016,6 +1217,22 @@ _FLAGGEMS_SPEC_BUILDERS = {
         module="pipeline.triton.flaggems_specs",
         attr="FLAGGEMS_MAX_SRC",
         runner=_run_flaggems_row_max_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "row_mean": lambda: KernelSpec(
+        name="row_mean",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_MEAN_SRC",
+        runner=_run_flaggems_row_mean_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "row_all": lambda: KernelSpec(
+        name="row_all",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_ALL_SRC",
+        runner=_run_flaggems_row_all_reference,
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
     ),

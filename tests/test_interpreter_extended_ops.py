@@ -68,3 +68,29 @@ def test_extended_reduction_ops_execute() -> None:
     assert np.allclose(out["pd"], np.prod(x, axis=1), atol=1e-6)
     assert np.array_equal(out["am"], np.argmax(x, axis=1))
     assert np.allclose(out["cs"], np.cumsum(x, axis=1), atol=1e-6)
+
+
+def test_reduce_any_with_and_combine_and_exp_base2() -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "reduce_any_and_and_exp2",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "nz": {"dtype": "i1", "shape": ["M", "N"], "layout": "row_major"},
+                "all_out": {"dtype": "i1", "shape": ["M"], "layout": "row_major"},
+                "exp2_out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "const", "inputs": [], "output": "zero", "attrs": {"value": 0.0, "dtype": "f32"}},
+                {"op": "ne", "inputs": ["x", "zero"], "output": "nz"},
+                {"op": "reduce_any", "inputs": ["nz"], "output": "all_out", "attrs": {"dims": [1], "combine_fn": "and"}},
+                {"op": "exp", "inputs": ["x"], "output": "exp2_out", "attrs": {"base": 2.0}},
+            ],
+            "outputs": ["all_out", "exp2_out"],
+        }
+    )
+    x = np.array([[1.0, 2.0, 3.0], [0.0, 4.0, 5.0]], dtype=np.float32)
+    out = execute_intent(intent, {"x": x}, shape_bindings={"M": 2, "N": 3})
+
+    assert np.array_equal(out["all_out"], np.all(x != 0, axis=1))
+    assert np.allclose(out["exp2_out"], np.exp2(x), atol=1e-6)

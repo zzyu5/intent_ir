@@ -55,12 +55,19 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
             "lt",
             "le",
             "neg",
+            "ceil",
+            "reciprocal",
+            "sqrt",
+            "silu",
+            "tanh",
             "abs",
             "rsqrt",
             "softmax",
             "group_norm",
             "relu",
             "sum",
+            "mean",
+            "all",
             "max",
             "where_self",
             "exp",
@@ -80,12 +87,19 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
     assert "lt2d" in specs
     assert "le2d" in specs
     assert "neg2d" in specs
+    assert "ceil2d" in specs
+    assert "reciprocal2d" in specs
+    assert "sqrt2d" in specs
+    assert "silu2d" in specs
+    assert "tanh2d" in specs
     assert "abs2d" in specs
     assert "rsqrt2d" in specs
     assert "softmax_inner" in specs
     assert "relu2d" in specs
     assert "where2d" in specs
     assert "row_sum" in specs
+    assert "row_mean" in specs
+    assert "row_all" in specs
     assert "row_max" in specs
     assert "exp2d" in specs
     assert "clamp2d" in specs
