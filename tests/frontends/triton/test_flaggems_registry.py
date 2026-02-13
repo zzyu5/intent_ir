@@ -65,6 +65,14 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
             "logical_or",
             "logical_not",
             "logical_xor",
+            "mm",
+            "bmm",
+            "addmm",
+            "baddbmm",
+            "dot",
+            "vdot",
+            "mv",
+            "addmv",
             "abs",
             "rsqrt",
             "full",
@@ -112,6 +120,14 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
     assert "logical_or2d" in specs
     assert "logical_not2d" in specs
     assert "logical_xor2d" in specs
+    assert "mm2d" in specs
+    assert "bmm3d" in specs
+    assert "addmm2d" in specs
+    assert "baddbmm3d" in specs
+    assert "dot1d" in specs
+    assert "vdot1d" in specs
+    assert "mv2d" in specs
+    assert "addmv2d" in specs
     assert "abs2d" in specs
     assert "rsqrt2d" in specs
     assert "full2d" in specs

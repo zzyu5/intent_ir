@@ -84,6 +84,14 @@ FLAGGEMS_LOGICAL_NOT_SRC = _module_source_text("flag_gems.ops.logical_not")
 FLAGGEMS_LOGICAL_XOR_SRC = _module_source_text("flag_gems.ops.logical_xor")
 FLAGGEMS_GROUP_NORM_SRC = _module_source_text("flag_gems.ops.groupnorm")
 FLAGGEMS_LAYER_NORM_SRC = _module_source_text("flag_gems.ops.layernorm")
+FLAGGEMS_MM_SRC = _module_source_text("flag_gems.ops.mm")
+FLAGGEMS_BMM_SRC = _module_source_text("flag_gems.ops.bmm")
+FLAGGEMS_ADDMM_SRC = _module_source_text("flag_gems.ops.addmm")
+FLAGGEMS_BADDBMM_SRC = _module_source_text("flag_gems.ops.baddbmm")
+FLAGGEMS_DOT_SRC = _module_source_text("flag_gems.ops.dot")
+FLAGGEMS_VDOT_SRC = _module_source_text("flag_gems.ops.vdot")
+FLAGGEMS_MV_SRC = _module_source_text("flag_gems.ops.mv")
+FLAGGEMS_ADDMV_SRC = _module_source_text("flag_gems.ops.addmv")
 FLAGGEMS_SOFTMAX_SRC = _module_source_text("flag_gems.ops.softmax")
 FLAGGEMS_RELU_SRC = _module_source_text("flag_gems.ops.relu")
 FLAGGEMS_EXP_SRC = _module_source_text("flag_gems.ops.exp")
@@ -727,6 +735,317 @@ def _run_flaggems_cast2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     }
 
 
+def _run_flaggems_mm2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 16))
+    k = int(case.shapes.get("K", 32))
+    n = int(case.shapes.get("N", 16))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "A" in case.inputs:
+        a = _as_f32_tensor(np.asarray(case.inputs["A"]), device=device)
+    else:
+        a = torch.from_numpy(rg.standard_normal((m, k), dtype=np.float32)).to(device)
+
+    if case.inputs and "B" in case.inputs:
+        b = _as_f32_tensor(np.asarray(case.inputs["B"]), device=device)
+    else:
+        b = torch.from_numpy(rg.standard_normal((k, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["mm"]):
+        c = torch.mm(a, b)
+
+    a_np = _to_np(a)
+    b_np = _to_np(b)
+    c_np = _to_np(c)
+    return {
+        "A": a_np,
+        "B": b_np,
+        "C": c_np,
+        "mat1": a_np,
+        "mat2": b_np,
+        "out": c_np,
+        "output": c_np,
+    }
+
+
+def _run_flaggems_bmm3d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    batch = int(case.shapes.get("BATCH", 2))
+    m = int(case.shapes.get("M", 8))
+    k = int(case.shapes.get("K", 16))
+    n = int(case.shapes.get("N", 8))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "A" in case.inputs:
+        a = _as_f32_tensor(np.asarray(case.inputs["A"]), device=device)
+    else:
+        a = torch.from_numpy(rg.standard_normal((batch, m, k), dtype=np.float32)).to(device)
+
+    if case.inputs and "B" in case.inputs:
+        b = _as_f32_tensor(np.asarray(case.inputs["B"]), device=device)
+    else:
+        b = torch.from_numpy(rg.standard_normal((batch, k, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["bmm"]):
+        c = torch.bmm(a, b)
+
+    a_np = _to_np(a)
+    b_np = _to_np(b)
+    c_np = _to_np(c)
+    return {
+        "A": a_np,
+        "B": b_np,
+        "C": c_np,
+        "batch1": a_np,
+        "batch2": b_np,
+        "out": c_np,
+        "output": c_np,
+    }
+
+
+def _run_flaggems_addmm2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 16))
+    k = int(case.shapes.get("K", 32))
+    n = int(case.shapes.get("N", 16))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "input" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["input"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    if case.inputs and "mat1" in case.inputs:
+        mat1 = _as_f32_tensor(np.asarray(case.inputs["mat1"]), device=device)
+    else:
+        mat1 = torch.from_numpy(rg.standard_normal((m, k), dtype=np.float32)).to(device)
+
+    if case.inputs and "mat2" in case.inputs:
+        mat2 = _as_f32_tensor(np.asarray(case.inputs["mat2"]), device=device)
+    else:
+        mat2 = torch.from_numpy(rg.standard_normal((k, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["addmm", "mm"]):
+        out = torch.addmm(inp, mat1, mat2)
+
+    inp_np = _to_np(inp)
+    mat1_np = _to_np(mat1)
+    mat2_np = _to_np(mat2)
+    out_np = _to_np(out)
+    return {
+        "a": mat1_np,
+        "b": mat2_np,
+        "i": inp_np,
+        "c": out_np,
+        "alpha": np.array(1.0, dtype=np.float32),
+        "beta": np.array(1.0, dtype=np.float32),
+        "input": inp_np,
+        "mat1": mat1_np,
+        "mat2": mat2_np,
+        "out": out_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_baddbmm3d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    batch = int(case.shapes.get("BATCH", 2))
+    m = int(case.shapes.get("M", 8))
+    k = int(case.shapes.get("K", 16))
+    n = int(case.shapes.get("N", 8))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "input" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["input"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((batch, m, n), dtype=np.float32)).to(device)
+
+    if case.inputs and "batch1" in case.inputs:
+        batch1 = _as_f32_tensor(np.asarray(case.inputs["batch1"]), device=device)
+    else:
+        batch1 = torch.from_numpy(rg.standard_normal((batch, m, k), dtype=np.float32)).to(device)
+
+    if case.inputs and "batch2" in case.inputs:
+        batch2 = _as_f32_tensor(np.asarray(case.inputs["batch2"]), device=device)
+    else:
+        batch2 = torch.from_numpy(rg.standard_normal((batch, k, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["baddbmm", "bmm"]):
+        out = torch.baddbmm(inp, batch1, batch2)
+
+    inp_np = _to_np(inp)
+    batch1_np = _to_np(batch1)
+    batch2_np = _to_np(batch2)
+    out_np = _to_np(out)
+    return {
+        "A": batch1_np,
+        "B": batch2_np,
+        "O": out_np,
+        "bias": inp_np,
+        "alpha": np.array(1.0, dtype=np.float32),
+        "beta": np.array(1.0, dtype=np.float32),
+        "input": inp_np,
+        "batch1": batch1_np,
+        "batch2": batch2_np,
+        "out": out_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_dot1d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = int(case.shapes.get("N", 256))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "A" in case.inputs:
+        a = _as_f32_tensor(np.asarray(case.inputs["A"]), device=device).reshape(n)
+    else:
+        a = torch.from_numpy(rg.standard_normal((n,), dtype=np.float32)).to(device)
+
+    if case.inputs and "B" in case.inputs:
+        b = _as_f32_tensor(np.asarray(case.inputs["B"]), device=device).reshape(n)
+    else:
+        b = torch.from_numpy(rg.standard_normal((n,), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["dot"]):
+        out = torch.dot(a, b)
+
+    a_np = _to_np(a)
+    b_np = _to_np(b)
+    out_np = _to_np(out)
+    return {
+        "A": a_np,
+        "B": b_np,
+        "x": a_np,
+        "y": b_np,
+        "out": out_np,
+        "output": out_np,
+        "result": out_np,
+    }
+
+
+def _run_flaggems_vdot1d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = int(case.shapes.get("N", 256))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "A" in case.inputs:
+        a = _as_f32_tensor(np.asarray(case.inputs["A"]), device=device).reshape(n)
+    else:
+        a = torch.from_numpy(rg.standard_normal((n,), dtype=np.float32)).to(device)
+
+    if case.inputs and "B" in case.inputs:
+        b = _as_f32_tensor(np.asarray(case.inputs["B"]), device=device).reshape(n)
+    else:
+        b = torch.from_numpy(rg.standard_normal((n,), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["vdot"]):
+        out = torch.vdot(a, b)
+
+    a_np = _to_np(a)
+    b_np = _to_np(b)
+    out_np = _to_np(out)
+    return {
+        "A": a_np,
+        "B": b_np,
+        "inp_ptr": a_np,
+        "other_ptr": b_np,
+        "out_ptr": out_np,
+        "out": out_np,
+        "output": out_np,
+        "result": out_np,
+    }
+
+
+def _run_flaggems_mv2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 16))
+    n = int(case.shapes.get("N", 32))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "A" in case.inputs:
+        mat = _as_f32_tensor(np.asarray(case.inputs["A"]), device=device)
+    elif case.inputs and "mat" in case.inputs:
+        mat = _as_f32_tensor(np.asarray(case.inputs["mat"]), device=device)
+    else:
+        # Align with inferred intent conventions: A shape [N, M], B shape [M], C shape [N].
+        mat = torch.from_numpy(rg.standard_normal((n, m), dtype=np.float32)).to(device)
+
+    if case.inputs and "B" in case.inputs:
+        vec = _as_f32_tensor(np.asarray(case.inputs["B"]), device=device).reshape(m)
+    elif case.inputs and "vec" in case.inputs:
+        vec = _as_f32_tensor(np.asarray(case.inputs["vec"]), device=device).reshape(m)
+    else:
+        vec = torch.from_numpy(rg.standard_normal((m,), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["mv"]):
+        out = torch.mv(mat, vec)
+
+    mat_np = _to_np(mat)
+    vec_np = _to_np(vec)
+    out_np = _to_np(out)
+    return {
+        "A": mat_np,
+        "B": vec_np,
+        "C": out_np,
+        "mat": mat_np,
+        "vec": vec_np,
+        "out": out_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_addmv2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 16))
+    n = int(case.shapes.get("N", 32))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "Inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["Inp"]), device=device).reshape(n)
+    elif case.inputs and "input" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["input"]), device=device).reshape(n)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((n,), dtype=np.float32)).to(device)
+
+    if case.inputs and "A" in case.inputs:
+        mat = _as_f32_tensor(np.asarray(case.inputs["A"]), device=device)
+    elif case.inputs and "mat" in case.inputs:
+        mat = _as_f32_tensor(np.asarray(case.inputs["mat"]), device=device)
+    else:
+        # Align with inferred intent conventions: A shape [N, M], B shape [M], Inp/Out shape [N].
+        mat = torch.from_numpy(rg.standard_normal((n, m), dtype=np.float32)).to(device)
+
+    if case.inputs and "B" in case.inputs:
+        vec = _as_f32_tensor(np.asarray(case.inputs["B"]), device=device).reshape(m)
+    elif case.inputs and "vec" in case.inputs:
+        vec = _as_f32_tensor(np.asarray(case.inputs["vec"]), device=device).reshape(m)
+    else:
+        vec = torch.from_numpy(rg.standard_normal((m,), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["addmv", "mv"]):
+        out = torch.addmv(inp, mat, vec)
+
+    inp_np = _to_np(inp)
+    mat_np = _to_np(mat)
+    vec_np = _to_np(vec)
+    out_np = _to_np(out)
+    return {
+        "A": mat_np,
+        "B": vec_np,
+        "Inp": inp_np,
+        "Out": out_np,
+        "alpha": np.array(1.0, dtype=np.float32),
+        "beta": np.array(1.0, dtype=np.float32),
+        "input": inp_np,
+        "mat": mat_np,
+        "vec": vec_np,
+        "out": out_np,
+        "output": out_np,
+    }
+
+
 def _run_flaggems_any_reference(case: TestCase) -> Dict[str, np.ndarray]:
     m = int(case.shapes.get("M", 4))
     n = int(case.shapes.get("N", 8))
@@ -1351,6 +1670,70 @@ _FLAGGEMS_SPEC_BUILDERS = {
         attr="FLAGGEMS_TANH_SRC",
         runner=_run_flaggems_tanh2d_reference,
         canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "mm2d": lambda: KernelSpec(
+        name="mm2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_MM_SRC",
+        runner=_run_flaggems_mm2d_reference,
+        canonical_shapes={"M": 16, "K": 32, "N": 16},
+        vary_axes=["M", "K", "N"],
+    ),
+    "bmm3d": lambda: KernelSpec(
+        name="bmm3d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_BMM_SRC",
+        runner=_run_flaggems_bmm3d_reference,
+        canonical_shapes={"BATCH": 2, "M": 8, "K": 16, "N": 8},
+        vary_axes=["BATCH", "M", "K", "N"],
+    ),
+    "addmm2d": lambda: KernelSpec(
+        name="addmm2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_ADDMM_SRC",
+        runner=_run_flaggems_addmm2d_reference,
+        canonical_shapes={"M": 16, "K": 32, "N": 16},
+        vary_axes=["M", "K", "N"],
+    ),
+    "baddbmm3d": lambda: KernelSpec(
+        name="baddbmm3d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_BADDBMM_SRC",
+        runner=_run_flaggems_baddbmm3d_reference,
+        canonical_shapes={"BATCH": 2, "M": 8, "K": 16, "N": 8},
+        vary_axes=["BATCH", "M", "K", "N"],
+    ),
+    "dot1d": lambda: KernelSpec(
+        name="dot1d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_DOT_SRC",
+        runner=_run_flaggems_dot1d_reference,
+        canonical_shapes={"N": 256},
+        vary_axes=["N"],
+    ),
+    "vdot1d": lambda: KernelSpec(
+        name="vdot1d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_VDOT_SRC",
+        runner=_run_flaggems_vdot1d_reference,
+        canonical_shapes={"N": 256},
+        vary_axes=["N"],
+    ),
+    "mv2d": lambda: KernelSpec(
+        name="mv2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_MV_SRC",
+        runner=_run_flaggems_mv2d_reference,
+        canonical_shapes={"M": 16, "N": 32},
+        vary_axes=["M", "N"],
+    ),
+    "addmv2d": lambda: KernelSpec(
+        name="addmv2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_ADDMV_SRC",
+        runner=_run_flaggems_addmv2d_reference,
+        canonical_shapes={"M": 16, "N": 32},
         vary_axes=["M", "N"],
     ),
     "group_norm_kernel": lambda: KernelSpec(

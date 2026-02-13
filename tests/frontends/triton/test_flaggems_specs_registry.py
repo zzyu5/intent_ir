@@ -35,6 +35,14 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "logical_or2d" in names
     assert "logical_not2d" in names
     assert "logical_xor2d" in names
+    assert "mm2d" in names
+    assert "bmm3d" in names
+    assert "addmm2d" in names
+    assert "baddbmm3d" in names
+    assert "dot1d" in names
+    assert "vdot1d" in names
+    assert "mv2d" in names
+    assert "addmv2d" in names
     assert "sub2d" in names
     assert "mul2d" in names
     assert "abs2d" in names

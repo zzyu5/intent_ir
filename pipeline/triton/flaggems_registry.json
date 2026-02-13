@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-13T04:31:10.826190+00:00",
+  "generated_at": "2026-02-13T06:22:31.526352+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -19,8 +19,8 @@
     "semantic_ops": 196,
     "by_status": {
       "blocked_backend": 26,
-      "blocked_ir": 103,
-      "dual_pass": 67
+      "blocked_ir": 95,
+      "dual_pass": 75
     },
     "by_family": {
       "attention_sequence": 5,
@@ -253,33 +253,54 @@
         "addmv_out"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "matmul",
+        "add"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.addmv",
+      "e2e_spec": "addmv2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as add(input, matmul(mat, vec))",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "matmul"
+          ],
+          "supported_ops": [
+            "add",
+            "matmul"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "matmul"
+          ],
+          "supported_ops": [
+            "add",
+            "matmul"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "matmul"
+          ],
+          "supported_ops": [
+            "add",
+            "matmul"
+          ],
           "missing_ops": []
         }
       }
@@ -3777,33 +3798,47 @@
         "mv"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "matmul"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.mv",
+      "e2e_spec": "mv2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped to matrix-vector matmul primitive",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "matmul"
+          ],
+          "supported_ops": [
+            "matmul"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "matmul"
+          ],
+          "supported_ops": [
+            "matmul"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "matmul"
+          ],
+          "supported_ops": [
+            "matmul"
+          ],
           "missing_ops": []
         }
       }
@@ -8172,33 +8207,54 @@
         "addmm_out"
       ],
       "family": "matmul_linear",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "matmul",
+        "add"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.addmm",
+      "e2e_spec": "addmm2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as add(input, matmul(mat1, mat2))",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "matmul"
+          ],
+          "supported_ops": [
+            "add",
+            "matmul"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "matmul"
+          ],
+          "supported_ops": [
+            "add",
+            "matmul"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "matmul"
+          ],
+          "supported_ops": [
+            "add",
+            "matmul"
+          ],
           "missing_ops": []
         }
       }
@@ -8209,33 +8265,54 @@
         "baddbmm"
       ],
       "family": "matmul_linear",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "matmul",
+        "add"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.baddbmm",
+      "e2e_spec": "baddbmm3d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as add(input, matmul(batch1, batch2))",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "matmul"
+          ],
+          "supported_ops": [
+            "add",
+            "matmul"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "matmul"
+          ],
+          "supported_ops": [
+            "add",
+            "matmul"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "add",
+            "matmul"
+          ],
+          "supported_ops": [
+            "add",
+            "matmul"
+          ],
           "missing_ops": []
         }
       }
@@ -8247,33 +8324,47 @@
         "bmm_out"
       ],
       "family": "matmul_linear",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "matmul"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.bmm",
+      "e2e_spec": "bmm3d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped to batched matmul primitive",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "matmul"
+          ],
+          "supported_ops": [
+            "matmul"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "matmul"
+          ],
+          "supported_ops": [
+            "matmul"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "matmul"
+          ],
+          "supported_ops": [
+            "matmul"
+          ],
           "missing_ops": []
         }
       }
@@ -8358,33 +8449,47 @@
         "dot"
       ],
       "family": "matmul_linear",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "matmul"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.dot",
+      "e2e_spec": "dot1d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped to vector matmul primitive",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "matmul"
+          ],
+          "supported_ops": [
+            "matmul"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "matmul"
+          ],
+          "supported_ops": [
+            "matmul"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "matmul"
+          ],
+          "supported_ops": [
+            "matmul"
+          ],
           "missing_ops": []
         }
       }
@@ -8396,33 +8501,47 @@
         "mm_out"
       ],
       "family": "matmul_linear",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "matmul"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.mm",
+      "e2e_spec": "mm2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped to matmul primitive",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "matmul"
+          ],
+          "supported_ops": [
+            "matmul"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "matmul"
+          ],
+          "supported_ops": [
+            "matmul"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "matmul"
+          ],
+          "supported_ops": [
+            "matmul"
+          ],
           "missing_ops": []
         }
       }
@@ -8433,33 +8552,47 @@
         "vdot"
       ],
       "family": "matmul_linear",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "matmul"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.vdot",
+      "e2e_spec": "vdot1d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped to vector matmul primitive",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "matmul"
+          ],
+          "supported_ops": [
+            "matmul"
+          ],
           "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "matmul"
+          ],
+          "supported_ops": [
+            "matmul"
+          ],
           "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
           "ok": true,
-          "requested_ops": [],
-          "supported_ops": [],
+          "requested_ops": [
+            "matmul"
+          ],
+          "supported_ops": [
+            "matmul"
+          ],
           "missing_ops": []
         }
       }
