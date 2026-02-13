@@ -31,12 +31,39 @@ def main() -> None:
     ap.add_argument("--suite", choices=["smoke", "coverage", "all"], default="smoke")
     ap.add_argument("--kernel", action="append", default=[], help="repeatable; optional kernel filter")
     ap.add_argument("--cases-limit", type=int, default=8)
-    ap.add_argument("--use-llm", action=argparse.BooleanOptionalAction, default=True)
+    ap.add_argument(
+        "--use-intent-ir",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable IntentIR pipeline for Triton stage (default: on).",
+    )
+    ap.add_argument(
+        "--intentir-seed-policy",
+        choices=["auto", "force_llm", "force_cache"],
+        default="auto",
+        help="IntentIR seed policy for Triton stage.",
+    )
+    legacy_llm = ap.add_mutually_exclusive_group()
+    legacy_llm.add_argument(
+        "--use-llm",
+        dest="legacy_llm_switch",
+        action="store_const",
+        const="force_llm",
+        help="Legacy alias: equivalent to --use-intent-ir --intentir-seed-policy force_llm.",
+    )
+    legacy_llm.add_argument(
+        "--no-use-llm",
+        dest="legacy_llm_switch",
+        action="store_const",
+        const="traditional",
+        help="Legacy alias: equivalent to --no-use-intent-ir.",
+    )
+    ap.set_defaults(legacy_llm_switch=None)
     ap.add_argument(
         "--allow-deterministic-fallback",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="When --no-use-llm and seed cache is missing, allow deterministic fallback intents.",
+        help="When intentir-seed-policy is force_cache and seed cache is missing, allow deterministic fallback intents.",
     )
     ap.add_argument("--flaggems-opset", choices=["deterministic_forward"], default="deterministic_forward")
     ap.add_argument("--backend-target", choices=["rvv", "cuda_h100", "cuda_5090d"], default="rvv")
@@ -73,6 +100,13 @@ def main() -> None:
     ap.add_argument("--out-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_matrix"))
     ap.add_argument("--write-registry", action="store_true")
     args = ap.parse_args()
+    use_intent_ir = bool(args.use_intent_ir)
+    seed_policy = str(args.intentir_seed_policy)
+    if args.legacy_llm_switch == "force_llm":
+        use_intent_ir = True
+        seed_policy = "force_llm"
+    elif args.legacy_llm_switch == "traditional":
+        use_intent_ir = False
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -120,10 +154,11 @@ def main() -> None:
             "--backend-target",
             str(args.backend_target),
         ]
-        if bool(args.use_llm):
-            cmd.append("--use-llm")
+        if bool(use_intent_ir):
+            cmd.append("--use-intent-ir")
         else:
-            cmd.append("--no-use-llm")
+            cmd.append("--no-use-intent-ir")
+        cmd += ["--intentir-seed-policy", str(seed_policy)]
         if bool(args.allow_deterministic_fallback):
             cmd.append("--allow-deterministic-fallback")
         else:

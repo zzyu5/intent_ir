@@ -9,8 +9,10 @@ importable modules (e.g., `pipeline/triton/core.py`, or backend/verify packages)
   - `--provider native|flaggems` chooses Triton provider (`flaggems` is still Triton, not a separate frontend).
   - `--flaggems-opset deterministic_forward` selects the FlagGems semantic-op set baseline.
   - `--backend-target rvv|cuda_h100|cuda_5090d` enables backend capability preflight on generated IntentIR.
-  - `--use-llm/--no-use-llm` toggles LLM extraction vs cached intent-seed replay.
-  - `--allow-deterministic-fallback` only applies to `--no-use-llm` when cache is missing.
+  - `--use-intent-ir/--no-use-intent-ir` chooses IntentIR pipeline vs traditional provider path.
+  - `--intentir-seed-policy auto|force_llm|force_cache` controls Intent seed behavior when IntentIR is enabled.
+  - Legacy aliases remain: `--use-llm` => `force_llm`; `--no-use-llm` => `--no-use-intent-ir`.
+  - `--allow-deterministic-fallback` only applies to `force_cache` when cache is missing.
   - `--suite smoke|coverage|all`, `--list`, and `--kernel NAME` control kernel selection.
 - `tilelang/full_pipeline_verify.py`: run the TileLang MVP pipeline for the default kernel set.
 - `pipeline/triton/core.py`: reusable Triton pipeline helper library used by `scripts/triton/full_pipeline_verify.py`.

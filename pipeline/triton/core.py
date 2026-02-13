@@ -2395,6 +2395,51 @@ def coverage_kernel_specs() -> List[KernelSpec]:
     return specs
 
 
+def _persist_baseline_snapshot(
+    *,
+    report: Dict[str, object],
+    out_dir: Path,
+    spec_name: str,
+    baseline_case: TestCase,
+    baseline_io_raw: Dict[str, np.ndarray],
+    intent_for_alias=None,
+) -> None:
+    try:
+        baseline_io = dict(baseline_io_raw)
+        if intent_for_alias is not None:
+            try:
+                from verify.diff_runner import _with_io_aliases as _with_io_aliases_for_diff
+
+                baseline_io = _with_io_aliases_for_diff(intent_for_alias, baseline_io)
+            except Exception:
+                pass
+        total_bytes = 0
+        for v in baseline_io.values():
+            arr = np.asarray(v)
+            total_bytes += int(arr.size) * int(arr.dtype.itemsize)
+        if total_bytes <= 16 * 1024 * 1024:
+            npz_path = out_dir / f"{spec_name}.baseline.npz"
+            np.savez_compressed(npz_path, **{k: np.asarray(v) for k, v in baseline_io.items()})
+            report["baseline"] = {
+                "shapes": dict(baseline_case.shapes),
+                "seed": int(baseline_case.seed),
+                "npz_path": str(npz_path),
+                "keys": sorted(list(baseline_io.keys())),
+                "bytes": int(total_bytes),
+            }
+        else:
+            report["baseline"] = {
+                "shapes": dict(baseline_case.shapes),
+                "seed": int(baseline_case.seed),
+                "npz_path": None,
+                "keys": sorted(list(baseline_io.keys())),
+                "bytes": int(total_bytes),
+                "skipped": "baseline too large to cache (over 16MB)",
+            }
+    except Exception as e:
+        report["baseline"] = {"shapes": dict(baseline_case.shapes), "seed": int(baseline_case.seed), "error": str(e)}
+
+
 def run_pipeline_for_spec(
     spec: KernelSpec,
     *,
@@ -2402,6 +2447,8 @@ def run_pipeline_for_spec(
     cases_limit: int = 8,
     use_llm: bool = True,
     allow_deterministic_fallback: bool = False,
+    use_intent_ir: bool = True,
+    intentir_seed_policy: str = "auto",
     triton_provider: str = "native",
     backend_target: str | None = None,
     enable_stage_c: bool = True,
@@ -2415,11 +2462,18 @@ def run_pipeline_for_spec(
 
     Args:
       use_llm:
-        True: normal path (LLM extraction + repair loops).
-        False: replay cached IntentIR seeds produced by prior LLM runs.
+        Legacy compatibility switch. Prefer `intentir_seed_policy`.
       allow_deterministic_fallback:
-        When `use_llm=False` and no cached seed is available, allow legacy
+        When `intentir_seed_policy=force_cache` and no cached seed is available, allow legacy
         deterministic fallback intents instead of failing fast.
+      use_intent_ir:
+        True: run IntentIR pipeline.
+        False: skip IntentIR generation and use traditional provider path.
+      intentir_seed_policy:
+        Seed behavior when `use_intent_ir=True`:
+        - `auto`: replay cache if available, otherwise call LLM and save cache.
+        - `force_llm`: always call LLM and overwrite cache.
+        - `force_cache`: require cache and never call LLM.
     """
     report: Dict[str, object] = {
         "kernel": spec.name,
@@ -2546,45 +2600,85 @@ def run_pipeline_for_spec(
     else:
         report["ttir_path"] = None
 
-    # 3) IntentIR construction (LLM path or seed replay / fallback).
-    stage5_mode = "LLM -> IntentIR (may take a while)" if use_llm else "replay cached IntentIR seed (--no-use-llm)"
+    if not bool(use_intent_ir):
+        print(f"[{spec.name}] stage5: traditional provider path (--no-use-intent-ir)", flush=True)
+        report["intentir"] = {
+            "enabled": False,
+            "mode": "traditional_provider_path",
+            "reason": "intent_ir_disabled_by_caller",
+        }
+        report["llm_enabled"] = False
+        report["intent_seed"] = {"used": False, "mode": "disabled", "reason": "intent_ir_disabled"}
+        report["intent"] = None
+        report["intent_expanded"] = None
+        report["backend_preflight"] = {"ok": True, "skipped": True, "reason": "no_intent_ir"}
+        report["diff"] = {"ok": True, "skipped": True, "reason": "traditional_provider_path_no_intent_ir"}
+        report["stage_c"] = {"ok": True, "skipped": True, "reason": "no_intent_ir"}
+        report["mutation_kill"] = {"skipped": True, "reason": "no_intent_ir"}
+        _persist_baseline_snapshot(
+            report=report,
+            out_dir=out_dir,
+            spec_name=spec.name,
+            baseline_case=baseline_case,
+            baseline_io_raw=baseline_io_raw,
+            intent_for_alias=None,
+        )
+        return report
+
+    seed_policy = str(intentir_seed_policy).strip().lower()
+    if seed_policy not in {"auto", "force_llm", "force_cache"}:
+        raise ValueError(f"unsupported intentir_seed_policy: {intentir_seed_policy}")
+    # Backward compatibility: explicit use_llm=False historically meant no live LLM.
+    if seed_policy == "auto" and not bool(use_llm):
+        seed_policy = "force_cache"
+
+    # 3) IntentIR construction (cache/LLM/fallback policy).
+    if seed_policy == "force_cache":
+        stage5_mode = "IntentIR from cached seed (forced)"
+    elif seed_policy == "force_llm":
+        stage5_mode = "LLM -> IntentIR (forced)"
+    else:
+        stage5_mode = "IntentIR auto mode (cache hit -> replay, miss -> LLM)"
     print(f"[{spec.name}] stage5: {stage5_mode}", flush=True)
-    report["llm_enabled"] = bool(use_llm)
+    report["llm_enabled"] = bool(seed_policy in {"auto", "force_llm"})
     feedback: List[str] = []
     cand: CandidateIntent | None = None
     cand_expanded: CandidateIntent | None = None
     llm_generated = False
+    cache_used = False
     seed_path = _intent_seed_path(out_dir, spec.name)
     report["intent_seed"] = {
         "path": str(seed_path),
-        "mode": ("record" if use_llm else "replay"),
+        "mode": str(seed_policy),
         "used": False,
     }
-    if not use_llm:
-        if seed_path.is_file():
-            cand, cand_expanded = _load_intent_seed(seed_path)
-            report["intent_seed"]["used"] = True
-            report["intent_seed"]["source"] = "cache"
-            (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
-            if cand_expanded is not None:
-                (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(
-                    print_mlir_like(cand_expanded.intent), encoding="utf-8"
-                )
-        elif not allow_deterministic_fallback:
+    should_try_cache = bool(seed_policy in {"auto", "force_cache"})
+    should_try_llm = bool(seed_policy in {"auto", "force_llm"})
+    if should_try_cache and seed_path.is_file():
+        cand, cand_expanded = _load_intent_seed(seed_path)
+        cache_used = True
+        report["intent_seed"]["used"] = True
+        report["intent_seed"]["source"] = "cache"
+        (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
+        if cand_expanded is not None:
+            (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(
+                print_mlir_like(cand_expanded.intent), encoding="utf-8"
+            )
+    elif seed_policy == "force_cache":
+        if not allow_deterministic_fallback:
             raise RuntimeError(
                 f"no cached intent seed for {spec.name}: {seed_path}. "
-                "Run once with --use-llm to create seed cache, or pass --allow-deterministic-fallback."
+                "Run once with --use-intent-ir --intentir-seed-policy force_llm to create cache."
             )
-        else:
-            feedback = ["LLM disabled and seed cache missing; deterministic fallback enabled by caller"]
-            report["intent_seed"]["used"] = False
-            report["intent_seed"]["reason"] = "cache_missing_fallback_enabled"
+        feedback = ["IntentIR force_cache requested but cache missing; deterministic fallback enabled by caller"]
+        report["intent_seed"]["used"] = False
+        report["intent_seed"]["reason"] = "cache_missing_fallback_enabled"
     # Some macro/complex kernels can easily trigger provider instability or long
     # waits. Keep the default full pipeline usable by allowing deterministic
     # fallbacks, while still permitting LLM forcing via env vars.
     use_llm_for_macro = str(os.getenv("INTENTIR_TRITON_UPSAMPLE_USE_LLM", "1")).strip() in {"1", "true", "yes", "on"}
     use_llm_for_attn = str(os.getenv("INTENTIR_TRITON_ATTN_USE_LLM", "1")).strip() in {"1", "true", "yes", "on"}
-    if cand is None and spec.name == "upsample_bicubic2d_aa" and not use_llm_for_macro:
+    if cand is None and spec.name == "upsample_bicubic2d_aa" and seed_policy != "force_llm" and not use_llm_for_macro:
         fb_intent = _upsample_bicubic2d_aa_fallback_intent()
         cand = CandidateIntent(intent=fb_intent, problem_params={}, schedule_params={}, raw_json={"fallback": True}, llm_trace={})
         report["llm_fallback"] = {
@@ -2607,7 +2701,7 @@ def run_pipeline_for_spec(
         exp_txt = print_mlir_like(expanded_intent)
         (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
         (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
-    elif cand is None and spec.name == "_attn_fwd" and not use_llm_for_attn:
+    elif cand is None and spec.name == "_attn_fwd" and seed_policy != "force_llm" and not use_llm_for_attn:
         fb_intent = _attn_fwd_fallback_intent()
         cand = CandidateIntent(intent=fb_intent, problem_params={}, schedule_params={}, raw_json={"fallback": True}, llm_trace={})
         report["llm_fallback"] = {
@@ -2631,7 +2725,7 @@ def run_pipeline_for_spec(
         (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
         (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
     elif cand is None:
-        if use_llm:
+        if should_try_llm:
             for attempt in range(2):
                 try:
                     cand = llm_to_intent(desc, feedback=feedback)
@@ -2657,7 +2751,7 @@ def run_pipeline_for_spec(
                     cand_expanded = None
                     continue
         elif not feedback:
-            feedback = ["LLM disabled by caller"]
+            feedback = ["intent seed policy does not allow live LLM in this run"]
     if cand is None:
         # Resilience fallback for macro-heavy kernels when providers are unstable.
         if spec.name == "upsample_bicubic2d_aa":
@@ -2727,6 +2821,21 @@ def run_pipeline_for_spec(
                 backend_target=backend_target,
             )
     report["intent_expanded"] = (cand_expanded.intent.to_json_dict() if cand_expanded is not None else None)
+    if llm_generated:
+        source_mode = "llm"
+    elif bool((report.get("llm_fallback") or {}).get("used")):
+        source_mode = "fallback"
+    elif cache_used:
+        source_mode = "cache"
+    else:
+        source_mode = "unknown"
+    report["intentir"] = {
+        "enabled": True,
+        "seed_policy": str(seed_policy),
+        "source_mode": str(source_mode),
+        "cache_path": str(seed_path),
+    }
+    llm_repair_allowed = bool(should_try_llm and not cache_used)
 
     # 4) Static validation (Intent vs certificate), if TTIR certificate exists.
     if cert is not None:
@@ -2738,7 +2847,7 @@ def run_pipeline_for_spec(
             "reasons": list(sv.reasons),
             "obligations": [{"id": o.id, "status": o.status, "detail": o.detail} for o in sv.obligations],
         }
-        if use_llm and not sv.ok:
+        if llm_repair_allowed and not sv.ok:
             # One conservative repair round using certificate-derived feedback.
             try:
                 cand = llm_to_intent(desc, feedback=list(sv.reasons))
@@ -2847,7 +2956,7 @@ def run_pipeline_for_spec(
 
     # If dynamic diff fails, do one bounded LLM repair round using concrete feedback.
     # This is deliberately conservative (1 retry) to respect LLM rate limits.
-    if use_llm and diffs_in and not all(d.ok for d in diffs_in):
+    if llm_repair_allowed and diffs_in and not all(d.ok for d in diffs_in):
         worst_summary = (report.get("diff") or {}).get("worst", {}).get("summary")
         ce0 = (report.get("counterexamples") or [{}])[0]
         feedback3: List[str] = []
@@ -3081,39 +3190,14 @@ def run_pipeline_for_spec(
 
     # Persist baseline IO aligned to the final macro intent, so Task6 tools can
     # reuse the same snapshot without re-launching Triton.
-    try:
-        baseline_io = dict(baseline_io_raw)
-        try:
-            from verify.diff_runner import _with_io_aliases as _with_io_aliases_for_diff
-
-            baseline_io = _with_io_aliases_for_diff(cand.intent, baseline_io)
-        except Exception:
-            pass
-        total_bytes = 0
-        for v in baseline_io.values():
-            arr = np.asarray(v)
-            total_bytes += int(arr.size) * int(arr.dtype.itemsize)
-        if total_bytes <= 16 * 1024 * 1024:
-            npz_path = out_dir / f"{spec.name}.baseline.npz"
-            np.savez_compressed(npz_path, **{k: np.asarray(v) for k, v in baseline_io.items()})
-            report["baseline"] = {
-                "shapes": dict(baseline_case.shapes),
-                "seed": int(baseline_case.seed),
-                "npz_path": str(npz_path),
-                "keys": sorted(list(baseline_io.keys())),
-                "bytes": int(total_bytes),
-            }
-        else:
-            report["baseline"] = {
-                "shapes": dict(baseline_case.shapes),
-                "seed": int(baseline_case.seed),
-                "npz_path": None,
-                "keys": sorted(list(baseline_io.keys())),
-                "bytes": int(total_bytes),
-                "skipped": "baseline too large to cache (over 16MB)",
-            }
-    except Exception as e:
-        report["baseline"] = {"shapes": dict(baseline_case.shapes), "seed": int(baseline_case.seed), "error": str(e)}
+    _persist_baseline_snapshot(
+        report=report,
+        out_dir=out_dir,
+        spec_name=spec.name,
+        baseline_case=baseline_case,
+        baseline_io_raw=baseline_io_raw,
+        intent_for_alias=cand.intent,
+    )
     return report
 
 
