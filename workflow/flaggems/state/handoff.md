@@ -1,9 +1,9 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-13T20:02:33+00:00
-- Commit: `4e5cf1ba1349376b93e97504454dea028e67bf9d`
-- Summary: Mapped one_hot/nll_loss_forward/max_pool2d_with_indices into IntentIR and validated scoped pipeline+RVV(local/remote)+CUDA classification.
-- Batch Ops (3): max_pool2d_with_indices, nll_loss_forward, one_hot
-- Run Summary: `artifacts/flaggems_matrix/daily/20260213/batch_onehot_nll_pool_v1/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260213/batch_onehot_nll_pool_v1/status_converged.json`
-- Next Focus: Implement blocked_ir attention/conv wave from active_batch (ScaleDotProductAttention, conv1d/conv3d/conv_depthwise2d, flash_attention_forward) and keep CUDA timeouts classified with reason_code.
+- Timestamp: 2026-02-13T20:32:08+00:00
+- Commit: `6b1f134`
+- Summary: Mapped trace/triu/upsample_nearest(1d/2d) into IntentIR with e2e specs and multibackend classification.
+- Batch Ops (4): trace, triu, upsample_nearest1d, upsample_nearest2d
+- Run Summary: `artifacts/flaggems_matrix/daily/20260214/batch_trace_triu_upsample_v1/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260214/batch_trace_triu_upsample_v1/status_converged.json`
+- Next Focus: Continue blocked_ir queue (attention/scatter/select_scatter/slice_scatter/polar/quantile/unique2/weight_norm_interface) and add RVV/CUDA lowering for trace/triu/upsample_nearest ops.

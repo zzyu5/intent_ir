@@ -1,13 +1,13 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-13T20:02:16+00:00",
+  "generated_at": "2026-02-13T20:30:49+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
       "dual_pass": 106,
-      "blocked_backend": 71,
-      "blocked_ir": 19
+      "blocked_backend": 78,
+      "blocked_ir": 12
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -1639,23 +1639,27 @@
       "id": "flaggems::trace",
       "semantic_op": "trace",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "trace2d",
+      "intent_ops": [
+        "trace"
+      ]
     },
     {
       "id": "flaggems::triu",
       "semantic_op": "triu",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "triu2d",
+      "intent_ops": [
+        "triu"
+      ]
     },
     {
       "id": "flaggems::true_divide",
@@ -2542,12 +2546,14 @@
       "id": "flaggems::conv1d",
       "semantic_op": "conv1d",
       "family": "conv_pool_interp",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "conv1d_ncl",
+      "intent_ops": [
+        "conv1d"
+      ]
     },
     {
       "id": "flaggems::conv2d",
@@ -2566,23 +2572,27 @@
       "id": "flaggems::conv3d",
       "semantic_op": "conv3d",
       "family": "conv_pool_interp",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "conv3d_ncdhw",
+      "intent_ops": [
+        "conv3d"
+      ]
     },
     {
       "id": "flaggems::conv_depthwise2d",
       "semantic_op": "conv_depthwise2d",
       "family": "conv_pool_interp",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "conv_depthwise2d_nchw",
+      "intent_ops": [
+        "conv_depthwise2d"
+      ]
     },
     {
       "id": "flaggems::max_pool2d_with_indices",
@@ -2615,23 +2625,27 @@
       "id": "flaggems::upsample_nearest1d",
       "semantic_op": "upsample_nearest1d",
       "family": "conv_pool_interp",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "upsample_nearest1d_ncl",
+      "intent_ops": [
+        "upsample_nearest1d"
+      ]
     },
     {
       "id": "flaggems::upsample_nearest2d",
       "semantic_op": "upsample_nearest2d",
       "family": "conv_pool_interp",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "upsample_nearest2d_nchw",
+      "intent_ops": [
+        "upsample_nearest2d"
+      ]
     },
     {
       "id": "flaggems::ScaleDotProductAttention",
