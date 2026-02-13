@@ -80,6 +80,7 @@ _ALIAS_TO_BASE: dict[str, str] = {
     "repeat_interleave_self_tensor": "repeat_interleave",
     "repeat_interleave_tensor": "repeat_interleave",
     "sort_stable": "sort",
+    "_conv_depthwise2d": "conv_depthwise2d",
     # Bitwise aliases.
     "bitwise_and_scalar": "bitwise_and",
     "bitwise_and_scalar_tensor": "bitwise_and",
@@ -707,6 +708,55 @@ _MACRO_TEMPLATE: dict[str, SemanticMapping] = {
         mapping_kind="macro_template",
         pattern_id="macro.max_pool2d_with_indices",
         detail="mapped as dual value/index extraction with max_pool2d_with_indices primitive",
+    ),
+    "conv1d": _mk(
+        "conv1d",
+        ("conv1d",),
+        mapping_kind="macro_template",
+        pattern_id="macro.conv1d",
+        detail="mapped to conv1d primitive",
+    ),
+    "conv3d": _mk(
+        "conv3d",
+        ("conv3d",),
+        mapping_kind="macro_template",
+        pattern_id="macro.conv3d",
+        detail="mapped to conv3d primitive",
+    ),
+    "conv_depthwise2d": _mk(
+        "conv_depthwise2d",
+        ("conv_depthwise2d",),
+        mapping_kind="macro_template",
+        pattern_id="macro.conv_depthwise2d",
+        detail="mapped to conv_depthwise2d primitive",
+    ),
+    "trace": _mk(
+        "trace",
+        ("trace",),
+        mapping_kind="macro_template",
+        pattern_id="macro.trace",
+        detail="mapped to trace primitive",
+    ),
+    "triu": _mk(
+        "triu",
+        ("triu",),
+        mapping_kind="macro_template",
+        pattern_id="macro.triu",
+        detail="mapped to triu primitive",
+    ),
+    "upsample_nearest1d": _mk(
+        "upsample_nearest1d",
+        ("upsample_nearest1d",),
+        mapping_kind="macro_template",
+        pattern_id="macro.upsample_nearest1d",
+        detail="mapped to upsample_nearest1d primitive",
+    ),
+    "upsample_nearest2d": _mk(
+        "upsample_nearest2d",
+        ("upsample_nearest2d",),
+        mapping_kind="macro_template",
+        pattern_id="macro.upsample_nearest2d",
+        detail="mapped to upsample_nearest2d primitive",
     ),
 }
 

@@ -964,6 +964,57 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
             raise IntentIRValidationError(f"op[{idx}] diag_embed.dim2 must be int when provided")
         if (dim1 is not None) and (dim2 is not None) and int(dim1) == int(dim2):
             raise IntentIRValidationError(f"op[{idx}] diag_embed.dim1 and dim2 must be different")
+    elif op.op == "trace":
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] trace requires 1 input")
+    elif op.op == "triu":
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] triu requires 1 input")
+        diagonal = attrs.get("diagonal")
+        if diagonal is not None and not isinstance(diagonal, int):
+            raise IntentIRValidationError(f"op[{idx}] triu.diagonal must be int when provided")
+    elif op.op == "upsample_nearest1d":
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] upsample_nearest1d requires 1 input")
+        output_size = attrs.get("output_size")
+        scales = attrs.get("scales", attrs.get("scale_factor"))
+        if output_size is not None:
+            valid_size = isinstance(output_size, int) and output_size > 0
+            if not valid_size:
+                valid_size = (
+                    isinstance(output_size, list)
+                    and len(output_size) == 1
+                    and isinstance(output_size[0], int)
+                    and output_size[0] > 0
+                )
+            if not valid_size:
+                raise IntentIRValidationError(
+                    f"op[{idx}] upsample_nearest1d.output_size must be int>0 or list[int] len=1 when provided"
+                )
+        if scales is not None and (not isinstance(scales, (int, float)) or float(scales) <= 0.0):
+            raise IntentIRValidationError(f"op[{idx}] upsample_nearest1d.scales/scale_factor must be positive number when provided")
+    elif op.op == "upsample_nearest2d":
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] upsample_nearest2d requires 1 input")
+        output_size = attrs.get("output_size")
+        scales_h = attrs.get("scales_h")
+        scales_w = attrs.get("scales_w")
+        if output_size is not None:
+            valid_size = isinstance(output_size, int) and output_size > 0
+            if not valid_size:
+                valid_size = (
+                    isinstance(output_size, list)
+                    and len(output_size) == 2
+                    and all(isinstance(v, int) and v > 0 for v in output_size)
+                )
+            if not valid_size:
+                raise IntentIRValidationError(
+                    f"op[{idx}] upsample_nearest2d.output_size must be int>0 or list[int,int] when provided"
+                )
+        if scales_h is not None and (not isinstance(scales_h, (int, float)) or float(scales_h) <= 0.0):
+            raise IntentIRValidationError(f"op[{idx}] upsample_nearest2d.scales_h must be positive number when provided")
+        if scales_w is not None and (not isinstance(scales_w, (int, float)) or float(scales_w) <= 0.0):
+            raise IntentIRValidationError(f"op[{idx}] upsample_nearest2d.scales_w must be positive number when provided")
     elif op.op == "avg_pool2d":
         if len(op.inputs) != 1:
             raise IntentIRValidationError(f"op[{idx}] avg_pool2d requires 1 input")
@@ -990,6 +1041,81 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
             raise IntentIRValidationError(f"op[{idx}] avg_pool2d.ceil_mode must be bool when provided")
         if count_include_pad is not None and not isinstance(count_include_pad, bool):
             raise IntentIRValidationError(f"op[{idx}] avg_pool2d.count_include_pad must be bool when provided")
+    elif op.op == "conv1d":
+        if len(op.inputs) < 2:
+            raise IntentIRValidationError(f"op[{idx}] conv1d requires at least 2 inputs (input, weight)")
+        if len(op.inputs) > 3:
+            raise IntentIRValidationError(f"op[{idx}] conv1d accepts at most 3 inputs (input, weight, bias)")
+        stride = attrs.get("stride")
+        padding = attrs.get("padding")
+        dilation = attrs.get("dilation")
+        groups = attrs.get("groups")
+
+        def _valid_1d(v: object) -> bool:
+            if isinstance(v, int):
+                return v >= 0
+            if isinstance(v, list) and len(v) == 1 and isinstance(v[0], int) and v[0] >= 0:
+                return True
+            return False
+
+        if stride is not None and not _valid_1d(stride):
+            raise IntentIRValidationError(f"op[{idx}] conv1d.stride must be int>=0 or list[int] len=1 when provided")
+        if padding is not None and not _valid_1d(padding):
+            raise IntentIRValidationError(f"op[{idx}] conv1d.padding must be int>=0 or list[int] len=1 when provided")
+        if dilation is not None and not _valid_1d(dilation):
+            raise IntentIRValidationError(f"op[{idx}] conv1d.dilation must be int>=0 or list[int] len=1 when provided")
+        if groups is not None and (not isinstance(groups, int) or groups <= 0):
+            raise IntentIRValidationError(f"op[{idx}] conv1d.groups must be positive int when provided")
+    elif op.op == "conv3d":
+        if len(op.inputs) < 2:
+            raise IntentIRValidationError(f"op[{idx}] conv3d requires at least 2 inputs (input, weight)")
+        if len(op.inputs) > 3:
+            raise IntentIRValidationError(f"op[{idx}] conv3d accepts at most 3 inputs (input, weight, bias)")
+        stride = attrs.get("stride")
+        padding = attrs.get("padding")
+        dilation = attrs.get("dilation")
+        groups = attrs.get("groups")
+
+        def _valid_3d(v: object) -> bool:
+            if isinstance(v, int):
+                return v >= 0
+            if isinstance(v, list) and len(v) == 3 and all(isinstance(x, int) and x >= 0 for x in v):
+                return True
+            return False
+
+        if stride is not None and not _valid_3d(stride):
+            raise IntentIRValidationError(f"op[{idx}] conv3d.stride must be int>=0 or list[int,int,int] when provided")
+        if padding is not None and not _valid_3d(padding):
+            raise IntentIRValidationError(f"op[{idx}] conv3d.padding must be int>=0 or list[int,int,int] when provided")
+        if dilation is not None and not _valid_3d(dilation):
+            raise IntentIRValidationError(f"op[{idx}] conv3d.dilation must be int>=0 or list[int,int,int] when provided")
+        if groups is not None and (not isinstance(groups, int) or groups <= 0):
+            raise IntentIRValidationError(f"op[{idx}] conv3d.groups must be positive int when provided")
+    elif op.op == "conv_depthwise2d":
+        if len(op.inputs) < 2:
+            raise IntentIRValidationError(f"op[{idx}] conv_depthwise2d requires at least 2 inputs (input, weight)")
+        if len(op.inputs) > 3:
+            raise IntentIRValidationError(f"op[{idx}] conv_depthwise2d accepts at most 3 inputs (input, weight, bias)")
+        stride = attrs.get("stride")
+        padding = attrs.get("padding")
+        dilation = attrs.get("dilation")
+        groups = attrs.get("groups")
+
+        def _valid_2d(v: object) -> bool:
+            if isinstance(v, int):
+                return v >= 0
+            if isinstance(v, list) and len(v) == 2 and all(isinstance(x, int) and x >= 0 for x in v):
+                return True
+            return False
+
+        if stride is not None and not _valid_2d(stride):
+            raise IntentIRValidationError(f"op[{idx}] conv_depthwise2d.stride must be int>=0 or list[int,int] when provided")
+        if padding is not None and not _valid_2d(padding):
+            raise IntentIRValidationError(f"op[{idx}] conv_depthwise2d.padding must be int>=0 or list[int,int] when provided")
+        if dilation is not None and not _valid_2d(dilation):
+            raise IntentIRValidationError(f"op[{idx}] conv_depthwise2d.dilation must be int>=0 or list[int,int] when provided")
+        if groups is not None and (not isinstance(groups, int) or groups <= 0):
+            raise IntentIRValidationError(f"op[{idx}] conv_depthwise2d.groups must be positive int when provided")
     elif op.op == "layout_cast":
         if len(op.inputs) != 1:
             raise IntentIRValidationError(f"op[{idx}] layout_cast requires 1 input")

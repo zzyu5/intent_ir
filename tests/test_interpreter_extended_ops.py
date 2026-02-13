@@ -279,6 +279,50 @@ def test_count_nonzero_diag_and_diag_embed_execute() -> None:
     assert np.allclose(out["de"], expected_de, atol=1e-6)
 
 
+def test_trace_triu_and_upsample_nearest_execute() -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "trace_triu_upsample",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "u1": {"dtype": "f32", "shape": ["B1", "C1", "L1"], "layout": "row_major"},
+                "u2": {"dtype": "f32", "shape": ["B2", "C2", "H2", "W2"], "layout": "row_major"},
+                "tr": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "tu": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "u1o": {"dtype": "f32", "shape": ["B1", "C1", "O1"], "layout": "row_major"},
+                "u2o": {"dtype": "f32", "shape": ["B2", "C2", "OH2", "OW2"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "trace", "inputs": ["x"], "output": "tr"},
+                {"op": "triu", "inputs": ["x"], "output": "tu", "attrs": {"diagonal": 0}},
+                {"op": "upsample_nearest1d", "inputs": ["u1"], "output": "u1o"},
+                {"op": "upsample_nearest2d", "inputs": ["u2"], "output": "u2o"},
+            ],
+            "outputs": ["tr", "tu", "u1o", "u2o"],
+        }
+    )
+
+    x = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
+    u1 = np.array([[[1.0, 2.0, 3.0]]], dtype=np.float32)
+    u2 = np.array([[[[1.0, 2.0], [3.0, 4.0]]]], dtype=np.float32)
+
+    out = execute_intent(
+        intent,
+        {"x": x, "u1": u1, "u2": u2},
+        shape_bindings={"M": 2, "N": 3, "B1": 1, "C1": 1, "L1": 3, "O1": 6, "B2": 1, "C2": 1, "H2": 2, "W2": 2, "OH2": 4, "OW2": 4},
+    )
+
+    assert np.allclose(out["tr"], np.trace(x), atol=1e-6)
+    assert np.allclose(out["tu"], np.triu(x), atol=1e-6)
+    expected_u1 = np.array([[[1.0, 1.0, 2.0, 2.0, 3.0, 3.0]]], dtype=np.float32)
+    expected_u2 = np.array(
+        [[[[1.0, 1.0, 2.0, 2.0], [1.0, 1.0, 2.0, 2.0], [3.0, 3.0, 4.0, 4.0], [3.0, 3.0, 4.0, 4.0]]]],
+        dtype=np.float32,
+    )
+    assert np.allclose(out["u1o"], expected_u1, atol=1e-6)
+    assert np.allclose(out["u2o"], expected_u2, atol=1e-6)
+
+
 def test_glu_cum_and_index_update_ops_execute() -> None:
     intent = IntentFunction.from_json_dict(
         {
@@ -591,3 +635,116 @@ def test_nll_loss_forward_and_max_pool2d_with_indices_execute() -> None:
     expected_idx = np.array([[[[5, 7], [13, 15]]]], dtype=np.int64)
     assert np.allclose(out["pool_vals"], expected_vals, atol=1e-6)
     assert np.array_equal(out["pool_idx"], expected_idx)
+
+
+def test_conv1d_conv3d_and_depthwise2d_execute() -> None:
+    import torch
+    import torch.nn.functional as F
+
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "conv_family",
+            "tensors": {
+                "x1": {"dtype": "f32", "shape": ["N1", "C1", "L1"], "layout": "row_major"},
+                "w1": {"dtype": "f32", "shape": ["CO1", "CI1", "K1"], "layout": "row_major"},
+                "b1": {"dtype": "f32", "shape": ["CO1"], "layout": "row_major"},
+                "x3": {"dtype": "f32", "shape": ["N3", "C3", "D3", "H3", "W3"], "layout": "row_major"},
+                "w3": {"dtype": "f32", "shape": ["CO3", "CI3", "KD3", "KH3", "KW3"], "layout": "row_major"},
+                "b3": {"dtype": "f32", "shape": ["CO3"], "layout": "row_major"},
+                "xdw": {"dtype": "f32", "shape": ["NDW", "CDW", "HDW", "WDW"], "layout": "row_major"},
+                "wdw": {"dtype": "f32", "shape": ["CODW", "ONE", "KHDW", "KWDW"], "layout": "row_major"},
+                "bdw": {"dtype": "f32", "shape": ["CODW"], "layout": "row_major"},
+                "y1": {"dtype": "f32", "shape": ["N1", "CO1", "O1"], "layout": "row_major"},
+                "y3": {"dtype": "f32", "shape": ["N3", "CO3", "OD3", "OH3", "OW3"], "layout": "row_major"},
+                "ydw": {"dtype": "f32", "shape": ["NDW", "CODW", "OHDW", "OWDW"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "conv1d",
+                    "inputs": ["x1", "w1", "b1"],
+                    "output": "y1",
+                    "attrs": {"stride": 1, "padding": 1, "dilation": 1, "groups": 1},
+                },
+                {
+                    "op": "conv3d",
+                    "inputs": ["x3", "w3", "b3"],
+                    "output": "y3",
+                    "attrs": {"stride": [1, 1, 1], "padding": [1, 1, 1], "dilation": [1, 1, 1], "groups": 1},
+                },
+                {
+                    "op": "conv_depthwise2d",
+                    "inputs": ["xdw", "wdw", "bdw"],
+                    "output": "ydw",
+                    "attrs": {"stride": [1, 1], "padding": [1, 1], "dilation": [1, 1]},
+                },
+            ],
+            "outputs": ["y1", "y3", "ydw"],
+        }
+    )
+
+    x1 = np.arange(1, 1 + (1 * 2 * 8), dtype=np.float32).reshape(1, 2, 8) / 10.0
+    w1 = np.arange(1, 1 + (3 * 2 * 3), dtype=np.float32).reshape(3, 2, 3) / 50.0
+    b1 = np.array([0.1, -0.2, 0.3], dtype=np.float32)
+
+    x3 = np.arange(1, 1 + (1 * 2 * 4 * 4 * 4), dtype=np.float32).reshape(1, 2, 4, 4, 4) / 100.0
+    w3 = np.arange(1, 1 + (3 * 2 * 3 * 3 * 3), dtype=np.float32).reshape(3, 2, 3, 3, 3) / 200.0
+    b3 = np.array([0.05, -0.1, 0.15], dtype=np.float32)
+
+    xdw = np.arange(1, 1 + (1 * 2 * 5 * 5), dtype=np.float32).reshape(1, 2, 5, 5) / 20.0
+    wdw = np.arange(1, 1 + (4 * 1 * 3 * 3), dtype=np.float32).reshape(4, 1, 3, 3) / 40.0
+    bdw = np.array([0.01, -0.02, 0.03, -0.04], dtype=np.float32)
+
+    out = execute_intent(
+        intent,
+        {"x1": x1, "w1": w1, "b1": b1, "x3": x3, "w3": w3, "b3": b3, "xdw": xdw, "wdw": wdw, "bdw": bdw},
+        shape_bindings={
+            "N1": 1,
+            "C1": 2,
+            "L1": 8,
+            "CO1": 3,
+            "CI1": 2,
+            "K1": 3,
+            "N3": 1,
+            "C3": 2,
+            "D3": 4,
+            "H3": 4,
+            "W3": 4,
+            "CO3": 3,
+            "CI3": 2,
+            "KD3": 3,
+            "KH3": 3,
+            "KW3": 3,
+            "NDW": 1,
+            "CDW": 2,
+            "HDW": 5,
+            "WDW": 5,
+            "CODW": 4,
+            "ONE": 1,
+            "KHDW": 3,
+            "KWDW": 3,
+        },
+    )
+
+    exp_y1 = F.conv1d(torch.from_numpy(x1), torch.from_numpy(w1), bias=torch.from_numpy(b1), stride=1, padding=1, dilation=1, groups=1).numpy()
+    exp_y3 = F.conv3d(
+        torch.from_numpy(x3),
+        torch.from_numpy(w3),
+        bias=torch.from_numpy(b3),
+        stride=(1, 1, 1),
+        padding=(1, 1, 1),
+        dilation=(1, 1, 1),
+        groups=1,
+    ).numpy()
+    exp_ydw = F.conv2d(
+        torch.from_numpy(xdw),
+        torch.from_numpy(wdw),
+        bias=torch.from_numpy(bdw),
+        stride=(1, 1),
+        padding=(1, 1),
+        dilation=(1, 1),
+        groups=2,
+    ).numpy()
+
+    assert np.allclose(out["y1"], exp_y1, atol=1e-6)
+    assert np.allclose(out["y3"], exp_y3, atol=1e-6)
+    assert np.allclose(out["ydw"], exp_ydw, atol=1e-6)

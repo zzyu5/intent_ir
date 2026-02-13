@@ -147,6 +147,23 @@ def test_new_structure_ops_validate_success() -> None:
             {"op": "bitwise_left_shift", "inputs": ["K", "K"], "output": "BLS"},
             {"op": "bitwise_right_shift", "inputs": ["K", "K"], "output": "BRS"},
             {"op": "avg_pool2d", "inputs": ["X4"], "output": "P2", "attrs": {"kernel_size": [2, 2], "stride": [2, 2]}},
+            {"op": "conv1d", "inputs": ["X1D", "W1D", "B1D"], "output": "Y1D", "attrs": {"stride": 1, "padding": 1, "dilation": 1, "groups": 1}},
+            {
+                "op": "conv3d",
+                "inputs": ["X3D", "W3D", "B3D"],
+                "output": "Y3D",
+                "attrs": {"stride": [1, 1, 1], "padding": [1, 1, 1], "dilation": [1, 1, 1], "groups": 1},
+            },
+            {
+                "op": "conv_depthwise2d",
+                "inputs": ["XDW", "WDW", "BDW"],
+                "output": "YDW",
+                "attrs": {"stride": [1, 1], "padding": [1, 1], "dilation": [1, 1]},
+            },
+            {"op": "trace", "inputs": ["X"], "output": "TR"},
+            {"op": "triu", "inputs": ["X"], "output": "TRIU", "attrs": {"diagonal": 0}},
+            {"op": "upsample_nearest1d", "inputs": ["UP1"], "output": "UP1O"},
+            {"op": "upsample_nearest2d", "inputs": ["UP2"], "output": "UP2O"},
             {"op": "kron", "inputs": ["X", "Y"], "output": "KRON"},
             {"op": "masked_select", "inputs": ["X", "MASK"], "output": "SEL"},
             {"op": "masked_scatter", "inputs": ["X", "MASK", "SRC"], "output": "MS"},
@@ -181,6 +198,24 @@ def test_new_structure_ops_validate_success() -> None:
     }
     src["tensors"]["X4"] = {"dtype": "f32", "shape": ["N", "C", "H", "W"], "layout": "row_major"}
     src["tensors"]["P2"] = {"dtype": "f32", "shape": ["N", "C", "OH", "OW"], "layout": "row_major"}
+    src["tensors"]["X1D"] = {"dtype": "f32", "shape": ["N1", "C1", "L1"], "layout": "row_major"}
+    src["tensors"]["W1D"] = {"dtype": "f32", "shape": ["CO1", "CI1", "K1"], "layout": "row_major"}
+    src["tensors"]["B1D"] = {"dtype": "f32", "shape": ["CO1"], "layout": "row_major"}
+    src["tensors"]["Y1D"] = {"dtype": "f32", "shape": ["N1", "CO1", "O1"], "layout": "row_major"}
+    src["tensors"]["X3D"] = {"dtype": "f32", "shape": ["N3", "C3", "D3", "H3", "W3"], "layout": "row_major"}
+    src["tensors"]["W3D"] = {"dtype": "f32", "shape": ["CO3", "CI3", "KD3", "KH3", "KW3"], "layout": "row_major"}
+    src["tensors"]["B3D"] = {"dtype": "f32", "shape": ["CO3"], "layout": "row_major"}
+    src["tensors"]["Y3D"] = {"dtype": "f32", "shape": ["N3", "CO3", "OD3", "OH3", "OW3"], "layout": "row_major"}
+    src["tensors"]["XDW"] = {"dtype": "f32", "shape": ["NDW", "CDW", "HDW", "WDW"], "layout": "row_major"}
+    src["tensors"]["WDW"] = {"dtype": "f32", "shape": ["CODW", 1, "KHDW", "KWDW"], "layout": "row_major"}
+    src["tensors"]["BDW"] = {"dtype": "f32", "shape": ["CODW"], "layout": "row_major"}
+    src["tensors"]["YDW"] = {"dtype": "f32", "shape": ["NDW", "CODW", "OHDW", "OWDW"], "layout": "row_major"}
+    src["tensors"]["TR"] = {"dtype": "f32", "shape": [], "layout": "row_major"}
+    src["tensors"]["TRIU"] = {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"}
+    src["tensors"]["UP1"] = {"dtype": "f32", "shape": ["NUP1", "CUP1", "LUP1"], "layout": "row_major"}
+    src["tensors"]["UP1O"] = {"dtype": "f32", "shape": ["NUP1", "CUP1", "OUP1"], "layout": "row_major"}
+    src["tensors"]["UP2"] = {"dtype": "f32", "shape": ["NUP2", "CUP2", "HUP2", "WUP2"], "layout": "row_major"}
+    src["tensors"]["UP2O"] = {"dtype": "f32", "shape": ["NUP2", "CUP2", "OHUP2", "OWUP2"], "layout": "row_major"}
     src["tensors"]["ANG"] = {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"}
     src["tensors"]["BN"] = {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"}
     src["tensors"]["BA"] = {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"}

@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-13T19:48:07.342110+00:00",
+  "generated_at": "2026-02-13T20:27:33.263860+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -18,8 +18,8 @@
     "source_filtered_ops": 212,
     "semantic_ops": 196,
     "by_status": {
-      "blocked_backend": 71,
-      "blocked_ir": 19,
+      "blocked_backend": 78,
+      "blocked_ir": 12,
       "dual_pass": 106
     },
     "by_family": {
@@ -8179,40 +8179,60 @@
         "trace"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "trace"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.trace",
+      "e2e_spec": "trace2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to trace primitive; rvv_missing=['trace']; cuda_h100_missing=['trace']; cuda_5090d_missing=['trace']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "trace"
+          ],
+          "known_ops": [
+            "trace"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "trace"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "trace"
+          ],
+          "known_ops": [
+            "trace"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "trace"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "trace"
+          ],
+          "known_ops": [
+            "trace"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "trace"
+          ]
         }
       }
     },
@@ -8222,40 +8242,60 @@
         "triu"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "triu"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.triu",
+      "e2e_spec": "triu2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to triu primitive; rvv_missing=['triu']; cuda_h100_missing=['triu']; cuda_5090d_missing=['triu']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "triu"
+          ],
+          "known_ops": [
+            "triu"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "triu"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "triu"
+          ],
+          "known_ops": [
+            "triu"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "triu"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "triu"
+          ],
+          "known_ops": [
+            "triu"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "triu"
+          ]
         }
       }
     },
@@ -12800,40 +12840,60 @@
         "conv1d"
       ],
       "family": "conv_pool_interp",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "conv1d"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.conv1d",
+      "e2e_spec": "conv1d_ncl",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to conv1d primitive; rvv_missing=['conv1d']; cuda_h100_missing=['conv1d']; cuda_5090d_missing=['conv1d']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "conv1d"
+          ],
+          "known_ops": [
+            "conv1d"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "conv1d"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "conv1d"
+          ],
+          "known_ops": [
+            "conv1d"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "conv1d"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "conv1d"
+          ],
+          "known_ops": [
+            "conv1d"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "conv1d"
+          ]
         }
       }
     },
@@ -12906,40 +12966,60 @@
         "conv3d"
       ],
       "family": "conv_pool_interp",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "conv3d"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.conv3d",
+      "e2e_spec": "conv3d_ncdhw",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to conv3d primitive; rvv_missing=['conv3d']; cuda_h100_missing=['conv3d']; cuda_5090d_missing=['conv3d']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "conv3d"
+          ],
+          "known_ops": [
+            "conv3d"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "conv3d"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "conv3d"
+          ],
+          "known_ops": [
+            "conv3d"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "conv3d"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "conv3d"
+          ],
+          "known_ops": [
+            "conv3d"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "conv3d"
+          ]
         }
       }
     },
@@ -12949,40 +13029,60 @@
         "_conv_depthwise2d"
       ],
       "family": "conv_pool_interp",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "conv_depthwise2d"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.conv_depthwise2d",
+      "e2e_spec": "conv_depthwise2d_nchw",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to conv_depthwise2d primitive; rvv_missing=['conv_depthwise2d']; cuda_h100_missing=['conv_depthwise2d']; cuda_5090d_missing=['conv_depthwise2d']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "conv_depthwise2d"
+          ],
+          "known_ops": [
+            "conv_depthwise2d"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "conv_depthwise2d"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "conv_depthwise2d"
+          ],
+          "known_ops": [
+            "conv_depthwise2d"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "conv_depthwise2d"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "conv_depthwise2d"
+          ],
+          "known_ops": [
+            "conv_depthwise2d"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "conv_depthwise2d"
+          ]
         }
       }
     },
@@ -13119,40 +13219,60 @@
         "upsample_nearest1d"
       ],
       "family": "conv_pool_interp",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "upsample_nearest1d"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.upsample_nearest1d",
+      "e2e_spec": "upsample_nearest1d_ncl",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to upsample_nearest1d primitive; rvv_missing=['upsample_nearest1d']; cuda_h100_missing=['upsample_nearest1d']; cuda_5090d_missing=['upsample_nearest1d']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "upsample_nearest1d"
+          ],
+          "known_ops": [
+            "upsample_nearest1d"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "upsample_nearest1d"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "upsample_nearest1d"
+          ],
+          "known_ops": [
+            "upsample_nearest1d"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "upsample_nearest1d"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "upsample_nearest1d"
+          ],
+          "known_ops": [
+            "upsample_nearest1d"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "upsample_nearest1d"
+          ]
         }
       }
     },
@@ -13162,40 +13282,60 @@
         "upsample_nearest2d"
       ],
       "family": "conv_pool_interp",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "upsample_nearest2d"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.upsample_nearest2d",
+      "e2e_spec": "upsample_nearest2d_nchw",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to upsample_nearest2d primitive; rvv_missing=['upsample_nearest2d']; cuda_h100_missing=['upsample_nearest2d']; cuda_5090d_missing=['upsample_nearest2d']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "upsample_nearest2d"
+          ],
+          "known_ops": [
+            "upsample_nearest2d"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "upsample_nearest2d"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "upsample_nearest2d"
+          ],
+          "known_ops": [
+            "upsample_nearest2d"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "upsample_nearest2d"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "upsample_nearest2d"
+          ],
+          "known_ops": [
+            "upsample_nearest2d"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "upsample_nearest2d"
+          ]
         }
       }
     },

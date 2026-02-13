@@ -578,6 +578,139 @@ def _canonical_max_pool2d_with_indices_nchw_intent() -> IntentFunction:
     )
 
 
+def _canonical_conv1d_ncl_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "conv1d_ncl",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["N", "C_IN", "L"], "layout": "row_major"},
+                "weight": {"dtype": "f32", "shape": ["C_OUT", "C_PER_G", "K"], "layout": "row_major"},
+                "bias": {"dtype": "f32", "shape": ["C_OUT"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N", "C_OUT", "OL"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "conv1d",
+                    "inputs": ["input", "weight", "bias"],
+                    "output": "out",
+                    "attrs": {"stride": 1, "padding": 1, "dilation": 1, "groups": 1},
+                },
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_conv3d_ncdhw_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "conv3d_ncdhw",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["N", "C_IN", "D", "H", "W"], "layout": "row_major"},
+                "weight": {"dtype": "f32", "shape": ["C_OUT", "C_PER_G", "KD", "KH", "KW"], "layout": "row_major"},
+                "bias": {"dtype": "f32", "shape": ["C_OUT"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N", "C_OUT", "OD", "OH", "OW"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "conv3d",
+                    "inputs": ["input", "weight", "bias"],
+                    "output": "out",
+                    "attrs": {"stride": [1, 1, 1], "padding": [1, 1, 1], "dilation": [1, 1, 1], "groups": 1},
+                },
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_conv_depthwise2d_nchw_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "conv_depthwise2d_nchw",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["N", "C_IN", "H", "W"], "layout": "row_major"},
+                "weight": {"dtype": "f32", "shape": ["C_OUT", 1, "KH", "KW"], "layout": "row_major"},
+                "bias": {"dtype": "f32", "shape": ["C_OUT"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N", "C_OUT", "OH", "OW"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "conv_depthwise2d",
+                    "inputs": ["input", "weight", "bias"],
+                    "output": "out",
+                    "attrs": {"stride": [1, 1], "padding": [1, 1], "dilation": [1, 1]},
+                },
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_trace2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "trace2d",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": [], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "trace", "inputs": ["input"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_triu2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "triu2d",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "triu", "inputs": ["input"], "output": "out", "attrs": {"diagonal": 0}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_upsample_nearest1d_ncl_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "upsample_nearest1d_ncl",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["N", "C", "IL"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N", "C", "OL"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "upsample_nearest1d", "inputs": ["input"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_upsample_nearest2d_nchw_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "upsample_nearest2d_nchw",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["N", "C", "IH", "IW"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N", "C", "OH", "OW"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "upsample_nearest2d", "inputs": ["input"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def _canonical_glu2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -879,6 +1012,20 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_one_hot2d_intent()
     if name == "max_pool2d_with_indices_nchw":
         return _canonical_max_pool2d_with_indices_nchw_intent()
+    if name == "conv1d_ncl":
+        return _canonical_conv1d_ncl_intent()
+    if name == "conv3d_ncdhw":
+        return _canonical_conv3d_ncdhw_intent()
+    if name == "conv_depthwise2d_nchw":
+        return _canonical_conv_depthwise2d_nchw_intent()
+    if name == "trace2d":
+        return _canonical_trace2d_intent()
+    if name == "triu2d":
+        return _canonical_triu2d_intent()
+    if name == "upsample_nearest1d_ncl":
+        return _canonical_upsample_nearest1d_ncl_intent()
+    if name == "upsample_nearest2d_nchw":
+        return _canonical_upsample_nearest2d_nchw_intent()
     if name == "glu2d":
         return _canonical_glu2d_intent()
     if name == "cummax1d":

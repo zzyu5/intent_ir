@@ -129,6 +129,34 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert pool_idx is not None
     assert [op.op for op in pool_idx.ops] == ["max_pool2d_with_indices", "max_pool2d_with_indices"]
 
+    conv1d = canonical_flaggems_intent_for_spec("conv1d_ncl")
+    assert conv1d is not None
+    assert [op.op for op in conv1d.ops] == ["conv1d"]
+
+    conv3d = canonical_flaggems_intent_for_spec("conv3d_ncdhw")
+    assert conv3d is not None
+    assert [op.op for op in conv3d.ops] == ["conv3d"]
+
+    conv_dw = canonical_flaggems_intent_for_spec("conv_depthwise2d_nchw")
+    assert conv_dw is not None
+    assert [op.op for op in conv_dw.ops] == ["conv_depthwise2d"]
+
+    trace = canonical_flaggems_intent_for_spec("trace2d")
+    assert trace is not None
+    assert [op.op for op in trace.ops] == ["trace"]
+
+    triu = canonical_flaggems_intent_for_spec("triu2d")
+    assert triu is not None
+    assert [op.op for op in triu.ops] == ["triu"]
+
+    up1d = canonical_flaggems_intent_for_spec("upsample_nearest1d_ncl")
+    assert up1d is not None
+    assert [op.op for op in up1d.ops] == ["upsample_nearest1d"]
+
+    up2d = canonical_flaggems_intent_for_spec("upsample_nearest2d_nchw")
+    assert up2d is not None
+    assert [op.op for op in up2d.ops] == ["upsample_nearest2d"]
+
     glu = canonical_flaggems_intent_for_spec("glu2d")
     assert glu is not None
     assert [op.op for op in glu.ops] == ["glu"]
@@ -208,6 +236,24 @@ def test_maybe_normalize_flaggems_candidate_overrides_known_spec() -> None:
     assert info3 is not None and info3.get("applied") is True
     assert out3.intent.name == "one_hot2d"
     assert out3_expanded is not None
+
+    out4, out4_expanded, info4 = maybe_normalize_flaggems_candidate(
+        spec_name="conv1d_ncl",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info4 is not None and info4.get("applied") is True
+    assert out4.intent.name == "conv1d_ncl"
+    assert out4_expanded is not None
+
+    out5, out5_expanded, info5 = maybe_normalize_flaggems_candidate(
+        spec_name="trace2d",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info5 is not None and info5.get("applied") is True
+    assert out5.intent.name == "trace2d"
+    assert out5_expanded is not None
 
 
 def test_maybe_normalize_flaggems_candidate_noop_for_other_specs() -> None:

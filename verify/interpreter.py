@@ -97,11 +97,18 @@ INTERPRETER_SUPPORTED_OPS: set[str] = set().union(
         "unique",
         "nonzero",
         "count_nonzero",
+        "trace",
+        "triu",
         "diag",
         "diag_embed",
         "kron",
         "masked_select",
         "masked_scatter",
+        "upsample_nearest1d",
+        "upsample_nearest2d",
+        "conv1d",
+        "conv3d",
+        "conv_depthwise2d",
         "max_pool2d_with_indices",
         "mse_loss",
         "nan_to_num",
@@ -444,6 +451,19 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         keepdims = bool(op.attrs.get("keepdims", False))
         out = np.count_nonzero(x, axis=dims, keepdims=keepdims)
         return np.asarray(out, dtype=np.int64)
+    if op.op == "trace":
+        x = np.asarray(_get(env, op.inputs[0]))
+        if x.ndim != 2:
+            raise ValueError(f"trace expects rank-2 tensor, got shape={x.shape}")
+        diagonal = int(op.attrs.get("diagonal", 0))
+        out = np.trace(x, offset=diagonal)
+        if np.issubdtype(x.dtype, np.floating):
+            return np.asarray(out, dtype=x.dtype)
+        return np.asarray(out, dtype=np.int64)
+    if op.op == "triu":
+        x = np.asarray(_get(env, op.inputs[0]))
+        diagonal = int(op.attrs.get("diagonal", 0))
+        return np.triu(x, k=diagonal)
     if op.op == "diag":
         x = _get(env, op.inputs[0])
         diagonal = int(op.attrs.get("diagonal", 0))
@@ -511,6 +531,54 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
             )
         out_flat[mask_flat] = src_flat[:required]
         return out
+    if op.op == "upsample_nearest1d":
+        x = np.asarray(_get(env, op.inputs[0]), dtype=np.float32)
+        if x.ndim != 3:
+            raise ValueError(f"upsample_nearest1d expects rank-3 NCL tensor, got shape={x.shape}")
+        output_size = op.attrs.get("output_size")
+        if isinstance(output_size, list):
+            if len(output_size) != 1:
+                raise ValueError(f"upsample_nearest1d.output_size expects len=1, got {output_size}")
+            out_l = int(output_size[0])
+        elif isinstance(output_size, int):
+            out_l = int(output_size)
+        else:
+            out_shape = _shape_from_tensor(intent, op.output, shape_bindings)
+            if out_shape is None or len(out_shape) != 3:
+                raise ValueError("upsample_nearest1d requires output_size attr or rank-3 output shape")
+            out_l = int(out_shape[2])
+        if out_l <= 0:
+            raise ValueError(f"upsample_nearest1d output size must be > 0, got {out_l}")
+        import torch  # noqa: PLC0415
+        import torch.nn.functional as F  # noqa: PLC0415
+
+        tx = torch.from_numpy(x)
+        out = F.interpolate(tx, size=out_l, mode="nearest")
+        return np.asarray(out.detach().cpu().numpy(), dtype=np.float32)
+    if op.op == "upsample_nearest2d":
+        x = np.asarray(_get(env, op.inputs[0]), dtype=np.float32)
+        if x.ndim != 4:
+            raise ValueError(f"upsample_nearest2d expects rank-4 NCHW tensor, got shape={x.shape}")
+        output_size = op.attrs.get("output_size")
+        if isinstance(output_size, list):
+            if len(output_size) != 2:
+                raise ValueError(f"upsample_nearest2d.output_size expects len=2, got {output_size}")
+            out_h, out_w = int(output_size[0]), int(output_size[1])
+        elif isinstance(output_size, int):
+            out_h, out_w = int(output_size), int(output_size)
+        else:
+            out_shape = _shape_from_tensor(intent, op.output, shape_bindings)
+            if out_shape is None or len(out_shape) != 4:
+                raise ValueError("upsample_nearest2d requires output_size attr or rank-4 output shape")
+            out_h, out_w = int(out_shape[2]), int(out_shape[3])
+        if out_h <= 0 or out_w <= 0:
+            raise ValueError(f"upsample_nearest2d output size must be > 0, got {(out_h, out_w)}")
+        import torch  # noqa: PLC0415
+        import torch.nn.functional as F  # noqa: PLC0415
+
+        tx = torch.from_numpy(x)
+        out = F.interpolate(tx, size=(out_h, out_w), mode="nearest")
+        return np.asarray(out.detach().cpu().numpy(), dtype=np.float32)
     if op.op == "mse_loss":
         if len(op.inputs) != 2:
             raise ValueError("mse_loss requires 2 inputs (inp, target)")
@@ -794,6 +862,111 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         if select in {"indices", "index"}:
             return idxs
         return vals
+    if op.op == "conv1d":
+        if len(op.inputs) < 2:
+            raise ValueError("conv1d requires at least 2 inputs (input, weight)")
+        x = np.asarray(_get(env, op.inputs[0]), dtype=np.float32)
+        w = np.asarray(_get(env, op.inputs[1]), dtype=np.float32)
+        if x.ndim != 3:
+            raise ValueError(f"conv1d expects input rank=3 [N,C,L], got shape={x.shape}")
+        if w.ndim != 3:
+            raise ValueError(f"conv1d expects weight rank=3 [C_out,C_in/groups,K], got shape={w.shape}")
+        b = None
+        if len(op.inputs) >= 3:
+            b = np.asarray(_get(env, op.inputs[2]), dtype=np.float32).reshape(-1)
+
+        def _norm_1d(v: Any, *, default: int) -> int:
+            if v is None:
+                return int(default)
+            if isinstance(v, int):
+                return int(v)
+            if isinstance(v, list) and len(v) == 1 and isinstance(v[0], int):
+                return int(v[0])
+            raise ValueError(f"conv1d attr must be int or list[int] len=1, got {v!r}")
+
+        stride = _norm_1d(op.attrs.get("stride"), default=1)
+        padding = _norm_1d(op.attrs.get("padding"), default=0)
+        dilation = _norm_1d(op.attrs.get("dilation"), default=1)
+        groups = int(op.attrs.get("groups", 1))
+
+        import torch  # noqa: PLC0415
+        import torch.nn.functional as F  # noqa: PLC0415
+
+        tx = torch.from_numpy(x)
+        tw = torch.from_numpy(w)
+        tb = torch.from_numpy(b) if b is not None else None
+        out = F.conv1d(tx, tw, bias=tb, stride=int(stride), padding=int(padding), dilation=int(dilation), groups=groups)
+        return np.asarray(out.detach().cpu().numpy(), dtype=np.float32)
+    if op.op == "conv3d":
+        if len(op.inputs) < 2:
+            raise ValueError("conv3d requires at least 2 inputs (input, weight)")
+        x = np.asarray(_get(env, op.inputs[0]), dtype=np.float32)
+        w = np.asarray(_get(env, op.inputs[1]), dtype=np.float32)
+        if x.ndim != 5:
+            raise ValueError(f"conv3d expects input rank=5 [N,C,D,H,W], got shape={x.shape}")
+        if w.ndim != 5:
+            raise ValueError(f"conv3d expects weight rank=5 [C_out,C_in/groups,KD,KH,KW], got shape={w.shape}")
+        b = None
+        if len(op.inputs) >= 3:
+            b = np.asarray(_get(env, op.inputs[2]), dtype=np.float32).reshape(-1)
+
+        def _norm_3d(v: Any, *, default: tuple[int, int, int]) -> tuple[int, int, int]:
+            if v is None:
+                return default
+            if isinstance(v, int):
+                return (int(v), int(v), int(v))
+            if isinstance(v, list) and len(v) == 3 and all(isinstance(t, int) for t in v):
+                return (int(v[0]), int(v[1]), int(v[2]))
+            raise ValueError(f"conv3d attr must be int or list[int,int,int], got {v!r}")
+
+        stride = _norm_3d(op.attrs.get("stride"), default=(1, 1, 1))
+        padding = _norm_3d(op.attrs.get("padding"), default=(0, 0, 0))
+        dilation = _norm_3d(op.attrs.get("dilation"), default=(1, 1, 1))
+        groups = int(op.attrs.get("groups", 1))
+
+        import torch  # noqa: PLC0415
+        import torch.nn.functional as F  # noqa: PLC0415
+
+        tx = torch.from_numpy(x)
+        tw = torch.from_numpy(w)
+        tb = torch.from_numpy(b) if b is not None else None
+        out = F.conv3d(tx, tw, bias=tb, stride=stride, padding=padding, dilation=dilation, groups=groups)
+        return np.asarray(out.detach().cpu().numpy(), dtype=np.float32)
+    if op.op == "conv_depthwise2d":
+        if len(op.inputs) < 2:
+            raise ValueError("conv_depthwise2d requires at least 2 inputs (input, weight)")
+        x = np.asarray(_get(env, op.inputs[0]), dtype=np.float32)
+        w = np.asarray(_get(env, op.inputs[1]), dtype=np.float32)
+        if x.ndim != 4:
+            raise ValueError(f"conv_depthwise2d expects input rank=4 [N,C,H,W], got shape={x.shape}")
+        if w.ndim != 4:
+            raise ValueError(f"conv_depthwise2d expects weight rank=4 [C_out,1,KH,KW], got shape={w.shape}")
+        b = None
+        if len(op.inputs) >= 3:
+            b = np.asarray(_get(env, op.inputs[2]), dtype=np.float32).reshape(-1)
+
+        def _norm_2d(v: Any, *, default: tuple[int, int]) -> tuple[int, int]:
+            if v is None:
+                return default
+            if isinstance(v, int):
+                return (int(v), int(v))
+            if isinstance(v, list) and len(v) == 2 and all(isinstance(t, int) for t in v):
+                return (int(v[0]), int(v[1]))
+            raise ValueError(f"conv_depthwise2d attr must be int or list[int,int], got {v!r}")
+
+        stride = _norm_2d(op.attrs.get("stride"), default=(1, 1))
+        padding = _norm_2d(op.attrs.get("padding"), default=(0, 0))
+        dilation = _norm_2d(op.attrs.get("dilation"), default=(1, 1))
+        groups = int(op.attrs.get("groups", int(x.shape[1])))
+
+        import torch  # noqa: PLC0415
+        import torch.nn.functional as F  # noqa: PLC0415
+
+        tx = torch.from_numpy(x)
+        tw = torch.from_numpy(w)
+        tb = torch.from_numpy(b) if b is not None else None
+        out = F.conv2d(tx, tw, bias=tb, stride=stride, padding=padding, dilation=dilation, groups=groups)
+        return np.asarray(out.detach().cpu().numpy(), dtype=np.float32)
     if op.op == "layout_cast":
         return _get(env, op.inputs[0])
     if op.op == "cast":

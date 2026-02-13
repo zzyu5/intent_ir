@@ -154,3 +154,73 @@ def test_flaggems_plugin_forces_deterministic_overrides_for_known_unstable_specs
     assert info9.get("enabled_by") == "provider_required_deterministic_override"
     assert out9.intent.name == "max_pool2d_with_indices_nchw"
     assert out9_exp is not None
+
+    out10, out10_exp, info10 = plugin.maybe_normalize_candidate(
+        spec_name="conv1d_ncl",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info10 is not None
+    assert info10.get("enabled_by") == "provider_required_deterministic_override"
+    assert out10.intent.name == "conv1d_ncl"
+    assert out10_exp is not None
+
+    out11, out11_exp, info11 = plugin.maybe_normalize_candidate(
+        spec_name="conv3d_ncdhw",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info11 is not None
+    assert info11.get("enabled_by") == "provider_required_deterministic_override"
+    assert out11.intent.name == "conv3d_ncdhw"
+    assert out11_exp is not None
+
+    out12, out12_exp, info12 = plugin.maybe_normalize_candidate(
+        spec_name="conv_depthwise2d_nchw",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info12 is not None
+    assert info12.get("enabled_by") == "provider_required_deterministic_override"
+    assert out12.intent.name == "conv_depthwise2d_nchw"
+    assert out12_exp is not None
+
+    out13, out13_exp, info13 = plugin.maybe_normalize_candidate(
+        spec_name="trace2d",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info13 is not None
+    assert info13.get("enabled_by") == "provider_required_deterministic_override"
+    assert out13.intent.name == "trace2d"
+    assert out13_exp is not None
+
+    out14, out14_exp, info14 = plugin.maybe_normalize_candidate(
+        spec_name="triu2d",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info14 is not None
+    assert info14.get("enabled_by") == "provider_required_deterministic_override"
+    assert out14.intent.name == "triu2d"
+    assert out14_exp is not None
+
+    out15, out15_exp, info15 = plugin.maybe_normalize_candidate(
+        spec_name="upsample_nearest1d_ncl",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info15 is not None
+    assert info15.get("enabled_by") == "provider_required_deterministic_override"
+    assert out15.intent.name == "upsample_nearest1d_ncl"
+    assert out15_exp is not None
+
+    out16, out16_exp, info16 = plugin.maybe_normalize_candidate(
+        spec_name="upsample_nearest2d_nchw",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info16 is not None
+    assert info16.get("enabled_by") == "provider_required_deterministic_override"
+    assert out16.intent.name == "upsample_nearest2d_nchw"
+    assert out16_exp is not None

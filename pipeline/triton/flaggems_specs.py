@@ -81,6 +81,8 @@ FLAGGEMS_AVG_POOL2D_SRC = _module_source_text("flag_gems.ops.avg_pool2d")
 FLAGGEMS_COUNT_NONZERO_SRC = _module_source_text("flag_gems.ops.count_nonzero")
 FLAGGEMS_DIAG_SRC = _module_source_text("flag_gems.ops.diag")
 FLAGGEMS_DIAG_EMBED_SRC = _module_source_text("flag_gems.ops.diag_embed")
+FLAGGEMS_TRACE_SRC = _module_source_text("flag_gems.ops.trace")
+FLAGGEMS_TRIU_SRC = _module_source_text("flag_gems.ops.triu")
 FLAGGEMS_EQ_SRC = _module_source_text("flag_gems.ops.eq")
 FLAGGEMS_NE_SRC = _module_source_text("flag_gems.ops.ne")
 FLAGGEMS_GT_SRC = _module_source_text("flag_gems.ops.gt")
@@ -121,6 +123,11 @@ FLAGGEMS_LOGSPACE_SRC = _module_source_text("flag_gems.ops.logspace")
 FLAGGEMS_MASKED_SELECT_SRC = _module_source_text("flag_gems.ops.masked_select")
 FLAGGEMS_MASKED_SCATTER_SRC = _module_source_text("flag_gems.ops.masked_scatter")
 FLAGGEMS_MAX_POOL2D_WITH_INDICES_SRC = _module_source_text("flag_gems.ops.max_pool2d_with_indices")
+FLAGGEMS_CONV1D_SRC = _module_source_text("flag_gems.ops.conv1d")
+FLAGGEMS_CONV3D_SRC = _module_source_text("flag_gems.ops.conv3d")
+FLAGGEMS_CONV_DEPTHWISE2D_SRC = _module_source_text("flag_gems.ops.conv_depthwise2d")
+FLAGGEMS_UPSAMPLE_NEAREST1D_SRC = _module_source_text("flag_gems.ops.upsample_nearest1d")
+FLAGGEMS_UPSAMPLE_NEAREST2D_SRC = _module_source_text("flag_gems.ops.upsample_nearest2d")
 FLAGGEMS_MSE_LOSS_SRC = _module_source_text("flag_gems.ops.mse_loss")
 FLAGGEMS_NAN_TO_NUM_SRC = _module_source_text("flag_gems.ops.nan_to_num")
 FLAGGEMS_NLL_LOSS_SRC = _module_source_text("flag_gems.ops.nllloss")
@@ -1089,6 +1096,203 @@ def _run_flaggems_avg_pool2d_nchw_reference(case: TestCase) -> Dict[str, np.ndar
     }
 
 
+def _run_flaggems_conv1d_ncl_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = max(1, int(case.shapes.get("N", 2)))
+    c_in = max(1, int(case.shapes.get("C_IN", 4)))
+    c_out = max(1, int(case.shapes.get("C_OUT", 8)))
+    l = max(1, int(case.shapes.get("L", 32)))
+    k = max(1, int(case.shapes.get("K", 3)))
+    stride = max(1, int(case.shapes.get("STRIDE", 1)))
+    padding = max(0, int(case.shapes.get("PADDING", 1)))
+    dilation = max(1, int(case.shapes.get("DILATION", 1)))
+    groups = max(1, int(case.shapes.get("GROUPS", 1)))
+    while groups > 1 and ((c_in % groups) != 0 or (c_out % groups) != 0):
+        groups -= 1
+    eff = dilation * (k - 1) + 1
+    l = max(l, max(1, eff - (2 * padding)))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "input" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["input"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((n, c_in, l), dtype=np.float32)).to(device)
+    if case.inputs and "weight" in case.inputs:
+        weight = _as_f32_tensor(np.asarray(case.inputs["weight"]), device=device)
+    else:
+        weight = torch.from_numpy(rg.standard_normal((c_out, c_in // groups, k), dtype=np.float32)).to(device)
+    if case.inputs and "bias" in case.inputs:
+        bias = _as_f32_tensor(np.asarray(case.inputs["bias"]), device=device).reshape(c_out)
+    else:
+        bias = torch.from_numpy(rg.standard_normal((c_out,), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["conv1d"]):
+        out = flag_gems_ops.conv1d(
+            inp,
+            weight,
+            bias=bias,
+            stride=int(stride),
+            padding=int(padding),
+            dilation=int(dilation),
+            groups=int(groups),
+        )
+
+    inp_np = _to_np(inp)
+    weight_np = _to_np(weight)
+    bias_np = _to_np(bias)
+    out_np = _to_np(out)
+    return {
+        "input": inp_np,
+        "weight": weight_np,
+        "bias": bias_np,
+        "out": out_np,
+        "output": out_np,
+        "stride": np.array(stride, dtype=np.int32),
+        "padding": np.array(padding, dtype=np.int32),
+        "dilation": np.array(dilation, dtype=np.int32),
+        "groups": np.array(groups, dtype=np.int32),
+    }
+
+
+def _run_flaggems_conv3d_ncdhw_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = max(1, int(case.shapes.get("N", 1)))
+    c_in = max(1, int(case.shapes.get("C_IN", 2)))
+    c_out = max(1, int(case.shapes.get("C_OUT", 4)))
+    d = max(1, int(case.shapes.get("D", 8)))
+    h = max(1, int(case.shapes.get("H", 8)))
+    w = max(1, int(case.shapes.get("W", 8)))
+    kd = max(1, int(case.shapes.get("KD", case.shapes.get("K", 3))))
+    kh = max(1, int(case.shapes.get("KH", case.shapes.get("K", 3))))
+    kw = max(1, int(case.shapes.get("KW", case.shapes.get("K", 3))))
+    sd = max(1, int(case.shapes.get("SD", case.shapes.get("STRIDE", 1))))
+    sh = max(1, int(case.shapes.get("SH", case.shapes.get("STRIDE", 1))))
+    sw = max(1, int(case.shapes.get("SW", case.shapes.get("STRIDE", 1))))
+    pd = max(0, int(case.shapes.get("PD", case.shapes.get("PADDING", 1))))
+    ph = max(0, int(case.shapes.get("PH", case.shapes.get("PADDING", 1))))
+    pw = max(0, int(case.shapes.get("PW", case.shapes.get("PADDING", 1))))
+    dd = max(1, int(case.shapes.get("DD", case.shapes.get("DILATION", 1))))
+    dh = max(1, int(case.shapes.get("DH", case.shapes.get("DILATION", 1))))
+    dw = max(1, int(case.shapes.get("DW", case.shapes.get("DILATION", 1))))
+    groups = max(1, int(case.shapes.get("GROUPS", 1)))
+    while groups > 1 and ((c_in % groups) != 0 or (c_out % groups) != 0):
+        groups -= 1
+    eff_d = dd * (kd - 1) + 1
+    eff_h = dh * (kh - 1) + 1
+    eff_w = dw * (kw - 1) + 1
+    d = max(d, max(1, eff_d - (2 * pd)))
+    h = max(h, max(1, eff_h - (2 * ph)))
+    w = max(w, max(1, eff_w - (2 * pw)))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "input" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["input"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((n, c_in, d, h, w), dtype=np.float32)).to(device)
+    if case.inputs and "weight" in case.inputs:
+        weight = _as_f32_tensor(np.asarray(case.inputs["weight"]), device=device)
+    else:
+        weight = torch.from_numpy(
+            rg.standard_normal((c_out, c_in // groups, kd, kh, kw), dtype=np.float32)
+        ).to(device)
+    if case.inputs and "bias" in case.inputs:
+        bias = _as_f32_tensor(np.asarray(case.inputs["bias"]), device=device).reshape(c_out)
+    else:
+        bias = torch.from_numpy(rg.standard_normal((c_out,), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["conv3d"]):
+        out = flag_gems_ops.conv3d(
+            inp,
+            weight,
+            bias=bias,
+            stride=(sd, sh, sw),
+            padding=(pd, ph, pw),
+            dilation=(dd, dh, dw),
+            groups=int(groups),
+        )
+
+    inp_np = _to_np(inp)
+    weight_np = _to_np(weight)
+    bias_np = _to_np(bias)
+    out_np = _to_np(out)
+    return {
+        "input": inp_np,
+        "weight": weight_np,
+        "bias": bias_np,
+        "out": out_np,
+        "output": out_np,
+        "stride": np.array([sd, sh, sw], dtype=np.int32),
+        "padding": np.array([pd, ph, pw], dtype=np.int32),
+        "dilation": np.array([dd, dh, dw], dtype=np.int32),
+        "groups": np.array(groups, dtype=np.int32),
+    }
+
+
+def _run_flaggems_conv_depthwise2d_nchw_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = max(1, int(case.shapes.get("N", 1)))
+    c_in = max(1, int(case.shapes.get("C_IN", 4)))
+    h = max(1, int(case.shapes.get("H", 8)))
+    w = max(1, int(case.shapes.get("W", 8)))
+    kh = max(1, int(case.shapes.get("KH", case.shapes.get("K", 3))))
+    kw = max(1, int(case.shapes.get("KW", case.shapes.get("K", 3))))
+    sh = max(1, int(case.shapes.get("SH", case.shapes.get("STRIDE", 1))))
+    sw = max(1, int(case.shapes.get("SW", case.shapes.get("STRIDE", 1))))
+    ph = max(0, int(case.shapes.get("PH", case.shapes.get("PADDING", 1))))
+    pw = max(0, int(case.shapes.get("PW", case.shapes.get("PADDING", 1))))
+    dh = max(1, int(case.shapes.get("DH", case.shapes.get("DILATION", 1))))
+    dw = max(1, int(case.shapes.get("DW", case.shapes.get("DILATION", 1))))
+    multiplier = max(1, int(case.shapes.get("MULT", 1)))
+    c_out = c_in * multiplier
+    groups = c_in
+    eff_h = dh * (kh - 1) + 1
+    eff_w = dw * (kw - 1) + 1
+    h = max(h, max(1, eff_h - (2 * ph)))
+    w = max(w, max(1, eff_w - (2 * pw)))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "input" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["input"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((n, c_in, h, w), dtype=np.float32)).to(device)
+    if case.inputs and "weight" in case.inputs:
+        weight = _as_f32_tensor(np.asarray(case.inputs["weight"]), device=device)
+    else:
+        weight = torch.from_numpy(rg.standard_normal((c_out, 1, kh, kw), dtype=np.float32)).to(device)
+    if case.inputs and "bias" in case.inputs:
+        bias = _as_f32_tensor(np.asarray(case.inputs["bias"]), device=device).reshape(c_out)
+    else:
+        bias = torch.from_numpy(rg.standard_normal((c_out,), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["_conv_depthwise2d"]):
+        out = flag_gems_ops._conv_depthwise2d(
+            inp,
+            weight,
+            (kh, kw),
+            bias,
+            (sh, sw),
+            (ph, pw),
+            (dh, dw),
+        )
+
+    inp_np = _to_np(inp)
+    weight_np = _to_np(weight)
+    bias_np = _to_np(bias)
+    out_np = _to_np(out)
+    return {
+        "input": inp_np,
+        "weight": weight_np,
+        "bias": bias_np,
+        "out": out_np,
+        "output": out_np,
+        "stride": np.array([sh, sw], dtype=np.int32),
+        "padding": np.array([ph, pw], dtype=np.int32),
+        "dilation": np.array([dh, dw], dtype=np.int32),
+        "groups": np.array(groups, dtype=np.int32),
+        "multiplier": np.array(multiplier, dtype=np.int32),
+    }
+
+
 def _run_flaggems_count_nonzero2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     m = int(case.shapes.get("M", 4))
     n = int(case.shapes.get("N", 64))
@@ -1162,6 +1366,109 @@ def _run_flaggems_diag_embed2d_reference(case: TestCase) -> Dict[str, np.ndarray
         "offset_scalar": offset_np,
         "dim1": np.array(-2, dtype=np.int32),
         "dim2": np.array(-1, dtype=np.int32),
+    }
+
+
+def _run_flaggems_trace2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 16))
+    n = int(case.shapes.get("N", 16))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+    with flag_gems.use_gems(include=["trace"]):
+        out = flag_gems_ops.trace(inp)
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "x": inp_np,
+        "input": inp_np,
+        "out": out_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_triu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 16))
+    n = int(case.shapes.get("N", 16))
+    diagonal = int(case.shapes.get("DIAG", 0))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+    with flag_gems.use_gems(include=["triu"]):
+        out = torch.triu(inp, diagonal=diagonal)
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    diagonal_np = np.array(diagonal, dtype=np.int32)
+    return {
+        "inp": inp_np,
+        "x": inp_np,
+        "input": inp_np,
+        "out": out_np,
+        "output": out_np,
+        "diagonal": diagonal_np,
+        "diagonal_const": diagonal_np,
+    }
+
+
+def _run_flaggems_upsample_nearest1d_ncl_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = int(case.shapes.get("N", 2))
+    c = int(case.shapes.get("C", 3))
+    il = int(case.shapes.get("IL", 8))
+    ol = int(case.shapes.get("OL", max(1, il * 2)))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+    if case.inputs and "input" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["input"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((n, c, il), dtype=np.float32)).to(device)
+    with flag_gems.use_gems(include=["upsample_nearest1d"]):
+        out = flag_gems_ops.upsample_nearest1d(inp, output_size=(ol,), scales=None)
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "input": inp_np,
+        "inp": inp_np,
+        "x": inp_np,
+        "out": out_np,
+        "output": out_np,
+        "output_size": np.array([ol], dtype=np.int32),
+        "scales": np.array(float(il) / float(max(1, ol)), dtype=np.float32),
+    }
+
+
+def _run_flaggems_upsample_nearest2d_nchw_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = int(case.shapes.get("N", 1))
+    c = int(case.shapes.get("C", 2))
+    ih = int(case.shapes.get("IH", 8))
+    iw = int(case.shapes.get("IW", 8))
+    oh = int(case.shapes.get("OH", max(1, ih * 2)))
+    ow = int(case.shapes.get("OW", max(1, iw * 2)))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+    if case.inputs and "input" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["input"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((n, c, ih, iw), dtype=np.float32)).to(device)
+    with flag_gems.use_gems(include=["upsample_nearest2d"]):
+        out = flag_gems_ops.upsample_nearest2d(inp, (oh, ow), scales_h=None, scales_w=None)
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "input": inp_np,
+        "inp": inp_np,
+        "x": inp_np,
+        "out": out_np,
+        "output": out_np,
+        "output_size": np.array([oh, ow], dtype=np.int32),
+        "scales_h": np.array(float(ih) / float(max(1, oh)), dtype=np.float32),
+        "scales_w": np.array(float(iw) / float(max(1, ow)), dtype=np.float32),
     }
 
 
@@ -3340,6 +3647,49 @@ def _norm_diag_embed2d(shapes: Dict[str, int]) -> Dict[str, int]:
     return out
 
 
+def _norm_trace2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    out["M"] = max(1, int(out.get("M", 16)))
+    out["N"] = max(1, int(out.get("N", 16)))
+    return out
+
+
+def _norm_triu2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    m = max(1, int(out.get("M", 16)))
+    n = max(1, int(out.get("N", 16)))
+    out["M"] = m
+    out["N"] = n
+    diag = int(out.get("DIAG", 0))
+    lo = -m
+    hi = n
+    out["DIAG"] = min(max(diag, lo), hi)
+    return out
+
+
+def _norm_upsample_nearest1d_ncl(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    out["N"] = max(1, int(out.get("N", 2)))
+    out["C"] = max(1, int(out.get("C", 3)))
+    il = max(1, int(out.get("IL", 8)))
+    out["IL"] = il
+    out["OL"] = max(1, int(out.get("OL", il * 2)))
+    return out
+
+
+def _norm_upsample_nearest2d_nchw(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    out["N"] = max(1, int(out.get("N", 1)))
+    out["C"] = max(1, int(out.get("C", 2)))
+    ih = max(1, int(out.get("IH", 8)))
+    iw = max(1, int(out.get("IW", 8)))
+    out["IH"] = ih
+    out["IW"] = iw
+    out["OH"] = max(1, int(out.get("OH", ih * 2)))
+    out["OW"] = max(1, int(out.get("OW", iw * 2)))
+    return out
+
+
 def _norm_glu2d(shapes: Dict[str, int]) -> Dict[str, int]:
     out = dict(shapes)
     out["M"] = max(1, int(out.get("M", 4)))
@@ -3441,6 +3791,111 @@ def _norm_max_pool2d_with_indices_nchw(shapes: Dict[str, int]) -> Dict[str, int]
     out["DH"] = dh
     out["DW"] = dw
     out["CEIL_MODE"] = int(bool(out.get("CEIL_MODE", 0)))
+    return out
+
+
+def _norm_conv1d_ncl(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    n = max(1, int(out.get("N", 2)))
+    c_in = max(1, int(out.get("C_IN", 4)))
+    c_out = max(1, int(out.get("C_OUT", 8)))
+    k = max(1, int(out.get("K", 3)))
+    stride = max(1, int(out.get("STRIDE", 1)))
+    padding = max(0, int(out.get("PADDING", 1)))
+    dilation = max(1, int(out.get("DILATION", 1)))
+    groups = max(1, int(out.get("GROUPS", 1)))
+    groups = min(groups, c_in, c_out)
+    while groups > 1 and ((c_in % groups) != 0 or (c_out % groups) != 0):
+        groups -= 1
+    eff = dilation * (k - 1) + 1
+    min_l = max(1, eff - (2 * padding))
+    l = max(min_l, int(out.get("L", 32)))
+    out["N"] = n
+    out["C_IN"] = c_in
+    out["C_OUT"] = c_out
+    out["L"] = l
+    out["K"] = k
+    out["STRIDE"] = stride
+    out["PADDING"] = padding
+    out["DILATION"] = dilation
+    out["GROUPS"] = groups
+    return out
+
+
+def _norm_conv3d_ncdhw(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    n = max(1, int(out.get("N", 1)))
+    c_in = max(1, int(out.get("C_IN", 2)))
+    c_out = max(1, int(out.get("C_OUT", 4)))
+    kd = max(1, int(out.get("KD", out.get("K", 3))))
+    kh = max(1, int(out.get("KH", out.get("K", 3))))
+    kw = max(1, int(out.get("KW", out.get("K", 3))))
+    sd = max(1, int(out.get("SD", out.get("STRIDE", 1))))
+    sh = max(1, int(out.get("SH", out.get("STRIDE", 1))))
+    sw = max(1, int(out.get("SW", out.get("STRIDE", 1))))
+    pd = max(0, int(out.get("PD", out.get("PADDING", 1))))
+    ph = max(0, int(out.get("PH", out.get("PADDING", 1))))
+    pw = max(0, int(out.get("PW", out.get("PADDING", 1))))
+    dd = max(1, int(out.get("DD", out.get("DILATION", 1))))
+    dh = max(1, int(out.get("DH", out.get("DILATION", 1))))
+    dw = max(1, int(out.get("DW", out.get("DILATION", 1))))
+    groups = max(1, int(out.get("GROUPS", 1)))
+    groups = min(groups, c_in, c_out)
+    while groups > 1 and ((c_in % groups) != 0 or (c_out % groups) != 0):
+        groups -= 1
+    min_d = max(1, dd * (kd - 1) + 1 - (2 * pd))
+    min_h = max(1, dh * (kh - 1) + 1 - (2 * ph))
+    min_w = max(1, dw * (kw - 1) + 1 - (2 * pw))
+    out["N"] = n
+    out["C_IN"] = c_in
+    out["C_OUT"] = c_out
+    out["D"] = max(min_d, int(out.get("D", 8)))
+    out["H"] = max(min_h, int(out.get("H", 8)))
+    out["W"] = max(min_w, int(out.get("W", 8)))
+    out["KD"] = kd
+    out["KH"] = kh
+    out["KW"] = kw
+    out["SD"] = sd
+    out["SH"] = sh
+    out["SW"] = sw
+    out["PD"] = pd
+    out["PH"] = ph
+    out["PW"] = pw
+    out["DD"] = dd
+    out["DH"] = dh
+    out["DW"] = dw
+    out["GROUPS"] = groups
+    return out
+
+
+def _norm_conv_depthwise2d_nchw(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    n = max(1, int(out.get("N", 1)))
+    c_in = max(1, int(out.get("C_IN", 4)))
+    kh = max(1, int(out.get("KH", out.get("K", 3))))
+    kw = max(1, int(out.get("KW", out.get("K", 3))))
+    sh = max(1, int(out.get("SH", out.get("STRIDE", 1))))
+    sw = max(1, int(out.get("SW", out.get("STRIDE", 1))))
+    ph = max(0, int(out.get("PH", out.get("PADDING", 1))))
+    pw = max(0, int(out.get("PW", out.get("PADDING", 1))))
+    dh = max(1, int(out.get("DH", out.get("DILATION", 1))))
+    dw = max(1, int(out.get("DW", out.get("DILATION", 1))))
+    mult = max(1, int(out.get("MULT", 1)))
+    min_h = max(1, dh * (kh - 1) + 1 - (2 * ph))
+    min_w = max(1, dw * (kw - 1) + 1 - (2 * pw))
+    out["N"] = n
+    out["C_IN"] = c_in
+    out["H"] = max(min_h, int(out.get("H", 8)))
+    out["W"] = max(min_w, int(out.get("W", 8)))
+    out["KH"] = kh
+    out["KW"] = kw
+    out["SH"] = sh
+    out["SW"] = sw
+    out["PH"] = ph
+    out["PW"] = pw
+    out["DH"] = dh
+    out["DW"] = dw
+    out["MULT"] = mult
     return out
 
 
@@ -3587,6 +4042,59 @@ _FLAGGEMS_SPEC_BUILDERS = {
         canonical_shapes={"N": 1, "C": 3, "H": 8, "W": 8, "K": 2, "S": 2, "P": 0},
         vary_axes=["N", "C", "H", "W"],
     ),
+    "conv1d_ncl": lambda: KernelSpec(
+        name="conv1d_ncl",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_CONV1D_SRC",
+        runner=_run_flaggems_conv1d_ncl_reference,
+        canonical_shapes={"N": 2, "C_IN": 4, "C_OUT": 8, "L": 32, "K": 3, "STRIDE": 1, "PADDING": 1, "DILATION": 1, "GROUPS": 1},
+        vary_axes=["N", "C_IN", "C_OUT", "L"],
+        normalize_shapes=_norm_conv1d_ncl,
+        stage_c_max_cases=4,
+        mutation_bounded_max_cases=2,
+    ),
+    "conv3d_ncdhw": lambda: KernelSpec(
+        name="conv3d_ncdhw",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_CONV3D_SRC",
+        runner=_run_flaggems_conv3d_ncdhw_reference,
+        canonical_shapes={
+            "N": 1,
+            "C_IN": 2,
+            "C_OUT": 4,
+            "D": 8,
+            "H": 8,
+            "W": 8,
+            "KD": 3,
+            "KH": 3,
+            "KW": 3,
+            "SD": 1,
+            "SH": 1,
+            "SW": 1,
+            "PD": 1,
+            "PH": 1,
+            "PW": 1,
+            "DD": 1,
+            "DH": 1,
+            "DW": 1,
+            "GROUPS": 1,
+        },
+        vary_axes=["N", "C_IN", "C_OUT", "D", "H", "W"],
+        normalize_shapes=_norm_conv3d_ncdhw,
+        stage_c_max_cases=3,
+        mutation_bounded_max_cases=2,
+    ),
+    "conv_depthwise2d_nchw": lambda: KernelSpec(
+        name="conv_depthwise2d_nchw",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_CONV_DEPTHWISE2D_SRC",
+        runner=_run_flaggems_conv_depthwise2d_nchw_reference,
+        canonical_shapes={"N": 1, "C_IN": 4, "H": 8, "W": 8, "KH": 3, "KW": 3, "SH": 1, "SW": 1, "PH": 1, "PW": 1, "DH": 1, "DW": 1, "MULT": 1},
+        vary_axes=["N", "C_IN", "H", "W"],
+        normalize_shapes=_norm_conv_depthwise2d_nchw,
+        stage_c_max_cases=4,
+        mutation_bounded_max_cases=2,
+    ),
     "count_nonzero2d": lambda: KernelSpec(
         name="count_nonzero2d",
         module="pipeline.triton.flaggems_specs",
@@ -3612,6 +4120,46 @@ _FLAGGEMS_SPEC_BUILDERS = {
         canonical_shapes={"B": 2, "N": 8, "OFFSET": 0},
         vary_axes=["B", "N"],
         normalize_shapes=_norm_diag_embed2d,
+    ),
+    "trace2d": lambda: KernelSpec(
+        name="trace2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_TRACE_SRC",
+        runner=_run_flaggems_trace2d_reference,
+        canonical_shapes={"M": 16, "N": 16},
+        vary_axes=["M", "N"],
+        normalize_shapes=_norm_trace2d,
+    ),
+    "triu2d": lambda: KernelSpec(
+        name="triu2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_TRIU_SRC",
+        runner=_run_flaggems_triu2d_reference,
+        canonical_shapes={"M": 16, "N": 16, "DIAG": 0},
+        vary_axes=["M", "N"],
+        normalize_shapes=_norm_triu2d,
+    ),
+    "upsample_nearest1d_ncl": lambda: KernelSpec(
+        name="upsample_nearest1d_ncl",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_UPSAMPLE_NEAREST1D_SRC",
+        runner=_run_flaggems_upsample_nearest1d_ncl_reference,
+        canonical_shapes={"N": 2, "C": 3, "IL": 8, "OL": 16},
+        vary_axes=["N", "C", "IL"],
+        normalize_shapes=_norm_upsample_nearest1d_ncl,
+        stage_c_max_cases=4,
+        mutation_bounded_max_cases=2,
+    ),
+    "upsample_nearest2d_nchw": lambda: KernelSpec(
+        name="upsample_nearest2d_nchw",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_UPSAMPLE_NEAREST2D_SRC",
+        runner=_run_flaggems_upsample_nearest2d_nchw_reference,
+        canonical_shapes={"N": 1, "C": 2, "IH": 8, "IW": 8, "OH": 16, "OW": 16},
+        vary_axes=["N", "C", "IH", "IW"],
+        normalize_shapes=_norm_upsample_nearest2d_nchw,
+        stage_c_max_cases=4,
+        mutation_bounded_max_cases=2,
     ),
     "sub2d": lambda: KernelSpec(
         name="sub2d",
@@ -4435,6 +4983,8 @@ __all__ = [
     "FLAGGEMS_COUNT_NONZERO_SRC",
     "FLAGGEMS_DIAG_SRC",
     "FLAGGEMS_DIAG_EMBED_SRC",
+    "FLAGGEMS_TRACE_SRC",
+    "FLAGGEMS_TRIU_SRC",
     "FLAGGEMS_ACOS_SRC",
     "FLAGGEMS_ATAN_SRC",
     "FLAGGEMS_ARANGE_SRC",
@@ -4471,6 +5021,11 @@ __all__ = [
     "FLAGGEMS_MSE_LOSS_SRC",
     "FLAGGEMS_NAN_TO_NUM_SRC",
     "FLAGGEMS_NLL_LOSS_SRC",
+    "FLAGGEMS_CONV1D_SRC",
+    "FLAGGEMS_CONV3D_SRC",
+    "FLAGGEMS_CONV_DEPTHWISE2D_SRC",
+    "FLAGGEMS_UPSAMPLE_NEAREST1D_SRC",
+    "FLAGGEMS_UPSAMPLE_NEAREST2D_SRC",
     "FLAGGEMS_ONE_HOT_SRC",
     "FLAGGEMS_MAX_POOL2D_WITH_INDICES_SRC",
     "FLAGGEMS_GLU_SRC",

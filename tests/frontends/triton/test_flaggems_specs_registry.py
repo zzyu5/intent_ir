@@ -34,6 +34,13 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "bitwise_left_shift2d" in names
     assert "bitwise_right_shift2d" in names
     assert "avg_pool2d_nchw" in names
+    assert "conv1d_ncl" in names
+    assert "conv3d_ncdhw" in names
+    assert "conv_depthwise2d_nchw" in names
+    assert "trace2d" in names
+    assert "triu2d" in names
+    assert "upsample_nearest1d_ncl" in names
+    assert "upsample_nearest2d_nchw" in names
     assert "count_nonzero2d" in names
     assert "diag2d" in names
     assert "diag_embed2d" in names
