@@ -96,6 +96,9 @@ INTERPRETER_SUPPORTED_OPS: set[str] = set().union(
         "topk",
         "unique",
         "nonzero",
+        "count_nonzero",
+        "diag",
+        "diag_embed",
         "layout_cast",
         "cast",
         "iota",
@@ -421,6 +424,42 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         if not idx:
             return np.zeros((0, 0), dtype=np.int64)
         return np.stack(idx, axis=-1).astype(np.int64, copy=False)
+    if op.op == "count_nonzero":
+        x = _get(env, op.inputs[0])
+        dims_raw = op.attrs.get("axes", op.attrs.get("dims", op.attrs.get("axis")))
+        dims = None if dims_raw is None else _resolve_dims(dims_raw, x)
+        keepdims = bool(op.attrs.get("keepdims", False))
+        out = np.count_nonzero(x, axis=dims, keepdims=keepdims)
+        return np.asarray(out, dtype=np.int64)
+    if op.op == "diag":
+        x = _get(env, op.inputs[0])
+        diagonal = int(op.attrs.get("diagonal", 0))
+        return np.diag(x, k=diagonal)
+    if op.op == "diag_embed":
+        x = np.asarray(_get(env, op.inputs[0]))
+        if x.ndim < 1:
+            raise ValueError("diag_embed expects input rank >= 1")
+        offset = int(op.attrs.get("offset", 0))
+        dim1 = int(op.attrs.get("dim1", -2))
+        dim2 = int(op.attrs.get("dim2", -1))
+        out_rank = x.ndim + 1
+        d1 = dim1 if dim1 >= 0 else out_rank + dim1
+        d2 = dim2 if dim2 >= 0 else out_rank + dim2
+        if d1 < 0 or d1 >= out_rank or d2 < 0 or d2 >= out_rank or d1 == d2:
+            raise ValueError(f"diag_embed dim1/dim2 invalid for rank {out_rank}: dim1={dim1}, dim2={dim2}")
+        n = int(x.shape[-1])
+        diag_extent = n + abs(offset)
+        out = np.zeros(tuple(int(v) for v in x.shape[:-1]) + (diag_extent, diag_extent), dtype=x.dtype)
+        if offset >= 0:
+            rows = np.arange(n, dtype=np.int64)
+            cols = rows + int(offset)
+        else:
+            cols = np.arange(n, dtype=np.int64)
+            rows = cols + int(-offset)
+        out[..., rows, cols] = x
+        if [d1, d2] != [out_rank - 2, out_rank - 1]:
+            out = np.moveaxis(out, [out_rank - 2, out_rank - 1], [d1, d2])
+        return out
     if op.op == "avg_pool2d":
         x = np.asarray(_get(env, op.inputs[0]), dtype=np.float32)
         if x.ndim != 4:

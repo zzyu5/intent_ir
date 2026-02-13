@@ -140,6 +140,9 @@ _OP_SPECS: tuple[OpSpec, ...] = (
     OpSpec("topk", "experimental", "index", (1,), attr_schema={"k": "int!", "axis": "int", "largest": "bool", "sorted": "bool"}),
     OpSpec("unique", "experimental", "index", (1,), attr_schema={"axis": "int", "sorted": "bool"}),
     OpSpec("nonzero", "experimental", "index", (1,)),
+    OpSpec("count_nonzero", "experimental", "reduction", (1,), attr_schema={"dims": "int_list", "axis": "int_or_int_list", "keepdims": "bool"}),
+    OpSpec("diag", "experimental", "transform", (1,), attr_schema={"diagonal": "int"}),
+    OpSpec("diag_embed", "experimental", "transform", (1,), attr_schema={"offset": "int", "dim1": "int", "dim2": "int"}),
     # Macro ops.
     OpSpec("upsample_bicubic2d_aa", "macro", "macro", (1,), attr_schema={"impl": "object"}),
 )

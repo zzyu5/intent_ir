@@ -32,6 +32,9 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "bitwise_left_shift2d" in names
     assert "bitwise_right_shift2d" in names
     assert "avg_pool2d_nchw" in names
+    assert "count_nonzero2d" in names
+    assert "diag2d" in names
+    assert "diag_embed2d" in names
     assert "div2d" in names
     assert "eq2d" in names
     assert "ne2d" in names

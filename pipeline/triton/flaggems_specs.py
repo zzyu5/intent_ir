@@ -78,6 +78,9 @@ FLAGGEMS_BITWISE_NOT_SRC = _module_source_text("flag_gems.ops.bitwise_not")
 FLAGGEMS_BITWISE_LEFT_SHIFT_SRC = _module_source_text("flag_gems.ops.bitwise_left_shift")
 FLAGGEMS_BITWISE_RIGHT_SHIFT_SRC = _module_source_text("flag_gems.ops.bitwise_right_shift")
 FLAGGEMS_AVG_POOL2D_SRC = _module_source_text("flag_gems.ops.avg_pool2d")
+FLAGGEMS_COUNT_NONZERO_SRC = _module_source_text("flag_gems.ops.count_nonzero")
+FLAGGEMS_DIAG_SRC = _module_source_text("flag_gems.ops.diag")
+FLAGGEMS_DIAG_EMBED_SRC = _module_source_text("flag_gems.ops.diag_embed")
 FLAGGEMS_EQ_SRC = _module_source_text("flag_gems.ops.eq")
 FLAGGEMS_NE_SRC = _module_source_text("flag_gems.ops.ne")
 FLAGGEMS_GT_SRC = _module_source_text("flag_gems.ops.gt")
@@ -1062,6 +1065,82 @@ def _run_flaggems_avg_pool2d_nchw_reference(case: TestCase) -> Dict[str, np.ndar
         "kernel_size": np.array([k, k], dtype=np.int32),
         "stride": np.array([s, s], dtype=np.int32),
         "padding": np.array([p, p], dtype=np.int32),
+    }
+
+
+def _run_flaggems_count_nonzero2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+    with flag_gems.use_gems(include=["count_nonzero"]):
+        out = torch.count_nonzero(inp)
+    inp_np = _to_np(inp)
+    out_np = _to_np(out).astype(np.int64, copy=False)
+    return {
+        "inp": inp_np,
+        "x": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_diag2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 8))
+    n = int(case.shapes.get("N", 8))
+    diagonal = int(case.shapes.get("DIAG", 0))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+    with flag_gems.use_gems(include=["diag"]):
+        out = torch.diag(inp, diagonal=diagonal)
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    diagonal_np = np.array(diagonal, dtype=np.int32)
+    return {
+        "inp": inp_np,
+        "data": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+        "diagonal": diagonal_np,
+        "diagonal_const": diagonal_np,
+    }
+
+
+def _run_flaggems_diag_embed2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    b = int(case.shapes.get("B", 2))
+    n = int(case.shapes.get("N", 8))
+    offset = int(case.shapes.get("OFFSET", 0))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((b, n), dtype=np.float32)).to(device)
+    with flag_gems.use_gems(include=["diag_embed"]):
+        out = torch.diag_embed(inp, offset=offset, dim1=-2, dim2=-1)
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    offset_np = np.array(offset, dtype=np.int32)
+    return {
+        "inp": inp_np,
+        "x": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+        "offset": offset_np,
+        "offset_scalar": offset_np,
+        "dim1": np.array(-2, dtype=np.int32),
+        "dim2": np.array(-1, dtype=np.int32),
     }
 
 
@@ -2588,6 +2667,30 @@ _FLAGGEMS_SPEC_BUILDERS = {
         canonical_shapes={"N": 1, "C": 3, "H": 8, "W": 8, "K": 2, "S": 2, "P": 0},
         vary_axes=["N", "C", "H", "W"],
     ),
+    "count_nonzero2d": lambda: KernelSpec(
+        name="count_nonzero2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_COUNT_NONZERO_SRC",
+        runner=_run_flaggems_count_nonzero2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "diag2d": lambda: KernelSpec(
+        name="diag2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_DIAG_SRC",
+        runner=_run_flaggems_diag2d_reference,
+        canonical_shapes={"M": 8, "N": 8, "DIAG": 0},
+        vary_axes=["M", "N"],
+    ),
+    "diag_embed2d": lambda: KernelSpec(
+        name="diag_embed2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_DIAG_EMBED_SRC",
+        runner=_run_flaggems_diag_embed2d_reference,
+        canonical_shapes={"B": 2, "N": 8, "OFFSET": 0},
+        vary_axes=["B", "N"],
+    ),
     "sub2d": lambda: KernelSpec(
         name="sub2d",
         module="pipeline.triton.flaggems_specs",
@@ -3189,6 +3292,9 @@ __all__ = [
     "FLAGGEMS_BITWISE_LEFT_SHIFT_SRC",
     "FLAGGEMS_BITWISE_RIGHT_SHIFT_SRC",
     "FLAGGEMS_AVG_POOL2D_SRC",
+    "FLAGGEMS_COUNT_NONZERO_SRC",
+    "FLAGGEMS_DIAG_SRC",
+    "FLAGGEMS_DIAG_EMBED_SRC",
     "FLAGGEMS_ACOS_SRC",
     "FLAGGEMS_ATAN_SRC",
     "FLAGGEMS_ARANGE_SRC",

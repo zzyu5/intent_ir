@@ -34,6 +34,9 @@ def test_semantic_rule_templates_for_high_yield_ops() -> None:
     assert resolve_semantic_mapping("bitwise_not").intent_ops == ("bitwise_not",)
     assert resolve_semantic_mapping("bitwise_left_shift").intent_ops == ("bitwise_left_shift",)
     assert resolve_semantic_mapping("bitwise_right_shift").intent_ops == ("bitwise_right_shift",)
+    assert resolve_semantic_mapping("count_nonzero").intent_ops == ("count_nonzero",)
+    assert resolve_semantic_mapping("diag").intent_ops == ("diag",)
+    assert resolve_semantic_mapping("diag_embed").intent_ops == ("diag_embed",)
     assert resolve_semantic_mapping("avg_pool2d").intent_ops == ("avg_pool2d",)
 
 

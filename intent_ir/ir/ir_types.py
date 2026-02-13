@@ -930,6 +930,40 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
     elif op.op == "nonzero":
         if len(op.inputs) != 1:
             raise IntentIRValidationError(f"op[{idx}] nonzero requires 1 input")
+    elif op.op == "count_nonzero":
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] count_nonzero requires 1 input")
+        dims = attrs.get("dims")
+        if dims is None:
+            dims = attrs.get("axis")
+            if isinstance(dims, int):
+                dims = [dims]
+        if dims is not None:
+            if not isinstance(dims, list) or not all(isinstance(x, int) for x in dims):
+                raise IntentIRValidationError(f"op[{idx}] count_nonzero.dims must be list[int] when provided")
+        keepdims = attrs.get("keepdims")
+        if keepdims is not None and not isinstance(keepdims, bool):
+            raise IntentIRValidationError(f"op[{idx}] count_nonzero.keepdims must be bool when provided")
+    elif op.op == "diag":
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] diag requires 1 input")
+        diagonal = attrs.get("diagonal")
+        if diagonal is not None and not isinstance(diagonal, int):
+            raise IntentIRValidationError(f"op[{idx}] diag.diagonal must be int when provided")
+    elif op.op == "diag_embed":
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] diag_embed requires 1 input")
+        offset = attrs.get("offset")
+        dim1 = attrs.get("dim1")
+        dim2 = attrs.get("dim2")
+        if offset is not None and not isinstance(offset, int):
+            raise IntentIRValidationError(f"op[{idx}] diag_embed.offset must be int when provided")
+        if dim1 is not None and not isinstance(dim1, int):
+            raise IntentIRValidationError(f"op[{idx}] diag_embed.dim1 must be int when provided")
+        if dim2 is not None and not isinstance(dim2, int):
+            raise IntentIRValidationError(f"op[{idx}] diag_embed.dim2 must be int when provided")
+        if (dim1 is not None) and (dim2 is not None) and int(dim1) == int(dim2):
+            raise IntentIRValidationError(f"op[{idx}] diag_embed.dim1 and dim2 must be different")
     elif op.op == "avg_pool2d":
         if len(op.inputs) != 1:
             raise IntentIRValidationError(f"op[{idx}] avg_pool2d requires 1 input")
@@ -1084,8 +1118,9 @@ def _validate_function_meta(meta: Dict[str, Any]) -> None:
         return
     if not isinstance(provider, str):
         raise IntentIRValidationError("meta.provider must be string when provided")
-    if provider == "flaggems":
-        if not isinstance(meta.get("source_op"), str):
-            raise IntentIRValidationError("meta.source_op must be string when meta.provider=flaggems")
-        if not isinstance(meta.get("capability_state"), str):
-            raise IntentIRValidationError("meta.capability_state must be string when meta.provider=flaggems")
+    if "source_op" in meta and not isinstance(meta.get("source_op"), str):
+        raise IntentIRValidationError("meta.source_op must be string when provided")
+    if "capability_state" in meta and not isinstance(meta.get("capability_state"), str):
+        raise IntentIRValidationError("meta.capability_state must be string when provided")
+    if "backend_target" in meta and not isinstance(meta.get("backend_target"), str):
+        raise IntentIRValidationError("meta.backend_target must be string when provided")

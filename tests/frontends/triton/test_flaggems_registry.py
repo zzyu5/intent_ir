@@ -128,6 +128,9 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
             "threshold",
             "exp",
             "clamp",
+            "count_nonzero",
+            "diag",
+            "diag_embed",
         ],
         flaggems_commit="b" * 40,
     )
@@ -201,6 +204,9 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
     assert "threshold2d" in specs
     assert "clamp2d" in specs
     assert "lerp2d" in specs
+    assert "count_nonzero2d" in specs
+    assert "diag2d" in specs
+    assert "diag_embed2d" in specs
     assert "batch_norm2d" in specs
     assert "rms_norm2d" in specs
 

@@ -39,7 +39,11 @@ from verify.metamorphic import run_bounded_exhaustive, run_metamorphic_suite
 from verify.mutation import run_mutation_kill
 from verify.tolerances import infer_tolerances
 from pipeline.triton.execution_policy import ExecutionPathPolicy, make_policy_from_legacy_flags
-from pipeline.triton.flaggems_intent_normalize import maybe_normalize_flaggems_candidate
+from pipeline.triton.provider_hooks import (
+    annotate_provider_intent_meta,
+    maybe_normalize_provider_candidate,
+    validate_provider_intent_meta,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -64,55 +68,6 @@ class KernelSpec:
     stage_c_max_cases: Optional[int] = None
     enable_mutation_kill: bool = True
     mutation_bounded_max_cases: Optional[int] = None
-
-
-def _annotate_flaggems_intent_meta(
-    intent,
-    *,
-    source_op: str,
-    capability_state: str,
-    backend_target: str | None,
-) -> None:
-    meta = dict(getattr(intent, "meta", {}) or {})
-    meta["provider"] = "flaggems"
-    meta["source_op"] = str(source_op)
-    meta["capability_state"] = str(capability_state)
-    if backend_target is not None:
-        meta["backend_target"] = str(backend_target)
-    intent.meta = meta
-
-    for op in (getattr(intent, "ops", []) or []):
-        op_meta = dict(getattr(op, "meta", {}) or {})
-        op_meta["provider"] = "flaggems"
-        op_meta["source_op"] = str(source_op)
-        op_meta["capability_state"] = str(capability_state)
-        if backend_target is not None:
-            op_meta["backend_target"] = str(backend_target)
-        setattr(op, "meta", op_meta)
-
-
-def _validate_flaggems_intent_meta(intent) -> Dict[str, object]:
-    fn_meta = dict(getattr(intent, "meta", {}) or {})
-    fn_ok = (
-        fn_meta.get("provider") == "flaggems"
-        and isinstance(fn_meta.get("source_op"), str)
-        and isinstance(fn_meta.get("capability_state"), str)
-    )
-    missing_ops: List[int] = []
-    for i, op in enumerate(getattr(intent, "ops", []) or []):
-        op_meta = dict(getattr(op, "meta", {}) or {})
-        if op_meta.get("provider") != "flaggems":
-            missing_ops.append(i)
-            continue
-        if not isinstance(op_meta.get("source_op"), str) or not isinstance(op_meta.get("capability_state"), str):
-            missing_ops.append(i)
-            continue
-    return {
-        "ok": bool(fn_ok and not missing_ops),
-        "function_meta_ok": bool(fn_ok),
-        "missing_op_meta_indices": list(missing_ops),
-    }
-
 
 def _backend_capability_preflight(intent, *, backend_target: str | None) -> Dict[str, object]:
     if backend_target is None:
@@ -2832,40 +2787,49 @@ def run_pipeline_for_spec(
             (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
             (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
     # Ensure schedule is attached even if the LLM emits only partial schedule fields.
-    if str(triton_provider) == "flaggems":
-        cand, cand_expanded, norm_info = maybe_normalize_flaggems_candidate(
-            spec_name=str(spec.name),
-            candidate=cand,
-            candidate_expanded=cand_expanded,
-        )
-        if norm_info is not None:
+    provider_name = str(triton_provider)
+    provider_source_op = getattr(spec, "source_op", getattr(spec, "name", None))
+    provider_capability_state = getattr(spec, "capability_state", getattr(spec, "capability_status", None))
+    cand, cand_expanded, norm_info = maybe_normalize_provider_candidate(
+        provider=provider_name,
+        spec_name=str(spec.name),
+        candidate=cand,
+        candidate_expanded=cand_expanded,
+    )
+    if norm_info is not None:
+        report["provider_intent_normalization"] = dict(norm_info)
+        if provider_name == "flaggems":
             report["flaggems_intent_normalization"] = dict(norm_info)
-            (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
-            if cand_expanded is not None:
-                (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(
-                    print_mlir_like(cand_expanded.intent), encoding="utf-8"
-                )
+        (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
+        if cand_expanded is not None:
+            (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(
+                print_mlir_like(cand_expanded.intent), encoding="utf-8"
+            )
     _ensure_schedule(cand.intent, kernel_name=spec.name, triton_src=src)
     _attach_access_witness_meta(cand.intent, cert_v2=cert_v2, canonical_shapes=dict(spec.canonical_shapes))
-    if str(triton_provider) == "flaggems":
-        _annotate_flaggems_intent_meta(
-            cand.intent,
-            source_op=str(getattr(spec, "source_op", getattr(spec, "name", "unknown"))),
-            capability_state=str(getattr(spec, "capability_state", getattr(spec, "capability_status", "blocked_ir"))),
-            backend_target=backend_target,
-        )
-        report["provider_meta_validation"] = _validate_flaggems_intent_meta(cand.intent)
+    annotate_provider_intent_meta(
+        cand.intent,
+        provider=provider_name,
+        source_op=(str(provider_source_op) if provider_source_op is not None else None),
+        capability_state=(str(provider_capability_state) if provider_capability_state is not None else None),
+        backend_target=backend_target,
+    )
+    report["provider_meta_validation"] = validate_provider_intent_meta(
+        cand.intent,
+        provider=provider_name,
+        require_source_and_state=(provider_name == "flaggems"),
+    )
     report["intent"] = cand.intent.to_json_dict()
     if cand_expanded is not None:
         _ensure_schedule(cand_expanded.intent, kernel_name=spec.name, triton_src=src)
         _attach_access_witness_meta(cand_expanded.intent, cert_v2=cert_v2, canonical_shapes=dict(spec.canonical_shapes))
-        if str(triton_provider) == "flaggems":
-            _annotate_flaggems_intent_meta(
-                cand_expanded.intent,
-                source_op=str(getattr(spec, "source_op", getattr(spec, "name", "unknown"))),
-                capability_state=str(getattr(spec, "capability_state", getattr(spec, "capability_status", "blocked_ir"))),
-                backend_target=backend_target,
-            )
+        annotate_provider_intent_meta(
+            cand_expanded.intent,
+            provider=provider_name,
+            source_op=(str(provider_source_op) if provider_source_op is not None else None),
+            capability_state=(str(provider_capability_state) if provider_capability_state is not None else None),
+            backend_target=backend_target,
+        )
     report["intent_expanded"] = (cand_expanded.intent.to_json_dict() if cand_expanded is not None else None)
     if llm_generated:
         source_mode = "llm"
@@ -2899,9 +2863,7 @@ def run_pipeline_for_spec(
                 cand = llm_to_intent(desc, feedback=list(sv.reasons))
                 llm_generated = True
                 report["llm_trace"] = dict(cand.llm_trace)
-                _ensure_schedule(cand.intent, kernel_name=spec.name, triton_src=src)
                 enrich_intent_macros(cand.intent)
-                (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
                 expanded_intent = expand_macros(cand.intent)
                 cand_expanded = CandidateIntent(
                     intent=expanded_intent,
@@ -2910,11 +2872,46 @@ def run_pipeline_for_spec(
                     raw_json=dict(cand.raw_json),
                     llm_trace=dict(cand.llm_trace),
                 )
+                cand, cand_expanded, repair_norm_info = maybe_normalize_provider_candidate(
+                    provider=provider_name,
+                    spec_name=str(spec.name),
+                    candidate=cand,
+                    candidate_expanded=cand_expanded,
+                )
+                if repair_norm_info is not None:
+                    report["provider_intent_normalization"] = dict(repair_norm_info)
+                    if provider_name == "flaggems":
+                        report["flaggems_intent_normalization"] = dict(repair_norm_info)
+
+                _ensure_schedule(cand.intent, kernel_name=spec.name, triton_src=src)
+                _attach_access_witness_meta(cand.intent, cert_v2=cert_v2, canonical_shapes=dict(spec.canonical_shapes))
+                annotate_provider_intent_meta(
+                    cand.intent,
+                    provider=provider_name,
+                    source_op=(str(provider_source_op) if provider_source_op is not None else None),
+                    capability_state=(str(provider_capability_state) if provider_capability_state is not None else None),
+                    backend_target=backend_target,
+                )
+                (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
+                _ensure_schedule(cand_expanded.intent, kernel_name=spec.name, triton_src=src)
+                _attach_access_witness_meta(cand_expanded.intent, cert_v2=cert_v2, canonical_shapes=dict(spec.canonical_shapes))
+                annotate_provider_intent_meta(
+                    cand_expanded.intent,
+                    provider=provider_name,
+                    source_op=(str(provider_source_op) if provider_source_op is not None else None),
+                    capability_state=(str(provider_capability_state) if provider_capability_state is not None else None),
+                    backend_target=backend_target,
+                )
                 (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(
-                    print_mlir_like(expanded_intent), encoding="utf-8"
+                    print_mlir_like(cand_expanded.intent), encoding="utf-8"
+                )
+                report["provider_meta_validation"] = validate_provider_intent_meta(
+                    cand.intent,
+                    provider=provider_name,
+                    require_source_and_state=(provider_name == "flaggems"),
                 )
                 report["intent"] = cand.intent.to_json_dict()
-                report["intent_expanded"] = expanded_intent.to_json_dict()
+                report["intent_expanded"] = cand_expanded.intent.to_json_dict()
                 sv = static_validate((cand_expanded.intent if cand_expanded is not None else cand.intent), sv_cert)
                 report["static_validation"] = {
                     "ok": bool(sv.ok),

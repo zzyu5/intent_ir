@@ -34,7 +34,21 @@ def test_op_tiers_are_disjoint() -> None:
 
 
 def test_structure_ops_are_registered() -> None:
-    for op in {"concat", "stack", "tile", "repeat", "repeat_interleave", "pad", "sort", "topk", "unique", "nonzero"}:
+    for op in {
+        "concat",
+        "stack",
+        "tile",
+        "repeat",
+        "repeat_interleave",
+        "pad",
+        "sort",
+        "topk",
+        "unique",
+        "nonzero",
+        "count_nonzero",
+        "diag",
+        "diag_embed",
+    }:
         assert op in EXPERIMENTAL_OPS
 
 

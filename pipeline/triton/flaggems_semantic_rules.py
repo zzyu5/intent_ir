@@ -267,6 +267,13 @@ _REDUCE_TEMPLATE: dict[str, SemanticMapping] = {
     "cumsum": _mk("cumsum", ("cumsum",), mapping_kind="reduce_template", pattern_id="reduce.cumsum", detail="mapped to cumsum primitive"),
     "var": _mk("var", ("var",), mapping_kind="reduce_template", pattern_id="reduce.var", detail="mapped to var primitive"),
     "std": _mk("std", ("std",), mapping_kind="reduce_template", pattern_id="reduce.std", detail="mapped to std primitive"),
+    "count_nonzero": _mk(
+        "count_nonzero",
+        ("count_nonzero",),
+        mapping_kind="reduce_template",
+        pattern_id="reduce.count_nonzero",
+        detail="mapped to count_nonzero primitive",
+    ),
     # all(x) == not(any(not(x)))
     "all": _mk(
         "all",
@@ -281,6 +288,14 @@ _INDEX_TEMPLATE: dict[str, SemanticMapping] = {
     "gather": _mk("gather", ("gather",), mapping_kind="index_template", pattern_id="index.gather", detail="mapped by index template"),
     "index": _mk("index", ("gather",), mapping_kind="index_template", pattern_id="index.index_via_gather", detail="mapped to gather primitive"),
     "index_select": _mk("index_select", ("gather",), mapping_kind="index_template", pattern_id="index.index_select_via_gather", detail="mapped to gather primitive"),
+    "diag": _mk("diag", ("diag",), mapping_kind="index_template", pattern_id="index.diag", detail="mapped to diag primitive"),
+    "diag_embed": _mk(
+        "diag_embed",
+        ("diag_embed",),
+        mapping_kind="index_template",
+        pattern_id="index.diag_embed",
+        detail="mapped to diag_embed primitive",
+    ),
     "where_self": _mk("where_self", ("gt", "where"), mapping_kind="index_template", pattern_id="index.where_self", detail="mapped via compare+where"),
     "where_scalar_self": _mk(
         "where_scalar_self",

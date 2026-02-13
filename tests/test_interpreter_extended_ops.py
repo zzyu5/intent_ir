@@ -246,3 +246,34 @@ def test_bitwise_angle_avg_pool_ops_execute() -> None:
     assert np.array_equal(out["a_rshift"], np.right_shift(a.astype(np.int64), b.astype(np.int64)))
     expected_pool = np.array([[[[(1 + 2 + 5 + 6) / 4.0, (3 + 4 + 7 + 8) / 4.0], [(9 + 10 + 13 + 14) / 4.0, (11 + 12 + 15 + 16) / 4.0]]]], dtype=np.float32)
     assert np.allclose(out["img_pool"], expected_pool, atol=1e-6)
+
+
+def test_count_nonzero_diag_and_diag_embed_execute() -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "count_diag_diag_embed",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "v": {"dtype": "f32", "shape": ["B", "N"], "layout": "row_major"},
+                "cnz": {"dtype": "i64", "shape": ["M"], "layout": "row_major"},
+                "d": {"dtype": "f32", "shape": ["K"], "layout": "row_major"},
+                "de": {"dtype": "f32", "shape": ["B", "NP", "NP"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "count_nonzero", "inputs": ["x"], "output": "cnz", "attrs": {"dims": [1]}},
+                {"op": "diag", "inputs": ["x"], "output": "d", "attrs": {"diagonal": 0}},
+                {"op": "diag_embed", "inputs": ["v"], "output": "de", "attrs": {"offset": 1, "dim1": -2, "dim2": -1}},
+            ],
+            "outputs": ["cnz", "d", "de"],
+        }
+    )
+    x = np.array([[0.0, 1.0, 2.0], [3.0, 0.0, 0.0]], dtype=np.float32)
+    v = np.array([[1.0, 2.0, 3.0], [0.5, 0.25, 0.125]], dtype=np.float32)
+    out = execute_intent(intent, {"x": x, "v": v}, shape_bindings={"M": 2, "N": 3, "B": 2, "K": 2, "NP": 4})
+
+    assert np.array_equal(out["cnz"], np.count_nonzero(x, axis=1).astype(np.int64))
+    assert np.array_equal(out["d"], np.diag(x))
+
+    expected_de = np.zeros((2, 4, 4), dtype=np.float32)
+    expected_de[:, np.arange(3), np.arange(3) + 1] = v
+    assert np.allclose(out["de"], expected_de, atol=1e-6)

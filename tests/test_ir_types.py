@@ -108,11 +108,16 @@ def test_op_meta_roundtrip_and_validation():
     assert out["ops"][0]["meta"]["source_op"] == "add"
 
 
-def test_function_meta_flaggems_requires_source_and_state():
+def test_function_meta_provider_fields_optional_but_typed():
     bad = _minimal_intent_json()
     bad["meta"] = {"provider": "flaggems"}
+    intent = IntentFunction.from_json_dict(bad)
+    assert intent.meta.get("provider") == "flaggems"
+
+    bad2 = _minimal_intent_json()
+    bad2["meta"] = {"provider": "flaggems", "source_op": 1}
     with pytest.raises(IntentIRValidationError):
-        IntentFunction.from_json_dict(bad)
+        IntentFunction.from_json_dict(bad2)
 
 
 def test_new_structure_ops_validate_success() -> None:
@@ -132,6 +137,9 @@ def test_new_structure_ops_validate_success() -> None:
             {"op": "topk", "inputs": ["X"], "output": "K", "attrs": {"k": 1, "axis": 1}},
             {"op": "unique", "inputs": ["K"], "output": "U", "attrs": {"sorted": False}},
             {"op": "nonzero", "inputs": ["X"], "output": "NZ"},
+            {"op": "count_nonzero", "inputs": ["X"], "output": "CNZ", "attrs": {"dims": [1]}},
+            {"op": "diag", "inputs": ["X"], "output": "D", "attrs": {"diagonal": 0}},
+            {"op": "diag_embed", "inputs": ["K"], "output": "DE", "attrs": {"offset": 0, "dim1": -2, "dim2": -1}},
             {"op": "angle", "inputs": ["X"], "output": "ANG"},
             {"op": "bitwise_not", "inputs": ["K"], "output": "BN"},
             {"op": "bitwise_and", "inputs": ["K", "K"], "output": "BA"},
@@ -150,6 +158,9 @@ def test_new_structure_ops_validate_success() -> None:
     src["tensors"]["BO"] = {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"}
     src["tensors"]["BLS"] = {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"}
     src["tensors"]["BRS"] = {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"}
+    src["tensors"]["CNZ"] = {"dtype": "i64", "shape": ["M"], "layout": "row_major"}
+    src["tensors"]["D"] = {"dtype": "f32", "shape": ["M"], "layout": "row_major"}
+    src["tensors"]["DE"] = {"dtype": "i32", "shape": ["M", "N", "N"], "layout": "row_major"}
     intent = IntentFunction.from_json_dict(src)
     assert intent.name == "structure_ok"
 
@@ -190,6 +201,20 @@ def test_avg_pool2d_requires_valid_kernel_size() -> None:
             "Y": {"dtype": "f32", "shape": ["N", "C", "OH", "OW"], "layout": "row_major"},
         },
         "ops": [{"op": "avg_pool2d", "inputs": ["X"], "output": "Y", "attrs": {"kernel_size": "2"}}],
+        "outputs": ["Y"],
+    }
+    with pytest.raises(IntentIRValidationError):
+        IntentFunction.from_json_dict(bad)
+
+
+def test_diag_embed_requires_distinct_dims() -> None:
+    bad = {
+        "name": "diag_embed_bad",
+        "tensors": {
+            "X": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            "Y": {"dtype": "f32", "shape": ["M", "N", "N"], "layout": "row_major"},
+        },
+        "ops": [{"op": "diag_embed", "inputs": ["X"], "output": "Y", "attrs": {"dim1": -1, "dim2": -1}}],
         "outputs": ["Y"],
     }
     with pytest.raises(IntentIRValidationError):

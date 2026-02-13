@@ -80,6 +80,9 @@ _SEMANTIC_TO_E2E_SPEC: dict[str, str] = {
     "bitwise_left_shift": "bitwise_left_shift2d",
     "bitwise_right_shift": "bitwise_right_shift2d",
     "avg_pool2d": "avg_pool2d_nchw",
+    "count_nonzero": "count_nonzero2d",
+    "diag": "diag2d",
+    "diag_embed": "diag_embed2d",
     "div": "div2d",
     "eq": "eq2d",
     "ne": "ne2d",
@@ -282,6 +285,7 @@ def classify_semantic_family(semantic_op: str) -> str:
             "softmax",
             "logsumexp",
             "cumsum",
+            "count_nonzero",
         )
     ):
         return "reduction"
