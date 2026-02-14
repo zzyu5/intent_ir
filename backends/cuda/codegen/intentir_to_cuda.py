@@ -4279,6 +4279,142 @@ extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(
     return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=lowered_bindings)
 
 
+def _kernel_dot_1d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    ops = list(intent.ops or [])
+    if len(ops) != 4 or [o.op for o in ops] != ["cast", "cast", "mul", "reduce_sum"]:
+        raise CudaLoweringError("dot lowering expects cast->cast->mul->reduce_sum pattern")
+    cast_x, cast_y, mul_op, red_op = ops
+    if len(cast_x.inputs) != 1 or len(cast_y.inputs) != 1:
+        raise CudaLoweringError("dot lowering expects cast ops with single input")
+    x_name = str(cast_x.inputs[0])
+    y_name = str(cast_y.inputs[0])
+    if [str(v) for v in mul_op.inputs] != [str(cast_x.output), str(cast_y.output)]:
+        raise CudaLoweringError("dot lowering expects mul(cast_x, cast_y)")
+    if len(red_op.inputs) != 1 or str(red_op.inputs[0]) != str(mul_op.output):
+        raise CudaLoweringError("dot lowering expects reduce_sum over mul output")
+    out_name = str(red_op.output)
+    x_shape = _shape_values(intent, x_name)
+    y_shape = _shape_values(intent, y_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(x_shape) != 1 or len(y_shape) != 1:
+        raise CudaLoweringError("dot lowering expects rank-1 x/y")
+    if len(out_shape) != 0:
+        raise CudaLoweringError("dot lowering expects scalar output")
+    N = _resolve_dim_int(x_shape[0], bindings, name="N")
+    Ny = _resolve_dim_int(y_shape[0], bindings, name="N_y")
+    if N != Ny:
+        raise CudaLoweringError("dot lowering expects x/y same length")
+
+    cuda_src = f"""
+#include <stdint.h>
+
+extern "C" __global__ void {intent.name}(
+    const float* __restrict__ {x_name},
+    const float* __restrict__ {y_name},
+    float* __restrict__ {out_name},
+    int N) {{
+  if (blockIdx.x != 0 || threadIdx.x != 0) return;
+  float acc = 0.0f;
+  for (int i = 0; i < N; ++i) {{
+    acc += {x_name}[i] * {y_name}[i];
+  }}
+  {out_name}[0] = acc;
+}}
+""".lstrip()
+
+    io_spec = _io_spec_from_args(
+        intent,
+        tensor_args=[x_name, y_name, out_name],
+        scalar_args={"N": "i32"},
+        arg_names=[x_name, y_name, out_name, "N"],
+    )
+    launch = CudaLaunch(grid=(1, 1, 1), block=(1, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings["N"] = int(N)
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=[out_name],
+        bindings=lowered_bindings,
+    )
+
+
+def _kernel_diag_embed_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    ops = list(intent.ops or [])
+    expected = ["const", "broadcast_in_dim", "iota", "iota", "iota", "ne", "not", "gather", "where"]
+    if len(ops) != len(expected) or [o.op for o in ops] != expected:
+        raise CudaLoweringError("diag_embed lowering expects const->broadcast->iota*3->ne->not->gather->where pattern")
+    bcast_op = ops[1]
+    gather_op = ops[7]
+    where_op = ops[8]
+    if len(gather_op.inputs) != 3:
+        raise CudaLoweringError("diag_embed gather expects inputs [x, idx_b, idx_col]")
+    x_name = str(gather_op.inputs[0])
+    out_name = str(where_op.output)
+    x_shape = _shape_values(intent, x_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(x_shape) != 2 or len(out_shape) != 3:
+        raise CudaLoweringError("diag_embed lowering expects x[B,N] -> y[B,N,N]")
+    B = _resolve_dim_int(x_shape[0], bindings, name="B")
+    N = _resolve_dim_int(x_shape[1], bindings, name="N")
+    if _resolve_dim_int(out_shape[0], bindings, name="OB") != B:
+        raise CudaLoweringError("diag_embed output B mismatch")
+    if _resolve_dim_int(out_shape[1], bindings, name="ON1") != N or _resolve_dim_int(out_shape[2], bindings, name="ON2") != N:
+        raise CudaLoweringError("diag_embed output N mismatch")
+
+    bcast_shape = (bcast_op.attrs or {}).get("out_shape")
+    if not isinstance(bcast_shape, list) or len(bcast_shape) != 3:
+        raise CudaLoweringError("diag_embed broadcast_in_dim must provide out_shape=[B,N,N]")
+
+    total = int(B) * int(N) * int(N)
+    sched = intent.schedule or ScheduleSketch()
+    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=256)
+    block_x = max(32, min(1024, int(block_x) if block_x > 0 else 256))
+    grid_x = (total + block_x - 1) // block_x
+
+    cuda_src = f"""
+#include <stdint.h>
+
+extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(
+    const float* __restrict__ {x_name},
+    float* __restrict__ {out_name},
+    int B, int N) {{
+  const int64_t tid = (int64_t)blockIdx.x * (int64_t)blockDim.x + (int64_t)threadIdx.x;
+  const int64_t total = (int64_t)B * (int64_t)N * (int64_t)N;
+  if (tid >= total) return;
+  int64_t t = tid;
+  const int col = (int)(t % N); t /= N;
+  const int row = (int)(t % N); t /= N;
+  const int b = (int)t;
+  if (row == col) {{
+    {out_name}[tid] = {x_name}[(size_t)b * (size_t)N + (size_t)col];
+  }} else {{
+    {out_name}[tid] = 0.0f;
+  }}
+}}
+""".lstrip()
+
+    io_spec = _io_spec_from_args(
+        intent,
+        tensor_args=[x_name, out_name],
+        scalar_args={"B": "i32", "N": "i32"},
+        arg_names=[x_name, out_name, "B", "N"],
+    )
+    launch = CudaLaunch(grid=(grid_x, 1, 1), block=(block_x, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.update({"B": int(B), "N": int(N)})
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=[out_name],
+        bindings=lowered_bindings,
+    )
+
+
 def _kernel_avg_pool2d_nchw_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
     if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != "avg_pool2d":
         raise CudaLoweringError("avg_pool2d lowering expects a single avg_pool2d op")
@@ -4843,6 +4979,10 @@ def lower_intent_to_cuda_kernel(
         return _kernel_count_nonzero_2d_i64(intent, bindings)
     if op_seq == ["iota", "gather"]:
         return _kernel_diag_2d_f32(intent, bindings)
+    if op_seq == ["cast", "cast", "mul", "reduce_sum"]:
+        return _kernel_dot_1d_f32(intent, bindings)
+    if op_seq == ["const", "broadcast_in_dim", "iota", "iota", "iota", "ne", "not", "gather", "where"]:
+        return _kernel_diag_embed_2d_f32(intent, bindings)
     if op_seq == ["conv2d", "broadcast_in_dim", "add"]:
         return _kernel_conv2d_nchw_bias_pattern_f32(intent, bindings)
     if op_seq in (["matmul", "mul", "mul", "add", "cast"], ["matmul", "mul", "mul", "add"]):

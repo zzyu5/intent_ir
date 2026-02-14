@@ -291,6 +291,8 @@ def _normalize_io_name(name: str) -> str:
     # Common shorthand aliases from copied kernels.
     if s == "i":
         s = "input"
+    if s == "a":
+        s = "input"
     if s == "o":
         s = "output"
     if s == "x":

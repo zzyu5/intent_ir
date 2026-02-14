@@ -65,6 +65,8 @@ def _normalize_io_name(name: str) -> str:
     # Single-letter IO names from some kernels/LLM outputs.
     if s == "i":
         s = "input"
+    if s == "a":
+        s = "input"
     if s == "o":
         s = "output"
     if s == "x":
