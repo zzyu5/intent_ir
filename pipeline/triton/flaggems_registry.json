@@ -18,8 +18,8 @@
     "source_filtered_ops": 212,
     "semantic_ops": 196,
     "by_status": {
-      "blocked_backend": 154,
-      "dual_pass": 42
+      "blocked_backend": 153,
+      "dual_pass": 43
     },
     "by_family": {
       "attention_sequence": 5,
@@ -17028,8 +17028,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.conv1d",
       "e2e_spec": "conv1d_ncl",
-      "status": "blocked_backend",
-      "status_reason": "pipeline_diff_failed_or_missing",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped to conv1d primitive; rvv_missing=['conv1d']; cuda_h100_missing=['conv1d']; cuda_5090d_missing=['conv1d']",
       "backend_support": {
         "rvv": {
@@ -17078,24 +17078,24 @@
           ]
         }
       },
-      "reason_code": "diff_fail",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
         "provider": {
           "exists": true,
-          "diff_ok": false
+          "diff_ok": true
         },
-        "rvv": "fail",
-        "cuda": "fail"
+        "rvv": "pass",
+        "cuda": "pass"
       },
       "in_scope": true,
       "in_scope_active": true,

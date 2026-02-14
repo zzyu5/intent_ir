@@ -1,12 +1,12 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-14T18:25:14+00:00",
+  "generated_at": "2026-02-14T18:40:30+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
-      "dual_pass": 42,
-      "blocked_backend": 154
+      "dual_pass": 43,
+      "blocked_backend": 153
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -2561,10 +2561,10 @@
       "id": "flaggems::conv1d",
       "semantic_op": "conv1d",
       "family": "conv_pool_interp",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "conv1d_ncl",
       "intent_ops": [
         "conv1d"
