@@ -1,12 +1,12 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-14T20:32:45+00:00",
+  "generated_at": "2026-02-14T21:04:35+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
-      "dual_pass": 73,
-      "blocked_backend": 123
+      "dual_pass": 83,
+      "blocked_backend": 113
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -665,10 +665,10 @@
       "id": "flaggems::ge",
       "semantic_op": "ge",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "ge2d",
       "intent_ops": [
         "ge"
@@ -678,10 +678,10 @@
       "id": "flaggems::ge_scalar",
       "semantic_op": "ge_scalar",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "ge2d",
       "intent_ops": [
         "ge"
@@ -691,10 +691,10 @@
       "id": "flaggems::glu",
       "semantic_op": "glu",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "glu2d",
       "intent_ops": [
         "glu"
@@ -704,10 +704,10 @@
       "id": "flaggems::gt",
       "semantic_op": "gt",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "gt2d",
       "intent_ops": [
         "gt"
@@ -717,10 +717,10 @@
       "id": "flaggems::gt_scalar",
       "semantic_op": "gt_scalar",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "gt2d",
       "intent_ops": [
         "gt"
@@ -730,10 +730,10 @@
       "id": "flaggems::hstack",
       "semantic_op": "hstack",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "hstack2d",
       "intent_ops": [
         "concat"
@@ -2032,10 +2032,10 @@
       "id": "flaggems::gelu",
       "semantic_op": "gelu",
       "family": "norm_activation",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "gelu2d",
       "intent_ops": [
         "const",
@@ -2050,10 +2050,10 @@
       "id": "flaggems::group_norm",
       "semantic_op": "group_norm",
       "family": "norm_activation",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "group_norm_kernel",
       "intent_ops": [
         "reduce_sum",
@@ -2272,10 +2272,10 @@
       "id": "flaggems::gather",
       "semantic_op": "gather",
       "family": "index_scatter_gather",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "gather2d",
       "intent_ops": [
         "gather"
@@ -2285,10 +2285,10 @@
       "id": "flaggems::index",
       "semantic_op": "index",
       "family": "index_scatter_gather",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "index_select2d",
       "intent_ops": [
         "gather"
