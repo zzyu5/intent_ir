@@ -251,3 +251,65 @@ def test_converge_status_propagates_lowering_missing_op_for_runtime_fail(tmp_pat
     entry = scoped_entries[0]
     assert entry["status"] == "rvv_only"
     assert entry["reason_code"] == "lowering_missing_op"
+
+
+def test_converge_status_uses_backend_reason_code_field_when_present(tmp_path: Path) -> None:
+    registry = tmp_path / "registry.json"
+    provider_dir = tmp_path / "provider"
+    rvv_json = tmp_path / "rvv.json"
+    cuda_json = tmp_path / "cuda.json"
+    out = tmp_path / "status_converged.json"
+    provider_dir.mkdir(parents=True, exist_ok=True)
+
+    _write_minimal_registry(registry)
+    rvv_json.write_text(json.dumps({"results": [{"kernel": "angle2d", "ok": True}]}), encoding="utf-8")
+    cuda_json.write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "kernel": "angle2d",
+                        "ok": False,
+                        "reason_code": "env_unavailable",
+                        "error": {"type": "RuntimeError", "message": "nvrtc_unavailable"},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (provider_dir / "angle2d.json").write_text(json.dumps({"diff": {"ok": True}}), encoding="utf-8")
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/converge_status.py",
+            "--registry",
+            str(registry),
+            "--provider-report-dir",
+            str(provider_dir),
+            "--rvv-json",
+            str(rvv_json),
+            "--cuda-json",
+            str(cuda_json),
+            "--scope-kernels",
+            "angle2d",
+            "--scope-semantic-ops",
+            "angle",
+            "--scope-mode",
+            "active_only",
+            "--out",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    scoped_entries = list(payload.get("scoped_entries_active") or [])
+    assert len(scoped_entries) == 1
+    entry = scoped_entries[0]
+    assert entry["status"] == "rvv_only"
+    assert entry["reason_code"] == "env_unavailable"
+    assert entry["runtime_detail"]["cuda"]["reason_code"] == "env_unavailable"

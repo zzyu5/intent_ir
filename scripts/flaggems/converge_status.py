@@ -111,6 +111,18 @@ def _classify_runtime_reason(state: str, detail: dict[str, Any], *, skip_reason:
     if s == "unknown":
         return "runtime_unknown", "missing result for kernel in backend summary"
 
+    detail_reason = str(detail.get("reason_code") or "").strip().lower()
+    if detail_reason in {"compile_timeout", "launch_timeout", "runtime_timeout"}:
+        return "runtime_timeout", f"backend runtime timeout ({detail_reason})"
+    if detail_reason == "env_unavailable":
+        return "env_unavailable", "backend environment unavailable"
+    if detail_reason == "lowering_missing_op":
+        return "lowering_missing_op", "backend lowering does not support one or more ops"
+    if detail_reason == "diff_fail":
+        return "diff_fail", "numerical diff failed"
+    if detail_reason in {"runtime_fail", "artifact_missing"}:
+        return "runtime_fail", ("backend runtime failed" if not detail_reason else f"backend runtime failed ({detail_reason})")
+
     err = detail.get("error")
     msg_parts: list[str] = []
     if isinstance(err, dict):

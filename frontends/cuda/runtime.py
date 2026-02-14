@@ -903,6 +903,13 @@ def compile_cuda_extension(
         + " ".join(flags)
     )
     mod_name = f"intentir_cuda_{kernel_name}_{h}"
+    force_nvrtc_raw = os.getenv("INTENTIR_CUDA_FORCE_NVRTC", "0").strip().lower()
+    force_nvrtc = force_nvrtc_raw in {"1", "true", "yes", "y"}
+    if force_nvrtc:
+        import json  # noqa: PLC0415
+
+        return _load_nvrtc_cached(mod_name, kernel_name, cuda_src, json.dumps(io_spec, sort_keys=True), flags)
+
     full_src = _build_extension_src(cuda_src, kernel_name=kernel_name, io_spec=io_spec)
     try:
         return _load_ext_cached(mod_name, full_src, flags)

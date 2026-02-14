@@ -247,6 +247,19 @@ def _set_codegen_mode_env(codegen_mode: str) -> None:
         os.environ.pop("INTENTIR_CUDA_CODEGEN", None)
 
 
+def _set_runtime_backend_env(runtime_backend: str) -> None:
+    mode = str(runtime_backend).strip().lower()
+    if mode == "nvrtc":
+        os.environ["INTENTIR_CUDA_FORCE_NVRTC"] = "1"
+        os.environ.setdefault("INTENTIR_CUDA_NVRTC_FALLBACK", "1")
+        try:
+            from cuda import nvrtc as _nvrtc  # noqa: PLC0415
+        except Exception as e:
+            raise RuntimeError(f"nvrtc_unavailable: {type(e).__name__}: {e}") from e
+    else:
+        os.environ.pop("INTENTIR_CUDA_FORCE_NVRTC", None)
+
+
 def _run_compile_stage(
     kernel: str,
     *,
@@ -376,6 +389,8 @@ def _reason_code_for_exception(e: Exception) -> str:
     if isinstance(e, FileNotFoundError):
         return "artifact_missing"
     if isinstance(e, RuntimeError):
+        if "nvrtc_unavailable" in str(e).lower():
+            return "env_unavailable"
         return "runtime_fail"
     if isinstance(e, ValueError):
         return "runtime_fail"
@@ -389,9 +404,11 @@ def _cuda_compile_worker(
     triton_provider: str,
     artifact_dir: str | None,
     codegen_mode: str,
+    runtime_backend: str,
 ) -> None:
-    _set_codegen_mode_env(codegen_mode)
     try:
+        _set_codegen_mode_env(codegen_mode)
+        _set_runtime_backend_env(runtime_backend)
         res = _run_compile_stage(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
         queue.put({"ok": True, "result": res})
     except Exception as ex:  # noqa: BLE001
@@ -414,9 +431,11 @@ def _cuda_launch_worker(
     triton_provider: str,
     artifact_dir: str | None,
     codegen_mode: str,
+    runtime_backend: str,
 ) -> None:
-    _set_codegen_mode_env(codegen_mode)
     try:
+        _set_codegen_mode_env(codegen_mode)
+        _set_runtime_backend_env(runtime_backend)
         res = _run_launch_stage(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
         queue.put({"ok": True, "result": res})
     except Exception as ex:  # noqa: BLE001
@@ -440,13 +459,14 @@ def _run_worker_with_timeout(
     triton_provider: str,
     artifact_dir: str | None,
     codegen_mode: str,
+    runtime_backend: str,
     timeout_sec: int,
 ) -> dict[str, Any]:
     ctx = mp.get_context("spawn")
     q: mp.Queue = ctx.Queue()
     proc = ctx.Process(
         target=worker,
-        args=(q, str(kernel), str(frontend), str(triton_provider), artifact_dir, str(codegen_mode)),
+        args=(q, str(kernel), str(frontend), str(triton_provider), artifact_dir, str(codegen_mode), str(runtime_backend)),
     )
     proc.start()
     timeout = None if int(timeout_sec) <= 0 else float(timeout_sec)
@@ -482,6 +502,7 @@ def _run_one_with_stage_timeouts(
     compile_timeout_sec: int,
     launch_timeout_sec: int,
     codegen_mode: str,
+    runtime_backend: str,
 ) -> dict[str, Any]:
     compile_res = _run_worker_with_timeout(
         _cuda_compile_worker,
@@ -490,6 +511,7 @@ def _run_one_with_stage_timeouts(
         triton_provider=triton_provider,
         artifact_dir=artifact_dir,
         codegen_mode=codegen_mode,
+        runtime_backend=runtime_backend,
         timeout_sec=int(compile_timeout_sec),
     )
     if bool(compile_res.get("timed_out")):
@@ -516,6 +538,7 @@ def _run_one_with_stage_timeouts(
         triton_provider=triton_provider,
         artifact_dir=artifact_dir,
         codegen_mode=codegen_mode,
+        runtime_backend=runtime_backend,
         timeout_sec=int(launch_timeout_sec),
     )
     if bool(launch_res.get("timed_out")):
@@ -561,6 +584,7 @@ def _probe_timeout_runtime_detail(
     artifact_dir: str | None,
     compile_timeout_sec: int,
     launch_timeout_sec: int,
+    runtime_backend: str,
 ) -> dict[str, Any]:
     probe = _run_one_with_stage_timeouts(
         kernel=kernel,
@@ -570,6 +594,7 @@ def _probe_timeout_runtime_detail(
         compile_timeout_sec=max(1, min(int(compile_timeout_sec), 30)),
         launch_timeout_sec=max(1, min(int(launch_timeout_sec), 30)),
         codegen_mode="py",
+        runtime_backend=runtime_backend,
     )
     detail = {
         "ok": bool(probe.get("ok")),
@@ -640,6 +665,12 @@ def main() -> None:
         help="CUDA codegen mode for smoke run (default: auto).",
     )
     ap.add_argument(
+        "--runtime-backend",
+        choices=["auto", "nvcc", "nvrtc"],
+        default="auto",
+        help="CUDA runtime compile backend selector. nvrtc forces NVRTC path, nvcc forces extension path.",
+    )
+    ap.add_argument(
         "--refine-timeout-reason",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -653,6 +684,9 @@ def main() -> None:
 
     compile_timeout_sec = int(args.compile_timeout_sec) if args.compile_timeout_sec is not None else int(args.timeout_sec)
     launch_timeout_sec = int(args.launch_timeout_sec) if args.launch_timeout_sec is not None else int(args.timeout_sec)
+    runtime_backend = str(args.runtime_backend)
+    if runtime_backend == "auto":
+        runtime_backend = "nvcc"
 
     if args.kernel:
         kernels = list(args.kernel)
@@ -672,6 +706,10 @@ def main() -> None:
             "flaggems_opset": str(args.flaggems_opset),
             "backend_target": str(args.backend_target),
             "artifact_dir": (str(args.artifact_dir) if args.artifact_dir else None),
+            "runtime_backend": str(runtime_backend),
+            "timeout_sec": int(args.timeout_sec),
+            "compile_timeout_sec": int(compile_timeout_sec),
+            "launch_timeout_sec": int(launch_timeout_sec),
             "kernels": list(kernels),
             "results": [],
             "ok": False,
@@ -698,6 +736,7 @@ def main() -> None:
                 compile_timeout_sec=int(compile_timeout_sec),
                 launch_timeout_sec=int(launch_timeout_sec),
                 codegen_mode=str(args.codegen_mode),
+                runtime_backend=runtime_backend,
             )
         except (CudaLoweringError, CudaRuntimeError, FileNotFoundError, RuntimeError, ValueError) as e:
             r = {
@@ -729,6 +768,7 @@ def main() -> None:
                 artifact_dir=(str(args.artifact_dir) if args.artifact_dir else None),
                 compile_timeout_sec=int(compile_timeout_sec),
                 launch_timeout_sec=int(launch_timeout_sec),
+                runtime_backend=runtime_backend,
             )
             runtime_detail = dict(r.get("runtime_detail") or {})
             runtime_detail["timeout_probe"] = detail
@@ -756,6 +796,7 @@ def main() -> None:
         "flaggems_opset": str(args.flaggems_opset),
         "backend_target": str(args.backend_target),
         "artifact_dir": (str(args.artifact_dir) if args.artifact_dir else None),
+        "runtime_backend": str(runtime_backend),
         "timeout_sec": int(args.timeout_sec),
         "compile_timeout_sec": int(compile_timeout_sec),
         "launch_timeout_sec": int(launch_timeout_sec),

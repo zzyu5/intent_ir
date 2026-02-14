@@ -201,6 +201,12 @@ def main() -> None:
         default="auto",
         help="Codegen mode passed to cuda_backend_smoke.py (default: auto).",
     )
+    ap.add_argument(
+        "--cuda-runtime-backend",
+        choices=["auto", "nvcc", "nvrtc"],
+        default="auto",
+        help="Runtime backend selector passed to cuda_backend_smoke.py (default: auto).",
+    )
     date_tag = datetime.now(timezone.utc).strftime("%Y%m%d")
     ap.add_argument("--out-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_matrix" / "daily" / date_tag))
     ap.add_argument("--write-registry", action="store_true")
@@ -361,6 +367,8 @@ def main() -> None:
             str(int(cuda_launch_timeout_sec)),
             "--codegen-mode",
             str(args.cuda_codegen_mode),
+            "--runtime-backend",
+            str(args.cuda_runtime_backend),
             "--json",
             "--out",
             str(cuda_json),
@@ -419,6 +427,8 @@ def main() -> None:
             if args.cuda_launch_timeout_sec is not None
             else int(args.cuda_timeout_sec)
         ),
+        "cuda_runtime_backend": str(args.cuda_runtime_backend),
+        "cuda_codegen_mode": str(args.cuda_codegen_mode),
         "seed_cache_dir": str(seed_cache_dir),
         "pipeline_out_dir": str(pipeline_out_dir),
         "stages": stage_results,

@@ -118,6 +118,8 @@ def test_matrix_forwards_cuda_stage_timeout_flags(monkeypatch: pytest.MonkeyPatc
             "222",
             "--cuda-launch-timeout-sec",
             "333",
+            "--cuda-runtime-backend",
+            "nvrtc",
         ],
     )
     with pytest.raises(SystemExit) as exc:
@@ -129,7 +131,9 @@ def test_matrix_forwards_cuda_stage_timeout_flags(monkeypatch: pytest.MonkeyPatc
     assert cuda_cmd[cuda_cmd.index("--timeout-sec") + 1] == "111"
     assert cuda_cmd[cuda_cmd.index("--compile-timeout-sec") + 1] == "222"
     assert cuda_cmd[cuda_cmd.index("--launch-timeout-sec") + 1] == "333"
+    assert cuda_cmd[cuda_cmd.index("--runtime-backend") + 1] == "nvrtc"
     summary = json.loads((out_dir / "run_summary.json").read_text(encoding="utf-8"))
     assert summary["cuda_timeout_sec"] == 111
     assert summary["cuda_compile_timeout_sec"] == 222
     assert summary["cuda_launch_timeout_sec"] == 333
+    assert summary["cuda_runtime_backend"] == "nvrtc"
