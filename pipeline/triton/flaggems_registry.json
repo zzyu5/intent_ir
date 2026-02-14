@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-14T04:47:15.593717+00:00",
+  "generated_at": "2026-02-14T05:20:17.346485+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -8496,10 +8496,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.vstack->concat",
-      "e2e_spec": null,
+      "e2e_spec": "vstack2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to concat; semantic op equals IntentIR op name; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to concat; semantic op equals IntentIR op name; rvv_missing=['concat']; cuda_h100_missing=['concat']; cuda_5090d_missing=['concat']",
       "backend_support": {
         "rvv": {
           "target": "rvv",

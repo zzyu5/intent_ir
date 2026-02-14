@@ -125,6 +125,7 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "pad2d" in names
     assert "constant_pad_nd2d" in names
     assert "hstack2d" in names
+    assert "vstack2d" in names
     assert "full2d" in names
     assert "eye2d" in names
     assert "eye_m2d" in names

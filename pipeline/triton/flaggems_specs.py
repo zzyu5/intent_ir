@@ -197,6 +197,7 @@ FLAGGEMS_REPEAT_INTERLEAVE_SRC = _module_source_text("flag_gems.ops.repeat_inter
 FLAGGEMS_PROD_SRC = _module_source_text("flag_gems.ops.prod")
 FLAGGEMS_POW_SRC = _module_source_text("flag_gems.ops.pow")
 FLAGGEMS_HSTACK_SRC = _module_source_text("flag_gems.ops.hstack")
+FLAGGEMS_VSTACK_SRC = _module_source_text("flag_gems.ops.vstack")
 FLAGGEMS_STACK_SRC = _module_source_text("flag_gems.ops.stack")
 FLAGGEMS_SORT_SRC = _module_source_text("flag_gems.ops.sort")
 FLAGGEMS_TOPK_SRC = _module_source_text("flag_gems.ops.topk")
@@ -1200,6 +1201,45 @@ def _run_flaggems_hstack2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         "output": out_np,
         "axis": np.array(1, dtype=np.int32),
         "dim": np.array(1, dtype=np.int32),
+    }
+
+
+def _run_flaggems_vstack2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 32))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "A" in case.inputs:
+        a = _as_f32_tensor(np.asarray(case.inputs["A"]), device=device)
+    else:
+        a = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+    if case.inputs and "B" in case.inputs:
+        b = _as_f32_tensor(np.asarray(case.inputs["B"]), device=device)
+    else:
+        b = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["vstack"]):
+        out = flag_gems_ops.vstack((a, b))
+
+    a_np = _to_np(a)
+    b_np = _to_np(b)
+    out_np = _to_np(out)
+    return {
+        "A": a_np,
+        "B": b_np,
+        "in0": a_np,
+        "in1": b_np,
+        "input0": a_np,
+        "input1": b_np,
+        "in_ptr_a": a_np,
+        "in_ptr_b": b_np,
+        "out": out_np,
+        "output": out_np,
+        "output_data": out_np,
+        "out_ptr": out_np,
+        "axis": np.array(0, dtype=np.int32),
+        "dim": np.array(0, dtype=np.int32),
     }
 
 
@@ -5643,6 +5683,14 @@ _FLAGGEMS_SPEC_BUILDERS = {
         canonical_shapes={"M": 4, "N": 32},
         vary_axes=["M", "N"],
     ),
+    "vstack2d": lambda: KernelSpec(
+        name="vstack2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_VSTACK_SRC",
+        runner=_run_flaggems_vstack2d_reference,
+        canonical_shapes={"M": 4, "N": 32},
+        vary_axes=["M", "N"],
+    ),
     "avg_pool2d_nchw": lambda: KernelSpec(
         name="avg_pool2d_nchw",
         module="pipeline.triton.flaggems_specs",
@@ -7059,6 +7107,7 @@ __all__ = [
     "FLAGGEMS_LOGSPACE_SRC",
     "FLAGGEMS_MASKED_SELECT_SRC",
     "FLAGGEMS_MASKED_SCATTER_SRC",
+    "FLAGGEMS_VSTACK_SRC",
     "FLAGGEMS_MSE_LOSS_SRC",
     "FLAGGEMS_NAN_TO_NUM_SRC",
     "FLAGGEMS_NLL_LOSS_SRC",

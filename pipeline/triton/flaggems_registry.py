@@ -187,6 +187,7 @@ _SEMANTIC_TO_E2E_SPEC: dict[str, str] = {
     "upsample_nearest2d": "upsample_nearest2d_nchw",
     "constant_pad_nd": "constant_pad_nd2d",
     "hstack": "hstack2d",
+    "vstack": "vstack2d",
     "conv2d": "conv2d_nchw",
     "mse_loss": "mse_loss2d",
     "nan_to_num": "nan_to_num2d",

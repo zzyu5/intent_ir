@@ -169,6 +169,7 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
             "vector_norm",
             "constant_pad_nd",
             "hstack",
+            "vstack",
             "conv2d",
             "flash_attn_varlen_func",
         ],
@@ -285,6 +286,7 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
     assert "vector_norm2d" in specs
     assert "constant_pad_nd2d" in specs
     assert "hstack2d" in specs
+    assert "vstack2d" in specs
     assert "conv2d_nchw" in specs
     assert "flash_attn_varlen_func_bhsd" in specs
     assert "batch_norm2d" in specs
