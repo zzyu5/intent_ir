@@ -1,9 +1,9 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-14T19:52:11+00:00
-- Commit: `04949f80a1268118b69278e66955e6e7dffbbba3`
-- Summary: Closed active conv/cum/diag batch to 10/10 dual_pass across RVV local+remote and CUDA nvrtc, with scoped registry write.
-- Batch Ops (10): conv2d, conv3d, conv_depthwise2d, copy, cos, count_nonzero, cummax, cummin, cumsum, diag
-- Run Summary: `artifacts/flaggems_matrix/daily/20260214/batch_active10_conv_cum_v4_explicit/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260214/batch_active10_conv_cum_v4_explicit/status_converged.json`
-- Next Focus: 1) Run check_batch_gate to validate scoped closure. 2) Plan next backend_missing_ops batch. 3) Continue provider-boundary-safe IntentIR backend expansion with mandatory RVV/CUDA validation.
+- Timestamp: 2026-02-14T20:04:12+00:00
+- Commit: `3d28ab9268d9be2de4e65b7c65c7cd6232c9da10`
+- Summary: Closed diag-exp batch to 10/10 dual_pass by adding CUDA diag_embed/dot lowering and fixing A/input IO aliasing across RVV/CUDA runners.
+- Batch Ops (10): diag_embed, div_mode, dot, elu, embedding, eq, eq_scalar, equal, erf, exp
+- Run Summary: `artifacts/flaggems_matrix/daily/20260214/batch_active10_diagexp_v2/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260214/batch_active10_diagexp_v2/status_converged.json`
+- Next Focus: 1) Run batch gate for scoped closure. 2) Plan next backend batch from registry priority. 3) Continue plugin-boundary-safe IntentIR backend expansion with mandatory RVV local+remote and CUDA runs.
