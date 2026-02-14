@@ -1,12 +1,12 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-14T00:46:18+00:00",
+  "generated_at": "2026-02-14T01:34:43+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
-      "dual_pass": 106,
-      "blocked_backend": 90
+      "dual_pass": 110,
+      "blocked_backend": 86
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -372,9 +372,9 @@
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "constant_pad_nd2d",
       "intent_ops": [
         "pad"
       ]
@@ -409,11 +409,11 @@
       "id": "flaggems::cos",
       "semantic_op": "cos",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "cos2d",
       "intent_ops": [
         "cos"
       ]
@@ -521,11 +521,11 @@
       "id": "flaggems::erf",
       "semantic_op": "erf",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "erf2d",
       "intent_ops": [
         "erf"
       ]
@@ -732,9 +732,9 @@
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "hstack2d",
       "intent_ops": [
         "concat"
       ]
@@ -1801,9 +1801,9 @@
       "family": "reduction",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "argmax2d",
       "intent_ops": [
         "argmax"
       ]
@@ -1814,9 +1814,9 @@
       "family": "reduction",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "argmin2d",
       "intent_ops": [
         "argmin"
       ]
@@ -1840,9 +1840,9 @@
       "family": "reduction",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "cumsum2d",
       "intent_ops": [
         "cumsum"
       ]
@@ -1851,11 +1851,11 @@
       "id": "flaggems::flash_attn_varlen_func",
       "semantic_op": "flash_attn_varlen_func",
       "family": "reduction",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "flash_attn_varlen_func_bhsd",
       "intent_ops": [
         "matmul",
         "softmax",
@@ -2032,11 +2032,11 @@
       "id": "flaggems::gelu",
       "semantic_op": "gelu",
       "family": "norm_activation",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "all_targets_supported_with_e2e_spec",
+      "next_action": "none",
+      "e2e_spec": "gelu2d",
       "intent_ops": [
         "const",
         "mul",
@@ -2576,9 +2576,9 @@
       "family": "conv_pool_interp",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "conv2d_nchw",
       "intent_ops": [
         "conv2d"
       ]
