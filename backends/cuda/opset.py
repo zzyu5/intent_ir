@@ -20,6 +20,8 @@ CUDA_SUPPORTED_OPS: set[str] = {
     # Tensor transforms / indexing.
     "transpose",
     "gather",
+    "concat",
+    "pad",
     # Core primitives covered by pattern + fused elementwise lowerings.
     "const",
     "iota",
@@ -44,6 +46,7 @@ CUDA_SUPPORTED_OPS: set[str] = {
     "cos",
     "erf",
     "floor",
+    "ceil",
     "rsqrt",
     "ne",
     "eq",

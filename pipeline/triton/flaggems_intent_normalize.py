@@ -259,6 +259,64 @@ def _canonical_threshold2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_cat2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "cat2d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "B": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M_OUT", "N_OUT"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "concat", "inputs": ["A", "B"], "output": "out", "attrs": {"axis": 1}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_clamp2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "clamp2d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "mini": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "maxi": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cast", "inputs": ["x"], "output": "x_f32", "attrs": {"to": "f32"}},
+                {"op": "max", "inputs": ["mini", "x_f32"], "output": "clamped_min"},
+                {"op": "min", "inputs": ["clamped_min", "maxi"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_constant_pad_nd2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "constant_pad_nd2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M_OUT", "N_OUT"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "pad",
+                    "inputs": ["inp"],
+                    "output": "out",
+                    "attrs": {"pad_width": {"pairs": [[1, 0], [1, 2]]}, "mode": "constant", "value": 0.0},
+                }
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def _canonical_gather2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -1379,6 +1437,12 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_row_all_intent()
     if name == "threshold2d":
         return _canonical_threshold2d_intent()
+    if name == "cat2d":
+        return _canonical_cat2d_intent()
+    if name == "clamp2d":
+        return _canonical_clamp2d_intent()
+    if name == "constant_pad_nd2d":
+        return _canonical_constant_pad_nd2d_intent()
     if name == "gather2d":
         return _canonical_gather2d_intent()
     if name == "index_select2d":

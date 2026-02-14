@@ -70,6 +70,20 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert [op.op for op in masked_fill.ops] == ["where"]
     assert "eq" not in [op.op for op in masked_fill.ops]
 
+    cat2d = canonical_flaggems_intent_for_spec("cat2d")
+    assert cat2d is not None
+    assert [op.op for op in cat2d.ops] == ["concat"]
+    assert (cat2d.ops[0].attrs or {}).get("axis") == 1
+
+    clamp2d = canonical_flaggems_intent_for_spec("clamp2d")
+    assert clamp2d is not None
+    assert [op.op for op in clamp2d.ops] == ["cast", "max", "min"]
+
+    const_pad = canonical_flaggems_intent_for_spec("constant_pad_nd2d")
+    assert const_pad is not None
+    assert [op.op for op in const_pad.ops] == ["pad"]
+    assert (const_pad.ops[0].attrs or {}).get("pad_width") == {"pairs": [[1, 0], [1, 2]]}
+
     gather = canonical_flaggems_intent_for_spec("gather2d")
     assert gather is not None
     assert [op.op for op in gather.ops] == ["gather"]

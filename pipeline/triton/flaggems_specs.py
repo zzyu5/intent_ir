@@ -4670,6 +4670,13 @@ def _run_flaggems_constant_pad_nd2d_reference(case: TestCase) -> Dict[str, np.nd
         "output": out_np,
         "pad": np.array(pads, dtype=np.int32),
         "value": np.array(value, dtype=np.float32),
+        # Canonical aliases used by provider-normalized intents.
+        "in0": inp_np,
+        "pad_value": np.array(value, dtype=np.float32),
+        "PAD_LEFT": np.array(pad_left, dtype=np.int32),
+        "PAD_RIGHT": np.array(pad_right, dtype=np.int32),
+        "PAD_TOP": np.array(pad_top, dtype=np.int32),
+        "PAD_BOTTOM": np.array(pad_bottom, dtype=np.int32),
     }
 
 
@@ -5089,6 +5096,10 @@ def _run_flaggems_clamp2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         "out": out_np,
         "input": inp_np,
         "output": out_np,
+        # Canonical aliases used by provider-normalized intents.
+        "x": inp_np,
+        "mini": lo_np,
+        "maxi": hi_np,
     }
 
 
@@ -5498,6 +5509,46 @@ def _norm_conv1d_ncl(shapes: Dict[str, int]) -> Dict[str, int]:
     return out
 
 
+def _norm_cat2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    m = max(1, int(out.get("M", 4)))
+    n = max(1, int(out.get("N", 32)))
+    axis = int(out.get("AXIS", 1))
+    if axis < 0:
+        axis += 2
+    if axis not in {0, 1}:
+        axis = 1
+    out["M"] = m
+    out["N"] = n
+    out["AXIS"] = axis
+    if axis == 1:
+        out["M_OUT"] = m
+        out["N_OUT"] = 2 * n
+    else:
+        out["M_OUT"] = 2 * m
+        out["N_OUT"] = n
+    return out
+
+
+def _norm_constant_pad_nd2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    m = max(1, int(out.get("M", 4)))
+    n = max(1, int(out.get("N", 64)))
+    pad_left = max(0, int(out.get("PAD_LEFT", 1)))
+    pad_right = max(0, int(out.get("PAD_RIGHT", 2)))
+    pad_top = max(0, int(out.get("PAD_TOP", 1)))
+    pad_bottom = max(0, int(out.get("PAD_BOTTOM", 0)))
+    out["M"] = m
+    out["N"] = n
+    out["PAD_LEFT"] = pad_left
+    out["PAD_RIGHT"] = pad_right
+    out["PAD_TOP"] = pad_top
+    out["PAD_BOTTOM"] = pad_bottom
+    out["M_OUT"] = m + pad_top + pad_bottom
+    out["N_OUT"] = n + pad_left + pad_right
+    return out
+
+
 def _norm_conv2d_nchw(shapes: Dict[str, int]) -> Dict[str, int]:
     out = dict(shapes)
     n = max(1, int(out.get("N", 1)))
@@ -5779,8 +5830,9 @@ _FLAGGEMS_SPEC_BUILDERS = {
         module="pipeline.triton.flaggems_specs",
         attr="FLAGGEMS_CAT_SRC",
         runner=_run_flaggems_cat2d_reference,
-        canonical_shapes={"M": 4, "N": 32, "AXIS": 1},
+        canonical_shapes={"M": 4, "N": 32, "AXIS": 1, "M_OUT": 4, "N_OUT": 64},
         vary_axes=["M", "N"],
+        normalize_shapes=_norm_cat2d,
     ),
     "hstack2d": lambda: KernelSpec(
         name="hstack2d",
@@ -6461,8 +6513,18 @@ _FLAGGEMS_SPEC_BUILDERS = {
         module="pipeline.triton.flaggems_specs",
         attr="FLAGGEMS_PAD_SRC",
         runner=_run_flaggems_constant_pad_nd2d_reference,
-        canonical_shapes={"M": 4, "N": 64, "PAD_LEFT": 1, "PAD_RIGHT": 2, "PAD_TOP": 1, "PAD_BOTTOM": 0},
+        canonical_shapes={
+            "M": 4,
+            "N": 64,
+            "PAD_LEFT": 1,
+            "PAD_RIGHT": 2,
+            "PAD_TOP": 1,
+            "PAD_BOTTOM": 0,
+            "M_OUT": 5,
+            "N_OUT": 67,
+        },
         vary_axes=["M", "N"],
+        normalize_shapes=_norm_constant_pad_nd2d,
     ),
     "pad2d": lambda: KernelSpec(
         name="pad2d",

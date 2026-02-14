@@ -20,6 +20,8 @@ SPMD_RVV_SUPPORTED_OPS: set[str] = {
     "reshape",
     "transpose",
     "broadcast_in_dim",
+    "concat",
+    "pad",
     # Elementwise.
     "add",
     "sub",
@@ -50,6 +52,7 @@ SPMD_RVV_SUPPORTED_OPS: set[str] = {
     "rsqrt",
     "abs",
     "floor",
+    "ceil",
     "cast",
     "where",
     # Indexing / reductions.

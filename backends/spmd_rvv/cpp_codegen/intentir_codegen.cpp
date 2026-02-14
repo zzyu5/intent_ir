@@ -825,6 +825,11 @@ void emit_floor(CodeWriter& w, const std::string& out, const std::string& a, con
   w.line("intentir_floor_f32(" + a + ", " + out + ", (size_t)" + std::to_string(n) + ");");
 }
 
+void emit_ceil(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
+  const int64_t n = numel(out_shape);
+  w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) " + out + "[i] = ceilf(" + a + "[i]);");
+}
+
 void emit_rsqrt(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
   const int64_t n = numel(out_shape);
   w.line("intentir_rsqrt_f32(" + a + ", " + out + ", (size_t)" + std::to_string(n) + ");");
@@ -2200,7 +2205,88 @@ struct CProgramEmitter {
 		        }
 		      } else if (op.op == "broadcast_in_dim") {
 			        emit_broadcast_in_dim(op, out_shape);
-		      } else if (op.op == "add" || op.op == "sub" || op.op == "mul" || op.op == "div" || op.op == "max" || op.op == "min") {
+	      } else if (op.op == "concat") {
+	        if (op.inputs.size() != 2) fail("concat currently supports exactly 2 inputs");
+	        const auto& a_shape = shape_env.at(op.inputs[0]);
+	        const auto& b_shape = shape_env.at(op.inputs[1]);
+	        if (a_shape.size() != 2 || b_shape.size() != 2 || out_shape.size() != 2) fail("concat currently supports rank-2 tensors");
+	        if (dtype_env.at(op.inputs[0]) != "f32" || dtype_env.at(op.inputs[1]) != "f32" || dtype_env.at(out) != "f32")
+	          fail("concat currently supports only f32 tensors");
+	        int axis = 0;
+	        if (op.attrs.contains("axis")) axis = (int)resolve_const_value(op.attrs["axis"], bindings);
+	        if (axis < 0) axis += 2;
+	        if (axis < 0 || axis >= 2) fail("concat axis out of range for rank-2 tensor");
+	        if (axis == 1) {
+	          if (a_shape[0] != b_shape[0]) fail("concat axis=1 requires matching row count");
+	          if (out_shape[0] != a_shape[0] || out_shape[1] != (a_shape[1] + b_shape[1])) fail("concat output shape mismatch");
+	          w.line("for (int i = 0; i < " + std::to_string(out_shape[0]) + "; ++i) {");
+	          w.indent();
+	          w.line("for (int j = 0; j < " + std::to_string(out_shape[1]) + "; ++j) {");
+	          w.indent();
+	          w.line("if (j < " + std::to_string(a_shape[1]) + ") " + out_var + "[i * " + std::to_string(out_shape[1]) + " + j] = " + v(op.inputs[0]) +
+	                 "[i * " + std::to_string(a_shape[1]) + " + j];");
+	          w.line("else " + out_var + "[i * " + std::to_string(out_shape[1]) + " + j] = " + v(op.inputs[1]) + "[i * " + std::to_string(b_shape[1]) +
+	                 " + (j - " + std::to_string(a_shape[1]) + ")];");
+	          w.dedent();
+	          w.line("}");
+	          w.dedent();
+	          w.line("}");
+	        } else {
+	          if (a_shape[1] != b_shape[1]) fail("concat axis=0 requires matching column count");
+	          if (out_shape[1] != a_shape[1] || out_shape[0] != (a_shape[0] + b_shape[0])) fail("concat output shape mismatch");
+	          w.line("for (int i = 0; i < " + std::to_string(out_shape[0]) + "; ++i) {");
+	          w.indent();
+	          w.line("for (int j = 0; j < " + std::to_string(out_shape[1]) + "; ++j) {");
+	          w.indent();
+	          w.line("if (i < " + std::to_string(a_shape[0]) + ") " + out_var + "[i * " + std::to_string(out_shape[1]) + " + j] = " + v(op.inputs[0]) +
+	                 "[i * " + std::to_string(a_shape[1]) + " + j];");
+	          w.line("else " + out_var + "[i * " + std::to_string(out_shape[1]) + " + j] = " + v(op.inputs[1]) + "[(i - " + std::to_string(a_shape[0]) +
+	                 ") * " + std::to_string(b_shape[1]) + " + j];");
+	          w.dedent();
+	          w.line("}");
+	          w.dedent();
+	          w.line("}");
+	        }
+	      } else if (op.op == "pad") {
+	        if (op.inputs.size() != 1) fail("pad expects exactly 1 input tensor");
+	        const auto& in_shape = shape_env.at(op.inputs[0]);
+	        if (in_shape.size() != 2 || out_shape.size() != 2) fail("pad currently supports rank-2 tensors");
+	        if (dtype_env.at(op.inputs[0]) != "f32" || dtype_env.at(out) != "f32") fail("pad currently supports only f32 tensors");
+	        std::string mode = op.attrs.value("mode", "constant");
+	        if (mode != "constant") fail("pad currently supports mode=constant");
+	        json padw = op.attrs.value("pad_width", json{});
+	        if (padw.is_object() && padw.contains("pairs")) padw = padw["pairs"];
+	        if (!padw.is_array() || padw.size() != 2) fail("pad_width must be rank-2 pairs");
+	        const auto& p0 = padw[0];
+	        const auto& p1 = padw[1];
+	        if (!p0.is_array() || p0.size() != 2 || !p1.is_array() || p1.size() != 2) fail("pad_width pairs must each contain 2 elements");
+	        const int pad_top = (int)resolve_const_value(p0[0], bindings);
+	        const int pad_bottom = (int)resolve_const_value(p0[1], bindings);
+	        const int pad_left = (int)resolve_const_value(p1[0], bindings);
+	        const int pad_right = (int)resolve_const_value(p1[1], bindings);
+	        (void)pad_bottom;
+	        (void)pad_right;
+	        const double pad_val = op.attrs.contains("value") ? resolve_const_value(op.attrs["value"], bindings) : 0.0;
+	        w.line("for (int i = 0; i < " + std::to_string(out_shape[0]) + "; ++i) {");
+	        w.indent();
+	        w.line("for (int j = 0; j < " + std::to_string(out_shape[1]) + "; ++j) {");
+	        w.indent();
+	        w.line("const int src_i = i - " + std::to_string(pad_top) + ";");
+	        w.line("const int src_j = j - " + std::to_string(pad_left) + ";");
+	        w.line("if (src_i >= 0 && src_i < " + std::to_string(in_shape[0]) + " && src_j >= 0 && src_j < " + std::to_string(in_shape[1]) + ") {");
+	        w.indent();
+	        w.line(out_var + "[i * " + std::to_string(out_shape[1]) + " + j] = " + v(op.inputs[0]) + "[src_i * " + std::to_string(in_shape[1]) + " + src_j];");
+	        w.dedent();
+	        w.line("} else {");
+	        w.indent();
+	        w.line(out_var + "[i * " + std::to_string(out_shape[1]) + " + j] = (float)(" + std::to_string(pad_val) + ");");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	      } else if (op.op == "add" || op.op == "sub" || op.op == "mul" || op.op == "div" || op.op == "max" || op.op == "min") {
 		        if (op.inputs.size() == 2) {
 		          emit_elemwise_bin(w, intent, bindings, op.op, out_var, v(op.inputs[0]), v(op.inputs[1]), op.inputs[0], op.inputs[1],
 		                            shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape,
@@ -2251,6 +2337,8 @@ struct CProgramEmitter {
 	        emit_unary_abs(w, out_var, v(op.inputs[0]), out_shape, dtype_env.at(op.inputs[0]), dtype_env.at(out));
 	      } else if (op.op == "floor") {
 	        emit_floor(w, out_var, v(op.inputs[0]), out_shape);
+	      } else if (op.op == "ceil") {
+	        emit_ceil(w, out_var, v(op.inputs[0]), out_shape);
 	      } else if (op.op == "acos") {
 	        emit_acos(w, out_var, v(op.inputs[0]), out_shape);
 	      } else if (op.op == "atan") {
@@ -2633,6 +2721,46 @@ int main(int argc, char** argv) {
         dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
       }
+      if (kind == "concat") {
+        if (op.inputs.empty()) fail("concat requires at least one input");
+        const auto& first = get_shape(op.inputs[0]);
+        if (first.empty()) fail("concat expects rank >= 1");
+        int axis = op.attrs.value("axis", 0);
+        if (axis < 0) axis += static_cast<int>(first.size());
+        if (axis < 0 || axis >= static_cast<int>(first.size())) fail("concat axis out of range");
+        std::vector<int64_t> shp = first;
+        shp[axis] = 0;
+        for (const auto& in_name : op.inputs) {
+          const auto& s = get_shape(in_name);
+          if (s.size() != first.size()) fail("concat requires matching ranks");
+          for (int i = 0; i < (int)s.size(); ++i) {
+            if (i == axis) shp[i] += s[i];
+            else if (s[i] != first[i]) fail("concat requires matching non-axis dimensions");
+          }
+        }
+        shape_env[out] = shp;
+        dtype_env[out] = get_dtype(op.inputs[0]);
+        continue;
+      }
+      if (kind == "pad") {
+        if (op.inputs.size() != 1) fail("pad expects one input tensor");
+        const auto& in_shape = get_shape(op.inputs[0]);
+        json padw = op.attrs.value("pad_width", json{});
+        if (padw.is_object() && padw.contains("pairs")) padw = padw["pairs"];
+        if (!padw.is_array() || padw.size() != in_shape.size()) fail("pad_width rank mismatch");
+        std::vector<int64_t> shp = in_shape;
+        for (int i = 0; i < (int)in_shape.size(); ++i) {
+          const auto& pair = padw[i];
+          if (!pair.is_array() || pair.size() != 2) fail("pad_width entries must be [left,right]");
+          int64_t left = static_cast<int64_t>(resolve_const_value(pair[0], bindings));
+          int64_t right = static_cast<int64_t>(resolve_const_value(pair[1], bindings));
+          shp[i] = in_shape[i] + left + right;
+          if (shp[i] < 0) fail("pad produced negative output dimension");
+        }
+        shape_env[out] = shp;
+        dtype_env[out] = get_dtype(op.inputs[0]);
+        continue;
+      }
       if (kind == "add" || kind == "sub" || kind == "mul" || kind == "div" || kind == "max" || kind == "min") {
         if (op.inputs.size() == 2) {
           const auto& sa = get_shape(op.inputs[0]);
@@ -2721,7 +2849,7 @@ int main(int argc, char** argv) {
         dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
       }
-      if (kind == "abs" || kind == "floor" || kind == "acos" || kind == "atan" || kind == "cos" || kind == "erf") {
+      if (kind == "abs" || kind == "floor" || kind == "ceil" || kind == "acos" || kind == "atan" || kind == "cos" || kind == "erf") {
         shape_env[out] = get_shape(op.inputs[0]);
         dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
