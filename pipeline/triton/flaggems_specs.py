@@ -5506,6 +5506,9 @@ def _norm_conv1d_ncl(shapes: Dict[str, int]) -> Dict[str, int]:
     out["PADDING"] = padding
     out["DILATION"] = dilation
     out["GROUPS"] = groups
+    out["C_PER_G"] = max(1, c_in // groups)
+    ol = ((l + (2 * padding) - (dilation * (k - 1)) - 1) // stride) + 1
+    out["OL"] = max(1, int(ol))
     return out
 
 

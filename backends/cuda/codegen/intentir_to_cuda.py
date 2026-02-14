@@ -3326,6 +3326,116 @@ extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(const floa
     return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=lowered_bindings)
 
 
+def _kernel_conv1d_ncl_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != "conv1d":
+        raise CudaLoweringError("conv1d lowering expects a single conv1d op")
+    op = intent.ops[0]
+    if len(op.inputs) != 3:
+        raise CudaLoweringError("conv1d lowering expects inputs [input, weight, bias]")
+    inp_name = str(op.inputs[0])
+    weight_name = str(op.inputs[1])
+    bias_name = str(op.inputs[2])
+    out_name = str(op.output)
+
+    in_shape = _shape_values(intent, inp_name)
+    w_shape = _shape_values(intent, weight_name)
+    b_shape = _shape_values(intent, bias_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(in_shape) != 3 or len(w_shape) != 3 or len(b_shape) != 1 or len(out_shape) != 3:
+        raise CudaLoweringError("conv1d lowering expects input[N,C,L], weight[CO,C_PER_G,K], bias[CO], out[N,CO,OL]")
+
+    N_dim, C_in_dim, L_dim = in_shape
+    C_out_dim, C_per_g_dim, K_dim = w_shape
+    if str(b_shape[0]) != str(C_out_dim):
+        raise CudaLoweringError("conv1d bias shape mismatch")
+    if str(out_shape[0]) != str(N_dim) or str(out_shape[1]) != str(C_out_dim):
+        raise CudaLoweringError("conv1d output N/CO mismatch")
+
+    stride = int((op.attrs or {}).get("stride", 1))
+    padding = int((op.attrs or {}).get("padding", 0))
+    dilation = int((op.attrs or {}).get("dilation", 1))
+    groups = int((op.attrs or {}).get("groups", 1))
+    if stride <= 0 or dilation <= 0 or groups <= 0:
+        raise CudaLoweringError("conv1d attrs stride/dilation/groups must be positive")
+
+    N = _resolve_dim_int(N_dim, bindings, name="N")
+    C_IN = _resolve_dim_int(C_in_dim, bindings, name="C_IN")
+    L = _resolve_dim_int(L_dim, bindings, name="L")
+    C_OUT = _resolve_dim_int(C_out_dim, bindings, name="C_OUT")
+    C_PER_G = _resolve_dim_int(C_per_g_dim, bindings, name="C_PER_G")
+    K = _resolve_dim_int(K_dim, bindings, name="K")
+    OL = _resolve_dim_int(out_shape[2], bindings, name="OL")
+    if C_IN != C_PER_G * groups:
+        raise CudaLoweringError("conv1d channel/group mismatch: C_IN must equal C_PER_G * groups")
+    if C_OUT % groups != 0:
+        raise CudaLoweringError("conv1d C_OUT must be divisible by groups")
+    expected_ol = (L + 2 * padding - dilation * (K - 1) - 1) // stride + 1
+    if expected_ol != OL:
+        raise CudaLoweringError(f"conv1d output length mismatch: expected {expected_ol}, got {OL}")
+
+    sched = intent.schedule or ScheduleSketch()
+    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=64)
+    block_y = _resolve_schedule_int(sched.tile_m, bindings, default=4)
+    block_x = max(16, min(256, int(block_x) if block_x > 0 else 64))
+    block_y = max(1, min(8, int(block_y) if block_y > 0 else 4))
+    if block_x * block_y > 1024:
+        block_y = max(1, 1024 // block_x)
+    grid_x = (OL + block_x - 1) // block_x
+    grid_y = (C_OUT + block_y - 1) // block_y
+    grid_z = max(1, int(N))
+
+    cuda_src = f"""
+#include <stdint.h>
+
+extern "C" __global__ __launch_bounds__({block_x * block_y}) void {intent.name}(
+    const float* __restrict__ {inp_name},
+    const float* __restrict__ {weight_name},
+    const float* __restrict__ {bias_name},
+    float* __restrict__ {out_name},
+    int N, int C_IN, int L, int C_OUT, int C_PER_G, int K, int OL) {{
+  const int ol = (int)blockIdx.x * (int)blockDim.x + (int)threadIdx.x;
+  const int co = (int)blockIdx.y * (int)blockDim.y + (int)threadIdx.y;
+  const int n = (int)blockIdx.z;
+  if (n >= N || co >= C_OUT || ol >= OL) return;
+  const int co_per_g = C_OUT / {groups};
+  const int g = co / co_per_g;
+  const int c_start = g * C_PER_G;
+  float acc = {bias_name}[(size_t)co];
+  for (int ci = 0; ci < C_PER_G; ++ci) {{
+    const int c = c_start + ci;
+    for (int k = 0; k < K; ++k) {{
+      const int li = ol * {stride} - {padding} + k * {dilation};
+      if ((unsigned)li < (unsigned)L) {{
+        const size_t x_idx = ((size_t)n * (size_t)C_IN + (size_t)c) * (size_t)L + (size_t)li;
+        const size_t w_idx = ((size_t)co * (size_t)C_PER_G + (size_t)ci) * (size_t)K + (size_t)k;
+        acc += {inp_name}[x_idx] * {weight_name}[w_idx];
+      }}
+    }}
+  }}
+  const size_t y_idx = ((size_t)n * (size_t)C_OUT + (size_t)co) * (size_t)OL + (size_t)ol;
+  {out_name}[y_idx] = acc;
+}}
+""".lstrip()
+
+    io_spec = _io_spec_from_args(
+        intent,
+        tensor_args=[inp_name, weight_name, bias_name, out_name],
+        scalar_args={"N": "i32", "C_IN": "i32", "L": "i32", "C_OUT": "i32", "C_PER_G": "i32", "K": "i32", "OL": "i32"},
+        arg_names=[inp_name, weight_name, bias_name, out_name, "N", "C_IN", "L", "C_OUT", "C_PER_G", "K", "OL"],
+    )
+    launch = CudaLaunch(grid=(grid_x, grid_y, grid_z), block=(block_x, block_y, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.update({"N": int(N), "C_IN": int(C_IN), "L": int(L), "C_OUT": int(C_OUT), "C_PER_G": int(C_PER_G), "K": int(K), "OL": int(OL)})
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=[out_name],
+        bindings=lowered_bindings,
+    )
+
+
 def _kernel_avg_pool2d_nchw_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
     if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != "avg_pool2d":
         raise CudaLoweringError("avg_pool2d lowering expects a single avg_pool2d op")
@@ -3836,6 +3946,8 @@ def lower_intent_to_cuda_kernel(
                 if len(out_shape) == 3:
                     return _kernel_bmm_3d_f32(intent, bindings)
                 return _kernel_matmul_f32(intent, bindings)
+            if op0 == "conv1d":
+                return _kernel_conv1d_ncl_f32(intent, bindings)
             if op0 == "dropout":
                 return _kernel_dropout_f32(intent, bindings)
             if op0 == "correlation":

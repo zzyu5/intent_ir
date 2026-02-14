@@ -2352,6 +2352,64 @@ struct CProgramEmitter {
 	      } else if (op.op == "where") {
 	        emit_where(w, out_var, v(op.inputs[0]), v(op.inputs[1]), v(op.inputs[2]), shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), shape_env.at(op.inputs[2]), out_shape,
 	                   dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(op.inputs[2]), dtype_env.at(out));
+	      } else if (op.op == "conv1d") {
+	        if (op.inputs.size() != 3) fail("conv1d expects inputs [input, weight, bias]");
+	        const auto& x_shape = shape_env.at(op.inputs[0]);
+	        const auto& w_shape = shape_env.at(op.inputs[1]);
+	        const auto& b_shape = shape_env.at(op.inputs[2]);
+	        if (x_shape.size() != 3 || w_shape.size() != 3 || b_shape.size() != 1 || out_shape.size() != 3)
+	          fail("conv1d expects input[N,C,L], weight[CO,C_PER_G,K], bias[CO], out[N,CO,OL]");
+	        if (dtype_env.at(op.inputs[0]) != "f32" || dtype_env.at(op.inputs[1]) != "f32" || dtype_env.at(op.inputs[2]) != "f32" || dtype_env.at(out) != "f32")
+	          fail("conv1d currently supports f32 only");
+	        const int64_t N = x_shape[0];
+	        const int64_t C_IN = x_shape[1];
+	        const int64_t L = x_shape[2];
+	        const int64_t C_OUT = w_shape[0];
+	        const int64_t C_PER_G = w_shape[1];
+	        const int64_t K = w_shape[2];
+	        if (b_shape[0] != C_OUT) fail("conv1d bias shape mismatch");
+	        const int64_t OL = out_shape[2];
+	        const int stride = op.attrs.contains("stride") ? (int)resolve_const_value(op.attrs["stride"], bindings) : 1;
+	        const int padding = op.attrs.contains("padding") ? (int)resolve_const_value(op.attrs["padding"], bindings) : 0;
+	        const int dilation = op.attrs.contains("dilation") ? (int)resolve_const_value(op.attrs["dilation"], bindings) : 1;
+	        const int groups = op.attrs.contains("groups") ? (int)resolve_const_value(op.attrs["groups"], bindings) : 1;
+	        if (groups <= 0 || stride <= 0 || dilation <= 0) fail("conv1d attrs stride/dilation/groups must be positive");
+	        if (C_IN != C_PER_G * groups) fail("conv1d channel/group mismatch");
+	        if ((C_OUT % groups) != 0) fail("conv1d C_OUT must be divisible by groups");
+	        w.line("for (int n = 0; n < " + std::to_string(N) + "; ++n) {");
+	        w.indent();
+	        w.line("for (int co = 0; co < " + std::to_string(C_OUT) + "; ++co) {");
+	        w.indent();
+	        w.line("const int co_per_g = " + std::to_string(C_OUT / groups) + ";");
+	        w.line("const int g = co / co_per_g;");
+	        w.line("const int c_start = g * " + std::to_string(C_PER_G) + ";");
+	        w.line("for (int ol = 0; ol < " + std::to_string(OL) + "; ++ol) {");
+	        w.indent();
+	        w.line("float acc = " + v(op.inputs[2]) + "[co];");
+	        w.line("for (int ci = 0; ci < " + std::to_string(C_PER_G) + "; ++ci) {");
+	        w.indent();
+	        w.line("const int c = c_start + ci;");
+	        w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) {");
+	        w.indent();
+	        w.line("const int li = ol * " + std::to_string(stride) + " - " + std::to_string(padding) + " + k * " + std::to_string(dilation) + ";");
+	        w.line("if (li >= 0 && li < " + std::to_string(L) + ") {");
+	        w.indent();
+	        w.line("const int x_idx = ((n * " + std::to_string(C_IN) + " + c) * " + std::to_string(L) + " + li);");
+	        w.line("const int w_idx = ((co * " + std::to_string(C_PER_G) + " + ci) * " + std::to_string(K) + " + k);");
+	        w.line("acc += " + v(op.inputs[0]) + "[x_idx] * " + v(op.inputs[1]) + "[w_idx];");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.line(out_var + "[((n * " + std::to_string(C_OUT) + " + co) * " + std::to_string(OL) + " + ol)] = acc;");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
 	      } else if (op.op == "dropout") {
 	        if (op.inputs.size() != 3) fail("dropout requires 3 inputs (X, p, seed)");
 	        if (dtype_env.at(op.inputs[0]) != "f32" || dtype_env.at(out) != "f32") fail("dropout supports only f32 tensors");
@@ -2814,6 +2872,32 @@ int main(int argc, char** argv) {
         if (axis != 1) fail(kind + " infer currently supports axis=1");
         shape_env[out] = {in_shape[0]};
         dtype_env[out] = "i32";
+        continue;
+      }
+      if (kind == "conv1d") {
+        if (op.inputs.size() != 3) fail("conv1d infer expects inputs [input, weight, bias]");
+        const auto& in_shape = get_shape(op.inputs[0]);
+        const auto& w_shape = get_shape(op.inputs[1]);
+        const auto& b_shape = get_shape(op.inputs[2]);
+        if (in_shape.size() != 3 || w_shape.size() != 3 || b_shape.size() != 1) fail("conv1d infer expects input[N,C,L], weight[CO,C_PER_G,K], bias[CO]");
+        const int64_t N = in_shape[0];
+        const int64_t C_IN = in_shape[1];
+        const int64_t L = in_shape[2];
+        const int64_t C_OUT = w_shape[0];
+        const int64_t C_PER_G = w_shape[1];
+        const int64_t K = w_shape[2];
+        if (b_shape[0] != C_OUT) fail("conv1d infer bias shape mismatch");
+        const int64_t stride = op.attrs.contains("stride") ? static_cast<int64_t>(resolve_const_value(op.attrs["stride"], bindings)) : 1;
+        const int64_t padding = op.attrs.contains("padding") ? static_cast<int64_t>(resolve_const_value(op.attrs["padding"], bindings)) : 0;
+        const int64_t dilation = op.attrs.contains("dilation") ? static_cast<int64_t>(resolve_const_value(op.attrs["dilation"], bindings)) : 1;
+        const int64_t groups = op.attrs.contains("groups") ? static_cast<int64_t>(resolve_const_value(op.attrs["groups"], bindings)) : 1;
+        if (stride <= 0 || dilation <= 0 || groups <= 0) fail("conv1d infer stride/dilation/groups must be positive");
+        if (C_IN != C_PER_G * groups) fail("conv1d infer channel/group mismatch");
+        if ((C_OUT % groups) != 0) fail("conv1d infer C_OUT must be divisible by groups");
+        const int64_t OL = ((L + 2 * padding - dilation * (K - 1) - 1) / stride) + 1;
+        if (OL <= 0) fail("conv1d infer produced non-positive output length");
+        shape_env[out] = {N, C_OUT, OL};
+        dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
       }
       if (kind == "avg_pool2d") {

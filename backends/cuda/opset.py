@@ -11,6 +11,7 @@ from __future__ import annotations
 CUDA_SUPPORTED_OPS: set[str] = {
     # Single-op semantic kernels.
     "matmul",
+    "conv1d",
     "dropout",
     "softmax",
     "correlation",
