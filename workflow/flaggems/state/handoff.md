@@ -1,9 +1,9 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-14T17:48:33+00:00
-- Commit: `7bc78829811cbc800078dfce9f3fdec95d1f7f64`
-- Summary: Closed active backend batch by landing dual-pass fixes for baddbmm and batch_norm on RVV local/remote plus CUDA nvrtc.
-- Batch Ops (10): amax, any, arange, atan, baddbmm, batch_norm, bitwise_or_scalar, bitwise_or_scalar_tensor, bitwise_or_tensor, bitwise_right_shift
-- Run Summary: `artifacts/flaggems_matrix/daily/20260214/batch_active10_orange_v3_fix/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260214/batch_active10_orange_v3_fix/status_converged.json`
-- Next Focus: 1) Run check_batch_gate to confirm scoped closure. 2) Plan next backend_missing_ops batch and continue dual-pass expansion. 3) Keep provider plugin boundary and multi-backend mandatory tests.
+- Timestamp: 2026-02-14T18:25:38+00:00
+- Commit: `f37c22923ccd864b103f2690937de3ba457a1f1a`
+- Summary: Reduced current active batch to a single blocker by landing ceil/bmm/cat/pad RVV+CUDA lowerings and scoped convergence update (9/10 dual_pass).
+- Batch Ops (10): bmm, cat, ceil, celu, clamp, clamp_min, clamp_tensor, constant_pad_nd, contiguous, conv1d
+- Run Summary: `artifacts/flaggems_matrix/daily/20260214/batch_active10_bmm_cat_v4/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260214/batch_active10_bmm_cat_v4/status_converged.json`
+- Next Focus: 1) Implement conv1d lowering on RVV and CUDA to close active batch to 10/10 dual_pass. 2) Re-run full matrix v5 and gate check. 3) Write scoped registry and close batch via plan_next_batch.

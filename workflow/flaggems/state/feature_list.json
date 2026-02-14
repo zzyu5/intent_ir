@@ -1,12 +1,12 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-14T17:48:03+00:00",
+  "generated_at": "2026-02-14T18:25:14+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
-      "dual_pass": 33,
-      "blocked_backend": 163
+      "dual_pass": 42,
+      "blocked_backend": 154
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -282,10 +282,10 @@
       "id": "flaggems::cat",
       "semantic_op": "cat",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "cat2d",
       "intent_ops": [
         "concat"
@@ -295,10 +295,10 @@
       "id": "flaggems::ceil",
       "semantic_op": "ceil",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "ceil2d",
       "intent_ops": [
         "const",
@@ -311,10 +311,10 @@
       "id": "flaggems::celu",
       "semantic_op": "celu",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "celu2d",
       "intent_ops": [
         "const",
@@ -329,10 +329,10 @@
       "id": "flaggems::clamp",
       "semantic_op": "clamp",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "clamp2d",
       "intent_ops": [
         "max",
@@ -343,10 +343,10 @@
       "id": "flaggems::clamp_min",
       "semantic_op": "clamp_min",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "maximum2d",
       "intent_ops": [
         "max"
@@ -356,10 +356,10 @@
       "id": "flaggems::clamp_tensor",
       "semantic_op": "clamp_tensor",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "clamp2d",
       "intent_ops": [
         "max",
@@ -370,10 +370,10 @@
       "id": "flaggems::constant_pad_nd",
       "semantic_op": "constant_pad_nd",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "constant_pad_nd2d",
       "intent_ops": [
         "pad"
@@ -383,10 +383,10 @@
       "id": "flaggems::contiguous",
       "semantic_op": "contiguous",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "identity2d",
       "intent_ops": [
         "identity"
@@ -2470,10 +2470,10 @@
       "id": "flaggems::bmm",
       "semantic_op": "bmm",
       "family": "matmul_linear",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "bmm3d",
       "intent_ops": [
         "matmul"
