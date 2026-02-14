@@ -694,7 +694,19 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
             if len(op.inputs) != 1:
                 raise CudaLoweringError("exp expects 1 input")
             x = val(op.inputs[0])
-            emit_assign(f"__expf({x})")
+            base_attr = op_attrs.get("base")
+            base_val: float | None = None
+            if isinstance(base_attr, (int, float)):
+                try:
+                    base_val = float(base_attr)
+                except Exception:
+                    base_val = None
+            if base_val is not None and abs(base_val - 2.0) <= 1e-6:
+                emit_assign(f"exp2f({x})")
+            elif base_val is not None:
+                emit_assign(f"powf({base_val:.9g}f, {x})")
+            else:
+                emit_assign(f"__expf({x})")
         elif opname == "cos":
             if len(op.inputs) != 1:
                 raise CudaLoweringError("cos expects 1 input")
@@ -4615,6 +4627,204 @@ extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(const floa
     return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=lowered_bindings)
 
 
+def _kernel_flash_attn_varlen_decomposed_bhsd_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    ops = list(intent.ops or [])
+    if [o.op for o in ops] != ["transpose", "matmul", "mul", "add", "softmax", "matmul"]:
+        raise CudaLoweringError("flash-attn decomposition lowering expects transpose->matmul->mul->add->softmax->matmul")
+    op_t, op_qk, op_mul, op_add, op_softmax, op_out = ops
+
+    if len(op_t.inputs) != 1:
+        raise CudaLoweringError("flash-attn transpose expects 1 input")
+    k_name = str(op_t.inputs[0])
+    k_t_name = str(op_t.output)
+
+    if len(op_qk.inputs) != 2 or str(op_qk.inputs[1]) != k_t_name:
+        raise CudaLoweringError("flash-attn first matmul must consume transpose(K)")
+    q_name = str(op_qk.inputs[0])
+    qk_name = str(op_qk.output)
+
+    if len(op_mul.inputs) != 2:
+        raise CudaLoweringError("flash-attn mul expects 2 inputs")
+    if str(op_mul.inputs[0]) == qk_name:
+        sm_scale_name = str(op_mul.inputs[1])
+    elif str(op_mul.inputs[1]) == qk_name:
+        sm_scale_name = str(op_mul.inputs[0])
+    else:
+        raise CudaLoweringError("flash-attn mul must consume first matmul output")
+    qk_scaled_name = str(op_mul.output)
+
+    if len(op_add.inputs) != 2:
+        raise CudaLoweringError("flash-attn add expects 2 inputs")
+    if str(op_add.inputs[0]) == qk_scaled_name:
+        attn_mask_name = str(op_add.inputs[1])
+    elif str(op_add.inputs[1]) == qk_scaled_name:
+        attn_mask_name = str(op_add.inputs[0])
+    else:
+        raise CudaLoweringError("flash-attn add must consume scaled scores")
+    qk_masked_name = str(op_add.output)
+
+    if len(op_softmax.inputs) != 1 or str(op_softmax.inputs[0]) != qk_masked_name:
+        raise CudaLoweringError("flash-attn softmax must consume masked scores")
+    attn_weights_name = str(op_softmax.output)
+
+    if len(op_out.inputs) != 2:
+        raise CudaLoweringError("flash-attn output matmul expects 2 inputs")
+    if str(op_out.inputs[0]) == attn_weights_name:
+        v_name = str(op_out.inputs[1])
+    elif str(op_out.inputs[1]) == attn_weights_name:
+        v_name = str(op_out.inputs[0])
+    else:
+        raise CudaLoweringError("flash-attn output matmul must consume softmax output")
+    out_name = str(op_out.output)
+
+    q_shape = _shape_values(intent, q_name)
+    k_shape = _shape_values(intent, k_name)
+    v_shape = _shape_values(intent, v_name)
+    mask_shape = _shape_values(intent, attn_mask_name)
+    out_shape = _shape_values(intent, out_name)
+    scale_shape = _shape_values(intent, sm_scale_name)
+    if len(q_shape) != 4 or len(k_shape) != 4 or len(v_shape) != 4 or len(mask_shape) != 4 or len(out_shape) != 4:
+        raise CudaLoweringError("flash-attn decomposition expects rank-4 Q/K/V/mask/out tensors")
+    if len(scale_shape) != 0:
+        raise CudaLoweringError("flash-attn sm_scale must be scalar tensor")
+
+    B = _resolve_dim_int(q_shape[0], bindings, name="B")
+    Hh = _resolve_dim_int(q_shape[1], bindings, name="H")
+    Q = _resolve_dim_int(q_shape[2], bindings, name="Q")
+    D = _resolve_dim_int(q_shape[3], bindings, name="D")
+    BK = _resolve_dim_int(k_shape[0], bindings, name="BK")
+    HK = _resolve_dim_int(k_shape[1], bindings, name="HK")
+    K = _resolve_dim_int(k_shape[2], bindings, name="K")
+    DK = _resolve_dim_int(k_shape[3], bindings, name="DK")
+    BV = _resolve_dim_int(v_shape[0], bindings, name="BV")
+    HV = _resolve_dim_int(v_shape[1], bindings, name="HV")
+    KV = _resolve_dim_int(v_shape[2], bindings, name="KV")
+    DV = _resolve_dim_int(v_shape[3], bindings, name="DV")
+    if BK != B or HK != Hh or DK != D:
+        raise CudaLoweringError("flash-attn shape mismatch between query and key")
+    if BV != B or HV != Hh or KV != K:
+        raise CudaLoweringError("flash-attn shape mismatch between key and value")
+    if (
+        _resolve_dim_int(mask_shape[0], bindings, name="MB") != B
+        or _resolve_dim_int(mask_shape[1], bindings, name="MH") != Hh
+        or _resolve_dim_int(mask_shape[2], bindings, name="MQ") != Q
+        or _resolve_dim_int(mask_shape[3], bindings, name="MK") != K
+    ):
+        raise CudaLoweringError("flash-attn mask shape mismatch")
+    if (
+        _resolve_dim_int(out_shape[0], bindings, name="OB") != B
+        or _resolve_dim_int(out_shape[1], bindings, name="OH") != Hh
+        or _resolve_dim_int(out_shape[2], bindings, name="OQ") != Q
+        or _resolve_dim_int(out_shape[3], bindings, name="OD") != DV
+    ):
+        raise CudaLoweringError("flash-attn output shape mismatch")
+
+    lse_name: str | None = None
+    for cand in list(intent.outputs or []):
+        cc = str(cand)
+        if cc != out_name and cc in intent.tensors:
+            lse_name = cc
+            break
+    if lse_name is not None:
+        lse_shape = _shape_values(intent, lse_name)
+        if len(lse_shape) != 3:
+            raise CudaLoweringError("flash-attn softmax_lse output must be rank-3 [B,H,Q]")
+        if (
+            _resolve_dim_int(lse_shape[0], bindings, name="LB") != B
+            or _resolve_dim_int(lse_shape[1], bindings, name="LH") != Hh
+            or _resolve_dim_int(lse_shape[2], bindings, name="LQ") != Q
+        ):
+            raise CudaLoweringError("flash-attn softmax_lse shape mismatch")
+
+    total = int(B) * int(Hh) * int(Q) * int(DV)
+    sched = intent.schedule or ScheduleSketch()
+    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=128)
+    if block_x <= 0:
+        block_x = 128
+    if block_x > 1024:
+        block_x = 1024
+    grid_x = (total + block_x - 1) // block_x
+
+    lse_param = f", float* __restrict__ {lse_name}" if lse_name is not None else ""
+    lse_write = (
+        f"if (d == 0) {{ const int64_t lidx = (((int64_t)b * {Hh} + h) * {Q}) + q; {lse_name}[lidx] = (denom > 0.0f) ? (max_score + logf(denom)) : -INFINITY; }}"
+        if lse_name is not None
+        else ""
+    )
+    cuda_src = f"""
+#include <math.h>
+#include <stdint.h>
+
+extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(const float* __restrict__ {q_name},
+                                                                       const float* __restrict__ {k_name},
+                                                                       const float* __restrict__ {v_name},
+                                                                       const float* __restrict__ {attn_mask_name},
+                                                                       const float* __restrict__ {sm_scale_name},
+                                                                       float* __restrict__ {out_name}{lse_param}) {{
+  const int64_t tid = (int64_t)blockIdx.x * (int64_t)blockDim.x + (int64_t)threadIdx.x;
+  const int64_t total = (int64_t){total};
+  if (tid >= total) return;
+
+  int64_t t = tid;
+  const int d = (int)(t % {DV}); t /= {DV};
+  const int q = (int)(t % {Q}); t /= {Q};
+  const int h = (int)(t % {Hh}); t /= {Hh};
+  const int b = (int)t;
+
+  const float scale = {sm_scale_name}[0];
+  float max_score = -INFINITY;
+  for (int k = 0; k < {K}; ++k) {{
+    float dot = 0.0f;
+    for (int x = 0; x < {D}; ++x) {{
+      const int64_t qidx = ((((int64_t)b * {Hh} + h) * {Q} + q) * {D}) + x;
+      const int64_t kidx = ((((int64_t)b * {Hh} + h) * {K} + k) * {D}) + x;
+      dot += {q_name}[qidx] * {k_name}[kidx];
+    }}
+    const int64_t midx = ((((int64_t)b * {Hh} + h) * {Q} + q) * {K}) + k;
+    const float score = dot * scale + {attn_mask_name}[midx];
+    max_score = fmaxf(max_score, score);
+  }}
+
+  float denom = 0.0f;
+  float numer = 0.0f;
+  for (int k = 0; k < {K}; ++k) {{
+    float dot = 0.0f;
+    for (int x = 0; x < {D}; ++x) {{
+      const int64_t qidx = ((((int64_t)b * {Hh} + h) * {Q} + q) * {D}) + x;
+      const int64_t kidx = ((((int64_t)b * {Hh} + h) * {K} + k) * {D}) + x;
+      dot += {q_name}[qidx] * {k_name}[kidx];
+    }}
+    const int64_t midx = ((((int64_t)b * {Hh} + h) * {Q} + q) * {K}) + k;
+    const float score = dot * scale + {attn_mask_name}[midx];
+    const float wgt = expf(score - max_score);
+    denom += wgt;
+    const int64_t vidx = ((((int64_t)b * {Hh} + h) * {K} + k) * {DV}) + d;
+    numer += wgt * {v_name}[vidx];
+  }}
+
+  {out_name}[tid] = (denom > 0.0f) ? (numer / denom) : 0.0f;
+  {lse_write}
+}}
+""".lstrip()
+
+    tensor_args = [q_name, k_name, v_name, attn_mask_name, sm_scale_name, out_name]
+    if lse_name is not None:
+        tensor_args.append(lse_name)
+    io_spec = _io_spec_from_args(intent, tensor_args=tensor_args, scalar_args={}, arg_names=tensor_args)
+    launch = CudaLaunch(grid=(grid_x, 1, 1), block=(block_x, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.update({"B": int(B), "H": int(Hh), "Q": int(Q), "K": int(K), "D": int(D), "DV": int(DV)})
+    output_names = [out_name] + ([lse_name] if lse_name is not None else [])
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=output_names,
+        bindings=lowered_bindings,
+    )
+
+
 def _kernel_resize_bilinear2x_i8(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
     if not intent.ops or intent.ops[0].op != "resize":
         raise CudaLoweringError("resize lowering expects a single resize op")
@@ -4983,6 +5193,8 @@ def lower_intent_to_cuda_kernel(
         return _kernel_dot_1d_f32(intent, bindings)
     if op_seq == ["const", "broadcast_in_dim", "iota", "iota", "iota", "ne", "not", "gather", "where"]:
         return _kernel_diag_embed_2d_f32(intent, bindings)
+    if op_seq == ["transpose", "matmul", "mul", "add", "softmax", "matmul"]:
+        return _kernel_flash_attn_varlen_decomposed_bhsd_f32(intent, bindings)
     if op_seq == ["conv2d", "broadcast_in_dim", "add"]:
         return _kernel_conv2d_nchw_bias_pattern_f32(intent, bindings)
     if op_seq in (["matmul", "mul", "mul", "add", "cast"], ["matmul", "mul", "mul", "add"]):

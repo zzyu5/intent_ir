@@ -2936,7 +2936,21 @@ struct CProgramEmitter {
                                           shape_env.at(op.inputs[2]), out_shape, is_causal);
 	      } else if (op.op == "exp") {
 	        int64_t n = numel(out_shape);
-	        w.line("intentir_exp_f32(" + v(op.inputs[0]) + ", " + out_var + ", (size_t)" + std::to_string(n) + ");");
+          std::optional<double> base;
+          if (op.attrs.contains("base")) {
+            base = resolve_const_value(op.attrs["base"], bindings);
+          }
+          if (base.has_value()) {
+            const double b = *base;
+            if (std::fabs(b - 2.0) < 1e-6) {
+              w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) " + out_var + "[i] = exp2f(" + v(op.inputs[0]) + "[i]);");
+            } else {
+              w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) " + out_var + "[i] = powf((float)" + std::to_string(b) + ", " +
+                     v(op.inputs[0]) + "[i]);");
+            }
+          } else {
+            w.line("intentir_exp_f32(" + v(op.inputs[0]) + ", " + out_var + ", (size_t)" + std::to_string(n) + ");");
+          }
 	      } else if (op.op == "relu") {
 	        int64_t n = numel(out_shape);
 	        w.line("intentir_relu_f32(" + v(op.inputs[0]) + ", " + out_var + ", (size_t)" + std::to_string(n) + ");");

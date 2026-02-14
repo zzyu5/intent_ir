@@ -95,6 +95,73 @@ def _external_inputs(intent: IntentFunction) -> tuple[list[str], list[str]]:
     return external_inputs, list(intent.outputs)
 
 
+def _np_dtype(dt: str) -> Any:
+    m = {
+        "f16": np.float16,
+        "bf16": np.float32,
+        "f32": np.float32,
+        "f64": np.float64,
+        "i8": np.int8,
+        "u8": np.uint8,
+        "i16": np.int16,
+        "i32": np.int32,
+        "i64": np.int64,
+        "i1": np.bool_,
+        "bool": np.bool_,
+    }
+    return m.get(str(dt), np.float32)
+
+
+def _resolve_tensor_shape(tensor: Any, bindings: dict) -> tuple[int, ...] | None:
+    shape: list[int] = []
+    for d in list(getattr(tensor, "shape", []) or []):
+        if hasattr(d, "kind") and getattr(d, "kind") == "sym":
+            key = str(getattr(d, "value"))
+            if key not in bindings:
+                return None
+            try:
+                shape.append(int(bindings[key]))
+            except Exception:
+                return None
+            continue
+        if hasattr(d, "kind") and getattr(d, "kind") == "const":
+            try:
+                shape.append(int(getattr(d, "value")))
+            except Exception:
+                return None
+            continue
+        if isinstance(d, int):
+            shape.append(int(d))
+            continue
+        key = str(d)
+        if key in bindings:
+            try:
+                shape.append(int(bindings[key]))
+                continue
+            except Exception:
+                return None
+        try:
+            shape.append(int(key))
+        except Exception:
+            return None
+    return tuple(shape)
+
+
+def _derive_optional_input_array(name: str, *, tensor: Any, bindings: dict) -> np.ndarray | None:
+    if str(name) == "sm_scale":
+        hd = bindings.get("HEAD_DIM")
+        try:
+            if hd is not None and int(hd) > 0:
+                return np.array(1.0 / np.sqrt(float(hd)), dtype=_np_dtype(str(getattr(tensor, "dtype", "f32"))))
+        except Exception:
+            pass
+    if str(name) == "attn_mask":
+        shape = _resolve_tensor_shape(tensor, bindings)
+        if shape is not None:
+            return np.zeros(shape, dtype=_np_dtype(str(getattr(tensor, "dtype", "f32"))))
+    return None
+
+
 def _write_bin(path: Path, arr: np.ndarray, dtype: str) -> None:
     if dtype in {"bool", "i1"}:
         raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
@@ -145,6 +212,15 @@ def run_one(
     baseline = dict(np.load(baseline_npz_path, allow_pickle=False))
     baseline = _with_io_aliases_for_diff(intent, baseline)
     external_inputs, outputs = _external_inputs(intent)
+    produced = {op.output for op in intent.ops if op.output}
+    outputs = [name for name in outputs if (name in baseline or name in produced)]
+    if not outputs:
+        outputs = list(intent.outputs)
+    intent_codegen = intent
+    if outputs != list(intent.outputs):
+        intent_j = intent.to_json_dict()
+        intent_j["outputs"] = list(outputs)
+        intent_codegen = IntentFunction.from_json_dict(intent_j)
 
     bindings = ((report.get("baseline") or {}).get("shapes") or {}) if isinstance(report.get("baseline"), dict) else {}
     # Common axis aliases (match pipeline/runner conventions).
@@ -179,6 +255,7 @@ def run_one(
         prof = load_profile(tune_profile or "generic_rvv_256")
         tuned = select_schedule(intent, shape_bindings=bindings, profile=prof, request=tune_request, tile_hints=tile_hints, evidence=cert_v2)
         intent.schedule = tuned.schedule
+        intent_codegen.schedule = tuned.schedule
     tol = {
         "any_kernel_dim": (0.0, 0.0),
         "group_norm_kernel": (1e-3, 1e-3),
@@ -195,6 +272,12 @@ def run_one(
         # Write inputs / reference outputs.
         for name in external_inputs:
             if name not in baseline:
+                tt = intent.tensors.get(name)
+                if tt is not None:
+                    derived = _derive_optional_input_array(name, tensor=tt, bindings=bindings)
+                    if derived is not None:
+                        baseline[name] = derived
+            if name not in baseline:
                 raise RuntimeError(f"baseline missing input {name} for {kernel}")
             _write_bin(td / f"{name}.bin", np.asarray(baseline[name]), intent.tensors[name].dtype)
         for name in outputs:
@@ -202,7 +285,7 @@ def run_one(
                 raise RuntimeError(f"baseline missing output {name} for {kernel}")
             _write_bin(td / f"{name}_ref.bin", np.asarray(baseline[name]), intent.tensors[name].dtype)
 
-        c_src = lower_intent_to_c_with_files(intent, shape_bindings=bindings, atol=float(atol), rtol=float(rtol))
+        c_src = lower_intent_to_c_with_files(intent_codegen, shape_bindings=bindings, atol=float(atol), rtol=float(rtol))
         (td / "main.c").write_text(c_src, encoding="utf-8")
 
         runtime_dir = ROOT / "backends" / "spmd_rvv" / "runtime"

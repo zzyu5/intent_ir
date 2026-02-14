@@ -165,6 +165,50 @@ def _derive_scalar_input(name: str, *, dtype: str, bindings: dict) -> np.ndarray
     return np.array(value, dtype=_np_dtype(dtype))
 
 
+def _resolve_tensor_shape(tensor: Any, bindings: dict) -> tuple[int, ...] | None:
+    shape: list[int] = []
+    for d in list(getattr(tensor, "shape", []) or []):
+        if hasattr(d, "kind") and getattr(d, "kind") == "sym":
+            key = str(getattr(d, "value"))
+            if key not in bindings:
+                return None
+            try:
+                shape.append(int(bindings[key]))
+            except Exception:
+                return None
+            continue
+        if hasattr(d, "kind") and getattr(d, "kind") == "const":
+            try:
+                shape.append(int(getattr(d, "value")))
+            except Exception:
+                return None
+            continue
+        if isinstance(d, int):
+            shape.append(int(d))
+            continue
+        key = str(d)
+        if key in bindings:
+            try:
+                shape.append(int(bindings[key]))
+                continue
+            except Exception:
+                return None
+        try:
+            shape.append(int(key))
+        except Exception:
+            return None
+    return tuple(shape)
+
+
+def _derive_optional_tensor_input(name: str, *, tensor: Any, bindings: dict) -> np.ndarray | None:
+    if str(name) != "attn_mask":
+        return None
+    shape = _resolve_tensor_shape(tensor, bindings)
+    if shape is None:
+        return None
+    return np.zeros(shape, dtype=_np_dtype(str(getattr(tensor, "dtype", "f32"))))
+
+
 def _compare_output(name: str, got: np.ndarray, ref: np.ndarray, *, atol: float, rtol: float) -> tuple[bool, str]:
     g = np.asarray(got)
     r = np.asarray(ref)
@@ -201,6 +245,10 @@ def _prepare_kernel_context(
     baseline = dict(np.load(baseline_npz_path, allow_pickle=False))
     baseline = _with_io_aliases_for_diff(intent, baseline)
     external_inputs, outputs = _external_inputs(intent)
+    produced = {op.output for op in intent.ops if op.output}
+    outputs = [name for name in outputs if (name in baseline or name in produced)]
+    if not outputs:
+        outputs = list(intent.outputs)
     raw_bindings = ((report.get("baseline") or {}).get("shapes") or {}) if isinstance(report.get("baseline"), dict) else {}
     bindings = _coerce_bindings(raw_bindings)
     tol = (report.get("tolerances") or {}) if isinstance(report.get("tolerances"), dict) else {}
@@ -230,12 +278,18 @@ def _build_inputs_np(
             inputs_np[name] = np.asarray(baseline[name])
             continue
         tt = intent.tensors.get(name)
-        if tt is None or tt.shape:
+        if tt is None:
             raise RuntimeError(f"baseline missing input {name} for {kernel}")
-        derived = _derive_scalar_input(name, dtype=str(tt.dtype), bindings=bindings)
-        if derived is None:
+        if tt.shape:
+            derived_t = _derive_optional_tensor_input(name, tensor=tt, bindings=bindings)
+            if derived_t is None:
+                raise RuntimeError(f"baseline missing input {name} for {kernel}")
+            inputs_np[name] = derived_t
+            continue
+        derived_s = _derive_scalar_input(name, dtype=str(tt.dtype), bindings=bindings)
+        if derived_s is None:
             raise RuntimeError(f"baseline missing input {name} for {kernel}")
-        inputs_np[name] = derived
+        inputs_np[name] = derived_s
     return inputs_np
 
 

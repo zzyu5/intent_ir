@@ -155,7 +155,14 @@ def run_diff(
             tt = intent_exec.tensors.get(name)
             if tt is None:
                 continue
-            # Only inject scalars (rank-0 tensors).
+            # Optional attention mask defaults to zeros when frontend baseline does
+            # not materialize it explicitly.
+            if name == "attn_mask":
+                shape = _resolve_tensor_shape(tt, bindings)
+                if shape is not None:
+                    inputs[name] = np.zeros(shape, dtype=_dtype_to_np(str(getattr(tt, "dtype", "f32"))))
+                    continue
+            # Only inject derived scalar values below.
             if getattr(tt, "shape", None):
                 continue
             if case.inputs and name in case.inputs:
@@ -172,22 +179,7 @@ def run_diff(
                     continue
             if name in bindings:
                 dt = str(getattr(tt, "dtype", "f32"))
-                np_dt = np.float32
-                if dt == "f16":
-                    np_dt = np.float16
-                elif dt == "f64":
-                    np_dt = np.float64
-                elif dt == "i32":
-                    np_dt = np.int32
-                elif dt == "i64":
-                    np_dt = np.int64
-                elif dt == "i8":
-                    np_dt = np.int8
-                elif dt == "u8":
-                    np_dt = np.uint8
-                elif dt == "bool":
-                    np_dt = np.bool_
-                inputs[name] = np.array(bindings[name], dtype=np_dt)
+                inputs[name] = np.array(bindings[name], dtype=_dtype_to_np(dt))
         # Strict "original view" check: inputs must match declared tensor shapes exactly.
         # If the LLM needs a grouped/view shape, it must introduce explicit reshape ops
         # inside IntentIR, rather than redefining the input tensor shape.
@@ -248,9 +240,15 @@ def run_diff(
 
         # Feed symbolic shape bindings from TestCase for broadcast/reshape
         try:
+            outs_to_compare = _materialized_outputs(intent_exec, ref_out)
+            intent_eval = intent_exec
+            if list(outs_to_compare) != list(intent_exec.outputs):
+                j = intent_exec.to_json_dict()
+                j["outputs"] = list(outs_to_compare)
+                intent_eval = IntentFunction.from_json_dict(j)
             with np.errstate(all="ignore"):
-                pred = execute_intent(intent_exec, inputs, shape_bindings=bindings)
-            diff = _compare_outputs(pred, ref_out, intent_exec.outputs, inferred_tol)
+                pred = execute_intent(intent_eval, inputs, shape_bindings=bindings)
+            diff = _compare_outputs(pred, ref_out, outs_to_compare, inferred_tol)
         except Exception as e:
             diff = DiffResult(
                 ok=False,
@@ -303,6 +301,18 @@ def _normalize_io_name(name: str) -> str:
         s = "weight"
     if s == "b":
         s = "bias"
+    if s == "q":
+        s = "query"
+    if s == "k":
+        s = "key"
+    if s == "v":
+        s = "value"
+    if s == "s":
+        s = "scale"
+    if s == "sm_scale":
+        s = "scale"
+    if s == "smscale":
+        s = "scale"
     if s == "in":
         s = "input"
     if s == "out":
@@ -355,6 +365,37 @@ def _with_io_aliases(intent: IntentFunction, ref_io: Dict[str, np.ndarray]) -> D
             if len(candidates) == 1:
                 out[name] = ref_io[candidates[0]]
     return out
+
+
+def _dtype_to_np(dt: str) -> Any:
+    m = {
+        "f16": np.float16,
+        "bf16": np.float32,
+        "f32": np.float32,
+        "f64": np.float64,
+        "i8": np.int8,
+        "u8": np.uint8,
+        "i16": np.int16,
+        "i32": np.int32,
+        "i64": np.int64,
+        "i1": np.bool_,
+        "bool": np.bool_,
+    }
+    return m.get(str(dt), np.float32)
+
+
+def _materialized_outputs(intent: IntentFunction, ref_io: Dict[str, np.ndarray]) -> list[str]:
+    """
+    Filter declared outputs to those that are actually materialized in this run.
+    Some frontends keep auxiliary outputs in `intent.outputs` (e.g. softmax_lse)
+    while runtime baselines only expose the primary tensor output.
+    """
+    produced = {op.output for op in intent.ops if op.output}
+    outs: list[str] = []
+    for name in list(intent.outputs):
+        if name in ref_io or name in produced:
+            outs.append(name)
+    return outs if outs else list(intent.outputs)
 
 
 def _compare_outputs(pred: Dict[str, np.ndarray], ref: Dict[str, np.ndarray], outputs: list[str], tol) -> DiffResult:

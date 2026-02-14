@@ -25,7 +25,7 @@ import math
 import os
 import sys
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import paramiko
 import numpy as np
@@ -77,6 +77,18 @@ def _normalize_io_name(name: str) -> str:
         s = "weight"
     if s == "b":
         s = "bias"
+    if s == "q":
+        s = "query"
+    if s == "k":
+        s = "key"
+    if s == "v":
+        s = "value"
+    if s == "s":
+        s = "scale"
+    if s == "sm_scale":
+        s = "scale"
+    if s == "smscale":
+        s = "scale"
     if s == "in":
         s = "input"
     if s == "out":
@@ -156,6 +168,51 @@ def _derive_scalar_input_array(name: str, *, dtype: str, bindings: dict) -> "np.
     if value is None:
         return None
     return np.array(value, dtype=_np_dtype(dtype))
+
+
+def _resolve_tensor_shape(tensor: Any, bindings: dict) -> tuple[int, ...] | None:
+    shape = []
+    for d in list(getattr(tensor, "shape", []) or []):
+        if hasattr(d, "kind") and getattr(d, "kind") == "sym":
+            key = str(getattr(d, "value"))
+            if key not in bindings:
+                return None
+            try:
+                shape.append(int(bindings[key]))
+            except Exception:
+                return None
+            continue
+        if hasattr(d, "kind") and getattr(d, "kind") == "const":
+            try:
+                shape.append(int(getattr(d, "value")))
+            except Exception:
+                return None
+            continue
+        if isinstance(d, int):
+            shape.append(int(d))
+            continue
+        key = str(d)
+        if key in bindings:
+            try:
+                shape.append(int(bindings[key]))
+                continue
+            except Exception:
+                return None
+        try:
+            shape.append(int(key))
+        except Exception:
+            return None
+    return tuple(shape)
+
+
+def _derive_optional_tensor_input_array(name: str, *, tensor: Any, bindings: dict) -> "np.ndarray" | None:
+    # Attention kernels may omit mask from baseline exports when no mask is supplied.
+    if str(name) != "attn_mask":
+        return None
+    shape = _resolve_tensor_shape(tensor, bindings)
+    if shape is None:
+        return None
+    return np.zeros(shape, dtype=_np_dtype(str(getattr(tensor, "dtype", "f32"))))
 
 
 def _sftp_mkdir_p(sftp: paramiko.SFTPClient, path: str) -> None:
@@ -665,7 +722,15 @@ def run_remote(
         for n in op.inputs:
             used.add(n)
     external_inputs = sorted([n for n in used if n in intent.tensors and n not in produced])
-    outputs = list(intent.outputs)
+    has_baseline = isinstance(baseline, dict)
+    outputs = [n for n in list(intent.outputs) if ((has_baseline and n in baseline) or n in produced)]
+    if not outputs:
+        outputs = list(intent.outputs)
+    intent_codegen = intent
+    if outputs != list(intent.outputs):
+        intent_j = intent.to_json_dict()
+        intent_j["outputs"] = list(outputs)
+        intent_codegen = IntentFunction.from_json_dict(intent_j)
 
     if not bool(bench_only):
         # Upload inputs/refs for correctness runs.
@@ -675,10 +740,15 @@ def run_remote(
             dt = intent.tensors[name].dtype
             if name not in baseline:
                 tt = intent.tensors.get(name)
-                if tt is not None and len(getattr(tt, "shape", [])) == 0:
-                    arr0 = _derive_scalar_input_array(str(name), dtype=str(tt.dtype), bindings=bindings)
-                    if arr0 is not None:
-                        baseline[name] = arr0
+                if tt is not None:
+                    if len(getattr(tt, "shape", [])) == 0:
+                        arr0 = _derive_scalar_input_array(str(name), dtype=str(tt.dtype), bindings=bindings)
+                        if arr0 is not None:
+                            baseline[name] = arr0
+                    else:
+                        arrn = _derive_optional_tensor_input_array(str(name), tensor=tt, bindings=bindings)
+                        if arrn is not None:
+                            baseline[name] = arrn
             if name not in baseline:
                 raise RuntimeError(f"baseline missing input tensor {name} for {kernel}")
             arr = np.asarray(baseline[name])
@@ -735,9 +805,9 @@ def run_remote(
 
     def _compile_and_run(schedule) -> dict:
         # Generate + upload code for this schedule.
-        intent.schedule = schedule
+        intent_codegen.schedule = schedule
         src = lower_intent_to_c_with_files(
-            intent,
+            intent_codegen,
             shape_bindings=bindings,
             atol=float(atol_use),
             rtol=float(rtol_use),
