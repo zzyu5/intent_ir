@@ -5309,6 +5309,17 @@ def _norm_weight_norm2d(shapes: Dict[str, int]) -> Dict[str, int]:
     return out
 
 
+def _norm_kron2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    out["M"] = max(1, int(out.get("M", 4)))
+    out["N"] = max(1, int(out.get("N", 8)))
+    out["P"] = max(1, int(out.get("P", 2)))
+    out["Q"] = max(1, int(out.get("Q", 3)))
+    out["MP"] = int(out["M"]) * int(out["P"])
+    out["NQ"] = int(out["N"]) * int(out["Q"])
+    return out
+
+
 def _norm_scaled_dot_product_attention_bhsd(shapes: Dict[str, int]) -> Dict[str, int]:
     out = dict(shapes)
     out["B"] = max(1, int(out.get("B", 1)))
@@ -6890,8 +6901,9 @@ _FLAGGEMS_SPEC_BUILDERS = {
         module="pipeline.triton.flaggems_specs",
         attr="FLAGGEMS_KRON_SRC",
         runner=_run_flaggems_kron2d_reference,
-        canonical_shapes={"M": 4, "N": 8, "P": 2, "Q": 3},
+        canonical_shapes={"M": 4, "N": 8, "P": 2, "Q": 3, "MP": 8, "NQ": 24},
         vary_axes=["M", "N", "P", "Q"],
+        normalize_shapes=_norm_kron2d,
         stage_c_max_cases=6,
         mutation_bounded_max_cases=3,
     ),

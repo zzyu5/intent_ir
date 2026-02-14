@@ -1133,6 +1133,99 @@ void emit_gather(CodeWriter& w, const std::string& out, const std::string& data,
   }
 }
 
+void emit_index_add_2d(CodeWriter& w, const std::string& out, const std::string& base, const std::string& index, const std::string& src,
+                       const std::vector<int64_t>& base_shape, const std::vector<int64_t>& index_shape, const std::vector<int64_t>& src_shape,
+                       const std::vector<int64_t>& out_shape, const std::string& idx_dtype, int axis, double alpha) {
+  if (base_shape.size() != 2 || out_shape.size() != 2) fail("index_add expects rank-2 base/output");
+  if (index_shape.size() != 1) fail("index_add expects rank-1 index");
+  if (src_shape.size() != 2) fail("index_add expects rank-2 src");
+  if (out_shape != base_shape) fail("index_add output shape mismatch");
+  int axis_norm = axis;
+  if (axis_norm < 0) axis_norm += 2;
+  if (axis_norm != 0) fail("index_add currently supports axis=0 only");
+  const std::string idx_ct = ctype_for_dtype(idx_dtype);
+  if (!(idx_ct == "int32_t" || idx_ct == "int64_t")) fail("index_add index dtype must be i32/i64");
+  const int64_t M = base_shape[0];
+  const int64_t N = base_shape[1];
+  const int64_t L = index_shape[0];
+  if (src_shape[0] != L || src_shape[1] != N) fail("index_add src shape mismatch");
+
+  w.line("for (size_t i = 0; i < (size_t)" + std::to_string(numel(out_shape)) + "; ++i) " + out + "[i] = " + base + "[i];");
+  w.line("for (int l = 0; l < " + std::to_string(L) + "; ++l) {");
+  w.indent();
+  w.line("const int r = (int)" + index + "[l];");
+  w.line("if ((unsigned)r >= (unsigned)" + std::to_string(M) + ") continue;");
+  w.line("for (int n = 0; n < " + std::to_string(N) + "; ++n) {");
+  w.indent();
+  w.line(out + "[r * " + std::to_string(N) + " + n] += (" + c_float(alpha) + ") * " + src + "[l * " + std::to_string(N) + " + n];");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+}
+
+void emit_index_put_2d(CodeWriter& w, const std::string& out, const std::string& base, const std::string& row_idx, const std::string& col_idx,
+                       const std::string& values, const std::vector<int64_t>& base_shape, const std::vector<int64_t>& row_shape,
+                       const std::vector<int64_t>& col_shape, const std::vector<int64_t>& values_shape, const std::vector<int64_t>& out_shape,
+                       const std::string& row_dtype, const std::string& col_dtype, bool accumulate) {
+  if (base_shape.size() != 2 || out_shape.size() != 2) fail("index_put expects rank-2 base/output");
+  if (row_shape.size() != 1 || col_shape.size() != 1 || values_shape.size() != 1) fail("index_put expects rank-1 indices/values");
+  if (out_shape != base_shape) fail("index_put output shape mismatch");
+  const std::string row_ct = ctype_for_dtype(row_dtype);
+  const std::string col_ct = ctype_for_dtype(col_dtype);
+  if (!((row_ct == "int32_t" || row_ct == "int64_t") && (col_ct == "int32_t" || col_ct == "int64_t"))) {
+    fail("index_put row/col dtype must be i32/i64");
+  }
+  const int64_t M = base_shape[0];
+  const int64_t N = base_shape[1];
+  const int64_t L = row_shape[0];
+  if (col_shape[0] != L || values_shape[0] != L) fail("index_put index/value length mismatch");
+
+  w.line("for (size_t i = 0; i < (size_t)" + std::to_string(numel(out_shape)) + "; ++i) " + out + "[i] = " + base + "[i];");
+  w.line("for (int l = 0; l < " + std::to_string(L) + "; ++l) {");
+  w.indent();
+  w.line("const int r = (int)" + row_idx + "[l];");
+  w.line("const int c = (int)" + col_idx + "[l];");
+  w.line("if ((unsigned)r >= (unsigned)" + std::to_string(M) + " || (unsigned)c >= (unsigned)" + std::to_string(N) + ") continue;");
+  w.line("const size_t pos = (size_t)r * (size_t)" + std::to_string(N) + " + (size_t)c;");
+  if (accumulate) {
+    w.line(out + "[pos] += " + values + "[l];");
+  } else {
+    w.line(out + "[pos] = " + values + "[l];");
+  }
+  w.dedent();
+  w.line("}");
+}
+
+void emit_kron_2d(CodeWriter& w, const std::string& out, const std::string& a, const std::string& b, const std::vector<int64_t>& a_shape,
+                  const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape) {
+  if (a_shape.size() != 2 || b_shape.size() != 2 || out_shape.size() != 2) fail("kron currently supports rank-2 tensors");
+  const int64_t M = a_shape[0], N = a_shape[1];
+  const int64_t P = b_shape[0], Q = b_shape[1];
+  if (out_shape[0] != M * P || out_shape[1] != N * Q) fail("kron output shape mismatch");
+  const int64_t NQ = out_shape[1];
+  w.line("for (int i = 0; i < " + std::to_string(M) + "; ++i) {");
+  w.indent();
+  w.line("for (int j = 0; j < " + std::to_string(N) + "; ++j) {");
+  w.indent();
+  w.line("const float av = " + a + "[i * " + std::to_string(N) + " + j];");
+  w.line("for (int p = 0; p < " + std::to_string(P) + "; ++p) {");
+  w.indent();
+  w.line("for (int q = 0; q < " + std::to_string(Q) + "; ++q) {");
+  w.indent();
+  w.line("const size_t oi = (size_t)(i * " + std::to_string(P) + " + p);");
+  w.line("const size_t oj = (size_t)(j * " + std::to_string(Q) + " + q);");
+  w.line(out + "[oi * (size_t)" + std::to_string(NQ) + " + oj] = av * " + b + "[p * " + std::to_string(Q) + " + q];");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+}
+
 void emit_reduce_sum(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape,
                      const std::vector<int>& dims, bool keepdims, std::optional<double> scale) {
   const int r = static_cast<int>(in_shape.size());
@@ -2864,6 +2957,45 @@ struct CProgramEmitter {
 	        std::vector<std::string> idx_dtypes;
 	        for (size_t i = 1; i < op.inputs.size(); ++i) idx_dtypes.push_back(dtype_env.at(op.inputs[i]));
 	        emit_gather(w, out_var, v(op.inputs[0]), idxs, shape_env.at(op.inputs[0]), idx_shapes, out_shape, dtype_env.at(op.inputs[0]), idx_dtypes, dtype_env.at(out));
+	      } else if (op.op == "index_add") {
+	        if (op.inputs.size() != 3) fail("index_add expects inputs [base, index, src]");
+	        int axis = op.attrs.value("axis", 0);
+	        double alpha = 1.0;
+	        if (op.attrs.contains("alpha")) alpha = resolve_const_value(op.attrs["alpha"], bindings);
+	        emit_index_add_2d(
+	            w,
+	            out_var,
+	            v(op.inputs[0]),
+	            v(op.inputs[1]),
+	            v(op.inputs[2]),
+	            shape_env.at(op.inputs[0]),
+	            shape_env.at(op.inputs[1]),
+	            shape_env.at(op.inputs[2]),
+	            out_shape,
+	            dtype_env.at(op.inputs[1]),
+	            axis,
+	            alpha);
+	      } else if (op.op == "index_put") {
+	        if (op.inputs.size() != 4) fail("index_put expects inputs [base, row_idx, col_idx, values]");
+	        bool accumulate = op.attrs.value("accumulate", false);
+	        emit_index_put_2d(
+	            w,
+	            out_var,
+	            v(op.inputs[0]),
+	            v(op.inputs[1]),
+	            v(op.inputs[2]),
+	            v(op.inputs[3]),
+	            shape_env.at(op.inputs[0]),
+	            shape_env.at(op.inputs[1]),
+	            shape_env.at(op.inputs[2]),
+	            shape_env.at(op.inputs[3]),
+	            out_shape,
+	            dtype_env.at(op.inputs[1]),
+	            dtype_env.at(op.inputs[2]),
+	            accumulate);
+	      } else if (op.op == "kron") {
+	        if (op.inputs.size() != 2) fail("kron expects inputs [A, B]");
+	        emit_kron_2d(w, out_var, v(op.inputs[0]), v(op.inputs[1]), shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape);
 	      } else if (op.op == "reduce_sum") {
         // Accept both "axes" and "dims" (parser/LLM may emit either). Prefer "axes"
         // when both are present to match interpreter semantics.
@@ -3540,6 +3672,44 @@ int main(int argc, char** argv) {
         std::vector<int64_t> oshape = get_shape(op.inputs[1]);
         for (size_t i = 2; i < op.inputs.size(); ++i) oshape = broadcast_shape(oshape, get_shape(op.inputs[i]));
         shape_env[out] = oshape;
+        dtype_env[out] = get_dtype(op.inputs[0]);
+        continue;
+      }
+      if (kind == "index_add") {
+        if (op.inputs.size() != 3) fail("index_add expects inputs [base, index, src]");
+        const auto& base_shape = get_shape(op.inputs[0]);
+        const auto& idx_shape = get_shape(op.inputs[1]);
+        const auto& src_shape = get_shape(op.inputs[2]);
+        if (base_shape.size() != 2 || idx_shape.size() != 1 || src_shape.size() != 2) fail("index_add infer expects base[2], index[1], src[2]");
+        int axis = op.attrs.value("axis", 0);
+        int axis_norm = axis;
+        if (axis_norm < 0) axis_norm += 2;
+        if (axis_norm != 0) fail("index_add infer currently supports axis=0 only");
+        if (src_shape[0] != idx_shape[0] || src_shape[1] != base_shape[1]) fail("index_add infer shape mismatch");
+        shape_env[out] = base_shape;
+        dtype_env[out] = get_dtype(op.inputs[0]);
+        continue;
+      }
+      if (kind == "index_put") {
+        if (op.inputs.size() != 4) fail("index_put expects inputs [base, row_idx, col_idx, values]");
+        const auto& base_shape = get_shape(op.inputs[0]);
+        const auto& row_shape = get_shape(op.inputs[1]);
+        const auto& col_shape = get_shape(op.inputs[2]);
+        const auto& val_shape = get_shape(op.inputs[3]);
+        if (base_shape.size() != 2 || row_shape.size() != 1 || col_shape.size() != 1 || val_shape.size() != 1) {
+          fail("index_put infer expects base[2], row_idx[1], col_idx[1], values[1]");
+        }
+        if (row_shape[0] != col_shape[0] || row_shape[0] != val_shape[0]) fail("index_put infer length mismatch");
+        shape_env[out] = base_shape;
+        dtype_env[out] = get_dtype(op.inputs[0]);
+        continue;
+      }
+      if (kind == "kron") {
+        if (op.inputs.size() != 2) fail("kron expects inputs [A, B]");
+        const auto& a_shape = get_shape(op.inputs[0]);
+        const auto& b_shape = get_shape(op.inputs[1]);
+        if (a_shape.size() != 2 || b_shape.size() != 2) fail("kron infer currently supports rank-2 tensors");
+        shape_env[out] = {a_shape[0] * b_shape[0], a_shape[1] * b_shape[1]};
         dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
       }

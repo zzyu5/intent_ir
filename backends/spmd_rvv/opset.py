@@ -58,6 +58,9 @@ SPMD_RVV_SUPPORTED_OPS: set[str] = {
     # Indexing / reductions.
     "iota",
     "gather",
+    "index_add",
+    "index_put",
+    "kron",
     "reduce_sum",
     "reduce_max",
     "reduce_min",

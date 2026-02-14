@@ -24,6 +24,9 @@ CUDA_SUPPORTED_OPS: set[str] = {
     # Tensor transforms / indexing.
     "transpose",
     "gather",
+    "index_add",
+    "index_put",
+    "kron",
     "concat",
     "pad",
     "glu",
