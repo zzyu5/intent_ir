@@ -16,8 +16,10 @@ import json
 import math
 import multiprocessing as mp
 import os
+from queue import Empty
 import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +30,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backends.cuda.codegen.intentir_to_cuda import CudaLoweringError, lower_intent_to_cuda_kernel  # noqa: E402
-from backends.cuda.runtime import CudaRuntimeError, run_cuda_kernel  # noqa: E402
+from backends.cuda.runtime import CudaRuntimeError, compile_cuda_extension, run_cuda_kernel  # noqa: E402
 from intent_ir.ir import IntentFunction  # noqa: E402
 from intent_ir.macros import expand_macros  # noqa: E402
 from verify.diff_runner import _with_io_aliases as _with_io_aliases_for_diff  # noqa: E402
@@ -178,13 +180,13 @@ def _compare_output(name: str, got: np.ndarray, ref: np.ndarray, *, atol: float,
     return False, f"mismatch in {name} (max_abs={float(abs_err):.6g}, atol={atol}, rtol={rtol})"
 
 
-def run_one(
+def _prepare_kernel_context(
     kernel: str,
     *,
-    frontend: str = "triton",
-    triton_provider: str = "native",
-    artifact_dir: str | None = None,
-) -> dict:
+    frontend: str,
+    triton_provider: str,
+    artifact_dir: str | None,
+) -> dict[str, Any]:
     artifact_rel = _artifact_dir_for_frontend(frontend, triton_provider=str(triton_provider))
     artifact_root = (Path(artifact_dir) if artifact_dir else (ROOT / "artifacts" / artifact_rel)).resolve()
     report_path = artifact_root / f"{kernel}.json"
@@ -199,13 +201,29 @@ def run_one(
     baseline = dict(np.load(baseline_npz_path, allow_pickle=False))
     baseline = _with_io_aliases_for_diff(intent, baseline)
     external_inputs, outputs = _external_inputs(intent)
-
     raw_bindings = ((report.get("baseline") or {}).get("shapes") or {}) if isinstance(report.get("baseline"), dict) else {}
     bindings = _coerce_bindings(raw_bindings)
     tol = (report.get("tolerances") or {}) if isinstance(report.get("tolerances"), dict) else {}
-    atol = float(tol.get("atol", 1e-3))
-    rtol = float(tol.get("rtol", 1e-3))
+    return {
+        "kernel": str(kernel),
+        "intent": intent,
+        "baseline": baseline,
+        "external_inputs": external_inputs,
+        "outputs": outputs,
+        "bindings": bindings,
+        "atol": float(tol.get("atol", 1e-3)),
+        "rtol": float(tol.get("rtol", 1e-3)),
+    }
 
+
+def _build_inputs_np(
+    *,
+    kernel: str,
+    intent: IntentFunction,
+    baseline: dict[str, np.ndarray],
+    external_inputs: list[str],
+    bindings: dict[str, Any],
+) -> dict[str, np.ndarray]:
     inputs_np: dict[str, np.ndarray] = {}
     for name in external_inputs:
         if name in baseline:
@@ -218,8 +236,81 @@ def run_one(
         if derived is None:
             raise RuntimeError(f"baseline missing input {name} for {kernel}")
         inputs_np[name] = derived
+    return inputs_np
 
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings=bindings)
+
+def _set_codegen_mode_env(codegen_mode: str) -> None:
+    mode = str(codegen_mode).strip().lower()
+    if mode in {"py", "cpp"}:
+        os.environ["INTENTIR_CUDA_CODEGEN"] = mode
+    else:
+        os.environ.pop("INTENTIR_CUDA_CODEGEN", None)
+
+
+def _run_compile_stage(
+    kernel: str,
+    *,
+    frontend: str,
+    triton_provider: str,
+    artifact_dir: str | None,
+) -> dict[str, Any]:
+    t_all = time.perf_counter()
+    ctx = _prepare_kernel_context(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
+    t_lower = time.perf_counter()
+    lowered = lower_intent_to_cuda_kernel(ctx["intent"], shape_bindings=ctx["bindings"])
+    lower_ms = (time.perf_counter() - t_lower) * 1000.0
+
+    t_compile = time.perf_counter()
+    compile_cuda_extension(
+        kernel_name=lowered.kernel_name,
+        cuda_src=lowered.cuda_src,
+        io_spec=lowered.io_spec,
+    )
+    compile_ms = (time.perf_counter() - t_compile) * 1000.0
+
+    return {
+        "kernel": str(kernel),
+        "ok": True,
+        "reason_code": "ok",
+        "lower_ms": float(lower_ms),
+        "compile_ms": float(compile_ms),
+        "launch_ms": 0.0,
+        "total_ms": float((time.perf_counter() - t_all) * 1000.0),
+        "bindings": dict(ctx["bindings"]),
+    }
+
+
+def _run_launch_stage(
+    kernel: str,
+    *,
+    frontend: str,
+    triton_provider: str,
+    artifact_dir: str | None,
+) -> dict[str, Any]:
+    t_all = time.perf_counter()
+    ctx = _prepare_kernel_context(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
+
+    t_lower = time.perf_counter()
+    lowered = lower_intent_to_cuda_kernel(ctx["intent"], shape_bindings=ctx["bindings"])
+    lower_ms = (time.perf_counter() - t_lower) * 1000.0
+
+    t_compile = time.perf_counter()
+    compile_cuda_extension(
+        kernel_name=lowered.kernel_name,
+        cuda_src=lowered.cuda_src,
+        io_spec=lowered.io_spec,
+    )
+    compile_ms = (time.perf_counter() - t_compile) * 1000.0
+
+    inputs_np = _build_inputs_np(
+        kernel=str(kernel),
+        intent=ctx["intent"],
+        baseline=ctx["baseline"],
+        external_inputs=ctx["external_inputs"],
+        bindings=ctx["bindings"],
+    )
+
+    t_launch = time.perf_counter()
     out = run_cuda_kernel(
         kernel_name=lowered.kernel_name,
         cuda_src=lowered.cuda_src,
@@ -227,14 +318,15 @@ def run_one(
         launch=lowered.launch,
         bindings=lowered.bindings,
         inputs_np=inputs_np,
-        output_names=lowered.output_names or outputs,
+        output_names=lowered.output_names or ctx["outputs"],
     )
-    out = _with_io_aliases_for_diff(intent, out)
+    out = _with_io_aliases_for_diff(ctx["intent"], out)
+    launch_ms = (time.perf_counter() - t_launch) * 1000.0
 
     checks: list[dict[str, Any]] = []
     ok_all = True
-    for name in outputs:
-        if name not in baseline:
+    for name in ctx["outputs"]:
+        if name not in ctx["baseline"]:
             checks.append({"name": str(name), "ok": False, "summary": f"baseline missing output {name}"})
             ok_all = False
             continue
@@ -242,7 +334,7 @@ def run_one(
             checks.append({"name": str(name), "ok": False, "summary": f"cuda output missing {name}"})
             ok_all = False
             continue
-        ok, summary = _compare_output(name, out[name], baseline[name], atol=atol, rtol=rtol)
+        ok, summary = _compare_output(name, out[name], ctx["baseline"][name], atol=ctx["atol"], rtol=ctx["rtol"])
         checks.append({"name": str(name), "ok": bool(ok), "summary": str(summary)})
         ok_all = ok_all and bool(ok)
 
@@ -250,11 +342,27 @@ def run_one(
         "kernel": str(kernel),
         "ok": bool(ok_all),
         "reason_code": ("ok" if ok_all else "diff_fail"),
-        "atol": float(atol),
-        "rtol": float(rtol),
+        "atol": float(ctx["atol"]),
+        "rtol": float(ctx["rtol"]),
         "checks": checks,
-        "bindings": dict(bindings),
+        "bindings": dict(ctx["bindings"]),
+        "lower_ms": float(lower_ms),
+        "compile_ms": float(compile_ms),
+        "launch_ms": float(launch_ms),
+        "total_ms": float((time.perf_counter() - t_all) * 1000.0),
     }
+
+
+def run_one(
+    kernel: str,
+    *,
+    frontend: str = "triton",
+    triton_provider: str = "native",
+    artifact_dir: str | None = None,
+) -> dict:
+    # Compatibility helper for ad-hoc invocations.
+    _ = _run_compile_stage(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
+    return _run_launch_stage(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
 
 
 def _reason_code_for_exception(e: Exception) -> str:
@@ -263,7 +371,7 @@ def _reason_code_for_exception(e: Exception) -> str:
     if isinstance(e, CudaRuntimeError):
         msg = str(e).lower()
         if "timeout" in msg:
-            return "runtime_timeout"
+            return "launch_timeout"
         return "runtime_fail"
     if isinstance(e, FileNotFoundError):
         return "artifact_missing"
@@ -274,59 +382,7 @@ def _reason_code_for_exception(e: Exception) -> str:
     return "runtime_fail"
 
 
-def _run_one_with_timeout(
-    kernel: str,
-    *,
-    frontend: str,
-    triton_provider: str,
-    artifact_dir: str | None,
-    timeout_sec: int,
-    codegen_mode: str,
-) -> dict[str, Any]:
-    if int(timeout_sec) <= 0:
-        return run_one(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
-
-    ctx = mp.get_context("spawn")
-    q: mp.Queue = ctx.Queue()
-
-    proc = ctx.Process(
-        target=_cuda_worker,
-        args=(q, str(kernel), str(frontend), str(triton_provider), artifact_dir, str(codegen_mode)),
-    )
-    proc.start()
-    proc.join(timeout=float(timeout_sec))
-    if proc.is_alive():
-        proc.terminate()
-        proc.join(timeout=2.0)
-        return {
-            "kernel": str(kernel),
-            "ok": False,
-            "error": {
-                "type": "TimeoutError",
-                "message": f"kernel execution exceeded timeout_sec={int(timeout_sec)}",
-            },
-            "reason_code": "runtime_timeout",
-        }
-    if q.empty():
-        return {
-            "kernel": str(kernel),
-            "ok": False,
-            "error": {"type": "RuntimeError", "message": "no result returned from worker process"},
-            "reason_code": "runtime_fail",
-        }
-    payload = q.get()
-    if bool(payload.get("ok")):
-        return dict(payload.get("result") or {})
-    err = payload.get("error") or {}
-    return {
-        "kernel": str(kernel),
-        "ok": False,
-        "error": {"type": str(err.get("type")), "message": str(err.get("message"))},
-        "reason_code": str(err.get("reason_code") or "runtime_fail"),
-    }
-
-
-def _cuda_worker(
+def _cuda_compile_worker(
     queue: mp.Queue,
     kernel: str,
     frontend: str,
@@ -334,13 +390,9 @@ def _cuda_worker(
     artifact_dir: str | None,
     codegen_mode: str,
 ) -> None:
-    mode = str(codegen_mode).strip().lower()
-    if mode in {"py", "cpp"}:
-        os.environ["INTENTIR_CUDA_CODEGEN"] = mode
-    else:
-        os.environ.pop("INTENTIR_CUDA_CODEGEN", None)
+    _set_codegen_mode_env(codegen_mode)
     try:
-        res = run_one(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
+        res = _run_compile_stage(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
         queue.put({"ok": True, "result": res})
     except Exception as ex:  # noqa: BLE001
         queue.put(
@@ -355,56 +407,177 @@ def _cuda_worker(
         )
 
 
-def _refine_timeout_reason(
+def _cuda_launch_worker(
+    queue: mp.Queue,
+    kernel: str,
+    frontend: str,
+    triton_provider: str,
+    artifact_dir: str | None,
+    codegen_mode: str,
+) -> None:
+    _set_codegen_mode_env(codegen_mode)
+    try:
+        res = _run_launch_stage(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
+        queue.put({"ok": True, "result": res})
+    except Exception as ex:  # noqa: BLE001
+        queue.put(
+            {
+                "ok": False,
+                "error": {
+                    "type": type(ex).__name__,
+                    "message": str(ex),
+                    "reason_code": _reason_code_for_exception(ex),
+                },
+            }
+        )
+
+
+def _run_worker_with_timeout(
+    worker: Any,
     *,
     kernel: str,
     frontend: str,
     triton_provider: str,
     artifact_dir: str | None,
+    codegen_mode: str,
     timeout_sec: int,
-) -> dict[str, Any] | None:
-    """
-    Best-effort second pass for timeout cases.
+) -> dict[str, Any]:
+    ctx = mp.get_context("spawn")
+    q: mp.Queue = ctx.Queue()
+    proc = ctx.Process(
+        target=worker,
+        args=(q, str(kernel), str(frontend), str(triton_provider), artifact_dir, str(codegen_mode)),
+    )
+    proc.start()
+    timeout = None if int(timeout_sec) <= 0 else float(timeout_sec)
+    proc.join(timeout=timeout)
+    if proc.is_alive():
+        proc.terminate()
+        proc.join(timeout=2.0)
+        return {"ok": False, "timed_out": True}
+    try:
+        payload = q.get_nowait()
+    except Empty:
+        payload = None
+    if not isinstance(payload, dict):
+        return {
+            "ok": False,
+            "timed_out": False,
+            "error": {
+                "type": "RuntimeError",
+                "message": "no result returned from worker process",
+                "reason_code": "runtime_fail",
+            },
+        }
+    payload["timed_out"] = False
+    return payload
 
-    The default (C++ codegen) path can hang for unsupported ops in some envs.
-    Retry once with Python codegen to produce an actionable reason code.
-    """
-    probe = _run_one_with_timeout(
+
+def _run_one_with_stage_timeouts(
+    kernel: str,
+    *,
+    frontend: str,
+    triton_provider: str,
+    artifact_dir: str | None,
+    compile_timeout_sec: int,
+    launch_timeout_sec: int,
+    codegen_mode: str,
+) -> dict[str, Any]:
+    compile_res = _run_worker_with_timeout(
+        _cuda_compile_worker,
         kernel=kernel,
         frontend=frontend,
         triton_provider=triton_provider,
         artifact_dir=artifact_dir,
-        timeout_sec=max(1, min(int(timeout_sec), 30)),
+        codegen_mode=codegen_mode,
+        timeout_sec=int(compile_timeout_sec),
+    )
+    if bool(compile_res.get("timed_out")):
+        return {
+            "kernel": str(kernel),
+            "ok": False,
+            "reason_code": "compile_timeout",
+            "error": {"type": "TimeoutError", "message": f"compile stage exceeded timeout_sec={int(compile_timeout_sec)}"},
+        }
+    if not bool(compile_res.get("ok")):
+        err = compile_res.get("error") if isinstance(compile_res.get("error"), dict) else {}
+        return {
+            "kernel": str(kernel),
+            "ok": False,
+            "reason_code": str(err.get("reason_code") or "runtime_fail"),
+            "error": {"type": str(err.get("type") or "RuntimeError"), "message": str(err.get("message") or "compile stage failed")},
+        }
+    compile_payload = dict(compile_res.get("result") or {})
+
+    launch_res = _run_worker_with_timeout(
+        _cuda_launch_worker,
+        kernel=kernel,
+        frontend=frontend,
+        triton_provider=triton_provider,
+        artifact_dir=artifact_dir,
+        codegen_mode=codegen_mode,
+        timeout_sec=int(launch_timeout_sec),
+    )
+    if bool(launch_res.get("timed_out")):
+        return {
+            "kernel": str(kernel),
+            "ok": False,
+            "reason_code": "launch_timeout",
+            "error": {"type": "TimeoutError", "message": f"launch stage exceeded timeout_sec={int(launch_timeout_sec)}"},
+            "lower_ms": float(compile_payload.get("lower_ms", 0.0)),
+            "compile_ms": float(compile_payload.get("compile_ms", 0.0)),
+            "launch_ms": 0.0,
+            "total_ms": float(compile_payload.get("total_ms", 0.0)),
+        }
+    if not bool(launch_res.get("ok")):
+        err = launch_res.get("error") if isinstance(launch_res.get("error"), dict) else {}
+        return {
+            "kernel": str(kernel),
+            "ok": False,
+            "reason_code": str(err.get("reason_code") or "runtime_fail"),
+            "error": {"type": str(err.get("type") or "RuntimeError"), "message": str(err.get("message") or "launch stage failed")},
+            "lower_ms": float(compile_payload.get("lower_ms", 0.0)),
+            "compile_ms": float(compile_payload.get("compile_ms", 0.0)),
+            "launch_ms": 0.0,
+            "total_ms": float(compile_payload.get("total_ms", 0.0)),
+        }
+
+    launch_payload = dict(launch_res.get("result") or {})
+    launch_ms = float(launch_payload.get("launch_ms", 0.0))
+    lower_ms = float(compile_payload.get("lower_ms", launch_payload.get("lower_ms", 0.0)))
+    compile_ms = float(compile_payload.get("compile_ms", launch_payload.get("compile_ms", 0.0)))
+    launch_payload["lower_ms"] = lower_ms
+    launch_payload["compile_ms"] = compile_ms
+    launch_payload["launch_ms"] = launch_ms
+    launch_payload["total_ms"] = float(lower_ms + compile_ms + launch_ms)
+    return launch_payload
+
+
+def _probe_timeout_runtime_detail(
+    *,
+    kernel: str,
+    frontend: str,
+    triton_provider: str,
+    artifact_dir: str | None,
+    compile_timeout_sec: int,
+    launch_timeout_sec: int,
+) -> dict[str, Any]:
+    probe = _run_one_with_stage_timeouts(
+        kernel=kernel,
+        frontend=frontend,
+        triton_provider=triton_provider,
+        artifact_dir=artifact_dir,
+        compile_timeout_sec=max(1, min(int(compile_timeout_sec), 30)),
+        launch_timeout_sec=max(1, min(int(launch_timeout_sec), 30)),
         codegen_mode="py",
     )
-    if bool(probe.get("ok")):
-        return {
-            "reason_code": "runtime_timeout",
-            "error": {
-                "type": "TimeoutError",
-                "message": "cpp codegen path timed out; py codegen path passed",
-            },
-            "refined_by": "py_codegen_probe",
-            "refined_result": {
-                "ok": True,
-            },
-        }
-    probe_reason = str(probe.get("reason_code") or "")
-    if probe_reason == "runtime_timeout":
-        return None
-    probe_error = probe.get("error") if isinstance(probe.get("error"), dict) else {}
-    return {
-        "reason_code": probe_reason or "runtime_timeout",
-        "error": {
-            "type": str(probe_error.get("type") or "RuntimeError"),
-            "message": str(probe_error.get("message") or "timeout refined by py_codegen_probe"),
-        },
-        "refined_by": "py_codegen_probe",
-        "refined_result": {
-            "ok": False,
-            "reason_code": probe_reason or "runtime_fail",
-        },
+    detail = {
+        "ok": bool(probe.get("ok")),
+        "reason_code": str(probe.get("reason_code") or "runtime_fail"),
     }
+    if isinstance(probe.get("error"), dict):
+        detail["error"] = dict(probe.get("error") or {})
+    return detail
 
 
 def _cuda_env_ready() -> tuple[bool, str]:
@@ -446,7 +619,19 @@ def main() -> None:
         "--timeout-sec",
         type=int,
         default=120,
-        help="Per-kernel timeout in seconds (<=0 disables timeout wrapper).",
+        help="Compatibility default timeout in seconds used when stage-specific timeouts are not set.",
+    )
+    ap.add_argument(
+        "--compile-timeout-sec",
+        type=int,
+        default=None,
+        help="Compile-stage timeout in seconds (defaults to --timeout-sec).",
+    )
+    ap.add_argument(
+        "--launch-timeout-sec",
+        type=int,
+        default=None,
+        help="Launch-stage timeout in seconds (defaults to --timeout-sec).",
     )
     ap.add_argument(
         "--codegen-mode",
@@ -458,13 +643,16 @@ def main() -> None:
         "--refine-timeout-reason",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="When timeout happens under auto mode, retry once with py codegen to classify reason.",
+        help="When timeout happens under auto mode, run a short py-codegen probe and attach runtime_detail.",
     )
     ap.add_argument("--artifact-dir", default=None, help="Override artifact report directory.")
     ap.add_argument("--allow-skip", action="store_true", help="exit 0 with ok=false when CUDA environment is unavailable")
     ap.add_argument("--json", action="store_true", help="print machine-readable summary JSON")
     ap.add_argument("--out", default=None, help="write summary JSON to this path")
     args = ap.parse_args()
+
+    compile_timeout_sec = int(args.compile_timeout_sec) if args.compile_timeout_sec is not None else int(args.timeout_sec)
+    launch_timeout_sec = int(args.launch_timeout_sec) if args.launch_timeout_sec is not None else int(args.timeout_sec)
 
     if args.kernel:
         kernels = list(args.kernel)
@@ -502,12 +690,13 @@ def main() -> None:
     ok_all = True
     for k in kernels:
         try:
-            r = _run_one_with_timeout(
+            r = _run_one_with_stage_timeouts(
                 str(k),
                 frontend=str(args.frontend),
                 triton_provider=str(args.triton_provider),
                 artifact_dir=(str(args.artifact_dir) if args.artifact_dir else None),
-                timeout_sec=int(args.timeout_sec),
+                compile_timeout_sec=int(compile_timeout_sec),
+                launch_timeout_sec=int(launch_timeout_sec),
                 codegen_mode=str(args.codegen_mode),
             )
         except (CudaLoweringError, CudaRuntimeError, FileNotFoundError, RuntimeError, ValueError) as e:
@@ -517,26 +706,43 @@ def main() -> None:
                 "reason_code": _reason_code_for_exception(e),
                 "error": {"type": type(e).__name__, "message": str(e)},
             }
+        if str(r.get("reason_code") or "") not in {"ok", "compile_timeout", "launch_timeout"}:
+            if "lower_ms" not in r:
+                r["lower_ms"] = 0.0
+            if "compile_ms" not in r:
+                r["compile_ms"] = 0.0
+            if "launch_ms" not in r:
+                r["launch_ms"] = 0.0
+            if "total_ms" not in r:
+                r["total_ms"] = float(r["lower_ms"]) + float(r["compile_ms"]) + float(r["launch_ms"])
+
         if (
             (not bool(r.get("ok")))
-            and str(r.get("reason_code") or "") == "runtime_timeout"
+            and str(r.get("reason_code") or "") in {"compile_timeout", "launch_timeout"}
             and str(args.codegen_mode) == "auto"
             and bool(args.refine_timeout_reason)
         ):
-            refined = _refine_timeout_reason(
+            detail = _probe_timeout_runtime_detail(
                 kernel=str(k),
                 frontend=str(args.frontend),
                 triton_provider=str(args.triton_provider),
                 artifact_dir=(str(args.artifact_dir) if args.artifact_dir else None),
-                timeout_sec=int(args.timeout_sec),
+                compile_timeout_sec=int(compile_timeout_sec),
+                launch_timeout_sec=int(launch_timeout_sec),
             )
-            if refined is not None:
-                r["reason_code"] = str(refined.get("reason_code") or r.get("reason_code"))
-                r["error"] = dict(refined.get("error") or r.get("error") or {})
-                r["refined_by"] = str(refined.get("refined_by") or "py_codegen_probe")
-                r["refined_result"] = dict(refined.get("refined_result") or {})
+            runtime_detail = dict(r.get("runtime_detail") or {})
+            runtime_detail["timeout_probe"] = detail
+            r["runtime_detail"] = runtime_detail
         if "reason_code" not in r:
             r["reason_code"] = ("ok" if bool(r.get("ok")) else "runtime_fail")
+        if "lower_ms" not in r:
+            r["lower_ms"] = 0.0
+        if "compile_ms" not in r:
+            r["compile_ms"] = 0.0
+        if "launch_ms" not in r:
+            r["launch_ms"] = 0.0
+        if "total_ms" not in r:
+            r["total_ms"] = float(r["lower_ms"]) + float(r["compile_ms"]) + float(r["launch_ms"])
         results.append(r)
         ok_all = ok_all and bool(r.get("ok"))
         if not args.json:
@@ -551,6 +757,8 @@ def main() -> None:
         "backend_target": str(args.backend_target),
         "artifact_dir": (str(args.artifact_dir) if args.artifact_dir else None),
         "timeout_sec": int(args.timeout_sec),
+        "compile_timeout_sec": int(compile_timeout_sec),
+        "launch_timeout_sec": int(launch_timeout_sec),
         "kernels": list(kernels),
         "results": results,
         "ok": bool(ok_all),

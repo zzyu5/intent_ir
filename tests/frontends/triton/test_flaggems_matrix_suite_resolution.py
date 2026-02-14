@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -52,3 +53,23 @@ def test_unknown_kernel_rejected_with_clear_error() -> None:
             backend_target="rvv",
         )
     assert "unknown kernel(s)" in str(exc.value)
+
+
+def test_load_active_semantic_ops_reads_items(tmp_path: Path) -> None:
+    mod = _load_matrix_module()
+    active = tmp_path / "active_batch.json"
+    active.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_active_batch_v1",
+                "items": [
+                    {"semantic_op": "diag"},
+                    {"semantic_op": "angle"},
+                    {"semantic_op": "diag"},
+                    {"semantic_op": ""},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert mod._load_active_semantic_ops(active) == ["diag", "angle"]

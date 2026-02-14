@@ -29,6 +29,26 @@ def _run(cmd: list[str], *, cwd: Path) -> tuple[int, str, str]:
     return int(p.returncode), str(p.stdout or ""), str(p.stderr or "")
 
 
+def _load_active_semantic_ops(active_batch_path: Path) -> list[str]:
+    if not active_batch_path.is_file():
+        return []
+    try:
+        payload = json.loads(active_batch_path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    items = payload.get("items")
+    if not isinstance(items, list):
+        return []
+    out: list[str] = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        op = str(it.get("semantic_op") or "").strip()
+        if op and op not in out:
+            out.append(op)
+    return out
+
+
 def _suite_kernel_names(*, suite: str, flaggems_opset: str, backend_target: str) -> list[str]:
     if str(suite) == "smoke":
         from pipeline.triton.providers.flaggems.specs import default_flaggems_kernel_specs  # noqa: PLC0415
@@ -130,6 +150,7 @@ def main() -> None:
     )
     ap.add_argument("--seed-cache-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_seed_cache"))
     ap.add_argument("--pipeline-out-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_triton_full_pipeline"))
+    ap.add_argument("--active-batch", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch.json"))
     ap.add_argument("--flaggems-opset", choices=["deterministic_forward"], default="deterministic_forward")
     ap.add_argument("--backend-target", choices=["rvv", "cuda_h100", "cuda_5090d"], default="rvv")
     ap.add_argument("--skip-pipeline", action="store_true")
@@ -196,6 +217,7 @@ def main() -> None:
             flaggems_opset=str(args.flaggems_opset),
             backend_target=str(args.backend_target),
         )
+    scoped_semantic_ops = _load_active_semantic_ops(Path(args.active_batch))
 
     def _record(stage: str, rc: int, stdout: str, stderr: str, extra: dict | None = None) -> None:
         row = {
@@ -341,6 +363,9 @@ def main() -> None:
         cmd += ["--cuda-json", str(cuda_json)]
     for k in scoped_kernels:
         cmd += ["--scope-kernels", str(k)]
+    for sop in scoped_semantic_ops:
+        cmd += ["--scope-semantic-ops", str(sop)]
+    cmd += ["--scope-mode", "active_only"]
     if bool(args.write_registry):
         cmd.append("--write-registry")
     rc, out, err = _run(cmd, cwd=ROOT)

@@ -73,6 +73,8 @@ def test_converge_status_outputs_scoped_and_global_counts(tmp_path: Path) -> Non
             str(cuda_json),
             "--scope-kernels",
             "angle2d",
+            "--scope-mode",
+            "kernel_alias",
             "--out",
             str(out),
         ],
@@ -85,10 +87,15 @@ def test_converge_status_outputs_scoped_and_global_counts(tmp_path: Path) -> Non
 
     assert payload["counts_global"]["dual_pass"] == 2
     assert payload["counts_scoped"]["dual_pass"] == 1
+    assert payload["counts_scoped_kernel_alias"]["dual_pass"] == 1
+    assert payload["counts_scoped_active"] == {}
     assert payload["scope_enabled"] is True
+    assert payload["scope_mode"] == "kernel_alias"
     assert payload["scope_kernels"] == ["angle2d"]
     assert payload["scope_semantic_ops"] == []
     assert payload["scoped_entries_count"] == 1
+    assert payload["scoped_entries_active_count"] == 0
+    assert payload["scoped_entries_kernel_alias_count"] == 1
     assert payload["global_entries_count"] == 2
     scoped_ops = [str(e.get("semantic_op")) for e in payload["scoped_entries"]]
     assert scoped_ops == ["angle"]
@@ -132,8 +139,60 @@ def test_converge_status_scope_by_semantic_op(tmp_path: Path) -> None:
     assert p.returncode == 0, p.stderr
     payload = json.loads(out.read_text(encoding="utf-8"))
     assert payload["counts_scoped"]["dual_pass"] == 1
+    assert payload["counts_scoped_active"]["dual_pass"] == 1
+    assert payload["counts_scoped_kernel_alias"]["dual_pass"] == 1
     scoped_ops = [str(e.get("semantic_op")) for e in payload["scoped_entries"]]
     assert scoped_ops == ["diag"]
+
+
+def test_converge_status_scope_mode_both_emits_active_and_kernel_alias(tmp_path: Path) -> None:
+    registry = tmp_path / "registry.json"
+    provider_dir = tmp_path / "provider"
+    rvv_json = tmp_path / "rvv.json"
+    cuda_json = tmp_path / "cuda.json"
+    out = tmp_path / "status_converged.json"
+    provider_dir.mkdir(parents=True, exist_ok=True)
+
+    _write_minimal_registry(registry)
+    _write_runtime_summary(rvv_json)
+    _write_runtime_summary(cuda_json)
+    (provider_dir / "angle2d.json").write_text(json.dumps({"diff": {"ok": True}}), encoding="utf-8")
+    (provider_dir / "diag2d.json").write_text(json.dumps({"diff": {"ok": True}}), encoding="utf-8")
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/converge_status.py",
+            "--registry",
+            str(registry),
+            "--provider-report-dir",
+            str(provider_dir),
+            "--rvv-json",
+            str(rvv_json),
+            "--cuda-json",
+            str(cuda_json),
+            "--scope-mode",
+            "both",
+            "--scope-kernels",
+            "angle2d",
+            "--scope-semantic-ops",
+            "diag",
+            "--out",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["scope_mode"] == "both"
+    # Legacy scoped fields stay aligned to active_only semantics.
+    assert payload["counts_scoped"]["dual_pass"] == 1
+    assert payload["counts_scoped_active"]["dual_pass"] == 1
+    assert payload["counts_scoped_kernel_alias"]["dual_pass"] == 2
+    assert [str(e.get("semantic_op")) for e in payload["scoped_entries"]] == ["diag"]
+    assert sorted(str(e.get("semantic_op")) for e in payload["scoped_entries_kernel_alias"]) == ["angle", "diag"]
 
 
 def test_converge_status_propagates_lowering_missing_op_for_runtime_fail(tmp_path: Path) -> None:
@@ -176,6 +235,8 @@ def test_converge_status_propagates_lowering_missing_op_for_runtime_fail(tmp_pat
             str(cuda_json),
             "--scope-kernels",
             "angle2d",
+            "--scope-mode",
+            "kernel_alias",
             "--out",
             str(out),
         ],

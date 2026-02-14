@@ -186,6 +186,17 @@ def main() -> None:
         default=[],
         help="Semantic op name(s) to scope convergence on. Accepts repeated args or comma-separated values.",
     )
+    ap.add_argument(
+        "--scope-mode",
+        choices=["active_only", "kernel_alias", "both"],
+        default="active_only",
+        help=(
+            "How scoped entries are selected: "
+            "active_only=only --scope-semantic-ops, "
+            "kernel_alias=kernel OR semantic-op union, "
+            "both=emit both sets while legacy scoped fields follow active_only."
+        ),
+    )
     ap.add_argument("--out", type=Path, default=(ROOT / "artifacts" / "flaggems_coverage" / "status_converged.json"))
     ap.add_argument("--write-registry", action="store_true", help="overwrite registry with converged statuses")
     args = ap.parse_args()
@@ -199,6 +210,7 @@ def main() -> None:
     cuda_summary = _load_json(args.cuda_json)
     scope_kernels = _parse_scope_values(args.scope_kernels)
     scope_semantic_ops = _parse_scope_values(args.scope_semantic_ops)
+    scope_mode = str(args.scope_mode)
     scope_kernels_set = set(scope_kernels)
     scope_semantic_ops_set = set(scope_semantic_ops)
     scope_enabled = bool(scope_kernels_set or scope_semantic_ops_set)
@@ -208,10 +220,13 @@ def main() -> None:
     converged_entries: list[dict[str, Any]] = []
     counts_global: dict[str, int] = {}
     counts_scoped: dict[str, int] = {}
+    counts_scoped_active: dict[str, int] = {}
+    counts_scoped_kernel_alias: dict[str, int] = {}
     for e in entries:
         out = dict(e)
         spec = out.get("e2e_spec")
         kernel = str(spec) if isinstance(spec, str) and spec else None
+        semantic_op = str(out.get("semantic_op") or "")
 
         provider_state = {"exists": False, "diff_ok": False}
         if kernel is not None:
@@ -266,22 +281,35 @@ def main() -> None:
             "rvv": rvv_state,
             "cuda": cuda_state,
         }
-        in_scope = False
         if not scope_enabled:
-            in_scope = True
+            in_scope_active = True
+            in_scope_kernel_alias = True
         else:
-            semantic_op = str(out.get("semantic_op") or "")
-            if kernel is not None and kernel in scope_kernels_set:
-                in_scope = True
-            if semantic_op and semantic_op in scope_semantic_ops_set:
-                in_scope = True
+            in_scope_active = bool(semantic_op and semantic_op in scope_semantic_ops_set)
+            in_scope_kernel_alias = bool(
+                (kernel is not None and kernel in scope_kernels_set)
+                or (semantic_op and semantic_op in scope_semantic_ops_set)
+            )
+        if scope_mode == "kernel_alias":
+            in_scope = in_scope_kernel_alias
+        else:
+            # active_only and both share active-only legacy scoped fields.
+            in_scope = in_scope_active
         out["in_scope"] = bool(in_scope)
+        out["in_scope_active"] = bool(in_scope_active)
+        out["in_scope_kernel_alias"] = bool(in_scope_kernel_alias)
         converged_entries.append(out)
         counts_global[status] = counts_global.get(status, 0) + 1
         if in_scope:
             counts_scoped[status] = counts_scoped.get(status, 0) + 1
+        if in_scope_active:
+            counts_scoped_active[status] = counts_scoped_active.get(status, 0) + 1
+        if in_scope_kernel_alias:
+            counts_scoped_kernel_alias[status] = counts_scoped_kernel_alias.get(status, 0) + 1
 
     scoped_entries = [e for e in converged_entries if bool(e.get("in_scope"))]
+    scoped_entries_active = [e for e in converged_entries if bool(e.get("in_scope_active"))]
+    scoped_entries_kernel_alias = [e for e in converged_entries if bool(e.get("in_scope_kernel_alias"))]
 
     result = {
         "schema_version": "flaggems_registry_converged_v2",
@@ -293,13 +321,20 @@ def main() -> None:
         "counts_by_status": dict(sorted(counts_global.items(), key=lambda kv: kv[0])),
         "counts_global": dict(sorted(counts_global.items(), key=lambda kv: kv[0])),
         "counts_scoped": dict(sorted(counts_scoped.items(), key=lambda kv: kv[0])),
+        "counts_scoped_active": dict(sorted(counts_scoped_active.items(), key=lambda kv: kv[0])),
+        "counts_scoped_kernel_alias": dict(sorted(counts_scoped_kernel_alias.items(), key=lambda kv: kv[0])),
         "global_entries_count": len(converged_entries),
         "scoped_entries_count": len(scoped_entries),
+        "scoped_entries_active_count": len(scoped_entries_active),
+        "scoped_entries_kernel_alias_count": len(scoped_entries_kernel_alias),
         "scope_enabled": bool(scope_enabled),
+        "scope_mode": scope_mode,
         "scope_kernels": list(scope_kernels),
         "scope_semantic_ops": list(scope_semantic_ops),
         "entries": converged_entries,
         "scoped_entries": scoped_entries,
+        "scoped_entries_active": scoped_entries_active,
+        "scoped_entries_kernel_alias": scoped_entries_kernel_alias,
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")

@@ -37,6 +37,12 @@ def main() -> None:
     ap.add_argument("--status-converged", type=Path, required=True)
     ap.add_argument("--progress-log", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "progress_log.jsonl"))
     ap.add_argument("--handoff", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "handoff.md"))
+    ap.add_argument(
+        "--require-active-dual-pass",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require every active semantic op to be dual_pass (default: true).",
+    )
     ap.add_argument("--out", type=Path, default=(ROOT / "artifacts" / "flaggems_matrix" / "batch_gate.json"))
     args = ap.parse_args()
 
@@ -53,10 +59,15 @@ def main() -> None:
 
     entries = [e for e in (status_converged.get("entries") or []) if isinstance(e, dict)]
     scope_enabled = bool(status_converged.get("scope_enabled"))
+    scoped_entries_active = [e for e in (status_converged.get("scoped_entries_active") or []) if isinstance(e, dict)]
     scoped_entries = [e for e in (status_converged.get("scoped_entries") or []) if isinstance(e, dict)]
-    if not scoped_entries and scope_enabled:
+    if scope_enabled and scoped_entries_active:
+        gate_entries = scoped_entries_active
+    elif not scoped_entries and scope_enabled:
         scoped_entries = [e for e in entries if bool(e.get("in_scope"))]
-    gate_entries = scoped_entries if scope_enabled else entries
+        gate_entries = scoped_entries
+    else:
+        gate_entries = scoped_entries if scope_enabled else entries
 
     reason_complete = bool(gate_entries) and all(
         isinstance(e.get("reason_code"), str) and str(e.get("reason_code")).strip() for e in gate_entries
@@ -91,6 +102,15 @@ def main() -> None:
             "active batch no longer blocked_ir" if not left_blocked_ir else f"still blocked_ir: {left_blocked_ir}",
         )
     )
+    if bool(args.require_active_dual_pass):
+        non_dual = [op for op in active_ops if str((status_map.get(op) or {}).get("status")) != "dual_pass"]
+        checks.append(
+            _check(
+                "active_batch.all_dual_pass",
+                not non_dual,
+                "all active ops are dual_pass" if not non_dual else f"non dual_pass active ops: {non_dual}",
+            )
+        )
 
     handoff_text = args.handoff.read_text(encoding="utf-8") if args.handoff.is_file() else ""
     has_next_focus = ("Next Focus:" in handoff_text)
