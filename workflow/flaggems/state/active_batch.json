@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_active_batch_v1",
-  "generated_at": "2026-02-14T00:19:28+00:00",
+  "generated_at": "2026-02-14T00:46:24+00:00",
   "branch": "flaggems",
   "batch_size": 10,
   "selection_policy": [
@@ -9,83 +9,6 @@
     "backend_missing_ops"
   ],
   "items": [
-    {
-      "id": "flaggems::ScaleDotProductAttention",
-      "semantic_op": "ScaleDotProductAttention",
-      "family": "attention_sequence",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
-    },
-    {
-      "id": "flaggems::flash_attention_forward",
-      "semantic_op": "flash_attention_forward",
-      "family": "attention_sequence",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
-    },
-    {
-      "id": "flaggems::per_token_group_quant_fp8",
-      "semantic_op": "per_token_group_quant_fp8",
-      "family": "elementwise_broadcast",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
-    },
-    {
-      "id": "flaggems::scaled_dot_product_attention",
-      "semantic_op": "scaled_dot_product_attention",
-      "family": "attention_sequence",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
-    },
-    {
-      "id": "flaggems::scaled_dot_product_attention_forward",
-      "semantic_op": "scaled_dot_product_attention_forward",
-      "family": "attention_sequence",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
-    },
-    {
-      "id": "flaggems::unique2",
-      "semantic_op": "unique2",
-      "family": "elementwise_broadcast",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
-    },
-    {
-      "id": "flaggems::weight_norm_interface",
-      "semantic_op": "weight_norm_interface",
-      "family": "norm_activation",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
-    },
     {
       "id": "flaggems::argmax",
       "semantic_op": "argmax",
@@ -124,12 +47,110 @@
       "intent_ops": [
         "pad"
       ]
+    },
+    {
+      "id": "flaggems::conv2d",
+      "semantic_op": "conv2d",
+      "family": "conv_pool_interp",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "conv2d"
+      ]
+    },
+    {
+      "id": "flaggems::cos",
+      "semantic_op": "cos",
+      "family": "elementwise_broadcast",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "cos"
+      ]
+    },
+    {
+      "id": "flaggems::cumsum",
+      "semantic_op": "cumsum",
+      "family": "reduction",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "cumsum"
+      ]
+    },
+    {
+      "id": "flaggems::erf",
+      "semantic_op": "erf",
+      "family": "elementwise_broadcast",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "erf"
+      ]
+    },
+    {
+      "id": "flaggems::flash_attn_varlen_func",
+      "semantic_op": "flash_attn_varlen_func",
+      "family": "reduction",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "matmul",
+        "softmax",
+        "matmul"
+      ]
+    },
+    {
+      "id": "flaggems::gelu",
+      "semantic_op": "gelu",
+      "family": "norm_activation",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "const",
+        "mul",
+        "erf",
+        "add",
+        "mul",
+        "mul"
+      ]
+    },
+    {
+      "id": "flaggems::hstack",
+      "semantic_op": "hstack",
+      "family": "elementwise_broadcast",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "concat"
+      ]
     }
   ],
   "context": {
     "feature_list_path": "workflow/flaggems/state/feature_list.json",
     "progress_log_path": "workflow/flaggems/state/progress_log.jsonl",
-    "git_log": "874e0a9 workflow: record scatter-quantile-polar wave and refresh queue\n3583f1b intentir: map scatter family plus quantile and polar into flaggems flow\n9a8c184 workflow: refresh active batch context after trace-triu-upsample wave\nebc9011 workflow: record trace-triu-upsample batch and refresh queue\n6b1f134 intentir: expand flaggems mapping with conv and nearest/trace/triu ops\ne778320 workflow: record one-hot/nll-forward/maxpool batch and replan queue\n4e5cf1b intentir: add one_hot/nll_loss_forward/max_pool2d_with_indices wave\n3f75bed workflow: finalize handoff for masked-select/mse/nan-to-num/nll wave\n32bbc88 workflow: record masked-select/mse/nan-to-num/nll batch and refresh queue\n7169c84 intentir: add masked_select/mse_loss/nan_to_num/nll_loss2d_forward wave\n69610df workflow: finalize handoff for isin-kron-linspace-logspace-masked_scatter wave\nc8e7240 workflow: record isin-kron-linspace-logspace-masked_scatter batch and replan queue\n643e46e flaggems: add isin/kron/linspace/logspace/masked_scatter wave and scoped matrix convergence\ncc3c7dc workflow: record glu-cum-index batch and replan blocked-ir queue\nd1d2360 intentir: add glu/cum/index primitives and flaggems spec wave\n430aee5 workflow: record flip-embedding batch progress and refresh queue\n79f8253 flaggems: map flip/embedding and preserve canonical override in llm repair\n7a68432 workflow: record cuda-iota batch and refresh blocked-ir queue\n6de906a cuda: add iota lowering support for eye-style intents\n8c9511f workflow: record celu-eye batch results and replan blocked-ir queue",
+    "git_log": "381e75b workflow: refresh active batch after scatter-quantile-polar wave\n874e0a9 workflow: record scatter-quantile-polar wave and refresh queue\n3583f1b intentir: map scatter family plus quantile and polar into flaggems flow\n9a8c184 workflow: refresh active batch context after trace-triu-upsample wave\nebc9011 workflow: record trace-triu-upsample batch and refresh queue\n6b1f134 intentir: expand flaggems mapping with conv and nearest/trace/triu ops\ne778320 workflow: record one-hot/nll-forward/maxpool batch and replan queue\n4e5cf1b intentir: add one_hot/nll_loss_forward/max_pool2d_with_indices wave\n3f75bed workflow: finalize handoff for masked-select/mse/nan-to-num/nll wave\n32bbc88 workflow: record masked-select/mse/nan-to-num/nll batch and refresh queue\n7169c84 intentir: add masked_select/mse_loss/nan_to_num/nll_loss2d_forward wave\n69610df workflow: finalize handoff for isin-kron-linspace-logspace-masked_scatter wave\nc8e7240 workflow: record isin-kron-linspace-logspace-masked_scatter batch and replan queue\n643e46e flaggems: add isin/kron/linspace/logspace/masked_scatter wave and scoped matrix convergence\ncc3c7dc workflow: record glu-cum-index batch and replan blocked-ir queue\nd1d2360 intentir: add glu/cum/index primitives and flaggems spec wave\n430aee5 workflow: record flip-embedding batch progress and refresh queue\n79f8253 flaggems: map flip/embedding and preserve canonical override in llm repair\n7a68432 workflow: record cuda-iota batch and refresh blocked-ir queue\n6de906a cuda: add iota lowering support for eye-style intents",
     "progress_tail": [
       "{\"ts\": \"2026-02-13T19:37:14+00:00\", \"commit\": \"7169c84\", \"summary\": \"Mapped masked_select/mse_loss/nan_to_num/nll_loss2d_forward into IntentIR and completed scoped RVV/CUDA classification.\", \"batch_ops\": [\"masked_select\", \"mse_loss\", \"nan_to_num\", \"nll_loss2d_forward\"], \"active_batch_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_masked_select_mse_nan_nll_v2/active_batch_masked_select_mse_nan_nll.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_masked_select_mse_nan_nll_v2/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_masked_select_mse_nan_nll_v2/status_converged.json\", \"next_focus\": \"Implement backend lowering for masked_select/mse_loss/nan_to_num/nll_loss2d_forward to move this batch from blocked_backend to dual_pass; continue remaining blocked_ir queue for attention/conv/pool.\", \"run_ok\": false, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260213/batch_masked_select_mse_nan_nll_v2\", \"counts_by_status\": {\"blocked_backend\": 174, \"blocked_ir\": 22}}",
       "{\"ts\": \"2026-02-13T19:37:47+00:00\", \"commit\": \"32bbc88\", \"summary\": \"Session finalized for masked_select/mse_loss/nan_to_num/nll_loss2d_forward wave with scoped backend evidence.\", \"batch_ops\": [\"masked_select\", \"mse_loss\", \"nan_to_num\", \"nll_loss2d_forward\"], \"active_batch_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_masked_select_mse_nan_nll_v2/active_batch_masked_select_mse_nan_nll.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_masked_select_mse_nan_nll_v2/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_masked_select_mse_nan_nll_v2/status_converged.json\", \"next_focus\": \"1) Add RVV/CUDA lowering for masked_select/mse_loss/nan_to_num/nll_loss2d_forward. 2) Continue blocked_ir active batch (ScaleDotProductAttention, conv1d/3d/depthwise2d, flash_attention_forward, max_pool2d_with_indices, nll_loss_forward, one_hot, per_token_group_quant_fp8, polar).\", \"run_ok\": false, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260213/batch_masked_select_mse_nan_nll_v2\", \"counts_by_status\": {\"blocked_backend\": 174, \"blocked_ir\": 22}}",

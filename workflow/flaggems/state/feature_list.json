@@ -1,13 +1,12 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-14T00:18:26+00:00",
+  "generated_at": "2026-02-14T00:46:18+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
       "dual_pass": 106,
-      "blocked_backend": 83,
-      "blocked_ir": 7
+      "blocked_backend": 90
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -1303,12 +1302,14 @@
       "id": "flaggems::per_token_group_quant_fp8",
       "semantic_op": "per_token_group_quant_fp8",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
       "e2e_spec": null,
-      "intent_ops": []
+      "intent_ops": [
+        "per_token_group_quant_fp8"
+      ]
     },
     {
       "id": "flaggems::polar",
@@ -1682,12 +1683,14 @@
       "id": "flaggems::unique2",
       "semantic_op": "unique2",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "unique2d",
+      "intent_ops": [
+        "unique"
+      ]
     },
     {
       "id": "flaggems::vstack",
@@ -2243,12 +2246,14 @@
       "id": "flaggems::weight_norm_interface",
       "semantic_op": "weight_norm_interface",
       "family": "norm_activation",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "weight_norm2d",
+      "intent_ops": [
+        "weight_norm_interface"
+      ]
     },
     {
       "id": "flaggems::flip",
@@ -2661,12 +2666,14 @@
       "id": "flaggems::ScaleDotProductAttention",
       "semantic_op": "ScaleDotProductAttention",
       "family": "attention_sequence",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "scaled_dot_product_attention_bhsd",
+      "intent_ops": [
+        "scaled_dot_product_attention"
+      ]
     },
     {
       "id": "flaggems::embedding",
@@ -2685,34 +2692,40 @@
       "id": "flaggems::flash_attention_forward",
       "semantic_op": "flash_attention_forward",
       "family": "attention_sequence",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "scaled_dot_product_attention_bhsd",
+      "intent_ops": [
+        "scaled_dot_product_attention"
+      ]
     },
     {
       "id": "flaggems::scaled_dot_product_attention",
       "semantic_op": "scaled_dot_product_attention",
       "family": "attention_sequence",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "scaled_dot_product_attention_bhsd",
+      "intent_ops": [
+        "scaled_dot_product_attention"
+      ]
     },
     {
       "id": "flaggems::scaled_dot_product_attention_forward",
       "semantic_op": "scaled_dot_product_attention_forward",
       "family": "attention_sequence",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "scaled_dot_product_attention_bhsd",
+      "intent_ops": [
+        "scaled_dot_product_attention"
+      ]
     }
   ]
 }
