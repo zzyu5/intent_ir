@@ -580,7 +580,8 @@ void emit_cmp(CodeWriter& w, const std::string& cmp_op, const std::string& out, 
   const std::string a_ct = ctype_for_dtype(a_dtype);
   const std::string b_ct = ctype_for_dtype(b_dtype);
   const std::string out_ct = ctype_for_dtype(out_dtype);
-  const bool can_runtime = (r >= 1) && (out_ct == "uint8_t") && (a_ct == b_ct) && (a_ct == "float" || a_ct == "int32_t");
+  const bool can_runtime = (r >= 1) && (out_ct == "uint8_t") && (a_ct == b_ct) && (a_ct == "float" || a_ct == "int32_t") &&
+                           (cmp_op == "lt" || cmp_op == "le" || cmp_op == "gt" || cmp_op == "ge");
   if (can_runtime) {
     std::string op_code;
     if (cmp_op == "lt") op_code = "INTENTIR_CMP_LT";
@@ -627,7 +628,8 @@ void emit_cmp(CodeWriter& w, const std::string& cmp_op, const std::string& out, 
   std::string a_idx = idx_expr(pa);
   std::string b_idx = idx_expr(pb);
   std::string cop;
-  if (cmp_op == "lt") cop = "<";
+  if (cmp_op == "eq") cop = "==";
+  else if (cmp_op == "lt") cop = "<";
   else if (cmp_op == "le") cop = "<=";
   else if (cmp_op == "gt") cop = ">";
   else if (cmp_op == "ge") cop = ">=";
@@ -754,18 +756,32 @@ void emit_bool_bin(CodeWriter& w, const std::string& op, const std::string& out,
   };
   std::string a_idx = idx_expr(pa);
   std::string b_idx = idx_expr(pb);
-  std::string cop = (op == "and") ? "&&" : (op == "or") ? "||" : "";
-  if (cop.empty()) fail("unsupported bool op");
-  w.line(out + "[" + out_idx + "] = ((" + a_var + "[" + a_idx + "] != 0) " + cop + " (" + b_var + "[" + b_idx + "] != 0)) ? 1 : 0;");
+  if (a_ct == "int32_t" && b_ct == "int32_t" && out_ct == "int32_t") {
+    std::string cop = (op == "and") ? "&" : (op == "or") ? "|" : "";
+    if (cop.empty()) fail("unsupported bitwise op");
+    w.line(out + "[" + out_idx + "] = " + a_var + "[" + a_idx + "] " + cop + " " + b_var + "[" + b_idx + "];");
+  } else {
+    std::string cop = (op == "and") ? "&&" : (op == "or") ? "||" : "";
+    if (cop.empty()) fail("unsupported bool op");
+    w.line(out + "[" + out_idx + "] = ((" + a_var + "[" + a_idx + "] != 0) " + cop + " (" + b_var + "[" + b_idx + "] != 0)) ? 1 : 0;");
+  }
   for (int i = 0; i < r; ++i) {
     w.dedent();
     w.line("}");
   }
 }
 
-void emit_bool_not(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
+void emit_bool_not(
+    CodeWriter& w,
+    const std::string& out,
+    const std::string& a,
+    const std::vector<int64_t>& out_shape,
+    const std::string& in_dtype,
+    const std::string& out_dtype) {
   const int r = static_cast<int>(out_shape.size());
   if (r > 4) fail("not supports rank<=4");
+  const std::string in_ct = ctype_for_dtype(in_dtype);
+  const std::string out_ct = ctype_for_dtype(out_dtype);
   std::vector<std::string> idx = {"i0", "i1", "i2", "i3"};
   idx.resize(r);
   for (int i = 0; i < r; ++i) {
@@ -773,7 +789,11 @@ void emit_bool_not(CodeWriter& w, const std::string& out, const std::string& a, 
     w.indent();
   }
   std::string out_idx = flat_idx_expr(idx, out_shape);
-  w.line(out + "[" + out_idx + "] = (" + a + "[" + out_idx + "] == 0) ? 1 : 0;");
+  if (in_ct == "int32_t" && out_ct == "int32_t") {
+    w.line(out + "[" + out_idx + "] = ~" + a + "[" + out_idx + "];");
+  } else {
+    w.line(out + "[" + out_idx + "] = (" + a + "[" + out_idx + "] == 0) ? 1 : 0;");
+  }
   for (int i = 0; i < r; ++i) {
     w.dedent();
     w.line("}");
@@ -813,6 +833,16 @@ void emit_rsqrt(CodeWriter& w, const std::string& out, const std::string& a, con
 void emit_cos(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
   const int64_t n = numel(out_shape);
   w.line("intentir_cos_f32(" + a + ", " + out + ", (size_t)" + std::to_string(n) + ");");
+}
+
+void emit_acos(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
+  const int64_t n = numel(out_shape);
+  w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) " + out + "[i] = acosf(" + a + "[i]);");
+}
+
+void emit_atan(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
+  const int64_t n = numel(out_shape);
+  w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) " + out + "[i] = atanf(" + a + "[i]);");
 }
 
 void emit_erf(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
@@ -1174,6 +1204,54 @@ void emit_reduce_max(CodeWriter& w, const std::string& out, const std::string& a
   std::string in_idx = flat_idx_expr(in_vars, in_shape);
   w.line("float v = " + a + "[" + in_idx + "];");
   w.line("m = fmaxf(m, v);");
+  for (size_t i = 0; i < dims_set.size(); ++i) {
+    w.dedent();
+    w.line("}");
+  }
+  w.line(out + "[" + out_idx + "] = m;");
+  for (int i = 0; i < out_rank; ++i) {
+    w.dedent();
+    w.line("}");
+  }
+}
+
+void emit_reduce_min(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape,
+                     const std::vector<int>& dims, bool keepdims) {
+  const int r = static_cast<int>(in_shape.size());
+  if (r > 4) fail("reduce_min supports rank<=4");
+  std::vector<int> dims_set = dims;
+  std::vector<int64_t> D = in_shape;
+  std::vector<int64_t> OD = out_shape;
+  const int out_rank = static_cast<int>(out_shape.size());
+  if (keepdims) {
+    if (out_rank != r) fail("reduce_min keepdims expects out rank == in rank");
+  } else {
+    if (out_rank != r - (int)dims_set.size()) fail("reduce_min out rank mismatch");
+  }
+
+  std::vector<std::string> out_vars;
+  for (int i = 0; i < out_rank; ++i) out_vars.push_back("o" + std::to_string(i));
+  for (int i = 0; i < out_rank; ++i) {
+    w.line("for (int " + out_vars[i] + " = 0; " + out_vars[i] + " < " + std::to_string(OD[i]) + "; ++" + out_vars[i] + ") {");
+    w.indent();
+  }
+  std::string out_idx = flat_idx_expr(out_vars, out_shape);
+  w.line("float m = INFINITY;");
+  std::vector<std::string> in_vars(r);
+  int out_it = 0;
+  for (int di = 0; di < r; ++di) {
+    bool reduced = false;
+    for (int d : dims_set) if (d == di) reduced = true;
+    if (reduced) in_vars[di] = "r" + std::to_string(di);
+    else in_vars[di] = out_vars[out_it++];
+  }
+  for (int d : dims_set) {
+    w.line("for (int r" + std::to_string(d) + " = 0; r" + std::to_string(d) + " < " + std::to_string(D[d]) + "; ++r" + std::to_string(d) + ") {");
+    w.indent();
+  }
+  std::string in_idx = flat_idx_expr(in_vars, in_shape);
+  w.line("float v = " + a + "[" + in_idx + "];");
+  w.line("m = fminf(m, v);");
   for (size_t i = 0; i < dims_set.size(); ++i) {
     w.dedent();
     w.line("}");
@@ -1903,7 +1981,7 @@ struct CProgramEmitter {
 		        emit_ne(w, out_var, v(op.inputs[0]), v(op.inputs[1]), op.inputs[0], op.inputs[1],
 		                shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, intent, bindings,
 		                dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(out));
-		      } else if (op.op == "lt" || op.op == "le" || op.op == "gt" || op.op == "ge") {
+	      } else if (op.op == "eq" || op.op == "lt" || op.op == "le" || op.op == "gt" || op.op == "ge") {
 		        emit_cmp(w, op.op, out_var, v(op.inputs[0]), v(op.inputs[1]), op.inputs[0], op.inputs[1],
 		                 shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, intent, bindings,
 		                 dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(out));
@@ -1912,13 +1990,17 @@ struct CProgramEmitter {
 		                      shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, intent, bindings,
 		                      dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(out));
 		      } else if (op.op == "not") {
-		        emit_bool_not(w, out_var, v(op.inputs[0]), out_shape);
+		        emit_bool_not(w, out_var, v(op.inputs[0]), out_shape, dtype_env.at(op.inputs[0]), dtype_env.at(out));
 	      } else if (op.op == "rsqrt") {
 	        emit_rsqrt(w, out_var, v(op.inputs[0]), out_shape);
 	      } else if (op.op == "abs") {
 	        emit_unary_abs(w, out_var, v(op.inputs[0]), out_shape, dtype_env.at(op.inputs[0]), dtype_env.at(out));
 	      } else if (op.op == "floor") {
 	        emit_floor(w, out_var, v(op.inputs[0]), out_shape);
+	      } else if (op.op == "acos") {
+	        emit_acos(w, out_var, v(op.inputs[0]), out_shape);
+	      } else if (op.op == "atan") {
+	        emit_atan(w, out_var, v(op.inputs[0]), out_shape);
 	      } else if (op.op == "cos") {
 	        emit_cos(w, out_var, v(op.inputs[0]), out_shape);
 	      } else if (op.op == "erf") {
@@ -2047,6 +2129,23 @@ struct CProgramEmitter {
 	        }
 	        bool keepdims = op.attrs.value("keepdims", false);
 	        emit_reduce_max(w, out_var, v(op.inputs[0]), shape_env.at(op.inputs[0]), out_shape, dims, keepdims);
+	      } else if (op.op == "reduce_min") {
+        std::vector<int> dims;
+        if (op.attrs.contains("axes")) {
+          for (const auto& d : op.attrs["axes"]) dims.push_back(d.get<int>());
+        } else if (op.attrs.contains("dims")) {
+          for (const auto& d : op.attrs["dims"]) dims.push_back(d.get<int>());
+        } else if (op.attrs.contains("axis")) {
+          if (op.attrs["axis"].is_array()) {
+            for (const auto& d : op.attrs["axis"]) dims.push_back(d.get<int>());
+          } else {
+            dims.push_back(op.attrs["axis"].get<int>());
+          }
+        } else {
+          fail("reduce_min missing dims/axes");
+        }
+	        bool keepdims = op.attrs.value("keepdims", false);
+	        emit_reduce_min(w, out_var, v(op.inputs[0]), shape_env.at(op.inputs[0]), out_shape, dims, keepdims);
 	      } else if (op.op == "reduce_any") {
         std::vector<int> dims;
         if (op.attrs.contains("axes")) {
@@ -2193,7 +2292,7 @@ int main(int argc, char** argv) {
         continue;
       }
       if (shape_env.find(out) != shape_env.end()) {
-        if (kind == "ne" || kind == "lt" || kind == "le" || kind == "gt" || kind == "ge" || kind == "and" || kind == "or" || kind == "not" || kind == "reduce_any") {
+        if (kind == "eq" || kind == "ne" || kind == "lt" || kind == "le" || kind == "gt" || kind == "ge" || kind == "reduce_any") {
           dtype_env[out] = "bool";
         }
         continue;
@@ -2272,19 +2371,30 @@ int main(int argc, char** argv) {
         }
         continue;
       }
-      if (kind == "ne" || kind == "lt" || kind == "le" || kind == "gt" || kind == "ge" || kind == "and" || kind == "or") {
+      if (kind == "eq" || kind == "ne" || kind == "lt" || kind == "le" || kind == "gt" || kind == "ge") {
         const auto& sa = get_shape(op.inputs[0]);
         const auto& sb = get_shape(op.inputs[1]);
         shape_env[out] = broadcast_shape_named(intent, bindings, op.inputs[0], op.inputs[1], sa, sb);
         dtype_env[out] = "bool";
         continue;
       }
-      if (kind == "not") {
-        shape_env[out] = get_shape(op.inputs[0]);
-        dtype_env[out] = "bool";
+      if (kind == "and" || kind == "or") {
+        const auto& sa = get_shape(op.inputs[0]);
+        const auto& sb = get_shape(op.inputs[1]);
+        shape_env[out] = broadcast_shape_named(intent, bindings, op.inputs[0], op.inputs[1], sa, sb);
+        const std::string in_dt = get_dtype(op.inputs[0]);
+        if (in_dt == "bool" || in_dt == "i1" || in_dt == "u8") dtype_env[out] = "bool";
+        else dtype_env[out] = in_dt;
         continue;
       }
-      if (kind == "abs" || kind == "floor") {
+      if (kind == "not") {
+        shape_env[out] = get_shape(op.inputs[0]);
+        const std::string in_dt = get_dtype(op.inputs[0]);
+        if (in_dt == "bool" || in_dt == "i1" || in_dt == "u8") dtype_env[out] = "bool";
+        else dtype_env[out] = in_dt;
+        continue;
+      }
+      if (kind == "abs" || kind == "floor" || kind == "acos" || kind == "atan" || kind == "cos" || kind == "erf") {
         shape_env[out] = get_shape(op.inputs[0]);
         dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
@@ -2330,11 +2440,22 @@ int main(int argc, char** argv) {
         dtype_env[out] = "f32";
         continue;
       }
-      if (kind == "reduce_sum" || kind == "reduce_max" || kind == "reduce_any") {
+      if (kind == "reduce_sum" || kind == "reduce_max" || kind == "reduce_min" || kind == "reduce_any") {
         const auto& in_shape = get_shape(op.inputs[0]);
-        if (!op.attrs.contains("dims") || !op.attrs["dims"].is_array()) fail(kind + " requires dims list[int]");
         std::unordered_map<int,int> dims_set;
-        for (const auto& d : op.attrs["dims"]) dims_set.emplace(d.get<int>(), 1);
+        if (op.attrs.contains("dims") && op.attrs["dims"].is_array()) {
+          for (const auto& d : op.attrs["dims"]) dims_set.emplace(d.get<int>(), 1);
+        } else if (op.attrs.contains("axes") && op.attrs["axes"].is_array()) {
+          for (const auto& d : op.attrs["axes"]) dims_set.emplace(d.get<int>(), 1);
+        } else if (op.attrs.contains("axis")) {
+          if (op.attrs["axis"].is_array()) {
+            for (const auto& d : op.attrs["axis"]) dims_set.emplace(d.get<int>(), 1);
+          } else {
+            dims_set.emplace(op.attrs["axis"].get<int>(), 1);
+          }
+        } else {
+          fail(kind + " requires dims/axes list[int]");
+        }
         bool keepdims = op.attrs.value("keepdims", false);
         std::vector<int64_t> oshape;
         for (int i = 0; i < (int)in_shape.size(); ++i) {

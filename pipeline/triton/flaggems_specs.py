@@ -588,7 +588,8 @@ def _run_flaggems_neg2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     if case.inputs and "inp" in case.inputs:
         inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
     else:
-        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+        raw = np.abs(rg.standard_normal((m, n), dtype=np.float32)) + 1e-3
+        inp = torch.from_numpy(raw).to(device)
 
     with flag_gems.use_gems(include=["neg"]):
         out = torch.neg(inp)
@@ -672,6 +673,8 @@ def _run_flaggems_unary2d_reference(
         "out": out_np,
         "input": inp_np,
         "output": out_np,
+        "x": inp_np,
+        "y": out_np,
     }
 
 
@@ -799,6 +802,7 @@ def _run_flaggems_angle2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
 
     inp_np = _to_np(inp)
     out_np = _to_np(out)
+    imag_np = np.zeros_like(inp_np, dtype=np.float32)
     return {
         "A": inp_np,
         "Out": out_np,
@@ -806,6 +810,11 @@ def _run_flaggems_angle2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         "out": out_np,
         "input": inp_np,
         "output": out_np,
+        "result": out_np,
+        "real": inp_np,
+        "imag": imag_np,
+        "x": inp_np,
+        "y": out_np,
     }
 
 
@@ -1234,12 +1243,26 @@ def _run_flaggems_vstack2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         "input1": b_np,
         "in_ptr_a": a_np,
         "in_ptr_b": b_np,
+        "itensor_ptr0": a_np,
+        "itensor_ptr1": b_np,
+        "itensor_ptr2": b_np,
+        "itensor_ptr3": b_np,
         "out": out_np,
         "output": out_np,
         "output_data": out_np,
         "out_ptr": out_np,
         "axis": np.array(0, dtype=np.int32),
         "dim": np.array(0, dtype=np.int32),
+        "row_stride": np.array(n, dtype=np.int32),
+        "total_row_offset": np.array(0, dtype=np.int32),
+        "local_row0": np.array(m, dtype=np.int32),
+        "local_row1": np.array(m, dtype=np.int32),
+        "local_row2": np.array(0, dtype=np.int32),
+        "local_row3": np.array(0, dtype=np.int32),
+        "exc_row_offset0": np.array(0, dtype=np.int32),
+        "exc_row_offset1": np.array(m, dtype=np.int32),
+        "exc_row_offset2": np.array(0, dtype=np.int32),
+        "exc_row_offset3": np.array(0, dtype=np.int32),
     }
 
 
@@ -1264,14 +1287,28 @@ def _run_flaggems_avg_pool2d_nchw_reference(case: TestCase) -> Dict[str, np.ndar
 
     inp_np = _to_np(inp)
     out_np = _to_np(out)
+    count_include_pad = int(case.shapes.get("COUNT_INCLUDE_PAD", 1))
+    ceil_mode = int(case.shapes.get("CEIL_MODE", 0))
     return {
         "inp": inp_np,
         "out": out_np,
         "input": inp_np,
         "output": out_np,
         "kernel_size": np.array([k, k], dtype=np.int32),
+        "kernel_h": np.array(k, dtype=np.int32),
+        "kernel_w": np.array(k, dtype=np.int32),
         "stride": np.array([s, s], dtype=np.int32),
+        "stride_h": np.array(s, dtype=np.int32),
+        "stride_w": np.array(s, dtype=np.int32),
         "padding": np.array([p, p], dtype=np.int32),
+        "padding_h": np.array(p, dtype=np.int32),
+        "padding_w": np.array(p, dtype=np.int32),
+        "dilation": np.array([1, 1], dtype=np.int32),
+        "dilation_h": np.array(1, dtype=np.int32),
+        "dilation_w": np.array(1, dtype=np.int32),
+        "divisor_override": np.array(0, dtype=np.int32),
+        "count_include_pad": np.array(count_include_pad, dtype=np.int32),
+        "ceil_mode": np.array(ceil_mode, dtype=np.int32),
     }
 
 
@@ -4901,6 +4938,8 @@ def _run_flaggems_argmax2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         "out": out_np,
         "input": inp_np,
         "output": out_np,
+        "out_index": out_np,
+        "indices": out_np,
         "axis": np.array(axis, dtype=np.int32),
         "keepdim": np.array(int(keepdim), dtype=np.int32),
     }
@@ -4930,6 +4969,8 @@ def _run_flaggems_argmin2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         "out": out_np,
         "input": inp_np,
         "output": out_np,
+        "out_index": out_np,
+        "indices": out_np,
         "axis": np.array(axis, dtype=np.int32),
         "keepdim": np.array(int(keepdim), dtype=np.int32),
     }
@@ -5333,6 +5374,59 @@ def _norm_one_hot2d(shapes: Dict[str, int]) -> Dict[str, int]:
     return out
 
 
+def _norm_avg_pool2d_nchw(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    out["N"] = max(1, int(out.get("N", 1)))
+    out["C"] = max(1, int(out.get("C", 3)))
+    k = max(1, int(out.get("K", 2)))
+    s = max(1, int(out.get("S", k)))
+    p = max(0, int(out.get("P", 0)))
+    min_hw = max(1, k - (2 * p))
+    h = max(min_hw, int(out.get("H", 8)))
+    w = max(min_hw, int(out.get("W", 8)))
+    oh = max(1, ((h + (2 * p) - k) // s) + 1)
+    ow = max(1, ((w + (2 * p) - k) // s) + 1)
+    out["K"] = k
+    out["S"] = s
+    out["P"] = p
+    out["H"] = h
+    out["W"] = w
+    out["IH"] = h
+    out["IW"] = w
+    out["OH"] = oh
+    out["OW"] = ow
+    out["KH"] = k
+    out["KW"] = k
+    out["SH"] = s
+    out["SW"] = s
+    out["PH"] = p
+    out["PW"] = p
+    out["DH"] = 1
+    out["DW"] = 1
+    out["COUNT_INCLUDE_PAD"] = int(bool(out.get("COUNT_INCLUDE_PAD", 1)))
+    out["CEIL_MODE"] = int(bool(out.get("CEIL_MODE", 0)))
+    return out
+
+
+def _norm_vstack2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    m = max(1, int(out.get("M", 4)))
+    n = max(1, int(out.get("N", 32)))
+    out["M"] = m
+    out["N"] = n
+    out["row_stride"] = int(out.get("row_stride", n))
+    out["total_row_offset"] = int(out.get("total_row_offset", 0))
+    out["local_row0"] = int(out.get("local_row0", m))
+    out["local_row1"] = int(out.get("local_row1", m))
+    out["local_row2"] = int(out.get("local_row2", 0))
+    out["local_row3"] = int(out.get("local_row3", 0))
+    out["exc_row_offset0"] = int(out.get("exc_row_offset0", 0))
+    out["exc_row_offset1"] = int(out.get("exc_row_offset1", m))
+    out["exc_row_offset2"] = int(out.get("exc_row_offset2", 0))
+    out["exc_row_offset3"] = int(out.get("exc_row_offset3", 0))
+    return out
+
+
 def _norm_max_pool2d_with_indices_nchw(shapes: Dict[str, int]) -> Dict[str, int]:
     out = dict(shapes)
     out["N"] = max(1, int(out.get("N", 1)))
@@ -5690,14 +5784,16 @@ _FLAGGEMS_SPEC_BUILDERS = {
         runner=_run_flaggems_vstack2d_reference,
         canonical_shapes={"M": 4, "N": 32},
         vary_axes=["M", "N"],
+        normalize_shapes=_norm_vstack2d,
     ),
     "avg_pool2d_nchw": lambda: KernelSpec(
         name="avg_pool2d_nchw",
         module="pipeline.triton.flaggems_specs",
         attr="FLAGGEMS_AVG_POOL2D_SRC",
         runner=_run_flaggems_avg_pool2d_nchw_reference,
-        canonical_shapes={"N": 1, "C": 3, "H": 8, "W": 8, "K": 2, "S": 2, "P": 0},
+        canonical_shapes={"N": 1, "C": 3, "H": 8, "W": 8, "K": 2, "S": 2, "P": 0, "OH": 4, "OW": 4},
         vary_axes=["N", "C", "H", "W"],
+        normalize_shapes=_norm_avg_pool2d_nchw,
     ),
     "conv1d_ncl": lambda: KernelSpec(
         name="conv1d_ncl",

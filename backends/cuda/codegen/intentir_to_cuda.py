@@ -413,7 +413,7 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
             return "i32"
         if opname == "const":
             return _normalize_dtype_name(_infer_const_dtype(attrs))
-        if opname in {"ne", "lt", "le", "gt", "ge", "and", "or", "not"}:
+        if opname in {"eq", "ne", "lt", "le", "gt", "ge", "and", "or", "not"}:
             return "bool"
         if opname == "where":
             return _dtype_of(inputs[1]) if len(inputs) > 1 else "f32"
@@ -519,6 +519,16 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
                 raise CudaLoweringError("cos expects 1 input")
             x = val(op.inputs[0])
             emit_assign(f"cosf({x})")
+        elif opname == "acos":
+            if len(op.inputs) != 1:
+                raise CudaLoweringError("acos expects 1 input")
+            x = val(op.inputs[0])
+            emit_assign(f"acosf({x})")
+        elif opname == "atan":
+            if len(op.inputs) != 1:
+                raise CudaLoweringError("atan expects 1 input")
+            x = val(op.inputs[0])
+            emit_assign(f"atanf({x})")
         elif opname == "erf":
             if len(op.inputs) != 1:
                 raise CudaLoweringError("erf expects 1 input")
@@ -534,25 +544,40 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
                 raise CudaLoweringError("rsqrt expects 1 input")
             x = val(op.inputs[0])
             emit_assign(f"rsqrtf({x})")
-        elif opname in {"ne", "lt", "le", "gt", "ge"}:
+        elif opname in {"eq", "ne", "lt", "le", "gt", "ge"}:
             if len(op.inputs) != 2:
                 raise CudaLoweringError(f"{opname} expects 2 inputs")
             a = val(op.inputs[0])
             b = val(op.inputs[1])
-            op_map = {"ne": "!=", "lt": "<", "le": "<=", "gt": ">", "ge": ">="}
+            op_map = {"eq": "==", "ne": "!=", "lt": "<", "le": "<=", "gt": ">", "ge": ">="}
             emit_assign(f"({a} {op_map[opname]} {b})")
+        elif opname == "bitwise_and":
+            if len(op.inputs) != 2:
+                raise CudaLoweringError("bitwise_and expects 2 inputs")
+            a = val(op.inputs[0])
+            b = val(op.inputs[1])
+            emit_assign(f"(({a}) & ({b}))")
         elif opname in {"and", "or"}:
             if len(op.inputs) != 2:
                 raise CudaLoweringError(f"{opname} expects 2 inputs")
             a = val(op.inputs[0])
             b = val(op.inputs[1])
-            op_map = {"and": "&&", "or": "||"}
-            emit_assign(f"({a} {op_map[opname]} {b})")
+            out_dtype = str(out_dt)
+            if out_dtype in {"bool", "i1"}:
+                op_map = {"and": "&&", "or": "||"}
+                emit_assign(f"({a} {op_map[opname]} {b})")
+            else:
+                op_map = {"and": "&", "or": "|"}
+                emit_assign(f"(({a}) {op_map[opname]} ({b}))")
         elif opname == "not":
             if len(op.inputs) != 1:
                 raise CudaLoweringError("not expects 1 input")
             a = val(op.inputs[0])
-            emit_assign(f"(!{a})")
+            out_dtype = str(out_dt)
+            if out_dtype in {"bool", "i1"}:
+                emit_assign(f"(!{a})")
+            else:
+                emit_assign(f"(~({a}))")
         elif opname == "where":
             if len(op.inputs) != 3:
                 raise CudaLoweringError("where expects 3 inputs (cond, x, y)")
@@ -1772,6 +1797,76 @@ extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(const floa
     return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=dict(bindings))
 
 
+def _kernel_reduce_min_2d_axis1_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != "reduce_min":
+        raise CudaLoweringError("reduce_min lowering expects a single reduce_min op")
+    op = intent.ops[0]
+    if len(op.inputs) != 1:
+        raise CudaLoweringError("reduce_min expects 1 input")
+    inp_name = str(op.inputs[0])
+    out_name = str(op.output)
+    dims = (op.attrs or {}).get("dims")
+    axis = (op.attrs or {}).get("axis")
+    if dims not in ([1], (1,)) and axis not in ([1], 1, "1"):
+        raise CudaLoweringError("reduce_min MVP supports only axis=1 for 2D tensors")
+
+    M = _as_int(bindings.get("M"), name="M")
+    N = _as_int(bindings.get("N"), name="N")
+    sched = intent.schedule or ScheduleSketch()
+    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=256)
+    if block_x <= 0:
+        block_x = 256
+    if block_x > 1024:
+        block_x = 1024
+    if (block_x & (block_x - 1)) != 0:
+        block_x = 1 << int(block_x - 1).bit_length()
+    block_x = max(32, min(1024, int(block_x)))
+
+    m_is_tensor = _is_scalar_tensor(intent, "M", dtype="i32")
+    n_is_tensor = _is_scalar_tensor(intent, "N", dtype="i32")
+    m_param = "const int* M_ptr" if m_is_tensor else "int M"
+    n_param = "const int* N_ptr" if n_is_tensor else "int N"
+    m_load = "const int M = M_ptr ? M_ptr[0] : 0;" if m_is_tensor else ""
+    n_load = "const int N = N_ptr ? N_ptr[0] : 0;" if n_is_tensor else ""
+
+    cuda_src = f"""
+#include <math.h>
+#include <stdint.h>
+
+#include "intentir_cuda_ops.cuh"
+#include "kernels/reduce.cuh"
+
+extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(const float* __restrict__ {inp_name}, float* __restrict__ {out_name}, {m_param}, {n_param}) {{
+  {m_load}
+  {n_load}
+  const int m = (int)blockIdx.x;
+  if (m >= M) return;
+  constexpr int BLOCK_THREADS = {block_x};
+  __shared__ intentir_cuda::BlockAllreduceF32<BLOCK_THREADS> red;
+  float acc = INFINITY;
+  const float* row = {inp_name} + (size_t)m * (size_t)N;
+  for (int n = (int)threadIdx.x; n < N; n += (int)blockDim.x) acc = fminf(acc, intentir_ldg_f32(row + (size_t)n));
+  const float mn = intentir_cuda::block_allreduce_min<BLOCK_THREADS>(acc, &red);
+  if ((int)threadIdx.x == 0) {out_name}[m] = mn;
+}}
+""".lstrip()
+
+    tensor_args = [inp_name, out_name]
+    scalar_args: Dict[str, str] = {}
+    arg_names = [inp_name, out_name]
+    for dim_name in ["M", "N"]:
+        if _is_scalar_tensor(intent, dim_name, dtype="i32"):
+            tensor_args.append(dim_name)
+            arg_names.append(dim_name)
+        else:
+            scalar_args[dim_name] = "i32"
+            arg_names.append(dim_name)
+
+    io_spec = _io_spec_from_args(intent, tensor_args=tensor_args, scalar_args=scalar_args, arg_names=arg_names)
+    launch = CudaLaunch(grid=(M, 1, 1), block=(block_x, 1, 1), shared_mem=0)
+    return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=dict(bindings))
+
+
 def _kernel_any_dim_f32_to_i1(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
     """
     Pattern: const(z) + ne(inp, z) + reduce_any(axis=1).
@@ -2245,6 +2340,8 @@ def lower_intent_to_cuda_kernel(
                 return _kernel_reduce_sum_2d_axis1_f32(intent, bindings)
             if op0 == "reduce_max":
                 return _kernel_reduce_max_2d_axis1_f32(intent, bindings)
+            if op0 == "reduce_min":
+                return _kernel_reduce_min_2d_axis1_f32(intent, bindings)
             if op0 == "gather":
                 return _kernel_gather2d_f32(intent, bindings)
 
@@ -2277,15 +2374,19 @@ def lower_intent_to_cuda_kernel(
         "relu",
         "abs",
         "exp",
+        "acos",
+        "atan",
         "cos",
         "erf",
         "floor",
         "rsqrt",
+        "eq",
         "ne",
         "lt",
         "le",
         "gt",
         "ge",
+        "bitwise_and",
         "and",
         "or",
         "not",

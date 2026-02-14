@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-14T05:20:17.346485+00:00",
+  "generated_at": "2026-02-14T05:29:27.664386+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -18,8 +18,8 @@
     "source_filtered_ops": 212,
     "semantic_ops": 196,
     "by_status": {
-      "blocked_backend": 86,
-      "dual_pass": 110
+      "blocked_backend": 82,
+      "dual_pass": 114
     },
     "by_family": {
       "attention_sequence": 5,
@@ -107,13 +107,13 @@
       "mapping_kind": "unary_template",
       "intent_pattern_id": "unary.acos",
       "e2e_spec": "acos2d",
-      "status": "blocked_backend",
-      "status_reason": "backend_missing_ops",
-      "status_reason_detail": "mapped to acos primitive; rvv_missing=['acos']; cuda_h100_missing=['acos']; cuda_5090d_missing=['acos']",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped to acos primitive",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "acos"
           ],
@@ -121,14 +121,14 @@
             "acos"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
+          "supported_ops": [
             "acos"
-          ]
+          ],
+          "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "acos"
           ],
@@ -136,14 +136,14 @@
             "acos"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
+          "supported_ops": [
             "acos"
-          ]
+          ],
+          "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "acos"
           ],
@@ -151,10 +151,10 @@
             "acos"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
+          "supported_ops": [
             "acos"
-          ]
+          ],
+          "missing_ops": []
         }
       }
     },
@@ -706,13 +706,13 @@
       "mapping_kind": "unary_template",
       "intent_pattern_id": "unary.atan",
       "e2e_spec": "atan2d",
-      "status": "blocked_backend",
-      "status_reason": "backend_missing_ops",
-      "status_reason_detail": "mapped to atan primitive; rvv_missing=['atan']; cuda_h100_missing=['atan']; cuda_5090d_missing=['atan']",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped to atan primitive",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "atan"
           ],
@@ -720,14 +720,14 @@
             "atan"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
+          "supported_ops": [
             "atan"
-          ]
+          ],
+          "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "atan"
           ],
@@ -735,14 +735,14 @@
             "atan"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
+          "supported_ops": [
             "atan"
-          ]
+          ],
+          "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "atan"
           ],
@@ -750,10 +750,10 @@
             "atan"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
+          "supported_ops": [
             "atan"
-          ]
+          ],
+          "missing_ops": []
         }
       }
     },
@@ -5425,13 +5425,13 @@
       "mapping_kind": "reduce_template",
       "intent_pattern_id": "reduce.min",
       "e2e_spec": "min2d",
-      "status": "blocked_backend",
-      "status_reason": "backend_missing_ops",
-      "status_reason_detail": "mapped to reduce_min; rvv_missing=['reduce_min']; cuda_h100_missing=['reduce_min']; cuda_5090d_missing=['reduce_min']",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped to reduce_min",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "reduce_min"
           ],
@@ -5439,14 +5439,14 @@
             "reduce_min"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
+          "supported_ops": [
             "reduce_min"
-          ]
+          ],
+          "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "reduce_min"
           ],
@@ -5454,14 +5454,14 @@
             "reduce_min"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
+          "supported_ops": [
             "reduce_min"
-          ]
+          ],
+          "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "reduce_min"
           ],
@@ -5469,10 +5469,10 @@
             "reduce_min"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
+          "supported_ops": [
             "reduce_min"
-          ]
+          ],
+          "missing_ops": []
         }
       }
     },
@@ -5488,13 +5488,13 @@
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.min_dim->reduce_min",
       "e2e_spec": "min_dim2d",
-      "status": "blocked_backend",
-      "status_reason": "backend_missing_ops",
-      "status_reason_detail": "alias to reduce_min; semantic op equals IntentIR op name; rvv_missing=['reduce_min']; cuda_h100_missing=['reduce_min']; cuda_5090d_missing=['reduce_min']",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "alias to reduce_min; semantic op equals IntentIR op name",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "reduce_min"
           ],
@@ -5502,14 +5502,14 @@
             "reduce_min"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
+          "supported_ops": [
             "reduce_min"
-          ]
+          ],
+          "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "reduce_min"
           ],
@@ -5517,14 +5517,14 @@
             "reduce_min"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
+          "supported_ops": [
             "reduce_min"
-          ]
+          ],
+          "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "reduce_min"
           ],
@@ -5532,10 +5532,10 @@
             "reduce_min"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
+          "supported_ops": [
             "reduce_min"
-          ]
+          ],
+          "missing_ops": []
         }
       }
     },
