@@ -354,9 +354,30 @@ def main() -> None:
 
     if args.write_registry:
         reg2 = dict(reg)
-        reg2["entries"] = converged_entries
+        if scope_enabled:
+            # Scoped convergence must not overwrite out-of-scope registry entries.
+            merged_entries: list[dict[str, Any]] = []
+            for idx, conv in enumerate(converged_entries):
+                if bool(conv.get("in_scope")):
+                    merged_entries.append(conv)
+                else:
+                    if idx < len(entries):
+                        merged_entries.append(dict(entries[idx]))
+                    else:
+                        merged_entries.append(conv)
+        else:
+            merged_entries = converged_entries
+
+        merged_counts: dict[str, int] = {}
+        for row in merged_entries:
+            status = str(row.get("status") or "").strip()
+            if not status:
+                continue
+            merged_counts[status] = merged_counts.get(status, 0) + 1
+
+        reg2["entries"] = merged_entries
         reg2["counts"] = dict(reg2.get("counts") or {})
-        reg2["counts"]["by_status"] = dict(sorted(counts_global.items(), key=lambda kv: kv[0]))
+        reg2["counts"]["by_status"] = dict(sorted(merged_counts.items(), key=lambda kv: kv[0]))
         args.registry.write_text(json.dumps(reg2, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"Registry updated: {args.registry}")
 

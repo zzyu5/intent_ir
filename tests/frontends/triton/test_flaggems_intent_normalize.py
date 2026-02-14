@@ -56,6 +56,15 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     const_val = [op.attrs["value"] for op in isfinite.ops if op.op == "const"][0]
     assert math.isfinite(float(const_val))
 
+    row_all = canonical_flaggems_intent_for_spec("row_all")
+    assert row_all is not None
+    assert [op.op for op in row_all.ops] == ["const", "eq", "reduce_any", "not"]
+    reduce_attrs = row_all.ops[2].attrs or {}
+    assert reduce_attrs.get("dims") == [1]
+    assert reduce_attrs.get("keepdims") is True
+    row_all_json = row_all.to_json_dict()
+    assert row_all_json["tensors"]["out"]["shape"] == ["M", 1]
+
     masked_fill = canonical_flaggems_intent_for_spec("masked_fill2d")
     assert masked_fill is not None
     assert [op.op for op in masked_fill.ops] == ["where"]

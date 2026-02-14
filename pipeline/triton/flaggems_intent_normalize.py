@@ -216,6 +216,30 @@ def _canonical_allclose2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_row_all_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "row_all",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "bool", "shape": ["M", 1], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "const", "inputs": [], "output": "zero_const", "attrs": {"value": 0.0}},
+                {"op": "eq", "inputs": ["inp", "zero_const"], "output": "is_zero"},
+                {
+                    "op": "reduce_any",
+                    "inputs": ["is_zero"],
+                    "output": "any_zero",
+                    "attrs": {"dims": [1], "keepdims": True},
+                },
+                {"op": "not", "inputs": ["any_zero"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def _canonical_threshold2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -1275,6 +1299,8 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_isclose2d_intent()
     if name == "allclose2d":
         return _canonical_allclose2d_intent()
+    if name == "row_all":
+        return _canonical_row_all_intent()
     if name == "threshold2d":
         return _canonical_threshold2d_intent()
     if name == "gather2d":

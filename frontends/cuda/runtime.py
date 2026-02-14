@@ -986,7 +986,8 @@ def run_cuda_kernel_io(
                 dt = str(spec.get("dtype") or "f32")
                 shape_tpl = spec.get("shape") if isinstance(spec.get("shape"), list) else None
                 if name in out_set:
-                    if not shape_tpl:
+                    # Scalar outputs use shape=[], which is valid and should not be treated as missing.
+                    if shape_tpl is None:
                         raise CudaRuntimeError(f"missing output tensor shape for {name} in io_spec")
                     shape = tuple(int(bindings[str(d)]) if isinstance(d, str) else int(d) for d in shape_tpl)
                     t = torch.empty(shape, device=device, dtype=_dtype_to_torch(dt))

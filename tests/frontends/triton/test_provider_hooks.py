@@ -53,6 +53,21 @@ def test_flaggems_provider_normalization_opt_in(monkeypatch) -> None:
     assert out_expanded is not None
 
 
+def test_flaggems_provider_forces_canonical_for_required_specs(monkeypatch) -> None:
+    monkeypatch.delenv("INTENTIR_TRITON_FLAGGEMS_CANONICAL_NORMALIZE", raising=False)
+    cand = _dummy_candidate("old")
+    out, out_expanded, info = maybe_normalize_provider_candidate(
+        provider="flaggems",
+        spec_name="row_all",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info is not None
+    assert info.get("enabled_by") == "provider_required_deterministic_override"
+    assert out.intent.name == "row_all"
+    assert out_expanded is not None
+
+
 def test_annotate_and_validate_provider_meta_generic() -> None:
     cand = _dummy_candidate("plain")
     annotate_provider_intent_meta(

@@ -226,6 +226,68 @@ def _emit_broadcast_index_expr(
     return " + ".join(terms)
 
 
+def _emit_broadcast_in_dim_index_expr(
+    *,
+    final_out_rank: int,
+    op_out_shape: Sequence[str | int],
+    in_shape: Sequence[str | int],
+    out_idxs: Sequence[str],
+    dim_expr: Mapping[str, str],
+    broadcast_dims: Sequence[int],
+) -> str:
+    """
+    Emit row-major linear index for broadcast_in_dim(input -> op_out_shape).
+
+    Unlike NumPy-style right alignment, broadcast_in_dim maps each input
+    dimension explicitly via `broadcast_dims`.
+    """
+    in_rank = len(in_shape)
+    if in_rank == 0:
+        return "0"
+    if len(broadcast_dims) != in_rank:
+        raise CudaLoweringError("broadcast_in_dim expects len(broadcast_dims) == input rank")
+
+    op_rank = len(op_out_shape)
+    shift = int(final_out_rank) - int(op_rank)
+    if shift < 0:
+        raise CudaLoweringError("broadcast_in_dim output rank cannot exceed fused output rank")
+
+    # Build per-dim "size" expressions for the input.
+    in_sizes: list[str] = []
+    for d in in_shape:
+        if isinstance(d, int):
+            in_sizes.append(str(int(d)))
+        else:
+            in_sizes.append(dim_expr[str(d)])
+
+    # Row-major strides.
+    strides: list[str] = []
+    for j in range(in_rank):
+        tail = in_sizes[j + 1 :]
+        if not tail:
+            strides.append("1")
+        else:
+            strides.append(" * ".join(f"(int64_t){x}" for x in tail))
+
+    terms: list[str] = []
+    for j, out_dim in enumerate(broadcast_dims):
+        k = int(out_dim)
+        if k < 0:
+            k += op_rank
+        if k < 0 or k >= op_rank:
+            raise CudaLoweringError("broadcast_in_dim broadcast_dims contains out-of-range axis")
+        out_k = shift + k
+        if out_k < 0 or out_k >= len(out_idxs):
+            raise CudaLoweringError("broadcast_in_dim index mapping exceeds fused output rank")
+        size_expr = in_sizes[j]
+        if size_expr == "1":
+            continue
+        terms.append(f"((int64_t){out_idxs[out_k]}) * ({strides[j]})")
+    if not terms:
+        return "0"
+    return " + ".join(terms)
+
+
 def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
     """
     Generic fused elementwise lowering for small IntentIR graphs.
@@ -481,7 +543,22 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
         elif opname == "broadcast_in_dim":
             if len(op.inputs) != 1:
                 raise CudaLoweringError("broadcast_in_dim expects 1 input")
-            emit_assign(val(op.inputs[0]))
+            src = str(op.inputs[0])
+            raw_dims = op_attrs.get("broadcast_dims")
+            if src in intent.tensors and isinstance(raw_dims, (list, tuple)):
+                out_shape_op = _output_shape(opname, outn, op_attrs)
+                in_shape = _shape_values(intent, src)
+                idx_expr = _emit_broadcast_in_dim_index_expr(
+                    final_out_rank=out_rank,
+                    op_out_shape=out_shape_op,
+                    in_shape=in_shape,
+                    out_idxs=idx_vars,
+                    dim_expr=dim_expr,
+                    broadcast_dims=[int(x) for x in raw_dims],
+                )
+                emit_assign(f"{src}[(size_t)({idx_expr})]")
+            else:
+                emit_assign(val(src))
         elif opname in {"add", "sub", "mul", "div", "max", "min"}:
             if len(op.inputs) != 2:
                 raise CudaLoweringError(f"{opname} expects 2 inputs")
@@ -1880,32 +1957,64 @@ extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(const floa
 
 def _kernel_any_dim_f32_to_i1(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
     """
-    Pattern: const(z) + ne(inp, z) + reduce_any(axis=1).
+    Pattern family:
+      - const(z) + ne(inp, z) + reduce_any(axis=1)
+      - const(z) + eq(inp, z) + reduce_any(axis=1) + not
 
-    Common coverage kernel: `any_kernel_dim`.
+    Supports keepdim and reduction combine_fn={or,and}. The second pattern is
+    used by row_all-style semantics: not(any(inp == 0)).
     """
-    if not intent.ops or len(intent.ops) != 3:
-        raise CudaLoweringError("any-dim lowering expects 3 ops (const, ne, reduce_any)")
-    c0, ne0, r0 = intent.ops
-    if c0.op != "const" or ne0.op != "ne" or r0.op != "reduce_any":
-        raise CudaLoweringError("any-dim lowering expects ops const->ne->reduce_any")
-    if len(ne0.inputs) != 2 or len(r0.inputs) != 1:
+    if not intent.ops or len(intent.ops) not in {3, 4}:
+        raise CudaLoweringError("any-dim lowering expects 3 or 4 ops")
+    c0 = intent.ops[0]
+    cmp0 = intent.ops[1]
+    r0 = intent.ops[2]
+    tail_not = intent.ops[3] if len(intent.ops) == 4 else None
+    if c0.op != "const" or cmp0.op not in {"ne", "eq"} or r0.op != "reduce_any":
+        raise CudaLoweringError("any-dim lowering expects const->(eq|ne)->reduce_any")
+    if tail_not is not None and tail_not.op != "not":
+        raise CudaLoweringError("any-dim lowering expects optional trailing not")
+    if len(cmp0.inputs) != 2 or len(r0.inputs) != 1:
         raise CudaLoweringError("any-dim lowering invalid op arity")
+    if tail_not is not None and len(tail_not.inputs) != 1:
+        raise CudaLoweringError("any-dim lowering trailing not expects 1 input")
     const_out = str(c0.output)
-    a0, b0 = (str(x) for x in ne0.inputs)
+    a0, b0 = (str(x) for x in cmp0.inputs)
     if a0 == const_out and b0 != const_out:
         inp_name = b0
     elif b0 == const_out and a0 != const_out:
         inp_name = a0
     else:
-        raise CudaLoweringError("any-dim lowering expects ne(inp, const)")
-    out_name = str(r0.output)
+        raise CudaLoweringError("any-dim lowering expects compare(inp, const)")
+    if tail_not is not None and str(tail_not.inputs[0]) != str(r0.output):
+        raise CudaLoweringError("any-dim lowering trailing not must consume reduce_any output")
+    out_name = str(tail_not.output) if tail_not is not None else str(r0.output)
+    cmp_is_ne = str(cmp0.op) == "ne"
+    invert_output = tail_not is not None
     z = float((c0.attrs or {}).get("value", 0.0))
+
+    combine_fn = str((r0.attrs or {}).get("combine_fn", "or")).strip().lower()
+    init_value = bool((r0.attrs or {}).get("init_value", False))
+    reduce_is_and = combine_fn in {"and", "all"} or init_value
+
     # Require reduce axis=1.
     dims = (r0.attrs or {}).get("dims")
     axis = (r0.attrs or {}).get("axis")
     if dims not in ([1], (1,)) and axis not in ([1], 1, "1"):
         raise CudaLoweringError("any-dim MVP supports only axis=1 for 2D tensors")
+
+    keepdim = bool((r0.attrs or {}).get("keepdims", False) or (r0.attrs or {}).get("keepdim", False))
+    out_shape = _shape_values(intent, out_name)
+    if keepdim:
+        if len(out_shape) != 2:
+            raise CudaLoweringError("any-dim keepdim expects rank-2 output")
+        if str(out_shape[0]) != "M" or str(out_shape[1]) not in {"1", "1.0"}:
+            raise CudaLoweringError("any-dim keepdim expects output shape [M,1]")
+    else:
+        if len(out_shape) != 1:
+            raise CudaLoweringError("any-dim non-keepdim expects rank-1 output")
+        if str(out_shape[0]) != "M":
+            raise CudaLoweringError("any-dim non-keepdim expects output shape [M]")
 
     M = _as_int(bindings.get("M"), name="M")
     N = _as_int(bindings.get("N"), name="N")
@@ -1927,6 +2036,11 @@ def _kernel_any_dim_f32_to_i1(intent: IntentFunction, bindings: Dict[str, int]) 
     n_load = "const int N = N_ptr ? N_ptr[0] : 0;" if n_is_tensor else ""
 
     z_lit = _c_scalar_literal("f32", z)
+    cmp_pred = "!=" if cmp_is_ne else "=="
+    reduce_op = "|" if not reduce_is_and else "&"
+    reduce_init = "0" if not reduce_is_and else "1"
+    reduce_call = "block_allreduce_max" if not reduce_is_and else "block_allreduce_min"
+    out_expr = "((any != 0) ? false : true)" if invert_output else "(any != 0)"
     cuda_src = f"""
 #include <stdint.h>
 
@@ -1940,11 +2054,14 @@ extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(const floa
   if (m >= M) return;
   constexpr int BLOCK_THREADS = {block_x};
   __shared__ intentir_cuda::BlockAllreduceI32<BLOCK_THREADS> red;
-  int anyv = 0;
+  int anyv = {reduce_init};
   const float* row = {inp_name} + (size_t)m * (size_t)N;
-  for (int n = (int)threadIdx.x; n < N; n += (int)blockDim.x) anyv |= (intentir_ldg_f32(row + (size_t)n) != {z_lit});
-  const int any = intentir_cuda::block_allreduce_max<BLOCK_THREADS>(anyv, &red);
-  if ((int)threadIdx.x == 0) {out_name}[m] = (any != 0);
+  for (int n = (int)threadIdx.x; n < N; n += (int)blockDim.x) {{
+    const int pred = (intentir_ldg_f32(row + (size_t)n) {cmp_pred} {z_lit}) ? 1 : 0;
+    anyv {reduce_op}= pred;
+  }}
+  const int any = intentir_cuda::{reduce_call}<BLOCK_THREADS>(anyv, &red);
+  if ((int)threadIdx.x == 0) {out_name}[m] = {out_expr};
 }}
 """.lstrip()
 
@@ -1961,6 +2078,408 @@ extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(const floa
 
     io_spec = _io_spec_from_args(intent, tensor_args=tensor_args, scalar_args=scalar_args, arg_names=arg_names)
     launch = CudaLaunch(grid=(M, 1, 1), block=(block_x, 1, 1), shared_mem=0)
+    return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=dict(bindings))
+
+
+def _kernel_addmm_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    """
+    Pattern: matmul + alpha/beta scaling + add (+ optional cast).
+    """
+    ops = list(intent.ops or [])
+    if len(ops) not in {4, 5}:
+        raise CudaLoweringError("addmm lowering expects 4 or 5 ops")
+    if ops[0].op != "matmul" or ops[1].op != "mul" or ops[2].op != "mul" or ops[3].op != "add":
+        raise CudaLoweringError("addmm lowering expects matmul->mul->mul->add chain")
+    mat, mul_a, mul_b, add0 = ops[:4]
+    cast0 = ops[4] if len(ops) == 5 else None
+    if cast0 is not None and cast0.op != "cast":
+        raise CudaLoweringError("addmm optional 5th op must be cast")
+
+    if len(mat.inputs) != 2:
+        raise CudaLoweringError("addmm matmul expects 2 inputs")
+    a_name = str(mat.inputs[0])
+    b_name = str(mat.inputs[1])
+    mm_out = str(mat.output)
+
+    if len(mul_a.inputs) != 2 or len(mul_b.inputs) != 2:
+        raise CudaLoweringError("addmm mul ops expect 2 inputs each")
+
+    mul_a_in = [str(x) for x in mul_a.inputs]
+    if mm_out in mul_a_in:
+        alpha_name = mul_a_in[1] if mul_a_in[0] == mm_out else mul_a_in[0]
+        scaled_mm = str(mul_a.output)
+    else:
+        raise CudaLoweringError("addmm first mul must consume matmul output")
+
+    mul_b_in = [str(x) for x in mul_b.inputs]
+    beta_name = None
+    bias_name = None
+    for x in mul_b_in:
+        if _is_scalar_tensor(intent, x, dtype="f32"):
+            beta_name = x
+        else:
+            bias_name = x
+    if beta_name is None or bias_name is None:
+        raise CudaLoweringError("addmm second mul must be bias * beta")
+    scaled_bias = str(mul_b.output)
+
+    add_in = [str(x) for x in add0.inputs]
+    if len(add_in) != 2 or sorted(add_in) != sorted([scaled_mm, scaled_bias]):
+        raise CudaLoweringError("addmm add op must consume scaled matmul and scaled bias")
+    add_out = str(add0.output)
+
+    out_name = str(intent.outputs[0])
+    if cast0 is not None:
+        if len(cast0.inputs) != 1 or str(cast0.inputs[0]) != add_out or str(cast0.output) != out_name:
+            raise CudaLoweringError("addmm cast must consume add output and produce final output")
+    elif add_out != out_name:
+        raise CudaLoweringError("addmm add output must be final output when cast is absent")
+
+    a_shape = _shape_values(intent, a_name)
+    b_shape = _shape_values(intent, b_name)
+    bias_shape = _shape_values(intent, bias_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(a_shape) != 2 or len(b_shape) != 2 or len(bias_shape) != 2 or len(out_shape) != 2:
+        raise CudaLoweringError("addmm lowering expects rank-2 tensors")
+    M_dim, K_dim = a_shape
+    K2_dim, N_dim = b_shape
+    if str(K_dim) != str(K2_dim):
+        raise CudaLoweringError("addmm K mismatch")
+    if str(bias_shape[0]) != str(M_dim) or str(bias_shape[1]) != str(N_dim):
+        raise CudaLoweringError("addmm bias shape mismatch")
+    if str(out_shape[0]) != str(M_dim) or str(out_shape[1]) != str(N_dim):
+        raise CudaLoweringError("addmm output shape mismatch")
+
+    ta = bool((mat.attrs or {}).get("transpose_a", False))
+    tb = bool((mat.attrs or {}).get("transpose_b", False))
+    M = _resolve_dim_int(M_dim, bindings, name="M")
+    N = _resolve_dim_int(N_dim, bindings, name="N")
+    K = _resolve_dim_int(K_dim, bindings, name="K")
+
+    sched = intent.schedule or ScheduleSketch()
+    block_y = _resolve_schedule_int(sched.tile_m, bindings, default=16)
+    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=16)
+    if block_x <= 0:
+        block_x = 16
+    if block_y <= 0:
+        block_y = 16
+    block_x = max(8, min(32, int(block_x)))
+    block_y = max(8, min(32, int(block_y)))
+    if block_x * block_y > 1024:
+        block_y = max(1, 1024 // block_x)
+    grid_x = (N + block_x - 1) // block_x
+    grid_y = (M + block_y - 1) // block_y
+
+    m_is_tensor = _is_scalar_tensor(intent, str(M_dim), dtype="i32")
+    n_is_tensor = _is_scalar_tensor(intent, str(N_dim), dtype="i32")
+    k_is_tensor = _is_scalar_tensor(intent, str(K_dim), dtype="i32")
+    m_param = f"const int* {str(M_dim)}_ptr" if m_is_tensor else "int M_in"
+    n_param = f"const int* {str(N_dim)}_ptr" if n_is_tensor else "int N_in"
+    k_param = f"const int* {str(K_dim)}_ptr" if k_is_tensor else "int K_in"
+    m_load = f"const int M = {str(M_dim)}_ptr ? {str(M_dim)}_ptr[0] : 0;" if m_is_tensor else "const int M = M_in;"
+    n_load = f"const int N = {str(N_dim)}_ptr ? {str(N_dim)}_ptr[0] : 0;" if n_is_tensor else "const int N = N_in;"
+    k_load = f"const int K = {str(K_dim)}_ptr ? {str(K_dim)}_ptr[0] : 0;" if k_is_tensor else "const int K = K_in;"
+
+    a_idx = "((size_t)row * (size_t)K + (size_t)k)" if not ta else "((size_t)k * (size_t)M + (size_t)row)"
+    b_idx = "((size_t)k * (size_t)N + (size_t)col)" if not tb else "((size_t)col * (size_t)K + (size_t)k)"
+    out_idx = "((size_t)row * (size_t)N + (size_t)col)"
+    alpha_ptr_name = f"{alpha_name}_ptr"
+    beta_ptr_name = f"{beta_name}_ptr"
+    cuda_src = f"""
+#include <math.h>
+#include <stdint.h>
+
+#include "intentir_cuda_ops.cuh"
+
+extern "C" __global__ __launch_bounds__({block_x * block_y}) void {intent.name}(
+    const float* __restrict__ {a_name},
+    const float* __restrict__ {b_name},
+    const float* __restrict__ {bias_name},
+    const float* __restrict__ {alpha_ptr_name},
+    const float* __restrict__ {beta_ptr_name},
+    float* __restrict__ {out_name},
+    {m_param},
+    {n_param},
+    {k_param}) {{
+  {m_load}
+  {n_load}
+  {k_load}
+  const int row = (int)blockIdx.y * (int)blockDim.y + (int)threadIdx.y;
+  const int col = (int)blockIdx.x * (int)blockDim.x + (int)threadIdx.x;
+  if (row >= M || col >= N) return;
+  const float alpha = {alpha_ptr_name} ? {alpha_ptr_name}[0] : 1.0f;
+  const float beta = {beta_ptr_name} ? {beta_ptr_name}[0] : 1.0f;
+  float acc = 0.0f;
+  for (int k = 0; k < K; ++k) {{
+    const float av = intentir_ldg_f32({a_name} + {a_idx});
+    const float bv = intentir_ldg_f32({b_name} + {b_idx});
+    acc += av * bv;
+  }}
+  const float bias = intentir_ldg_f32({bias_name} + {out_idx});
+  {out_name}[{out_idx}] = alpha * acc + beta * bias;
+}}
+""".lstrip()
+
+    tensor_args = [a_name, b_name, bias_name, alpha_name, beta_name, out_name]
+    scalar_args: Dict[str, str] = {}
+    arg_names = [a_name, b_name, bias_name, alpha_name, beta_name, out_name]
+    for dim_name, is_tensor in ((str(M_dim), m_is_tensor), (str(N_dim), n_is_tensor), (str(K_dim), k_is_tensor)):
+        if is_tensor:
+            tensor_args.append(dim_name)
+        else:
+            scalar_args[dim_name] = "i32"
+        arg_names.append(dim_name)
+    io_spec = _io_spec_from_args(intent, tensor_args=tensor_args, scalar_args=scalar_args, arg_names=arg_names)
+    launch = CudaLaunch(grid=(grid_x, grid_y, 1), block=(block_x, block_y, 1), shared_mem=0)
+    return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=dict(bindings))
+
+
+def _kernel_addmv_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    """
+    Pattern: matmul(A[N,M], B[M]) + alpha/beta scaling + add.
+    """
+    ops = list(intent.ops or [])
+    if len(ops) != 4 or [o.op for o in ops] != ["matmul", "mul", "mul", "add"]:
+        raise CudaLoweringError("addmv lowering expects matmul->mul->mul->add chain")
+    mat, mul_a, mul_b, add0 = ops
+    if len(mat.inputs) != 2:
+        raise CudaLoweringError("addmv matmul expects 2 inputs")
+    a_name = str(mat.inputs[0])
+    b_name = str(mat.inputs[1])
+    mm_out = str(mat.output)
+
+    mul_a_in = [str(x) for x in mul_a.inputs]
+    if mm_out in mul_a_in:
+        alpha_name = mul_a_in[1] if mul_a_in[0] == mm_out else mul_a_in[0]
+        scaled_mm = str(mul_a.output)
+    else:
+        raise CudaLoweringError("addmv first mul must consume matmul output")
+
+    mul_b_in = [str(x) for x in mul_b.inputs]
+    beta_name = None
+    inp_name = None
+    for x in mul_b_in:
+        if _is_scalar_tensor(intent, x, dtype="f32"):
+            beta_name = x
+        else:
+            inp_name = x
+    if beta_name is None or inp_name is None:
+        raise CudaLoweringError("addmv second mul must be input * beta")
+    scaled_inp = str(mul_b.output)
+
+    add_in = [str(x) for x in add0.inputs]
+    if len(add_in) != 2 or sorted(add_in) != sorted([scaled_mm, scaled_inp]):
+        raise CudaLoweringError("addmv add op must consume scaled matmul and scaled input")
+    out_name = str(intent.outputs[0])
+    if str(add0.output) != out_name:
+        raise CudaLoweringError("addmv add output must be final output")
+
+    a_shape = _shape_values(intent, a_name)
+    b_shape = _shape_values(intent, b_name)
+    inp_shape = _shape_values(intent, inp_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(a_shape) != 2 or len(b_shape) != 1 or len(inp_shape) != 1 or len(out_shape) != 1:
+        raise CudaLoweringError("addmv lowering expects A[N,M], B[M], input[N], out[N]")
+    N_dim, M_dim = a_shape
+    if str(b_shape[0]) != str(M_dim):
+        raise CudaLoweringError("addmv shape mismatch between A and B")
+    if str(inp_shape[0]) != str(N_dim) or str(out_shape[0]) != str(N_dim):
+        raise CudaLoweringError("addmv shape mismatch for input/output")
+
+    N = _resolve_dim_int(N_dim, bindings, name="N")
+    M = _resolve_dim_int(M_dim, bindings, name="M")
+    sched = intent.schedule or ScheduleSketch()
+    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=256)
+    if block_x <= 0:
+        block_x = 256
+    block_x = max(32, min(1024, int(block_x)))
+    if (block_x & (block_x - 1)) != 0:
+        block_x = 1 << int(block_x - 1).bit_length()
+    grid_x = (N + block_x - 1) // block_x
+
+    n_is_tensor = _is_scalar_tensor(intent, str(N_dim), dtype="i32")
+    m_is_tensor = _is_scalar_tensor(intent, str(M_dim), dtype="i32")
+    n_param = f"const int* {str(N_dim)}_ptr" if n_is_tensor else "int N_in"
+    m_param = f"const int* {str(M_dim)}_ptr" if m_is_tensor else "int M_in"
+    n_load = f"const int N = {str(N_dim)}_ptr ? {str(N_dim)}_ptr[0] : 0;" if n_is_tensor else "const int N = N_in;"
+    m_load = f"const int M = {str(M_dim)}_ptr ? {str(M_dim)}_ptr[0] : 0;" if m_is_tensor else "const int M = M_in;"
+    alpha_ptr_name = f"{alpha_name}_ptr"
+    beta_ptr_name = f"{beta_name}_ptr"
+
+    cuda_src = f"""
+#include <stdint.h>
+
+#include "intentir_cuda_ops.cuh"
+
+extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(
+    const float* __restrict__ {a_name},
+    const float* __restrict__ {b_name},
+    const float* __restrict__ {inp_name},
+    const float* __restrict__ {alpha_ptr_name},
+    const float* __restrict__ {beta_ptr_name},
+    float* __restrict__ {out_name},
+    {n_param},
+    {m_param}) {{
+  {n_load}
+  {m_load}
+  const int n = (int)blockIdx.x * (int)blockDim.x + (int)threadIdx.x;
+  if (n >= N) return;
+  const float alpha = {alpha_ptr_name} ? {alpha_ptr_name}[0] : 1.0f;
+  const float beta = {beta_ptr_name} ? {beta_ptr_name}[0] : 1.0f;
+  float acc = 0.0f;
+  const float* row = {a_name} + (size_t)n * (size_t)M;
+  for (int k = 0; k < M; ++k) {{
+    acc += intentir_ldg_f32(row + (size_t)k) * intentir_ldg_f32({b_name} + (size_t)k);
+  }}
+  {out_name}[(size_t)n] = alpha * acc + beta * intentir_ldg_f32({inp_name} + (size_t)n);
+}}
+""".lstrip()
+
+    tensor_args = [a_name, b_name, inp_name, alpha_name, beta_name, out_name]
+    scalar_args: Dict[str, str] = {}
+    arg_names = [a_name, b_name, inp_name, alpha_name, beta_name, out_name]
+    for dim_name, is_tensor in ((str(N_dim), n_is_tensor), (str(M_dim), m_is_tensor)):
+        if is_tensor:
+            tensor_args.append(dim_name)
+        else:
+            scalar_args[dim_name] = "i32"
+        arg_names.append(dim_name)
+    io_spec = _io_spec_from_args(intent, tensor_args=tensor_args, scalar_args=scalar_args, arg_names=arg_names)
+    launch = CudaLaunch(grid=(grid_x, 1, 1), block=(block_x, 1, 1), shared_mem=0)
+    return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=dict(bindings))
+
+
+def _kernel_allclose_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    """
+    Pattern: allclose decomposition:
+      sub, abs, abs, mul, add, le, not, reduce_any, not -> scalar bool.
+    """
+    ops = list(intent.ops or [])
+    expected = ["sub", "abs", "abs", "mul", "add", "le", "not", "reduce_any", "not"]
+    if [o.op for o in ops] != expected:
+        raise CudaLoweringError("allclose lowering expects canonical op chain")
+    sub0, abs0, abs1, mul0, add0, le0, not0, red0, not1 = ops
+    if len(sub0.inputs) != 2:
+        raise CudaLoweringError("allclose sub expects 2 inputs")
+    a_name = str(sub0.inputs[0])
+    b_name = str(sub0.inputs[1])
+    if len(abs0.inputs) != 1 or str(abs0.inputs[0]) != str(sub0.output):
+        raise CudaLoweringError("allclose abs(diff) pattern mismatch")
+    if len(abs1.inputs) != 1 or str(abs1.inputs[0]) != b_name:
+        raise CudaLoweringError("allclose abs(b) pattern mismatch")
+    if len(mul0.inputs) != 2:
+        raise CudaLoweringError("allclose mul expects 2 inputs")
+    rtol_name = None
+    abs_b_tmp = str(abs1.output)
+    for x in (str(mul0.inputs[0]), str(mul0.inputs[1])):
+        if _is_scalar_tensor(intent, x, dtype="f32"):
+            rtol_name = x
+    if rtol_name is None:
+        raise CudaLoweringError("allclose mul must consume scalar rtol")
+    if abs_b_tmp not in {str(mul0.inputs[0]), str(mul0.inputs[1])}:
+        raise CudaLoweringError("allclose mul must consume abs(B)")
+    if len(add0.inputs) != 2:
+        raise CudaLoweringError("allclose add expects 2 inputs")
+    atol_name = None
+    for x in (str(add0.inputs[0]), str(add0.inputs[1])):
+        if _is_scalar_tensor(intent, x, dtype="f32"):
+            atol_name = x
+    if atol_name is None:
+        raise CudaLoweringError("allclose add must consume scalar atol")
+    if str(mul0.output) not in {str(add0.inputs[0]), str(add0.inputs[1])}:
+        raise CudaLoweringError("allclose add must consume mul(rtol, abs(B))")
+    if len(le0.inputs) != 2 or str(le0.inputs[0]) != str(abs0.output) or str(le0.inputs[1]) != str(add0.output):
+        raise CudaLoweringError("allclose le pattern mismatch")
+    if len(not0.inputs) != 1 or str(not0.inputs[0]) != str(le0.output):
+        raise CudaLoweringError("allclose first not pattern mismatch")
+    if len(red0.inputs) != 1 or str(red0.inputs[0]) != str(not0.output):
+        raise CudaLoweringError("allclose reduce_any pattern mismatch")
+    if len(not1.inputs) != 1 or str(not1.inputs[0]) != str(red0.output):
+        raise CudaLoweringError("allclose final not pattern mismatch")
+
+    out_name = str(intent.outputs[0])
+    if str(not1.output) != out_name:
+        raise CudaLoweringError("allclose final output mismatch")
+
+    dims = (red0.attrs or {}).get("dims")
+    if dims not in ([0, 1], [1, 0], (0, 1), (1, 0)):
+        raise CudaLoweringError("allclose reduce_any expects dims=[0,1]")
+
+    a_shape = _shape_values(intent, a_name)
+    b_shape = _shape_values(intent, b_name)
+    if len(a_shape) != 2 or len(b_shape) != 2:
+        raise CudaLoweringError("allclose expects rank-2 A/B")
+    if str(a_shape[0]) != str(b_shape[0]) or str(a_shape[1]) != str(b_shape[1]):
+        raise CudaLoweringError("allclose shape mismatch between A/B")
+    M_dim, N_dim = a_shape
+    M = _resolve_dim_int(M_dim, bindings, name="M")
+    N = _resolve_dim_int(N_dim, bindings, name="N")
+
+    sched = intent.schedule or ScheduleSketch()
+    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=256)
+    if block_x <= 0:
+        block_x = 256
+    if block_x > 1024:
+        block_x = 1024
+    if (block_x & (block_x - 1)) != 0:
+        block_x = 1 << int(block_x - 1).bit_length()
+    block_x = max(32, min(1024, int(block_x)))
+
+    m_is_tensor = _is_scalar_tensor(intent, str(M_dim), dtype="i32")
+    n_is_tensor = _is_scalar_tensor(intent, str(N_dim), dtype="i32")
+    m_param = f"const int* {str(M_dim)}_ptr" if m_is_tensor else "int M_in"
+    n_param = f"const int* {str(N_dim)}_ptr" if n_is_tensor else "int N_in"
+    m_load = f"const int M = {str(M_dim)}_ptr ? {str(M_dim)}_ptr[0] : 0;" if m_is_tensor else "const int M = M_in;"
+    n_load = f"const int N = {str(N_dim)}_ptr ? {str(N_dim)}_ptr[0] : 0;" if n_is_tensor else "const int N = N_in;"
+    rtol_ptr_name = f"{rtol_name}_ptr"
+    atol_ptr_name = f"{atol_name}_ptr"
+
+    cuda_src = f"""
+#include <math.h>
+#include <stdint.h>
+
+#include "intentir_cuda_ops.cuh"
+#include "kernels/reduce.cuh"
+
+extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(
+    const float* __restrict__ {a_name},
+    const float* __restrict__ {b_name},
+    const float* __restrict__ {rtol_ptr_name},
+    const float* __restrict__ {atol_ptr_name},
+    bool* __restrict__ {out_name},
+    {m_param},
+    {n_param}) {{
+  {m_load}
+  {n_load}
+  constexpr int BLOCK_THREADS = {block_x};
+  __shared__ intentir_cuda::BlockAllreduceI32<BLOCK_THREADS> red;
+  const float rtol = {rtol_ptr_name} ? {rtol_ptr_name}[0] : 1.0e-5f;
+  const float atol = {atol_ptr_name} ? {atol_ptr_name}[0] : 1.0e-8f;
+  const int64_t total = (int64_t)M * (int64_t)N;
+  int any_not_close = 0;
+  for (int64_t idx = (int64_t)threadIdx.x; idx < total; idx += (int64_t)blockDim.x) {{
+    const float av = intentir_ldg_f32({a_name} + (size_t)idx);
+    const float bv = intentir_ldg_f32({b_name} + (size_t)idx);
+    const float diff = fabsf(av - bv);
+    const float tol = atol + rtol * fabsf(bv);
+    any_not_close |= (diff > tol) ? 1 : 0;
+  }}
+  const int any = intentir_cuda::block_allreduce_max<BLOCK_THREADS>(any_not_close, &red);
+  if ((int)threadIdx.x == 0) {out_name}[0] = (any == 0);
+}}
+""".lstrip()
+
+    tensor_args = [a_name, b_name, rtol_name, atol_name, out_name]
+    scalar_args: Dict[str, str] = {}
+    arg_names = [a_name, b_name, rtol_name, atol_name, out_name]
+    for dim_name, is_tensor in ((str(M_dim), m_is_tensor), (str(N_dim), n_is_tensor)):
+        if is_tensor:
+            tensor_args.append(dim_name)
+        else:
+            scalar_args[dim_name] = "i32"
+        arg_names.append(dim_name)
+    io_spec = _io_spec_from_args(intent, tensor_args=tensor_args, scalar_args=scalar_args, arg_names=arg_names)
+    launch = CudaLaunch(grid=(1, 1, 1), block=(block_x, 1, 1), shared_mem=0)
     return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=dict(bindings))
 
 
@@ -2649,9 +3168,18 @@ def lower_intent_to_cuda_kernel(
 
     # 2) Pattern-based kernels (fused).
     outs = set(intent.outputs or [])
-    # any_kernel_dim (coverage): const + ne + reduce_any(axis=1)
-    if intent.ops and len(intent.ops) == 3 and [o.op for o in intent.ops] == ["const", "ne", "reduce_any"]:
+    # any/all row-reduction family.
+    op_seq = [o.op for o in (intent.ops or [])]
+    if op_seq in (["const", "ne", "reduce_any"], ["const", "eq", "reduce_any"], ["const", "eq", "reduce_any", "not"], ["const", "ne", "reduce_any", "not"]):
         return _kernel_any_dim_f32_to_i1(intent, bindings)
+    if op_seq in (["matmul", "mul", "mul", "add", "cast"], ["matmul", "mul", "mul", "add"]):
+        out_shape = _shape_values(intent, str((intent.outputs or [""])[0]))
+        if len(out_shape) == 2:
+            return _kernel_addmm_2d_f32(intent, bindings)
+        if len(out_shape) == 1:
+            return _kernel_addmv_2d_f32(intent, bindings)
+    if op_seq == ["sub", "abs", "abs", "mul", "add", "le", "not", "reduce_any", "not"]:
+        return _kernel_allclose_2d_f32(intent, bindings)
     if {"Y", "Mean", "Rstd"}.issubset(outs):
         return _kernel_layernorm_2d_f32(intent, bindings)
     # Softmax: recognize by name or by presence of reduce_max + exp + reduce_sum.

@@ -45,6 +45,7 @@ _ALWAYS_CANONICAL_SPECS = frozenset(
         "unique2d",
         "weight_norm2d",
         "scaled_dot_product_attention_bhsd",
+        "row_all",
         "trace2d",
         "triu2d",
         "upsample_nearest1d_ncl",

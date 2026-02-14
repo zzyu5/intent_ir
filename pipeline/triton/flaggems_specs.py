@@ -455,6 +455,11 @@ def _run_flaggems_addc2d_reference(
         "A": a_np,
         "B": b_np,
         "C": c_np,
+        # Parser-native aliases used by some intent extractions.
+        "x": a_np,
+        "t1": b_np,
+        "t2": c_np,
+        "inp": a_np,
         "out": out_np,
         "output": out_np,
         "input": a_np,
@@ -982,7 +987,7 @@ def _run_flaggems_row_all_reference(case: TestCase) -> Dict[str, np.ndarray]:
         inp = torch.from_numpy((rg.random((m, n), dtype=np.float32) > 0.3)).to(device=device, dtype=torch.bool)
 
     with flag_gems.use_gems(include=["all", "all_dim", "all_dims"]):
-        out = torch.all(inp, dim=1)
+        out = torch.all(inp, dim=1, keepdim=True)
 
     inp_np = _to_np(inp)
     out_np = _to_np(out)
@@ -4264,6 +4269,9 @@ def _run_flaggems_abs2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     inp_np = _to_np(inp)
     out_np = _to_np(out)
     return {
+        # Parser-native aliases used by abs2d extraction.
+        "A": inp_np,
+        "Out": out_np,
         "inp": inp_np,
         "out": out_np,
         "input": inp_np,

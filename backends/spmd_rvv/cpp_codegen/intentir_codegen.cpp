@@ -1556,6 +1556,27 @@ void emit_matmul(CodeWriter& w, const std::string& out, const std::string& a, co
            std::to_string(tm) + ", " + std::to_string(tn) + ", " + std::to_string(tk) + ");");
     return;
   }
+  if (a_shape.size() == 2 && b_shape.size() == 1) {
+    if (transpose_b) fail("matmul rank-2 x rank-1 does not support transpose_b");
+    int64_t M = transpose_a ? a_shape[1] : a_shape[0];
+    int64_t K = transpose_a ? a_shape[0] : a_shape[1];
+    int64_t K2 = b_shape[0];
+    if (K2 != K) fail("matmul shape mismatch (2D x 1D)");
+    if (out_shape.size() != 1 || out_shape[0] != M) fail("matmul output shape mismatch (2D x 1D)");
+    for (int64_t i = 0; i < M; ++i) {
+      w.line("{");
+      w.indent();
+      w.line("double acc = 0.0;");
+      for (int64_t k = 0; k < K; ++k) {
+        const int64_t a_idx = transpose_a ? (k * M + i) : (i * K + k);
+        w.line("acc += (double)" + a + "[" + std::to_string(a_idx) + "] * (double)" + b + "[" + std::to_string(k) + "];");
+      }
+      w.line(out + "[" + std::to_string(i) + "] = (float)acc;");
+      w.dedent();
+      w.line("}");
+    }
+    return;
+  }
   if (a_shape.size() == 3 && b_shape.size() == 3 && out_shape.size() == 3) {
     int64_t B0 = a_shape[0];
     int64_t M = transpose_a ? a_shape[2] : a_shape[1];
@@ -1591,7 +1612,7 @@ void emit_matmul(CodeWriter& w, const std::string& out, const std::string& a, co
            ");");
     return;
   }
-  fail("matmul supports rank-2/3/4");
+  fail("matmul supports rank-2/3/4 and rank-2 x rank-1");
 }
 
 struct CProgramEmitter {
@@ -2748,6 +2769,16 @@ int main(int argc, char** argv) {
           dtype_env[out] = "f32";
           continue;
         }
+        if (sa.size() == 2 && sb.size() == 1) {
+          if (tb) fail("matmul infer rank-2 x rank-1 does not support transpose_b");
+          int64_t M = ta ? sa[1] : sa[0];
+          int64_t K = ta ? sa[0] : sa[1];
+          int64_t K2 = sb[0];
+          if (K2 != K) fail("matmul infer shape mismatch (2D x 1D)");
+          shape_env[out] = {M};
+          dtype_env[out] = "f32";
+          continue;
+        }
         if (sa.size() == 4 && sb.size() == 4) {
           if (sa[0] != sb[0] || sa[1] != sb[1]) fail("matmul infer shape mismatch (4D batch/head)");
           int64_t B = sa[0], H = sa[1];
@@ -2760,7 +2791,7 @@ int main(int argc, char** argv) {
           dtype_env[out] = "f32";
           continue;
         }
-        fail("matmul infer supports only rank-2 or rank-4");
+        fail("matmul infer supports only rank-2, rank-2x1, or rank-4");
       }
       fail("cannot infer output shape for op: " + kind);
     }
@@ -2792,6 +2823,15 @@ int main(int argc, char** argv) {
         int64_t N = tb ? sb[0] : sb[1];
         if (K2 != K) continue;
         matmul_flops_total += 2.0 * (double)M * (double)N * (double)K;
+        continue;
+      }
+      if (sa.size() == 2 && sb.size() == 1) {
+        if (tb) continue;
+        int64_t M = ta ? sa[1] : sa[0];
+        int64_t K = ta ? sa[0] : sa[1];
+        int64_t K2 = sb[0];
+        if (K2 != K) continue;
+        matmul_flops_total += 2.0 * (double)M * (double)K;
         continue;
       }
       if (sa.size() == 4 && sb.size() == 4) {

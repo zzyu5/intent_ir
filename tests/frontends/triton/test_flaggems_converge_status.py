@@ -313,3 +313,74 @@ def test_converge_status_uses_backend_reason_code_field_when_present(tmp_path: P
     assert entry["status"] == "rvv_only"
     assert entry["reason_code"] == "env_unavailable"
     assert entry["runtime_detail"]["cuda"]["reason_code"] == "env_unavailable"
+
+
+def test_converge_status_write_registry_scoped_updates_only_in_scope(tmp_path: Path) -> None:
+    registry = tmp_path / "registry.json"
+    provider_dir = tmp_path / "provider"
+    rvv_json = tmp_path / "rvv.json"
+    cuda_json = tmp_path / "cuda.json"
+    out = tmp_path / "status_converged.json"
+    provider_dir.mkdir(parents=True, exist_ok=True)
+
+    registry.write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "semantic_op": "angle",
+                        "intent_ops": ["angle"],
+                        "e2e_spec": "angle2d",
+                        "status": "blocked_backend",
+                        "reason_code": "runtime_backend_fail",
+                    },
+                    {
+                        "semantic_op": "diag",
+                        "intent_ops": ["diag"],
+                        "e2e_spec": "diag2d",
+                        "status": "dual_pass",
+                        "reason_code": "runtime_dual_backend_pass",
+                    },
+                ],
+                "counts": {"by_status": {"blocked_backend": 1, "dual_pass": 1}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    rvv_json.write_text(json.dumps({"results": [{"kernel": "angle2d", "ok": True}]}), encoding="utf-8")
+    cuda_json.write_text(json.dumps({"results": [{"kernel": "angle2d", "ok": True}]}), encoding="utf-8")
+    (provider_dir / "angle2d.json").write_text(json.dumps({"diff": {"ok": True}}), encoding="utf-8")
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/converge_status.py",
+            "--registry",
+            str(registry),
+            "--provider-report-dir",
+            str(provider_dir),
+            "--rvv-json",
+            str(rvv_json),
+            "--cuda-json",
+            str(cuda_json),
+            "--scope-semantic-ops",
+            "angle",
+            "--scope-mode",
+            "active_only",
+            "--write-registry",
+            "--out",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+
+    reg_after = json.loads(registry.read_text(encoding="utf-8"))
+    entries = list(reg_after.get("entries") or [])
+    assert entries[0]["semantic_op"] == "angle"
+    assert entries[0]["status"] == "dual_pass"
+    assert entries[1]["semantic_op"] == "diag"
+    assert entries[1]["status"] == "dual_pass"
+    assert reg_after["counts"]["by_status"]["dual_pass"] == 2

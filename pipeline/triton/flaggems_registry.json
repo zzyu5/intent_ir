@@ -18,8 +18,8 @@
     "source_filtered_ops": 212,
     "semantic_ops": 196,
     "by_status": {
-      "blocked_backend": 183,
-      "dual_pass": 13
+      "blocked_backend": 173,
+      "dual_pass": 23
     },
     "by_family": {
       "attention_sequence": 5,
@@ -44,8 +44,8 @@
       "mapping_kind": "unary_template",
       "intent_pattern_id": "unary.abs",
       "e2e_spec": "abs2d",
-      "status": "blocked_backend",
-      "status_reason": "pipeline_diff_failed_or_missing",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped by unary template",
       "backend_support": {
         "rvv": {
@@ -94,28 +94,28 @@
           "missing_ops": []
         }
       },
-      "reason_code": "provider_report_missing",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
-          "reason_code": "runtime_unknown",
-          "reason_detail": "missing result for kernel in backend summary"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "runtime_unknown",
-          "reason_detail": "missing result for kernel in backend summary"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
         "provider": {
-          "exists": false,
-          "diff_ok": false
+          "exists": true,
+          "diff_ok": true
         },
-        "rvv": "unknown",
-        "cuda": "unknown"
+        "rvv": "pass",
+        "cuda": "pass"
       },
-      "in_scope": false,
-      "in_scope_active": false,
-      "in_scope_kernel_alias": false
+      "in_scope": true,
+      "in_scope_active": true,
+      "in_scope_kernel_alias": true
     },
     {
       "semantic_op": "acos",
@@ -129,8 +129,8 @@
       "mapping_kind": "unary_template",
       "intent_pattern_id": "unary.acos",
       "e2e_spec": "acos2d",
-      "status": "blocked_backend",
-      "status_reason": "pipeline_diff_failed_or_missing",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped to acos primitive",
       "backend_support": {
         "rvv": {
@@ -179,28 +179,28 @@
           "missing_ops": []
         }
       },
-      "reason_code": "provider_report_missing",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
-          "reason_code": "runtime_unknown",
-          "reason_detail": "missing result for kernel in backend summary"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "runtime_unknown",
-          "reason_detail": "missing result for kernel in backend summary"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
         "provider": {
-          "exists": false,
-          "diff_ok": false
+          "exists": true,
+          "diff_ok": true
         },
-        "rvv": "unknown",
-        "cuda": "unknown"
+        "rvv": "pass",
+        "cuda": "pass"
       },
-      "in_scope": false,
-      "in_scope_active": false,
-      "in_scope_kernel_alias": false
+      "in_scope": true,
+      "in_scope_active": true,
+      "in_scope_kernel_alias": true
     },
     {
       "semantic_op": "add",
@@ -214,8 +214,8 @@
       "mapping_kind": "binary_template",
       "intent_pattern_id": "binary.add",
       "e2e_spec": "add2d",
-      "status": "blocked_backend",
-      "status_reason": "runtime_backend_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped by binary template",
       "backend_support": {
         "rvv": {
@@ -264,15 +264,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "runtime_backend_fail",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
-          "reason_code": "runtime_unknown",
-          "reason_detail": "missing result for kernel in backend summary"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "runtime_unknown",
-          "reason_detail": "missing result for kernel in backend summary"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -280,12 +280,12 @@
           "exists": true,
           "diff_ok": true
         },
-        "rvv": "unknown",
-        "cuda": "unknown"
+        "rvv": "pass",
+        "cuda": "pass"
       },
-      "in_scope": false,
-      "in_scope_active": false,
-      "in_scope_kernel_alias": false
+      "in_scope": true,
+      "in_scope_active": true,
+      "in_scope_kernel_alias": true
     },
     {
       "semantic_op": "addcdiv",
@@ -302,8 +302,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.addcdiv",
       "e2e_spec": "addcdiv2d",
-      "status": "blocked_backend",
-      "status_reason": "pipeline_diff_failed_or_missing",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as input + value * tensor1 / tensor2",
       "backend_support": {
         "rvv": {
@@ -379,28 +379,28 @@
           "missing_ops": []
         }
       },
-      "reason_code": "provider_report_missing",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
-          "reason_code": "runtime_unknown",
-          "reason_detail": "missing result for kernel in backend summary"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "runtime_unknown",
-          "reason_detail": "missing result for kernel in backend summary"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
         "provider": {
-          "exists": false,
-          "diff_ok": false
+          "exists": true,
+          "diff_ok": true
         },
-        "rvv": "unknown",
-        "cuda": "unknown"
+        "rvv": "pass",
+        "cuda": "pass"
       },
-      "in_scope": false,
-      "in_scope_active": false,
-      "in_scope_kernel_alias": false
+      "in_scope": true,
+      "in_scope_active": true,
+      "in_scope_kernel_alias": true
     },
     {
       "semantic_op": "addcmul",
@@ -417,8 +417,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.addcmul",
       "e2e_spec": "addcmul2d",
-      "status": "blocked_backend",
-      "status_reason": "pipeline_diff_failed_or_missing",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as input + value * tensor1 * tensor2",
       "backend_support": {
         "rvv": {
@@ -485,28 +485,28 @@
           "missing_ops": []
         }
       },
-      "reason_code": "provider_report_missing",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
-          "reason_code": "runtime_unknown",
-          "reason_detail": "missing result for kernel in backend summary"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "runtime_unknown",
-          "reason_detail": "missing result for kernel in backend summary"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
         "provider": {
-          "exists": false,
-          "diff_ok": false
+          "exists": true,
+          "diff_ok": true
         },
-        "rvv": "unknown",
-        "cuda": "unknown"
+        "rvv": "pass",
+        "cuda": "pass"
       },
-      "in_scope": false,
-      "in_scope_active": false,
-      "in_scope_kernel_alias": false
+      "in_scope": true,
+      "in_scope_active": true,
+      "in_scope_kernel_alias": true
     },
     {
       "semantic_op": "addmv",
@@ -522,8 +522,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.addmv",
       "e2e_spec": "addmv2d",
-      "status": "blocked_backend",
-      "status_reason": "runtime_backend_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as add(input, matmul(mat, vec))",
       "backend_support": {
         "rvv": {
@@ -581,15 +581,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "runtime_backend_fail",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
-          "reason_code": "runtime_unknown",
-          "reason_detail": "missing result for kernel in backend summary"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "runtime_unknown",
-          "reason_detail": "missing result for kernel in backend summary"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -597,12 +597,12 @@
           "exists": true,
           "diff_ok": true
         },
-        "rvv": "unknown",
-        "cuda": "unknown"
+        "rvv": "pass",
+        "cuda": "pass"
       },
-      "in_scope": false,
-      "in_scope_active": false,
-      "in_scope_kernel_alias": false
+      "in_scope": true,
+      "in_scope_active": true,
+      "in_scope_kernel_alias": true
     },
     {
       "semantic_op": "addr",
@@ -621,8 +621,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.addr",
       "e2e_spec": "addr2d",
-      "status": "blocked_backend",
-      "status_reason": "pipeline_diff_failed_or_missing",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as beta*input + alpha*outer(vec1, vec2) via matmul decomposition",
       "backend_support": {
         "rvv": {
@@ -698,28 +698,28 @@
           "missing_ops": []
         }
       },
-      "reason_code": "provider_report_missing",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
-          "reason_code": "runtime_unknown",
-          "reason_detail": "missing result for kernel in backend summary"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "runtime_unknown",
-          "reason_detail": "missing result for kernel in backend summary"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
         "provider": {
-          "exists": false,
-          "diff_ok": false
+          "exists": true,
+          "diff_ok": true
         },
-        "rvv": "unknown",
-        "cuda": "unknown"
+        "rvv": "pass",
+        "cuda": "pass"
       },
-      "in_scope": false,
-      "in_scope_active": false,
-      "in_scope_kernel_alias": false
+      "in_scope": true,
+      "in_scope_active": true,
+      "in_scope_kernel_alias": true
     },
     {
       "semantic_op": "angle",
@@ -11460,8 +11460,8 @@
       "mapping_kind": "reduce_template",
       "intent_pattern_id": "reduce.all_via_not_any",
       "e2e_spec": "row_all",
-      "status": "blocked_backend",
-      "status_reason": "runtime_backend_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as not(reduce_any(not(x)))",
       "backend_support": {
         "rvv": {
@@ -11519,15 +11519,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "runtime_backend_fail",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
-          "reason_code": "runtime_unknown",
-          "reason_detail": "missing result for kernel in backend summary"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "runtime_unknown",
-          "reason_detail": "missing result for kernel in backend summary"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -11535,12 +11535,12 @@
           "exists": true,
           "diff_ok": true
         },
-        "rvv": "unknown",
-        "cuda": "unknown"
+        "rvv": "pass",
+        "cuda": "pass"
       },
-      "in_scope": false,
-      "in_scope_active": false,
-      "in_scope_kernel_alias": false
+      "in_scope": true,
+      "in_scope_active": true,
+      "in_scope_kernel_alias": true
     },
     {
       "semantic_op": "allclose",
@@ -11562,8 +11562,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.allclose",
       "e2e_spec": "allclose2d",
-      "status": "blocked_backend",
-      "status_reason": "runtime_backend_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as not(reduce_any(not(isclose(a,b))))",
       "backend_support": {
         "rvv": {
@@ -11666,15 +11666,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "runtime_backend_fail",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
-          "reason_code": "runtime_unknown",
-          "reason_detail": "missing result for kernel in backend summary"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "runtime_unknown",
-          "reason_detail": "missing result for kernel in backend summary"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -11682,12 +11682,12 @@
           "exists": true,
           "diff_ok": true
         },
-        "rvv": "unknown",
-        "cuda": "unknown"
+        "rvv": "pass",
+        "cuda": "pass"
       },
-      "in_scope": false,
-      "in_scope_active": false,
-      "in_scope_kernel_alias": false
+      "in_scope": true,
+      "in_scope_active": true,
+      "in_scope_kernel_alias": true
     },
     {
       "semantic_op": "amax",
@@ -16242,8 +16242,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.addmm",
       "e2e_spec": "addmm2d",
-      "status": "blocked_backend",
-      "status_reason": "runtime_backend_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as add(input, matmul(mat1, mat2))",
       "backend_support": {
         "rvv": {
@@ -16301,15 +16301,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "runtime_backend_fail",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
-          "reason_code": "runtime_unknown",
-          "reason_detail": "missing result for kernel in backend summary"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "runtime_unknown",
-          "reason_detail": "missing result for kernel in backend summary"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -16317,12 +16317,12 @@
           "exists": true,
           "diff_ok": true
         },
-        "rvv": "unknown",
-        "cuda": "unknown"
+        "rvv": "pass",
+        "cuda": "pass"
       },
-      "in_scope": false,
-      "in_scope_active": false,
-      "in_scope_kernel_alias": false
+      "in_scope": true,
+      "in_scope_active": true,
+      "in_scope_kernel_alias": true
     },
     {
       "semantic_op": "baddbmm",
