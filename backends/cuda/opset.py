@@ -12,6 +12,9 @@ CUDA_SUPPORTED_OPS: set[str] = {
     # Single-op semantic kernels.
     "matmul",
     "conv1d",
+    "conv2d",
+    "conv3d",
+    "conv_depthwise2d",
     "dropout",
     "softmax",
     "correlation",
@@ -66,6 +69,9 @@ CUDA_SUPPORTED_OPS: set[str] = {
     "where",
     "argmax",
     "argmin",
+    "cumsum",
+    "cummax",
+    "cummin",
     "avg_pool2d",
     "scaled_dot_product_attention",
 }

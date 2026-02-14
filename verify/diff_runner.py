@@ -138,6 +138,7 @@ def run_diff(
                     bindings.setdefault("HEAD_DIM_MID", hd // 2)
             except Exception:
                 pass
+        _add_common_derived_bindings(bindings)
         # Only feed/validate true external inputs (values consumed by the ops graph).
         produced = {op.output for op in intent_exec.ops if op.output}
         used: set[str] = set()
@@ -514,6 +515,66 @@ def _resolve_tensor_shape(tensor, bindings: Dict[str, int]):
         else:
             return None
     return tuple(shape)
+
+
+def _binding_int(bindings: Dict[str, Any], key: str) -> int | None:
+    if key not in bindings:
+        return None
+    try:
+        return int(bindings[key])
+    except Exception:
+        return None
+
+
+def _add_common_derived_bindings(bindings: Dict[str, Any]) -> None:
+    c_in = _binding_int(bindings, "C_IN")
+    groups = _binding_int(bindings, "GROUPS")
+    c_per_g = _binding_int(bindings, "C_PER_G")
+    c_out = _binding_int(bindings, "C_OUT")
+    mult = _binding_int(bindings, "MULT")
+
+    if "C_IN_TOTAL" not in bindings and c_in is not None:
+        bindings["C_IN_TOTAL"] = c_in * groups if groups is not None else c_in
+    if "C_PER_G" not in bindings:
+        if c_per_g is not None:
+            bindings["C_PER_G"] = c_per_g
+        elif c_in is not None:
+            if groups is not None and groups > 0 and c_in % groups == 0:
+                bindings["C_PER_G"] = c_in // groups
+            else:
+                bindings["C_PER_G"] = c_in
+    if "C_OUT" not in bindings:
+        if c_out is not None:
+            bindings["C_OUT"] = c_out
+        elif c_in is not None and mult is not None:
+            bindings["C_OUT"] = c_in * mult
+        elif c_per_g is not None and groups is not None:
+            bindings["C_OUT"] = c_per_g * groups
+
+    if "OH" not in bindings:
+        H = _binding_int(bindings, "H")
+        PH = _binding_int(bindings, "PH")
+        KH = _binding_int(bindings, "KH")
+        SH = _binding_int(bindings, "SH")
+        DH = _binding_int(bindings, "DH")
+        if None not in (H, PH, KH, SH, DH) and SH and SH > 0:
+            bindings["OH"] = (H + 2 * PH - DH * (KH - 1) - 1) // SH + 1
+    if "OW" not in bindings:
+        W = _binding_int(bindings, "W")
+        PW = _binding_int(bindings, "PW")
+        KW = _binding_int(bindings, "KW")
+        SW = _binding_int(bindings, "SW")
+        DW = _binding_int(bindings, "DW")
+        if None not in (W, PW, KW, SW, DW) and SW and SW > 0:
+            bindings["OW"] = (W + 2 * PW - DW * (KW - 1) - 1) // SW + 1
+    if "OD" not in bindings:
+        D = _binding_int(bindings, "D")
+        PD = _binding_int(bindings, "PD")
+        KD = _binding_int(bindings, "KD")
+        SD = _binding_int(bindings, "SD")
+        DD = _binding_int(bindings, "DD")
+        if None not in (D, PD, KD, SD, DD) and SD and SD > 0:
+            bindings["OD"] = (D + 2 * PD - DD * (KD - 1) - 1) // SD + 1
 
 
 __all__ = ["DiffResult", "Counterexample", "run_diff"]

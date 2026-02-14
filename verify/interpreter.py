@@ -115,6 +115,7 @@ INTERPRETER_SUPPORTED_OPS: set[str] = set().union(
         "upsample_nearest1d",
         "upsample_nearest2d",
         "conv1d",
+        "conv2d",
         "conv3d",
         "conv_depthwise2d",
         "max_pool2d_with_indices",
@@ -1111,6 +1112,52 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         tw = torch.from_numpy(w)
         tb = torch.from_numpy(b) if b is not None else None
         out = F.conv1d(tx, tw, bias=tb, stride=int(stride), padding=int(padding), dilation=int(dilation), groups=groups)
+        return np.asarray(out.detach().cpu().numpy(), dtype=np.float32)
+    if op.op == "conv2d":
+        if len(op.inputs) < 2:
+            raise ValueError("conv2d requires at least 2 inputs (input, weight)")
+        x = np.asarray(_get(env, op.inputs[0]), dtype=np.float32)
+        w = np.asarray(_get(env, op.inputs[1]), dtype=np.float32)
+        if x.ndim != 4:
+            raise ValueError(f"conv2d expects input rank=4 [N,C,H,W], got shape={x.shape}")
+        if w.ndim != 4:
+            raise ValueError(f"conv2d expects weight rank=4 [C_out,C_in/groups,KH,KW], got shape={w.shape}")
+        b = None
+        if len(op.inputs) >= 3:
+            b = np.asarray(_get(env, op.inputs[2]), dtype=np.float32).reshape(-1)
+
+        def _to_int_attr(v: Any, name: str) -> int:
+            if isinstance(v, (int, np.integer)):
+                return int(v)
+            if isinstance(v, str):
+                if v in shape_bindings:
+                    return int(shape_bindings[v])
+                if v.lstrip("-").isdigit():
+                    return int(v)
+            raise ValueError(f"conv2d {name} must resolve to int, got {v!r}")
+
+        def _norm_2d(v: Any, *, default: tuple[int, int], name: str) -> tuple[int, int]:
+            if v is None:
+                return default
+            if isinstance(v, (int, np.integer, str)):
+                x0 = _to_int_attr(v, name)
+                return (x0, x0)
+            if isinstance(v, list) and len(v) == 2:
+                return (_to_int_attr(v[0], name), _to_int_attr(v[1], name))
+            raise ValueError(f"conv2d {name} must be int/symbol or list[len=2], got {v!r}")
+
+        stride = _norm_2d(op.attrs.get("stride"), default=(1, 1), name="stride")
+        padding = _norm_2d(op.attrs.get("padding"), default=(0, 0), name="padding")
+        dilation = _norm_2d(op.attrs.get("dilation"), default=(1, 1), name="dilation")
+        groups = _to_int_attr(op.attrs.get("groups", 1), "groups")
+
+        import torch  # noqa: PLC0415
+        import torch.nn.functional as F  # noqa: PLC0415
+
+        tx = torch.from_numpy(x)
+        tw = torch.from_numpy(w)
+        tb = torch.from_numpy(b) if b is not None else None
+        out = F.conv2d(tx, tw, bias=tb, stride=stride, padding=padding, dilation=dilation, groups=groups)
         return np.asarray(out.detach().cpu().numpy(), dtype=np.float32)
     if op.op == "conv3d":
         if len(op.inputs) < 2:

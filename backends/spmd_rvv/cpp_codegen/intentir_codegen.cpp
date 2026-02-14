@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <algorithm>
+#include <array>
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -918,6 +919,78 @@ void emit_where(CodeWriter& w, const std::string& out, const std::string& cond, 
     w.dedent();
     w.line("}");
   }
+}
+
+void emit_cumsum(CodeWriter& w, const std::string& out, const std::string& x, const std::vector<int64_t>& out_shape, int axis, const std::string& dt) {
+  if (dt != "f32") fail("cumsum currently supports f32 only");
+  const int r = static_cast<int>(out_shape.size());
+  if (r == 1) {
+    if (axis < 0) axis += 1;
+    if (axis != 0) fail("cumsum rank-1 supports axis=0 only");
+    w.line("float acc = 0.0f;");
+    w.line("for (int i = 0; i < " + std::to_string(out_shape[0]) + "; ++i) {");
+    w.indent();
+    w.line("acc += " + x + "[i];");
+    w.line(out + "[i] = acc;");
+    w.dedent();
+    w.line("}");
+    return;
+  }
+  if (r == 2) {
+    if (axis < 0) axis += 2;
+    const int64_t M = out_shape[0];
+    const int64_t N = out_shape[1];
+    if (axis == 0) {
+      w.line("for (int j = 0; j < " + std::to_string(N) + "; ++j) {");
+      w.indent();
+      w.line("float acc = 0.0f;");
+      w.line("for (int i = 0; i < " + std::to_string(M) + "; ++i) {");
+      w.indent();
+      w.line("const int idx = i * " + std::to_string(N) + " + j;");
+      w.line("acc += " + x + "[idx];");
+      w.line(out + "[idx] = acc;");
+      w.dedent();
+      w.line("}");
+      w.dedent();
+      w.line("}");
+      return;
+    }
+    if (axis == 1) {
+      w.line("for (int i = 0; i < " + std::to_string(M) + "; ++i) {");
+      w.indent();
+      w.line("float acc = 0.0f;");
+      w.line("for (int j = 0; j < " + std::to_string(N) + "; ++j) {");
+      w.indent();
+      w.line("const int idx = i * " + std::to_string(N) + " + j;");
+      w.line("acc += " + x + "[idx];");
+      w.line(out + "[idx] = acc;");
+      w.dedent();
+      w.line("}");
+      w.dedent();
+      w.line("}");
+      return;
+    }
+    fail("cumsum rank-2 supports axis=0/1 only");
+  }
+  fail("cumsum currently supports rank-1/2 only");
+}
+
+void emit_cumext_1d(CodeWriter& w, const std::string& out, const std::string& x, const std::vector<int64_t>& out_shape, int axis,
+                    const std::string& dt, bool is_max) {
+  if (dt != "f32") fail(std::string(is_max ? "cummax" : "cummin") + " currently supports f32 only");
+  if (out_shape.size() != 1) fail(std::string(is_max ? "cummax" : "cummin") + " currently supports rank-1 only");
+  if (axis < 0) axis += 1;
+  if (axis != 0) fail(std::string(is_max ? "cummax" : "cummin") + " rank-1 supports axis=0 only");
+  const std::string fun = is_max ? "fmaxf" : "fminf";
+  w.line("if (" + std::to_string(out_shape[0]) + " <= 0) return;");
+  w.line("float best = " + x + "[0];");
+  w.line(out + "[0] = best;");
+  w.line("for (int i = 1; i < " + std::to_string(out_shape[0]) + "; ++i) {");
+  w.indent();
+  w.line("best = " + fun + "(best, " + x + "[i]);");
+  w.line(out + "[i] = best;");
+  w.dedent();
+  w.line("}");
 }
 
 void emit_iota(CodeWriter& w, const std::string& out, const std::vector<int64_t>& out_shape, int axis, const std::string& out_dtype) {
@@ -2352,6 +2425,15 @@ struct CProgramEmitter {
 	      } else if (op.op == "where") {
 	        emit_where(w, out_var, v(op.inputs[0]), v(op.inputs[1]), v(op.inputs[2]), shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), shape_env.at(op.inputs[2]), out_shape,
 	                   dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(op.inputs[2]), dtype_env.at(out));
+	      } else if (op.op == "cumsum") {
+	        int axis = op.attrs.value("axis", 0);
+	        emit_cumsum(w, out_var, v(op.inputs[0]), out_shape, axis, dtype_env.at(out));
+	      } else if (op.op == "cummax") {
+	        int axis = op.attrs.value("axis", 0);
+	        emit_cumext_1d(w, out_var, v(op.inputs[0]), out_shape, axis, dtype_env.at(out), /*is_max=*/true);
+	      } else if (op.op == "cummin") {
+	        int axis = op.attrs.value("axis", 0);
+	        emit_cumext_1d(w, out_var, v(op.inputs[0]), out_shape, axis, dtype_env.at(out), /*is_max=*/false);
 	      } else if (op.op == "conv1d") {
 	        if (op.inputs.size() != 3) fail("conv1d expects inputs [input, weight, bias]");
 	        const auto& x_shape = shape_env.at(op.inputs[0]);
@@ -2404,6 +2486,272 @@ struct CProgramEmitter {
 	        w.dedent();
 	        w.line("}");
 	        w.line(out_var + "[((n * " + std::to_string(C_OUT) + " + co) * " + std::to_string(OL) + " + ol)] = acc;");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	      } else if (op.op == "conv2d") {
+	        if (op.inputs.size() < 2 || op.inputs.size() > 3) fail("conv2d expects inputs [input, weight] or [input, weight, bias]");
+	        const auto& x_shape = shape_env.at(op.inputs[0]);
+	        const auto& w_shape = shape_env.at(op.inputs[1]);
+	        const bool has_bias = op.inputs.size() == 3;
+	        const auto& b_shape = has_bias ? shape_env.at(op.inputs[2]) : std::vector<int64_t>{};
+	        if (x_shape.size() != 4 || w_shape.size() != 4 || out_shape.size() != 4)
+	          fail("conv2d expects input[N,C,H,W], weight[CO,C_PER_G,KH,KW], out[N,CO,OH,OW]");
+	        if (dtype_env.at(op.inputs[0]) != "f32" || dtype_env.at(op.inputs[1]) != "f32" || dtype_env.at(out) != "f32")
+	          fail("conv2d currently supports f32 only");
+	        if (has_bias) {
+	          if (b_shape.size() != 1) fail("conv2d bias must be rank-1");
+	          if (dtype_env.at(op.inputs[2]) != "f32") fail("conv2d bias must be f32");
+	        }
+	        const int64_t N = x_shape[0];
+	        const int64_t C_IN_TOTAL = x_shape[1];
+	        const int64_t H = x_shape[2];
+	        const int64_t W = x_shape[3];
+	        const int64_t C_OUT = w_shape[0];
+	        const int64_t C_PER_G = w_shape[1];
+	        const int64_t KH = w_shape[2];
+	        const int64_t KW = w_shape[3];
+	        if (has_bias && b_shape[0] != C_OUT) fail("conv2d bias shape mismatch");
+	        auto parse_pair = [&](const json& value, const std::string& key) -> std::pair<int, int> {
+	          if (value.is_array()) {
+	            if (value.size() != 2) fail("conv2d " + key + " must have length 2");
+	            return {static_cast<int>(resolve_const_value(value[0], bindings)), static_cast<int>(resolve_const_value(value[1], bindings))};
+	          }
+	          int v = static_cast<int>(resolve_const_value(value, bindings));
+	          return {v, v};
+	        };
+	        std::pair<int, int> stride = op.attrs.contains("stride") ? parse_pair(op.attrs["stride"], "stride") : std::pair<int, int>{1, 1};
+	        std::pair<int, int> padding = op.attrs.contains("padding") ? parse_pair(op.attrs["padding"], "padding") : std::pair<int, int>{0, 0};
+	        std::pair<int, int> dilation = op.attrs.contains("dilation") ? parse_pair(op.attrs["dilation"], "dilation") : std::pair<int, int>{1, 1};
+	        const int groups = op.attrs.contains("groups") ? static_cast<int>(resolve_const_value(op.attrs["groups"], bindings)) : 1;
+	        if (groups <= 0 || stride.first <= 0 || stride.second <= 0 || dilation.first <= 0 || dilation.second <= 0)
+	          fail("conv2d attrs stride/dilation/groups must be positive");
+	        if (C_IN_TOTAL != C_PER_G * groups) fail("conv2d channel/group mismatch");
+	        if ((C_OUT % groups) != 0) fail("conv2d C_OUT must be divisible by groups");
+	        const int64_t OH = out_shape[2];
+	        const int64_t OW = out_shape[3];
+	        const int64_t expected_oh = ((H + 2LL * padding.first - (int64_t)dilation.first * (KH - 1) - 1) / stride.first) + 1;
+	        const int64_t expected_ow = ((W + 2LL * padding.second - (int64_t)dilation.second * (KW - 1) - 1) / stride.second) + 1;
+	        if (expected_oh != OH || expected_ow != OW) fail("conv2d output shape mismatch");
+	        w.line("for (int n = 0; n < " + std::to_string(N) + "; ++n) {");
+	        w.indent();
+	        w.line("for (int co = 0; co < " + std::to_string(C_OUT) + "; ++co) {");
+	        w.indent();
+	        w.line("const int co_per_g = " + std::to_string(C_OUT / groups) + ";");
+	        w.line("const int g = co / co_per_g;");
+	        w.line("const int c_start = g * " + std::to_string(C_PER_G) + ";");
+	        w.line("for (int oh = 0; oh < " + std::to_string(OH) + "; ++oh) {");
+	        w.indent();
+	        w.line("for (int ow = 0; ow < " + std::to_string(OW) + "; ++ow) {");
+	        w.indent();
+	        if (has_bias) w.line("float acc = " + v(op.inputs[2]) + "[co];");
+	        else w.line("float acc = 0.0f;");
+	        w.line("for (int ci = 0; ci < " + std::to_string(C_PER_G) + "; ++ci) {");
+	        w.indent();
+	        w.line("const int c = c_start + ci;");
+	        w.line("for (int kh = 0; kh < " + std::to_string(KH) + "; ++kh) {");
+	        w.indent();
+	        w.line("const int ih = oh * " + std::to_string(stride.first) + " - " + std::to_string(padding.first) + " + kh * " + std::to_string(dilation.first) + ";");
+	        w.line("if ((unsigned)ih >= (unsigned)" + std::to_string(H) + ") continue;");
+	        w.line("for (int kw = 0; kw < " + std::to_string(KW) + "; ++kw) {");
+	        w.indent();
+	        w.line("const int iw = ow * " + std::to_string(stride.second) + " - " + std::to_string(padding.second) + " + kw * " + std::to_string(dilation.second) + ";");
+	        w.line("if ((unsigned)iw >= (unsigned)" + std::to_string(W) + ") continue;");
+	        w.line("const int x_idx = (((n * " + std::to_string(C_IN_TOTAL) + " + c) * " + std::to_string(H) + " + ih) * " + std::to_string(W) + " + iw);");
+	        w.line("const int w_idx = (((co * " + std::to_string(C_PER_G) + " + ci) * " + std::to_string(KH) + " + kh) * " + std::to_string(KW) + " + kw);");
+	        w.line("acc += " + v(op.inputs[0]) + "[x_idx] * " + v(op.inputs[1]) + "[w_idx];");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.line(out_var + "[(((n * " + std::to_string(C_OUT) + " + co) * " + std::to_string(OH) + " + oh) * " + std::to_string(OW) + " + ow)] = acc;");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	      } else if (op.op == "conv3d") {
+	        if (op.inputs.size() < 2 || op.inputs.size() > 3) fail("conv3d expects inputs [input, weight] or [input, weight, bias]");
+	        const auto& x_shape = shape_env.at(op.inputs[0]);
+	        const auto& w_shape = shape_env.at(op.inputs[1]);
+	        const bool has_bias = op.inputs.size() == 3;
+	        const auto& b_shape = has_bias ? shape_env.at(op.inputs[2]) : std::vector<int64_t>{};
+	        if (x_shape.size() != 5 || w_shape.size() != 5 || out_shape.size() != 5)
+	          fail("conv3d expects input[N,C,D,H,W], weight[CO,C_PER_G,KD,KH,KW], out[N,CO,OD,OH,OW]");
+	        if (dtype_env.at(op.inputs[0]) != "f32" || dtype_env.at(op.inputs[1]) != "f32" || dtype_env.at(out) != "f32")
+	          fail("conv3d currently supports f32 only");
+	        if (has_bias) {
+	          if (b_shape.size() != 1) fail("conv3d bias must be rank-1");
+	          if (dtype_env.at(op.inputs[2]) != "f32") fail("conv3d bias must be f32");
+	        }
+	        const int64_t N = x_shape[0];
+	        const int64_t C_IN_TOTAL = x_shape[1];
+	        const int64_t D = x_shape[2];
+	        const int64_t H = x_shape[3];
+	        const int64_t W = x_shape[4];
+	        const int64_t C_OUT = w_shape[0];
+	        const int64_t C_PER_G = w_shape[1];
+	        const int64_t KD = w_shape[2];
+	        const int64_t KH = w_shape[3];
+	        const int64_t KW = w_shape[4];
+	        if (has_bias && b_shape[0] != C_OUT) fail("conv3d bias shape mismatch");
+	        auto parse_triple = [&](const json& value, const std::string& key) -> std::array<int, 3> {
+	          if (value.is_array()) {
+	            if (value.size() != 3) fail("conv3d " + key + " must have length 3");
+	            return {static_cast<int>(resolve_const_value(value[0], bindings)),
+	                    static_cast<int>(resolve_const_value(value[1], bindings)),
+	                    static_cast<int>(resolve_const_value(value[2], bindings))};
+	          }
+	          int v = static_cast<int>(resolve_const_value(value, bindings));
+	          return {v, v, v};
+	        };
+	        std::array<int, 3> stride = op.attrs.contains("stride") ? parse_triple(op.attrs["stride"], "stride") : std::array<int, 3>{1, 1, 1};
+	        std::array<int, 3> padding = op.attrs.contains("padding") ? parse_triple(op.attrs["padding"], "padding") : std::array<int, 3>{0, 0, 0};
+	        std::array<int, 3> dilation = op.attrs.contains("dilation") ? parse_triple(op.attrs["dilation"], "dilation") : std::array<int, 3>{1, 1, 1};
+	        const int groups = op.attrs.contains("groups") ? static_cast<int>(resolve_const_value(op.attrs["groups"], bindings)) : 1;
+	        if (groups <= 0 || stride[0] <= 0 || stride[1] <= 0 || stride[2] <= 0 || dilation[0] <= 0 || dilation[1] <= 0 || dilation[2] <= 0)
+	          fail("conv3d attrs stride/dilation/groups must be positive");
+	        if (C_IN_TOTAL != C_PER_G * groups) fail("conv3d channel/group mismatch");
+	        if ((C_OUT % groups) != 0) fail("conv3d C_OUT must be divisible by groups");
+	        const int64_t OD = out_shape[2];
+	        const int64_t OH = out_shape[3];
+	        const int64_t OW = out_shape[4];
+	        const int64_t expected_od = ((D + 2LL * padding[0] - (int64_t)dilation[0] * (KD - 1) - 1) / stride[0]) + 1;
+	        const int64_t expected_oh = ((H + 2LL * padding[1] - (int64_t)dilation[1] * (KH - 1) - 1) / stride[1]) + 1;
+	        const int64_t expected_ow = ((W + 2LL * padding[2] - (int64_t)dilation[2] * (KW - 1) - 1) / stride[2]) + 1;
+	        if (expected_od != OD || expected_oh != OH || expected_ow != OW) fail("conv3d output shape mismatch");
+	        w.line("for (int n = 0; n < " + std::to_string(N) + "; ++n) {");
+	        w.indent();
+	        w.line("for (int co = 0; co < " + std::to_string(C_OUT) + "; ++co) {");
+	        w.indent();
+	        w.line("const int co_per_g = " + std::to_string(C_OUT / groups) + ";");
+	        w.line("const int g = co / co_per_g;");
+	        w.line("const int c_start = g * " + std::to_string(C_PER_G) + ";");
+	        w.line("for (int od = 0; od < " + std::to_string(OD) + "; ++od) {");
+	        w.indent();
+	        w.line("for (int oh = 0; oh < " + std::to_string(OH) + "; ++oh) {");
+	        w.indent();
+	        w.line("for (int ow = 0; ow < " + std::to_string(OW) + "; ++ow) {");
+	        w.indent();
+	        if (has_bias) w.line("float acc = " + v(op.inputs[2]) + "[co];");
+	        else w.line("float acc = 0.0f;");
+	        w.line("for (int ci = 0; ci < " + std::to_string(C_PER_G) + "; ++ci) {");
+	        w.indent();
+	        w.line("const int c = c_start + ci;");
+	        w.line("for (int kd = 0; kd < " + std::to_string(KD) + "; ++kd) {");
+	        w.indent();
+	        w.line("const int id = od * " + std::to_string(stride[0]) + " - " + std::to_string(padding[0]) + " + kd * " + std::to_string(dilation[0]) + ";");
+	        w.line("if ((unsigned)id >= (unsigned)" + std::to_string(D) + ") continue;");
+	        w.line("for (int kh = 0; kh < " + std::to_string(KH) + "; ++kh) {");
+	        w.indent();
+	        w.line("const int ih = oh * " + std::to_string(stride[1]) + " - " + std::to_string(padding[1]) + " + kh * " + std::to_string(dilation[1]) + ";");
+	        w.line("if ((unsigned)ih >= (unsigned)" + std::to_string(H) + ") continue;");
+	        w.line("for (int kw = 0; kw < " + std::to_string(KW) + "; ++kw) {");
+	        w.indent();
+	        w.line("const int iw = ow * " + std::to_string(stride[2]) + " - " + std::to_string(padding[2]) + " + kw * " + std::to_string(dilation[2]) + ";");
+	        w.line("if ((unsigned)iw >= (unsigned)" + std::to_string(W) + ") continue;");
+	        w.line("const int x_idx = ((((n * " + std::to_string(C_IN_TOTAL) + " + c) * " + std::to_string(D) + " + id) * " + std::to_string(H) + " + ih) * " + std::to_string(W) + " + iw);");
+	        w.line("const int w_idx = ((((co * " + std::to_string(C_PER_G) + " + ci) * " + std::to_string(KD) + " + kd) * " + std::to_string(KH) + " + kh) * " + std::to_string(KW) + " + kw);");
+	        w.line("acc += " + v(op.inputs[0]) + "[x_idx] * " + v(op.inputs[1]) + "[w_idx];");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.line(out_var + "[((((n * " + std::to_string(C_OUT) + " + co) * " + std::to_string(OD) + " + od) * " + std::to_string(OH) + " + oh) * " + std::to_string(OW) + " + ow)] = acc;");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	      } else if (op.op == "conv_depthwise2d") {
+	        if (op.inputs.size() < 2 || op.inputs.size() > 3) fail("conv_depthwise2d expects inputs [input, weight] or [input, weight, bias]");
+	        const auto& x_shape = shape_env.at(op.inputs[0]);
+	        const auto& w_shape = shape_env.at(op.inputs[1]);
+	        const bool has_bias = op.inputs.size() == 3;
+	        const auto& b_shape = has_bias ? shape_env.at(op.inputs[2]) : std::vector<int64_t>{};
+	        if (x_shape.size() != 4 || w_shape.size() != 4 || out_shape.size() != 4)
+	          fail("conv_depthwise2d expects input[N,C,H,W], weight[C_OUT,1,KH,KW], out[N,C_OUT,OH,OW]");
+	        if (dtype_env.at(op.inputs[0]) != "f32" || dtype_env.at(op.inputs[1]) != "f32" || dtype_env.at(out) != "f32")
+	          fail("conv_depthwise2d currently supports f32 only");
+	        if (has_bias) {
+	          if (b_shape.size() != 1) fail("conv_depthwise2d bias must be rank-1");
+	          if (dtype_env.at(op.inputs[2]) != "f32") fail("conv_depthwise2d bias must be f32");
+	        }
+	        const int64_t N = x_shape[0];
+	        const int64_t C_IN = x_shape[1];
+	        const int64_t H = x_shape[2];
+	        const int64_t W = x_shape[3];
+	        const int64_t C_OUT = w_shape[0];
+	        const int64_t KH = w_shape[2];
+	        const int64_t KW = w_shape[3];
+	        if (w_shape[1] != 1) fail("conv_depthwise2d expects weight second dim == 1");
+	        if (C_IN <= 0 || C_OUT <= 0 || (C_OUT % C_IN) != 0) fail("conv_depthwise2d channel multiplier mismatch");
+	        if (has_bias && b_shape[0] != C_OUT) fail("conv_depthwise2d bias shape mismatch");
+	        const int64_t channel_multiplier = C_OUT / C_IN;
+	        auto parse_pair = [&](const json& value, const std::string& key) -> std::pair<int, int> {
+	          if (value.is_array()) {
+	            if (value.size() != 2) fail("conv_depthwise2d " + key + " must have length 2");
+	            return {static_cast<int>(resolve_const_value(value[0], bindings)), static_cast<int>(resolve_const_value(value[1], bindings))};
+	          }
+	          int v = static_cast<int>(resolve_const_value(value, bindings));
+	          return {v, v};
+	        };
+	        std::pair<int, int> stride = op.attrs.contains("stride") ? parse_pair(op.attrs["stride"], "stride") : std::pair<int, int>{1, 1};
+	        std::pair<int, int> padding = op.attrs.contains("padding") ? parse_pair(op.attrs["padding"], "padding") : std::pair<int, int>{0, 0};
+	        std::pair<int, int> dilation = op.attrs.contains("dilation") ? parse_pair(op.attrs["dilation"], "dilation") : std::pair<int, int>{1, 1};
+	        if (stride.first <= 0 || stride.second <= 0 || dilation.first <= 0 || dilation.second <= 0)
+	          fail("conv_depthwise2d attrs stride/dilation must be positive");
+	        const int64_t OH = out_shape[2];
+	        const int64_t OW = out_shape[3];
+	        const int64_t expected_oh = ((H + 2LL * padding.first - (int64_t)dilation.first * (KH - 1) - 1) / stride.first) + 1;
+	        const int64_t expected_ow = ((W + 2LL * padding.second - (int64_t)dilation.second * (KW - 1) - 1) / stride.second) + 1;
+	        if (expected_oh != OH || expected_ow != OW) fail("conv_depthwise2d output shape mismatch");
+	        w.line("for (int n = 0; n < " + std::to_string(N) + "; ++n) {");
+	        w.indent();
+	        w.line("for (int co = 0; co < " + std::to_string(C_OUT) + "; ++co) {");
+	        w.indent();
+	        w.line("const int ci = co / " + std::to_string(channel_multiplier) + ";");
+	        w.line("for (int oh = 0; oh < " + std::to_string(OH) + "; ++oh) {");
+	        w.indent();
+	        w.line("for (int ow = 0; ow < " + std::to_string(OW) + "; ++ow) {");
+	        w.indent();
+	        if (has_bias) w.line("float acc = " + v(op.inputs[2]) + "[co];");
+	        else w.line("float acc = 0.0f;");
+	        w.line("for (int kh = 0; kh < " + std::to_string(KH) + "; ++kh) {");
+	        w.indent();
+	        w.line("const int ih = oh * " + std::to_string(stride.first) + " - " + std::to_string(padding.first) + " + kh * " + std::to_string(dilation.first) + ";");
+	        w.line("if ((unsigned)ih >= (unsigned)" + std::to_string(H) + ") continue;");
+	        w.line("for (int kw = 0; kw < " + std::to_string(KW) + "; ++kw) {");
+	        w.indent();
+	        w.line("const int iw = ow * " + std::to_string(stride.second) + " - " + std::to_string(padding.second) + " + kw * " + std::to_string(dilation.second) + ";");
+	        w.line("if ((unsigned)iw >= (unsigned)" + std::to_string(W) + ") continue;");
+	        w.line("const int x_idx = (((n * " + std::to_string(C_IN) + " + ci) * " + std::to_string(H) + " + ih) * " + std::to_string(W) + " + iw);");
+	        w.line("const int w_idx = ((co * " + std::to_string(KH) + " + kh) * " + std::to_string(KW) + " + kw);");
+	        w.line("acc += " + v(op.inputs[0]) + "[x_idx] * " + v(op.inputs[1]) + "[w_idx];");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.line(out_var + "[(((n * " + std::to_string(C_OUT) + " + co) * " + std::to_string(OH) + " + oh) * " + std::to_string(OW) + " + ow)] = acc;");
+	        w.dedent();
+	        w.line("}");
 	        w.dedent();
 	        w.line("}");
 	        w.dedent();
@@ -2652,6 +3000,57 @@ int main(int argc, char** argv) {
       if (it.value().is_number_integer()) bindings.emplace(it.key(), it.value().get<int64_t>());
       else if (it.value().is_number()) bindings.emplace(it.key(), static_cast<int64_t>(it.value().get<double>()));
     }
+    auto binding_get = [&](const std::string& key) -> std::optional<int64_t> {
+      auto it = bindings.find(key);
+      if (it == bindings.end()) return std::nullopt;
+      return it->second;
+    };
+    auto derive_binding = [&](const std::string& key) -> std::optional<int64_t> {
+      auto c_in = binding_get("C_IN");
+      auto groups = binding_get("GROUPS");
+      auto c_per_g = binding_get("C_PER_G");
+      auto c_out = binding_get("C_OUT");
+      auto mult = binding_get("MULT");
+      if (key == "C_IN_TOTAL") {
+        if (c_in && groups) return (*c_in) * (*groups);
+        if (c_in) return *c_in;
+      }
+      if (key == "C_PER_G") {
+        if (c_per_g) return *c_per_g;
+        if (c_in && groups && *groups > 0 && ((*c_in) % (*groups) == 0)) return (*c_in) / (*groups);
+        if (c_in) return *c_in;
+      }
+      if (key == "C_OUT") {
+        if (c_out) return *c_out;
+        if (c_in && mult) return (*c_in) * (*mult);
+        if (c_per_g && groups) return (*c_per_g) * (*groups);
+      }
+      if (key == "OH") {
+        auto H = binding_get("H");
+        auto PH = binding_get("PH");
+        auto KH = binding_get("KH");
+        auto SH = binding_get("SH");
+        auto DH = binding_get("DH");
+        if (H && PH && KH && SH && DH && *SH > 0) return ((*H) + 2 * (*PH) - (*DH) * ((*KH) - 1) - 1) / (*SH) + 1;
+      }
+      if (key == "OW") {
+        auto W = binding_get("W");
+        auto PW = binding_get("PW");
+        auto KW = binding_get("KW");
+        auto SW = binding_get("SW");
+        auto DW = binding_get("DW");
+        if (W && PW && KW && SW && DW && *SW > 0) return ((*W) + 2 * (*PW) - (*DW) * ((*KW) - 1) - 1) / (*SW) + 1;
+      }
+      if (key == "OD") {
+        auto D = binding_get("D");
+        auto PD = binding_get("PD");
+        auto KD = binding_get("KD");
+        auto SD = binding_get("SD");
+        auto DD = binding_get("DD");
+        if (D && PD && KD && SD && DD && *SD > 0) return ((*D) + 2 * (*PD) - (*DD) * ((*KD) - 1) - 1) / (*SD) + 1;
+      }
+      return std::nullopt;
+    };
 
     // Backend schedule knobs (C): optional tunables/hints.
     auto resolve_sched_int = [&](const char* key) -> std::optional<int64_t> {
@@ -2694,8 +3093,14 @@ int main(int argc, char** argv) {
             shp.push_back(std::stoll(s));
           } else {
             auto it = bindings.find(s);
-            if (it == bindings.end()) fail("unbound symbol in shape: " + s);
-            shp.push_back(it->second);
+            if (it == bindings.end()) {
+              auto dv = derive_binding(s);
+              if (!dv.has_value()) fail("unbound symbol in shape: " + s);
+              bindings.emplace(s, *dv);
+              shp.push_back(*dv);
+            } else {
+              shp.push_back(it->second);
+            }
           }
         } else {
           fail("invalid dim type in tensor shape");
@@ -2900,6 +3305,135 @@ int main(int argc, char** argv) {
         dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
       }
+      if (kind == "conv2d") {
+        if (op.inputs.size() < 2 || op.inputs.size() > 3) fail("conv2d infer expects inputs [input, weight] or [input, weight, bias]");
+        const auto& in_shape = get_shape(op.inputs[0]);
+        const auto& w_shape = get_shape(op.inputs[1]);
+        const bool has_bias = op.inputs.size() == 3;
+        const auto& b_shape = has_bias ? get_shape(op.inputs[2]) : std::vector<int64_t>{};
+        if (in_shape.size() != 4 || w_shape.size() != 4) fail("conv2d infer expects input[N,C,H,W], weight[CO,C_PER_G,KH,KW]");
+        const int64_t N = in_shape[0];
+        const int64_t C_IN_TOTAL = in_shape[1];
+        const int64_t H = in_shape[2];
+        const int64_t W = in_shape[3];
+        const int64_t C_OUT = w_shape[0];
+        const int64_t C_PER_G = w_shape[1];
+        const int64_t KH = w_shape[2];
+        const int64_t KW = w_shape[3];
+        if (has_bias) {
+          if (b_shape.size() != 1) fail("conv2d infer bias must be rank-1");
+          if (b_shape[0] != C_OUT) fail("conv2d infer bias shape mismatch");
+        }
+        auto parse_pair = [&](const json& value, const std::string& key) -> std::pair<int64_t, int64_t> {
+          if (value.is_array()) {
+            if (value.size() != 2) fail("conv2d infer " + key + " must have length 2");
+            return {static_cast<int64_t>(resolve_const_value(value[0], bindings)), static_cast<int64_t>(resolve_const_value(value[1], bindings))};
+          }
+          int64_t v = static_cast<int64_t>(resolve_const_value(value, bindings));
+          return {v, v};
+        };
+        auto stride = op.attrs.contains("stride") ? parse_pair(op.attrs["stride"], "stride") : std::pair<int64_t, int64_t>{1, 1};
+        auto padding = op.attrs.contains("padding") ? parse_pair(op.attrs["padding"], "padding") : std::pair<int64_t, int64_t>{0, 0};
+        auto dilation = op.attrs.contains("dilation") ? parse_pair(op.attrs["dilation"], "dilation") : std::pair<int64_t, int64_t>{1, 1};
+        const int64_t groups = op.attrs.contains("groups") ? static_cast<int64_t>(resolve_const_value(op.attrs["groups"], bindings)) : 1;
+        if (stride.first <= 0 || stride.second <= 0 || dilation.first <= 0 || dilation.second <= 0 || groups <= 0)
+          fail("conv2d infer stride/dilation/groups must be positive");
+        if (C_IN_TOTAL != C_PER_G * groups) fail("conv2d infer channel/group mismatch");
+        if ((C_OUT % groups) != 0) fail("conv2d infer C_OUT must be divisible by groups");
+        const int64_t OH = ((H + 2 * padding.first - dilation.first * (KH - 1) - 1) / stride.first) + 1;
+        const int64_t OW = ((W + 2 * padding.second - dilation.second * (KW - 1) - 1) / stride.second) + 1;
+        if (OH <= 0 || OW <= 0) fail("conv2d infer produced non-positive output shape");
+        shape_env[out] = {N, C_OUT, OH, OW};
+        dtype_env[out] = get_dtype(op.inputs[0]);
+        continue;
+      }
+      if (kind == "conv3d") {
+        if (op.inputs.size() < 2 || op.inputs.size() > 3) fail("conv3d infer expects inputs [input, weight] or [input, weight, bias]");
+        const auto& in_shape = get_shape(op.inputs[0]);
+        const auto& w_shape = get_shape(op.inputs[1]);
+        const bool has_bias = op.inputs.size() == 3;
+        const auto& b_shape = has_bias ? get_shape(op.inputs[2]) : std::vector<int64_t>{};
+        if (in_shape.size() != 5 || w_shape.size() != 5) fail("conv3d infer expects input[N,C,D,H,W], weight[CO,C_PER_G,KD,KH,KW]");
+        const int64_t N = in_shape[0];
+        const int64_t C_IN_TOTAL = in_shape[1];
+        const int64_t D = in_shape[2];
+        const int64_t H = in_shape[3];
+        const int64_t W = in_shape[4];
+        const int64_t C_OUT = w_shape[0];
+        const int64_t C_PER_G = w_shape[1];
+        const int64_t KD = w_shape[2];
+        const int64_t KH = w_shape[3];
+        const int64_t KW = w_shape[4];
+        if (has_bias) {
+          if (b_shape.size() != 1) fail("conv3d infer bias must be rank-1");
+          if (b_shape[0] != C_OUT) fail("conv3d infer bias shape mismatch");
+        }
+        auto parse_triple = [&](const json& value, const std::string& key) -> std::array<int64_t, 3> {
+          if (value.is_array()) {
+            if (value.size() != 3) fail("conv3d infer " + key + " must have length 3");
+            return {static_cast<int64_t>(resolve_const_value(value[0], bindings)),
+                    static_cast<int64_t>(resolve_const_value(value[1], bindings)),
+                    static_cast<int64_t>(resolve_const_value(value[2], bindings))};
+          }
+          int64_t v = static_cast<int64_t>(resolve_const_value(value, bindings));
+          return {v, v, v};
+        };
+        auto stride = op.attrs.contains("stride") ? parse_triple(op.attrs["stride"], "stride") : std::array<int64_t, 3>{1, 1, 1};
+        auto padding = op.attrs.contains("padding") ? parse_triple(op.attrs["padding"], "padding") : std::array<int64_t, 3>{0, 0, 0};
+        auto dilation = op.attrs.contains("dilation") ? parse_triple(op.attrs["dilation"], "dilation") : std::array<int64_t, 3>{1, 1, 1};
+        const int64_t groups = op.attrs.contains("groups") ? static_cast<int64_t>(resolve_const_value(op.attrs["groups"], bindings)) : 1;
+        if (stride[0] <= 0 || stride[1] <= 0 || stride[2] <= 0 || dilation[0] <= 0 || dilation[1] <= 0 || dilation[2] <= 0 || groups <= 0)
+          fail("conv3d infer stride/dilation/groups must be positive");
+        if (C_IN_TOTAL != C_PER_G * groups) fail("conv3d infer channel/group mismatch");
+        if ((C_OUT % groups) != 0) fail("conv3d infer C_OUT must be divisible by groups");
+        const int64_t OD = ((D + 2 * padding[0] - dilation[0] * (KD - 1) - 1) / stride[0]) + 1;
+        const int64_t OH = ((H + 2 * padding[1] - dilation[1] * (KH - 1) - 1) / stride[1]) + 1;
+        const int64_t OW = ((W + 2 * padding[2] - dilation[2] * (KW - 1) - 1) / stride[2]) + 1;
+        if (OD <= 0 || OH <= 0 || OW <= 0) fail("conv3d infer produced non-positive output shape");
+        shape_env[out] = {N, C_OUT, OD, OH, OW};
+        dtype_env[out] = get_dtype(op.inputs[0]);
+        continue;
+      }
+      if (kind == "conv_depthwise2d") {
+        if (op.inputs.size() < 2 || op.inputs.size() > 3) fail("conv_depthwise2d infer expects inputs [input, weight] or [input, weight, bias]");
+        const auto& in_shape = get_shape(op.inputs[0]);
+        const auto& w_shape = get_shape(op.inputs[1]);
+        const bool has_bias = op.inputs.size() == 3;
+        const auto& b_shape = has_bias ? get_shape(op.inputs[2]) : std::vector<int64_t>{};
+        if (in_shape.size() != 4 || w_shape.size() != 4) fail("conv_depthwise2d infer expects input[N,C,H,W], weight[C_OUT,1,KH,KW]");
+        const int64_t N = in_shape[0];
+        const int64_t C_IN = in_shape[1];
+        const int64_t H = in_shape[2];
+        const int64_t W = in_shape[3];
+        const int64_t C_OUT = w_shape[0];
+        const int64_t KH = w_shape[2];
+        const int64_t KW = w_shape[3];
+        if (w_shape[1] != 1) fail("conv_depthwise2d infer expects weight second dim == 1");
+        if (C_IN <= 0 || C_OUT <= 0 || (C_OUT % C_IN) != 0) fail("conv_depthwise2d infer channel multiplier mismatch");
+        if (has_bias) {
+          if (b_shape.size() != 1) fail("conv_depthwise2d infer bias must be rank-1");
+          if (b_shape[0] != C_OUT) fail("conv_depthwise2d infer bias shape mismatch");
+        }
+        auto parse_pair = [&](const json& value, const std::string& key) -> std::pair<int64_t, int64_t> {
+          if (value.is_array()) {
+            if (value.size() != 2) fail("conv_depthwise2d infer " + key + " must have length 2");
+            return {static_cast<int64_t>(resolve_const_value(value[0], bindings)), static_cast<int64_t>(resolve_const_value(value[1], bindings))};
+          }
+          int64_t v = static_cast<int64_t>(resolve_const_value(value, bindings));
+          return {v, v};
+        };
+        auto stride = op.attrs.contains("stride") ? parse_pair(op.attrs["stride"], "stride") : std::pair<int64_t, int64_t>{1, 1};
+        auto padding = op.attrs.contains("padding") ? parse_pair(op.attrs["padding"], "padding") : std::pair<int64_t, int64_t>{0, 0};
+        auto dilation = op.attrs.contains("dilation") ? parse_pair(op.attrs["dilation"], "dilation") : std::pair<int64_t, int64_t>{1, 1};
+        if (stride.first <= 0 || stride.second <= 0 || dilation.first <= 0 || dilation.second <= 0)
+          fail("conv_depthwise2d infer stride/dilation must be positive");
+        const int64_t OH = ((H + 2 * padding.first - dilation.first * (KH - 1) - 1) / stride.first) + 1;
+        const int64_t OW = ((W + 2 * padding.second - dilation.second * (KW - 1) - 1) / stride.second) + 1;
+        if (OH <= 0 || OW <= 0) fail("conv_depthwise2d infer produced non-positive output shape");
+        shape_env[out] = {N, C_OUT, OH, OW};
+        dtype_env[out] = get_dtype(op.inputs[0]);
+        continue;
+      }
       if (kind == "avg_pool2d") {
         const auto& in_shape = get_shape(op.inputs[0]);
         if (in_shape.size() != 4) fail("avg_pool2d infer expects rank-4 NCHW input");
@@ -2972,6 +3506,11 @@ int main(int argc, char** argv) {
         oshape = broadcast_shape(oshape, get_shape(op.inputs[2]));
         shape_env[out] = oshape;
         dtype_env[out] = get_dtype(op.inputs[1]);
+        continue;
+      }
+      if (kind == "cumsum" || kind == "cummax" || kind == "cummin") {
+        shape_env[out] = get_shape(op.inputs[0]);
+        dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
       }
       if (kind == "rsqrt" || kind == "exp" || kind == "relu" || kind == "softmax") {

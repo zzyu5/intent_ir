@@ -70,9 +70,113 @@ def _resolve_dim_int(dim: str | int, bindings: Mapping[str, Any], *, name: str) 
     if isinstance(dim, int):
         return int(dim)
     key = str(dim)
-    if key not in bindings:
+    if key in bindings:
+        return _as_int(bindings[key], name=name)
+    derived = _derive_binding_value(key, bindings)
+    if derived is None:
         raise CudaLoweringError(f"missing binding for dim {name} ({key})")
-    return _as_int(bindings[key], name=name)
+    return int(derived)
+
+
+def _binding_int(bindings: Mapping[str, Any], key: str) -> int | None:
+    if key not in bindings:
+        return None
+    try:
+        return _as_int(bindings[key], name=key)
+    except Exception:
+        return None
+
+
+def _derive_binding_value(key: str, bindings: Mapping[str, Any]) -> int | None:
+    c_in = _binding_int(bindings, "C_IN")
+    groups = _binding_int(bindings, "GROUPS")
+    c_per_g = _binding_int(bindings, "C_PER_G")
+    c_out = _binding_int(bindings, "C_OUT")
+    mult = _binding_int(bindings, "MULT")
+    if key == "C_IN_TOTAL":
+        if c_in is not None and groups is not None:
+            return c_in * groups
+        return c_in
+    if key == "C_PER_G":
+        if c_per_g is not None:
+            return c_per_g
+        if c_in is not None and groups is not None and groups > 0 and c_in % groups == 0:
+            return c_in // groups
+        return c_in
+    if key == "C_OUT":
+        if c_out is not None:
+            return c_out
+        if c_in is not None and mult is not None:
+            return c_in * mult
+        if c_per_g is not None and groups is not None:
+            return c_per_g * groups
+        return None
+    if key == "OH":
+        h = _binding_int(bindings, "H")
+        ph = _binding_int(bindings, "PH")
+        kh = _binding_int(bindings, "KH")
+        sh = _binding_int(bindings, "SH")
+        dh = _binding_int(bindings, "DH")
+        if None not in (h, ph, kh, sh, dh) and sh and sh > 0:
+            return (h + 2 * ph - dh * (kh - 1) - 1) // sh + 1
+        return None
+    if key == "OW":
+        w = _binding_int(bindings, "W")
+        pw = _binding_int(bindings, "PW")
+        kw = _binding_int(bindings, "KW")
+        sw = _binding_int(bindings, "SW")
+        dw = _binding_int(bindings, "DW")
+        if None not in (w, pw, kw, sw, dw) and sw and sw > 0:
+            return (w + 2 * pw - dw * (kw - 1) - 1) // sw + 1
+        return None
+    if key == "OD":
+        d = _binding_int(bindings, "D")
+        pd = _binding_int(bindings, "PD")
+        kd = _binding_int(bindings, "KD")
+        sd = _binding_int(bindings, "SD")
+        dd = _binding_int(bindings, "DD")
+        if None not in (d, pd, kd, sd, dd) and sd and sd > 0:
+            return (d + 2 * pd - dd * (kd - 1) - 1) // sd + 1
+        return None
+    return None
+
+
+def _resolve_attr_int(value: Any, bindings: Mapping[str, Any], *, name: str) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    key = str(value)
+    if key in bindings:
+        return _as_int(bindings[key], name=name)
+    try:
+        return int(key)
+    except Exception as e:
+        raise CudaLoweringError(f"missing binding for attr {name} ({key})") from e
+
+
+def _resolve_attr_tuple(
+    value: Any,
+    bindings: Mapping[str, Any],
+    *,
+    name: str,
+    rank: int,
+    default: int | Sequence[Any],
+) -> tuple[int, ...]:
+    if value is None:
+        if isinstance(default, (list, tuple)):
+            if len(default) != rank:
+                raise CudaLoweringError(f"{name} default must have length {rank}")
+            seq = list(default)
+        else:
+            seq = [default] * rank
+        return tuple(_resolve_attr_int(v, bindings, name=f"{name}[{i}]") for i, v in enumerate(seq))
+    if isinstance(value, (list, tuple)):
+        if len(value) != rank:
+            raise CudaLoweringError(f"{name} must have length {rank}")
+        return tuple(_resolve_attr_int(v, bindings, name=f"{name}[{i}]") for i, v in enumerate(value))
+    v = _resolve_attr_int(value, bindings, name=name)
+    return tuple([v] * rank)
 
 
 def _is_scalar_tensor(intent: IntentFunction, name: str, *, dtype: str | None = None) -> bool:
@@ -3069,6 +3173,266 @@ extern "C" __global__ void {intent.name}(
     return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=lowered_bindings)
 
 
+def _kernel_diag_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    ops = list(intent.ops or [])
+    if len(ops) != 2 or [o.op for o in ops] != ["iota", "gather"]:
+        raise CudaLoweringError("diag lowering expects iota->gather pattern")
+    g = ops[1]
+    if len(g.inputs) != 3:
+        raise CudaLoweringError("diag gather expects inputs [data, idx, idx]")
+    data_name = str(g.inputs[0])
+    idx0_name = str(g.inputs[1])
+    idx1_name = str(g.inputs[2])
+    out_name = str(g.output)
+    if idx0_name != idx1_name:
+        raise CudaLoweringError("diag gather requires row/col indices to match")
+    data_shape = _shape_values(intent, data_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(data_shape) != 2 or len(out_shape) != 1:
+        raise CudaLoweringError("diag lowering expects data rank-2 and output rank-1")
+    M = _resolve_dim_int(data_shape[0], bindings, name="M")
+    N = _resolve_dim_int(data_shape[1], bindings, name="N")
+    D = _resolve_dim_int(out_shape[0], bindings, name="D")
+
+    sched = intent.schedule or ScheduleSketch()
+    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=256)
+    block_x = max(32, min(1024, int(block_x) if block_x > 0 else 256))
+    grid_x = (D + block_x - 1) // block_x
+
+    cuda_src = f"""
+#include <stdint.h>
+
+extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(
+    const float* __restrict__ {data_name},
+    float* __restrict__ {out_name},
+    int M, int N, int D) {{
+  const int i = (int)blockIdx.x * (int)blockDim.x + (int)threadIdx.x;
+  if (i >= D) return;
+  int r = i;
+  int c = r;
+  if ((unsigned)r < (unsigned)M && (unsigned)c < (unsigned)N) {{
+    {out_name}[i] = {data_name}[(size_t)r * (size_t)N + (size_t)c];
+  }} else {{
+    {out_name}[i] = 0.0f;
+  }}
+}}
+""".lstrip()
+
+    io_spec = _io_spec_from_args(
+        intent,
+        tensor_args=[data_name, out_name],
+        scalar_args={"M": "i32", "N": "i32", "D": "i32"},
+        arg_names=[data_name, out_name, "M", "N", "D"],
+    )
+    launch = CudaLaunch(grid=(grid_x, 1, 1), block=(block_x, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.update({"M": int(M), "N": int(N), "D": int(D)})
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=[out_name],
+        bindings=lowered_bindings,
+    )
+
+
+def _kernel_count_nonzero_2d_i64(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    ops = list(intent.ops or [])
+    if len(ops) != 4 or [o.op for o in ops] != ["const", "ne", "cast", "reduce_sum"]:
+        raise CudaLoweringError("count_nonzero lowering expects const->ne->cast->reduce_sum pattern")
+    const0, ne0, cast0, red0 = ops
+    const_name = str(const0.output)
+    ne_in = [str(x) for x in ne0.inputs]
+    if len(ne_in) != 2 or const_name not in ne_in:
+        raise CudaLoweringError("count_nonzero ne must compare input tensor with const zero")
+    inp_name = ne_in[1] if ne_in[0] == const_name else ne_in[0]
+    if str(cast0.inputs[0]) != str(ne0.output):
+        raise CudaLoweringError("count_nonzero cast must consume ne output")
+    if str(red0.inputs[0]) != str(cast0.output):
+        raise CudaLoweringError("count_nonzero reduce_sum must consume cast output")
+    out_name = str(intent.outputs[0])
+    in_shape = _shape_values(intent, inp_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(in_shape) != 2:
+        raise CudaLoweringError("count_nonzero lowering currently supports rank-2 input")
+    if len(out_shape) > 1 or (len(out_shape) == 1 and _resolve_dim_int(out_shape[0], bindings, name="OUT") != 1):
+        raise CudaLoweringError("count_nonzero lowering expects scalar output")
+    out_dt = str(intent.tensors[out_name].dtype)
+    if out_dt not in {"i64", "i32"}:
+        raise CudaLoweringError("count_nonzero lowering supports i64/i32 output")
+    M = _resolve_dim_int(in_shape[0], bindings, name="M")
+    N = _resolve_dim_int(in_shape[1], bindings, name="N")
+    zero = float((const0.attrs or {}).get("value", 0.0))
+    out_ct = "int64_t" if out_dt == "i64" else "int32_t"
+
+    cuda_src = f"""
+#include <stdint.h>
+
+extern "C" __global__ void {intent.name}(
+    const float* __restrict__ {inp_name},
+    {out_ct}* __restrict__ {out_name},
+    int M, int N) {{
+  if (blockIdx.x != 0 || threadIdx.x != 0) return;
+  int64_t cnt = 0;
+  for (int i = 0; i < M; ++i) {{
+    for (int j = 0; j < N; ++j) {{
+      const float v = {inp_name}[(size_t)i * (size_t)N + (size_t)j];
+      if (v != (float){zero}) cnt += 1;
+    }}
+  }}
+  {out_name}[0] = ({out_ct})cnt;
+}}
+""".lstrip()
+
+    io_spec = _io_spec_from_args(
+        intent,
+        tensor_args=[inp_name, out_name],
+        scalar_args={"M": "i32", "N": "i32"},
+        arg_names=[inp_name, out_name, "M", "N"],
+    )
+    launch = CudaLaunch(grid=(1, 1, 1), block=(1, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.update({"M": int(M), "N": int(N)})
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=[out_name],
+        bindings=lowered_bindings,
+    )
+
+
+def _kernel_cumsum_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != "cumsum":
+        raise CudaLoweringError("cumsum lowering expects a single cumsum op")
+    op = intent.ops[0]
+    if len(op.inputs) != 1:
+        raise CudaLoweringError("cumsum expects one input")
+    inp_name = str(op.inputs[0])
+    out_name = str(op.output)
+    in_shape = _shape_values(intent, inp_name)
+    out_shape = _shape_values(intent, out_name)
+    if [str(x) for x in in_shape] != [str(x) for x in out_shape]:
+        raise CudaLoweringError("cumsum input/output shape mismatch")
+    axis = int((op.attrs or {}).get("axis", 0))
+
+    if len(in_shape) == 1:
+        D = _resolve_dim_int(in_shape[0], bindings, name="D")
+        if axis < 0:
+            axis += 1
+        if axis != 0:
+            raise CudaLoweringError("cumsum rank-1 supports axis=0 only")
+        cuda_src = f"""
+#include <stdint.h>
+
+extern "C" __global__ void {intent.name}(const float* __restrict__ {inp_name}, float* __restrict__ {out_name}, int D) {{
+  if (blockIdx.x != 0 || threadIdx.x != 0) return;
+  float acc = 0.0f;
+  for (int i = 0; i < D; ++i) {{
+    acc += {inp_name}[i];
+    {out_name}[i] = acc;
+  }}
+}}
+""".lstrip()
+        io_spec = _io_spec_from_args(intent, tensor_args=[inp_name, out_name], scalar_args={"D": "i32"}, arg_names=[inp_name, out_name, "D"])
+        launch = CudaLaunch(grid=(1, 1, 1), block=(1, 1, 1), shared_mem=0)
+        lowered_bindings = dict(bindings)
+        lowered_bindings["D"] = int(D)
+        return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=lowered_bindings)
+
+    if len(in_shape) == 2:
+        M = _resolve_dim_int(in_shape[0], bindings, name="M")
+        N = _resolve_dim_int(in_shape[1], bindings, name="N")
+        if axis < 0:
+            axis += 2
+        if axis not in {0, 1}:
+            raise CudaLoweringError("cumsum rank-2 supports axis=0/1 only")
+        cuda_src = f"""
+#include <stdint.h>
+
+extern "C" __global__ void {intent.name}(const float* __restrict__ {inp_name}, float* __restrict__ {out_name}, int M, int N) {{
+  if (blockIdx.x != 0 || threadIdx.x != 0) return;
+  if ({axis} == 0) {{
+    for (int j = 0; j < N; ++j) {{
+      float acc = 0.0f;
+      for (int i = 0; i < M; ++i) {{
+        const int idx = i * N + j;
+        acc += {inp_name}[idx];
+        {out_name}[idx] = acc;
+      }}
+    }}
+  }} else {{
+    for (int i = 0; i < M; ++i) {{
+      float acc = 0.0f;
+      for (int j = 0; j < N; ++j) {{
+        const int idx = i * N + j;
+        acc += {inp_name}[idx];
+        {out_name}[idx] = acc;
+      }}
+    }}
+  }}
+}}
+""".lstrip()
+        io_spec = _io_spec_from_args(
+            intent,
+            tensor_args=[inp_name, out_name],
+            scalar_args={"M": "i32", "N": "i32"},
+            arg_names=[inp_name, out_name, "M", "N"],
+        )
+        launch = CudaLaunch(grid=(1, 1, 1), block=(1, 1, 1), shared_mem=0)
+        lowered_bindings = dict(bindings)
+        lowered_bindings.update({"M": int(M), "N": int(N)})
+        return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=lowered_bindings)
+
+    raise CudaLoweringError("cumsum lowering currently supports rank-1/2 only")
+
+
+def _kernel_cumext_1d_f32(intent: IntentFunction, bindings: Dict[str, int], *, is_max: bool) -> CudaLoweredKernel:
+    opname = "cummax" if is_max else "cummin"
+    if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != opname:
+        raise CudaLoweringError(f"{opname} lowering expects a single {opname} op")
+    op = intent.ops[0]
+    if len(op.inputs) != 1:
+        raise CudaLoweringError(f"{opname} expects one input")
+    inp_name = str(op.inputs[0])
+    out_name = str(op.output)
+    in_shape = _shape_values(intent, inp_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(in_shape) != 1 or len(out_shape) != 1:
+        raise CudaLoweringError(f"{opname} lowering currently supports rank-1 only")
+    if str(in_shape[0]) != str(out_shape[0]):
+        raise CudaLoweringError(f"{opname} input/output shape mismatch")
+    axis = int((op.attrs or {}).get("axis", 0))
+    if axis < 0:
+        axis += 1
+    if axis != 0:
+        raise CudaLoweringError(f"{opname} rank-1 supports axis=0 only")
+    D = _resolve_dim_int(in_shape[0], bindings, name="D")
+    fun = "fmaxf" if is_max else "fminf"
+    cuda_src = f"""
+#include <math.h>
+#include <stdint.h>
+
+extern "C" __global__ void {intent.name}(const float* __restrict__ {inp_name}, float* __restrict__ {out_name}, int D) {{
+  if (blockIdx.x != 0 || threadIdx.x != 0) return;
+  if (D <= 0) return;
+  float best = {inp_name}[0];
+  {out_name}[0] = best;
+  for (int i = 1; i < D; ++i) {{
+    best = {fun}(best, {inp_name}[i]);
+    {out_name}[i] = best;
+  }}
+}}
+""".lstrip()
+    io_spec = _io_spec_from_args(intent, tensor_args=[inp_name, out_name], scalar_args={"D": "i32"}, arg_names=[inp_name, out_name, "D"])
+    launch = CudaLaunch(grid=(1, 1, 1), block=(1, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings["D"] = int(D)
+    return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=lowered_bindings)
+
+
 def _kernel_concat_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
     if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != "concat":
         raise CudaLoweringError("concat lowering expects a single concat op")
@@ -3434,6 +3798,485 @@ extern "C" __global__ __launch_bounds__({block_x * block_y}) void {intent.name}(
         output_names=[out_name],
         bindings=lowered_bindings,
     )
+
+
+def _kernel_conv2d_nchw_impl_f32(
+    intent: IntentFunction,
+    bindings: Dict[str, int],
+    *,
+    inp_name: str,
+    weight_name: str,
+    out_name: str,
+    attrs: Mapping[str, Any],
+    bias_name: str | None,
+) -> CudaLoweredKernel:
+    in_shape = _shape_values(intent, inp_name)
+    w_shape = _shape_values(intent, weight_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(in_shape) != 4 or len(w_shape) != 4 or len(out_shape) != 4:
+        raise CudaLoweringError("conv2d lowering expects input[N,C,H,W], weight[CO,C_PER_G,KH,KW], out[N,CO,OH,OW]")
+    if bias_name is not None:
+        b_shape = _shape_values(intent, bias_name)
+        if len(b_shape) != 1:
+            raise CudaLoweringError("conv2d bias must be rank-1")
+    else:
+        b_shape = []
+
+    N_dim, C_in_dim, H_dim, W_dim = in_shape
+    C_out_dim, C_per_g_dim, KH_dim, KW_dim = w_shape
+    ON_dim, OC_dim, OH_dim, OW_dim = out_shape
+    if str(ON_dim) != str(N_dim) or str(OC_dim) != str(C_out_dim):
+        raise CudaLoweringError("conv2d output N/C mismatch")
+    if bias_name is not None and str(b_shape[0]) != str(C_out_dim):
+        raise CudaLoweringError("conv2d bias shape mismatch")
+
+    sh, sw = _resolve_attr_tuple(attrs.get("stride"), bindings, name="conv2d.stride", rank=2, default=1)
+    ph, pw = _resolve_attr_tuple(attrs.get("padding"), bindings, name="conv2d.padding", rank=2, default=0)
+    dh, dw = _resolve_attr_tuple(attrs.get("dilation"), bindings, name="conv2d.dilation", rank=2, default=1)
+    groups = _resolve_attr_int(attrs.get("groups", 1), bindings, name="conv2d.groups")
+    if sh <= 0 or sw <= 0 or dh <= 0 or dw <= 0 or groups <= 0:
+        raise CudaLoweringError("conv2d attrs stride/dilation/groups must be positive")
+
+    N = _resolve_dim_int(N_dim, bindings, name="N")
+    C_IN_TOTAL = _resolve_dim_int(C_in_dim, bindings, name="C_IN_TOTAL")
+    H = _resolve_dim_int(H_dim, bindings, name="H")
+    W = _resolve_dim_int(W_dim, bindings, name="W")
+    C_OUT = _resolve_dim_int(C_out_dim, bindings, name="C_OUT")
+    C_PER_G = _resolve_dim_int(C_per_g_dim, bindings, name="C_PER_G")
+    KH = _resolve_dim_int(KH_dim, bindings, name="KH")
+    KW = _resolve_dim_int(KW_dim, bindings, name="KW")
+    OH = _resolve_dim_int(OH_dim, bindings, name="OH")
+    OW = _resolve_dim_int(OW_dim, bindings, name="OW")
+    if C_IN_TOTAL != C_PER_G * groups:
+        raise CudaLoweringError("conv2d channel/group mismatch: C_IN_TOTAL must equal C_PER_G * groups")
+    if C_OUT % groups != 0:
+        raise CudaLoweringError("conv2d C_OUT must be divisible by groups")
+    expected_oh = (H + 2 * ph - dh * (KH - 1) - 1) // sh + 1
+    expected_ow = (W + 2 * pw - dw * (KW - 1) - 1) // sw + 1
+    if expected_oh != OH or expected_ow != OW:
+        raise CudaLoweringError(f"conv2d output shape mismatch: expected ({expected_oh}, {expected_ow}), got ({OH}, {OW})")
+
+    total = int(N) * int(C_OUT) * int(OH) * int(OW)
+    sched = intent.schedule or ScheduleSketch()
+    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=128)
+    block_x = max(32, min(1024, int(block_x) if block_x > 0 else 128))
+    grid_x = (total + block_x - 1) // block_x
+
+    bias_param = f", const float* __restrict__ {bias_name}" if bias_name is not None else ""
+    bias_init = f"float acc = {bias_name}[(size_t)co];" if bias_name is not None else "float acc = 0.0f;"
+    cuda_src = f"""
+#include <stdint.h>
+
+extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(
+    const float* __restrict__ {inp_name},
+    const float* __restrict__ {weight_name}{bias_param},
+    float* __restrict__ {out_name},
+    int N, int C_IN_TOTAL, int H, int W, int C_OUT, int C_PER_G, int KH, int KW, int OH, int OW) {{
+  const int64_t tid = (int64_t)blockIdx.x * (int64_t)blockDim.x + (int64_t)threadIdx.x;
+  const int64_t total = (int64_t)N * (int64_t)C_OUT * (int64_t)OH * (int64_t)OW;
+  if (tid >= total) return;
+  int64_t t = tid;
+  const int ow = (int)(t % OW); t /= OW;
+  const int oh = (int)(t % OH); t /= OH;
+  const int co = (int)(t % C_OUT); t /= C_OUT;
+  const int n = (int)t;
+  const int co_per_g = C_OUT / {groups};
+  const int g = co / co_per_g;
+  const int c_start = g * C_PER_G;
+  {bias_init}
+  for (int ci = 0; ci < C_PER_G; ++ci) {{
+    const int c = c_start + ci;
+    for (int kh = 0; kh < KH; ++kh) {{
+      const int ih = oh * {sh} - {ph} + kh * {dh};
+      if ((unsigned)ih >= (unsigned)H) continue;
+      for (int kw = 0; kw < KW; ++kw) {{
+        const int iw = ow * {sw} - {pw} + kw * {dw};
+        if ((unsigned)iw >= (unsigned)W) continue;
+        const size_t x_idx = (((size_t)n * (size_t)C_IN_TOTAL + (size_t)c) * (size_t)H + (size_t)ih) * (size_t)W + (size_t)iw;
+        const size_t w_idx = (((size_t)co * (size_t)C_PER_G + (size_t)ci) * (size_t)KH + (size_t)kh) * (size_t)KW + (size_t)kw;
+        acc += {inp_name}[x_idx] * {weight_name}[w_idx];
+      }}
+    }}
+  }}
+  {out_name}[tid] = acc;
+}}
+""".lstrip()
+
+    tensor_args = [inp_name, weight_name]
+    arg_names = [inp_name, weight_name]
+    if bias_name is not None:
+        tensor_args.append(bias_name)
+        arg_names.append(bias_name)
+    tensor_args.append(out_name)
+    arg_names.append(out_name)
+    scalar_args = {
+        "N": "i32",
+        "C_IN_TOTAL": "i32",
+        "H": "i32",
+        "W": "i32",
+        "C_OUT": "i32",
+        "C_PER_G": "i32",
+        "KH": "i32",
+        "KW": "i32",
+        "OH": "i32",
+        "OW": "i32",
+    }
+    arg_names.extend(["N", "C_IN_TOTAL", "H", "W", "C_OUT", "C_PER_G", "KH", "KW", "OH", "OW"])
+    io_spec = _io_spec_from_args(intent, tensor_args=tensor_args, scalar_args=scalar_args, arg_names=arg_names)
+    launch = CudaLaunch(grid=(grid_x, 1, 1), block=(block_x, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.update(
+        {
+            "N": int(N),
+            "C_IN_TOTAL": int(C_IN_TOTAL),
+            "H": int(H),
+            "W": int(W),
+            "C_OUT": int(C_OUT),
+            "C_PER_G": int(C_PER_G),
+            "KH": int(KH),
+            "KW": int(KW),
+            "OH": int(OH),
+            "OW": int(OW),
+        }
+    )
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=[out_name],
+        bindings=lowered_bindings,
+    )
+
+
+def _kernel_conv2d_nchw_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != "conv2d":
+        raise CudaLoweringError("conv2d lowering expects a single conv2d op")
+    op = intent.ops[0]
+    if len(op.inputs) not in {2, 3}:
+        raise CudaLoweringError("conv2d lowering expects inputs [input, weight] or [input, weight, bias]")
+    inp_name = str(op.inputs[0])
+    weight_name = str(op.inputs[1])
+    bias_name = str(op.inputs[2]) if len(op.inputs) == 3 else None
+    return _kernel_conv2d_nchw_impl_f32(
+        intent,
+        bindings,
+        inp_name=inp_name,
+        weight_name=weight_name,
+        out_name=str(op.output),
+        attrs=(op.attrs or {}),
+        bias_name=bias_name,
+    )
+
+
+def _kernel_conv2d_nchw_bias_pattern_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    ops = list(intent.ops or [])
+    if len(ops) != 3 or [o.op for o in ops] != ["conv2d", "broadcast_in_dim", "add"]:
+        raise CudaLoweringError("conv2d+bias lowering expects [conv2d, broadcast_in_dim, add]")
+    conv_op, bcast_op, add_op = ops
+    if len(conv_op.inputs) != 2:
+        raise CudaLoweringError("conv2d+bias lowering expects conv2d inputs [input, weight]")
+    if len(bcast_op.inputs) != 1:
+        raise CudaLoweringError("conv2d+bias lowering expects broadcast_in_dim input [bias]")
+    if len(add_op.inputs) != 2:
+        raise CudaLoweringError("conv2d+bias lowering expects add with two inputs")
+    conv_out = str(conv_op.output)
+    bcast_out = str(bcast_op.output)
+    add_in = [str(x) for x in add_op.inputs]
+    if conv_out not in add_in or bcast_out not in add_in:
+        raise CudaLoweringError("conv2d+bias lowering expects add(conv_out, bias_bcast)")
+    bcast_dims = (bcast_op.attrs or {}).get("broadcast_dims")
+    if bcast_dims not in ([1], (1,)):
+        raise CudaLoweringError("conv2d+bias lowering expects bias broadcast_dims=[1]")
+    return _kernel_conv2d_nchw_impl_f32(
+        intent,
+        bindings,
+        inp_name=str(conv_op.inputs[0]),
+        weight_name=str(conv_op.inputs[1]),
+        out_name=str(add_op.output),
+        attrs=(conv_op.attrs or {}),
+        bias_name=str(bcast_op.inputs[0]),
+    )
+
+
+def _kernel_conv3d_ncdhw_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != "conv3d":
+        raise CudaLoweringError("conv3d lowering expects a single conv3d op")
+    op = intent.ops[0]
+    if len(op.inputs) not in {2, 3}:
+        raise CudaLoweringError("conv3d lowering expects inputs [input, weight] or [input, weight, bias]")
+    inp_name = str(op.inputs[0])
+    weight_name = str(op.inputs[1])
+    bias_name = str(op.inputs[2]) if len(op.inputs) == 3 else None
+    out_name = str(op.output)
+
+    in_shape = _shape_values(intent, inp_name)
+    w_shape = _shape_values(intent, weight_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(in_shape) != 5 or len(w_shape) != 5 or len(out_shape) != 5:
+        raise CudaLoweringError("conv3d lowering expects input[N,C,D,H,W], weight[CO,C_PER_G,KD,KH,KW], out[N,CO,OD,OH,OW]")
+    if bias_name is not None:
+        b_shape = _shape_values(intent, bias_name)
+        if len(b_shape) != 1:
+            raise CudaLoweringError("conv3d bias must be rank-1")
+    else:
+        b_shape = []
+
+    N_dim, C_in_dim, D_dim, H_dim, W_dim = in_shape
+    C_out_dim, C_per_g_dim, KD_dim, KH_dim, KW_dim = w_shape
+    ON_dim, OC_dim, OD_dim, OH_dim, OW_dim = out_shape
+    if str(ON_dim) != str(N_dim) or str(OC_dim) != str(C_out_dim):
+        raise CudaLoweringError("conv3d output N/C mismatch")
+    if bias_name is not None and str(b_shape[0]) != str(C_out_dim):
+        raise CudaLoweringError("conv3d bias shape mismatch")
+
+    sd, sh, sw = _resolve_attr_tuple((op.attrs or {}).get("stride"), bindings, name="conv3d.stride", rank=3, default=1)
+    pd, ph, pw = _resolve_attr_tuple((op.attrs or {}).get("padding"), bindings, name="conv3d.padding", rank=3, default=0)
+    dd, dh, dw = _resolve_attr_tuple((op.attrs or {}).get("dilation"), bindings, name="conv3d.dilation", rank=3, default=1)
+    groups = _resolve_attr_int((op.attrs or {}).get("groups", 1), bindings, name="conv3d.groups")
+    if min(sd, sh, sw, dd, dh, dw, groups) <= 0:
+        raise CudaLoweringError("conv3d attrs stride/dilation/groups must be positive")
+
+    N = _resolve_dim_int(N_dim, bindings, name="N")
+    C_IN_TOTAL = _resolve_dim_int(C_in_dim, bindings, name="C_IN_TOTAL")
+    D = _resolve_dim_int(D_dim, bindings, name="D")
+    H = _resolve_dim_int(H_dim, bindings, name="H")
+    W = _resolve_dim_int(W_dim, bindings, name="W")
+    C_OUT = _resolve_dim_int(C_out_dim, bindings, name="C_OUT")
+    C_PER_G = _resolve_dim_int(C_per_g_dim, bindings, name="C_PER_G")
+    KD = _resolve_dim_int(KD_dim, bindings, name="KD")
+    KH = _resolve_dim_int(KH_dim, bindings, name="KH")
+    KW = _resolve_dim_int(KW_dim, bindings, name="KW")
+    OD = _resolve_dim_int(OD_dim, bindings, name="OD")
+    OH = _resolve_dim_int(OH_dim, bindings, name="OH")
+    OW = _resolve_dim_int(OW_dim, bindings, name="OW")
+    if C_IN_TOTAL != C_PER_G * groups:
+        raise CudaLoweringError("conv3d channel/group mismatch: C_IN_TOTAL must equal C_PER_G * groups")
+    if C_OUT % groups != 0:
+        raise CudaLoweringError("conv3d C_OUT must be divisible by groups")
+    expected_od = (D + 2 * pd - dd * (KD - 1) - 1) // sd + 1
+    expected_oh = (H + 2 * ph - dh * (KH - 1) - 1) // sh + 1
+    expected_ow = (W + 2 * pw - dw * (KW - 1) - 1) // sw + 1
+    if expected_od != OD or expected_oh != OH or expected_ow != OW:
+        raise CudaLoweringError(
+            f"conv3d output shape mismatch: expected ({expected_od}, {expected_oh}, {expected_ow}), got ({OD}, {OH}, {OW})"
+        )
+
+    total = int(N) * int(C_OUT) * int(OD) * int(OH) * int(OW)
+    sched = intent.schedule or ScheduleSketch()
+    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=64)
+    block_x = max(32, min(1024, int(block_x) if block_x > 0 else 64))
+    grid_x = (total + block_x - 1) // block_x
+
+    bias_param = f", const float* __restrict__ {bias_name}" if bias_name is not None else ""
+    bias_init = f"float acc = {bias_name}[(size_t)co];" if bias_name is not None else "float acc = 0.0f;"
+    cuda_src = f"""
+#include <stdint.h>
+
+extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(
+    const float* __restrict__ {inp_name},
+    const float* __restrict__ {weight_name}{bias_param},
+    float* __restrict__ {out_name},
+    int N, int C_IN_TOTAL, int D, int H, int W, int C_OUT, int C_PER_G, int KD, int KH, int KW, int OD, int OH, int OW) {{
+  const int64_t tid = (int64_t)blockIdx.x * (int64_t)blockDim.x + (int64_t)threadIdx.x;
+  const int64_t total = (int64_t)N * (int64_t)C_OUT * (int64_t)OD * (int64_t)OH * (int64_t)OW;
+  if (tid >= total) return;
+  int64_t t = tid;
+  const int ow = (int)(t % OW); t /= OW;
+  const int oh = (int)(t % OH); t /= OH;
+  const int od = (int)(t % OD); t /= OD;
+  const int co = (int)(t % C_OUT); t /= C_OUT;
+  const int n = (int)t;
+  const int co_per_g = C_OUT / {groups};
+  const int g = co / co_per_g;
+  const int c_start = g * C_PER_G;
+  {bias_init}
+  for (int ci = 0; ci < C_PER_G; ++ci) {{
+    const int c = c_start + ci;
+    for (int kd = 0; kd < KD; ++kd) {{
+      const int id = od * {sd} - {pd} + kd * {dd};
+      if ((unsigned)id >= (unsigned)D) continue;
+      for (int kh = 0; kh < KH; ++kh) {{
+        const int ih = oh * {sh} - {ph} + kh * {dh};
+        if ((unsigned)ih >= (unsigned)H) continue;
+        for (int kw = 0; kw < KW; ++kw) {{
+          const int iw = ow * {sw} - {pw} + kw * {dw};
+          if ((unsigned)iw >= (unsigned)W) continue;
+          const size_t x_idx = ((((size_t)n * (size_t)C_IN_TOTAL + (size_t)c) * (size_t)D + (size_t)id) * (size_t)H + (size_t)ih) * (size_t)W + (size_t)iw;
+          const size_t w_idx = ((((size_t)co * (size_t)C_PER_G + (size_t)ci) * (size_t)KD + (size_t)kd) * (size_t)KH + (size_t)kh) * (size_t)KW + (size_t)kw;
+          acc += {inp_name}[x_idx] * {weight_name}[w_idx];
+        }}
+      }}
+    }}
+  }}
+  {out_name}[tid] = acc;
+}}
+""".lstrip()
+
+    tensor_args = [inp_name, weight_name]
+    arg_names = [inp_name, weight_name]
+    if bias_name is not None:
+        tensor_args.append(bias_name)
+        arg_names.append(bias_name)
+    tensor_args.append(out_name)
+    arg_names.append(out_name)
+    scalar_args = {
+        "N": "i32",
+        "C_IN_TOTAL": "i32",
+        "D": "i32",
+        "H": "i32",
+        "W": "i32",
+        "C_OUT": "i32",
+        "C_PER_G": "i32",
+        "KD": "i32",
+        "KH": "i32",
+        "KW": "i32",
+        "OD": "i32",
+        "OH": "i32",
+        "OW": "i32",
+    }
+    arg_names.extend(["N", "C_IN_TOTAL", "D", "H", "W", "C_OUT", "C_PER_G", "KD", "KH", "KW", "OD", "OH", "OW"])
+    io_spec = _io_spec_from_args(intent, tensor_args=tensor_args, scalar_args=scalar_args, arg_names=arg_names)
+    launch = CudaLaunch(grid=(grid_x, 1, 1), block=(block_x, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.update(
+        {
+            "N": int(N),
+            "C_IN_TOTAL": int(C_IN_TOTAL),
+            "D": int(D),
+            "H": int(H),
+            "W": int(W),
+            "C_OUT": int(C_OUT),
+            "C_PER_G": int(C_PER_G),
+            "KD": int(KD),
+            "KH": int(KH),
+            "KW": int(KW),
+            "OD": int(OD),
+            "OH": int(OH),
+            "OW": int(OW),
+        }
+    )
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=[out_name],
+        bindings=lowered_bindings,
+    )
+
+
+def _kernel_conv_depthwise2d_nchw_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != "conv_depthwise2d":
+        raise CudaLoweringError("conv_depthwise2d lowering expects a single conv_depthwise2d op")
+    op = intent.ops[0]
+    if len(op.inputs) not in {2, 3}:
+        raise CudaLoweringError("conv_depthwise2d lowering expects inputs [input, weight] or [input, weight, bias]")
+    inp_name = str(op.inputs[0])
+    weight_name = str(op.inputs[1])
+    bias_name = str(op.inputs[2]) if len(op.inputs) == 3 else None
+    out_name = str(op.output)
+
+    in_shape = _shape_values(intent, inp_name)
+    w_shape = _shape_values(intent, weight_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(in_shape) != 4 or len(w_shape) != 4 or len(out_shape) != 4:
+        raise CudaLoweringError("conv_depthwise2d expects input[N,C,H,W], weight[C_OUT,1,KH,KW], out[N,C_OUT,OH,OW]")
+    if bias_name is not None:
+        b_shape = _shape_values(intent, bias_name)
+        if len(b_shape) != 1:
+            raise CudaLoweringError("conv_depthwise2d bias must be rank-1")
+    else:
+        b_shape = []
+
+    N_dim, C_in_dim, H_dim, W_dim = in_shape
+    C_out_dim, C1_dim, KH_dim, KW_dim = w_shape
+    ON_dim, OC_dim, OH_dim, OW_dim = out_shape
+    if str(ON_dim) != str(N_dim) or str(OC_dim) != str(C_out_dim):
+        raise CudaLoweringError("conv_depthwise2d output N/C mismatch")
+    if bias_name is not None and str(b_shape[0]) != str(C_out_dim):
+        raise CudaLoweringError("conv_depthwise2d bias shape mismatch")
+    if _resolve_dim_int(C1_dim, bindings, name="C1") != 1:
+        raise CudaLoweringError("conv_depthwise2d expects weight second dim == 1")
+
+    sh, sw = _resolve_attr_tuple((op.attrs or {}).get("stride"), bindings, name="conv_depthwise2d.stride", rank=2, default=1)
+    ph, pw = _resolve_attr_tuple((op.attrs or {}).get("padding"), bindings, name="conv_depthwise2d.padding", rank=2, default=0)
+    dh, dw = _resolve_attr_tuple((op.attrs or {}).get("dilation"), bindings, name="conv_depthwise2d.dilation", rank=2, default=1)
+    if min(sh, sw, dh, dw) <= 0:
+        raise CudaLoweringError("conv_depthwise2d stride/dilation must be positive")
+
+    N = _resolve_dim_int(N_dim, bindings, name="N")
+    C_IN = _resolve_dim_int(C_in_dim, bindings, name="C_IN")
+    H = _resolve_dim_int(H_dim, bindings, name="H")
+    W = _resolve_dim_int(W_dim, bindings, name="W")
+    C_OUT = _resolve_dim_int(C_out_dim, bindings, name="C_OUT")
+    KH = _resolve_dim_int(KH_dim, bindings, name="KH")
+    KW = _resolve_dim_int(KW_dim, bindings, name="KW")
+    OH = _resolve_dim_int(OH_dim, bindings, name="OH")
+    OW = _resolve_dim_int(OW_dim, bindings, name="OW")
+    if C_IN <= 0 or C_OUT <= 0 or C_OUT % C_IN != 0:
+        raise CudaLoweringError("conv_depthwise2d channel multiplier mismatch")
+    channel_multiplier = C_OUT // C_IN
+    expected_oh = (H + 2 * ph - dh * (KH - 1) - 1) // sh + 1
+    expected_ow = (W + 2 * pw - dw * (KW - 1) - 1) // sw + 1
+    if expected_oh != OH or expected_ow != OW:
+        raise CudaLoweringError(f"conv_depthwise2d output shape mismatch: expected ({expected_oh}, {expected_ow}), got ({OH}, {OW})")
+
+    total = int(N) * int(C_OUT) * int(OH) * int(OW)
+    sched = intent.schedule or ScheduleSketch()
+    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=128)
+    block_x = max(32, min(1024, int(block_x) if block_x > 0 else 128))
+    grid_x = (total + block_x - 1) // block_x
+
+    bias_param = f", const float* __restrict__ {bias_name}" if bias_name is not None else ""
+    bias_init = f"float acc = {bias_name}[(size_t)co];" if bias_name is not None else "float acc = 0.0f;"
+    cuda_src = f"""
+#include <stdint.h>
+
+extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(
+    const float* __restrict__ {inp_name},
+    const float* __restrict__ {weight_name}{bias_param},
+    float* __restrict__ {out_name},
+    int N, int C_IN, int H, int W, int C_OUT, int KH, int KW, int OH, int OW) {{
+  const int64_t tid = (int64_t)blockIdx.x * (int64_t)blockDim.x + (int64_t)threadIdx.x;
+  const int64_t total = (int64_t)N * (int64_t)C_OUT * (int64_t)OH * (int64_t)OW;
+  if (tid >= total) return;
+  int64_t t = tid;
+  const int ow = (int)(t % OW); t /= OW;
+  const int oh = (int)(t % OH); t /= OH;
+  const int co = (int)(t % C_OUT); t /= C_OUT;
+  const int n = (int)t;
+  const int ci = co / {channel_multiplier};
+  {bias_init}
+  for (int kh = 0; kh < KH; ++kh) {{
+    const int ih = oh * {sh} - {ph} + kh * {dh};
+    if ((unsigned)ih >= (unsigned)H) continue;
+    for (int kw = 0; kw < KW; ++kw) {{
+      const int iw = ow * {sw} - {pw} + kw * {dw};
+      if ((unsigned)iw >= (unsigned)W) continue;
+      const size_t x_idx = (((size_t)n * (size_t)C_IN + (size_t)ci) * (size_t)H + (size_t)ih) * (size_t)W + (size_t)iw;
+      const size_t w_idx = ((size_t)co * (size_t)KH + (size_t)kh) * (size_t)KW + (size_t)kw;
+      acc += {inp_name}[x_idx] * {weight_name}[w_idx];
+    }}
+  }}
+  {out_name}[tid] = acc;
+}}
+""".lstrip()
+
+    tensor_args = [inp_name, weight_name]
+    arg_names = [inp_name, weight_name]
+    if bias_name is not None:
+        tensor_args.append(bias_name)
+        arg_names.append(bias_name)
+    tensor_args.append(out_name)
+    arg_names.append(out_name)
+    scalar_args = {"N": "i32", "C_IN": "i32", "H": "i32", "W": "i32", "C_OUT": "i32", "KH": "i32", "KW": "i32", "OH": "i32", "OW": "i32"}
+    arg_names.extend(["N", "C_IN", "H", "W", "C_OUT", "KH", "KW", "OH", "OW"])
+    io_spec = _io_spec_from_args(intent, tensor_args=tensor_args, scalar_args=scalar_args, arg_names=arg_names)
+    launch = CudaLaunch(grid=(grid_x, 1, 1), block=(block_x, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.update({"N": int(N), "C_IN": int(C_IN), "H": int(H), "W": int(W), "C_OUT": int(C_OUT), "KH": int(KH), "KW": int(KW), "OH": int(OH), "OW": int(OW)})
+    return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=lowered_bindings)
 
 
 def _kernel_avg_pool2d_nchw_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
@@ -3948,8 +4791,20 @@ def lower_intent_to_cuda_kernel(
                 return _kernel_matmul_f32(intent, bindings)
             if op0 == "conv1d":
                 return _kernel_conv1d_ncl_f32(intent, bindings)
+            if op0 == "conv2d":
+                return _kernel_conv2d_nchw_f32(intent, bindings)
+            if op0 == "conv3d":
+                return _kernel_conv3d_ncdhw_f32(intent, bindings)
+            if op0 == "conv_depthwise2d":
+                return _kernel_conv_depthwise2d_nchw_f32(intent, bindings)
             if op0 == "dropout":
                 return _kernel_dropout_f32(intent, bindings)
+            if op0 == "cumsum":
+                return _kernel_cumsum_f32(intent, bindings)
+            if op0 == "cummax":
+                return _kernel_cumext_1d_f32(intent, bindings, is_max=True)
+            if op0 == "cummin":
+                return _kernel_cumext_1d_f32(intent, bindings, is_max=False)
             if op0 == "correlation":
                 return _kernel_correlation_i8(intent, bindings)
             if op0 == "resize":
@@ -3984,6 +4839,12 @@ def lower_intent_to_cuda_kernel(
     op_seq = [o.op for o in (intent.ops or [])]
     if op_seq in (["const", "ne", "reduce_any"], ["const", "eq", "reduce_any"], ["const", "eq", "reduce_any", "not"], ["const", "ne", "reduce_any", "not"]):
         return _kernel_any_dim_f32_to_i1(intent, bindings)
+    if op_seq == ["const", "ne", "cast", "reduce_sum"]:
+        return _kernel_count_nonzero_2d_i64(intent, bindings)
+    if op_seq == ["iota", "gather"]:
+        return _kernel_diag_2d_f32(intent, bindings)
+    if op_seq == ["conv2d", "broadcast_in_dim", "add"]:
+        return _kernel_conv2d_nchw_bias_pattern_f32(intent, bindings)
     if op_seq in (["matmul", "mul", "mul", "add", "cast"], ["matmul", "mul", "mul", "add"]):
         out_shape = _shape_values(intent, str((intent.outputs or [""])[0]))
         if len(out_shape) == 2:
