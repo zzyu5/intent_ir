@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -73,3 +74,62 @@ def test_load_active_semantic_ops_reads_items(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert mod._load_active_semantic_ops(active) == ["diag", "angle"]
+
+
+def test_matrix_forwards_cuda_stage_timeout_flags(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    mod = _load_matrix_module()
+    recorded_cmds: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], *, cwd: Path):
+        _ = cwd
+        recorded_cmds.append(list(cmd))
+        if "--out" in cmd:
+            out = Path(cmd[cmd.index("--out") + 1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps({"results": []}), encoding="utf-8")
+        return 0, "", ""
+
+    monkeypatch.setattr(mod, "_run", _fake_run)
+    monkeypatch.setattr(mod, "_suite_kernel_names", lambda **kwargs: ["angle2d"])
+    monkeypatch.setattr(mod, "_load_active_semantic_ops", lambda _: ["angle"])
+    out_dir = tmp_path / "matrix_out"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_multibackend_matrix.py",
+            "--suite",
+            "coverage",
+            "--kernel",
+            "angle2d",
+            "--skip-pipeline",
+            "--skip-rvv",
+            "--active-batch",
+            str(tmp_path / "active.json"),
+            "--pipeline-out-dir",
+            str(tmp_path / "pipeline"),
+            "--seed-cache-dir",
+            str(tmp_path / "seed"),
+            "--out-dir",
+            str(out_dir),
+            "--cuda-timeout-sec",
+            "111",
+            "--cuda-compile-timeout-sec",
+            "222",
+            "--cuda-launch-timeout-sec",
+            "333",
+        ],
+    )
+    with pytest.raises(SystemExit) as exc:
+        mod.main()
+    assert int(exc.value.code) == 0
+    cuda_cmds = [c for c in recorded_cmds if "scripts/cuda_backend_smoke.py" in c]
+    assert len(cuda_cmds) == 1
+    cuda_cmd = cuda_cmds[0]
+    assert cuda_cmd[cuda_cmd.index("--timeout-sec") + 1] == "111"
+    assert cuda_cmd[cuda_cmd.index("--compile-timeout-sec") + 1] == "222"
+    assert cuda_cmd[cuda_cmd.index("--launch-timeout-sec") + 1] == "333"
+    summary = json.loads((out_dir / "run_summary.json").read_text(encoding="utf-8"))
+    assert summary["cuda_timeout_sec"] == 111
+    assert summary["cuda_compile_timeout_sec"] == 222
+    assert summary["cuda_launch_timeout_sec"] == 333

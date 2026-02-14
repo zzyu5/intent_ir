@@ -181,7 +181,19 @@ def main() -> None:
         "--cuda-timeout-sec",
         type=int,
         default=120,
-        help="Per-kernel timeout passed to cuda_backend_smoke.py.",
+        help="Compatibility timeout passed to cuda_backend_smoke.py.",
+    )
+    ap.add_argument(
+        "--cuda-compile-timeout-sec",
+        type=int,
+        default=None,
+        help="CUDA compile-stage timeout passed to cuda_backend_smoke.py.",
+    )
+    ap.add_argument(
+        "--cuda-launch-timeout-sec",
+        type=int,
+        default=None,
+        help="CUDA launch-stage timeout passed to cuda_backend_smoke.py.",
     )
     ap.add_argument(
         "--cuda-codegen-mode",
@@ -318,6 +330,16 @@ def main() -> None:
 
     cuda_json = out_dir / "cuda_local.json"
     if not bool(args.skip_cuda):
+        cuda_compile_timeout_sec = (
+            int(args.cuda_compile_timeout_sec)
+            if args.cuda_compile_timeout_sec is not None
+            else int(args.cuda_timeout_sec)
+        )
+        cuda_launch_timeout_sec = (
+            int(args.cuda_launch_timeout_sec)
+            if args.cuda_launch_timeout_sec is not None
+            else int(args.cuda_timeout_sec)
+        )
         cmd = [
             sys.executable,
             "scripts/cuda_backend_smoke.py",
@@ -333,6 +355,10 @@ def main() -> None:
             str(pipeline_out_dir),
             "--timeout-sec",
             str(int(args.cuda_timeout_sec)),
+            "--compile-timeout-sec",
+            str(int(cuda_compile_timeout_sec)),
+            "--launch-timeout-sec",
+            str(int(cuda_launch_timeout_sec)),
             "--codegen-mode",
             str(args.cuda_codegen_mode),
             "--json",
@@ -382,6 +408,17 @@ def main() -> None:
         "intentir_mode": str(args.intentir_mode),
         "flaggems_opset": str(args.flaggems_opset),
         "backend_target": str(args.backend_target),
+        "cuda_timeout_sec": int(args.cuda_timeout_sec),
+        "cuda_compile_timeout_sec": (
+            int(args.cuda_compile_timeout_sec)
+            if args.cuda_compile_timeout_sec is not None
+            else int(args.cuda_timeout_sec)
+        ),
+        "cuda_launch_timeout_sec": (
+            int(args.cuda_launch_timeout_sec)
+            if args.cuda_launch_timeout_sec is not None
+            else int(args.cuda_timeout_sec)
+        ),
         "seed_cache_dir": str(seed_cache_dir),
         "pipeline_out_dir": str(pipeline_out_dir),
         "stages": stage_results,
