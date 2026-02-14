@@ -164,6 +164,21 @@ def test_new_structure_ops_validate_success() -> None:
             {"op": "triu", "inputs": ["X"], "output": "TRIU", "attrs": {"diagonal": 0}},
             {"op": "upsample_nearest1d", "inputs": ["UP1"], "output": "UP1O"},
             {"op": "upsample_nearest2d", "inputs": ["UP2"], "output": "UP2O"},
+            {"op": "scatter", "inputs": ["X", "SC_IDX", "SC_SRC"], "output": "SC_OUT", "attrs": {"dim": 1}},
+            {"op": "select_scatter", "inputs": ["X", "SEL_SRC"], "output": "SEL_OUT", "attrs": {"dim": 1, "index": 0}},
+            {
+                "op": "slice_scatter",
+                "inputs": ["X", "SLS_SRC"],
+                "output": "SLS_OUT",
+                "attrs": {"dim": 1, "start": 0, "end": 4, "step": 1},
+            },
+            {
+                "op": "quantile",
+                "inputs": ["X", "QV"],
+                "output": "QT_OUT",
+                "attrs": {"dim": 1, "keepdim": False, "interpolation": "linear"},
+            },
+            {"op": "polar", "inputs": ["ABS_P", "ANG_P"], "output": "POLAR_OUT"},
             {"op": "kron", "inputs": ["X", "Y"], "output": "KRON"},
             {"op": "masked_select", "inputs": ["X", "MASK"], "output": "SEL"},
             {"op": "masked_scatter", "inputs": ["X", "MASK", "SRC"], "output": "MS"},
@@ -216,6 +231,18 @@ def test_new_structure_ops_validate_success() -> None:
     src["tensors"]["UP1O"] = {"dtype": "f32", "shape": ["NUP1", "CUP1", "OUP1"], "layout": "row_major"}
     src["tensors"]["UP2"] = {"dtype": "f32", "shape": ["NUP2", "CUP2", "HUP2", "WUP2"], "layout": "row_major"}
     src["tensors"]["UP2O"] = {"dtype": "f32", "shape": ["NUP2", "CUP2", "OHUP2", "OWUP2"], "layout": "row_major"}
+    src["tensors"]["SC_IDX"] = {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"}
+    src["tensors"]["SC_SRC"] = {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"}
+    src["tensors"]["SC_OUT"] = {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"}
+    src["tensors"]["SEL_SRC"] = {"dtype": "f32", "shape": ["M"], "layout": "row_major"}
+    src["tensors"]["SEL_OUT"] = {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"}
+    src["tensors"]["SLS_SRC"] = {"dtype": "f32", "shape": ["M", 4], "layout": "row_major"}
+    src["tensors"]["SLS_OUT"] = {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"}
+    src["tensors"]["QV"] = {"dtype": "f32", "shape": [], "layout": "row_major"}
+    src["tensors"]["QT_OUT"] = {"dtype": "f32", "shape": ["M"], "layout": "row_major"}
+    src["tensors"]["ABS_P"] = {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"}
+    src["tensors"]["ANG_P"] = {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"}
+    src["tensors"]["POLAR_OUT"] = {"dtype": "f32", "shape": ["M", "N", 2], "layout": "row_major"}
     src["tensors"]["ANG"] = {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"}
     src["tensors"]["BN"] = {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"}
     src["tensors"]["BA"] = {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"}

@@ -964,6 +964,61 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
             raise IntentIRValidationError(f"op[{idx}] diag_embed.dim2 must be int when provided")
         if (dim1 is not None) and (dim2 is not None) and int(dim1) == int(dim2):
             raise IntentIRValidationError(f"op[{idx}] diag_embed.dim1 and dim2 must be different")
+    elif op.op == "scatter":
+        if len(op.inputs) != 3:
+            raise IntentIRValidationError(f"op[{idx}] scatter requires 3 inputs (inp, index, src)")
+        dim = attrs.get("dim")
+        if dim is not None and not isinstance(dim, int):
+            raise IntentIRValidationError(f"op[{idx}] scatter.dim must be int when provided")
+        reduce = attrs.get("reduce")
+        if reduce is not None and (not isinstance(reduce, str) or str(reduce).strip().lower() not in {"", "none", "add", "multiply"}):
+            raise IntentIRValidationError(
+                f"op[{idx}] scatter.reduce must be one of none|add|multiply when provided"
+            )
+    elif op.op == "select_scatter":
+        if len(op.inputs) != 2:
+            raise IntentIRValidationError(f"op[{idx}] select_scatter requires 2 inputs (inp, src)")
+        dim = attrs.get("dim")
+        index = attrs.get("index")
+        if dim is not None and not isinstance(dim, int):
+            raise IntentIRValidationError(f"op[{idx}] select_scatter.dim must be int when provided")
+        if index is not None and not isinstance(index, int):
+            raise IntentIRValidationError(f"op[{idx}] select_scatter.index must be int when provided")
+    elif op.op == "slice_scatter":
+        if len(op.inputs) != 2:
+            raise IntentIRValidationError(f"op[{idx}] slice_scatter requires 2 inputs (inp, src)")
+        dim = attrs.get("dim")
+        start = attrs.get("start")
+        end = attrs.get("end")
+        step = attrs.get("step")
+        if dim is not None and not isinstance(dim, int):
+            raise IntentIRValidationError(f"op[{idx}] slice_scatter.dim must be int when provided")
+        if start is not None and not isinstance(start, int):
+            raise IntentIRValidationError(f"op[{idx}] slice_scatter.start must be int when provided")
+        if end is not None and not isinstance(end, int):
+            raise IntentIRValidationError(f"op[{idx}] slice_scatter.end must be int when provided")
+        if step is not None and (not isinstance(step, int) or int(step) == 0):
+            raise IntentIRValidationError(f"op[{idx}] slice_scatter.step must be non-zero int when provided")
+    elif op.op == "quantile":
+        if len(op.inputs) != 2:
+            raise IntentIRValidationError(f"op[{idx}] quantile requires 2 inputs (inp, q)")
+        dim = attrs.get("dim")
+        if dim is not None and not isinstance(dim, int):
+            raise IntentIRValidationError(f"op[{idx}] quantile.dim must be int when provided")
+        keepdim = attrs.get("keepdim")
+        if keepdim is not None and not isinstance(keepdim, bool):
+            raise IntentIRValidationError(f"op[{idx}] quantile.keepdim must be bool when provided")
+        interpolation = attrs.get("interpolation")
+        if interpolation is not None and (
+            not isinstance(interpolation, str)
+            or str(interpolation).strip().lower() not in {"linear", "lower", "higher", "nearest", "midpoint"}
+        ):
+            raise IntentIRValidationError(
+                f"op[{idx}] quantile.interpolation must be one of linear|lower|higher|nearest|midpoint when provided"
+            )
+    elif op.op == "polar":
+        if len(op.inputs) != 2:
+            raise IntentIRValidationError(f"op[{idx}] polar requires 2 inputs (abs, angle)")
     elif op.op == "trace":
         if len(op.inputs) != 1:
             raise IntentIRValidationError(f"op[{idx}] trace requires 1 input")

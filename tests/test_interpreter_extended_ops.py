@@ -323,6 +323,69 @@ def test_trace_triu_and_upsample_nearest_execute() -> None:
     assert np.allclose(out["u2o"], expected_u2, atol=1e-6)
 
 
+def test_scatter_quantile_and_polar_execute() -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "scatter_quantile_polar",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "idx": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "src": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "sel_src": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "slice_src": {"dtype": "f32", "shape": ["M", "L"], "layout": "row_major"},
+                "q": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "abs": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "ang": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "scatter_out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "sel_out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "slice_out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "quant_out": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "polar_out": {"dtype": "f32", "shape": ["M", "N", 2], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "scatter", "inputs": ["x", "idx", "src"], "output": "scatter_out", "attrs": {"dim": 1}},
+                {"op": "select_scatter", "inputs": ["x", "sel_src"], "output": "sel_out", "attrs": {"dim": 1, "index": 0}},
+                {"op": "slice_scatter", "inputs": ["x", "slice_src"], "output": "slice_out", "attrs": {"dim": 1, "start": 0, "end": 2, "step": 1}},
+                {"op": "quantile", "inputs": ["x", "q"], "output": "quant_out", "attrs": {"dim": 1, "keepdim": False, "interpolation": "linear"}},
+                {"op": "polar", "inputs": ["abs", "ang"], "output": "polar_out"},
+            ],
+            "outputs": ["scatter_out", "sel_out", "slice_out", "quant_out", "polar_out"],
+        }
+    )
+    x = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
+    idx = np.array([[2, 1, 0], [0, 2, 1]], dtype=np.int32)
+    src = np.array([[10.0, 11.0, 12.0], [13.0, 14.0, 15.0]], dtype=np.float32)
+    sel_src = np.array([100.0, 200.0], dtype=np.float32)
+    slice_src = np.array([[7.0, 8.0], [9.0, 10.0]], dtype=np.float32)
+    q = np.array(0.5, dtype=np.float32)
+    abs_v = np.array([[1.0, 2.0, 3.0], [0.5, 1.5, 2.5]], dtype=np.float32)
+    ang_v = np.array([[0.0, 0.5, 1.0], [1.5, -0.5, -1.0]], dtype=np.float32)
+
+    out = execute_intent(
+        intent,
+        {"x": x, "idx": idx, "src": src, "sel_src": sel_src, "slice_src": slice_src, "q": q, "abs": abs_v, "ang": ang_v},
+        shape_bindings={"M": 2, "N": 3, "L": 2},
+    )
+
+    expected_scatter = x.copy()
+    np.put_along_axis(expected_scatter, idx.astype(np.int64), src, axis=1)
+    assert np.allclose(out["scatter_out"], expected_scatter, atol=1e-6)
+
+    expected_sel = x.copy()
+    expected_sel[:, 0] = sel_src
+    assert np.allclose(out["sel_out"], expected_sel, atol=1e-6)
+
+    expected_slice = x.copy()
+    expected_slice[:, 0:2] = slice_src
+    assert np.allclose(out["slice_out"], expected_slice, atol=1e-6)
+
+    expected_quant = np.quantile(x, 0.5, axis=1)
+    assert np.allclose(out["quant_out"], expected_quant, atol=1e-6)
+
+    expected_polar = np.stack([abs_v * np.cos(ang_v), abs_v * np.sin(ang_v)], axis=-1)
+    assert np.allclose(out["polar_out"], expected_polar, atol=1e-6)
+
+
 def test_glu_cum_and_index_update_ops_execute() -> None:
     intent = IntentFunction.from_json_dict(
         {

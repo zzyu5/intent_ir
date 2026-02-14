@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-13T20:27:33.263860+00:00",
+  "generated_at": "2026-02-14T00:18:09.572370+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -18,8 +18,8 @@
     "source_filtered_ops": 212,
     "semantic_ops": 196,
     "by_status": {
-      "blocked_backend": 78,
-      "blocked_ir": 12,
+      "blocked_backend": 83,
+      "blocked_ir": 7,
       "dual_pass": 106
     },
     "by_family": {
@@ -6604,40 +6604,60 @@
         "polar"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "polar"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.polar",
+      "e2e_spec": "polar2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to polar primitive; rvv_missing=['polar']; cuda_h100_missing=['polar']; cuda_5090d_missing=['polar']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "polar"
+          ],
+          "known_ops": [
+            "polar"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "polar"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "polar"
+          ],
+          "known_ops": [
+            "polar"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "polar"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "polar"
+          ],
+          "known_ops": [
+            "polar"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "polar"
+          ]
         }
       }
     },
@@ -6836,40 +6856,60 @@
         "quantile"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "quantile"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.quantile",
+      "e2e_spec": "quantile2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to quantile primitive; rvv_missing=['quantile']; cuda_h100_missing=['quantile']; cuda_5090d_missing=['quantile']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "quantile"
+          ],
+          "known_ops": [
+            "quantile"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "quantile"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "quantile"
+          ],
+          "known_ops": [
+            "quantile"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "quantile"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "quantile"
+          ],
+          "known_ops": [
+            "quantile"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "quantile"
+          ]
         }
       }
     },
@@ -11921,40 +11961,60 @@
         "scatter"
       ],
       "family": "index_scatter_gather",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "scatter"
+      ],
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.scatter",
+      "e2e_spec": "scatter2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to scatter primitive; rvv_missing=['scatter']; cuda_h100_missing=['scatter']; cuda_5090d_missing=['scatter']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "scatter"
+          ],
+          "known_ops": [
+            "scatter"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "scatter"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "scatter"
+          ],
+          "known_ops": [
+            "scatter"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "scatter"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "scatter"
+          ],
+          "known_ops": [
+            "scatter"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "scatter"
+          ]
         }
       }
     },
@@ -11964,40 +12024,60 @@
         "select_scatter"
       ],
       "family": "index_scatter_gather",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "select_scatter"
+      ],
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.select_scatter",
+      "e2e_spec": "select_scatter2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to select_scatter primitive; rvv_missing=['select_scatter']; cuda_h100_missing=['select_scatter']; cuda_5090d_missing=['select_scatter']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "select_scatter"
+          ],
+          "known_ops": [
+            "select_scatter"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "select_scatter"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "select_scatter"
+          ],
+          "known_ops": [
+            "select_scatter"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "select_scatter"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "select_scatter"
+          ],
+          "known_ops": [
+            "select_scatter"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "select_scatter"
+          ]
         }
       }
     },
@@ -12007,40 +12087,60 @@
         "slice_scatter"
       ],
       "family": "index_scatter_gather",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "slice_scatter"
+      ],
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.slice_scatter",
+      "e2e_spec": "slice_scatter2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to slice_scatter primitive; rvv_missing=['slice_scatter']; cuda_h100_missing=['slice_scatter']; cuda_5090d_missing=['slice_scatter']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "slice_scatter"
+          ],
+          "known_ops": [
+            "slice_scatter"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "slice_scatter"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "slice_scatter"
+          ],
+          "known_ops": [
+            "slice_scatter"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "slice_scatter"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "slice_scatter"
+          ],
+          "known_ops": [
+            "slice_scatter"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "slice_scatter"
+          ]
         }
       }
     },

@@ -325,6 +325,27 @@ _INDEX_TEMPLATE: dict[str, SemanticMapping] = {
         pattern_id="index.masked_select",
         detail="mapped to masked_select primitive",
     ),
+    "scatter": _mk(
+        "scatter",
+        ("scatter",),
+        mapping_kind="index_template",
+        pattern_id="index.scatter",
+        detail="mapped to scatter primitive",
+    ),
+    "select_scatter": _mk(
+        "select_scatter",
+        ("select_scatter",),
+        mapping_kind="index_template",
+        pattern_id="index.select_scatter",
+        detail="mapped to select_scatter primitive",
+    ),
+    "slice_scatter": _mk(
+        "slice_scatter",
+        ("slice_scatter",),
+        mapping_kind="index_template",
+        pattern_id="index.slice_scatter",
+        detail="mapped to slice_scatter primitive",
+    ),
     "where_self": _mk("where_self", ("gt", "where"), mapping_kind="index_template", pattern_id="index.where_self", detail="mapped via compare+where"),
     "where_scalar_self": _mk(
         "where_scalar_self",
@@ -729,6 +750,20 @@ _MACRO_TEMPLATE: dict[str, SemanticMapping] = {
         mapping_kind="macro_template",
         pattern_id="macro.conv_depthwise2d",
         detail="mapped to conv_depthwise2d primitive",
+    ),
+    "quantile": _mk(
+        "quantile",
+        ("quantile",),
+        mapping_kind="macro_template",
+        pattern_id="macro.quantile",
+        detail="mapped to quantile primitive",
+    ),
+    "polar": _mk(
+        "polar",
+        ("polar",),
+        mapping_kind="macro_template",
+        pattern_id="macro.polar",
+        detail="mapped to polar primitive",
     ),
     "trace": _mk(
         "trace",

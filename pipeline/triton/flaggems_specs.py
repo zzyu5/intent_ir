@@ -126,6 +126,11 @@ FLAGGEMS_MAX_POOL2D_WITH_INDICES_SRC = _module_source_text("flag_gems.ops.max_po
 FLAGGEMS_CONV1D_SRC = _module_source_text("flag_gems.ops.conv1d")
 FLAGGEMS_CONV3D_SRC = _module_source_text("flag_gems.ops.conv3d")
 FLAGGEMS_CONV_DEPTHWISE2D_SRC = _module_source_text("flag_gems.ops.conv_depthwise2d")
+FLAGGEMS_SCATTER_SRC = _module_source_text("flag_gems.ops.scatter")
+FLAGGEMS_SELECT_SCATTER_SRC = _module_source_text("flag_gems.ops.select_scatter")
+FLAGGEMS_SLICE_SCATTER_SRC = _module_source_text("flag_gems.ops.slice_scatter")
+FLAGGEMS_QUANTILE_SRC = _module_source_text("flag_gems.ops.quantile")
+FLAGGEMS_POLAR_SRC = _module_source_text("flag_gems.ops.polar")
 FLAGGEMS_UPSAMPLE_NEAREST1D_SRC = _module_source_text("flag_gems.ops.upsample_nearest1d")
 FLAGGEMS_UPSAMPLE_NEAREST2D_SRC = _module_source_text("flag_gems.ops.upsample_nearest2d")
 FLAGGEMS_MSE_LOSS_SRC = _module_source_text("flag_gems.ops.mse_loss")
@@ -1469,6 +1474,169 @@ def _run_flaggems_upsample_nearest2d_nchw_reference(case: TestCase) -> Dict[str,
         "output_size": np.array([oh, ow], dtype=np.int32),
         "scales_h": np.array(float(ih) / float(max(1, oh)), dtype=np.float32),
         "scales_w": np.array(float(iw) / float(max(1, ow)), dtype=np.float32),
+    }
+
+
+def _run_flaggems_scatter2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 8))
+    n = int(case.shapes.get("N", 16))
+    dim = int(case.shapes.get("DIM", 1))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+    if case.inputs and "src" in case.inputs:
+        src = _as_f32_tensor(np.asarray(case.inputs["src"]), device=device)
+    else:
+        src = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+    if case.inputs and "index" in case.inputs:
+        index = torch.as_tensor(np.asarray(case.inputs["index"]), device=device, dtype=torch.int64)
+    else:
+        idx_np = np.stack([rg.permutation(n).astype(np.int32, copy=False) for _ in range(m)], axis=0)
+        index = torch.from_numpy(idx_np).to(device=device, dtype=torch.int64)
+    with flag_gems.use_gems(include=["scatter"]):
+        out = flag_gems_ops.scatter(inp, int(dim), index, src, reduce=None)
+    inp_np = _to_np(inp)
+    src_np = _to_np(src)
+    index_np = _to_np(index).astype(np.int32, copy=False)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "input": inp_np,
+        "index": index_np,
+        "src": src_np,
+        "out": out_np,
+        "output": out_np,
+        "dim": np.array(int(dim), dtype=np.int32),
+    }
+
+
+def _run_flaggems_select_scatter2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 8))
+    n = int(case.shapes.get("N", 16))
+    dim = int(case.shapes.get("DIM", 1))
+    index = int(case.shapes.get("INDEX", 0))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+    if case.inputs and "src" in case.inputs:
+        src = _as_f32_tensor(np.asarray(case.inputs["src"]), device=device)
+    else:
+        src = torch.from_numpy(rg.standard_normal((m,), dtype=np.float32)).to(device)
+    index = max(-n, min(index, n - 1))
+    with flag_gems.use_gems(include=["select_scatter"]):
+        out = flag_gems_ops.select_scatter(inp, src, dim=int(dim), index=int(index))
+    inp_np = _to_np(inp)
+    src_np = _to_np(src)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "input": inp_np,
+        "src": src_np,
+        "out": out_np,
+        "output": out_np,
+        "dim": np.array(int(dim), dtype=np.int32),
+        "index": np.array(int(index), dtype=np.int32),
+    }
+
+
+def _run_flaggems_slice_scatter2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 8))
+    n = int(case.shapes.get("N", 16))
+    l = int(case.shapes.get("L", 4))
+    dim = int(case.shapes.get("DIM", 1))
+    start = int(case.shapes.get("START", 0))
+    step = int(case.shapes.get("STEP", 1))
+    step = 1 if step == 0 else step
+    l = max(1, min(l, n))
+    max_end = start + l * step
+    if max_end > n:
+        start = max(0, n - l * step)
+    end = start + l * step
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+    if case.inputs and "src" in case.inputs:
+        src = _as_f32_tensor(np.asarray(case.inputs["src"]), device=device)
+    else:
+        src = torch.from_numpy(rg.standard_normal((m, l), dtype=np.float32)).to(device)
+    with flag_gems.use_gems(include=["slice_scatter"]):
+        out = flag_gems_ops.slice_scatter(inp, src, dim=int(dim), start=int(start), end=int(end), step=int(step))
+    inp_np = _to_np(inp)
+    src_np = _to_np(src)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "input": inp_np,
+        "src": src_np,
+        "out": out_np,
+        "output": out_np,
+        "dim": np.array(int(dim), dtype=np.int32),
+        "start": np.array(int(start), dtype=np.int32),
+        "end": np.array(int(end), dtype=np.int32),
+        "step": np.array(int(step), dtype=np.int32),
+    }
+
+
+def _run_flaggems_quantile2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 8))
+    n = int(case.shapes.get("N", 32))
+    q = float(case.shapes.get("Q", 0.5))
+    q = min(1.0, max(0.0, q))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+    q_t = torch.tensor(q, device=device, dtype=inp.dtype)
+    with flag_gems.use_gems(include=["quantile"]):
+        out = flag_gems_ops.quantile(inp, q_t, dim=1, keepdim=False, interpolation="linear")
+    inp_np = _to_np(inp)
+    q_np = np.array(q, dtype=np.float32)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "input": inp_np,
+        "q": q_np,
+        "out": out_np,
+        "output": out_np,
+        "dim": np.array(1, dtype=np.int32),
+    }
+
+
+def _run_flaggems_polar2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 8))
+    n = int(case.shapes.get("N", 16))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+    if case.inputs and "abs" in case.inputs:
+        abs_t = _as_f32_tensor(np.asarray(case.inputs["abs"]), device=device)
+    else:
+        abs_t = torch.from_numpy(rg.uniform(0.0, 3.0, size=(m, n)).astype(np.float32)).to(device)
+    if case.inputs and "angle" in case.inputs:
+        angle_t = _as_f32_tensor(np.asarray(case.inputs["angle"]), device=device)
+    else:
+        angle_t = torch.from_numpy(rg.uniform(-3.14159, 3.14159, size=(m, n)).astype(np.float32)).to(device)
+    with flag_gems.use_gems(include=["polar"]):
+        out_complex = flag_gems_ops.polar(abs_t, angle_t)
+    out_ri = torch.view_as_real(out_complex)
+    abs_np = _to_np(abs_t)
+    angle_np = _to_np(angle_t)
+    out_np = _to_np(out_ri)
+    return {
+        "abs": abs_np,
+        "angle": angle_np,
+        "out": out_np,
+        "output": out_np,
     }
 
 
@@ -3690,6 +3858,62 @@ def _norm_upsample_nearest2d_nchw(shapes: Dict[str, int]) -> Dict[str, int]:
     return out
 
 
+def _norm_scatter2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    out["M"] = max(1, int(out.get("M", 8)))
+    out["N"] = max(1, int(out.get("N", 16)))
+    out["DIM"] = int(out.get("DIM", 1))
+    return out
+
+
+def _norm_select_scatter2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    m = max(1, int(out.get("M", 8)))
+    n = max(1, int(out.get("N", 16)))
+    idx = int(out.get("INDEX", 0))
+    out["M"] = m
+    out["N"] = n
+    out["DIM"] = int(out.get("DIM", 1))
+    out["INDEX"] = max(-n, min(idx, n - 1))
+    return out
+
+
+def _norm_slice_scatter2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    n = max(1, int(out.get("N", 16)))
+    l = max(1, int(out.get("L", 4)))
+    l = min(l, n)
+    step = int(out.get("STEP", 1))
+    if step == 0:
+        step = 1
+    start = max(0, int(out.get("START", 0)))
+    if start + l * step > n:
+        start = max(0, n - l * step)
+    out["M"] = max(1, int(out.get("M", 8)))
+    out["N"] = n
+    out["L"] = l
+    out["DIM"] = int(out.get("DIM", 1))
+    out["STEP"] = step
+    out["START"] = start
+    return out
+
+
+def _norm_quantile2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    out["M"] = max(1, int(out.get("M", 8)))
+    out["N"] = max(2, int(out.get("N", 32)))
+    q = float(out.get("Q", 0.5))
+    out["Q"] = min(1.0, max(0.0, q))
+    return out
+
+
+def _norm_polar2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    out["M"] = max(1, int(out.get("M", 8)))
+    out["N"] = max(1, int(out.get("N", 16)))
+    return out
+
+
 def _norm_glu2d(shapes: Dict[str, int]) -> Dict[str, int]:
     out = dict(shapes)
     out["M"] = max(1, int(out.get("M", 4)))
@@ -4092,6 +4316,61 @@ _FLAGGEMS_SPEC_BUILDERS = {
         canonical_shapes={"N": 1, "C_IN": 4, "H": 8, "W": 8, "KH": 3, "KW": 3, "SH": 1, "SW": 1, "PH": 1, "PW": 1, "DH": 1, "DW": 1, "MULT": 1},
         vary_axes=["N", "C_IN", "H", "W"],
         normalize_shapes=_norm_conv_depthwise2d_nchw,
+        stage_c_max_cases=4,
+        mutation_bounded_max_cases=2,
+    ),
+    "scatter2d": lambda: KernelSpec(
+        name="scatter2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_SCATTER_SRC",
+        runner=_run_flaggems_scatter2d_reference,
+        canonical_shapes={"M": 8, "N": 16, "DIM": 1},
+        vary_axes=["M", "N"],
+        normalize_shapes=_norm_scatter2d,
+        stage_c_max_cases=4,
+        mutation_bounded_max_cases=2,
+    ),
+    "select_scatter2d": lambda: KernelSpec(
+        name="select_scatter2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_SELECT_SCATTER_SRC",
+        runner=_run_flaggems_select_scatter2d_reference,
+        canonical_shapes={"M": 8, "N": 16, "DIM": 1, "INDEX": 0},
+        vary_axes=["M", "N"],
+        normalize_shapes=_norm_select_scatter2d,
+        stage_c_max_cases=4,
+        mutation_bounded_max_cases=2,
+    ),
+    "slice_scatter2d": lambda: KernelSpec(
+        name="slice_scatter2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_SLICE_SCATTER_SRC",
+        runner=_run_flaggems_slice_scatter2d_reference,
+        canonical_shapes={"M": 8, "N": 16, "L": 4, "DIM": 1, "START": 0, "STEP": 1},
+        vary_axes=["M", "N"],
+        normalize_shapes=_norm_slice_scatter2d,
+        stage_c_max_cases=4,
+        mutation_bounded_max_cases=2,
+    ),
+    "quantile2d": lambda: KernelSpec(
+        name="quantile2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_QUANTILE_SRC",
+        runner=_run_flaggems_quantile2d_reference,
+        canonical_shapes={"M": 8, "N": 32, "Q": 0.5},
+        vary_axes=["M", "N"],
+        normalize_shapes=_norm_quantile2d,
+        stage_c_max_cases=4,
+        mutation_bounded_max_cases=2,
+    ),
+    "polar2d": lambda: KernelSpec(
+        name="polar2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_POLAR_SRC",
+        runner=_run_flaggems_polar2d_reference,
+        canonical_shapes={"M": 8, "N": 16},
+        vary_axes=["M", "N"],
+        normalize_shapes=_norm_polar2d,
         stage_c_max_cases=4,
         mutation_bounded_max_cases=2,
     ),
@@ -5024,6 +5303,11 @@ __all__ = [
     "FLAGGEMS_CONV1D_SRC",
     "FLAGGEMS_CONV3D_SRC",
     "FLAGGEMS_CONV_DEPTHWISE2D_SRC",
+    "FLAGGEMS_SCATTER_SRC",
+    "FLAGGEMS_SELECT_SCATTER_SRC",
+    "FLAGGEMS_SLICE_SCATTER_SRC",
+    "FLAGGEMS_QUANTILE_SRC",
+    "FLAGGEMS_POLAR_SRC",
     "FLAGGEMS_UPSAMPLE_NEAREST1D_SRC",
     "FLAGGEMS_UPSAMPLE_NEAREST2D_SRC",
     "FLAGGEMS_ONE_HOT_SRC",

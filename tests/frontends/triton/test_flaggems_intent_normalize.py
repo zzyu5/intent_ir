@@ -141,6 +141,26 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert conv_dw is not None
     assert [op.op for op in conv_dw.ops] == ["conv_depthwise2d"]
 
+    scatter = canonical_flaggems_intent_for_spec("scatter2d")
+    assert scatter is not None
+    assert [op.op for op in scatter.ops] == ["scatter"]
+
+    select_scatter = canonical_flaggems_intent_for_spec("select_scatter2d")
+    assert select_scatter is not None
+    assert [op.op for op in select_scatter.ops] == ["select_scatter"]
+
+    slice_scatter = canonical_flaggems_intent_for_spec("slice_scatter2d")
+    assert slice_scatter is not None
+    assert [op.op for op in slice_scatter.ops] == ["slice_scatter"]
+
+    quantile = canonical_flaggems_intent_for_spec("quantile2d")
+    assert quantile is not None
+    assert [op.op for op in quantile.ops] == ["quantile"]
+
+    polar = canonical_flaggems_intent_for_spec("polar2d")
+    assert polar is not None
+    assert [op.op for op in polar.ops] == ["polar"]
+
     trace = canonical_flaggems_intent_for_spec("trace2d")
     assert trace is not None
     assert [op.op for op in trace.ops] == ["trace"]
@@ -254,6 +274,15 @@ def test_maybe_normalize_flaggems_candidate_overrides_known_spec() -> None:
     assert info5 is not None and info5.get("applied") is True
     assert out5.intent.name == "trace2d"
     assert out5_expanded is not None
+
+    out6, out6_expanded, info6 = maybe_normalize_flaggems_candidate(
+        spec_name="scatter2d",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info6 is not None and info6.get("applied") is True
+    assert out6.intent.name == "scatter2d"
+    assert out6_expanded is not None
 
 
 def test_maybe_normalize_flaggems_candidate_noop_for_other_specs() -> None:

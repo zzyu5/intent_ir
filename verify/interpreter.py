@@ -101,6 +101,11 @@ INTERPRETER_SUPPORTED_OPS: set[str] = set().union(
         "triu",
         "diag",
         "diag_embed",
+        "scatter",
+        "select_scatter",
+        "slice_scatter",
+        "quantile",
+        "polar",
         "kron",
         "masked_select",
         "masked_scatter",
@@ -493,6 +498,125 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         if [d1, d2] != [out_rank - 2, out_rank - 1]:
             out = np.moveaxis(out, [out_rank - 2, out_rank - 1], [d1, d2])
         return out
+    if op.op == "scatter":
+        if len(op.inputs) != 3:
+            raise ValueError("scatter requires 3 inputs (inp, index, src)")
+        inp = np.array(_get(env, op.inputs[0]), copy=True)
+        index = np.asarray(_get(env, op.inputs[1]), dtype=np.int64)
+        src = np.asarray(_get(env, op.inputs[2]), dtype=inp.dtype)
+        dim = int(op.attrs.get("dim", 0))
+        axis = dim if dim >= 0 else inp.ndim + dim
+        if axis < 0 or axis >= inp.ndim:
+            raise ValueError(f"scatter dim out of range: dim={dim} rank={inp.ndim}")
+        if tuple(index.shape) != tuple(src.shape):
+            raise ValueError(f"scatter expects index/src shape match, got {index.shape} vs {src.shape}")
+        if tuple(index.shape) != tuple(inp.shape):
+            # Follow torch.scatter broadcasting semantics only partially for now:
+            # enforce exact-shape kernels used by deterministic specs.
+            raise ValueError(f"scatter currently expects index shape == inp shape, got {index.shape} vs {inp.shape}")
+        axis_size = int(inp.shape[axis])
+        idx = np.where(index < 0, index + axis_size, index)
+        if np.any((idx < 0) | (idx >= axis_size)):
+            raise ValueError("scatter index out of bounds")
+        reduce = str(op.attrs.get("reduce", "none")).strip().lower()
+        if reduce in {"", "none"}:
+            np.put_along_axis(inp, idx, src, axis=axis)
+            return inp
+
+        # Build advanced indices for reduction variants.
+        grid = np.indices(idx.shape, sparse=False)
+        adv: list[np.ndarray] = []
+        for d in range(inp.ndim):
+            if d == axis:
+                adv.append(idx)
+            else:
+                adv.append(grid[d])
+        if reduce == "add":
+            np.add.at(inp, tuple(adv), src)
+            return inp
+        if reduce == "multiply":
+            # NumPy has no multiply.at; use scalar loop for correctness.
+            for pos in np.ndindex(tuple(int(v) for v in idx.shape)):
+                key = [int(p) for p in pos]
+                key[axis] = int(idx[pos])
+                inp[tuple(key)] *= src[pos]
+            return inp
+        raise ValueError(f"scatter unsupported reduce mode: {reduce}")
+    if op.op == "select_scatter":
+        if len(op.inputs) != 2:
+            raise ValueError("select_scatter requires 2 inputs (inp, src)")
+        inp = np.array(_get(env, op.inputs[0]), copy=True)
+        src = np.asarray(_get(env, op.inputs[1]), dtype=inp.dtype)
+        dim = int(op.attrs.get("dim", 0))
+        axis = dim if dim >= 0 else inp.ndim + dim
+        if axis < 0 or axis >= inp.ndim:
+            raise ValueError(f"select_scatter dim out of range: dim={dim} rank={inp.ndim}")
+        idx = int(op.attrs.get("index", 0))
+        axis_size = int(inp.shape[axis])
+        idx = idx if idx >= 0 else idx + axis_size
+        if idx < 0 or idx >= axis_size:
+            raise ValueError(f"select_scatter index out of bounds: index={idx} axis_size={axis_size}")
+        expected = list(inp.shape)
+        del expected[axis]
+        if tuple(src.shape) != tuple(expected):
+            raise ValueError(f"select_scatter src shape mismatch: expected {tuple(expected)} got {tuple(src.shape)}")
+        sl = [slice(None)] * inp.ndim
+        sl[axis] = idx
+        inp[tuple(sl)] = src
+        return inp
+    if op.op == "slice_scatter":
+        if len(op.inputs) != 2:
+            raise ValueError("slice_scatter requires 2 inputs (inp, src)")
+        inp = np.array(_get(env, op.inputs[0]), copy=True)
+        src = np.asarray(_get(env, op.inputs[1]), dtype=inp.dtype)
+        dim = int(op.attrs.get("dim", 0))
+        axis = dim if dim >= 0 else inp.ndim + dim
+        if axis < 0 or axis >= inp.ndim:
+            raise ValueError(f"slice_scatter dim out of range: dim={dim} rank={inp.ndim}")
+        step = int(op.attrs.get("step", 1))
+        if step == 0:
+            raise ValueError("slice_scatter step must be non-zero")
+        axis_size = int(inp.shape[axis])
+        start = int(op.attrs.get("start", 0))
+        end = op.attrs.get("end")
+        if end is None:
+            end = axis_size
+        end = int(end)
+        if start < 0:
+            start += axis_size
+        if end < 0:
+            end += axis_size
+        start = max(0, min(start, axis_size))
+        end = max(0, min(end, axis_size))
+        sl = [slice(None)] * inp.ndim
+        sl[axis] = slice(start, end, step)
+        target = inp[tuple(sl)]
+        if tuple(src.shape) != tuple(target.shape):
+            raise ValueError(f"slice_scatter src shape mismatch: expected {target.shape} got {src.shape}")
+        inp[tuple(sl)] = src
+        return inp
+    if op.op == "quantile":
+        if len(op.inputs) != 2:
+            raise ValueError("quantile requires 2 inputs (inp, q)")
+        x = np.asarray(_get(env, op.inputs[0]), dtype=np.float32)
+        q = np.asarray(_get(env, op.inputs[1]), dtype=np.float32)
+        dim = op.attrs.get("dim")
+        axis = None if dim is None else int(dim)
+        keepdim = bool(op.attrs.get("keepdim", False))
+        method = str(op.attrs.get("interpolation", "linear"))
+        try:
+            out = np.quantile(x, q, axis=axis, keepdims=keepdim, method=method)
+        except TypeError:
+            out = np.quantile(x, q, axis=axis, keepdims=keepdim, interpolation=method)
+        return np.asarray(out, dtype=np.float32)
+    if op.op == "polar":
+        if len(op.inputs) != 2:
+            raise ValueError("polar requires 2 inputs (abs, angle)")
+        abs_v = np.asarray(_get(env, op.inputs[0]), dtype=np.float32)
+        angle_v = np.asarray(_get(env, op.inputs[1]), dtype=np.float32)
+        real = abs_v * np.cos(angle_v)
+        imag = abs_v * np.sin(angle_v)
+        return np.stack([real, imag], axis=-1).astype(np.float32, copy=False)
     if op.op == "kron":
         if len(op.inputs) != 2:
             raise ValueError("kron requires 2 inputs")

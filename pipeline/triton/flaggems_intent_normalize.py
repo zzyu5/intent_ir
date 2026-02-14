@@ -711,6 +711,102 @@ def _canonical_upsample_nearest2d_nchw_intent() -> IntentFunction:
     )
 
 
+def _canonical_scatter2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "scatter2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "index": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "src": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "scatter", "inputs": ["inp", "index", "src"], "output": "out", "attrs": {"dim": 1}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_select_scatter2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "select_scatter2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "src": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "select_scatter", "inputs": ["inp", "src"], "output": "out", "attrs": {"dim": 1, "index": 0}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_slice_scatter2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "slice_scatter2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "src": {"dtype": "f32", "shape": ["M", "L"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "slice_scatter",
+                    "inputs": ["inp", "src"],
+                    "output": "out",
+                    "attrs": {"dim": 1, "start": 0, "end": 4, "step": 1},
+                },
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_quantile2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "quantile2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "q": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "quantile",
+                    "inputs": ["inp", "q"],
+                    "output": "out",
+                    "attrs": {"dim": 1, "keepdim": False, "interpolation": "linear"},
+                },
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_polar2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "polar2d",
+            "tensors": {
+                "abs": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "angle": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N", 2], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "polar", "inputs": ["abs", "angle"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def _canonical_glu2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -1018,6 +1114,16 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_conv3d_ncdhw_intent()
     if name == "conv_depthwise2d_nchw":
         return _canonical_conv_depthwise2d_nchw_intent()
+    if name == "scatter2d":
+        return _canonical_scatter2d_intent()
+    if name == "select_scatter2d":
+        return _canonical_select_scatter2d_intent()
+    if name == "slice_scatter2d":
+        return _canonical_slice_scatter2d_intent()
+    if name == "quantile2d":
+        return _canonical_quantile2d_intent()
+    if name == "polar2d":
+        return _canonical_polar2d_intent()
     if name == "trace2d":
         return _canonical_trace2d_intent()
     if name == "triu2d":

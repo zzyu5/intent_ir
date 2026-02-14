@@ -224,3 +224,53 @@ def test_flaggems_plugin_forces_deterministic_overrides_for_known_unstable_specs
     assert info16.get("enabled_by") == "provider_required_deterministic_override"
     assert out16.intent.name == "upsample_nearest2d_nchw"
     assert out16_exp is not None
+
+    out17, out17_exp, info17 = plugin.maybe_normalize_candidate(
+        spec_name="scatter2d",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info17 is not None
+    assert info17.get("enabled_by") == "provider_required_deterministic_override"
+    assert out17.intent.name == "scatter2d"
+    assert out17_exp is not None
+
+    out18, out18_exp, info18 = plugin.maybe_normalize_candidate(
+        spec_name="select_scatter2d",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info18 is not None
+    assert info18.get("enabled_by") == "provider_required_deterministic_override"
+    assert out18.intent.name == "select_scatter2d"
+    assert out18_exp is not None
+
+    out19, out19_exp, info19 = plugin.maybe_normalize_candidate(
+        spec_name="slice_scatter2d",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info19 is not None
+    assert info19.get("enabled_by") == "provider_required_deterministic_override"
+    assert out19.intent.name == "slice_scatter2d"
+    assert out19_exp is not None
+
+    out20, out20_exp, info20 = plugin.maybe_normalize_candidate(
+        spec_name="quantile2d",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info20 is not None
+    assert info20.get("enabled_by") == "provider_required_deterministic_override"
+    assert out20.intent.name == "quantile2d"
+    assert out20_exp is not None
+
+    out21, out21_exp, info21 = plugin.maybe_normalize_candidate(
+        spec_name="polar2d",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info21 is not None
+    assert info21.get("enabled_by") == "provider_required_deterministic_override"
+    assert out21.intent.name == "polar2d"
+    assert out21_exp is not None

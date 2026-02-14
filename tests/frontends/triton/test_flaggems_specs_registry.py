@@ -37,6 +37,11 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "conv1d_ncl" in names
     assert "conv3d_ncdhw" in names
     assert "conv_depthwise2d_nchw" in names
+    assert "scatter2d" in names
+    assert "select_scatter2d" in names
+    assert "slice_scatter2d" in names
+    assert "quantile2d" in names
+    assert "polar2d" in names
     assert "trace2d" in names
     assert "triu2d" in names
     assert "upsample_nearest1d_ncl" in names
