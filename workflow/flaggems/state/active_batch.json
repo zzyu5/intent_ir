@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_active_batch_v1",
-  "generated_at": "2026-02-14T16:10:08+00:00",
+  "generated_at": "2026-02-14T17:12:47+00:00",
   "branch": "flaggems",
   "batch_size": 10,
   "selection_policy": [
@@ -10,169 +10,153 @@
   ],
   "items": [
     {
-      "id": "flaggems::abs",
-      "semantic_op": "abs",
-      "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
-      "e2e_spec": "abs2d",
-      "intent_ops": [
-        "abs"
-      ]
-    },
-    {
-      "id": "flaggems::acos",
-      "semantic_op": "acos",
-      "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
-      "e2e_spec": "acos2d",
-      "intent_ops": [
-        "acos"
-      ]
-    },
-    {
-      "id": "flaggems::add",
-      "semantic_op": "add",
-      "family": "elementwise_broadcast",
+      "id": "flaggems::amax",
+      "semantic_op": "amax",
+      "family": "reduction",
       "status": "blocked_backend",
       "passes": false,
       "reason_code": "runtime_backend_fail",
       "next_action": "backend_lowering",
-      "e2e_spec": "add2d",
+      "e2e_spec": "row_max",
       "intent_ops": [
-        "add"
+        "reduce_max"
       ]
     },
     {
-      "id": "flaggems::addcdiv",
-      "semantic_op": "addcdiv",
+      "id": "flaggems::any",
+      "semantic_op": "any",
+      "family": "reduction",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "runtime_backend_fail",
+      "next_action": "backend_lowering",
+      "e2e_spec": "any_kernel_dim",
+      "intent_ops": [
+        "reduce_any"
+      ]
+    },
+    {
+      "id": "flaggems::arange",
+      "semantic_op": "arange",
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
       "reason_code": "pipeline_diff_failed_or_missing",
       "next_action": "backend_lowering",
-      "e2e_spec": "addcdiv2d",
+      "e2e_spec": "arange1d",
       "intent_ops": [
-        "const",
-        "mul",
-        "div",
-        "add"
+        "iota"
       ]
     },
     {
-      "id": "flaggems::addcmul",
-      "semantic_op": "addcmul",
+      "id": "flaggems::atan",
+      "semantic_op": "atan",
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
       "reason_code": "pipeline_diff_failed_or_missing",
       "next_action": "backend_lowering",
-      "e2e_spec": "addcmul2d",
+      "e2e_spec": "atan2d",
       "intent_ops": [
-        "const",
-        "mul",
-        "mul",
-        "add"
+        "atan"
       ]
     },
     {
-      "id": "flaggems::addmm",
-      "semantic_op": "addmm",
+      "id": "flaggems::baddbmm",
+      "semantic_op": "baddbmm",
       "family": "matmul_linear",
       "status": "blocked_backend",
       "passes": false,
       "reason_code": "runtime_backend_fail",
       "next_action": "backend_lowering",
-      "e2e_spec": "addmm2d",
+      "e2e_spec": "baddbmm3d",
       "intent_ops": [
         "matmul",
         "add"
       ]
     },
     {
-      "id": "flaggems::addmv",
-      "semantic_op": "addmv",
-      "family": "elementwise_broadcast",
+      "id": "flaggems::batch_norm",
+      "semantic_op": "batch_norm",
+      "family": "norm_activation",
       "status": "blocked_backend",
       "passes": false,
       "reason_code": "runtime_backend_fail",
       "next_action": "backend_lowering",
-      "e2e_spec": "addmv2d",
+      "e2e_spec": "batch_norm2d",
       "intent_ops": [
-        "matmul",
-        "add"
+        "reduce_sum",
+        "sub",
+        "mul",
+        "add",
+        "rsqrt",
+        "broadcast_in_dim",
+        "div"
       ]
     },
     {
-      "id": "flaggems::addr",
-      "semantic_op": "addr",
+      "id": "flaggems::bitwise_or_scalar",
+      "semantic_op": "bitwise_or_scalar",
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
       "reason_code": "pipeline_diff_failed_or_missing",
       "next_action": "backend_lowering",
-      "e2e_spec": "addr2d",
+      "e2e_spec": "bitwise_or2d",
       "intent_ops": [
-        "const",
-        "mul",
-        "matmul",
-        "const",
-        "mul",
-        "add"
+        "bitwise_or"
       ]
     },
     {
-      "id": "flaggems::all",
-      "semantic_op": "all",
-      "family": "reduction",
+      "id": "flaggems::bitwise_or_scalar_tensor",
+      "semantic_op": "bitwise_or_scalar_tensor",
+      "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "runtime_backend_fail",
+      "reason_code": "pipeline_diff_failed_or_missing",
       "next_action": "backend_lowering",
-      "e2e_spec": "row_all",
+      "e2e_spec": "bitwise_or2d",
       "intent_ops": [
-        "not",
-        "reduce_any",
-        "not"
+        "bitwise_or"
       ]
     },
     {
-      "id": "flaggems::allclose",
-      "semantic_op": "allclose",
-      "family": "reduction",
+      "id": "flaggems::bitwise_or_tensor",
+      "semantic_op": "bitwise_or_tensor",
+      "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "runtime_backend_fail",
+      "reason_code": "pipeline_diff_failed_or_missing",
       "next_action": "backend_lowering",
-      "e2e_spec": "allclose2d",
+      "e2e_spec": "bitwise_or2d",
       "intent_ops": [
-        "sub",
-        "abs",
-        "abs",
-        "mul",
-        "add",
-        "le",
-        "not",
-        "reduce_any",
-        "not"
+        "bitwise_or"
+      ]
+    },
+    {
+      "id": "flaggems::bitwise_right_shift",
+      "semantic_op": "bitwise_right_shift",
+      "family": "elementwise_broadcast",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "pipeline_diff_failed_or_missing",
+      "next_action": "backend_lowering",
+      "e2e_spec": "bitwise_right_shift2d",
+      "intent_ops": [
+        "bitwise_right_shift"
       ]
     }
   ],
   "context": {
     "feature_list_path": "workflow/flaggems/state/feature_list.json",
     "progress_log_path": "workflow/flaggems/state/progress_log.jsonl",
-    "git_log": "18e4bda flaggems: enable nvrtc runtime path and close active batch as dual-pass\na13a879 workflow: record nvrtc classification run for active batch\n2d1e3b4 flaggems: add cuda runtime backend mode and classify env_unavailable\nf76e4e8 workflow: record matrix timeout-plumbing session artifacts\n41ff7d8 flaggems: plumb cuda compile/launch timeouts through matrix runner\nb67d61c workflow: record scoped converge batch and next focus\n35badec flaggems: enforce active scoped gate and classify cuda stage timeouts\nd12b7b8 workflow: record active attention-angle-bitwise v6 scoped convergence\nc5ab8d6 intentir: extend active attention/bitwise lowering and sdpa tolerance\nc043118 workflow: record backend wave reruns and replan active batch\naa6295d intentir: extend rvv/cuda lowering for active backend batch\n9f611e5 flaggems: add vstack e2e spec and registry mapping\n649217b workflow: record sort-topk-var batch and replan queue\n677b5b6 flaggems: add sort-stack-std-topk-var-norm e2e spec wave\n264cf98 workflow: record pow-prod-repeat batch and replan next queue\n0a2a5f1 flaggems: add pow/prod/repeat/sin e2e spec wave\nac146f2 workflow: record log-min-pad batch and plan next backend wave\n8052234 flaggems: add log-min-pad batch specs and baseline aliases\nbcee88f workflow: record active-batch backend wave and plan next blocked-backend queue\n3f02af3 flaggems: add active-batch specs and enable rvv/cuda cos-erf lowering",
+    "git_log": "159a1a7 flaggems: close abs/add active batch backend gaps and scoped registry writes\n7a680d7 workflow: close nvrtc dual-pass batch and plan next backend wave\n18e4bda flaggems: enable nvrtc runtime path and close active batch as dual-pass\na13a879 workflow: record nvrtc classification run for active batch\n2d1e3b4 flaggems: add cuda runtime backend mode and classify env_unavailable\nf76e4e8 workflow: record matrix timeout-plumbing session artifacts\n41ff7d8 flaggems: plumb cuda compile/launch timeouts through matrix runner\nb67d61c workflow: record scoped converge batch and next focus\n35badec flaggems: enforce active scoped gate and classify cuda stage timeouts\nd12b7b8 workflow: record active attention-angle-bitwise v6 scoped convergence\nc5ab8d6 intentir: extend active attention/bitwise lowering and sdpa tolerance\nc043118 workflow: record backend wave reruns and replan active batch\naa6295d intentir: extend rvv/cuda lowering for active backend batch\n9f611e5 flaggems: add vstack e2e spec and registry mapping\n649217b workflow: record sort-topk-var batch and replan queue\n677b5b6 flaggems: add sort-stack-std-topk-var-norm e2e spec wave\n264cf98 workflow: record pow-prod-repeat batch and replan next queue\n0a2a5f1 flaggems: add pow/prod/repeat/sin e2e spec wave\nac146f2 workflow: record log-min-pad batch and plan next backend wave\n8052234 flaggems: add log-min-pad batch specs and baseline aliases",
     "progress_tail": [
-      "{\"ts\": \"2026-02-14T07:31:35+00:00\", \"commit\": \"c043118-dirty\", \"summary\": \"Rebased active attention/angle/bitwise batch to intentir auto mode, added SDPA tolerance primitive, and reran pipeline+RVV(local/remote)+CUDA scoped convergence.\", \"batch_ops\": [\"ScaleDotProductAttention\", \"angle\", \"argmax\", \"argmin\", \"avg_pool2d\", \"bitwise_and_scalar\", \"bitwise_and_scalar_tensor\", \"bitwise_and_tensor\", \"bitwise_left_shift\", \"bitwise_not\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_attention_angle_bitwise_v6/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_attention_angle_bitwise_v6/status_converged.json\", \"next_focus\": \"1) Resolve CUDA runtime_timeout for scaled_dot_product_attention/angle/bitwise_left_shift. 2) Keep provider-path plugin boundaries while adding non-timeout CUDA classifications. 3) Continue next backend_missing_ops batch after gate clean pass.\", \"run_ok\": true, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_attention_angle_bitwise_v6\", \"counts_by_status\": {\"blocked_backend\": 183, \"dual_pass\": 7, \"rvv_only\": 6}}",
-      "{\"ts\": \"2026-02-14T15:22:19+00:00\", \"commit\": \"35badecc9344eb4f2641ce24a8735262403b6b9f\", \"summary\": \"Implemented scoped converge/gate semantics and CUDA compile/launch timeout classification; reran active batch with RVV local+remote pass and CUDA compile_timeout classification.\", \"batch_ops\": [\"ScaleDotProductAttention\", \"angle\", \"argmax\", \"argmin\", \"avg_pool2d\", \"bitwise_and_scalar\", \"bitwise_and_scalar_tensor\", \"bitwise_and_tensor\", \"bitwise_left_shift\", \"bitwise_not\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_p1_scope_v3/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_p1_scope_v3/status_converged.json\", \"next_focus\": \"1) Plumb --compile-timeout-sec/--launch-timeout-sec through run_multibackend_matrix. 2) Fix CUDA compile-time bottleneck for scaled_dot_product_attention/angle/bitwise kernels to move active batch from rvv_only to dual_pass. 3) Re-run scoped gate with --write-registry after active dual_pass.\", \"run_ok\": false, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_p1_scope_v3\", \"counts_by_status\": {\"blocked_backend\": 183, \"rvv_only\": 13}}",
       "{\"ts\": \"2026-02-14T15:32:11+00:00\", \"commit\": \"41ff7d8d30151363bd488062cb8d010d1256600d\", \"summary\": \"Plumbed CUDA compile/launch timeout flags through matrix runner and validated scoped converge on matrix timeout probe run.\", \"batch_ops\": [\"ScaleDotProductAttention\", \"angle\", \"argmax\", \"argmin\", \"avg_pool2d\", \"bitwise_and_scalar\", \"bitwise_and_scalar_tensor\", \"bitwise_and_tensor\", \"bitwise_left_shift\", \"bitwise_not\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260214/matrix_timeout_probe_v1/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260214/matrix_timeout_probe_v1/status_converged.json\", \"next_focus\": \"1) Run full active batch with new matrix timeout knobs (pipeline+RVV local/remote+CUDA). 2) Tune compile timeout per kernel family to reduce compile_timeout false blockers. 3) Continue backend lowering for active batch ops to reach dual_pass.\", \"run_ok\": false, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260214/matrix_timeout_probe_v1\", \"counts_by_status\": {\"blocked_backend\": 195, \"rvv_only\": 1}}",
       "{\"ts\": \"2026-02-14T15:58:42+00:00\", \"commit\": \"2d1e3b438931b8c5d7ae572b03c7ca59ea5f1286\", \"summary\": \"Added CUDA runtime-backend control (nvcc/nvrtc), mapped nvrtc missing deps to env_unavailable, and reran active batch with RVV dual execution + scoped converge.\", \"batch_ops\": [\"ScaleDotProductAttention\", \"angle\", \"argmax\", \"argmin\", \"avg_pool2d\", \"bitwise_and_scalar\", \"bitwise_and_scalar_tensor\", \"bitwise_and_tensor\", \"bitwise_left_shift\", \"bitwise_not\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_nvrtc_classify_v1/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_nvrtc_classify_v1/status_converged.json\", \"next_focus\": \"1) Install/enable cuda-python NVRTC bindings on CUDA runner, then rerun active batch with --cuda-runtime-backend nvrtc. 2) If sticking to nvcc, investigate extension compile lock/latency to clear compile_timeout. 3) Continue backend lowering for ScaleDotProductAttention/avg_pool2d and finalize active dual_pass.\", \"run_ok\": false, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_nvrtc_classify_v1\", \"counts_by_status\": {\"blocked_backend\": 183, \"rvv_only\": 13}}",
-      "{\"ts\": \"2026-02-14T16:09:34+00:00\", \"commit\": \"18e4bda90de5ca461c2f143ae3bdc9e906f1fade\", \"summary\": \"Enabled nvrtc runtime backend compatibility and completed current active batch with scoped 10/10 dual_pass across RVV+CUDA.\", \"batch_ops\": [\"ScaleDotProductAttention\", \"angle\", \"argmax\", \"argmin\", \"avg_pool2d\", \"bitwise_and_scalar\", \"bitwise_and_scalar_tensor\", \"bitwise_and_tensor\", \"bitwise_left_shift\", \"bitwise_not\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_nvrtc_auto_v2/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_nvrtc_auto_v2/status_converged.json\", \"next_focus\": \"1) Plan and switch to next active batch (backend_missing_ops). 2) Keep nvrtc backend as default CUDA path for matrix runs in this env. 3) Continue backend lowering expansion to reduce global blocked_backend.\", \"run_ok\": true, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_nvrtc_auto_v2\", \"counts_by_status\": {\"blocked_backend\": 183, \"dual_pass\": 13}}"
+      "{\"ts\": \"2026-02-14T16:09:34+00:00\", \"commit\": \"18e4bda90de5ca461c2f143ae3bdc9e906f1fade\", \"summary\": \"Enabled nvrtc runtime backend compatibility and completed current active batch with scoped 10/10 dual_pass across RVV+CUDA.\", \"batch_ops\": [\"ScaleDotProductAttention\", \"angle\", \"argmax\", \"argmin\", \"avg_pool2d\", \"bitwise_and_scalar\", \"bitwise_and_scalar_tensor\", \"bitwise_and_tensor\", \"bitwise_left_shift\", \"bitwise_not\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_nvrtc_auto_v2/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_nvrtc_auto_v2/status_converged.json\", \"next_focus\": \"1) Plan and switch to next active batch (backend_missing_ops). 2) Keep nvrtc backend as default CUDA path for matrix runs in this env. 3) Continue backend lowering expansion to reduce global blocked_backend.\", \"run_ok\": true, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_nvrtc_auto_v2\", \"counts_by_status\": {\"blocked_backend\": 183, \"dual_pass\": 13}}",
+      "{\"ts\": \"2026-02-14T16:16:49+00:00\", \"commit\": \"7a680d7\", \"summary\": \"Ran full baseline for next active batch (abs/acos/add*): RVV local+remote and CUDA nvrtc classification completed with scoped status split.\", \"batch_ops\": [\"abs\", \"acos\", \"add\", \"addcdiv\", \"addcmul\", \"addmm\", \"addmv\", \"addr\", \"all\", \"allclose\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_abs_add_v1/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_abs_add_v1/status_converged.json\", \"next_focus\": \"1) Fix provider baseline aliases for abs2d/addcdiv2d inputs (A/t1) to remove diff_fail blockers. 2) Add lowering support for addmv/addmm/allclose matmul-reduction variants on CUDA and RVV. 3) Resolve addr/row_all shape/diff mismatches, then rerun batch gate toward dual_pass.\", \"run_ok\": false, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_abs_add_v1\", \"counts_by_status\": {\"blocked_backend\": 190, \"dual_pass\": 3, \"rvv_only\": 3}}",
+      "{\"ts\": \"2026-02-14T17:12:13+00:00\", \"commit\": \"159a1a7b7a34a5127ca89a22e927ab59f9b75c60\", \"summary\": \"Closed active abs/acos/add* batch to scoped 10/10 dual_pass on RVV local+remote and CUDA nvrtc; synced registry with scoped write-back.\", \"batch_ops\": [\"abs\", \"acos\", \"add\", \"addcdiv\", \"addcmul\", \"addmm\", \"addmv\", \"addr\", \"all\", \"allclose\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_abs_add_v3_manual/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_abs_add_v3_manual/status_converged.json\", \"next_focus\": \"1) Run check_batch_gate and finalize batch closure artifacts. 2) Plan next backend_missing_ops batch via plan_next_batch.py. 3) Continue backend wave with plugin-boundary constraints and mandatory RVV/CUDA validation.\", \"run_ok\": true, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_abs_add_v3_manual\", \"counts_by_status\": {\"blocked_backend\": 186, \"dual_pass\": 10}}"
     ]
   }
 }
