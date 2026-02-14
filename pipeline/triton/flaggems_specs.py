@@ -155,6 +155,9 @@ FLAGGEMS_RELU_SRC = _module_source_text("flag_gems.ops.relu")
 FLAGGEMS_CELU_SRC = _module_source_text("flag_gems.ops.celu")
 FLAGGEMS_ELU_SRC = _module_source_text("flag_gems.ops.elu")
 FLAGGEMS_EXP_SRC = _module_source_text("flag_gems.ops.exp")
+FLAGGEMS_LOG_SRC = _module_source_text("flag_gems.ops.log")
+FLAGGEMS_LOG_SIGMOID_SRC = _module_source_text("flag_gems.ops.log_sigmoid")
+FLAGGEMS_LOG_SOFTMAX_SRC = _module_source_text("flag_gems.ops.log_softmax")
 FLAGGEMS_COS_SRC = _module_source_text("flag_gems.ops.cos")
 FLAGGEMS_ERF_SRC = _module_source_text("flag_gems.ops.erf")
 FLAGGEMS_GELU_SRC = _module_source_text("flag_gems.ops.gelu")
@@ -170,16 +173,19 @@ FLAGGEMS_WHERE_SRC = _module_source_text("flag_gems.ops.where")
 FLAGGEMS_MASKED_FILL_SRC = _module_source_text("flag_gems.ops.masked_fill")
 FLAGGEMS_SUM_SRC = _module_source_text("flag_gems.ops.sum")
 FLAGGEMS_MAX_SRC = _module_source_text("flag_gems.ops.max")
+FLAGGEMS_MIN_SRC = _module_source_text("flag_gems.ops.min")
 FLAGGEMS_MEAN_SRC = _module_source_text("flag_gems.ops.mean")
 FLAGGEMS_ALL_SRC = _module_source_text("flag_gems.ops.all")
 FLAGGEMS_MAXIMUM_SRC = _module_source_text("flag_gems.ops.maximum")
 FLAGGEMS_MINIMUM_SRC = _module_source_text("flag_gems.ops.minimum")
+FLAGGEMS_NONZERO_SRC = _module_source_text("flag_gems.ops.nonzero")
 FLAGGEMS_FULL_SRC = _module_source_text("flag_gems.ops.full")
 FLAGGEMS_COPY_SRC = _module_source_text("flag_gems.ops.copy")
 FLAGGEMS_TO_COPY_SRC = _module_source_text("flag_gems.ops.to")
 FLAGGEMS_CLAMP_SRC = _module_source_text("flag_gems.ops.clamp")
 FLAGGEMS_THRESHOLD_SRC = _module_source_text("flag_gems.ops.threshold")
 FLAGGEMS_PAD_SRC = _module_source_text("flag_gems.ops.pad")
+FLAGGEMS_POW_SRC = _module_source_text("flag_gems.ops.pow")
 FLAGGEMS_HSTACK_SRC = _module_source_text("flag_gems.ops.hstack")
 FLAGGEMS_UPSAMPLE_BICUBIC2D_AA_SRC = _module_source_text("flag_gems.ops.upsample_bicubic2d_aa")
 FLAGGEMS_EYE_SRC = _module_source_text("flag_gems.ops.eye")
@@ -3468,6 +3474,303 @@ def _run_flaggems_exp2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     }
 
 
+def _run_flaggems_log2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        # Keep inputs positive for stable log() semantics.
+        x = np.abs(rg.standard_normal((m, n), dtype=np.float32)) + np.float32(1.0e-3)
+        inp = torch.from_numpy(x).to(device)
+
+    with flag_gems.use_gems(include=["log"]):
+        out = torch.log(inp)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "A": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_log_sigmoid2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["log_sigmoid"]):
+        out = torch.nn.functional.logsigmoid(inp)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_log_softmax2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    axis = int(case.shapes.get("AXIS", 1))
+    axis = max(0, min(1, axis))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["log_softmax"]):
+        out = torch.nn.functional.log_softmax(inp, dim=axis)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+        "axis": np.array(axis, dtype=np.int32),
+    }
+
+
+def _run_flaggems_min2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["min"]):
+        out = torch.min(inp)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "out": out_np,
+        "out_value": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_min_dim2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    axis = int(case.shapes.get("AXIS", 1))
+    axis = max(0, min(1, axis))
+    keepdim = bool(int(case.shapes.get("KEEPDIM", 0)))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["min", "min_dim"]):
+        out, indices = torch.min(inp, dim=axis, keepdim=keepdim)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    idx_np = _to_np(indices).astype(np.int32, copy=False)
+    return {
+        "inp": inp_np,
+        "out": out_np,
+        "out_value": out_np,
+        "indices": idx_np,
+        "input": inp_np,
+        "output": out_np,
+        "axis": np.array(axis, dtype=np.int32),
+        "keepdim": np.array(int(keepdim), dtype=np.int32),
+    }
+
+
+def _run_flaggems_nonzero2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        x = rg.standard_normal((m, n), dtype=np.float32)
+        x[np.abs(x) < 0.35] = 0.0
+        inp = torch.from_numpy(x).to(device)
+
+    with flag_gems.use_gems(include=["nonzero"]):
+        out = torch.nonzero(inp)
+
+    inp_np = _to_np(inp)
+    mask_np = np.asarray(inp_np != 0.0, dtype=np.bool_)
+    out_np = _to_np(out).astype(np.int32, copy=False)
+    return {
+        "inp": inp_np,
+        "mask": mask_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_normed_cumsum2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    axis = int(case.shapes.get("AXIS", 1))
+    axis = max(0, min(1, axis))
+    eps = float(case.shapes.get("EPS", 1.0e-6))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(np.abs(rg.standard_normal((m, n), dtype=np.float32))).to(device)
+
+    with flag_gems.use_gems(include=["normed_cumsum", "cumsum"]):
+        csum = torch.cumsum(inp, dim=axis)
+        if axis == 0:
+            denom = csum[-1:, :]
+        else:
+            denom = csum[:, -1:]
+        out = csum / (denom + eps)
+
+    inp_np = _to_np(inp)
+    csum_np = _to_np(csum)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "cumsum": csum_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+        "axis": np.array(axis, dtype=np.int32),
+        "eps": np.array(eps, dtype=np.float32),
+    }
+
+
+def _run_flaggems_pad2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    pad_left = max(0, int(case.shapes.get("PAD_LEFT", 1)))
+    pad_right = max(0, int(case.shapes.get("PAD_RIGHT", 2)))
+    pad_top = max(0, int(case.shapes.get("PAD_TOP", 1)))
+    pad_bottom = max(0, int(case.shapes.get("PAD_BOTTOM", 0)))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+    if case.inputs and "value" in case.inputs:
+        value = float(np.asarray(case.inputs["value"], dtype=np.float32).reshape(()))
+    else:
+        value = 0.0
+
+    pads = (pad_left, pad_right, pad_top, pad_bottom)
+    with flag_gems.use_gems(include=["pad"]):
+        out = torch.nn.functional.pad(inp, pads, mode="constant", value=value)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "in0": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+        "pad": np.array(pads, dtype=np.int32),
+        "value": np.array(value, dtype=np.float32),
+    }
+
+
+def _run_flaggems_pow_scalar2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    exponent = float(case.shapes.get("EXP", 2.0))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        x = np.abs(rg.standard_normal((m, n), dtype=np.float32)) + np.float32(1.0e-3)
+        inp = torch.from_numpy(x).to(device)
+
+    with flag_gems.use_gems(include=["pow", "pow_scalar"]):
+        out = torch.pow(inp, exponent)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "A": inp_np,
+        "out": out_np,
+        "input": inp_np,
+        "output": out_np,
+        "exponent": np.array(exponent, dtype=np.float32),
+    }
+
+
+def _run_flaggems_per_token_group_quant_fp8_2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    group_size = max(1, int(case.shapes.get("GROUP_SIZE", 16)))
+    eps = float(case.shapes.get("EPS", 1.0e-10))
+    if n % group_size != 0:
+        n = ((n + group_size - 1) // group_size) * group_size
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["per_token_group_quant_fp8"]):
+        quantized, scales = flag_gems_ops.per_token_group_quant_fp8(inp, group_size=group_size, eps=eps)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(quantized.float())
+    scales_np = _to_np(scales)
+    return {
+        "inp": inp_np,
+        "out": out_np,
+        "scales": scales_np,
+        "input": inp_np,
+        "output": out_np,
+        "fp8_max": np.array(448.0, dtype=np.float32),
+        "fp8_min": np.array(-448.0, dtype=np.float32),
+        "group_size": np.array(group_size, dtype=np.int32),
+        "eps": np.array(eps, dtype=np.float32),
+    }
+
+
 def _run_flaggems_abs2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     m = int(case.shapes.get("M", 4))
     n = int(case.shapes.get("N", 64))
@@ -4574,6 +4877,18 @@ def _norm_index_put2d(shapes: Dict[str, int]) -> Dict[str, int]:
     return out
 
 
+def _norm_per_token_group_quant_fp8_2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    out["M"] = max(1, int(out.get("M", 4)))
+    group_size = max(1, int(out.get("GROUP_SIZE", 16)))
+    n = max(group_size, int(out.get("N", 64)))
+    if n % group_size != 0:
+        n = ((n + group_size - 1) // group_size) * group_size
+    out["N"] = n
+    out["GROUP_SIZE"] = group_size
+    return out
+
+
 _FLAGGEMS_SPEC_BUILDERS = {
     "any_kernel_dim": lambda: KernelSpec(
         name="any_kernel_dim",
@@ -5248,6 +5563,30 @@ _FLAGGEMS_SPEC_BUILDERS = {
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
     ),
+    "log2d": lambda: KernelSpec(
+        name="log2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_LOG_SRC",
+        runner=_run_flaggems_log2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "log_sigmoid2d": lambda: KernelSpec(
+        name="log_sigmoid2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_LOG_SIGMOID_SRC",
+        runner=_run_flaggems_log_sigmoid2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "log_softmax2d": lambda: KernelSpec(
+        name="log_softmax2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_LOG_SOFTMAX_SRC",
+        runner=_run_flaggems_log_softmax2d_reference,
+        canonical_shapes={"M": 4, "N": 64, "AXIS": 1},
+        vary_axes=["M", "N"],
+    ),
     "isclose2d": lambda: KernelSpec(
         name="isclose2d",
         module="pipeline.triton.flaggems_specs",
@@ -5336,6 +5675,14 @@ _FLAGGEMS_SPEC_BUILDERS = {
         canonical_shapes={"M": 4, "N": 64, "PAD_LEFT": 1, "PAD_RIGHT": 2, "PAD_TOP": 1, "PAD_BOTTOM": 0},
         vary_axes=["M", "N"],
     ),
+    "pad2d": lambda: KernelSpec(
+        name="pad2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_PAD_SRC",
+        runner=_run_flaggems_pad2d_reference,
+        canonical_shapes={"M": 4, "N": 64, "PAD_LEFT": 1, "PAD_RIGHT": 2, "PAD_TOP": 1, "PAD_BOTTOM": 0},
+        vary_axes=["M", "N"],
+    ),
     "where2d": lambda: KernelSpec(
         name="where2d",
         module="pipeline.triton.flaggems_specs",
@@ -5366,6 +5713,22 @@ _FLAGGEMS_SPEC_BUILDERS = {
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
     ),
+    "min2d": lambda: KernelSpec(
+        name="min2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_MIN_SRC",
+        runner=_run_flaggems_min2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "min_dim2d": lambda: KernelSpec(
+        name="min_dim2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_MIN_SRC",
+        runner=_run_flaggems_min_dim2d_reference,
+        canonical_shapes={"M": 4, "N": 64, "AXIS": 1, "KEEPDIM": 0},
+        vary_axes=["M", "N"],
+    ),
     "argmax2d": lambda: KernelSpec(
         name="argmax2d",
         module="pipeline.triton.flaggems_specs",
@@ -5388,6 +5751,22 @@ _FLAGGEMS_SPEC_BUILDERS = {
         attr="FLAGGEMS_CUMSUM_SRC",
         runner=_run_flaggems_cumsum2d_reference,
         canonical_shapes={"M": 4, "N": 64, "AXIS": 1},
+        vary_axes=["M", "N"],
+    ),
+    "normed_cumsum2d": lambda: KernelSpec(
+        name="normed_cumsum2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_CUMSUM_SRC",
+        runner=_run_flaggems_normed_cumsum2d_reference,
+        canonical_shapes={"M": 4, "N": 64, "AXIS": 1, "EPS": 1.0e-6},
+        vary_axes=["M", "N"],
+    ),
+    "nonzero2d": lambda: KernelSpec(
+        name="nonzero2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_NONZERO_SRC",
+        runner=_run_flaggems_nonzero2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
     ),
     "row_mean": lambda: KernelSpec(
@@ -5711,6 +6090,25 @@ _FLAGGEMS_SPEC_BUILDERS = {
         runner=_run_flaggems_clamp2d_reference,
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
+    ),
+    "pow_scalar2d": lambda: KernelSpec(
+        name="pow_scalar2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_POW_SRC",
+        runner=_run_flaggems_pow_scalar2d_reference,
+        canonical_shapes={"M": 4, "N": 64, "EXP": 2.0},
+        vary_axes=["M", "N"],
+    ),
+    "per_token_group_quant_fp8_2d": lambda: KernelSpec(
+        name="per_token_group_quant_fp8_2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_PER_TOKEN_GROUP_QUANT_FP8_SRC",
+        runner=_run_flaggems_per_token_group_quant_fp8_2d_reference,
+        canonical_shapes={"M": 4, "N": 64, "GROUP_SIZE": 16, "EPS": 1.0e-10},
+        vary_axes=["M", "N"],
+        normalize_shapes=_norm_per_token_group_quant_fp8_2d,
+        stage_c_max_cases=6,
+        mutation_bounded_max_cases=3,
     ),
     "lerp2d": lambda: KernelSpec(
         name="lerp2d",

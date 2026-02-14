@@ -87,6 +87,9 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "cos2d" in names
     assert "erf2d" in names
     assert "gelu2d" in names
+    assert "log2d" in names
+    assert "log_sigmoid2d" in names
+    assert "log_softmax2d" in names
     assert "abs2d" in names
     assert "rsqrt2d" in names
     assert "where2d" in names
@@ -94,6 +97,10 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "row_mean" in names
     assert "row_all" in names
     assert "row_max" in names
+    assert "min2d" in names
+    assert "min_dim2d" in names
+    assert "nonzero2d" in names
+    assert "normed_cumsum2d" in names
     assert "allclose2d" in names
     assert "isclose2d" in names
     assert "isfinite2d" in names
@@ -101,6 +108,7 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "isnan2d" in names
     assert "masked_fill2d" in names
     assert "threshold2d" in names
+    assert "pad2d" in names
     assert "constant_pad_nd2d" in names
     assert "hstack2d" in names
     assert "full2d" in names
@@ -133,6 +141,8 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "gather2d" in names
     assert "index_select2d" in names
     assert "clamp2d" in names
+    assert "pow_scalar2d" in names
+    assert "per_token_group_quant_fp8_2d" in names
     assert "lerp2d" in names
     assert "batch_norm2d" in names
     assert "rms_norm2d" in names

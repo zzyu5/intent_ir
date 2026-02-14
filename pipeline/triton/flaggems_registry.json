@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-14T01:32:46.690882+00:00",
+  "generated_at": "2026-02-14T02:02:55.790837+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -4586,10 +4586,10 @@
       ],
       "mapping_kind": "unary_template",
       "intent_pattern_id": "unary.log",
-      "e2e_spec": null,
+      "e2e_spec": "log2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped to log primitive; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to log primitive; rvv_missing=['log']; cuda_h100_missing=['log']; cuda_5090d_missing=['log']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5424,10 +5424,10 @@
       ],
       "mapping_kind": "reduce_template",
       "intent_pattern_id": "reduce.min",
-      "e2e_spec": null,
+      "e2e_spec": "min2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped to reduce_min; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to reduce_min; rvv_missing=['reduce_min']; cuda_h100_missing=['reduce_min']; cuda_5090d_missing=['reduce_min']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -5487,10 +5487,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.min_dim->reduce_min",
-      "e2e_spec": null,
+      "e2e_spec": "min_dim2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to reduce_min; semantic op equals IntentIR op name; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to reduce_min; semantic op equals IntentIR op name; rvv_missing=['reduce_min']; cuda_h100_missing=['reduce_min']; cuda_5090d_missing=['reduce_min']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6190,10 +6190,10 @@
       ],
       "mapping_kind": "direct_supported_op",
       "intent_pattern_id": "direct.nonzero",
-      "e2e_spec": null,
+      "e2e_spec": "nonzero2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "semantic op equals IntentIR op name; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "semantic op equals IntentIR op name; rvv_missing=['nonzero']; cuda_h100_missing=['nonzero']; cuda_5090d_missing=['nonzero']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6502,10 +6502,10 @@
       ],
       "mapping_kind": "direct_supported_op",
       "intent_pattern_id": "direct.pad",
-      "e2e_spec": null,
+      "e2e_spec": "pad2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "semantic op equals IntentIR op name; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "semantic op equals IntentIR op name; rvv_missing=['pad']; cuda_h100_missing=['pad']; cuda_5090d_missing=['pad']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6565,10 +6565,10 @@
       ],
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.per_token_group_quant_fp8",
-      "e2e_spec": null,
+      "e2e_spec": "per_token_group_quant_fp8_2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped to per_token_group_quant_fp8 primitive; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to per_token_group_quant_fp8 primitive; rvv_missing=['per_token_group_quant_fp8']; cuda_h100_missing=['per_token_group_quant_fp8']; cuda_5090d_missing=['per_token_group_quant_fp8']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6691,10 +6691,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.pow_scalar->pow",
-      "e2e_spec": null,
+      "e2e_spec": "pow_scalar2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to pow; semantic op equals IntentIR op name; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to pow; semantic op equals IntentIR op name; rvv_missing=['pow']; cuda_h100_missing=['pow']; cuda_5090d_missing=['pow']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -9362,10 +9362,10 @@
       ],
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.log_softmax",
-      "e2e_spec": null,
+      "e2e_spec": "log_softmax2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as log(softmax(x)); no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped as log(softmax(x)); rvv_missing=['log']; cuda_h100_missing=['log']; cuda_5090d_missing=['log']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -10564,10 +10564,10 @@
       ],
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.log_sigmoid",
-      "e2e_spec": null,
+      "e2e_spec": "log_sigmoid2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as log(sigmoid(x)); no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped as log(sigmoid(x)); rvv_missing=['log']; cuda_h100_missing=['log']; cuda_5090d_missing=['log']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -10637,10 +10637,10 @@
       ],
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.normed_cumsum",
-      "e2e_spec": null,
+      "e2e_spec": "normed_cumsum2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as cumsum normalized by scalar divisor; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped as cumsum normalized by scalar divisor; rvv_missing=['cumsum']; cuda_h100_missing=['cumsum']; cuda_5090d_missing=['cumsum']",
       "backend_support": {
         "rvv": {
           "target": "rvv",

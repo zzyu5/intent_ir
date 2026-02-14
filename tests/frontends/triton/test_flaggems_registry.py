@@ -137,6 +137,16 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
             "erf",
             "gelu",
             "cumsum",
+            "log",
+            "log_sigmoid",
+            "log_softmax",
+            "min",
+            "min_dim",
+            "nonzero",
+            "normed_cumsum",
+            "pad",
+            "per_token_group_quant_fp8",
+            "pow_scalar",
             "constant_pad_nd",
             "hstack",
             "conv2d",
@@ -223,6 +233,16 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
     assert "erf2d" in specs
     assert "gelu2d" in specs
     assert "cumsum2d" in specs
+    assert "log2d" in specs
+    assert "log_sigmoid2d" in specs
+    assert "log_softmax2d" in specs
+    assert "min2d" in specs
+    assert "min_dim2d" in specs
+    assert "nonzero2d" in specs
+    assert "normed_cumsum2d" in specs
+    assert "pad2d" in specs
+    assert "per_token_group_quant_fp8_2d" in specs
+    assert "pow_scalar2d" in specs
     assert "constant_pad_nd2d" in specs
     assert "hstack2d" in specs
     assert "conv2d_nchw" in specs
