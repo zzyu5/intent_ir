@@ -190,13 +190,30 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert bitwise_and is not None
     assert [op.op for op in bitwise_and.ops] == ["bitwise_and"]
 
+    bitwise_or = canonical_flaggems_intent_for_spec("bitwise_or2d")
+    assert bitwise_or is not None
+    assert [op.op for op in bitwise_or.ops] == ["bitwise_or"]
+
     bitwise_left_shift = canonical_flaggems_intent_for_spec("bitwise_left_shift2d")
     assert bitwise_left_shift is not None
     assert [op.op for op in bitwise_left_shift.ops] == ["bitwise_left_shift"]
 
+    bitwise_right_shift = canonical_flaggems_intent_for_spec("bitwise_right_shift2d")
+    assert bitwise_right_shift is not None
+    assert [op.op for op in bitwise_right_shift.ops] == ["bitwise_right_shift"]
+
     bitwise_not = canonical_flaggems_intent_for_spec("bitwise_not2d")
     assert bitwise_not is not None
     assert [op.op for op in bitwise_not.ops] == ["bitwise_not"]
+
+    row_max = canonical_flaggems_intent_for_spec("row_max")
+    assert row_max is not None
+    assert [op.op for op in row_max.ops] == ["reduce_max"]
+    assert row_max.outputs == ["out"]
+
+    any_dim = canonical_flaggems_intent_for_spec("any_kernel_dim")
+    assert any_dim is not None
+    assert [op.op for op in any_dim.ops] == ["const", "ne", "reduce_any"]
 
     argmax = canonical_flaggems_intent_for_spec("argmax2d")
     assert argmax is not None

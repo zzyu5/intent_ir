@@ -247,3 +247,29 @@ def test_cuda_lowering_supports_allclose_pattern(monkeypatch) -> None:
     assert lowered.kernel_name == "allclose2d_cuda_lowering"
     assert "fabsf(av - bv)" in lowered.cuda_src
     assert "output[0] = (any == 0)" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_bitwise_or_and_right_shift(monkeypatch) -> None:
+    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "bitwise_or_right_shift_cuda_lowering",
+            "tensors": {
+                "A": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "B": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "OR": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "Out": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "bitwise_or", "inputs": ["A", "B"], "output": "OR"},
+                {"op": "bitwise_right_shift", "inputs": ["OR", "B"], "output": "Out"},
+            ],
+            "outputs": ["Out"],
+            "parallel_axes": ["M", "N"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
+        }
+    )
+    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 8})
+    assert lowered.kernel_name == "bitwise_or_right_shift_cuda_lowering"
+    assert "|" in lowered.cuda_src
+    assert ">>" in lowered.cuda_src

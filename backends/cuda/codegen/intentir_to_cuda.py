@@ -634,12 +634,24 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
             a = val(op.inputs[0])
             b = val(op.inputs[1])
             emit_assign(f"(({a}) & ({b}))")
+        elif opname == "bitwise_or":
+            if len(op.inputs) != 2:
+                raise CudaLoweringError("bitwise_or expects 2 inputs")
+            a = val(op.inputs[0])
+            b = val(op.inputs[1])
+            emit_assign(f"(({a}) | ({b}))")
         elif opname == "bitwise_left_shift":
             if len(op.inputs) != 2:
                 raise CudaLoweringError("bitwise_left_shift expects 2 inputs")
             a = val(op.inputs[0])
             b = val(op.inputs[1])
             emit_assign(f"(({a}) << (({b}) & 31))")
+        elif opname == "bitwise_right_shift":
+            if len(op.inputs) != 2:
+                raise CudaLoweringError("bitwise_right_shift expects 2 inputs")
+            a = val(op.inputs[0])
+            b = val(op.inputs[1])
+            emit_assign(f"(({a}) >> (({b}) & 31))")
         elif opname in {"and", "or"}:
             if len(op.inputs) != 2:
                 raise CudaLoweringError(f"{opname} expects 2 inputs")
@@ -3217,7 +3229,9 @@ def lower_intent_to_cuda_kernel(
         "gt",
         "ge",
         "bitwise_and",
+        "bitwise_or",
         "bitwise_left_shift",
+        "bitwise_right_shift",
         "bitwise_not",
         "and",
         "or",

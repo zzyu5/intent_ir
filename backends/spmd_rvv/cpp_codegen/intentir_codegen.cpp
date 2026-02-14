@@ -1332,6 +1332,44 @@ void emit_bitwise_left_shift(CodeWriter& w, const std::string& out, const std::s
   }
 }
 
+void emit_bitwise_right_shift(CodeWriter& w, const std::string& out, const std::string& a_var, const std::string& b_var,
+                              const std::string& a_name, const std::string& b_name,
+                              const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape,
+                              const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings,
+                              const std::string& a_dtype, const std::string& b_dtype, const std::string& out_dtype) {
+  if (ctype_for_dtype(a_dtype) != "int32_t" || ctype_for_dtype(b_dtype) != "int32_t" || ctype_for_dtype(out_dtype) != "int32_t") {
+    fail("bitwise_right_shift currently supports only i32");
+  }
+  const int r = static_cast<int>(out_shape.size());
+  if (r > 4) fail("bitwise_right_shift supports rank<=4");
+  std::vector<int64_t> pa = pad_for_broadcast(intent, bindings, a_name, a_shape, b_name, b_shape, r);
+  std::vector<int64_t> pb = pad_for_broadcast(intent, bindings, b_name, b_shape, a_name, a_shape, r);
+  for (int i = 0; i < r; ++i) {
+    if (pa[i] != 1 && pa[i] != out_shape[i]) fail("bitwise_right_shift broadcast mismatch (a)");
+    if (pb[i] != 1 && pb[i] != out_shape[i]) fail("bitwise_right_shift broadcast mismatch (b)");
+  }
+  std::vector<std::string> idx = {"i0", "i1", "i2", "i3"};
+  idx.resize(r);
+  for (int i = 0; i < r; ++i) {
+    w.line("for (int " + idx[i] + " = 0; " + idx[i] + " < " + std::to_string(out_shape[i]) + "; ++" + idx[i] + ") {");
+    w.indent();
+  }
+  std::string out_idx = flat_idx_expr(idx, out_shape);
+  auto idx_expr = [&](const std::vector<int64_t>& padded) -> std::string {
+    std::vector<std::string> in_vars;
+    in_vars.reserve(r);
+    for (int i = 0; i < r; ++i) in_vars.push_back(padded[i] == 1 ? "0" : idx[i]);
+    return flat_idx_expr(in_vars, padded);
+  };
+  std::string a_idx = idx_expr(pa);
+  std::string b_idx = idx_expr(pb);
+  w.line(out + "[" + out_idx + "] = (int32_t)(" + a_var + "[" + a_idx + "] >> (" + b_var + "[" + b_idx + "] & 31));");
+  for (int i = 0; i < r; ++i) {
+    w.dedent();
+    w.line("}");
+  }
+}
+
 void emit_arg_reduce_axis1(CodeWriter& w, const std::string& op, const std::string& out, const std::string& a,
                            const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape, int axis) {
   if (in_shape.size() != 2 || out_shape.size() != 1) fail(op + " currently supports rank-2 -> rank-1");
@@ -2192,9 +2230,9 @@ struct CProgramEmitter {
 		        emit_cmp(w, op.op, out_var, v(op.inputs[0]), v(op.inputs[1]), op.inputs[0], op.inputs[1],
 		                 shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, intent, bindings,
 		                 dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(out));
-	      } else if (op.op == "and" || op.op == "or" || op.op == "bitwise_and") {
-	        const std::string logical_op = (op.op == "bitwise_and") ? "and" : op.op;
-	        emit_bool_bin(w, logical_op, out_var, v(op.inputs[0]), v(op.inputs[1]), op.inputs[0], op.inputs[1],
+      } else if (op.op == "and" || op.op == "or" || op.op == "bitwise_and" || op.op == "bitwise_or") {
+        const std::string logical_op = (op.op == "bitwise_and") ? "and" : ((op.op == "bitwise_or") ? "or" : op.op);
+        emit_bool_bin(w, logical_op, out_var, v(op.inputs[0]), v(op.inputs[1]), op.inputs[0], op.inputs[1],
 		                      shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, intent, bindings,
 		                      dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(out));
 		      } else if (op.op == "not" || op.op == "bitwise_not") {
@@ -2203,6 +2241,10 @@ struct CProgramEmitter {
 	        emit_bitwise_left_shift(w, out_var, v(op.inputs[0]), v(op.inputs[1]), op.inputs[0], op.inputs[1],
 	                                shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, intent, bindings,
 	                                dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(out));
+	      } else if (op.op == "bitwise_right_shift") {
+	        emit_bitwise_right_shift(w, out_var, v(op.inputs[0]), v(op.inputs[1]), op.inputs[0], op.inputs[1],
+	                                 shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, intent, bindings,
+	                                 dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(out));
 	      } else if (op.op == "rsqrt") {
 	        emit_rsqrt(w, out_var, v(op.inputs[0]), out_shape);
 	      } else if (op.op == "abs") {
@@ -2613,7 +2655,7 @@ int main(int argc, char** argv) {
         dtype_env[out] = "bool";
         continue;
       }
-      if (kind == "and" || kind == "or" || kind == "bitwise_and" || kind == "bitwise_left_shift") {
+      if (kind == "and" || kind == "or" || kind == "bitwise_and" || kind == "bitwise_or" || kind == "bitwise_left_shift" || kind == "bitwise_right_shift") {
         const auto& sa = get_shape(op.inputs[0]);
         const auto& sb = get_shape(op.inputs[1]);
         shape_env[out] = broadcast_shape_named(intent, bindings, op.inputs[0], op.inputs[1], sa, sb);

@@ -4709,13 +4709,18 @@ def _run_flaggems_row_max_reference(case: TestCase) -> Dict[str, np.ndarray]:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
     with flag_gems.use_gems(include=["max", "max_dim"]):
-        out = torch.max(inp, dim=1).values
+        max_result = torch.max(inp, dim=1)
+        out = max_result.values
+        out_index = max_result.indices.to(dtype=torch.int32)
 
     inp_np = _to_np(inp)
     out_np = _to_np(out)
+    out_idx_np = _to_np(out_index).astype(np.int32, copy=False)
     return {
         "inp": inp_np,
         "out": out_np,
+        "out_value": out_np,
+        "out_index": out_idx_np,
         "input": inp_np,
         "output": out_np,
     }

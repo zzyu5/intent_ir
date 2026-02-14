@@ -1213,6 +1213,23 @@ def _canonical_bitwise_and2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_bitwise_or2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "bitwise_or2d",
+            "tensors": {
+                "A": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "B": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "bitwise_or", "inputs": ["A", "B"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def _canonical_bitwise_left_shift2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -1230,6 +1247,23 @@ def _canonical_bitwise_left_shift2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_bitwise_right_shift2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "bitwise_right_shift2d",
+            "tensors": {
+                "A": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "B": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "bitwise_right_shift", "inputs": ["A", "B"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def _canonical_bitwise_not2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -1240,6 +1274,40 @@ def _canonical_bitwise_not2d_intent() -> IntentFunction:
             },
             "ops": [
                 {"op": "bitwise_not", "inputs": ["inp"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_row_max_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "row_max",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "reduce_max", "inputs": ["inp"], "output": "out", "attrs": {"dims": [1], "keepdims": False}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_any_kernel_dim_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "any_kernel_dim",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "bool", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "const", "inputs": [], "output": "zero", "attrs": {"value": 0.0}},
+                {"op": "ne", "inputs": ["inp", "zero"], "output": "neq_zero"},
+                {"op": "reduce_any", "inputs": ["neq_zero"], "output": "out", "attrs": {"dims": [1]}},
             ],
             "outputs": ["out"],
         }
@@ -1283,10 +1351,18 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_avg_pool2d_nchw_intent()
     if name == "bitwise_and2d":
         return _canonical_bitwise_and2d_intent()
+    if name == "bitwise_or2d":
+        return _canonical_bitwise_or2d_intent()
     if name == "bitwise_left_shift2d":
         return _canonical_bitwise_left_shift2d_intent()
+    if name == "bitwise_right_shift2d":
+        return _canonical_bitwise_right_shift2d_intent()
     if name == "bitwise_not2d":
         return _canonical_bitwise_not2d_intent()
+    if name == "row_max":
+        return _canonical_row_max_intent()
+    if name == "any_kernel_dim":
+        return _canonical_any_kernel_dim_intent()
     if name == "batch_norm2d":
         return _canonical_batch_norm2d_intent()
     if name == "isnan2d":
