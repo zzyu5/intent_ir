@@ -34,7 +34,10 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "bitwise_left_shift2d" in names
     assert "bitwise_right_shift2d" in names
     assert "avg_pool2d_nchw" in names
+    assert "argmax2d" in names
+    assert "argmin2d" in names
     assert "conv1d_ncl" in names
+    assert "conv2d_nchw" in names
     assert "conv3d_ncdhw" in names
     assert "conv_depthwise2d_nchw" in names
     assert "scatter2d" in names
@@ -45,6 +48,7 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "unique2d" in names
     assert "weight_norm2d" in names
     assert "scaled_dot_product_attention_bhsd" in names
+    assert "flash_attn_varlen_func_bhsd" in names
     assert "trace2d" in names
     assert "triu2d" in names
     assert "upsample_nearest1d_ncl" in names
@@ -80,6 +84,9 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "sub2d" in names
     assert "mul2d" in names
     assert "sigmoid2d" in names
+    assert "cos2d" in names
+    assert "erf2d" in names
+    assert "gelu2d" in names
     assert "abs2d" in names
     assert "rsqrt2d" in names
     assert "where2d" in names
@@ -94,6 +101,8 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "isnan2d" in names
     assert "masked_fill2d" in names
     assert "threshold2d" in names
+    assert "constant_pad_nd2d" in names
+    assert "hstack2d" in names
     assert "full2d" in names
     assert "eye2d" in names
     assert "eye_m2d" in names
@@ -116,6 +125,7 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "nll_loss2d_forward" in names
     assert "one_hot2d" in names
     assert "glu2d" in names
+    assert "cumsum2d" in names
     assert "cummax1d" in names
     assert "cummin1d" in names
     assert "index_add2d" in names

@@ -231,7 +231,7 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
     Generic fused elementwise lowering for small IntentIR graphs.
 
     Supports:
-      - unary/binary float ops: add/sub/mul/div/max/min/relu/abs/exp/floor/rsqrt
+      - unary/binary float ops: add/sub/mul/div/max/min/relu/abs/exp/cos/erf/floor/rsqrt
       - comparisons -> bool: ne/lt/le/gt/ge
       - bool ops: and/or/not
       - where(cond, a, b)
@@ -514,6 +514,16 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
                 raise CudaLoweringError("exp expects 1 input")
             x = val(op.inputs[0])
             emit_assign(f"__expf({x})")
+        elif opname == "cos":
+            if len(op.inputs) != 1:
+                raise CudaLoweringError("cos expects 1 input")
+            x = val(op.inputs[0])
+            emit_assign(f"cosf({x})")
+        elif opname == "erf":
+            if len(op.inputs) != 1:
+                raise CudaLoweringError("erf expects 1 input")
+            x = val(op.inputs[0])
+            emit_assign(f"erff({x})")
         elif opname == "floor":
             if len(op.inputs) != 1:
                 raise CudaLoweringError("floor expects 1 input")
@@ -2267,6 +2277,8 @@ def lower_intent_to_cuda_kernel(
         "relu",
         "abs",
         "exp",
+        "cos",
+        "erf",
         "floor",
         "rsqrt",
         "ne",

@@ -83,6 +83,8 @@ void intentir_abs_f32(const float* a, float* out, size_t n);
 void intentir_floor_f32(const float* a, float* out, size_t n);
 void intentir_rsqrt_f32(const float* a, float* out, size_t n);
 void intentir_exp_f32(const float* a, float* out, size_t n);
+void intentir_cos_f32(const float* a, float* out, size_t n);
+void intentir_erf_f32(const float* a, float* out, size_t n);
 void intentir_relu_f32(const float* a, float* out, size_t n);
 
 // Casts between simple scalar types over 1D buffers.

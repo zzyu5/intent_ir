@@ -2323,6 +2323,22 @@ void intentir_exp_f32(const float* a, float* out, size_t n) {
   for (size_t i = 0; i < n; ++i) out[i] = expf(a[i]);
 }
 
+void intentir_cos_f32(const float* a, float* out, size_t n) {
+  if (!a || !out || n == 0) return;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if (n >= 16384)
+#endif
+  for (size_t i = 0; i < n; ++i) out[i] = cosf(a[i]);
+}
+
+void intentir_erf_f32(const float* a, float* out, size_t n) {
+  if (!a || !out || n == 0) return;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if (n >= 16384)
+#endif
+  for (size_t i = 0; i < n; ++i) out[i] = erff(a[i]);
+}
+
 void intentir_relu_f32(const float* a, float* out, size_t n) {
   if (!a || !out || n == 0) return;
 #if defined(__riscv_vector) || defined(__riscv_v)

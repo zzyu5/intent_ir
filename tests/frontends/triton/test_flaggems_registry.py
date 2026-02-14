@@ -131,6 +131,16 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
             "count_nonzero",
             "diag",
             "diag_embed",
+            "argmax",
+            "argmin",
+            "cos",
+            "erf",
+            "gelu",
+            "cumsum",
+            "constant_pad_nd",
+            "hstack",
+            "conv2d",
+            "flash_attn_varlen_func",
         ],
         flaggems_commit="b" * 40,
     )
@@ -207,6 +217,16 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
     assert "count_nonzero2d" in specs
     assert "diag2d" in specs
     assert "diag_embed2d" in specs
+    assert "argmax2d" in specs
+    assert "argmin2d" in specs
+    assert "cos2d" in specs
+    assert "erf2d" in specs
+    assert "gelu2d" in specs
+    assert "cumsum2d" in specs
+    assert "constant_pad_nd2d" in specs
+    assert "hstack2d" in specs
+    assert "conv2d_nchw" in specs
+    assert "flash_attn_varlen_func_bhsd" in specs
     assert "batch_norm2d" in specs
     assert "rms_norm2d" in specs
 

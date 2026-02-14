@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-14T00:31:10.223317+00:00",
+  "generated_at": "2026-02-14T01:32:46.690882+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -18,8 +18,8 @@
     "source_filtered_ops": 212,
     "semantic_ops": 196,
     "by_status": {
-      "blocked_backend": 90,
-      "dual_pass": 106
+      "blocked_backend": 86,
+      "dual_pass": 110
     },
     "by_family": {
       "attention_sequence": 5,
@@ -1796,10 +1796,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.constant_pad_nd->pad",
-      "e2e_spec": null,
+      "e2e_spec": "constant_pad_nd2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to pad; semantic op equals IntentIR op name; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to pad; semantic op equals IntentIR op name; rvv_missing=['pad']; cuda_h100_missing=['pad']; cuda_5090d_missing=['pad']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -1985,14 +1985,14 @@
       ],
       "mapping_kind": "unary_template",
       "intent_pattern_id": "unary.cos",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped to cos primitive; no e2e spec registered",
+      "e2e_spec": "cos2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped to cos primitive",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "cos"
           ],
@@ -2000,14 +2000,14 @@
             "cos"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
+          "supported_ops": [
             "cos"
-          ]
+          ],
+          "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "cos"
           ],
@@ -2015,14 +2015,14 @@
             "cos"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
+          "supported_ops": [
             "cos"
-          ]
+          ],
+          "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "cos"
           ],
@@ -2030,10 +2030,10 @@
             "cos"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
+          "supported_ops": [
             "cos"
-          ]
+          ],
+          "missing_ops": []
         }
       }
     },
@@ -2560,14 +2560,14 @@
       ],
       "mapping_kind": "unary_template",
       "intent_pattern_id": "unary.erf",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped to erf primitive; no e2e spec registered",
+      "e2e_spec": "erf2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped to erf primitive",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "erf"
           ],
@@ -2575,14 +2575,14 @@
             "erf"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
+          "supported_ops": [
             "erf"
-          ]
+          ],
+          "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "erf"
           ],
@@ -2590,14 +2590,14 @@
             "erf"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
+          "supported_ops": [
             "erf"
-          ]
+          ],
+          "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "erf"
           ],
@@ -2605,10 +2605,10 @@
             "erf"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
+          "supported_ops": [
             "erf"
-          ]
+          ],
+          "missing_ops": []
         }
       }
     },
@@ -3628,10 +3628,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.hstack->concat",
-      "e2e_spec": null,
+      "e2e_spec": "hstack2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to concat; semantic op equals IntentIR op name; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to concat; semantic op equals IntentIR op name; rvv_missing=['concat']; cuda_h100_missing=['concat']; cuda_5090d_missing=['concat']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -9034,10 +9034,10 @@
       ],
       "mapping_kind": "reduce_template",
       "intent_pattern_id": "reduce.argmax",
-      "e2e_spec": null,
+      "e2e_spec": "argmax2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped to argmax primitive; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to argmax primitive; rvv_missing=['argmax']; cuda_h100_missing=['argmax']; cuda_5090d_missing=['argmax']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -9097,10 +9097,10 @@
       ],
       "mapping_kind": "reduce_template",
       "intent_pattern_id": "reduce.argmin",
-      "e2e_spec": null,
+      "e2e_spec": "argmin2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped to argmin primitive; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to argmin primitive; rvv_missing=['argmin']; cuda_h100_missing=['argmin']; cuda_5090d_missing=['argmin']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -9224,10 +9224,10 @@
       ],
       "mapping_kind": "reduce_template",
       "intent_pattern_id": "reduce.cumsum",
-      "e2e_spec": null,
+      "e2e_spec": "cumsum2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped to cumsum primitive; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to cumsum primitive; rvv_missing=['cumsum']; cuda_h100_missing=['cumsum']; cuda_5090d_missing=['cumsum']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -9289,10 +9289,10 @@
       ],
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.flash_attn_varlen",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as attention core decomposition; no e2e spec registered",
+      "e2e_spec": "flash_attn_varlen_func_bhsd",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as attention core decomposition",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -10227,14 +10227,14 @@
       ],
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.gelu",
-      "e2e_spec": null,
-      "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as 0.5 * x * (1 + erf(x / sqrt(2))); no e2e spec registered",
+      "e2e_spec": "gelu2d",
+      "status": "dual_pass",
+      "status_reason": "all_targets_supported_with_e2e_spec",
+      "status_reason_detail": "mapped as 0.5 * x * (1 + erf(x / sqrt(2)))",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "add",
             "const",
@@ -10251,15 +10251,14 @@
           "supported_ops": [
             "add",
             "const",
+            "erf",
             "mul"
           ],
-          "missing_ops": [
-            "erf"
-          ]
+          "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "add",
             "const",
@@ -10276,15 +10275,14 @@
           "supported_ops": [
             "add",
             "const",
+            "erf",
             "mul"
           ],
-          "missing_ops": [
-            "erf"
-          ]
+          "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
             "add",
             "const",
@@ -10301,11 +10299,10 @@
           "supported_ops": [
             "add",
             "const",
+            "erf",
             "mul"
           ],
-          "missing_ops": [
-            "erf"
-          ]
+          "missing_ops": []
         }
       }
     },
@@ -13067,10 +13064,10 @@
       ],
       "mapping_kind": "direct_supported_op",
       "intent_pattern_id": "direct.conv2d",
-      "e2e_spec": null,
+      "e2e_spec": "conv2d_nchw",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "semantic op equals IntentIR op name; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "semantic op equals IntentIR op name; rvv_missing=['conv2d']; cuda_h100_missing=['conv2d']; cuda_5090d_missing=['conv2d']",
       "backend_support": {
         "rvv": {
           "target": "rvv",

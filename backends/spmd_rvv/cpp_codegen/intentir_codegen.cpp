@@ -810,6 +810,16 @@ void emit_rsqrt(CodeWriter& w, const std::string& out, const std::string& a, con
   w.line("intentir_rsqrt_f32(" + a + ", " + out + ", (size_t)" + std::to_string(n) + ");");
 }
 
+void emit_cos(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
+  const int64_t n = numel(out_shape);
+  w.line("intentir_cos_f32(" + a + ", " + out + ", (size_t)" + std::to_string(n) + ");");
+}
+
+void emit_erf(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
+  const int64_t n = numel(out_shape);
+  w.line("intentir_erf_f32(" + a + ", " + out + ", (size_t)" + std::to_string(n) + ");");
+}
+
 void emit_cast(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape, const std::string& from_dt, const std::string& to_dt) {
   const int64_t n = numel(out_shape);
   w.line("intentir_cast_1d(" + a + ", " + out + ", (size_t)" + std::to_string(n) + ", " + typecode_for_dtype(from_dt) + ", " + typecode_for_dtype(to_dt) +
@@ -1909,6 +1919,10 @@ struct CProgramEmitter {
 	        emit_unary_abs(w, out_var, v(op.inputs[0]), out_shape, dtype_env.at(op.inputs[0]), dtype_env.at(out));
 	      } else if (op.op == "floor") {
 	        emit_floor(w, out_var, v(op.inputs[0]), out_shape);
+	      } else if (op.op == "cos") {
+	        emit_cos(w, out_var, v(op.inputs[0]), out_shape);
+	      } else if (op.op == "erf") {
+	        emit_erf(w, out_var, v(op.inputs[0]), out_shape);
 	      } else if (op.op == "cast") {
 	        emit_cast(w, out_var, v(op.inputs[0]), out_shape, dtype_env.at(op.inputs[0]), dtype_env.at(out));
 	      } else if (op.op == "where") {
