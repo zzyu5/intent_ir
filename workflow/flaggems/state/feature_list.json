@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-14T02:03:02+00:00",
+  "generated_at": "2026-02-14T04:39:44+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
@@ -1343,9 +1343,9 @@
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "pow_tensor_scalar2d",
       "intent_ops": [
         "pow"
       ]
@@ -1356,9 +1356,9 @@
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "pow_tensor_tensor2d",
       "intent_ops": [
         "pow"
       ]
@@ -1396,9 +1396,9 @@
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "remainder2d",
       "intent_ops": [
         "remainder"
       ]
@@ -1409,9 +1409,9 @@
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "repeat2d",
       "intent_ops": [
         "repeat"
       ]
@@ -1422,9 +1422,9 @@
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "repeat_interleave_self_int1d",
       "intent_ops": [
         "repeat_interleave"
       ]
@@ -1435,9 +1435,9 @@
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "repeat_interleave_self_tensor1d",
       "intent_ops": [
         "repeat_interleave"
       ]
@@ -1448,9 +1448,9 @@
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "repeat_interleave_tensor1d",
       "intent_ops": [
         "repeat_interleave"
       ]
@@ -1500,9 +1500,9 @@
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "sin2d",
       "intent_ops": [
         "sin"
       ]
@@ -1910,9 +1910,9 @@
       "family": "reduction",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "prod2d",
       "intent_ops": [
         "reduce_prod"
       ]
@@ -1923,9 +1923,9 @@
       "family": "reduction",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "prod_dim2d",
       "intent_ops": [
         "reduce_prod"
       ]

@@ -1,9 +1,9 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-14T02:08:52+00:00
-- Commit: `8052234`
-- Summary: Added e2e specs for log/min/nonzero/normed_cumsum/pad/per_token_group_quant_fp8/pow_scalar wave and validated pipeline+rvv local/remote+cuda classification.
-- Batch Ops (10): log, log_sigmoid, log_softmax, min, min_dim, nonzero, normed_cumsum, pad, per_token_group_quant_fp8, pow_scalar
-- Run Summary: `artifacts/flaggems_matrix/daily/20260214/batch_active10_log_min_pad_v1/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260214/batch_active10_log_min_pad_v1/status_converged.json`
-- Next Focus: 1) Eliminate remaining baseline alias mismatches for min/nonzero/pad/per_token outputs. 2) Add RVV/CUDA lowering for log/reduce_min/pow/cumsum/nonzero/pad primitives. 3) Re-run scoped batch gate, then plan next blocked-backend batch.
+- Timestamp: 2026-02-14T04:38:43+00:00
+- Commit: `ac146f2074508c6041cb3a67b3168ab886c7d427`
+- Summary: Added pow/prod/remainder/repeat/sin batch e2e specs and ran scoped RVV local+remote+CUDA convergence.
+- Batch Ops (10): pow_tensor_scalar, pow_tensor_tensor, prod, prod_dim, remainder, repeat, repeat_interleave_self_int, repeat_interleave_self_tensor, repeat_interleave_tensor, sin
+- Run Summary: `artifacts/flaggems_matrix/daily/20260214/batch_active10_pow_prod_repeat_v1/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260214/batch_active10_pow_prod_repeat_v1/status_converged.json`
+- Next Focus: 1) implement RVV/CUDA lowering for pow/reduce_prod/sin; 2) fix baseline alias/runtime issues for repeat/repeat_interleave; 3) plan next backend_missing_ops batch.
