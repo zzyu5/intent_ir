@@ -18,8 +18,8 @@
     "source_filtered_ops": 212,
     "semantic_ops": 196,
     "by_status": {
-      "blocked_backend": 165,
-      "dual_pass": 31
+      "blocked_backend": 163,
+      "dual_pass": 33
     },
     "by_family": {
       "attention_sequence": 5,
@@ -13296,8 +13296,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.batch_norm",
       "e2e_spec": "batch_norm2d",
-      "status": "blocked_backend",
-      "status_reason": "pipeline_diff_failed_or_missing",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as batch normalized arithmetic decomposition",
       "backend_support": {
         "rvv": {
@@ -13400,24 +13400,24 @@
           "missing_ops": []
         }
       },
-      "reason_code": "diff_fail",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
-          "reason_code": "runtime_fail",
-          "reason_detail": "output_1: ok=0 max_abs=1.94302 max_rel=1.04715 worst_i=13 got=0.0874966 ref=-1.85553\nmean: ok=0 max_abs=3.85512 max_rel=7 worst_i=1 got=4.40585 ref=0.550732\ninv_std: ok=0 max_abs=0.667056 max_rel=0.747764 worst_i=3 got=0.225011 ref=0.892067\nrunning_mean_out: ok=0 max_abs=4.35078 max_rel=79 worst_i=1 got=4.40585 ref=0.0550732\nrunning_var_out: ok=0 max_abs=30.7964 max_rel=32.2336 worst_i=1 got=-29.841 ref=0.955413\nFAIL lowered"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
         "provider": {
           "exists": true,
-          "diff_ok": false
+          "diff_ok": true
         },
-        "rvv": "fail",
-        "cuda": "fail"
+        "rvv": "pass",
+        "cuda": "pass"
       },
       "in_scope": true,
       "in_scope_active": true,
@@ -16337,8 +16337,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.baddbmm",
       "e2e_spec": "baddbmm3d",
-      "status": "blocked_backend",
-      "status_reason": "runtime_backend_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as add(input, matmul(batch1, batch2))",
       "backend_support": {
         "rvv": {
@@ -16396,15 +16396,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
-          "reason_code": "runtime_fail",
-          "reason_detail": "[triton:baddbmm3d] load artifact: /home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline/baddbmm3d.json\n[triton:baddbmm3d] load baseline npz: artifacts/flaggems_triton_full_pipeline/baddbmm3d.baseline.npz\n[triton:baddbmm3d] schedule selection: mode=auto budget=1\n[triton:baddbmm3d] ssh connect: ubuntu@192.168.8.72:22\n[triton:baddbmm3d] remote dir: /tmp/intentir_baddbmm3d_rvv\n[triton:baddbmm3d] upload runtime\n[triton:baddbmm3d] upload inputs/refs\nTraceback (most recent call last):\n  File \"/home/kingdom/intentir/scripts/rvv_remote_run.py\", line 1138, in <module>\n    main()\n  File \"/home/kingdom/intentir/scripts/rvv_remote_run.py\", line 1105, in main\n    res = run_remote(\n          ^^^^^^^^^^^\n  File \"/home/kingdom/intentir/scripts/rvv_remote_run.py\", line 948, in run_remote\n    chosen = _compile_and_run(intent.schedule)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/kingdom/intentir/scripts/rvv_remote_run.py\", line 737, in _compile_and_run\n    src = lower_intent_to_c_with_files(\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/kingdom/intentir/backends/spmd_rvv/codegen/intentir_to_c.py\", line 46, in lower_intent_to_c_with_files\n    return lower_intent_to_c_with_files_cpp(intent, shape_bindings=shape_bindings, atol=atol, rtol=rtol, mode=str(mode))\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/kingdom/intentir/backends/spmd_rvv/codegen/cpp_driver.py\", line 142, in lower_intent_to_c_with_files_cpp\n    raise RuntimeError(f\"cpp codegen failed (rc={res.returncode}):\\n{res.stderr or res.stdout}\")\nRuntimeError: cpp codegen failed (rc=1):\nintentir_codegen error: matmul infer supports only rank-2, rank-2x1, or rank-4"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -16412,8 +16412,8 @@
           "exists": true,
           "diff_ok": true
         },
-        "rvv": "fail",
-        "cuda": "fail"
+        "rvv": "pass",
+        "cuda": "pass"
       },
       "in_scope": true,
       "in_scope_active": true,
