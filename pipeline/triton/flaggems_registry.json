@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-14T02:02:55.790837+00:00",
+  "generated_at": "2026-02-14T04:22:33.283898+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -6754,10 +6754,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.pow_tensor_scalar->pow",
-      "e2e_spec": null,
+      "e2e_spec": "pow_tensor_scalar2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to pow; semantic op equals IntentIR op name; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to pow; semantic op equals IntentIR op name; rvv_missing=['pow']; cuda_h100_missing=['pow']; cuda_5090d_missing=['pow']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -6817,10 +6817,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.pow_tensor_tensor->pow",
-      "e2e_spec": null,
+      "e2e_spec": "pow_tensor_tensor2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to pow; semantic op equals IntentIR op name; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to pow; semantic op equals IntentIR op name; rvv_missing=['pow']; cuda_h100_missing=['pow']; cuda_5090d_missing=['pow']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -7016,10 +7016,10 @@
       ],
       "mapping_kind": "direct_supported_op",
       "intent_pattern_id": "direct.remainder",
-      "e2e_spec": null,
+      "e2e_spec": "remainder2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "semantic op equals IntentIR op name; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "semantic op equals IntentIR op name; rvv_missing=['remainder']; cuda_h100_missing=['remainder']; cuda_5090d_missing=['remainder']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -7079,10 +7079,10 @@
       ],
       "mapping_kind": "direct_supported_op",
       "intent_pattern_id": "direct.repeat",
-      "e2e_spec": null,
+      "e2e_spec": "repeat2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "semantic op equals IntentIR op name; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "semantic op equals IntentIR op name; rvv_missing=['repeat']; cuda_h100_missing=['repeat']; cuda_5090d_missing=['repeat']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -7142,10 +7142,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.repeat_interleave_self_int->repeat_interleave",
-      "e2e_spec": null,
+      "e2e_spec": "repeat_interleave_self_int1d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to repeat_interleave; semantic op equals IntentIR op name; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to repeat_interleave; semantic op equals IntentIR op name; rvv_missing=['repeat_interleave']; cuda_h100_missing=['repeat_interleave']; cuda_5090d_missing=['repeat_interleave']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -7205,10 +7205,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.repeat_interleave_self_tensor->repeat_interleave",
-      "e2e_spec": null,
+      "e2e_spec": "repeat_interleave_self_tensor1d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to repeat_interleave; semantic op equals IntentIR op name; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to repeat_interleave; semantic op equals IntentIR op name; rvv_missing=['repeat_interleave']; cuda_h100_missing=['repeat_interleave']; cuda_5090d_missing=['repeat_interleave']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -7268,10 +7268,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.repeat_interleave_tensor->repeat_interleave",
-      "e2e_spec": null,
+      "e2e_spec": "repeat_interleave_tensor1d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to repeat_interleave; semantic op equals IntentIR op name; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to repeat_interleave; semantic op equals IntentIR op name; rvv_missing=['repeat_interleave']; cuda_h100_missing=['repeat_interleave']; cuda_5090d_missing=['repeat_interleave']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -7520,10 +7520,10 @@
       ],
       "mapping_kind": "unary_template",
       "intent_pattern_id": "unary.sin",
-      "e2e_spec": null,
+      "e2e_spec": "sin2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped to sin primitive; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to sin primitive; rvv_missing=['sin']; cuda_h100_missing=['sin']; cuda_5090d_missing=['sin']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -9583,10 +9583,10 @@
       ],
       "mapping_kind": "reduce_template",
       "intent_pattern_id": "reduce.prod",
-      "e2e_spec": null,
+      "e2e_spec": "prod2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped to reduce_prod; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to reduce_prod; rvv_missing=['reduce_prod']; cuda_h100_missing=['reduce_prod']; cuda_5090d_missing=['reduce_prod']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -9646,10 +9646,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.prod_dim->prod",
-      "e2e_spec": null,
+      "e2e_spec": "prod_dim2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to prod; mapped to reduce_prod; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to prod; mapped to reduce_prod; rvv_missing=['reduce_prod']; cuda_h100_missing=['reduce_prod']; cuda_5090d_missing=['reduce_prod']",
       "backend_support": {
         "rvv": {
           "target": "rvv",

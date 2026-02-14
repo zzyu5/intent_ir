@@ -90,10 +90,14 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "log2d" in names
     assert "log_sigmoid2d" in names
     assert "log_softmax2d" in names
+    assert "sin2d" in names
+    assert "remainder2d" in names
     assert "abs2d" in names
     assert "rsqrt2d" in names
     assert "where2d" in names
     assert "row_sum" in names
+    assert "prod2d" in names
+    assert "prod_dim2d" in names
     assert "row_mean" in names
     assert "row_all" in names
     assert "row_max" in names
@@ -119,6 +123,10 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "identity2d" in names
     assert "cast2d" in names
     assert "flip2d" in names
+    assert "repeat2d" in names
+    assert "repeat_interleave_self_int1d" in names
+    assert "repeat_interleave_self_tensor1d" in names
+    assert "repeat_interleave_tensor1d" in names
     assert "embedding2d" in names
     assert "isin1d" in names
     assert "kron2d" in names
@@ -142,6 +150,8 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "index_select2d" in names
     assert "clamp2d" in names
     assert "pow_scalar2d" in names
+    assert "pow_tensor_scalar2d" in names
+    assert "pow_tensor_tensor2d" in names
     assert "per_token_group_quant_fp8_2d" in names
     assert "lerp2d" in names
     assert "batch_norm2d" in names

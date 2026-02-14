@@ -158,6 +158,7 @@ FLAGGEMS_EXP_SRC = _module_source_text("flag_gems.ops.exp")
 FLAGGEMS_LOG_SRC = _module_source_text("flag_gems.ops.log")
 FLAGGEMS_LOG_SIGMOID_SRC = _module_source_text("flag_gems.ops.log_sigmoid")
 FLAGGEMS_LOG_SOFTMAX_SRC = _module_source_text("flag_gems.ops.log_softmax")
+FLAGGEMS_SIN_SRC = _module_source_text("flag_gems.ops.sin")
 FLAGGEMS_COS_SRC = _module_source_text("flag_gems.ops.cos")
 FLAGGEMS_ERF_SRC = _module_source_text("flag_gems.ops.erf")
 FLAGGEMS_GELU_SRC = _module_source_text("flag_gems.ops.gelu")
@@ -185,6 +186,11 @@ FLAGGEMS_TO_COPY_SRC = _module_source_text("flag_gems.ops.to")
 FLAGGEMS_CLAMP_SRC = _module_source_text("flag_gems.ops.clamp")
 FLAGGEMS_THRESHOLD_SRC = _module_source_text("flag_gems.ops.threshold")
 FLAGGEMS_PAD_SRC = _module_source_text("flag_gems.ops.pad")
+# FlagGems registers `remainder` from the `div` module.
+FLAGGEMS_REMAINDER_SRC = _module_source_text("flag_gems.ops.div")
+FLAGGEMS_REPEAT_SRC = _module_source_text("flag_gems.ops.repeat")
+FLAGGEMS_REPEAT_INTERLEAVE_SRC = _module_source_text("flag_gems.ops.repeat_interleave")
+FLAGGEMS_PROD_SRC = _module_source_text("flag_gems.ops.prod")
 FLAGGEMS_POW_SRC = _module_source_text("flag_gems.ops.pow")
 FLAGGEMS_HSTACK_SRC = _module_source_text("flag_gems.ops.hstack")
 FLAGGEMS_UPSAMPLE_BICUBIC2D_AA_SRC = _module_source_text("flag_gems.ops.upsample_bicubic2d_aa")
@@ -3737,6 +3743,290 @@ def _run_flaggems_pow_scalar2d_reference(case: TestCase) -> Dict[str, np.ndarray
     }
 
 
+def _run_flaggems_pow_tensor_scalar2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    exponent = float(case.shapes.get("EXP", 2.0))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "A" in case.inputs:
+        a = _as_f32_tensor(np.asarray(case.inputs["A"]), device=device)
+    else:
+        x = np.abs(rg.standard_normal((m, n), dtype=np.float32)) + np.float32(1.0e-3)
+        a = torch.from_numpy(x).to(device)
+
+    with flag_gems.use_gems(include=["pow", "pow_tensor_scalar"]):
+        out = flag_gems_ops.pow_tensor_scalar(a, exponent)
+
+    a_np = _to_np(a)
+    out_np = _to_np(out)
+    return {
+        "A": a_np,
+        "inp": a_np,
+        "input": a_np,
+        "out": out_np,
+        "output": out_np,
+        "exponent": np.array(exponent, dtype=np.float32),
+    }
+
+
+def _run_flaggems_pow_tensor_tensor2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "A" in case.inputs:
+        a = _as_f32_tensor(np.asarray(case.inputs["A"]), device=device)
+    else:
+        x = np.abs(rg.standard_normal((m, n), dtype=np.float32)) + np.float32(1.0e-3)
+        a = torch.from_numpy(x).to(device)
+    if case.inputs and "exponent" in case.inputs:
+        exponent = _as_f32_tensor(np.asarray(case.inputs["exponent"]), device=device)
+    else:
+        exp_np = rg.integers(1, 4, size=(m, n), dtype=np.int32).astype(np.float32)
+        exponent = torch.from_numpy(exp_np).to(device)
+
+    with flag_gems.use_gems(include=["pow", "pow_tensor_tensor"]):
+        out = flag_gems_ops.pow_tensor_tensor(a, exponent)
+
+    a_np = _to_np(a)
+    exponent_np = _to_np(exponent)
+    out_np = _to_np(out)
+    return {
+        "A": a_np,
+        "exponent": exponent_np,
+        "inp": a_np,
+        "other": exponent_np,
+        "input": a_np,
+        "out": out_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_remainder2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "A" in case.inputs:
+        a = _as_f32_tensor(np.asarray(case.inputs["A"]), device=device)
+    else:
+        a = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32) * np.float32(4.0)).to(device)
+    if case.inputs and "B" in case.inputs:
+        b = _as_f32_tensor(np.asarray(case.inputs["B"]), device=device)
+    else:
+        b_np = (rg.random((m, n), dtype=np.float32) * np.float32(3.0)) + np.float32(0.5)
+        b = torch.from_numpy(b_np).to(device)
+
+    with flag_gems.use_gems(include=["remainder"]):
+        out = torch.remainder(a, b)
+
+    a_np = _to_np(a)
+    b_np = _to_np(b)
+    out_np = _to_np(out)
+    return {
+        "A": a_np,
+        "B": b_np,
+        "inp": a_np,
+        "other": b_np,
+        "input": a_np,
+        "out": out_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_sin2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["sin"]):
+        out = torch.sin(inp)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "A": inp_np,
+        "input": inp_np,
+        "out": out_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_prod2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        x = (rg.standard_normal((m, n), dtype=np.float32) * np.float32(0.05)) + np.float32(1.0)
+        inp = torch.from_numpy(x).to(device)
+
+    with flag_gems.use_gems(include=["prod"]):
+        out = flag_gems_ops.prod(inp)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "input": inp_np,
+        "out": out_np,
+        "out_value": out_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_prod_dim2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 64))
+    axis = int(case.shapes.get("AXIS", 1))
+    axis = max(0, min(1, axis))
+    keepdim = bool(int(case.shapes.get("KEEPDIM", 0)))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        x = (rg.standard_normal((m, n), dtype=np.float32) * np.float32(0.05)) + np.float32(1.0)
+        inp = torch.from_numpy(x).to(device)
+
+    with flag_gems.use_gems(include=["prod", "prod_dim"]):
+        out = flag_gems_ops.prod_dim(inp, dim=axis, keepdim=keepdim)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "input": inp_np,
+        "out": out_np,
+        "out_value": out_np,
+        "output": out_np,
+        "axis": np.array(axis, dtype=np.int32),
+        "keepdim": np.array(int(keepdim), dtype=np.int32),
+    }
+
+
+def _run_flaggems_repeat2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 4))
+    n = int(case.shapes.get("N", 16))
+    r0 = max(1, int(case.shapes.get("R0", 2)))
+    r1 = max(1, int(case.shapes.get("R1", 1)))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["repeat"]):
+        out = flag_gems_ops.repeat(inp, (r0, r1))
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "input": inp_np,
+        "out": out_np,
+        "output": out_np,
+        "repeats": np.array([r0, r1], dtype=np.int32),
+        "axis": np.array(0, dtype=np.int32),
+    }
+
+
+def _run_flaggems_repeat_interleave_self_int1d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = int(case.shapes.get("N", 32))
+    repeats = max(1, int(case.shapes.get("R", 2)))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device).reshape(-1)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((n,), dtype=np.float32)).to(device)
+
+    with flag_gems.use_gems(include=["repeat_interleave_self_int"]):
+        out = flag_gems_ops.repeat_interleave_self_int(inp, repeats, dim=0)
+
+    inp_np = _to_np(inp)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "input": inp_np,
+        "out": out_np,
+        "output": out_np,
+        "repeats": np.array(repeats, dtype=np.int32),
+        "dim": np.array(0, dtype=np.int32),
+    }
+
+
+def _run_flaggems_repeat_interleave_self_tensor1d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = int(case.shapes.get("N", 32))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device).reshape(-1)
+    else:
+        inp = torch.from_numpy(rg.standard_normal((n,), dtype=np.float32)).to(device)
+    if case.inputs and "repeats" in case.inputs:
+        repeats = torch.as_tensor(np.asarray(case.inputs["repeats"]), device=device, dtype=torch.int64).reshape(-1)
+    else:
+        repeats = torch.from_numpy(rg.integers(1, 4, size=(n,), dtype=np.int64)).to(device)
+
+    with flag_gems.use_gems(include=["repeat_interleave_self_tensor"]):
+        out = flag_gems_ops.repeat_interleave_self_tensor(inp, repeats, dim=0)
+
+    inp_np = _to_np(inp)
+    repeats_np = _to_np(repeats).astype(np.int32, copy=False)
+    out_np = _to_np(out)
+    return {
+        "inp": inp_np,
+        "input": inp_np,
+        "repeats": repeats_np,
+        "out": out_np,
+        "output": out_np,
+        "dim": np.array(0, dtype=np.int32),
+    }
+
+
+def _run_flaggems_repeat_interleave_tensor1d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = int(case.shapes.get("N", 32))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    if case.inputs and "repeats" in case.inputs:
+        repeats = torch.as_tensor(np.asarray(case.inputs["repeats"]), device=device, dtype=torch.int64).reshape(-1)
+    else:
+        repeats = torch.from_numpy(rg.integers(1, 4, size=(n,), dtype=np.int64)).to(device)
+
+    with flag_gems.use_gems(include=["repeat_interleave_tensor"]):
+        out = flag_gems_ops.repeat_interleave_tensor(repeats)
+
+    repeats_np = _to_np(repeats).astype(np.int32, copy=False)
+    out_np = _to_np(out).astype(np.int32, copy=False)
+    return {
+        "repeats": repeats_np,
+        "input": repeats_np,
+        "out": out_np,
+        "output": out_np,
+    }
+
+
 def _run_flaggems_per_token_group_quant_fp8_2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     m = int(case.shapes.get("M", 4))
     n = int(case.shapes.get("N", 64))
@@ -5319,6 +5609,14 @@ _FLAGGEMS_SPEC_BUILDERS = {
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
     ),
+    "remainder2d": lambda: KernelSpec(
+        name="remainder2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_REMAINDER_SRC",
+        runner=_run_flaggems_remainder2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
     "eq2d": lambda: KernelSpec(
         name="eq2d",
         module="pipeline.triton.flaggems_specs",
@@ -5587,6 +5885,14 @@ _FLAGGEMS_SPEC_BUILDERS = {
         canonical_shapes={"M": 4, "N": 64, "AXIS": 1},
         vary_axes=["M", "N"],
     ),
+    "sin2d": lambda: KernelSpec(
+        name="sin2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_SIN_SRC",
+        runner=_run_flaggems_sin2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
     "isclose2d": lambda: KernelSpec(
         name="isclose2d",
         module="pipeline.triton.flaggems_specs",
@@ -5703,6 +6009,22 @@ _FLAGGEMS_SPEC_BUILDERS = {
         attr="FLAGGEMS_SUM_SRC",
         runner=_run_flaggems_row_sum_reference,
         canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "prod2d": lambda: KernelSpec(
+        name="prod2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_PROD_SRC",
+        runner=_run_flaggems_prod2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
+    "prod_dim2d": lambda: KernelSpec(
+        name="prod_dim2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_PROD_SRC",
+        runner=_run_flaggems_prod_dim2d_reference,
+        canonical_shapes={"M": 4, "N": 64, "AXIS": 1, "KEEPDIM": 0},
         vary_axes=["M", "N"],
     ),
     "row_max": lambda: KernelSpec(
@@ -5880,6 +6202,46 @@ _FLAGGEMS_SPEC_BUILDERS = {
         runner=_run_flaggems_flip2d_reference,
         canonical_shapes={"M": 4, "N": 64},
         vary_axes=["M", "N"],
+    ),
+    "repeat2d": lambda: KernelSpec(
+        name="repeat2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_REPEAT_SRC",
+        runner=_run_flaggems_repeat2d_reference,
+        canonical_shapes={"M": 4, "N": 16, "R0": 2, "R1": 1},
+        vary_axes=["M", "N"],
+        stage_c_max_cases=6,
+        mutation_bounded_max_cases=3,
+    ),
+    "repeat_interleave_self_int1d": lambda: KernelSpec(
+        name="repeat_interleave_self_int1d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_REPEAT_INTERLEAVE_SRC",
+        runner=_run_flaggems_repeat_interleave_self_int1d_reference,
+        canonical_shapes={"N": 32, "R": 2},
+        vary_axes=["N"],
+        stage_c_max_cases=6,
+        mutation_bounded_max_cases=3,
+    ),
+    "repeat_interleave_self_tensor1d": lambda: KernelSpec(
+        name="repeat_interleave_self_tensor1d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_REPEAT_INTERLEAVE_SRC",
+        runner=_run_flaggems_repeat_interleave_self_tensor1d_reference,
+        canonical_shapes={"N": 32},
+        vary_axes=["N"],
+        stage_c_max_cases=6,
+        mutation_bounded_max_cases=3,
+    ),
+    "repeat_interleave_tensor1d": lambda: KernelSpec(
+        name="repeat_interleave_tensor1d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_REPEAT_INTERLEAVE_SRC",
+        runner=_run_flaggems_repeat_interleave_tensor1d_reference,
+        canonical_shapes={"N": 32},
+        vary_axes=["N"],
+        stage_c_max_cases=6,
+        mutation_bounded_max_cases=3,
     ),
     "embedding2d": lambda: KernelSpec(
         name="embedding2d",
@@ -6099,6 +6461,22 @@ _FLAGGEMS_SPEC_BUILDERS = {
         canonical_shapes={"M": 4, "N": 64, "EXP": 2.0},
         vary_axes=["M", "N"],
     ),
+    "pow_tensor_scalar2d": lambda: KernelSpec(
+        name="pow_tensor_scalar2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_POW_SRC",
+        runner=_run_flaggems_pow_tensor_scalar2d_reference,
+        canonical_shapes={"M": 4, "N": 64, "EXP": 2.0},
+        vary_axes=["M", "N"],
+    ),
+    "pow_tensor_tensor2d": lambda: KernelSpec(
+        name="pow_tensor_tensor2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_POW_SRC",
+        runner=_run_flaggems_pow_tensor_tensor2d_reference,
+        canonical_shapes={"M": 4, "N": 64},
+        vary_axes=["M", "N"],
+    ),
     "per_token_group_quant_fp8_2d": lambda: KernelSpec(
         name="per_token_group_quant_fp8_2d",
         module="pipeline.triton.flaggems_specs",
@@ -6248,6 +6626,10 @@ __all__ = [
     "FLAGGEMS_CELU_SRC",
     "FLAGGEMS_ELU_SRC",
     "FLAGGEMS_EXP_SRC",
+    "FLAGGEMS_LOG_SRC",
+    "FLAGGEMS_LOG_SIGMOID_SRC",
+    "FLAGGEMS_LOG_SOFTMAX_SRC",
+    "FLAGGEMS_SIN_SRC",
     "FLAGGEMS_ISCLOSE_SRC",
     "FLAGGEMS_ISFINITE_SRC",
     "FLAGGEMS_ISINF_SRC",
@@ -6256,8 +6638,15 @@ __all__ = [
     "FLAGGEMS_MASKED_FILL_SRC",
     "FLAGGEMS_SUM_SRC",
     "FLAGGEMS_MAX_SRC",
+    "FLAGGEMS_MIN_SRC",
+    "FLAGGEMS_NONZERO_SRC",
     "FLAGGEMS_CLAMP_SRC",
     "FLAGGEMS_THRESHOLD_SRC",
+    "FLAGGEMS_REMAINDER_SRC",
+    "FLAGGEMS_REPEAT_SRC",
+    "FLAGGEMS_REPEAT_INTERLEAVE_SRC",
+    "FLAGGEMS_PROD_SRC",
+    "FLAGGEMS_POW_SRC",
     "FLAGGEMS_UPSAMPLE_BICUBIC2D_AA_SRC",
     "FLAGGEMS_EYE_SRC",
     "FLAGGEMS_EYE_M_SRC",

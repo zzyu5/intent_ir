@@ -147,6 +147,16 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
             "pad",
             "per_token_group_quant_fp8",
             "pow_scalar",
+            "pow_tensor_scalar",
+            "pow_tensor_tensor",
+            "prod",
+            "prod_dim",
+            "remainder",
+            "repeat",
+            "repeat_interleave_self_int",
+            "repeat_interleave_self_tensor",
+            "repeat_interleave_tensor",
+            "sin",
             "constant_pad_nd",
             "hstack",
             "conv2d",
@@ -243,6 +253,16 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
     assert "pad2d" in specs
     assert "per_token_group_quant_fp8_2d" in specs
     assert "pow_scalar2d" in specs
+    assert "pow_tensor_scalar2d" in specs
+    assert "pow_tensor_tensor2d" in specs
+    assert "prod2d" in specs
+    assert "prod_dim2d" in specs
+    assert "remainder2d" in specs
+    assert "repeat2d" in specs
+    assert "repeat_interleave_self_int1d" in specs
+    assert "repeat_interleave_self_tensor1d" in specs
+    assert "repeat_interleave_tensor1d" in specs
+    assert "sin2d" in specs
     assert "constant_pad_nd2d" in specs
     assert "hstack2d" in specs
     assert "conv2d_nchw" in specs
