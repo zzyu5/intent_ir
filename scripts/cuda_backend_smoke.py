@@ -253,7 +253,10 @@ def _set_runtime_backend_env(runtime_backend: str) -> None:
         os.environ["INTENTIR_CUDA_FORCE_NVRTC"] = "1"
         os.environ.setdefault("INTENTIR_CUDA_NVRTC_FALLBACK", "1")
         try:
-            from cuda import nvrtc as _nvrtc  # noqa: PLC0415
+            try:
+                from cuda import nvrtc as _nvrtc  # type: ignore[attr-defined]  # noqa: PLC0415
+            except Exception:
+                from cuda.bindings import nvrtc as _nvrtc  # type: ignore[assignment]  # noqa: PLC0415
         except Exception as e:
             raise RuntimeError(f"nvrtc_unavailable: {type(e).__name__}: {e}") from e
     else:
@@ -687,6 +690,11 @@ def main() -> None:
     runtime_backend = str(args.runtime_backend)
     if runtime_backend == "auto":
         runtime_backend = "nvcc"
+    requested_codegen_mode = str(args.codegen_mode)
+    effective_codegen_mode = requested_codegen_mode
+    if runtime_backend == "nvrtc" and requested_codegen_mode == "auto":
+        # NVRTC backend is stable with direct-launch (py) lowering; auto may pick cpp host-launch.
+        effective_codegen_mode = "py"
 
     if args.kernel:
         kernels = list(args.kernel)
@@ -707,6 +715,8 @@ def main() -> None:
             "backend_target": str(args.backend_target),
             "artifact_dir": (str(args.artifact_dir) if args.artifact_dir else None),
             "runtime_backend": str(runtime_backend),
+            "codegen_mode": str(requested_codegen_mode),
+            "effective_codegen_mode": str(effective_codegen_mode),
             "timeout_sec": int(args.timeout_sec),
             "compile_timeout_sec": int(compile_timeout_sec),
             "launch_timeout_sec": int(launch_timeout_sec),
@@ -735,7 +745,7 @@ def main() -> None:
                 artifact_dir=(str(args.artifact_dir) if args.artifact_dir else None),
                 compile_timeout_sec=int(compile_timeout_sec),
                 launch_timeout_sec=int(launch_timeout_sec),
-                codegen_mode=str(args.codegen_mode),
+                codegen_mode=str(effective_codegen_mode),
                 runtime_backend=runtime_backend,
             )
         except (CudaLoweringError, CudaRuntimeError, FileNotFoundError, RuntimeError, ValueError) as e:
@@ -758,7 +768,7 @@ def main() -> None:
         if (
             (not bool(r.get("ok")))
             and str(r.get("reason_code") or "") in {"compile_timeout", "launch_timeout"}
-            and str(args.codegen_mode) == "auto"
+            and str(effective_codegen_mode) == "auto"
             and bool(args.refine_timeout_reason)
         ):
             detail = _probe_timeout_runtime_detail(
@@ -797,6 +807,8 @@ def main() -> None:
         "backend_target": str(args.backend_target),
         "artifact_dir": (str(args.artifact_dir) if args.artifact_dir else None),
         "runtime_backend": str(runtime_backend),
+        "codegen_mode": str(requested_codegen_mode),
+        "effective_codegen_mode": str(effective_codegen_mode),
         "timeout_sec": int(args.timeout_sec),
         "compile_timeout_sec": int(compile_timeout_sec),
         "launch_timeout_sec": int(launch_timeout_sec),

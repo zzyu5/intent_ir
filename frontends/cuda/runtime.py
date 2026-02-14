@@ -378,7 +378,10 @@ def _nvrtc_compile_ptx(
         pass
 
     try:
-        from cuda import nvrtc  # noqa: PLC0415
+        try:
+            from cuda import nvrtc  # type: ignore[attr-defined]  # noqa: PLC0415
+        except Exception:
+            from cuda.bindings import nvrtc  # type: ignore[assignment]  # noqa: PLC0415
     except Exception as e:
         raise CudaRuntimeError(
             "NVRTC fallback requested, but cuda-python (cuda-bindings) is not available. "
@@ -466,7 +469,16 @@ class _NvrtcCudaModule:
         # Ensure a CUDA context exists before using the driver API.
         torch.empty((1,), device="cuda")
 
-        from cuda import cuda  # noqa: PLC0415
+        try:
+            try:
+                from cuda import cuda  # type: ignore[attr-defined]  # noqa: PLC0415
+            except Exception:
+                from cuda.bindings import driver as cuda  # type: ignore[assignment]  # noqa: PLC0415
+        except Exception as e:
+            raise CudaRuntimeError(
+                "NVRTC fallback requested, but CUDA driver bindings are unavailable "
+                "(expected cuda.cuda or cuda.bindings.driver)."
+            ) from e
 
         (err,) = cuda.cuInit(0)
         if int(err) != 0:
