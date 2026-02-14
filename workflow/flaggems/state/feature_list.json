@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-14T04:39:44+00:00",
+  "generated_at": "2026-02-14T05:02:54+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
@@ -1513,9 +1513,9 @@
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "sort2d",
       "intent_ops": [
         "sort"
       ]
@@ -1526,9 +1526,9 @@
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "sort_stable2d",
       "intent_ops": [
         "sort"
       ]
@@ -1553,9 +1553,9 @@
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "stack2d",
       "intent_ops": [
         "stack"
       ]
@@ -1579,9 +1579,9 @@
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "tan2d",
       "intent_ops": [
         "tan"
       ]
@@ -1607,9 +1607,9 @@
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "tile2d",
       "intent_ops": [
         "tile"
       ]
@@ -1633,9 +1633,9 @@
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "topk2d",
       "intent_ops": [
         "topk"
       ]
@@ -1962,9 +1962,9 @@
       "family": "reduction",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "std2d",
       "intent_ops": [
         "std"
       ]
@@ -2001,9 +2001,9 @@
       "family": "reduction",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "var_mean2d",
       "intent_ops": [
         "var",
         "mean"
@@ -2200,9 +2200,9 @@
       "family": "norm_activation",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "softplus2d",
       "intent_ops": [
         "exp",
         "add",
@@ -2233,9 +2233,9 @@
       "family": "norm_activation",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "vector_norm2d",
       "intent_ops": [
         "mul",
         "reduce_sum",

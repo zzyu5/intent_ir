@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_active_batch_v1",
-  "generated_at": "2026-02-14T04:39:53+00:00",
+  "generated_at": "2026-02-14T05:02:55+00:00",
   "branch": "flaggems",
   "batch_size": 10,
   "selection_policy": [
@@ -10,23 +10,8 @@
   ],
   "items": [
     {
-      "id": "flaggems::softplus",
-      "semantic_op": "softplus",
-      "family": "norm_activation",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
-      "intent_ops": [
-        "exp",
-        "add",
-        "log"
-      ]
-    },
-    {
-      "id": "flaggems::sort",
-      "semantic_op": "sort",
+      "id": "flaggems::vstack",
+      "semantic_op": "vstack",
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
@@ -34,127 +19,137 @@
       "next_action": "add_e2e_spec",
       "e2e_spec": null,
       "intent_ops": [
-        "sort"
+        "concat"
       ]
     },
     {
-      "id": "flaggems::sort_stable",
-      "semantic_op": "sort_stable",
+      "id": "flaggems::ScaleDotProductAttention",
+      "semantic_op": "ScaleDotProductAttention",
+      "family": "attention_sequence",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "scaled_dot_product_attention_bhsd",
+      "intent_ops": [
+        "scaled_dot_product_attention"
+      ]
+    },
+    {
+      "id": "flaggems::acos",
+      "semantic_op": "acos",
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "acos2d",
       "intent_ops": [
-        "sort"
+        "acos"
       ]
     },
     {
-      "id": "flaggems::stack",
-      "semantic_op": "stack",
+      "id": "flaggems::angle",
+      "semantic_op": "angle",
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "angle2d",
       "intent_ops": [
-        "stack"
+        "angle"
       ]
     },
     {
-      "id": "flaggems::std",
-      "semantic_op": "std",
+      "id": "flaggems::argmax",
+      "semantic_op": "argmax",
       "family": "reduction",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "argmax2d",
       "intent_ops": [
-        "std"
+        "argmax"
       ]
     },
     {
-      "id": "flaggems::tan",
-      "semantic_op": "tan",
-      "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
-      "intent_ops": [
-        "tan"
-      ]
-    },
-    {
-      "id": "flaggems::tile",
-      "semantic_op": "tile",
-      "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
-      "intent_ops": [
-        "tile"
-      ]
-    },
-    {
-      "id": "flaggems::topk",
-      "semantic_op": "topk",
-      "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
-      "intent_ops": [
-        "topk"
-      ]
-    },
-    {
-      "id": "flaggems::var_mean",
-      "semantic_op": "var_mean",
+      "id": "flaggems::argmin",
+      "semantic_op": "argmin",
       "family": "reduction",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "argmin2d",
       "intent_ops": [
-        "var",
-        "mean"
+        "argmin"
       ]
     },
     {
-      "id": "flaggems::vector_norm",
-      "semantic_op": "vector_norm",
-      "family": "norm_activation",
+      "id": "flaggems::atan",
+      "semantic_op": "atan",
+      "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "missing_e2e_spec",
-      "next_action": "add_e2e_spec",
-      "e2e_spec": null,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "atan2d",
       "intent_ops": [
-        "mul",
-        "reduce_sum",
-        "sqrt"
+        "atan"
+      ]
+    },
+    {
+      "id": "flaggems::avg_pool2d",
+      "semantic_op": "avg_pool2d",
+      "family": "conv_pool_interp",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "avg_pool2d_nchw",
+      "intent_ops": [
+        "avg_pool2d"
+      ]
+    },
+    {
+      "id": "flaggems::bitwise_and_scalar",
+      "semantic_op": "bitwise_and_scalar",
+      "family": "elementwise_broadcast",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "bitwise_and2d",
+      "intent_ops": [
+        "bitwise_and"
+      ]
+    },
+    {
+      "id": "flaggems::bitwise_and_scalar_tensor",
+      "semantic_op": "bitwise_and_scalar_tensor",
+      "family": "elementwise_broadcast",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "bitwise_and2d",
+      "intent_ops": [
+        "bitwise_and"
       ]
     }
   ],
   "context": {
     "feature_list_path": "workflow/flaggems/state/feature_list.json",
     "progress_log_path": "workflow/flaggems/state/progress_log.jsonl",
-    "git_log": "ac146f2 workflow: record log-min-pad batch and plan next backend wave\n8052234 flaggems: add log-min-pad batch specs and baseline aliases\nbcee88f workflow: record active-batch backend wave and plan next blocked-backend queue\n3f02af3 flaggems: add active-batch specs and enable rvv/cuda cos-erf lowering\nc71f7da workflow: record blocked-ir-zero wave and refresh next batch\nf6f618a intentir: clear remaining blocked_ir with attention/unique/weightnorm mappings\n381e75b workflow: refresh active batch after scatter-quantile-polar wave\n874e0a9 workflow: record scatter-quantile-polar wave and refresh queue\n3583f1b intentir: map scatter family plus quantile and polar into flaggems flow\n9a8c184 workflow: refresh active batch context after trace-triu-upsample wave\nebc9011 workflow: record trace-triu-upsample batch and refresh queue\n6b1f134 intentir: expand flaggems mapping with conv and nearest/trace/triu ops\ne778320 workflow: record one-hot/nll-forward/maxpool batch and replan queue\n4e5cf1b intentir: add one_hot/nll_loss_forward/max_pool2d_with_indices wave\n3f75bed workflow: finalize handoff for masked-select/mse/nan-to-num/nll wave\n32bbc88 workflow: record masked-select/mse/nan-to-num/nll batch and refresh queue\n7169c84 intentir: add masked_select/mse_loss/nan_to_num/nll_loss2d_forward wave\n69610df workflow: finalize handoff for isin-kron-linspace-logspace-masked_scatter wave\nc8e7240 workflow: record isin-kron-linspace-logspace-masked_scatter batch and replan queue\n643e46e flaggems: add isin/kron/linspace/logspace/masked_scatter wave and scoped matrix convergence",
+    "git_log": "677b5b6 flaggems: add sort-stack-std-topk-var-norm e2e spec wave\n264cf98 workflow: record pow-prod-repeat batch and replan next queue\n0a2a5f1 flaggems: add pow/prod/repeat/sin e2e spec wave\nac146f2 workflow: record log-min-pad batch and plan next backend wave\n8052234 flaggems: add log-min-pad batch specs and baseline aliases\nbcee88f workflow: record active-batch backend wave and plan next blocked-backend queue\n3f02af3 flaggems: add active-batch specs and enable rvv/cuda cos-erf lowering\nc71f7da workflow: record blocked-ir-zero wave and refresh next batch\nf6f618a intentir: clear remaining blocked_ir with attention/unique/weightnorm mappings\n381e75b workflow: refresh active batch after scatter-quantile-polar wave\n874e0a9 workflow: record scatter-quantile-polar wave and refresh queue\n3583f1b intentir: map scatter family plus quantile and polar into flaggems flow\n9a8c184 workflow: refresh active batch context after trace-triu-upsample wave\nebc9011 workflow: record trace-triu-upsample batch and refresh queue\n6b1f134 intentir: expand flaggems mapping with conv and nearest/trace/triu ops\ne778320 workflow: record one-hot/nll-forward/maxpool batch and replan queue\n4e5cf1b intentir: add one_hot/nll_loss_forward/max_pool2d_with_indices wave\n3f75bed workflow: finalize handoff for masked-select/mse/nan-to-num/nll wave\n32bbc88 workflow: record masked-select/mse/nan-to-num/nll batch and refresh queue\n7169c84 intentir: add masked_select/mse_loss/nan_to_num/nll_loss2d_forward wave",
     "progress_tail": [
-      "{\"ts\": \"2026-02-14T00:18:57+00:00\", \"commit\": \"3583f1b\", \"summary\": \"Mapped scatter/select_scatter/slice_scatter/quantile/polar into IntentIR with deterministic specs and multibackend classification.\", \"batch_ops\": [\"scatter\", \"select_scatter\", \"slice_scatter\", \"quantile\", \"polar\"], \"active_batch_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_scatter_quantile_polar_v2/active_batch_scatter_quantile_polar.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_scatter_quantile_polar_v2/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_scatter_quantile_polar_v2/status_converged.json\", \"next_focus\": \"Drive remaining blocked_ir queue (attention/per_token/unique2/weight_norm), then backend-lowering for scatter/quantile/polar family.\", \"run_ok\": false, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260214/batch_scatter_quantile_polar_v2\", \"counts_by_status\": {\"blocked_backend\": 189, \"blocked_ir\": 7}}",
       "{\"ts\": \"2026-02-14T00:47:10+00:00\", \"commit\": \"f6f618a\", \"summary\": \"Cleared remaining blocked_ir by mapping unique2/weight_norm_interface/SDPA family and added deterministic specs with RVV/CUDA classified blockers.\", \"batch_ops\": [\"unique2\", \"weight_norm_interface\", \"scaled_dot_product_attention\"], \"active_batch_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_attention_unique_weightnorm_v3_combined/active_batch_attention_unique_weightnorm.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_attention_unique_weightnorm_v3_combined/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_attention_unique_weightnorm_v3_combined/status_converged.json\", \"next_focus\": \"1) Fix unique2 and scaled_dot_product_attention diff_fail in pipeline. 2) Implement RVV/CUDA lowering for unique/weight_norm_interface/scaled_dot_product_attention. 3) Continue next planned backend_missing batch from active_batch.json.\", \"run_ok\": false, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260214/batch_attention_unique_weightnorm_v3_combined\", \"counts_by_status\": {\"blocked_backend\": 196}}",
       "{\"ts\": \"2026-02-14T01:35:29+00:00\", \"commit\": \"c71f7da0a51e0c9ec9928ba742120916e6a83562\", \"summary\": \"Completed active-batch backend wave for argmax/argmin/pad/conv2d/cos/cumsum/erf/flash/gelu/hstack with scoped RVV local+remote and CUDA subset evidence.\", \"batch_ops\": [\"argmax\", \"argmin\", \"constant_pad_nd\", \"conv2d\", \"cos\", \"cumsum\", \"erf\", \"flash_attn_varlen_func\", \"gelu\", \"hstack\"], \"active_batch_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_backend_wave_v3/active_batch_completed.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_backend_wave_v3/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_backend_wave_v3/status_converged.json\", \"next_focus\": \"1) Fix baseline I/O aliasing for argmax/argmin/constant_pad_nd/hstack/flash specs. 2) Add RVV gelu path shape inference for erf intermediate. 3) Stabilize CUDA smoke timeout behavior and rerun full 10-kernel gate.\", \"run_ok\": false, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_backend_wave_v3\", \"counts_by_status\": {\"blocked_backend\": 194, \"rvv_only\": 2}}",
       "{\"ts\": \"2026-02-14T02:08:52+00:00\", \"commit\": \"8052234\", \"summary\": \"Added e2e specs for log/min/nonzero/normed_cumsum/pad/per_token_group_quant_fp8/pow_scalar wave and validated pipeline+rvv local/remote+cuda classification.\", \"batch_ops\": [\"log\", \"log_sigmoid\", \"log_softmax\", \"min\", \"min_dim\", \"nonzero\", \"normed_cumsum\", \"pad\", \"per_token_group_quant_fp8\", \"pow_scalar\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_log_min_pad_v1/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_log_min_pad_v1/status_converged.json\", \"next_focus\": \"1) Eliminate remaining baseline alias mismatches for min/nonzero/pad/per_token outputs. 2) Add RVV/CUDA lowering for log/reduce_min/pow/cumsum/nonzero/pad primitives. 3) Re-run scoped batch gate, then plan next blocked-backend batch.\", \"run_ok\": true, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_log_min_pad_v1\", \"counts_by_status\": {\"blocked_backend\": 196}}",
-      "{\"ts\": \"2026-02-14T04:38:43+00:00\", \"commit\": \"ac146f2074508c6041cb3a67b3168ab886c7d427\", \"summary\": \"Added pow/prod/remainder/repeat/sin batch e2e specs and ran scoped RVV local+remote+CUDA convergence.\", \"batch_ops\": [\"pow_tensor_scalar\", \"pow_tensor_tensor\", \"prod\", \"prod_dim\", \"remainder\", \"repeat\", \"repeat_interleave_self_int\", \"repeat_interleave_self_tensor\", \"repeat_interleave_tensor\", \"sin\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_pow_prod_repeat_v1/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_pow_prod_repeat_v1/status_converged.json\", \"next_focus\": \"1) implement RVV/CUDA lowering for pow/reduce_prod/sin; 2) fix baseline alias/runtime issues for repeat/repeat_interleave; 3) plan next backend_missing_ops batch.\", \"run_ok\": true, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_pow_prod_repeat_v1\", \"counts_by_status\": {\"blocked_backend\": 196}}"
+      "{\"ts\": \"2026-02-14T04:38:43+00:00\", \"commit\": \"ac146f2074508c6041cb3a67b3168ab886c7d427\", \"summary\": \"Added pow/prod/remainder/repeat/sin batch e2e specs and ran scoped RVV local+remote+CUDA convergence.\", \"batch_ops\": [\"pow_tensor_scalar\", \"pow_tensor_tensor\", \"prod\", \"prod_dim\", \"remainder\", \"repeat\", \"repeat_interleave_self_int\", \"repeat_interleave_self_tensor\", \"repeat_interleave_tensor\", \"sin\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_pow_prod_repeat_v1/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_pow_prod_repeat_v1/status_converged.json\", \"next_focus\": \"1) implement RVV/CUDA lowering for pow/reduce_prod/sin; 2) fix baseline alias/runtime issues for repeat/repeat_interleave; 3) plan next backend_missing_ops batch.\", \"run_ok\": true, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_pow_prod_repeat_v1\", \"counts_by_status\": {\"blocked_backend\": 196}}",
+      "{\"ts\": \"2026-02-14T05:02:51+00:00\", \"commit\": \"677b5b6\", \"summary\": \"Added softplus/sort/stack/std/tan/tile/topk/var_mean/vector_norm specs and ran scoped RVV local+remote+CUDA convergence.\", \"batch_ops\": [\"softplus\", \"sort\", \"sort_stable\", \"stack\", \"std\", \"tan\", \"tile\", \"topk\", \"var_mean\", \"vector_norm\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_sort_topk_var_v1/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_sort_topk_var_v1/status_converged.json\", \"next_focus\": \"1) fix baseline aliasing for sort/sort_stable/stack/std/tile/topk/var_mean kernels; 2) add RVV/CUDA lowering for tan/log/sort/topk path; 3) continue backend_missing_ops queue.\", \"run_ok\": true, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260214/batch_active10_sort_topk_var_v1\", \"counts_by_status\": {\"blocked_backend\": 195, \"rvv_only\": 1}}"
     ]
   }
 }
