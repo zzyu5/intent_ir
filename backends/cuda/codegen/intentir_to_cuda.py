@@ -2227,8 +2227,8 @@ extern "C" __global__ __launch_bounds__({block_x * block_y}) void {intent.name}(
     const float bv = intentir_ldg_f32({b_name} + {b_idx});
     acc += av * bv;
   }}
-  const float bias = intentir_ldg_f32({bias_name} + {out_idx});
-  {out_name}[{out_idx}] = alpha * acc + beta * bias;
+  const float bias_val = intentir_ldg_f32({bias_name} + {out_idx});
+  {out_name}[{out_idx}] = alpha * acc + beta * bias_val;
 }}
 """.lstrip()
 
@@ -2359,6 +2359,370 @@ extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(
     io_spec = _io_spec_from_args(intent, tensor_args=tensor_args, scalar_args=scalar_args, arg_names=arg_names)
     launch = CudaLaunch(grid=(grid_x, 1, 1), block=(block_x, 1, 1), shared_mem=0)
     return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=dict(bindings))
+
+
+def _kernel_baddbmm_3d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    """
+    Pattern: batched addmm decomposition
+      matmul + mul(alpha) + mul(beta on bias) + add (+ optional cast)
+    with rank-3 tensors [B, M, N].
+    """
+    ops = list(intent.ops or [])
+    if len(ops) not in {4, 5}:
+        raise CudaLoweringError("baddbmm lowering expects 4 or 5 ops")
+    if [o.op for o in ops[:4]] != ["matmul", "mul", "mul", "add"]:
+        raise CudaLoweringError("baddbmm lowering expects matmul->mul->mul->add chain")
+    mat, mul_a, mul_b, add0 = ops[:4]
+    cast0 = ops[4] if len(ops) == 5 else None
+    if cast0 is not None and cast0.op != "cast":
+        raise CudaLoweringError("baddbmm optional 5th op must be cast")
+
+    if len(mat.inputs) != 2:
+        raise CudaLoweringError("baddbmm matmul expects 2 inputs")
+    a_name = str(mat.inputs[0])
+    b_name = str(mat.inputs[1])
+    mm_out = str(mat.output)
+
+    mul_a_in = [str(x) for x in mul_a.inputs]
+    if mm_out in mul_a_in:
+        alpha_name = mul_a_in[1] if mul_a_in[0] == mm_out else mul_a_in[0]
+        scaled_mm = str(mul_a.output)
+    else:
+        raise CudaLoweringError("baddbmm first mul must consume matmul output")
+
+    mul_b_in = [str(x) for x in mul_b.inputs]
+    beta_name = None
+    bias_name = None
+    for x in mul_b_in:
+        if _is_scalar_tensor(intent, x, dtype="f32"):
+            beta_name = x
+        else:
+            bias_name = x
+    if beta_name is None or bias_name is None:
+        raise CudaLoweringError("baddbmm second mul must be bias * beta")
+    scaled_bias = str(mul_b.output)
+
+    add_in = [str(x) for x in add0.inputs]
+    if len(add_in) != 2 or sorted(add_in) != sorted([scaled_mm, scaled_bias]):
+        raise CudaLoweringError("baddbmm add must consume scaled matmul and scaled bias")
+    add_out = str(add0.output)
+
+    out_name = str(intent.outputs[0])
+    if cast0 is not None:
+        if len(cast0.inputs) != 1 or str(cast0.inputs[0]) != add_out or str(cast0.output) != out_name:
+            raise CudaLoweringError("baddbmm cast must consume add output and produce final output")
+    elif add_out != out_name:
+        raise CudaLoweringError("baddbmm add output must be final output when cast is absent")
+
+    a_shape = _shape_values(intent, a_name)
+    b_shape = _shape_values(intent, b_name)
+    bias_shape = _shape_values(intent, bias_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(a_shape) != 3 or len(b_shape) != 3 or len(bias_shape) != 3 or len(out_shape) != 3:
+        raise CudaLoweringError("baddbmm lowering expects rank-3 tensors")
+
+    batch_dim, a1_dim, a2_dim = a_shape
+    b_batch_dim, b1_dim, b2_dim = b_shape
+    ta = bool((mat.attrs or {}).get("transpose_a", False))
+    tb = bool((mat.attrs or {}).get("transpose_b", False))
+
+    M_dim = a2_dim if ta else a1_dim
+    K_dim = a1_dim if ta else a2_dim
+    K2_dim = b2_dim if tb else b1_dim
+    N_dim = b1_dim if tb else b2_dim
+
+    if str(batch_dim) != str(b_batch_dim):
+        raise CudaLoweringError("baddbmm batch mismatch between A and B")
+    if str(K_dim) != str(K2_dim):
+        raise CudaLoweringError("baddbmm K mismatch")
+    if [str(x) for x in bias_shape] != [str(batch_dim), str(M_dim), str(N_dim)]:
+        raise CudaLoweringError("baddbmm bias shape mismatch")
+    if [str(x) for x in out_shape] != [str(batch_dim), str(M_dim), str(N_dim)]:
+        raise CudaLoweringError("baddbmm output shape mismatch")
+
+    BATCH = _resolve_dim_int(batch_dim, bindings, name="BATCH")
+    M = _resolve_dim_int(M_dim, bindings, name="M")
+    N = _resolve_dim_int(N_dim, bindings, name="N")
+    K = _resolve_dim_int(K_dim, bindings, name="K")
+
+    sched = intent.schedule or ScheduleSketch()
+    block_y = _resolve_schedule_int(sched.tile_m, bindings, default=16)
+    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=16)
+    if block_x <= 0:
+        block_x = 16
+    if block_y <= 0:
+        block_y = 16
+    block_x = max(8, min(32, int(block_x)))
+    block_y = max(8, min(32, int(block_y)))
+    if block_x * block_y > 1024:
+        block_y = max(1, 1024 // block_x)
+
+    grid_x = (N + block_x - 1) // block_x
+    grid_y = (M + block_y - 1) // block_y
+    grid_z = max(1, int(BATCH))
+
+    b_is_tensor = _is_scalar_tensor(intent, str(batch_dim), dtype="i32")
+    m_is_tensor = _is_scalar_tensor(intent, str(M_dim), dtype="i32")
+    n_is_tensor = _is_scalar_tensor(intent, str(N_dim), dtype="i32")
+    k_is_tensor = _is_scalar_tensor(intent, str(K_dim), dtype="i32")
+    b_param = f"const int* {str(batch_dim)}_ptr" if b_is_tensor else "int BATCH_in"
+    m_param = f"const int* {str(M_dim)}_ptr" if m_is_tensor else "int M_in"
+    n_param = f"const int* {str(N_dim)}_ptr" if n_is_tensor else "int N_in"
+    k_param = f"const int* {str(K_dim)}_ptr" if k_is_tensor else "int K_in"
+    b_load = f"const int BATCH = {str(batch_dim)}_ptr ? {str(batch_dim)}_ptr[0] : 0;" if b_is_tensor else "const int BATCH = BATCH_in;"
+    m_load = f"const int M = {str(M_dim)}_ptr ? {str(M_dim)}_ptr[0] : 0;" if m_is_tensor else "const int M = M_in;"
+    n_load = f"const int N = {str(N_dim)}_ptr ? {str(N_dim)}_ptr[0] : 0;" if n_is_tensor else "const int N = N_in;"
+    k_load = f"const int K = {str(K_dim)}_ptr ? {str(K_dim)}_ptr[0] : 0;" if k_is_tensor else "const int K = K_in;"
+
+    if ta:
+        a_idx = "((size_t)batch * (size_t)K * (size_t)M + (size_t)k * (size_t)M + (size_t)row)"
+    else:
+        a_idx = "((size_t)batch * (size_t)M * (size_t)K + (size_t)row * (size_t)K + (size_t)k)"
+    if tb:
+        b_idx = "((size_t)batch * (size_t)N * (size_t)K + (size_t)col * (size_t)K + (size_t)k)"
+    else:
+        b_idx = "((size_t)batch * (size_t)K * (size_t)N + (size_t)k * (size_t)N + (size_t)col)"
+    out_idx = "((size_t)batch * (size_t)M * (size_t)N + (size_t)row * (size_t)N + (size_t)col)"
+
+    alpha_ptr_name = f"{alpha_name}_ptr"
+    beta_ptr_name = f"{beta_name}_ptr"
+    cuda_src = f"""
+#include <stdint.h>
+
+#include "intentir_cuda_ops.cuh"
+
+extern "C" __global__ __launch_bounds__({block_x * block_y}) void {intent.name}(
+    const float* __restrict__ {a_name},
+    const float* __restrict__ {b_name},
+    const float* __restrict__ {bias_name},
+    const float* __restrict__ {alpha_ptr_name},
+    const float* __restrict__ {beta_ptr_name},
+    float* __restrict__ {out_name},
+    {b_param},
+    {m_param},
+    {n_param},
+    {k_param}) {{
+  {b_load}
+  {m_load}
+  {n_load}
+  {k_load}
+  const int batch = (int)blockIdx.z;
+  const int row = (int)blockIdx.y * (int)blockDim.y + (int)threadIdx.y;
+  const int col = (int)blockIdx.x * (int)blockDim.x + (int)threadIdx.x;
+  if (batch >= BATCH || row >= M || col >= N) return;
+  const float alpha = {alpha_ptr_name} ? {alpha_ptr_name}[0] : 1.0f;
+  const float beta = {beta_ptr_name} ? {beta_ptr_name}[0] : 1.0f;
+  float acc = 0.0f;
+  for (int k = 0; k < K; ++k) {{
+    const float av = intentir_ldg_f32({a_name} + {a_idx});
+    const float bv = intentir_ldg_f32({b_name} + {b_idx});
+    acc += av * bv;
+  }}
+  const float bias_val = intentir_ldg_f32({bias_name} + {out_idx});
+  {out_name}[{out_idx}] = alpha * acc + beta * bias_val;
+}}
+""".lstrip()
+
+    tensor_args = [a_name, b_name, bias_name, alpha_name, beta_name, out_name]
+    scalar_args: Dict[str, str] = {}
+    arg_names = [a_name, b_name, bias_name, alpha_name, beta_name, out_name]
+    for dim_name, is_tensor in (
+        (str(batch_dim), b_is_tensor),
+        (str(M_dim), m_is_tensor),
+        (str(N_dim), n_is_tensor),
+        (str(K_dim), k_is_tensor),
+    ):
+        if is_tensor:
+            tensor_args.append(dim_name)
+        else:
+            scalar_args[dim_name] = "i32"
+        arg_names.append(dim_name)
+
+    io_spec = _io_spec_from_args(intent, tensor_args=tensor_args, scalar_args=scalar_args, arg_names=arg_names)
+    launch = CudaLaunch(grid=(grid_x, grid_y, grid_z), block=(block_x, block_y, 1), shared_mem=0)
+    return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=dict(bindings))
+
+
+def _kernel_batch_norm2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    """
+    Canonical batch_norm2d lowering for input shape [N, C, HW].
+    Produces 5 outputs:
+      output_1, mean, inv_std, running_mean_out, running_var_out
+    """
+    produced = {o.output for o in (intent.ops or [])}
+    outs = [str(x) for x in (intent.outputs or [])]
+    out_set = set(outs)
+    required_outs = {"output_1", "mean", "inv_std", "running_mean_out", "running_var_out"}
+    if not required_outs.issubset(out_set):
+        raise CudaLoweringError("batch_norm lowering expects outputs: output_1/mean/inv_std/running_mean_out/running_var_out")
+
+    inputs = [n for n in intent.tensors.keys() if n not in produced and n not in out_set]
+    required_inputs = ["input", "weight", "bias", "running_mean", "running_var", "eps", "momentum"]
+    for name in required_inputs:
+        if name not in inputs:
+            raise CudaLoweringError(f"batch_norm lowering missing required input: {name}")
+
+    x_name = "input"
+    w_name = "weight"
+    b_name = "bias"
+    rm_name = "running_mean"
+    rv_name = "running_var"
+    eps_name = "eps"
+    momentum_name = "momentum"
+    eps_ptr_name = f"{eps_name}_ptr"
+    momentum_ptr_name = f"{momentum_name}_ptr"
+    n_elements_name = "n_elements" if "n_elements" in inputs else None
+    n_minus_1_name = "n_minus_1" if "n_minus_1" in inputs else None
+    n_elements_ptr_name = f"{n_elements_name}_ptr" if n_elements_name is not None else None
+    n_minus_1_ptr_name = f"{n_minus_1_name}_ptr" if n_minus_1_name is not None else None
+
+    y_name = "output_1"
+    mean_name = "mean"
+    inv_std_name = "inv_std"
+    rm_out_name = "running_mean_out"
+    rv_out_name = "running_var_out"
+
+    x_shape = _shape_values(intent, x_name)
+    if len(x_shape) != 3:
+        raise CudaLoweringError("batch_norm lowering expects rank-3 input [N,C,HW]")
+    N_dim, C_dim, HW_dim = x_shape
+    N = _resolve_dim_int(N_dim, bindings, name="N")
+    C = _resolve_dim_int(C_dim, bindings, name="C")
+    HW = _resolve_dim_int(HW_dim, bindings, name="HW")
+
+    sched = intent.schedule or ScheduleSketch()
+    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=256)
+    if block_x <= 0:
+        block_x = 256
+    block_x = max(32, min(1024, int(block_x)))
+    if (block_x & (block_x - 1)) != 0:
+        block_x = 1 << int(block_x - 1).bit_length()
+
+    n_is_tensor = _is_scalar_tensor(intent, str(N_dim), dtype="i32")
+    c_is_tensor = _is_scalar_tensor(intent, str(C_dim), dtype="i32")
+    hw_is_tensor = _is_scalar_tensor(intent, str(HW_dim), dtype="i32")
+    n_param = f"const int* {str(N_dim)}_ptr" if n_is_tensor else "int N_in"
+    c_param = f"const int* {str(C_dim)}_ptr" if c_is_tensor else "int C_in"
+    hw_param = f"const int* {str(HW_dim)}_ptr" if hw_is_tensor else "int HW_in"
+    n_load = f"const int N = {str(N_dim)}_ptr ? {str(N_dim)}_ptr[0] : 0;" if n_is_tensor else "const int N = N_in;"
+    c_load = f"const int C = {str(C_dim)}_ptr ? {str(C_dim)}_ptr[0] : 0;" if c_is_tensor else "const int C = C_in;"
+    hw_load = f"const int HW = {str(HW_dim)}_ptr ? {str(HW_dim)}_ptr[0] : 0;" if hw_is_tensor else "const int HW = HW_in;"
+
+    n_elements_load = f"{n_elements_ptr_name}[0]" if n_elements_ptr_name is not None else "(float)(N * HW)"
+    n_minus_1_load = f"{n_minus_1_ptr_name}[0]" if n_minus_1_ptr_name is not None else "(float)((N * HW) > 1 ? (N * HW - 1) : 1)"
+
+    n_elements_param = f", const float* __restrict__ {n_elements_ptr_name}" if n_elements_ptr_name is not None else ""
+    n_minus_1_param = f", const float* __restrict__ {n_minus_1_ptr_name}" if n_minus_1_ptr_name is not None else ""
+    tensor_args = [x_name, w_name, b_name, rm_name, rv_name, eps_name, momentum_name]
+    arg_names = [x_name, w_name, b_name, rm_name, rv_name, eps_name, momentum_name]
+    if n_elements_name is not None:
+        tensor_args.append(n_elements_name)
+        arg_names.append(n_elements_name)
+    if n_minus_1_name is not None:
+        tensor_args.append(n_minus_1_name)
+        arg_names.append(n_minus_1_name)
+
+    tensor_args.extend([y_name, mean_name, inv_std_name, rm_out_name, rv_out_name])
+    arg_names.extend([y_name, mean_name, inv_std_name, rm_out_name, rv_out_name])
+
+    scalar_args: Dict[str, str] = {}
+    for dim_name, is_tensor in ((str(N_dim), n_is_tensor), (str(C_dim), c_is_tensor), (str(HW_dim), hw_is_tensor)):
+        if is_tensor:
+            tensor_args.append(dim_name)
+        else:
+            scalar_args[dim_name] = "i32"
+        arg_names.append(dim_name)
+
+    cuda_src = f"""
+#include <math.h>
+#include <stdint.h>
+
+#include "intentir_cuda_ops.cuh"
+#include "kernels/reduce.cuh"
+
+extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(
+    const float* __restrict__ {x_name},
+    const float* __restrict__ {w_name},
+    const float* __restrict__ {b_name},
+    const float* __restrict__ {rm_name},
+    const float* __restrict__ {rv_name},
+    const float* __restrict__ {eps_ptr_name},
+    const float* __restrict__ {momentum_ptr_name}{n_elements_param}{n_minus_1_param},
+    float* __restrict__ {y_name},
+    float* __restrict__ {mean_name},
+    float* __restrict__ {inv_std_name},
+    float* __restrict__ {rm_out_name},
+    float* __restrict__ {rv_out_name},
+    {n_param},
+    {c_param},
+    {hw_param}) {{
+  {n_load}
+  {c_load}
+  {hw_load}
+  const int ch = (int)blockIdx.x;
+  if (ch >= C) return;
+  constexpr int BLOCK_THREADS = {block_x};
+  __shared__ intentir_cuda::BlockAllreduceF32<BLOCK_THREADS> red_sum;
+  __shared__ intentir_cuda::BlockAllreduceF32<BLOCK_THREADS> red_sqs;
+  __shared__ float s_mean;
+  __shared__ float s_inv_std;
+  __shared__ float s_w;
+  __shared__ float s_b;
+  const int nhw_i = N * HW;
+  const float n_elements = fmaxf({n_elements_load}, 1.0f);
+  const float n_minus_1 = fmaxf({n_minus_1_load}, 1.0f);
+  float local_sum = 0.0f;
+  float local_sqs = 0.0f;
+  for (int idx = (int)threadIdx.x; idx < nhw_i; idx += (int)blockDim.x) {{
+    const int n = idx / HW;
+    const int hw = idx - n * HW;
+    const size_t off = ((size_t)n * (size_t)C + (size_t)ch) * (size_t)HW + (size_t)hw;
+    const float xv = intentir_ldg_f32({x_name} + off);
+    local_sum += xv;
+    local_sqs += xv * xv;
+  }}
+  const float sum = intentir_cuda::block_allreduce_sum<BLOCK_THREADS>(local_sum, &red_sum);
+  const float sqs = intentir_cuda::block_allreduce_sum<BLOCK_THREADS>(local_sqs, &red_sqs);
+  const float eps = {eps_ptr_name} ? {eps_ptr_name}[0] : 1e-5f;
+  const float momentum = {momentum_ptr_name} ? {momentum_ptr_name}[0] : 0.1f;
+  if ((int)threadIdx.x == 0) {{
+    const float mu = sum / n_elements;
+    float var = sqs / n_elements - mu * mu;
+    if (var < 0.0f) var = 0.0f;
+    const float inv = rsqrtf(var + eps);
+    s_mean = mu;
+    s_inv_std = inv;
+    s_w = intentir_ldg_f32({w_name} + (size_t)ch);
+    s_b = intentir_ldg_f32({b_name} + (size_t)ch);
+    {mean_name}[(size_t)ch] = mu;
+    {inv_std_name}[(size_t)ch] = inv;
+    const float one_minus = 1.0f - momentum;
+    {rm_out_name}[(size_t)ch] = one_minus * intentir_ldg_f32({rm_name} + (size_t)ch) + momentum * mu;
+    const float unbiased_var = var * (n_elements / n_minus_1);
+    {rv_out_name}[(size_t)ch] = one_minus * intentir_ldg_f32({rv_name} + (size_t)ch) + momentum * unbiased_var;
+  }}
+  __syncthreads();
+  for (int idx = (int)threadIdx.x; idx < nhw_i; idx += (int)blockDim.x) {{
+    const int n = idx / HW;
+    const int hw = idx - n * HW;
+    const size_t off = ((size_t)n * (size_t)C + (size_t)ch) * (size_t)HW + (size_t)hw;
+    const float xv = intentir_ldg_f32({x_name} + off);
+    const float yv = ((xv - s_mean) * s_inv_std) * s_w + s_b;
+    {y_name}[off] = yv;
+  }}
+}}
+""".lstrip()
+
+    io_spec = _io_spec_from_args(intent, tensor_args=tensor_args, scalar_args=scalar_args, arg_names=arg_names)
+    launch = CudaLaunch(grid=(max(1, int(C)), 1, 1), block=(block_x, 1, 1), shared_mem=0)
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=[y_name, mean_name, inv_std_name, rm_out_name, rv_out_name],
+        bindings=dict(bindings),
+    )
 
 
 def _kernel_allclose_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
@@ -3180,6 +3544,7 @@ def lower_intent_to_cuda_kernel(
 
     # 2) Pattern-based kernels (fused).
     outs = set(intent.outputs or [])
+    op_names = {o.op for o in (intent.ops or [])}
     # any/all row-reduction family.
     op_seq = [o.op for o in (intent.ops or [])]
     if op_seq in (["const", "ne", "reduce_any"], ["const", "eq", "reduce_any"], ["const", "eq", "reduce_any", "not"], ["const", "ne", "reduce_any", "not"]):
@@ -3190,12 +3555,19 @@ def lower_intent_to_cuda_kernel(
             return _kernel_addmm_2d_f32(intent, bindings)
         if len(out_shape) == 1:
             return _kernel_addmv_2d_f32(intent, bindings)
+        if len(out_shape) == 3:
+            return _kernel_baddbmm_3d_f32(intent, bindings)
     if op_seq == ["sub", "abs", "abs", "mul", "add", "le", "not", "reduce_any", "not"]:
         return _kernel_allclose_2d_f32(intent, bindings)
+    if {"output_1", "mean", "inv_std", "running_mean_out", "running_var_out"}.issubset(outs) and {
+        "reduce_sum",
+        "broadcast_in_dim",
+        "rsqrt",
+    }.issubset(op_names):
+        return _kernel_batch_norm2d_f32(intent, bindings)
     if {"Y", "Mean", "Rstd"}.issubset(outs):
         return _kernel_layernorm_2d_f32(intent, bindings)
     # Softmax: recognize by name or by presence of reduce_max + exp + reduce_sum.
-    op_names = {o.op for o in (intent.ops or [])}
     if ("softmax" in str(intent.name).lower()) or ({"reduce_max", "reduce_sum", "exp", "div"}.issubset(op_names)):
         return _kernel_softmax_2d_last_f32(intent, bindings)
 

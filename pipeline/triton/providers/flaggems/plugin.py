@@ -30,6 +30,7 @@ _ALWAYS_CANONICAL_SPECS = frozenset(
         "bitwise_not2d",
         "row_max",
         "any_kernel_dim",
+        "batch_norm2d",
         "masked_select2d",
         "masked_scatter2d",
         "mse_loss2d",

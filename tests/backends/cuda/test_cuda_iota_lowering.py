@@ -207,6 +207,88 @@ def test_cuda_lowering_supports_addmv_pattern(monkeypatch) -> None:
     assert "alpha * acc + beta *" in lowered.cuda_src
 
 
+def test_cuda_lowering_supports_baddbmm_pattern(monkeypatch) -> None:
+    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "baddbmm3d_cuda_lowering",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["BATCH", "M", "K"], "layout": "row_major"},
+                "B": {"dtype": "f32", "shape": ["BATCH", "K", "N"], "layout": "row_major"},
+                "bias": {"dtype": "f32", "shape": ["BATCH", "M", "N"], "layout": "row_major"},
+                "alpha": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "beta": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "matmul_out": {"dtype": "f32", "shape": ["BATCH", "M", "N"], "layout": "row_major"},
+                "scaled_matmul": {"dtype": "f32", "shape": ["BATCH", "M", "N"], "layout": "row_major"},
+                "scaled_bias": {"dtype": "f32", "shape": ["BATCH", "M", "N"], "layout": "row_major"},
+                "O": {"dtype": "f32", "shape": ["BATCH", "M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "matmul", "inputs": ["A", "B"], "output": "matmul_out"},
+                {"op": "mul", "inputs": ["matmul_out", "alpha"], "output": "scaled_matmul"},
+                {"op": "mul", "inputs": ["bias", "beta"], "output": "scaled_bias"},
+                {"op": "add", "inputs": ["scaled_matmul", "scaled_bias"], "output": "O"},
+            ],
+            "outputs": ["O"],
+            "parallel_axes": ["BATCH", "M", "N"],
+            "schedule": {"tile_m": 8, "tile_n": 16, "tile_k": 8, "parallel_axes": ["BATCH", "M", "N"]},
+        }
+    )
+    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"BATCH": 2, "M": 8, "N": 8, "K": 16})
+    assert lowered.kernel_name == "baddbmm3d_cuda_lowering"
+    assert "blockIdx.z" in lowered.cuda_src
+    assert "alpha * acc + beta * bias" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_batch_norm2d_pattern(monkeypatch) -> None:
+    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "batch_norm2d_cuda_lowering",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["N", "C", "HW"], "layout": "row_major"},
+                "weight": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "bias": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "running_mean": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "running_var": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "eps": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "momentum": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "n_elements": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "n_minus_1": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "mean": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "mean_bcast": {"dtype": "f32", "shape": ["N", "C", "HW"], "layout": "row_major"},
+                "var_eps": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "inv_std": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "output_1": {"dtype": "f32", "shape": ["N", "C", "HW"], "layout": "row_major"},
+                "running_mean_out": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+                "running_var_out": {"dtype": "f32", "shape": ["C"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "reduce_sum", "inputs": ["input"], "output": "mean", "attrs": {"dims": [0, 2]}},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["mean"],
+                    "output": "mean_bcast",
+                    "attrs": {"out_shape": ["N", "C", "HW"], "broadcast_dims": [1]},
+                },
+                {"op": "add", "inputs": ["mean", "eps"], "output": "var_eps"},
+                {"op": "rsqrt", "inputs": ["var_eps"], "output": "inv_std"},
+                {"op": "identity", "inputs": ["input"], "output": "output_1"},
+                {"op": "add", "inputs": ["running_mean", "mean"], "output": "running_mean_out"},
+                {"op": "add", "inputs": ["running_var", "mean"], "output": "running_var_out"},
+            ],
+            "outputs": ["output_1", "mean", "inv_std", "running_mean_out", "running_var_out"],
+            "parallel_axes": ["N", "C", "HW"],
+            "schedule": {"tile_n": 256, "parallel_axes": ["N", "C", "HW"]},
+        }
+    )
+    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"N": 2, "C": 4, "HW": 8})
+    assert lowered.kernel_name == "batch_norm2d_cuda_lowering"
+    assert "running_mean_out" in lowered.cuda_src
+    assert "block_allreduce_sum" in lowered.cuda_src
+    assert len(lowered.output_names) == 5
+
+
 def test_cuda_lowering_supports_allclose_pattern(monkeypatch) -> None:
     monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(

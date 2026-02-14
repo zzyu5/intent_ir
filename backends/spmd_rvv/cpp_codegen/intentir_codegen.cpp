@@ -2821,6 +2821,18 @@ int main(int argc, char** argv) {
           dtype_env[out] = "f32";
           continue;
         }
+        if (sa.size() == 3 && sb.size() == 3) {
+          int64_t B = sa[0];
+          int64_t M = ta ? sa[2] : sa[1];
+          int64_t K = ta ? sa[1] : sa[2];
+          int64_t B2 = sb[0];
+          int64_t K2 = tb ? sb[2] : sb[1];
+          int64_t N = tb ? sb[1] : sb[2];
+          if (B2 != B || K2 != K) fail("matmul infer shape mismatch (3D)");
+          shape_env[out] = {B, M, N};
+          dtype_env[out] = "f32";
+          continue;
+        }
         if (sa.size() == 4 && sb.size() == 4) {
           if (sa[0] != sb[0] || sa[1] != sb[1]) fail("matmul infer shape mismatch (4D batch/head)");
           int64_t B = sa[0], H = sa[1];
@@ -2833,7 +2845,7 @@ int main(int argc, char** argv) {
           dtype_env[out] = "f32";
           continue;
         }
-        fail("matmul infer supports only rank-2, rank-2x1, or rank-4");
+        fail("matmul infer supports rank-2/3/4 and rank-2x1");
       }
       fail("cannot infer output shape for op: " + kind);
     }
@@ -2874,6 +2886,16 @@ int main(int argc, char** argv) {
         int64_t K2 = sb[0];
         if (K2 != K) continue;
         matmul_flops_total += 2.0 * (double)M * (double)K;
+        continue;
+      }
+      if (sa.size() == 3 && sb.size() == 3) {
+        int64_t B = sa[0];
+        int64_t M = ta ? sa[2] : sa[1];
+        int64_t K = ta ? sa[1] : sa[2];
+        int64_t K2 = tb ? sb[2] : sb[1];
+        int64_t N = tb ? sb[1] : sb[2];
+        if (K2 != K) continue;
+        matmul_flops_total += 2.0 * (double)B * (double)M * (double)N * (double)K;
         continue;
       }
       if (sa.size() == 4 && sb.size() == 4) {
