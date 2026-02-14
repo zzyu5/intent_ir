@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_active_batch_v1",
-  "generated_at": "2026-02-13T20:33:01+00:00",
+  "generated_at": "2026-02-14T00:18:26+00:00",
   "branch": "flaggems",
   "batch_size": 10,
   "selection_policy": [
@@ -43,28 +43,6 @@
       "intent_ops": []
     },
     {
-      "id": "flaggems::polar",
-      "semantic_op": "polar",
-      "family": "elementwise_broadcast",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
-    },
-    {
-      "id": "flaggems::quantile",
-      "semantic_op": "quantile",
-      "family": "elementwise_broadcast",
-      "status": "blocked_ir",
-      "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
-    },
-    {
       "id": "flaggems::scaled_dot_product_attention",
       "semantic_op": "scaled_dot_product_attention",
       "family": "attention_sequence",
@@ -87,9 +65,9 @@
       "intent_ops": []
     },
     {
-      "id": "flaggems::scatter",
-      "semantic_op": "scatter",
-      "family": "index_scatter_gather",
+      "id": "flaggems::unique2",
+      "semantic_op": "unique2",
+      "family": "elementwise_broadcast",
       "status": "blocked_ir",
       "passes": false,
       "reason_code": "no_intentir_mapping",
@@ -98,9 +76,9 @@
       "intent_ops": []
     },
     {
-      "id": "flaggems::select_scatter",
-      "semantic_op": "select_scatter",
-      "family": "index_scatter_gather",
+      "id": "flaggems::weight_norm_interface",
+      "semantic_op": "weight_norm_interface",
+      "family": "norm_activation",
       "status": "blocked_ir",
       "passes": false,
       "reason_code": "no_intentir_mapping",
@@ -109,21 +87,49 @@
       "intent_ops": []
     },
     {
-      "id": "flaggems::slice_scatter",
-      "semantic_op": "slice_scatter",
-      "family": "index_scatter_gather",
-      "status": "blocked_ir",
+      "id": "flaggems::argmax",
+      "semantic_op": "argmax",
+      "family": "reduction",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
       "e2e_spec": null,
-      "intent_ops": []
+      "intent_ops": [
+        "argmax"
+      ]
+    },
+    {
+      "id": "flaggems::argmin",
+      "semantic_op": "argmin",
+      "family": "reduction",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "argmin"
+      ]
+    },
+    {
+      "id": "flaggems::constant_pad_nd",
+      "semantic_op": "constant_pad_nd",
+      "family": "elementwise_broadcast",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "missing_e2e_spec",
+      "next_action": "add_e2e_spec",
+      "e2e_spec": null,
+      "intent_ops": [
+        "pad"
+      ]
     }
   ],
   "context": {
     "feature_list_path": "workflow/flaggems/state/feature_list.json",
     "progress_log_path": "workflow/flaggems/state/progress_log.jsonl",
-    "git_log": "ebc9011 workflow: record trace-triu-upsample batch and refresh queue\n6b1f134 intentir: expand flaggems mapping with conv and nearest/trace/triu ops\ne778320 workflow: record one-hot/nll-forward/maxpool batch and replan queue\n4e5cf1b intentir: add one_hot/nll_loss_forward/max_pool2d_with_indices wave\n3f75bed workflow: finalize handoff for masked-select/mse/nan-to-num/nll wave\n32bbc88 workflow: record masked-select/mse/nan-to-num/nll batch and refresh queue\n7169c84 intentir: add masked_select/mse_loss/nan_to_num/nll_loss2d_forward wave\n69610df workflow: finalize handoff for isin-kron-linspace-logspace-masked_scatter wave\nc8e7240 workflow: record isin-kron-linspace-logspace-masked_scatter batch and replan queue\n643e46e flaggems: add isin/kron/linspace/logspace/masked_scatter wave and scoped matrix convergence\ncc3c7dc workflow: record glu-cum-index batch and replan blocked-ir queue\nd1d2360 intentir: add glu/cum/index primitives and flaggems spec wave\n430aee5 workflow: record flip-embedding batch progress and refresh queue\n79f8253 flaggems: map flip/embedding and preserve canonical override in llm repair\n7a68432 workflow: record cuda-iota batch and refresh blocked-ir queue\n6de906a cuda: add iota lowering support for eye-style intents\n8c9511f workflow: record celu-eye batch results and replan blocked-ir queue\n59804e7 flaggems: add celu/eye mappings and stabilize matrix suite selection\n0a0923f workflow: sync feature batch after elu integration and backend reruns\n4673f27 flaggems: add elu mapping/spec and refine cuda timeout diagnostics",
+    "git_log": "9a8c184 workflow: refresh active batch context after trace-triu-upsample wave\nebc9011 workflow: record trace-triu-upsample batch and refresh queue\n6b1f134 intentir: expand flaggems mapping with conv and nearest/trace/triu ops\ne778320 workflow: record one-hot/nll-forward/maxpool batch and replan queue\n4e5cf1b intentir: add one_hot/nll_loss_forward/max_pool2d_with_indices wave\n3f75bed workflow: finalize handoff for masked-select/mse/nan-to-num/nll wave\n32bbc88 workflow: record masked-select/mse/nan-to-num/nll batch and refresh queue\n7169c84 intentir: add masked_select/mse_loss/nan_to_num/nll_loss2d_forward wave\n69610df workflow: finalize handoff for isin-kron-linspace-logspace-masked_scatter wave\nc8e7240 workflow: record isin-kron-linspace-logspace-masked_scatter batch and replan queue\n643e46e flaggems: add isin/kron/linspace/logspace/masked_scatter wave and scoped matrix convergence\ncc3c7dc workflow: record glu-cum-index batch and replan blocked-ir queue\nd1d2360 intentir: add glu/cum/index primitives and flaggems spec wave\n430aee5 workflow: record flip-embedding batch progress and refresh queue\n79f8253 flaggems: map flip/embedding and preserve canonical override in llm repair\n7a68432 workflow: record cuda-iota batch and refresh blocked-ir queue\n6de906a cuda: add iota lowering support for eye-style intents\n8c9511f workflow: record celu-eye batch results and replan blocked-ir queue\n59804e7 flaggems: add celu/eye mappings and stabilize matrix suite selection\n0a0923f workflow: sync feature batch after elu integration and backend reruns",
     "progress_tail": [
       "{\"ts\": \"2026-02-13T19:20:23+00:00\", \"commit\": \"c8e7240\", \"summary\": \"Session finalized on committed wave for isin/kron/linspace/logspace/masked_scatter with scoped backend validation.\", \"batch_ops\": [\"isin\", \"kron\", \"linspace\", \"logspace\", \"masked_scatter\"], \"active_batch_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_isin_kron_lin_log_masked_v2/active_batch_isin_kron_lin_log_masked.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_isin_kron_lin_log_masked_v2/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_isin_kron_lin_log_masked_v2/status_converged.json\", \"next_focus\": \"1) Implement RVV/CUDA lowering for kron and masked_scatter. 2) Resolve CUDA timeout for linspace/logspace. 3) Continue blocked_ir active batch: ScaleDotProductAttention, conv1d/conv3d/conv_depthwise2d, flash_attention_forward.\", \"run_ok\": false, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260213/batch_isin_kron_lin_log_masked_v2\", \"counts_by_status\": {\"blocked_backend\": 167, \"blocked_ir\": 26, \"rvv_only\": 3}}",
       "{\"ts\": \"2026-02-13T19:37:14+00:00\", \"commit\": \"7169c84\", \"summary\": \"Mapped masked_select/mse_loss/nan_to_num/nll_loss2d_forward into IntentIR and completed scoped RVV/CUDA classification.\", \"batch_ops\": [\"masked_select\", \"mse_loss\", \"nan_to_num\", \"nll_loss2d_forward\"], \"active_batch_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_masked_select_mse_nan_nll_v2/active_batch_masked_select_mse_nan_nll.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_masked_select_mse_nan_nll_v2/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260213/batch_masked_select_mse_nan_nll_v2/status_converged.json\", \"next_focus\": \"Implement backend lowering for masked_select/mse_loss/nan_to_num/nll_loss2d_forward to move this batch from blocked_backend to dual_pass; continue remaining blocked_ir queue for attention/conv/pool.\", \"run_ok\": false, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260213/batch_masked_select_mse_nan_nll_v2\", \"counts_by_status\": {\"blocked_backend\": 174, \"blocked_ir\": 22}}",

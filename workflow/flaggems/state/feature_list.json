@@ -1,13 +1,13 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-13T20:30:49+00:00",
+  "generated_at": "2026-02-14T00:18:26+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
       "dual_pass": 106,
-      "blocked_backend": 78,
-      "blocked_ir": 12
+      "blocked_backend": 83,
+      "blocked_ir": 7
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -1314,12 +1314,14 @@
       "id": "flaggems::polar",
       "semantic_op": "polar",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "polar2d",
+      "intent_ops": [
+        "polar"
+      ]
     },
     {
       "id": "flaggems::pow_scalar",
@@ -1364,12 +1366,14 @@
       "id": "flaggems::quantile",
       "semantic_op": "quantile",
       "family": "elementwise_broadcast",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "quantile2d",
+      "intent_ops": [
+        "quantile"
+      ]
     },
     {
       "id": "flaggems::reciprocal",
@@ -2354,34 +2358,40 @@
       "id": "flaggems::scatter",
       "semantic_op": "scatter",
       "family": "index_scatter_gather",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "scatter2d",
+      "intent_ops": [
+        "scatter"
+      ]
     },
     {
       "id": "flaggems::select_scatter",
       "semantic_op": "select_scatter",
       "family": "index_scatter_gather",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "select_scatter2d",
+      "intent_ops": [
+        "select_scatter"
+      ]
     },
     {
       "id": "flaggems::slice_scatter",
       "semantic_op": "slice_scatter",
       "family": "index_scatter_gather",
-      "status": "blocked_ir",
+      "status": "blocked_backend",
       "passes": false,
-      "reason_code": "no_intentir_mapping",
-      "next_action": "semantic_mapping",
-      "e2e_spec": null,
-      "intent_ops": []
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
+      "e2e_spec": "slice_scatter2d",
+      "intent_ops": [
+        "slice_scatter"
+      ]
     },
     {
       "id": "flaggems::where_scalar_other",

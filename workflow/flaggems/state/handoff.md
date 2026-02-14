@@ -1,9 +1,9 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-13T20:32:08+00:00
-- Commit: `6b1f134`
-- Summary: Mapped trace/triu/upsample_nearest(1d/2d) into IntentIR with e2e specs and multibackend classification.
-- Batch Ops (4): trace, triu, upsample_nearest1d, upsample_nearest2d
-- Run Summary: `artifacts/flaggems_matrix/daily/20260214/batch_trace_triu_upsample_v1/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260214/batch_trace_triu_upsample_v1/status_converged.json`
-- Next Focus: Continue blocked_ir queue (attention/scatter/select_scatter/slice_scatter/polar/quantile/unique2/weight_norm_interface) and add RVV/CUDA lowering for trace/triu/upsample_nearest ops.
+- Timestamp: 2026-02-14T00:18:57+00:00
+- Commit: `3583f1b`
+- Summary: Mapped scatter/select_scatter/slice_scatter/quantile/polar into IntentIR with deterministic specs and multibackend classification.
+- Batch Ops (5): scatter, select_scatter, slice_scatter, quantile, polar
+- Run Summary: `artifacts/flaggems_matrix/daily/20260214/batch_scatter_quantile_polar_v2/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260214/batch_scatter_quantile_polar_v2/status_converged.json`
+- Next Focus: Drive remaining blocked_ir queue (attention/per_token/unique2/weight_norm), then backend-lowering for scatter/quantile/polar family.
