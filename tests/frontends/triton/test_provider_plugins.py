@@ -274,3 +274,33 @@ def test_flaggems_plugin_forces_deterministic_overrides_for_known_unstable_specs
     assert info21.get("enabled_by") == "provider_required_deterministic_override"
     assert out21.intent.name == "polar2d"
     assert out21_exp is not None
+
+    out22, out22_exp, info22 = plugin.maybe_normalize_candidate(
+        spec_name="unique2d",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info22 is not None
+    assert info22.get("enabled_by") == "provider_required_deterministic_override"
+    assert out22.intent.name == "unique2d"
+    assert out22_exp is not None
+
+    out23, out23_exp, info23 = plugin.maybe_normalize_candidate(
+        spec_name="weight_norm2d",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info23 is not None
+    assert info23.get("enabled_by") == "provider_required_deterministic_override"
+    assert out23.intent.name == "weight_norm2d"
+    assert out23_exp is not None
+
+    out24, out24_exp, info24 = plugin.maybe_normalize_candidate(
+        spec_name="scaled_dot_product_attention_bhsd",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info24 is not None
+    assert info24.get("enabled_by") == "provider_required_deterministic_override"
+    assert out24.intent.name == "scaled_dot_product_attention_bhsd"
+    assert out24_exp is not None

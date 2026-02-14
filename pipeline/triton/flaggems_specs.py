@@ -131,6 +131,10 @@ FLAGGEMS_SELECT_SCATTER_SRC = _module_source_text("flag_gems.ops.select_scatter"
 FLAGGEMS_SLICE_SCATTER_SRC = _module_source_text("flag_gems.ops.slice_scatter")
 FLAGGEMS_QUANTILE_SRC = _module_source_text("flag_gems.ops.quantile")
 FLAGGEMS_POLAR_SRC = _module_source_text("flag_gems.ops.polar")
+FLAGGEMS_UNIQUE_SRC = _module_source_text("flag_gems.ops.unique")
+FLAGGEMS_WEIGHT_NORM_SRC = _module_source_text("flag_gems.ops.weightnorm")
+FLAGGEMS_ATTENTION_SRC = _module_source_text("flag_gems.ops.attention")
+FLAGGEMS_PER_TOKEN_GROUP_QUANT_FP8_SRC = _module_source_text("flag_gems.ops.per_token_group_quant_fp8")
 FLAGGEMS_UPSAMPLE_NEAREST1D_SRC = _module_source_text("flag_gems.ops.upsample_nearest1d")
 FLAGGEMS_UPSAMPLE_NEAREST2D_SRC = _module_source_text("flag_gems.ops.upsample_nearest2d")
 FLAGGEMS_MSE_LOSS_SRC = _module_source_text("flag_gems.ops.mse_loss")
@@ -1637,6 +1641,112 @@ def _run_flaggems_polar2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         "angle": angle_np,
         "out": out_np,
         "output": out_np,
+    }
+
+
+def _run_flaggems_unique2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    n = int(case.shapes.get("N", 128))
+    n = max(1, n)
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+    if case.inputs and "inp" in case.inputs:
+        inp = _as_i32_tensor(np.asarray(case.inputs["inp"]), device=device).reshape(-1)
+    else:
+        # Constrain value range to keep enough duplicates for unique2 kernels.
+        vals = rg.integers(0, max(2, n // 4), size=(n,), dtype=np.int32)
+        inp = _as_i32_tensor(vals, device=device).reshape(-1)
+    with flag_gems.use_gems(include=["_unique2"]):
+        out_vals, _, _ = flag_gems_ops._unique2(inp, sorted=False, return_inverse=False, return_counts=False)
+    inp_np = _to_np(inp).astype(np.int32, copy=False)
+    out_np = _to_np(out_vals).astype(np.int32, copy=False)
+    return {
+        "inp": inp_np,
+        "input": inp_np,
+        "out": out_np,
+        "output": out_np,
+    }
+
+
+def _run_flaggems_weight_norm2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    m = int(case.shapes.get("M", 16))
+    n = int(case.shapes.get("N", 32))
+    dim = int(case.shapes.get("DIM", 1))
+    m = max(1, m)
+    n = max(1, n)
+    dim = 0 if dim == 0 else 1
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+    if case.inputs and "v" in case.inputs:
+        v = _as_f32_tensor(np.asarray(case.inputs["v"]), device=device)
+    else:
+        v = _as_f32_tensor(rg.standard_normal((m, n), dtype=np.float32), device=device)
+    if case.inputs and "g" in case.inputs:
+        g = _as_f32_tensor(np.asarray(case.inputs["g"]), device=device).reshape(-1)
+    else:
+        g_shape = (m,) if dim == 0 else (n,)
+        g = _as_f32_tensor(rg.uniform(0.25, 1.75, size=g_shape).astype(np.float32), device=device).reshape(-1)
+    with flag_gems.use_gems(include=["weight_norm_interface"]):
+        out, norm = flag_gems_ops.weight_norm_interface(v, g, dim=dim)
+    v_np = _to_np(v).astype(np.float32, copy=False)
+    g_np = _to_np(g).astype(np.float32, copy=False)
+    out_np = _to_np(out).astype(np.float32, copy=False)
+    norm_np = _to_np(norm).astype(np.float32, copy=False)
+    return {
+        "v": v_np,
+        "g": g_np,
+        "out": out_np,
+        "norm": norm_np,
+        "output": out_np,
+        "dim": np.array(int(dim), dtype=np.int32),
+    }
+
+
+def _run_flaggems_scaled_dot_product_attention_bhsd_reference(case: TestCase) -> Dict[str, np.ndarray]:
+    b = max(1, int(case.shapes.get("B", 1)))
+    h = max(1, int(case.shapes.get("H", 2)))
+    q_len = max(1, int(case.shapes.get("Q", 8)))
+    kv_len = max(1, int(case.shapes.get("K", 8)))
+    d = int(case.shapes.get("D", 16))
+    if d not in {16, 32, 64, 128, 256}:
+        d = 16
+    is_causal = bool(int(case.shapes.get("IS_CAUSAL", 0)))
+    device = str(flag_gems.device)
+    rg = _rng(int(case.seed))
+
+    def _as_f16(name: str, shape: tuple[int, ...]) -> torch.Tensor:
+        if case.inputs and name in case.inputs:
+            return torch.as_tensor(np.asarray(case.inputs[name]), device=device, dtype=torch.float16)
+        return torch.as_tensor(rg.standard_normal(shape, dtype=np.float32), device=device, dtype=torch.float16)
+
+    query = _as_f16("query", (b, h, q_len, d))
+    key = _as_f16("key", (b, h, kv_len, d))
+    value = _as_f16("value", (b, h, kv_len, d))
+    scale = np.float32(1.0 / np.sqrt(float(d)))
+
+    with flag_gems.use_gems(include=["scaled_dot_product_attention", "scaled_dot_product_attention_forward"]):
+        out = flag_gems_ops.scaled_dot_product_attention(
+            query,
+            key,
+            value,
+            attn_mask=None,
+            dropout_p=0.0,
+            is_causal=is_causal,
+            scale=float(scale),
+            enable_gqa=False,
+        )
+
+    q_np = np.asarray(_to_np(query), dtype=np.float32)
+    k_np = np.asarray(_to_np(key), dtype=np.float32)
+    v_np = np.asarray(_to_np(value), dtype=np.float32)
+    out_np = np.asarray(_to_np(out), dtype=np.float32)
+    return {
+        "query": q_np,
+        "key": k_np,
+        "value": v_np,
+        "out": out_np,
+        "output": out_np,
+        "scale": np.array(float(scale), dtype=np.float32),
+        "is_causal": np.array(int(is_causal), dtype=np.int32),
     }
 
 
@@ -3914,6 +4024,35 @@ def _norm_polar2d(shapes: Dict[str, int]) -> Dict[str, int]:
     return out
 
 
+def _norm_unique2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    out["N"] = max(1, int(out.get("N", 128)))
+    return out
+
+
+def _norm_weight_norm2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    out["M"] = max(1, int(out.get("M", 16)))
+    out["N"] = max(1, int(out.get("N", 32)))
+    out["DIM"] = 0 if int(out.get("DIM", 1)) == 0 else 1
+    return out
+
+
+def _norm_scaled_dot_product_attention_bhsd(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    out["B"] = max(1, int(out.get("B", 1)))
+    out["H"] = max(1, int(out.get("H", 2)))
+    out["Q"] = max(1, int(out.get("Q", 8)))
+    out["K"] = max(1, int(out.get("K", 8)))
+    d = int(out.get("D", 16))
+    supported = [16, 32, 64, 128, 256]
+    if d not in supported:
+        d = min(supported, key=lambda x: abs(x - d))
+    out["D"] = int(d)
+    out["IS_CAUSAL"] = int(bool(out.get("IS_CAUSAL", 0)))
+    return out
+
+
 def _norm_glu2d(shapes: Dict[str, int]) -> Dict[str, int]:
     out = dict(shapes)
     out["M"] = max(1, int(out.get("M", 4)))
@@ -4373,6 +4512,39 @@ _FLAGGEMS_SPEC_BUILDERS = {
         normalize_shapes=_norm_polar2d,
         stage_c_max_cases=4,
         mutation_bounded_max_cases=2,
+    ),
+    "unique2d": lambda: KernelSpec(
+        name="unique2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_UNIQUE_SRC",
+        runner=_run_flaggems_unique2d_reference,
+        canonical_shapes={"N": 128},
+        vary_axes=["N"],
+        normalize_shapes=_norm_unique2d,
+        stage_c_max_cases=8,
+        mutation_bounded_max_cases=4,
+    ),
+    "weight_norm2d": lambda: KernelSpec(
+        name="weight_norm2d",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_WEIGHT_NORM_SRC",
+        runner=_run_flaggems_weight_norm2d_reference,
+        canonical_shapes={"M": 16, "N": 32, "DIM": 1},
+        vary_axes=["M", "N"],
+        normalize_shapes=_norm_weight_norm2d,
+        stage_c_max_cases=6,
+        mutation_bounded_max_cases=3,
+    ),
+    "scaled_dot_product_attention_bhsd": lambda: KernelSpec(
+        name="scaled_dot_product_attention_bhsd",
+        module="pipeline.triton.flaggems_specs",
+        attr="FLAGGEMS_ATTENTION_SRC",
+        runner=_run_flaggems_scaled_dot_product_attention_bhsd_reference,
+        canonical_shapes={"B": 1, "H": 2, "Q": 8, "K": 8, "D": 16, "IS_CAUSAL": 0},
+        vary_axes=["B", "H", "Q", "K", "D"],
+        normalize_shapes=_norm_scaled_dot_product_attention_bhsd,
+        stage_c_max_cases=3,
+        mutation_bounded_max_cases=1,
     ),
     "count_nonzero2d": lambda: KernelSpec(
         name="count_nonzero2d",

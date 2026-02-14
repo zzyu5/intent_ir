@@ -1058,6 +1058,62 @@ def _canonical_eye_m2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_unique2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "unique2d",
+            "tensors": {
+                "inp": {"dtype": "i32", "shape": ["N"], "layout": "row_major"},
+                "out": {"dtype": "i32", "shape": ["U"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "unique", "inputs": ["inp"], "output": "out", "attrs": {"sorted": False}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_weight_norm2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "weight_norm2d",
+            "tensors": {
+                "v": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "g": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "weight_norm_interface", "inputs": ["v", "g"], "output": "out", "attrs": {"dim": 1}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_scaled_dot_product_attention_bhsd_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "scaled_dot_product_attention_bhsd",
+            "tensors": {
+                "query": {"dtype": "f32", "shape": ["B", "H", "Q", "D"], "layout": "row_major"},
+                "key": {"dtype": "f32", "shape": ["B", "H", "K", "D"], "layout": "row_major"},
+                "value": {"dtype": "f32", "shape": ["B", "H", "K", "D"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["B", "H", "Q", "D"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "scaled_dot_product_attention",
+                    "inputs": ["query", "key", "value"],
+                    "output": "out",
+                    "attrs": {"is_causal": False},
+                },
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
     name = str(spec_name)
     if name == "sigmoid2d":
@@ -1158,6 +1214,12 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_eye2d_intent()
     if name == "eye_m2d":
         return _canonical_eye_m2d_intent()
+    if name == "unique2d":
+        return _canonical_unique2d_intent()
+    if name == "weight_norm2d":
+        return _canonical_weight_norm2d_intent()
+    if name == "scaled_dot_product_attention_bhsd":
+        return _canonical_scaled_dot_product_attention_bhsd_intent()
     return None
 
 

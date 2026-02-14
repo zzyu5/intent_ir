@@ -358,3 +358,43 @@ def test_glu_cum_index_update_ops_validate_success() -> None:
     }
     intent = IntentFunction.from_json_dict(src)
     assert intent.name == "glu_cum_index_ok"
+
+
+def test_attention_weightnorm_quant_ops_validate_success() -> None:
+    src = {
+        "name": "attn_weightnorm_quant_ok",
+        "tensors": {
+            "query": {"dtype": "f32", "shape": ["B", "H", "Q", "D"], "layout": "row_major"},
+            "key": {"dtype": "f32", "shape": ["B", "H", "K", "D"], "layout": "row_major"},
+            "value": {"dtype": "f32", "shape": ["B", "H", "K", "D"], "layout": "row_major"},
+            "attn_out": {"dtype": "f32", "shape": ["B", "H", "Q", "D"], "layout": "row_major"},
+            "v": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            "g": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+            "wn_out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            "x": {"dtype": "f32", "shape": ["R", "C"], "layout": "row_major"},
+            "q_out": {"dtype": "f32", "shape": ["R", "C"], "layout": "row_major"},
+        },
+        "ops": [
+            {
+                "op": "scaled_dot_product_attention",
+                "inputs": ["query", "key", "value"],
+                "output": "attn_out",
+                "attrs": {"is_causal": False},
+            },
+            {
+                "op": "weight_norm_interface",
+                "inputs": ["v", "g"],
+                "output": "wn_out",
+                "attrs": {"dim": 1},
+            },
+            {
+                "op": "per_token_group_quant_fp8",
+                "inputs": ["x"],
+                "output": "q_out",
+                "attrs": {"group_size": 4, "eps": 1e-10, "scale_ue8m0": False},
+            },
+        ],
+        "outputs": ["attn_out", "wn_out", "q_out"],
+    }
+    intent = IntentFunction.from_json_dict(src)
+    assert intent.name == "attn_weightnorm_quant_ok"

@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-14T00:18:09.572370+00:00",
+  "generated_at": "2026-02-14T00:31:10.223317+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -18,8 +18,7 @@
     "source_filtered_ops": 212,
     "semantic_ops": 196,
     "by_status": {
-      "blocked_backend": 83,
-      "blocked_ir": 7,
+      "blocked_backend": 90,
       "dual_pass": 106
     },
     "by_family": {
@@ -6561,40 +6560,60 @@
         "per_token_group_quant_fp8"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
+      "intent_ops": [
+        "per_token_group_quant_fp8"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.per_token_group_quant_fp8",
       "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "status": "blocked_backend",
+      "status_reason": "missing_e2e_spec",
+      "status_reason_detail": "mapped to per_token_group_quant_fp8 primitive; no e2e spec registered",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "per_token_group_quant_fp8"
+          ],
+          "known_ops": [
+            "per_token_group_quant_fp8"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "per_token_group_quant_fp8"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "per_token_group_quant_fp8"
+          ],
+          "known_ops": [
+            "per_token_group_quant_fp8"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "per_token_group_quant_fp8"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "per_token_group_quant_fp8"
+          ],
+          "known_ops": [
+            "per_token_group_quant_fp8"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "per_token_group_quant_fp8"
+          ]
         }
       }
     },
@@ -8409,40 +8428,60 @@
         "_unique2"
       ],
       "family": "elementwise_broadcast",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "unique"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.unique2->unique",
+      "e2e_spec": "unique2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to unique; semantic op equals IntentIR op name; rvv_missing=['unique']; cuda_h100_missing=['unique']; cuda_5090d_missing=['unique']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "unique"
+          ],
+          "known_ops": [
+            "unique"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "unique"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "unique"
+          ],
+          "known_ops": [
+            "unique"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "unique"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "unique"
+          ],
+          "known_ops": [
+            "unique"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "unique"
+          ]
         }
       }
     },
@@ -11414,40 +11453,60 @@
         "weight_norm_interface"
       ],
       "family": "norm_activation",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "weight_norm_interface"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.weight_norm_interface",
+      "e2e_spec": "weight_norm2d",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to weight_norm_interface primitive; rvv_missing=['weight_norm_interface']; cuda_h100_missing=['weight_norm_interface']; cuda_5090d_missing=['weight_norm_interface']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "weight_norm_interface"
+          ],
+          "known_ops": [
+            "weight_norm_interface"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "weight_norm_interface"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "weight_norm_interface"
+          ],
+          "known_ops": [
+            "weight_norm_interface"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "weight_norm_interface"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "weight_norm_interface"
+          ],
+          "known_ops": [
+            "weight_norm_interface"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "weight_norm_interface"
+          ]
         }
       }
     },
@@ -13445,40 +13504,60 @@
         "ScaleDotProductAttention"
       ],
       "family": "attention_sequence",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "scaled_dot_product_attention"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.ScaleDotProductAttention->scaled_dot_product_attention",
+      "e2e_spec": "scaled_dot_product_attention_bhsd",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to scaled_dot_product_attention; mapped to scaled_dot_product_attention primitive; rvv_missing=['scaled_dot_product_attention']; cuda_h100_missing=['scaled_dot_product_attention']; cuda_5090d_missing=['scaled_dot_product_attention']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "scaled_dot_product_attention"
+          ],
+          "known_ops": [
+            "scaled_dot_product_attention"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "scaled_dot_product_attention"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "scaled_dot_product_attention"
+          ],
+          "known_ops": [
+            "scaled_dot_product_attention"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "scaled_dot_product_attention"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "scaled_dot_product_attention"
+          ],
+          "known_ops": [
+            "scaled_dot_product_attention"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "scaled_dot_product_attention"
+          ]
         }
       }
     },
@@ -13551,40 +13630,60 @@
         "flash_attention_forward"
       ],
       "family": "attention_sequence",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "scaled_dot_product_attention"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.flash_attention_forward->scaled_dot_product_attention",
+      "e2e_spec": "scaled_dot_product_attention_bhsd",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to scaled_dot_product_attention; mapped to scaled_dot_product_attention primitive; rvv_missing=['scaled_dot_product_attention']; cuda_h100_missing=['scaled_dot_product_attention']; cuda_5090d_missing=['scaled_dot_product_attention']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "scaled_dot_product_attention"
+          ],
+          "known_ops": [
+            "scaled_dot_product_attention"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "scaled_dot_product_attention"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "scaled_dot_product_attention"
+          ],
+          "known_ops": [
+            "scaled_dot_product_attention"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "scaled_dot_product_attention"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "scaled_dot_product_attention"
+          ],
+          "known_ops": [
+            "scaled_dot_product_attention"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "scaled_dot_product_attention"
+          ]
         }
       }
     },
@@ -13594,40 +13693,60 @@
         "scaled_dot_product_attention"
       ],
       "family": "attention_sequence",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "scaled_dot_product_attention"
+      ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.scaled_dot_product_attention",
+      "e2e_spec": "scaled_dot_product_attention_bhsd",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to scaled_dot_product_attention primitive; rvv_missing=['scaled_dot_product_attention']; cuda_h100_missing=['scaled_dot_product_attention']; cuda_5090d_missing=['scaled_dot_product_attention']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "scaled_dot_product_attention"
+          ],
+          "known_ops": [
+            "scaled_dot_product_attention"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "scaled_dot_product_attention"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "scaled_dot_product_attention"
+          ],
+          "known_ops": [
+            "scaled_dot_product_attention"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "scaled_dot_product_attention"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "scaled_dot_product_attention"
+          ],
+          "known_ops": [
+            "scaled_dot_product_attention"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "scaled_dot_product_attention"
+          ]
         }
       }
     },
@@ -13637,40 +13756,60 @@
         "scaled_dot_product_attention_forward"
       ],
       "family": "attention_sequence",
-      "intent_ops": [],
-      "mapping_kind": "unmapped",
-      "intent_pattern_id": "none",
-      "e2e_spec": null,
-      "status": "blocked_ir",
-      "status_reason": "no_intentir_mapping",
-      "status_reason_detail": "no semantic rule matched and no direct IntentIR op",
+      "intent_ops": [
+        "scaled_dot_product_attention"
+      ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.scaled_dot_product_attention_forward->scaled_dot_product_attention",
+      "e2e_spec": "scaled_dot_product_attention_bhsd",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to scaled_dot_product_attention; mapped to scaled_dot_product_attention primitive; rvv_missing=['scaled_dot_product_attention']; cuda_h100_missing=['scaled_dot_product_attention']; cuda_5090d_missing=['scaled_dot_product_attention']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "scaled_dot_product_attention"
+          ],
+          "known_ops": [
+            "scaled_dot_product_attention"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "scaled_dot_product_attention"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "scaled_dot_product_attention"
+          ],
+          "known_ops": [
+            "scaled_dot_product_attention"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "scaled_dot_product_attention"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
-          "requested_ops": [],
-          "known_ops": [],
+          "ok": false,
+          "requested_ops": [
+            "scaled_dot_product_attention"
+          ],
+          "known_ops": [
+            "scaled_dot_product_attention"
+          ],
           "unknown_ops": [],
           "supported_ops": [],
-          "missing_ops": []
+          "missing_ops": [
+            "scaled_dot_product_attention"
+          ]
         }
       }
     }

@@ -1019,6 +1019,45 @@ def _validate_op_attrs(op: Op, idx: int) -> None:
     elif op.op == "polar":
         if len(op.inputs) != 2:
             raise IntentIRValidationError(f"op[{idx}] polar requires 2 inputs (abs, angle)")
+    elif op.op == "scaled_dot_product_attention":
+        if len(op.inputs) < 3:
+            raise IntentIRValidationError(
+                f"op[{idx}] scaled_dot_product_attention requires at least 3 inputs (query, key, value)"
+            )
+        is_causal = attrs.get("is_causal")
+        if is_causal is not None and not isinstance(is_causal, bool):
+            raise IntentIRValidationError(
+                f"op[{idx}] scaled_dot_product_attention.is_causal must be bool when provided"
+            )
+        scale = attrs.get("scale")
+        if scale is not None and not isinstance(scale, (int, float)):
+            raise IntentIRValidationError(
+                f"op[{idx}] scaled_dot_product_attention.scale must be number when provided"
+            )
+    elif op.op == "weight_norm_interface":
+        if len(op.inputs) != 2:
+            raise IntentIRValidationError(f"op[{idx}] weight_norm_interface requires 2 inputs (v, g)")
+        dim = attrs.get("dim")
+        if dim is not None and not isinstance(dim, int):
+            raise IntentIRValidationError(f"op[{idx}] weight_norm_interface.dim must be int when provided")
+    elif op.op == "per_token_group_quant_fp8":
+        if len(op.inputs) != 1:
+            raise IntentIRValidationError(f"op[{idx}] per_token_group_quant_fp8 requires 1 input")
+        group_size = attrs.get("group_size")
+        if not isinstance(group_size, int) or int(group_size) <= 0:
+            raise IntentIRValidationError(
+                f"op[{idx}] per_token_group_quant_fp8.group_size must be positive int"
+            )
+        eps = attrs.get("eps")
+        if eps is not None and (not isinstance(eps, (int, float)) or float(eps) <= 0.0):
+            raise IntentIRValidationError(
+                f"op[{idx}] per_token_group_quant_fp8.eps must be positive number when provided"
+            )
+        scale_ue8m0 = attrs.get("scale_ue8m0")
+        if scale_ue8m0 is not None and not isinstance(scale_ue8m0, bool):
+            raise IntentIRValidationError(
+                f"op[{idx}] per_token_group_quant_fp8.scale_ue8m0 must be bool when provided"
+            )
     elif op.op == "trace":
         if len(op.inputs) != 1:
             raise IntentIRValidationError(f"op[{idx}] trace requires 1 input")

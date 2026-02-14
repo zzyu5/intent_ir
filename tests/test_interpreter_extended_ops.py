@@ -811,3 +811,62 @@ def test_conv1d_conv3d_and_depthwise2d_execute() -> None:
     assert np.allclose(out["y1"], exp_y1, atol=1e-6)
     assert np.allclose(out["y3"], exp_y3, atol=1e-6)
     assert np.allclose(out["ydw"], exp_ydw, atol=1e-6)
+
+
+def test_attention_weightnorm_and_per_token_quant_execute() -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "attn_weightnorm_quant",
+            "tensors": {
+                "query": {"dtype": "f32", "shape": ["B", "H", "Q", "D"], "layout": "row_major"},
+                "key": {"dtype": "f32", "shape": ["B", "H", "K", "D"], "layout": "row_major"},
+                "value": {"dtype": "f32", "shape": ["B", "H", "K", "D"], "layout": "row_major"},
+                "attn_out": {"dtype": "f32", "shape": ["B", "H", "Q", "D"], "layout": "row_major"},
+                "v": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "g": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "wn_out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "x": {"dtype": "f32", "shape": ["R", "C"], "layout": "row_major"},
+                "q_out": {"dtype": "f32", "shape": ["R", "C"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "scaled_dot_product_attention",
+                    "inputs": ["query", "key", "value"],
+                    "output": "attn_out",
+                    "attrs": {"is_causal": False, "scale": 0.5},
+                },
+                {"op": "weight_norm_interface", "inputs": ["v", "g"], "output": "wn_out", "attrs": {"dim": 1}},
+                {"op": "per_token_group_quant_fp8", "inputs": ["x"], "output": "q_out", "attrs": {"group_size": 2}},
+            ],
+            "outputs": ["attn_out", "wn_out", "q_out"],
+        }
+    )
+
+    query = np.array([[[[1.0, 0.0], [0.0, 1.0]]]], dtype=np.float32)
+    key = np.array([[[[1.0, 0.0], [0.0, 1.0]]]], dtype=np.float32)
+    value = np.array([[[[2.0, 1.0], [0.5, 3.0]]]], dtype=np.float32)
+    v = np.array([[3.0, 4.0], [0.0, 5.0]], dtype=np.float32)
+    g = np.array([2.0, 0.5], dtype=np.float32)
+    x = np.array([[1.0, -2.0, 3.0, -4.0]], dtype=np.float32)
+
+    out = execute_intent(
+        intent,
+        {"query": query, "key": key, "value": value, "v": v, "g": g, "x": x},
+        shape_bindings={"B": 1, "H": 1, "Q": 2, "K": 2, "D": 2, "M": 2, "N": 2, "R": 1, "C": 4},
+    )
+
+    scores = np.matmul(query, np.swapaxes(key, -1, -2)) * np.float32(0.5)
+    probs = np.exp(scores - np.max(scores, axis=-1, keepdims=True))
+    probs = probs / np.sum(probs, axis=-1, keepdims=True)
+    expected_attn = np.matmul(probs, value)
+    assert np.allclose(out["attn_out"], expected_attn.astype(np.float32), atol=1e-6)
+
+    norm = np.sqrt(np.sum(v * v, axis=0) + np.finfo(np.float32).tiny)
+    expected_wn = (v / norm.reshape(1, -1)) * g.reshape(1, -1)
+    assert np.allclose(out["wn_out"], expected_wn.astype(np.float32), atol=1e-6)
+
+    # group_size=2 on C=4
+    groups = x.reshape(1, 2, 2)
+    scale = np.maximum(np.max(np.abs(groups), axis=-1, keepdims=True), np.float32(1.0e-10)) / np.float32(448.0)
+    expected_q = np.clip(groups / scale, -448.0, 448.0).reshape(1, 4).astype(np.float32)
+    assert np.allclose(out["q_out"], expected_q, atol=1e-5)

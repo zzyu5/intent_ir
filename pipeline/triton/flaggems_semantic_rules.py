@@ -105,6 +105,11 @@ _ALIAS_TO_BASE: dict[str, str] = {
     "full_like": "full",
     # Attention/reduction aliases.
     "scaled_softmax_forward": "softmax",
+    "ScaleDotProductAttention": "scaled_dot_product_attention",
+    "scaled_dot_product_attention_forward": "scaled_dot_product_attention",
+    "flash_attention_forward": "scaled_dot_product_attention",
+    # Unique naming aliases.
+    "unique2": "unique",
 }
 
 
@@ -793,6 +798,27 @@ _MACRO_TEMPLATE: dict[str, SemanticMapping] = {
         pattern_id="macro.upsample_nearest2d",
         detail="mapped to upsample_nearest2d primitive",
     ),
+    "scaled_dot_product_attention": _mk(
+        "scaled_dot_product_attention",
+        ("scaled_dot_product_attention",),
+        mapping_kind="macro_template",
+        pattern_id="macro.scaled_dot_product_attention",
+        detail="mapped to scaled_dot_product_attention primitive",
+    ),
+    "weight_norm_interface": _mk(
+        "weight_norm_interface",
+        ("weight_norm_interface",),
+        mapping_kind="macro_template",
+        pattern_id="macro.weight_norm_interface",
+        detail="mapped to weight_norm_interface primitive",
+    ),
+    "per_token_group_quant_fp8": _mk(
+        "per_token_group_quant_fp8",
+        ("per_token_group_quant_fp8",),
+        mapping_kind="macro_template",
+        pattern_id="macro.per_token_group_quant_fp8",
+        detail="mapped to per_token_group_quant_fp8 primitive",
+    ),
 }
 
 
@@ -845,8 +871,18 @@ def semantic_to_intent_ops(semantic_op: str) -> list[str]:
     return list(resolve_semantic_mapping(semantic_op).intent_ops)
 
 
+def mapping_for_semantic_op(semantic_op: str) -> SemanticMapping:
+    return resolve_semantic_mapping(semantic_op)
+
+
+def explain_mapping(semantic_op: str) -> dict[str, Any]:
+    return resolve_semantic_mapping(semantic_op).to_json_dict()
+
+
 __all__ = [
     "SemanticMapping",
+    "mapping_for_semantic_op",
+    "explain_mapping",
     "resolve_semantic_mapping",
     "semantic_to_intent_ops",
 ]

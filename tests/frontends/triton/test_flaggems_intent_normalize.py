@@ -161,6 +161,18 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert polar is not None
     assert [op.op for op in polar.ops] == ["polar"]
 
+    unique2 = canonical_flaggems_intent_for_spec("unique2d")
+    assert unique2 is not None
+    assert [op.op for op in unique2.ops] == ["unique"]
+
+    weight_norm = canonical_flaggems_intent_for_spec("weight_norm2d")
+    assert weight_norm is not None
+    assert [op.op for op in weight_norm.ops] == ["weight_norm_interface"]
+
+    sdpa = canonical_flaggems_intent_for_spec("scaled_dot_product_attention_bhsd")
+    assert sdpa is not None
+    assert [op.op for op in sdpa.ops] == ["scaled_dot_product_attention"]
+
     trace = canonical_flaggems_intent_for_spec("trace2d")
     assert trace is not None
     assert [op.op for op in trace.ops] == ["trace"]

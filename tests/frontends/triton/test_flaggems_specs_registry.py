@@ -42,6 +42,9 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "slice_scatter2d" in names
     assert "quantile2d" in names
     assert "polar2d" in names
+    assert "unique2d" in names
+    assert "weight_norm2d" in names
+    assert "scaled_dot_product_attention_bhsd" in names
     assert "trace2d" in names
     assert "triu2d" in names
     assert "upsample_nearest1d_ncl" in names

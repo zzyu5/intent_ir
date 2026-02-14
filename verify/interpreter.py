@@ -106,6 +106,9 @@ INTERPRETER_SUPPORTED_OPS: set[str] = set().union(
         "slice_scatter",
         "quantile",
         "polar",
+        "scaled_dot_product_attention",
+        "weight_norm_interface",
+        "per_token_group_quant_fp8",
         "kron",
         "masked_select",
         "masked_scatter",
@@ -617,6 +620,94 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         real = abs_v * np.cos(angle_v)
         imag = abs_v * np.sin(angle_v)
         return np.stack([real, imag], axis=-1).astype(np.float32, copy=False)
+    if op.op == "scaled_dot_product_attention":
+        if len(op.inputs) < 3:
+            raise ValueError("scaled_dot_product_attention requires at least 3 inputs (query, key, value)")
+        query = np.asarray(_get(env, op.inputs[0]), dtype=np.float32)
+        key = np.asarray(_get(env, op.inputs[1]), dtype=np.float32)
+        value = np.asarray(_get(env, op.inputs[2]), dtype=np.float32)
+        if query.ndim < 2 or key.ndim < 2 or value.ndim < 2:
+            raise ValueError("scaled_dot_product_attention expects tensors with rank >= 2")
+        if int(query.shape[-1]) != int(key.shape[-1]):
+            raise ValueError(
+                f"scaled_dot_product_attention head dim mismatch: query={query.shape[-1]} key={key.shape[-1]}"
+            )
+        if int(key.shape[-2]) != int(value.shape[-2]):
+            raise ValueError(
+                f"scaled_dot_product_attention sequence mismatch: key={key.shape[-2]} value={value.shape[-2]}"
+            )
+        scale = op.attrs.get("scale")
+        if scale is None:
+            scale_f = 1.0 / math.sqrt(max(1.0, float(query.shape[-1])))
+        else:
+            scale_f = float(scale)
+        scores = np.matmul(query, np.swapaxes(key, -1, -2)) * np.float32(scale_f)
+        if len(op.inputs) >= 4:
+            attn_mask = np.asarray(_get(env, op.inputs[3]))
+            if attn_mask.dtype == np.bool_:
+                scores = np.where(attn_mask, scores, np.float32(-1.0e9))
+            else:
+                scores = scores + np.asarray(attn_mask, dtype=np.float32)
+        if bool(op.attrs.get("is_causal", False)):
+            q_len = int(scores.shape[-2])
+            kv_len = int(scores.shape[-1])
+            causal = np.triu(np.ones((q_len, kv_len), dtype=np.bool_), k=1)
+            scores = np.where(causal, np.float32(-1.0e9), scores)
+        max_scores = np.max(scores, axis=-1, keepdims=True)
+        exp_scores = np.exp(scores - max_scores)
+        denom = np.sum(exp_scores, axis=-1, keepdims=True)
+        denom = np.maximum(denom, np.finfo(np.float32).tiny)
+        probs = exp_scores / denom
+        out = np.matmul(probs, value)
+        return np.asarray(out, dtype=np.float32)
+    if op.op == "weight_norm_interface":
+        if len(op.inputs) != 2:
+            raise ValueError("weight_norm_interface requires 2 inputs (v, g)")
+        v = np.asarray(_get(env, op.inputs[0]), dtype=np.float32)
+        g = np.asarray(_get(env, op.inputs[1]), dtype=np.float32)
+        dim = int(op.attrs.get("dim", 0))
+        axis = dim if dim >= 0 else v.ndim + dim
+        if axis < 0 or axis >= v.ndim:
+            raise ValueError(f"weight_norm_interface dim out of range: dim={dim} rank={v.ndim}")
+        if g.ndim != 1 or int(g.shape[0]) != int(v.shape[axis]):
+            raise ValueError(
+                f"weight_norm_interface expects g shape [{v.shape[axis]}], got {g.shape}"
+            )
+        reduce_axes = tuple(i for i in range(v.ndim) if i != axis)
+        eps = np.finfo(np.float32).tiny
+        norm = np.sqrt(np.sum(v * v, axis=reduce_axes, keepdims=False) + eps)
+        bshape = [1] * v.ndim
+        bshape[axis] = int(v.shape[axis])
+        g_b = np.reshape(g, bshape)
+        norm_b = np.reshape(norm, bshape)
+        out = (v / np.maximum(norm_b, eps)) * g_b
+        return np.asarray(out, dtype=np.float32)
+    if op.op == "per_token_group_quant_fp8":
+        if len(op.inputs) != 1:
+            raise ValueError("per_token_group_quant_fp8 requires 1 input")
+        x = np.asarray(_get(env, op.inputs[0]), dtype=np.float32)
+        if x.ndim < 1:
+            raise ValueError("per_token_group_quant_fp8 expects input rank >= 1")
+        group_size = int(op.attrs.get("group_size", 0))
+        if group_size <= 0:
+            raise ValueError("per_token_group_quant_fp8 requires attrs.group_size > 0")
+        last = int(x.shape[-1])
+        if last % group_size != 0:
+            raise ValueError(
+                f"per_token_group_quant_fp8 last dimension must be divisible by group_size, got {last} and {group_size}"
+            )
+        eps = float(op.attrs.get("eps", 1.0e-10))
+        scale_ue8m0 = bool(op.attrs.get("scale_ue8m0", False))
+        fp8_min = np.float32(-448.0)
+        fp8_max = np.float32(448.0)
+        flat = np.reshape(x, (-1, last))
+        groups = np.reshape(flat, (flat.shape[0], last // group_size, group_size))
+        absmax = np.max(np.abs(groups), axis=-1, keepdims=True)
+        scale = np.maximum(absmax, np.float32(eps)) / fp8_max
+        if scale_ue8m0:
+            scale = np.exp2(np.ceil(np.log2(np.maximum(np.abs(scale), np.float32(1.0e-10)))))
+        q = np.clip(groups / scale, fp8_min, fp8_max)
+        return np.reshape(q, x.shape).astype(np.float32, copy=False)
     if op.op == "kron":
         if len(op.inputs) != 2:
             raise ValueError("kron requires 2 inputs")
