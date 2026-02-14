@@ -1,9 +1,9 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-14T06:15:50+00:00
-- Commit: `aa6295d`
-- Summary: Expanded RVV/CUDA lowering (eq/reduce_min/acos/atan/int-and-or-not), hardened FlagGems spec aliases, and reran pipeline+RVV local/remote+CUDA for active backend batch.
-- Batch Ops (10): vstack, ScaleDotProductAttention, acos, angle, argmax, argmin, atan, avg_pool2d, bitwise_and_scalar, bitwise_and_scalar_tensor
-- Run Summary: `artifacts/flaggems_matrix/daily/20260214/batch_active10_vstack_attention_bitwise_v3/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260214/batch_active10_vstack_attention_bitwise_v3/status_converged.json`
-- Next Focus: 1) Fix argmax/argmin semantic mismatch (currently RVV diff_fail, CUDA lowering_missing_op for multi-op reduction graphs). 2) Add RVV/CUDA lowering path for scaled_dot_product_attention and avg_pool2d/concat families. 3) Stabilize CUDA runtime timeout for acos/atan/bitwise_and (or classify with deterministic skip policy).
+- Timestamp: 2026-02-14T07:31:35+00:00
+- Commit: `c043118-dirty`
+- Summary: Rebased active attention/angle/bitwise batch to intentir auto mode, added SDPA tolerance primitive, and reran pipeline+RVV(local/remote)+CUDA scoped convergence.
+- Batch Ops (10): ScaleDotProductAttention, angle, argmax, argmin, avg_pool2d, bitwise_and_scalar, bitwise_and_scalar_tensor, bitwise_and_tensor, bitwise_left_shift, bitwise_not
+- Run Summary: `artifacts/flaggems_matrix/daily/20260214/batch_active10_attention_angle_bitwise_v6/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260214/batch_active10_attention_angle_bitwise_v6/status_converged.json`
+- Next Focus: 1) Resolve CUDA runtime_timeout for scaled_dot_product_attention/angle/bitwise_left_shift. 2) Keep provider-path plugin boundaries while adding non-timeout CUDA classifications. 3) Continue next backend_missing_ops batch after gate clean pass.
