@@ -41,6 +41,9 @@ _OP_TOL_F32: Dict[str, Tolerances] = {
     # different rounding for dot-products. Keep this looser than the legacy
     # default to avoid false negatives on matmul-heavy kernels.
     "matmul": Tolerances(2e-2, 2e-2),
+    # Attention primitive is effectively two matmuls plus softmax and is
+    # routinely more sensitive across execution paths.
+    "scaled_dot_product_attention": Tolerances(2e-2, 2e-2),
     "reduce_sum": Tolerances(1e-3, 1e-3),
     "reduce_max": Tolerances(1e-3, 1e-3),
     "reduce_any": Tolerances(0.0, 0.0),

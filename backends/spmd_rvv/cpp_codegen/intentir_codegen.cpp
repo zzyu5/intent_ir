@@ -1294,6 +1294,192 @@ void emit_softmax(CodeWriter& w, const std::string& out, const std::string& a, c
   fail("softmax supports rank<=4");
 }
 
+void emit_bitwise_left_shift(CodeWriter& w, const std::string& out, const std::string& a_var, const std::string& b_var,
+                             const std::string& a_name, const std::string& b_name,
+                             const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape,
+                             const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings,
+                             const std::string& a_dtype, const std::string& b_dtype, const std::string& out_dtype) {
+  if (ctype_for_dtype(a_dtype) != "int32_t" || ctype_for_dtype(b_dtype) != "int32_t" || ctype_for_dtype(out_dtype) != "int32_t") {
+    fail("bitwise_left_shift currently supports only i32");
+  }
+  const int r = static_cast<int>(out_shape.size());
+  if (r > 4) fail("bitwise_left_shift supports rank<=4");
+  std::vector<int64_t> pa = pad_for_broadcast(intent, bindings, a_name, a_shape, b_name, b_shape, r);
+  std::vector<int64_t> pb = pad_for_broadcast(intent, bindings, b_name, b_shape, a_name, a_shape, r);
+  for (int i = 0; i < r; ++i) {
+    if (pa[i] != 1 && pa[i] != out_shape[i]) fail("bitwise_left_shift broadcast mismatch (a)");
+    if (pb[i] != 1 && pb[i] != out_shape[i]) fail("bitwise_left_shift broadcast mismatch (b)");
+  }
+  std::vector<std::string> idx = {"i0", "i1", "i2", "i3"};
+  idx.resize(r);
+  for (int i = 0; i < r; ++i) {
+    w.line("for (int " + idx[i] + " = 0; " + idx[i] + " < " + std::to_string(out_shape[i]) + "; ++" + idx[i] + ") {");
+    w.indent();
+  }
+  std::string out_idx = flat_idx_expr(idx, out_shape);
+  auto idx_expr = [&](const std::vector<int64_t>& padded) -> std::string {
+    std::vector<std::string> in_vars;
+    in_vars.reserve(r);
+    for (int i = 0; i < r; ++i) in_vars.push_back(padded[i] == 1 ? "0" : idx[i]);
+    return flat_idx_expr(in_vars, padded);
+  };
+  std::string a_idx = idx_expr(pa);
+  std::string b_idx = idx_expr(pb);
+  w.line(out + "[" + out_idx + "] = (int32_t)(" + a_var + "[" + a_idx + "] << (" + b_var + "[" + b_idx + "] & 31));");
+  for (int i = 0; i < r; ++i) {
+    w.dedent();
+    w.line("}");
+  }
+}
+
+void emit_arg_reduce_axis1(CodeWriter& w, const std::string& op, const std::string& out, const std::string& a,
+                           const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape, int axis) {
+  if (in_shape.size() != 2 || out_shape.size() != 1) fail(op + " currently supports rank-2 -> rank-1");
+  if (axis < 0) axis += 2;
+  if (axis != 1) fail(op + " currently supports axis=1 only");
+  if (out_shape[0] != in_shape[0]) fail(op + " output shape mismatch");
+  const int64_t M = in_shape[0];
+  const int64_t N = in_shape[1];
+  w.line("for (int i = 0; i < " + std::to_string(M) + "; ++i) {");
+  w.indent();
+  w.line("int32_t best_idx = 0;");
+  w.line("float best_val = " + a + "[idx2(i,0," + std::to_string(N) + ")];");
+  w.line("for (int j = 1; j < " + std::to_string(N) + "; ++j) {");
+  w.indent();
+  w.line("float v = " + a + "[idx2(i,j," + std::to_string(N) + ")];");
+  if (op == "argmax") {
+    w.line("if (v > best_val) { best_val = v; best_idx = j; }");
+  } else {
+    w.line("if (v < best_val) { best_val = v; best_idx = j; }");
+  }
+  w.dedent();
+  w.line("}");
+  w.line(out + "[i] = best_idx;");
+  w.dedent();
+  w.line("}");
+}
+
+void emit_avg_pool2d(CodeWriter& w, const std::string& out, const std::string& inp,
+                     const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape,
+                     int kh, int kw, int sh, int sw, int ph, int pw, bool count_include_pad) {
+  if (in_shape.size() != 4 || out_shape.size() != 4) fail("avg_pool2d expects rank-4 NCHW tensors");
+  const int64_t N = in_shape[0], C = in_shape[1], H = in_shape[2], W = in_shape[3];
+  const int64_t ON = out_shape[0], OC = out_shape[1], OH = out_shape[2], OW = out_shape[3];
+  if (N != ON || C != OC) fail("avg_pool2d output N/C mismatch");
+  w.line("for (int n = 0; n < " + std::to_string(N) + "; ++n) {");
+  w.indent();
+  w.line("for (int c = 0; c < " + std::to_string(C) + "; ++c) {");
+  w.indent();
+  w.line("for (int oh = 0; oh < " + std::to_string(OH) + "; ++oh) {");
+  w.indent();
+  w.line("for (int ow = 0; ow < " + std::to_string(OW) + "; ++ow) {");
+  w.indent();
+  w.line("const int h_start = oh * " + std::to_string(sh) + " - " + std::to_string(ph) + ";");
+  w.line("const int w_start = ow * " + std::to_string(sw) + " - " + std::to_string(pw) + ";");
+  w.line("const int h_end = h_start + " + std::to_string(kh) + ";");
+  w.line("const int w_end = w_start + " + std::to_string(kw) + ";");
+  w.line("float sum = 0.0f;");
+  w.line("int cnt = 0;");
+  w.line("for (int ih = h_start; ih < h_end; ++ih) {");
+  w.indent();
+  w.line("if (ih < 0 || ih >= " + std::to_string(H) + ") continue;");
+  w.line("for (int iw = w_start; iw < w_end; ++iw) {");
+  w.indent();
+  w.line("if (iw < 0 || iw >= " + std::to_string(W) + ") continue;");
+  w.line("sum += " + inp + "[idx4(n,c,ih,iw," + std::to_string(C) + "," + std::to_string(H) + "," + std::to_string(W) + ")];");
+  w.line("cnt += 1;");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+  if (count_include_pad) {
+    w.line("const float denom = (float)" + std::to_string(kh * kw) + ";");
+  } else {
+    w.line("const float denom = (float)(cnt > 0 ? cnt : 1);");
+  }
+  w.line(out + "[idx4(n,c,oh,ow," + std::to_string(C) + "," + std::to_string(OH) + "," + std::to_string(OW) + ")] = sum / denom;");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+}
+
+void emit_scaled_dot_product_attention(CodeWriter& w, const std::string& out,
+                                       const std::string& query, const std::string& key, const std::string& value,
+                                       const std::vector<int64_t>& q_shape, const std::vector<int64_t>& k_shape,
+                                       const std::vector<int64_t>& v_shape, const std::vector<int64_t>& out_shape,
+                                       bool is_causal) {
+  if (q_shape.size() != 4 || k_shape.size() != 4 || v_shape.size() != 4 || out_shape.size() != 4) {
+    fail("scaled_dot_product_attention expects rank-4 BHQD/BHKD tensors");
+  }
+  const int64_t B = q_shape[0], H = q_shape[1], Q = q_shape[2], D = q_shape[3];
+  const int64_t BK = k_shape[0], HK = k_shape[1], K = k_shape[2], DK = k_shape[3];
+  const int64_t BV = v_shape[0], HV = v_shape[1], KV = v_shape[2], DV = v_shape[3];
+  if (BK != B || HK != H || DK != D) fail("scaled_dot_product_attention shape mismatch between query/key");
+  if (BV != B || HV != H || KV != K) fail("scaled_dot_product_attention shape mismatch between key/value");
+  if (out_shape[0] != B || out_shape[1] != H || out_shape[2] != Q || out_shape[3] != DV) {
+    fail("scaled_dot_product_attention output shape mismatch");
+  }
+  w.line("const float inv_sqrt_d = 1.0f / sqrtf((float)" + std::to_string(D) + ");");
+  w.line("for (int b = 0; b < " + std::to_string(B) + "; ++b) {");
+  w.indent();
+  w.line("for (int h = 0; h < " + std::to_string(H) + "; ++h) {");
+  w.indent();
+  w.line("for (int q = 0; q < " + std::to_string(Q) + "; ++q) {");
+  w.indent();
+  w.line("for (int d = 0; d < " + std::to_string(DV) + "; ++d) {");
+  w.indent();
+  w.line("float max_score = -INFINITY;");
+  w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) {");
+  w.indent();
+  if (is_causal) {
+    w.line("if (k > q) continue;");
+  }
+  w.line("float dot = 0.0f;");
+  w.line("for (int t = 0; t < " + std::to_string(D) + "; ++t) {");
+  w.indent();
+  w.line("dot += " + query + "[idx4(b,h,q,t," + std::to_string(H) + "," + std::to_string(Q) + "," + std::to_string(D) + ")] * " +
+         key + "[idx4(b,h,k,t," + std::to_string(H) + "," + std::to_string(K) + "," + std::to_string(D) + ")];");
+  w.dedent();
+  w.line("}");
+  w.line("float score = dot * inv_sqrt_d;");
+  w.line("if (score > max_score) max_score = score;");
+  w.dedent();
+  w.line("}");
+  w.line("float denom = 0.0f;");
+  w.line("float numer = 0.0f;");
+  w.line("for (int k = 0; k < " + std::to_string(K) + "; ++k) {");
+  w.indent();
+  if (is_causal) {
+    w.line("if (k > q) continue;");
+  }
+  w.line("float dot = 0.0f;");
+  w.line("for (int t = 0; t < " + std::to_string(D) + "; ++t) {");
+  w.indent();
+  w.line("dot += " + query + "[idx4(b,h,q,t," + std::to_string(H) + "," + std::to_string(Q) + "," + std::to_string(D) + ")] * " +
+         key + "[idx4(b,h,k,t," + std::to_string(H) + "," + std::to_string(K) + "," + std::to_string(D) + ")];");
+  w.dedent();
+  w.line("}");
+  w.line("float wgt = expf(dot * inv_sqrt_d - max_score);");
+  w.line("denom += wgt;");
+  w.line("numer += wgt * " + value + "[idx4(b,h,k,d," + std::to_string(H) + "," + std::to_string(K) + "," + std::to_string(DV) + ")];");
+  w.dedent();
+  w.line("}");
+  w.line(out + "[idx4(b,h,q,d," + std::to_string(H) + "," + std::to_string(Q) + "," + std::to_string(DV) + ")] = (denom > 0.0f) ? (numer / denom) : 0.0f;");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+}
+
 void emit_transpose_4d_0132(CodeWriter& w, const std::string& out, const std::string& inp, const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape) {
   if (in_shape.size() != 4 || out_shape.size() != 4) fail("transpose expects rank-4");
   int64_t B = in_shape[0], H = in_shape[1], K = in_shape[2], D = in_shape[3];
@@ -1985,12 +2171,17 @@ struct CProgramEmitter {
 		        emit_cmp(w, op.op, out_var, v(op.inputs[0]), v(op.inputs[1]), op.inputs[0], op.inputs[1],
 		                 shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, intent, bindings,
 		                 dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(out));
-		      } else if (op.op == "and" || op.op == "or") {
-		        emit_bool_bin(w, op.op, out_var, v(op.inputs[0]), v(op.inputs[1]), op.inputs[0], op.inputs[1],
+	      } else if (op.op == "and" || op.op == "or" || op.op == "bitwise_and") {
+	        const std::string logical_op = (op.op == "bitwise_and") ? "and" : op.op;
+	        emit_bool_bin(w, logical_op, out_var, v(op.inputs[0]), v(op.inputs[1]), op.inputs[0], op.inputs[1],
 		                      shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, intent, bindings,
 		                      dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(out));
-		      } else if (op.op == "not") {
+		      } else if (op.op == "not" || op.op == "bitwise_not") {
 		        emit_bool_not(w, out_var, v(op.inputs[0]), out_shape, dtype_env.at(op.inputs[0]), dtype_env.at(out));
+	      } else if (op.op == "bitwise_left_shift") {
+	        emit_bitwise_left_shift(w, out_var, v(op.inputs[0]), v(op.inputs[1]), op.inputs[0], op.inputs[1],
+	                                shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape, intent, bindings,
+	                                dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(out));
 	      } else if (op.op == "rsqrt") {
 	        emit_rsqrt(w, out_var, v(op.inputs[0]), out_shape);
 	      } else if (op.op == "abs") {
@@ -2163,6 +2354,29 @@ struct CProgramEmitter {
 	        }
 	        bool keepdims = op.attrs.value("keepdims", false);
 	        emit_reduce_any(w, out_var, v(op.inputs[0]), shape_env.at(op.inputs[0]), out_shape, dims, keepdims, dtype_env.at(op.inputs[0]), dtype_env.at(out));
+	      } else if (op.op == "argmax" || op.op == "argmin") {
+        int axis = op.attrs.value("axis", -1);
+        emit_arg_reduce_axis1(w, op.op, out_var, v(op.inputs[0]), shape_env.at(op.inputs[0]), out_shape, axis);
+	      } else if (op.op == "avg_pool2d") {
+        auto parse_pair = [&](const json& value, const std::string& key) -> std::pair<int, int> {
+          if (value.is_array()) {
+            if (value.size() != 2) fail("avg_pool2d " + key + " must have length 2");
+            return {static_cast<int>(resolve_const_value(value[0], bindings)), static_cast<int>(resolve_const_value(value[1], bindings))};
+          }
+          int v = static_cast<int>(resolve_const_value(value, bindings));
+          return {v, v};
+        };
+        std::pair<int, int> ksz = op.attrs.contains("kernel_size") ? parse_pair(op.attrs["kernel_size"], "kernel_size") : std::pair<int, int>{2, 2};
+        std::pair<int, int> stride = op.attrs.contains("stride") ? parse_pair(op.attrs["stride"], "stride") : ksz;
+        std::pair<int, int> padding = op.attrs.contains("padding") ? parse_pair(op.attrs["padding"], "padding") : std::pair<int, int>{0, 0};
+        bool count_include_pad = op.attrs.value("count_include_pad", true);
+        emit_avg_pool2d(w, out_var, v(op.inputs[0]), shape_env.at(op.inputs[0]), out_shape, ksz.first, ksz.second, stride.first, stride.second,
+                        padding.first, padding.second, count_include_pad);
+	      } else if (op.op == "scaled_dot_product_attention") {
+        if (op.inputs.size() < 3) fail("scaled_dot_product_attention requires query/key/value");
+        bool is_causal = op.attrs.value("is_causal", false);
+        emit_scaled_dot_product_attention(w, out_var, v(op.inputs[0]), v(op.inputs[1]), v(op.inputs[2]), shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]),
+                                          shape_env.at(op.inputs[2]), out_shape, is_causal);
 	      } else if (op.op == "exp") {
 	        int64_t n = numel(out_shape);
 	        w.line("intentir_exp_f32(" + v(op.inputs[0]) + ", " + out_var + ", (size_t)" + std::to_string(n) + ");");
@@ -2378,20 +2592,70 @@ int main(int argc, char** argv) {
         dtype_env[out] = "bool";
         continue;
       }
-      if (kind == "and" || kind == "or") {
+      if (kind == "and" || kind == "or" || kind == "bitwise_and" || kind == "bitwise_left_shift") {
         const auto& sa = get_shape(op.inputs[0]);
         const auto& sb = get_shape(op.inputs[1]);
         shape_env[out] = broadcast_shape_named(intent, bindings, op.inputs[0], op.inputs[1], sa, sb);
         const std::string in_dt = get_dtype(op.inputs[0]);
-        if (in_dt == "bool" || in_dt == "i1" || in_dt == "u8") dtype_env[out] = "bool";
-        else dtype_env[out] = in_dt;
+        if (kind == "and" || kind == "or") {
+          if (in_dt == "bool" || in_dt == "i1" || in_dt == "u8") dtype_env[out] = "bool";
+          else dtype_env[out] = in_dt;
+        } else {
+          dtype_env[out] = in_dt;
+        }
         continue;
       }
-      if (kind == "not") {
+      if (kind == "not" || kind == "bitwise_not") {
         shape_env[out] = get_shape(op.inputs[0]);
         const std::string in_dt = get_dtype(op.inputs[0]);
-        if (in_dt == "bool" || in_dt == "i1" || in_dt == "u8") dtype_env[out] = "bool";
-        else dtype_env[out] = in_dt;
+        if (kind == "not" && (in_dt == "bool" || in_dt == "i1" || in_dt == "u8")) {
+          dtype_env[out] = "bool";
+        } else {
+          dtype_env[out] = in_dt;
+        }
+        continue;
+      }
+      if (kind == "argmax" || kind == "argmin") {
+        const auto& in_shape = get_shape(op.inputs[0]);
+        if (in_shape.size() != 2) fail(kind + " infer currently supports rank-2 input");
+        int axis = op.attrs.value("axis", -1);
+        if (axis < 0) axis += static_cast<int>(in_shape.size());
+        if (axis != 1) fail(kind + " infer currently supports axis=1");
+        shape_env[out] = {in_shape[0]};
+        dtype_env[out] = "i32";
+        continue;
+      }
+      if (kind == "avg_pool2d") {
+        const auto& in_shape = get_shape(op.inputs[0]);
+        if (in_shape.size() != 4) fail("avg_pool2d infer expects rank-4 NCHW input");
+        auto parse_pair = [&](const json& value, const std::string& key) -> std::pair<int64_t, int64_t> {
+          if (value.is_array()) {
+            if (value.size() != 2) fail("avg_pool2d " + key + " must have length 2");
+            return {static_cast<int64_t>(resolve_const_value(value[0], bindings)), static_cast<int64_t>(resolve_const_value(value[1], bindings))};
+          }
+          int64_t v = static_cast<int64_t>(resolve_const_value(value, bindings));
+          return {v, v};
+        };
+        auto ksz = op.attrs.contains("kernel_size") ? parse_pair(op.attrs["kernel_size"], "kernel_size") : std::pair<int64_t, int64_t>{2, 2};
+        auto stride = op.attrs.contains("stride") ? parse_pair(op.attrs["stride"], "stride") : ksz;
+        auto padding = op.attrs.contains("padding") ? parse_pair(op.attrs["padding"], "padding") : std::pair<int64_t, int64_t>{0, 0};
+        const int64_t N = in_shape[0], C = in_shape[1], H = in_shape[2], W = in_shape[3];
+        const int64_t OH = ((H + 2 * padding.first - ksz.first) / stride.first) + 1;
+        const int64_t OW = ((W + 2 * padding.second - ksz.second) / stride.second) + 1;
+        if (OH <= 0 || OW <= 0) fail("avg_pool2d infer produced non-positive output shape");
+        shape_env[out] = {N, C, OH, OW};
+        dtype_env[out] = get_dtype(op.inputs[0]);
+        continue;
+      }
+      if (kind == "scaled_dot_product_attention") {
+        if (op.inputs.size() < 3) fail("scaled_dot_product_attention infer requires query/key/value");
+        const auto& q = get_shape(op.inputs[0]);
+        const auto& k = get_shape(op.inputs[1]);
+        const auto& v = get_shape(op.inputs[2]);
+        if (q.size() != 4 || k.size() != 4 || v.size() != 4) fail("scaled_dot_product_attention infer expects rank-4 tensors");
+        if (q[0] != k[0] || q[1] != k[1] || k[2] != v[2]) fail("scaled_dot_product_attention infer shape mismatch");
+        shape_env[out] = {q[0], q[1], q[2], v[3]};
+        dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
       }
       if (kind == "abs" || kind == "floor" || kind == "acos" || kind == "atan" || kind == "cos" || kind == "erf") {

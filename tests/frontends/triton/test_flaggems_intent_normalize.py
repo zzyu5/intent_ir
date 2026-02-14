@@ -173,6 +173,34 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert sdpa is not None
     assert [op.op for op in sdpa.ops] == ["scaled_dot_product_attention"]
 
+    angle = canonical_flaggems_intent_for_spec("angle2d")
+    assert angle is not None
+    assert [op.op for op in angle.ops] == ["const", "const", "lt", "where"]
+
+    bitwise_and = canonical_flaggems_intent_for_spec("bitwise_and2d")
+    assert bitwise_and is not None
+    assert [op.op for op in bitwise_and.ops] == ["bitwise_and"]
+
+    bitwise_left_shift = canonical_flaggems_intent_for_spec("bitwise_left_shift2d")
+    assert bitwise_left_shift is not None
+    assert [op.op for op in bitwise_left_shift.ops] == ["bitwise_left_shift"]
+
+    bitwise_not = canonical_flaggems_intent_for_spec("bitwise_not2d")
+    assert bitwise_not is not None
+    assert [op.op for op in bitwise_not.ops] == ["bitwise_not"]
+
+    argmax = canonical_flaggems_intent_for_spec("argmax2d")
+    assert argmax is not None
+    assert [op.op for op in argmax.ops] == ["argmax"]
+
+    argmin = canonical_flaggems_intent_for_spec("argmin2d")
+    assert argmin is not None
+    assert [op.op for op in argmin.ops] == ["argmin"]
+
+    avg_pool2d = canonical_flaggems_intent_for_spec("avg_pool2d_nchw")
+    assert avg_pool2d is not None
+    assert [op.op for op in avg_pool2d.ops] == ["avg_pool2d"]
+
     trace = canonical_flaggems_intent_for_spec("trace2d")
     assert trace is not None
     assert [op.op for op in trace.ops] == ["trace"]

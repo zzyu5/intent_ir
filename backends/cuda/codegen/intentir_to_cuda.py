@@ -557,6 +557,12 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
             a = val(op.inputs[0])
             b = val(op.inputs[1])
             emit_assign(f"(({a}) & ({b}))")
+        elif opname == "bitwise_left_shift":
+            if len(op.inputs) != 2:
+                raise CudaLoweringError("bitwise_left_shift expects 2 inputs")
+            a = val(op.inputs[0])
+            b = val(op.inputs[1])
+            emit_assign(f"(({a}) << (({b}) & 31))")
         elif opname in {"and", "or"}:
             if len(op.inputs) != 2:
                 raise CudaLoweringError(f"{opname} expects 2 inputs")
@@ -578,6 +584,11 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
                 emit_assign(f"(!{a})")
             else:
                 emit_assign(f"(~({a}))")
+        elif opname == "bitwise_not":
+            if len(op.inputs) != 1:
+                raise CudaLoweringError("bitwise_not expects 1 input")
+            a = val(op.inputs[0])
+            emit_assign(f"(~({a}))")
         elif opname == "where":
             if len(op.inputs) != 3:
                 raise CudaLoweringError("where expects 3 inputs (cond, x, y)")
@@ -2020,6 +2031,291 @@ extern "C" __global__ void {intent.name}(
     return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=lowered_bindings)
 
 
+def _kernel_arg_reduce_2d_axis1_i32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op not in {"argmax", "argmin"}:
+        raise CudaLoweringError("arg-reduce lowering expects a single argmax/argmin op")
+    op = intent.ops[0]
+    if len(op.inputs) != 1:
+        raise CudaLoweringError(f"{op.op} expects 1 input")
+    inp_name = str(op.inputs[0])
+    out_name = str(op.output)
+    in_shape = _shape_values(intent, inp_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(in_shape) != 2 or len(out_shape) != 1:
+        raise CudaLoweringError(f"{op.op} MVP supports rank-2 input and rank-1 output")
+    axis = op.attrs.get("axis", op.attrs.get("dim", -1)) if op.attrs else -1
+    try:
+        axis = int(axis)
+    except Exception:
+        axis = -1
+    if axis < 0:
+        axis += 2
+    if axis != 1:
+        raise CudaLoweringError(f"{op.op} MVP supports only axis=1")
+
+    M = _resolve_dim_int(in_shape[0], bindings, name="M")
+    N = _resolve_dim_int(in_shape[1], bindings, name="N")
+    if _resolve_dim_int(out_shape[0], bindings, name="OUT_M") != M:
+        raise CudaLoweringError(f"{op.op} output shape mismatch")
+
+    sched = intent.schedule or ScheduleSketch()
+    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=256)
+    if block_x <= 0:
+        block_x = 256
+    if block_x > 1024:
+        block_x = 1024
+    if (block_x & (block_x - 1)) != 0:
+        block_x = 1 << int(block_x - 1).bit_length()
+    block_x = max(32, min(1024, int(block_x)))
+    cmp = ">" if op.op == "argmax" else "<"
+
+    m_is_tensor = _is_scalar_tensor(intent, "M", dtype="i32")
+    n_is_tensor = _is_scalar_tensor(intent, "N", dtype="i32")
+    m_param = "const int* M_ptr" if m_is_tensor else "int M"
+    n_param = "const int* N_ptr" if n_is_tensor else "int N"
+    m_load = "const int M = M_ptr ? M_ptr[0] : 0;" if m_is_tensor else ""
+    n_load = "const int N = N_ptr ? N_ptr[0] : 0;" if n_is_tensor else ""
+
+    cuda_src = f"""
+#include <stdint.h>
+
+extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(const float* __restrict__ {inp_name}, int* __restrict__ {out_name}, {m_param}, {n_param}) {{
+  {m_load}
+  {n_load}
+  const int row = (int)blockIdx.x * (int)blockDim.x + (int)threadIdx.x;
+  if (row >= M) return;
+  int best_idx = 0;
+  float best_val = {inp_name}[(size_t)row * (size_t)N];
+  for (int col = 1; col < N; ++col) {{
+    const float v = {inp_name}[(size_t)row * (size_t)N + (size_t)col];
+    if (v {cmp} best_val) {{
+      best_val = v;
+      best_idx = col;
+    }}
+  }}
+  {out_name}[row] = best_idx;
+}}
+""".lstrip()
+
+    tensor_args = [inp_name, out_name]
+    scalar_args: Dict[str, str] = {}
+    arg_names = [inp_name, out_name]
+    for dim_name in ["M", "N"]:
+        if _is_scalar_tensor(intent, dim_name, dtype="i32"):
+            tensor_args.append(dim_name)
+            arg_names.append(dim_name)
+        else:
+            scalar_args[dim_name] = "i32"
+            arg_names.append(dim_name)
+
+    io_spec = _io_spec_from_args(intent, tensor_args=tensor_args, scalar_args=scalar_args, arg_names=arg_names)
+    launch = CudaLaunch(grid=(M, 1, 1), block=(block_x, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.setdefault("M", int(M))
+    lowered_bindings.setdefault("N", int(N))
+    return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=lowered_bindings)
+
+
+def _kernel_avg_pool2d_nchw_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != "avg_pool2d":
+        raise CudaLoweringError("avg_pool2d lowering expects a single avg_pool2d op")
+    op = intent.ops[0]
+    if len(op.inputs) != 1:
+        raise CudaLoweringError("avg_pool2d expects 1 input")
+    inp_name = str(op.inputs[0])
+    out_name = str(op.output)
+    in_shape = _shape_values(intent, inp_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(in_shape) != 4 or len(out_shape) != 4:
+        raise CudaLoweringError("avg_pool2d MVP expects rank-4 NCHW tensors")
+
+    N = _resolve_dim_int(in_shape[0], bindings, name="N")
+    C = _resolve_dim_int(in_shape[1], bindings, name="C")
+    H = _resolve_dim_int(in_shape[2], bindings, name="H")
+    W = _resolve_dim_int(in_shape[3], bindings, name="W")
+    ON = _resolve_dim_int(out_shape[0], bindings, name="ON")
+    OC = _resolve_dim_int(out_shape[1], bindings, name="OC")
+    OH = _resolve_dim_int(out_shape[2], bindings, name="OH")
+    OW = _resolve_dim_int(out_shape[3], bindings, name="OW")
+    if N != ON or C != OC:
+        raise CudaLoweringError("avg_pool2d output N/C mismatch")
+
+    def _pair(val: Any, default: int) -> tuple[int, int]:
+        if val is None:
+            return (default, default)
+        if isinstance(val, (list, tuple)):
+            if len(val) != 2:
+                raise CudaLoweringError("avg_pool2d attrs pair must have length 2")
+            return (int(val[0]), int(val[1]))
+        v = int(val)
+        return (v, v)
+
+    attrs = op.attrs or {}
+    kh, kw = _pair(attrs.get("kernel_size"), 2)
+    sh, sw = _pair(attrs.get("stride"), kh)
+    ph, pw = _pair(attrs.get("padding"), 0)
+    count_include_pad = bool(attrs.get("count_include_pad", True))
+    if kh <= 0 or kw <= 0 or sh <= 0 or sw <= 0:
+        raise CudaLoweringError("avg_pool2d attrs must be positive")
+
+    total = int(N) * int(C) * int(OH) * int(OW)
+    sched = intent.schedule or ScheduleSketch()
+    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=256)
+    if block_x <= 0:
+        block_x = 256
+    if block_x > 1024:
+        block_x = 1024
+    grid_x = (total + block_x - 1) // block_x
+    include_pad = "true" if count_include_pad else "false"
+
+    cuda_src = f"""
+#include <math.h>
+#include <stdint.h>
+
+extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(const float* __restrict__ {inp_name}, float* __restrict__ {out_name}) {{
+  const int64_t tid = (int64_t)blockIdx.x * (int64_t)blockDim.x + (int64_t)threadIdx.x;
+  const int64_t total = (int64_t){total};
+  if (tid >= total) return;
+  int64_t t = tid;
+  const int ow = (int)(t % {OW}); t /= {OW};
+  const int oh = (int)(t % {OH}); t /= {OH};
+  const int c = (int)(t % {C}); t /= {C};
+  const int n = (int)t;
+  const int h_start = oh * {sh} - {ph};
+  const int w_start = ow * {sw} - {pw};
+  const int h_end = h_start + {kh};
+  const int w_end = w_start + {kw};
+  float sum = 0.0f;
+  int cnt = 0;
+  for (int ih = h_start; ih < h_end; ++ih) {{
+    if ((unsigned)ih >= (unsigned){H}) continue;
+    for (int iw = w_start; iw < w_end; ++iw) {{
+      if ((unsigned)iw >= (unsigned){W}) continue;
+      const int64_t in_idx = ((((int64_t)n * {C} + c) * {H} + ih) * {W}) + iw;
+      sum += {inp_name}[in_idx];
+      cnt += 1;
+    }}
+  }}
+  const float denom = {include_pad} ? (float)({kh} * {kw}) : (float)(cnt > 0 ? cnt : 1);
+  {out_name}[tid] = sum / denom;
+}}
+""".lstrip()
+
+    io_spec = _io_spec_from_args(intent, tensor_args=[inp_name, out_name], scalar_args={}, arg_names=[inp_name, out_name])
+    launch = CudaLaunch(grid=(grid_x, 1, 1), block=(block_x, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.update({"N": int(N), "C": int(C), "H": int(H), "W": int(W), "OH": int(OH), "OW": int(OW)})
+    return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=lowered_bindings)
+
+
+def _kernel_scaled_dot_product_attention_bhsd_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != "scaled_dot_product_attention":
+        raise CudaLoweringError("sdpa lowering expects a single scaled_dot_product_attention op")
+    op = intent.ops[0]
+    if len(op.inputs) < 3:
+        raise CudaLoweringError("scaled_dot_product_attention expects query/key/value inputs")
+    q_name, k_name, v_name = (str(op.inputs[0]), str(op.inputs[1]), str(op.inputs[2]))
+    out_name = str(op.output)
+
+    q_shape = _shape_values(intent, q_name)
+    k_shape = _shape_values(intent, k_name)
+    v_shape = _shape_values(intent, v_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(q_shape) != 4 or len(k_shape) != 4 or len(v_shape) != 4 or len(out_shape) != 4:
+        raise CudaLoweringError("sdpa MVP expects rank-4 BHQD/BHKD tensors")
+
+    B = _resolve_dim_int(q_shape[0], bindings, name="B")
+    Hh = _resolve_dim_int(q_shape[1], bindings, name="H")
+    Q = _resolve_dim_int(q_shape[2], bindings, name="Q")
+    D = _resolve_dim_int(q_shape[3], bindings, name="D")
+    BK = _resolve_dim_int(k_shape[0], bindings, name="BK")
+    HK = _resolve_dim_int(k_shape[1], bindings, name="HK")
+    K = _resolve_dim_int(k_shape[2], bindings, name="K")
+    DK = _resolve_dim_int(k_shape[3], bindings, name="DK")
+    BV = _resolve_dim_int(v_shape[0], bindings, name="BV")
+    HV = _resolve_dim_int(v_shape[1], bindings, name="HV")
+    KV = _resolve_dim_int(v_shape[2], bindings, name="KV")
+    DV = _resolve_dim_int(v_shape[3], bindings, name="DV")
+    if BK != B or HK != Hh or DK != D:
+        raise CudaLoweringError("sdpa shape mismatch between query and key")
+    if BV != B or HV != Hh or KV != K:
+        raise CudaLoweringError("sdpa shape mismatch between key and value")
+    if _resolve_dim_int(out_shape[0], bindings, name="OB") != B or _resolve_dim_int(out_shape[1], bindings, name="OH") != Hh:
+        raise CudaLoweringError("sdpa output BH mismatch")
+    if _resolve_dim_int(out_shape[2], bindings, name="OQ") != Q or _resolve_dim_int(out_shape[3], bindings, name="OD") != DV:
+        raise CudaLoweringError("sdpa output QD mismatch")
+
+    is_causal = bool((op.attrs or {}).get("is_causal", False))
+    causal_guard = "if (k > q) continue;" if is_causal else ""
+
+    total = int(B) * int(Hh) * int(Q) * int(DV)
+    sched = intent.schedule or ScheduleSketch()
+    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=128)
+    if block_x <= 0:
+        block_x = 128
+    if block_x > 1024:
+        block_x = 1024
+    grid_x = (total + block_x - 1) // block_x
+
+    cuda_src = f"""
+#include <math.h>
+#include <stdint.h>
+
+extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(const float* __restrict__ {q_name},
+                                                                       const float* __restrict__ {k_name},
+                                                                       const float* __restrict__ {v_name},
+                                                                       float* __restrict__ {out_name}) {{
+  const int64_t tid = (int64_t)blockIdx.x * (int64_t)blockDim.x + (int64_t)threadIdx.x;
+  const int64_t total = (int64_t){total};
+  if (tid >= total) return;
+
+  int64_t t = tid;
+  const int d = (int)(t % {DV}); t /= {DV};
+  const int q = (int)(t % {Q}); t /= {Q};
+  const int h = (int)(t % {Hh}); t /= {Hh};
+  const int b = (int)t;
+
+  const float inv_sqrt_d = rsqrtf((float){D});
+  float max_score = -INFINITY;
+  for (int k = 0; k < {K}; ++k) {{
+    {causal_guard}
+    float dot = 0.0f;
+    for (int x = 0; x < {D}; ++x) {{
+      const int64_t qidx = ((((int64_t)b * {Hh} + h) * {Q} + q) * {D}) + x;
+      const int64_t kidx = ((((int64_t)b * {Hh} + h) * {K} + k) * {D}) + x;
+      dot += {q_name}[qidx] * {k_name}[kidx];
+    }}
+    const float score = dot * inv_sqrt_d;
+    max_score = fmaxf(max_score, score);
+  }}
+
+  float denom = 0.0f;
+  float numer = 0.0f;
+  for (int k = 0; k < {K}; ++k) {{
+    {causal_guard}
+    float dot = 0.0f;
+    for (int x = 0; x < {D}; ++x) {{
+      const int64_t qidx = ((((int64_t)b * {Hh} + h) * {Q} + q) * {D}) + x;
+      const int64_t kidx = ((((int64_t)b * {Hh} + h) * {K} + k) * {D}) + x;
+      dot += {q_name}[qidx] * {k_name}[kidx];
+    }}
+    const float wgt = expf(dot * inv_sqrt_d - max_score);
+    denom += wgt;
+    const int64_t vidx = ((((int64_t)b * {Hh} + h) * {K} + k) * {DV}) + d;
+    numer += wgt * {v_name}[vidx];
+  }}
+
+  {out_name}[tid] = (denom > 0.0f) ? (numer / denom) : 0.0f;
+}}
+""".lstrip()
+
+    io_spec = _io_spec_from_args(intent, tensor_args=[q_name, k_name, v_name, out_name], scalar_args={}, arg_names=[q_name, k_name, v_name, out_name])
+    launch = CudaLaunch(grid=(grid_x, 1, 1), block=(block_x, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.update({"B": int(B), "H": int(Hh), "Q": int(Q), "K": int(K), "D": int(D), "DV": int(DV)})
+    return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=lowered_bindings)
+
+
 def _kernel_resize_bilinear2x_i8(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
     if not intent.ops or intent.ops[0].op != "resize":
         raise CudaLoweringError("resize lowering expects a single resize op")
@@ -2344,6 +2640,12 @@ def lower_intent_to_cuda_kernel(
                 return _kernel_reduce_min_2d_axis1_f32(intent, bindings)
             if op0 == "gather":
                 return _kernel_gather2d_f32(intent, bindings)
+            if op0 in {"argmax", "argmin"}:
+                return _kernel_arg_reduce_2d_axis1_i32(intent, bindings)
+            if op0 == "avg_pool2d":
+                return _kernel_avg_pool2d_nchw_f32(intent, bindings)
+            if op0 == "scaled_dot_product_attention":
+                return _kernel_scaled_dot_product_attention_bhsd_f32(intent, bindings)
 
     # 2) Pattern-based kernels (fused).
     outs = set(intent.outputs or [])
@@ -2387,6 +2689,8 @@ def lower_intent_to_cuda_kernel(
         "gt",
         "ge",
         "bitwise_and",
+        "bitwise_left_shift",
+        "bitwise_not",
         "and",
         "or",
         "not",

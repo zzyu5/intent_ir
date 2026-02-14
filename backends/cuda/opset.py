@@ -51,10 +51,17 @@ CUDA_SUPPORTED_OPS: set[str] = {
     "le",
     "gt",
     "ge",
+    "bitwise_and",
+    "bitwise_left_shift",
+    "bitwise_not",
     "and",
     "or",
     "not",
     "where",
+    "argmax",
+    "argmin",
+    "avg_pool2d",
+    "scaled_dot_product_attention",
 }
 
 __all__ = ["CUDA_SUPPORTED_OPS"]
