@@ -1,12 +1,12 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-14T17:12:38+00:00",
+  "generated_at": "2026-02-14T17:29:57+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
-      "dual_pass": 23,
-      "blocked_backend": 173
+      "dual_pass": 31,
+      "blocked_backend": 165
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -139,10 +139,10 @@
       "id": "flaggems::arange",
       "semantic_op": "arange",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "arange1d",
       "intent_ops": [
         "iota"
@@ -152,10 +152,10 @@
       "id": "flaggems::atan",
       "semantic_op": "atan",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "atan2d",
       "intent_ops": [
         "atan"
@@ -230,10 +230,10 @@
       "id": "flaggems::bitwise_or_scalar",
       "semantic_op": "bitwise_or_scalar",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "bitwise_or2d",
       "intent_ops": [
         "bitwise_or"
@@ -243,10 +243,10 @@
       "id": "flaggems::bitwise_or_scalar_tensor",
       "semantic_op": "bitwise_or_scalar_tensor",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "bitwise_or2d",
       "intent_ops": [
         "bitwise_or"
@@ -256,10 +256,10 @@
       "id": "flaggems::bitwise_or_tensor",
       "semantic_op": "bitwise_or_tensor",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "bitwise_or2d",
       "intent_ops": [
         "bitwise_or"
@@ -269,10 +269,10 @@
       "id": "flaggems::bitwise_right_shift",
       "semantic_op": "bitwise_right_shift",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "bitwise_right_shift2d",
       "intent_ops": [
         "bitwise_right_shift"
@@ -1773,10 +1773,10 @@
       "id": "flaggems::amax",
       "semantic_op": "amax",
       "family": "reduction",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "row_max",
       "intent_ops": [
         "reduce_max"
@@ -1786,10 +1786,10 @@
       "id": "flaggems::any",
       "semantic_op": "any",
       "family": "reduction",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "any_kernel_dim",
       "intent_ops": [
         "reduce_any"
@@ -2015,7 +2015,7 @@
       "family": "norm_activation",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "runtime_backend_fail",
+      "reason_code": "pipeline_diff_failed_or_missing",
       "next_action": "backend_lowering",
       "e2e_spec": "batch_norm2d",
       "intent_ops": [
