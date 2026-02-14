@@ -91,6 +91,16 @@ def test_flaggems_coverage_specs_include_expanded_semantics() -> None:
     assert "log_sigmoid2d" in names
     assert "log_softmax2d" in names
     assert "sin2d" in names
+    assert "softplus2d" in names
+    assert "sort2d" in names
+    assert "sort_stable2d" in names
+    assert "stack2d" in names
+    assert "std2d" in names
+    assert "tan2d" in names
+    assert "tile2d" in names
+    assert "topk2d" in names
+    assert "var_mean2d" in names
+    assert "vector_norm2d" in names
     assert "remainder2d" in names
     assert "abs2d" in names
     assert "rsqrt2d" in names

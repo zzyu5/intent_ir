@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-14T04:22:33.283898+00:00",
+  "generated_at": "2026-02-14T04:47:15.593717+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -7583,10 +7583,10 @@
       ],
       "mapping_kind": "direct_supported_op",
       "intent_pattern_id": "direct.sort",
-      "e2e_spec": null,
+      "e2e_spec": "sort2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "semantic op equals IntentIR op name; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "semantic op equals IntentIR op name; rvv_missing=['sort']; cuda_h100_missing=['sort']; cuda_5090d_missing=['sort']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -7646,10 +7646,10 @@
       ],
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.sort_stable->sort",
-      "e2e_spec": null,
+      "e2e_spec": "sort_stable2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "alias to sort; semantic op equals IntentIR op name; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "alias to sort; semantic op equals IntentIR op name; rvv_missing=['sort']; cuda_h100_missing=['sort']; cuda_5090d_missing=['sort']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -7782,10 +7782,10 @@
       ],
       "mapping_kind": "direct_supported_op",
       "intent_pattern_id": "direct.stack",
-      "e2e_spec": null,
+      "e2e_spec": "stack2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "semantic op equals IntentIR op name; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "semantic op equals IntentIR op name; rvv_missing=['stack']; cuda_h100_missing=['stack']; cuda_5090d_missing=['stack']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -7908,10 +7908,10 @@
       ],
       "mapping_kind": "unary_template",
       "intent_pattern_id": "unary.tan",
-      "e2e_spec": null,
+      "e2e_spec": "tan2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped to tan primitive; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to tan primitive; rvv_missing=['tan']; cuda_h100_missing=['tan']; cuda_5090d_missing=['tan']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -8054,10 +8054,10 @@
       ],
       "mapping_kind": "direct_supported_op",
       "intent_pattern_id": "direct.tile",
-      "e2e_spec": null,
+      "e2e_spec": "tile2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "semantic op equals IntentIR op name; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "semantic op equals IntentIR op name; rvv_missing=['tile']; cuda_h100_missing=['tile']; cuda_5090d_missing=['tile']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -8180,10 +8180,10 @@
       ],
       "mapping_kind": "direct_supported_op",
       "intent_pattern_id": "direct.topk",
-      "e2e_spec": null,
+      "e2e_spec": "topk2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "semantic op equals IntentIR op name; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "semantic op equals IntentIR op name; rvv_missing=['topk']; cuda_h100_missing=['topk']; cuda_5090d_missing=['topk']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -9835,10 +9835,10 @@
       ],
       "mapping_kind": "reduce_template",
       "intent_pattern_id": "reduce.std",
-      "e2e_spec": null,
+      "e2e_spec": "std2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped to std primitive; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to std primitive; rvv_missing=['std']; cuda_h100_missing=['std']; cuda_5090d_missing=['std']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -10027,10 +10027,10 @@
       ],
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.var_mean",
-      "e2e_spec": null,
+      "e2e_spec": "var_mean2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped to var/mean primitives; no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped to var/mean primitives; rvv_missing=['mean', 'var']; cuda_h100_missing=['mean', 'var']; cuda_5090d_missing=['mean', 'var']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -11172,10 +11172,10 @@
       ],
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.softplus",
-      "e2e_spec": null,
+      "e2e_spec": "softplus2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as log(1 + exp(x)); no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped as log(1 + exp(x)); rvv_missing=['log']; cuda_h100_missing=['log']; cuda_5090d_missing=['log']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
@@ -11371,10 +11371,10 @@
       ],
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.vector_norm",
-      "e2e_spec": null,
+      "e2e_spec": "vector_norm2d",
       "status": "blocked_backend",
-      "status_reason": "missing_e2e_spec",
-      "status_reason_detail": "mapped as sqrt(reduce_sum(x*x)); no e2e spec registered",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped as sqrt(reduce_sum(x*x)); rvv_missing=['sqrt']; cuda_h100_missing=['sqrt']; cuda_5090d_missing=['sqrt']",
       "backend_support": {
         "rvv": {
           "target": "rvv",

@@ -157,6 +157,16 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
             "repeat_interleave_self_tensor",
             "repeat_interleave_tensor",
             "sin",
+            "softplus",
+            "sort",
+            "sort_stable",
+            "stack",
+            "std",
+            "tan",
+            "tile",
+            "topk",
+            "var_mean",
+            "vector_norm",
             "constant_pad_nd",
             "hstack",
             "conv2d",
@@ -263,6 +273,16 @@ def test_list_supported_e2e_specs_uses_registry_entries() -> None:
     assert "repeat_interleave_self_tensor1d" in specs
     assert "repeat_interleave_tensor1d" in specs
     assert "sin2d" in specs
+    assert "softplus2d" in specs
+    assert "sort2d" in specs
+    assert "sort_stable2d" in specs
+    assert "stack2d" in specs
+    assert "std2d" in specs
+    assert "tan2d" in specs
+    assert "tile2d" in specs
+    assert "topk2d" in specs
+    assert "var_mean2d" in specs
+    assert "vector_norm2d" in specs
     assert "constant_pad_nd2d" in specs
     assert "hstack2d" in specs
     assert "conv2d_nchw" in specs
