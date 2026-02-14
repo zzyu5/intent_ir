@@ -71,6 +71,7 @@ SPMD_RVV_SUPPORTED_OPS: set[str] = {
     "scaled_dot_product_attention",
     # Higher-level kernels.
     "softmax",
+    "glu",
     "matmul",
     "conv1d",
     "conv2d",

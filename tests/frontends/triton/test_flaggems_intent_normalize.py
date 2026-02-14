@@ -75,6 +75,11 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert [op.op for op in cat2d.ops] == ["concat"]
     assert (cat2d.ops[0].attrs or {}).get("axis") == 1
 
+    hstack2d = canonical_flaggems_intent_for_spec("hstack2d")
+    assert hstack2d is not None
+    assert [op.op for op in hstack2d.ops] == ["concat"]
+    assert (hstack2d.ops[0].attrs or {}).get("axis") == 1
+
     clamp2d = canonical_flaggems_intent_for_spec("clamp2d")
     assert clamp2d is not None
     assert [op.op for op in clamp2d.ops] == ["cast", "max", "min"]

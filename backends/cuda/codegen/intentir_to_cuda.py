@@ -1666,6 +1666,220 @@ extern "C" __global__ void {intent.name}(
     return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[Y_name, Mean_name, Rstd_name], bindings=out_bindings)
 
 
+def _kernel_glu_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != "glu":
+        raise CudaLoweringError("glu lowering expects a single glu op")
+    op = intent.ops[0]
+    if len(op.inputs) != 1:
+        raise CudaLoweringError("glu expects one input tensor")
+    x_name = str(op.inputs[0])
+    out_name = str(op.output)
+    axis = int((op.attrs or {}).get("axis", -1))
+
+    x_shape = _shape_values(intent, x_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(x_shape) != 2 or len(out_shape) != 2:
+        raise CudaLoweringError("glu lowering currently supports rank-2 tensors")
+    axis_norm = axis if axis >= 0 else (axis + len(x_shape))
+    if axis_norm != 1:
+        raise CudaLoweringError("glu lowering currently supports axis=1")
+
+    M = _resolve_dim_int(x_shape[0], bindings, name="M")
+    N = _resolve_dim_int(x_shape[1], bindings, name="N")
+    if (N % 2) != 0:
+        raise CudaLoweringError("glu expects even input extent on split axis")
+    N_out = N // 2
+    try:
+        M_decl = _resolve_dim_int(out_shape[0], bindings, name="M_out")
+        if M_decl != M:
+            raise CudaLoweringError("glu output M mismatch")
+    except Exception:
+        pass
+    try:
+        N_decl = _resolve_dim_int(out_shape[1], bindings, name="N_out")
+        if N_decl not in {N_out, N}:
+            raise CudaLoweringError("glu output axis extent incompatible with input")
+    except Exception:
+        pass
+
+    total = int(M) * int(N_out)
+    sched = intent.schedule or ScheduleSketch()
+    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=256)
+    if block_x <= 0:
+        block_x = 256
+    if block_x > 1024:
+        block_x = 1024
+    grid_x = (total + block_x - 1) // block_x
+
+    cuda_src = f"""
+#include <math.h>
+#include <stdint.h>
+
+extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(const float* __restrict__ {x_name},
+                                                                       float* __restrict__ {out_name}) {{
+  const int tid = (int)blockIdx.x * (int)blockDim.x + (int)threadIdx.x;
+  const int total = {total};
+  if (tid >= total) return;
+  const int m = tid / {N_out};
+  const int n = tid % {N_out};
+  const int base = m * {N};
+  const float a = {x_name}[base + n];
+  const float b = {x_name}[base + n + {N_out}];
+  const float sig = 1.0f / (1.0f + expf(-b));
+  {out_name}[tid] = a * sig;
+}}
+""".lstrip()
+
+    io_spec = _io_spec_from_args(intent, tensor_args=[x_name, out_name], scalar_args={}, arg_names=[x_name, out_name])
+    launch = CudaLaunch(grid=(grid_x, 1, 1), block=(block_x, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.update({"M": int(M), "N": int(N), "N_out": int(N_out)})
+    return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=lowered_bindings)
+
+
+def _kernel_group_norm_3d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    outs = list(intent.outputs or [])
+    if len(outs) != 3:
+        raise CudaLoweringError("group_norm lowering expects outputs [Y, Mean, Rstd]")
+    Y_name, Mean_name, Rstd_name = (str(outs[0]), str(outs[1]), str(outs[2]))
+
+    produced = {o.output for o in (intent.ops or []) if o.output}
+    ext_inputs = [n for n in intent.tensors.keys() if n not in produced and n not in set(outs)]
+    x_candidates = [n for n in ext_inputs if len(_shape_values(intent, n)) == 3 and str(intent.tensors[n].dtype) == "f32"]
+    if not x_candidates:
+        raise CudaLoweringError("group_norm lowering cannot find rank-3 input X")
+    X_name = str(x_candidates[0])
+    vec_candidates = [n for n in ext_inputs if len(_shape_values(intent, n)) == 1 and str(intent.tensors[n].dtype) == "f32"]
+    if len(vec_candidates) < 2:
+        raise CudaLoweringError("group_norm lowering cannot find W/B vectors")
+    w_guess = next((n for n in vec_candidates if str(n).lower() in {"w", "weight"}), None)
+    b_guess = next((n for n in vec_candidates if str(n).lower() in {"b", "bias"}), None)
+    W_name = str(w_guess or vec_candidates[0])
+    B_name = str(b_guess or (vec_candidates[1] if str(vec_candidates[0]) == W_name else vec_candidates[0]))
+    if W_name == B_name:
+        raise CudaLoweringError("group_norm lowering failed to disambiguate W/B inputs")
+
+    x_shape = _shape_values(intent, X_name)
+    y_shape = _shape_values(intent, Y_name)
+    mean_shape = _shape_values(intent, Mean_name)
+    rstd_shape = _shape_values(intent, Rstd_name)
+    if len(x_shape) != 3 or len(y_shape) != 3 or len(mean_shape) != 2 or len(rstd_shape) != 2:
+        raise CudaLoweringError("group_norm lowering expects X/Y rank-3 and Mean/Rstd rank-2 tensors")
+    N = _resolve_dim_int(x_shape[0], bindings, name="N")
+    C = _resolve_dim_int(x_shape[1], bindings, name="C")
+    HW = _resolve_dim_int(x_shape[2], bindings, name="HW")
+    if (
+        _resolve_dim_int(y_shape[0], bindings, name="YN") != N
+        or _resolve_dim_int(y_shape[1], bindings, name="YC") != C
+        or _resolve_dim_int(y_shape[2], bindings, name="YHW") != HW
+    ):
+        raise CudaLoweringError("group_norm output Y shape mismatch")
+
+    num_groups = int(bindings.get("num_groups", bindings.get("G", 0)) or 0)
+    if num_groups <= 0:
+        num_groups = _resolve_dim_int(mean_shape[1], bindings, name="num_groups")
+    if num_groups <= 0:
+        raise CudaLoweringError("group_norm requires positive num_groups")
+    if C % num_groups != 0:
+        raise CudaLoweringError("group_norm requires C divisible by num_groups")
+    group_size = int(bindings.get("group_size", C // num_groups))
+    if group_size <= 0 or group_size * num_groups != C:
+        group_size = C // num_groups
+
+    if (
+        _resolve_dim_int(mean_shape[0], bindings, name="MeanN") != N
+        or _resolve_dim_int(mean_shape[1], bindings, name="MeanG") != num_groups
+        or _resolve_dim_int(rstd_shape[0], bindings, name="RstdN") != N
+        or _resolve_dim_int(rstd_shape[1], bindings, name="RstdG") != num_groups
+    ):
+        raise CudaLoweringError("group_norm Mean/Rstd shape mismatch")
+
+    eps = 1e-5
+    for op in intent.ops or []:
+        if op.op == "const" and str(op.output).lower() == "eps":
+            try:
+                eps = float(op.attrs.get("value"))
+            except Exception:
+                eps = 1e-5
+            break
+
+    total_groups = int(N) * int(num_groups)
+    sched = intent.schedule or ScheduleSketch()
+    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=128)
+    if block_x <= 0:
+        block_x = 128
+    if block_x > 1024:
+        block_x = 1024
+    grid_x = (total_groups + block_x - 1) // block_x
+
+    cuda_src = f"""
+#include <math.h>
+#include <stdint.h>
+
+extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(const float* __restrict__ {X_name},
+                                                                       const float* __restrict__ {W_name},
+                                                                       const float* __restrict__ {B_name},
+                                                                       float* __restrict__ {Y_name},
+                                                                       float* __restrict__ {Mean_name},
+                                                                       float* __restrict__ {Rstd_name}) {{
+  const int tid = (int)blockIdx.x * (int)blockDim.x + (int)threadIdx.x;
+  if (tid >= {total_groups}) return;
+  const int n = tid / {num_groups};
+  const int g = tid % {num_groups};
+  const int c0 = g * {group_size};
+  const int elems = {group_size} * {HW};
+
+  float sum = 0.0f;
+  float sq = 0.0f;
+  for (int gc = 0; gc < {group_size}; ++gc) {{
+    const int c = c0 + gc;
+    for (int hw = 0; hw < {HW}; ++hw) {{
+      const int idx = ((n * {C} + c) * {HW}) + hw;
+      const float x = {X_name}[idx];
+      sum += x;
+      sq += x * x;
+    }}
+  }}
+  const float mean = sum / (float)elems;
+  const float var = fmaxf((sq / (float)elems) - (mean * mean), 0.0f);
+  const float rstd = rsqrtf(var + {eps:.9g}f);
+  {Mean_name}[n * {num_groups} + g] = mean;
+  {Rstd_name}[n * {num_groups} + g] = rstd;
+
+  for (int gc = 0; gc < {group_size}; ++gc) {{
+    const int c = c0 + gc;
+    const float w = {W_name}[c];
+    const float b = {B_name}[c];
+    for (int hw = 0; hw < {HW}; ++hw) {{
+      const int idx = ((n * {C} + c) * {HW}) + hw;
+      const float x = {X_name}[idx];
+      {Y_name}[idx] = ((x - mean) * rstd) * w + b;
+    }}
+  }}
+}}
+""".lstrip()
+
+    io_spec = _io_spec_from_args(
+        intent,
+        tensor_args=[X_name, W_name, B_name, Y_name, Mean_name, Rstd_name],
+        scalar_args={},
+        arg_names=[X_name, W_name, B_name, Y_name, Mean_name, Rstd_name],
+    )
+    launch = CudaLaunch(grid=(grid_x, 1, 1), block=(block_x, 1, 1), shared_mem=0)
+    out_bindings: Dict[str, Any] = dict(bindings)
+    out_bindings.setdefault("num_groups", int(num_groups))
+    out_bindings.setdefault("group_size", int(group_size))
+    out_bindings.setdefault("eps", float(eps))
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=[Y_name, Mean_name, Rstd_name],
+        bindings=out_bindings,
+    )
+
+
 def _kernel_rope_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
     # Respect scalar-tensor dims when present; fall back to scalar args otherwise.
     SEQ = _as_int(bindings.get("SEQ_LEN"), name="SEQ_LEN")
@@ -3137,11 +3351,11 @@ def _kernel_gather2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cu
     N = _as_int(bindings.get("N"), name="N")
     out_shape = _shape_values(intent, out_name)
     if len(out_shape) == 1:
-        L = _resolve_dim_int(out_shape[0], bindings, name="L")
+        total = _resolve_dim_int(out_shape[0], bindings, name="L")
     elif len(out_shape) == 2:
         d0 = _resolve_dim_int(out_shape[0], bindings, name="out_dim0")
         d1 = _resolve_dim_int(out_shape[1], bindings, name="out_dim1")
-        L = int(d0) * int(d1)
+        total = int(d0) * int(d1)
     else:
         raise CudaLoweringError("gather2d MVP supports output rank<=2")
     sched = intent.schedule or ScheduleSketch()
@@ -3150,7 +3364,7 @@ def _kernel_gather2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> Cu
         block_x = 256
     if block_x > 1024:
         block_x = 1024
-    grid_x = (L + block_x - 1) // block_x
+    grid_x = (total + block_x - 1) // block_x
 
     other_lit = _c_scalar_literal("f32", other)
     cuda_src = f"""
@@ -3160,9 +3374,9 @@ extern "C" __global__ void {intent.name}(
     const int* __restrict__ {row_name},
     const int* __restrict__ {col_name},
     float* __restrict__ {out_name},
-    int M, int N, int L) {{
+    int M, int N, int TOTAL) {{
   const int tid = (int)blockIdx.x * (int)blockDim.x + (int)threadIdx.x;
-  if (tid >= L) return;
+  if (tid >= TOTAL) return;
   const int r = {row_name}[tid];
   const int c = {col_name}[tid];
   float v = {other_lit};
@@ -3174,12 +3388,12 @@ extern "C" __global__ void {intent.name}(
 """.lstrip()
 
     lowered_bindings = dict(bindings)
-    lowered_bindings["L"] = int(L)
+    lowered_bindings["TOTAL"] = int(total)
     io_spec = _io_spec_from_args(
         intent,
         tensor_args=[inp_name, row_name, col_name, out_name],
-        scalar_args={"M": "i32", "N": "i32", "L": "i32"},
-        arg_names=[inp_name, row_name, col_name, out_name, "M", "N", "L"],
+        scalar_args={"M": "i32", "N": "i32", "TOTAL": "i32"},
+        arg_names=[inp_name, row_name, col_name, out_name, "M", "N", "TOTAL"],
     )
     launch = CudaLaunch(grid=(grid_x, 1, 1), block=(block_x, 1, 1), shared_mem=0)
     return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=lowered_bindings)
@@ -5163,6 +5377,8 @@ def lower_intent_to_cuda_kernel(
                 return _kernel_concat_2d_f32(intent, bindings)
             if op0 == "pad":
                 return _kernel_pad_2d_f32(intent, bindings)
+            if op0 == "glu":
+                return _kernel_glu_2d_f32(intent, bindings)
             if op0 == "reduce_sum":
                 return _kernel_reduce_sum_2d_axis1_f32(intent, bindings)
             if op0 == "reduce_max":
@@ -5213,6 +5429,8 @@ def lower_intent_to_cuda_kernel(
         "rsqrt",
     }.issubset(op_names):
         return _kernel_batch_norm2d_f32(intent, bindings)
+    if str(intent.name).lower() in {"group_norm_kernel", "group_norm"}:
+        return _kernel_group_norm_3d_f32(intent, bindings)
     if {"Y", "Mean", "Rstd"}.issubset(outs):
         return _kernel_layernorm_2d_f32(intent, bindings)
     # Softmax: recognize by name or by presence of reduce_max + exp + reduce_sum.

@@ -26,6 +26,7 @@ CUDA_SUPPORTED_OPS: set[str] = {
     "gather",
     "concat",
     "pad",
+    "glu",
     # Core primitives covered by pattern + fused elementwise lowerings.
     "const",
     "iota",

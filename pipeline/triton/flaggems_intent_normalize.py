@@ -276,6 +276,12 @@ def _canonical_cat2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_hstack2d_intent() -> IntentFunction:
+    out = _canonical_cat2d_intent().to_json_dict()
+    out["name"] = "hstack2d"
+    return IntentFunction.from_json_dict(out)
+
+
 def _canonical_clamp2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -1439,6 +1445,8 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_threshold2d_intent()
     if name == "cat2d":
         return _canonical_cat2d_intent()
+    if name == "hstack2d":
+        return _canonical_hstack2d_intent()
     if name == "clamp2d":
         return _canonical_clamp2d_intent()
     if name == "constant_pad_nd2d":

@@ -5331,6 +5331,7 @@ def _norm_glu2d(shapes: Dict[str, int]) -> Dict[str, int]:
     if n % 2 != 0:
         n += 1
     out["N"] = n
+    out["N_HALF"] = n // 2
     out["AXIS"] = 1
     return out
 
@@ -5530,6 +5531,14 @@ def _norm_cat2d(shapes: Dict[str, int]) -> Dict[str, int]:
     else:
         out["M_OUT"] = 2 * m
         out["N_OUT"] = n
+    return out
+
+
+def _norm_hstack2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = _norm_cat2d(shapes)
+    out["AXIS"] = 1
+    out["M_OUT"] = int(out["M"])
+    out["N_OUT"] = int(out["N"]) * 2
     return out
 
 
@@ -5842,8 +5851,9 @@ _FLAGGEMS_SPEC_BUILDERS = {
         module="pipeline.triton.flaggems_specs",
         attr="FLAGGEMS_HSTACK_SRC",
         runner=_run_flaggems_hstack2d_reference,
-        canonical_shapes={"M": 4, "N": 32},
+        canonical_shapes={"M": 4, "N": 32, "AXIS": 1, "M_OUT": 4, "N_OUT": 64},
         vary_axes=["M", "N"],
+        normalize_shapes=_norm_hstack2d,
     ),
     "vstack2d": lambda: KernelSpec(
         name="vstack2d",
@@ -6998,7 +7008,7 @@ _FLAGGEMS_SPEC_BUILDERS = {
         module="pipeline.triton.flaggems_specs",
         attr="FLAGGEMS_GLU_SRC",
         runner=_run_flaggems_glu2d_reference,
-        canonical_shapes={"M": 4, "N": 64, "AXIS": 1},
+        canonical_shapes={"M": 4, "N": 64, "N_HALF": 32, "AXIS": 1},
         vary_axes=["M", "N"],
         normalize_shapes=_norm_glu2d,
         stage_c_max_cases=8,

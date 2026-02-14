@@ -856,6 +856,31 @@ void emit_erf(CodeWriter& w, const std::string& out, const std::string& a, const
   w.line("intentir_erf_f32(" + a + ", " + out + ", (size_t)" + std::to_string(n) + ");");
 }
 
+void emit_glu(CodeWriter& w, const std::string& out, const std::string& x, const std::vector<int64_t>& in_shape,
+              const std::vector<int64_t>& out_shape, int axis) {
+  if (in_shape.size() != 2 || out_shape.size() != 2) fail("glu lowering currently supports rank-2 tensors");
+  int axis_norm = axis;
+  if (axis_norm < 0) axis_norm += 2;
+  if (axis_norm != 1) fail("glu lowering currently supports axis=1");
+  const int64_t M = in_shape[0];
+  const int64_t N = in_shape[1];
+  const int64_t N2 = out_shape[1];
+  if (out_shape[0] != M) fail("glu output shape mismatch");
+  if (N != (2 * N2)) fail("glu expects input axis extent == 2 * output extent");
+  w.line("for (int i = 0; i < " + std::to_string(M) + "; ++i) {");
+  w.indent();
+  w.line("for (int j = 0; j < " + std::to_string(N2) + "; ++j) {");
+  w.indent();
+  w.line("const int in_base = i * " + std::to_string(N) + ";");
+  w.line("const float a = " + x + "[in_base + j];");
+  w.line("const float b = " + x + "[in_base + j + " + std::to_string(N2) + "];");
+  w.line(out + "[i * " + std::to_string(N2) + " + j] = a * (1.0f / (1.0f + expf(-b)));");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+}
+
 void emit_cast(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape, const std::string& from_dt, const std::string& to_dt) {
   const int64_t n = numel(out_shape);
   w.line("intentir_cast_1d(" + a + ", " + out + ", (size_t)" + std::to_string(n) + ", " + typecode_for_dtype(from_dt) + ", " + typecode_for_dtype(to_dt) +
@@ -2934,6 +2959,9 @@ struct CProgramEmitter {
         bool is_causal = op.attrs.value("is_causal", false);
         emit_scaled_dot_product_attention(w, out_var, v(op.inputs[0]), v(op.inputs[1]), v(op.inputs[2]), shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]),
                                           shape_env.at(op.inputs[2]), out_shape, is_causal);
+	      } else if (op.op == "glu") {
+          int axis = op.attrs.value("axis", -1);
+          emit_glu(w, out_var, v(op.inputs[0]), shape_env.at(op.inputs[0]), out_shape, axis);
 	      } else if (op.op == "exp") {
 	        int64_t n = numel(out_shape);
           std::optional<double> base;
@@ -3524,6 +3552,20 @@ int main(int argc, char** argv) {
       }
       if (kind == "cumsum" || kind == "cummax" || kind == "cummin") {
         shape_env[out] = get_shape(op.inputs[0]);
+        dtype_env[out] = get_dtype(op.inputs[0]);
+        continue;
+      }
+      if (kind == "glu") {
+        const auto& in_shape = get_shape(op.inputs[0]);
+        if (in_shape.empty()) fail("glu expects rank >= 1 input");
+        int axis = op.attrs.value("axis", -1);
+        int axis_norm = axis;
+        if (axis_norm < 0) axis_norm += static_cast<int>(in_shape.size());
+        if (axis_norm < 0 || axis_norm >= static_cast<int>(in_shape.size())) fail("glu axis out of range");
+        if ((in_shape[axis_norm] % 2) != 0) fail("glu requires even extent along selected axis");
+        std::vector<int64_t> oshape = in_shape;
+        oshape[axis_norm] = in_shape[axis_norm] / 2;
+        shape_env[out] = oshape;
         dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
       }
