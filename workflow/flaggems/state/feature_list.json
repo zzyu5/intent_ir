@@ -1,12 +1,12 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-14T18:40:30+00:00",
+  "generated_at": "2026-02-14T19:51:42+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
-      "dual_pass": 43,
-      "blocked_backend": 153
+      "dual_pass": 53,
+      "blocked_backend": 143
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -396,10 +396,10 @@
       "id": "flaggems::copy",
       "semantic_op": "copy",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "identity2d",
       "intent_ops": [
         "identity"
@@ -409,10 +409,10 @@
       "id": "flaggems::cos",
       "semantic_op": "cos",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "cos2d",
       "intent_ops": [
         "cos"
@@ -422,10 +422,10 @@
       "id": "flaggems::diag",
       "semantic_op": "diag",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "diag2d",
       "intent_ops": [
         "diag"
@@ -1825,10 +1825,10 @@
       "id": "flaggems::count_nonzero",
       "semantic_op": "count_nonzero",
       "family": "reduction",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "count_nonzero2d",
       "intent_ops": [
         "count_nonzero"
@@ -1838,10 +1838,10 @@
       "id": "flaggems::cumsum",
       "semantic_op": "cumsum",
       "family": "reduction",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "cumsum2d",
       "intent_ops": [
         "cumsum"
@@ -2483,10 +2483,10 @@
       "id": "flaggems::cummax",
       "semantic_op": "cummax",
       "family": "matmul_linear",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "cummax1d",
       "intent_ops": [
         "cummax"
@@ -2496,10 +2496,10 @@
       "id": "flaggems::cummin",
       "semantic_op": "cummin",
       "family": "matmul_linear",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "cummin1d",
       "intent_ops": [
         "cummin"
@@ -2574,10 +2574,10 @@
       "id": "flaggems::conv2d",
       "semantic_op": "conv2d",
       "family": "conv_pool_interp",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "conv2d_nchw",
       "intent_ops": [
         "conv2d"
@@ -2587,10 +2587,10 @@
       "id": "flaggems::conv3d",
       "semantic_op": "conv3d",
       "family": "conv_pool_interp",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "conv3d_ncdhw",
       "intent_ops": [
         "conv3d"
@@ -2600,10 +2600,10 @@
       "id": "flaggems::conv_depthwise2d",
       "semantic_op": "conv_depthwise2d",
       "family": "conv_pool_interp",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "conv_depthwise2d_nchw",
       "intent_ops": [
         "conv_depthwise2d"
