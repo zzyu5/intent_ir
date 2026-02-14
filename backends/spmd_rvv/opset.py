@@ -44,6 +44,7 @@ SPMD_RVV_SUPPORTED_OPS: set[str] = {
     "or",
     "not",
     "exp",
+    "log",
     "acos",
     "atan",
     "cos",

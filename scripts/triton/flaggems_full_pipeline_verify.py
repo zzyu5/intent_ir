@@ -127,6 +127,8 @@ def main() -> None:
                 print(f"[{spec.name}] intent seed cache hit: {seed_cache_dir / f'{spec.name}.intent_seed.json'}")
             elif cache_event == "miss":
                 print(f"[{spec.name}] intent seed cache miss: {seed_cache_dir / f'{spec.name}.intent_seed.json'}")
+            elif cache_event == "synthesized":
+                print(f"[{spec.name}] intent seed synthesized from provider canonical template: {seed_cache_dir / f'{spec.name}.intent_seed.json'}")
         else:
             # Ensure original path does not accidentally consume stale per-run seed.
             run_seed = out_dir / f"{spec.name}.intent_seed.json"

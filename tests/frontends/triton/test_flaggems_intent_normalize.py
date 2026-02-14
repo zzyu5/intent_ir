@@ -125,6 +125,31 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert logspace is not None
     assert [op.op for op in logspace.ops] == ["iota", "cast", "sub", "div", "mul", "add", "mul", "exp"]
 
+    le2d = canonical_flaggems_intent_for_spec("le2d")
+    assert le2d is not None
+    assert [op.op for op in le2d.ops] == ["le"]
+
+    log2d = canonical_flaggems_intent_for_spec("log2d")
+    assert log2d is not None
+    assert [op.op for op in log2d.ops] == ["log"]
+
+    log_sigmoid2d = canonical_flaggems_intent_for_spec("log_sigmoid2d")
+    assert log_sigmoid2d is not None
+    assert [op.op for op in log_sigmoid2d.ops] == ["abs", "const", "mul", "exp", "const", "add", "log", "const", "min", "sub"]
+
+    log_softmax2d = canonical_flaggems_intent_for_spec("log_softmax2d")
+    assert log_softmax2d is not None
+    assert [op.op for op in log_softmax2d.ops] == ["softmax", "log"]
+    assert (log_softmax2d.ops[0].attrs or {}).get("axis") == 1
+
+    logical_and2d = canonical_flaggems_intent_for_spec("logical_and2d")
+    assert logical_and2d is not None
+    assert [op.op for op in logical_and2d.ops] == ["and"]
+
+    logical_not2d = canonical_flaggems_intent_for_spec("logical_not2d")
+    assert logical_not2d is not None
+    assert [op.op for op in logical_not2d.ops] == ["not"]
+
     masked_scatter = canonical_flaggems_intent_for_spec("masked_scatter2d")
     assert masked_scatter is not None
     assert [op.op for op in masked_scatter.ops] == ["masked_scatter"]

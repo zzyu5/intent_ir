@@ -397,7 +397,7 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
     Generic fused elementwise lowering for small IntentIR graphs.
 
     Supports:
-      - unary/binary float ops: add/sub/mul/div/max/min/relu/abs/exp/cos/erf/floor/rsqrt
+      - unary/binary float ops: add/sub/mul/div/max/min/relu/abs/exp/log/cos/erf/floor/rsqrt
       - comparisons -> bool: ne/lt/le/gt/ge
       - bool ops: and/or/not
       - where(cond, a, b)
@@ -707,6 +707,11 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
                 emit_assign(f"powf({base_val:.9g}f, {x})")
             else:
                 emit_assign(f"__expf({x})")
+        elif opname == "log":
+            if len(op.inputs) != 1:
+                raise CudaLoweringError("log expects 1 input")
+            x = val(op.inputs[0])
+            emit_assign(f"logf({x})")
         elif opname == "cos":
             if len(op.inputs) != 1:
                 raise CudaLoweringError("cos expects 1 input")
@@ -1430,10 +1435,24 @@ extern "C" __global__ void {intent.name}(const float* X, const float* p_ptr, con
 
 def _kernel_softmax_2d_last_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
     # Softmax kernel: one block per row, reduce over last dimension.
+    op_seq = [str(o.op) for o in (intent.ops or [])]
+    is_log_softmax = (
+        len(op_seq) == 2
+        and op_seq[0] == "softmax"
+        and op_seq[1] == "log"
+        and len((intent.ops or [])[0].inputs) == 1
+        and len((intent.ops or [])[1].inputs) == 1
+        and str((intent.ops or [])[1].inputs[0]) == str((intent.ops or [])[0].output)
+        and str((intent.ops or [])[1].output) == str((intent.outputs or ["out"])[0])
+    )
     # Identify the input matrix by tracing the reduce_max input (robust against extra tensors).
     out_name = str(intent.outputs[0]) if intent.outputs else "out"
     in_name = None
+    if is_log_softmax:
+        in_name = str((intent.ops or [])[0].inputs[0])
     for op in intent.ops or []:
+        if in_name:
+            break
         if op.op == "reduce_max" and op.inputs:
             in_name = str(op.inputs[0])
             break
@@ -1483,6 +1502,8 @@ def _kernel_softmax_2d_last_f32(intent: IntentFunction, bindings: Dict[str, int]
         block_x = 1024
     if C > 1024:
         raise CudaLoweringError("softmax MVP supports only C<=1024")
+    use_exp2 = bool(int(bindings.get("SOFTMAX_USE_EXP2", 1) or 1))
+    use_exp2_literal = "true" if use_exp2 else "false"
 
     # Choose block threads for f32 softmax:
     # - We prefer fewer threads with higher "elements-per-thread" (EPT) to reduce
@@ -1541,6 +1562,20 @@ def _kernel_softmax_2d_last_f32(intent: IntentFunction, bindings: Dict[str, int]
     c_param = f"const int* {str(C_dim)}_ptr" if c_is_tensor else "int C"
     r_load = f"const int R = {str(R_dim)}_ptr ? {str(R_dim)}_ptr[0] : 0;" if r_is_tensor else ""
     c_load = f"const int C = {str(C_dim)}_ptr ? {str(C_dim)}_ptr[0] : 0;" if c_is_tensor else ""
+    post_softmax_code = ""
+    if is_log_softmax:
+        post_softmax_code = """
+  const int __row = (int)blockIdx.x;
+  if (__row < R) {
+    float* __out_row = __OUT_NAME__ + (size_t)__row * (size_t)C;
+    const int __tid = (int)threadIdx.x;
+    #pragma unroll
+    for (int __i = 0; __i < EPT; ++__i) {
+      const int __c = __tid + __i * BLOCK_THREADS;
+      if (__c < C) __out_row[(size_t)__c] = logf(__out_row[(size_t)__c]);
+    }
+  }
+""".replace("__OUT_NAME__", out_name).rstrip()
 
     cuda_src = f"""
 #include "kernels/softmax.cuh"
@@ -1550,7 +1585,8 @@ extern "C" __global__ void {intent.name}(const float* __restrict__ {in_name}, fl
   {c_load}
   constexpr int BLOCK_THREADS = {block_threads};
   constexpr int EPT = {ept};
-  intentir_cuda::softmax_2d_last_f32<BLOCK_THREADS, EPT>({in_name}, {out_name}, R, C);
+  intentir_cuda::softmax_2d_last_f32<BLOCK_THREADS, EPT, {use_exp2_literal}>({in_name}, {out_name}, R, C);
+  {post_softmax_code}
 }}
 """.lstrip()
 
@@ -5774,6 +5810,7 @@ def lower_intent_to_cuda_kernel(
         "relu",
         "abs",
         "exp",
+        "log",
         "acos",
         "atan",
         "cos",

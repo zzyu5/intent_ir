@@ -304,3 +304,13 @@ def test_flaggems_plugin_forces_deterministic_overrides_for_known_unstable_specs
     assert info24.get("enabled_by") == "provider_required_deterministic_override"
     assert out24.intent.name == "scaled_dot_product_attention_bhsd"
     assert out24_exp is not None
+
+    out25, out25_exp, info25 = plugin.maybe_normalize_candidate(
+        spec_name="log_softmax2d",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info25 is not None
+    assert info25.get("enabled_by") == "provider_required_deterministic_override"
+    assert out25.intent.name == "log_softmax2d"
+    assert out25_exp is not None

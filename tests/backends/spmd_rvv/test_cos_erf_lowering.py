@@ -21,12 +21,13 @@ def _unary_intent(op_name: str, fn_name: str) -> IntentFunction:
     )
 
 
-def test_rvv_opset_contains_cos_and_erf() -> None:
+def test_rvv_opset_contains_cos_erf_and_log() -> None:
     assert "cos" in SPMD_RVV_SUPPORTED_OPS
     assert "erf" in SPMD_RVV_SUPPORTED_OPS
+    assert "log" in SPMD_RVV_SUPPORTED_OPS
 
 
-def test_rvv_lowering_preflight_accepts_cos_and_erf(monkeypatch) -> None:
+def test_rvv_lowering_preflight_accepts_cos_erf_and_log(monkeypatch) -> None:
     calls: list[str] = []
 
     def _fake_cpp_lower(
@@ -51,7 +52,12 @@ def test_rvv_lowering_preflight_accepts_cos_and_erf(monkeypatch) -> None:
         _unary_intent("erf", "rvv_erf"),
         shape_bindings={"M": 4, "N": 8},
     )
+    c2 = intentir_to_c.lower_intent_to_c_with_files(
+        _unary_intent("log", "rvv_log"),
+        shape_bindings={"M": 4, "N": 8},
+    )
 
     assert c0 == "ok"
     assert c1 == "ok"
-    assert calls == ["rvv_cos", "rvv_erf"]
+    assert c2 == "ok"
+    assert calls == ["rvv_cos", "rvv_erf", "rvv_log"]

@@ -836,6 +836,11 @@ void emit_rsqrt(CodeWriter& w, const std::string& out, const std::string& a, con
   w.line("intentir_rsqrt_f32(" + a + ", " + out + ", (size_t)" + std::to_string(n) + ");");
 }
 
+void emit_log(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
+  const int64_t n = numel(out_shape);
+  w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) " + out + "[i] = logf(" + a + "[i]);");
+}
+
 void emit_cos(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
   const int64_t n = numel(out_shape);
   w.line("intentir_cos_f32(" + a + ", " + out + ", (size_t)" + std::to_string(n) + ");");
@@ -3111,6 +3116,8 @@ struct CProgramEmitter {
           } else {
             w.line("intentir_exp_f32(" + v(op.inputs[0]) + ", " + out_var + ", (size_t)" + std::to_string(n) + ");");
           }
+	      } else if (op.op == "log") {
+	        emit_log(w, out_var, v(op.inputs[0]), out_shape);
 	      } else if (op.op == "relu") {
 	        int64_t n = numel(out_shape);
 	        w.line("intentir_relu_f32(" + v(op.inputs[0]) + ", " + out_var + ", (size_t)" + std::to_string(n) + ");");
@@ -3641,7 +3648,7 @@ int main(int argc, char** argv) {
         dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
       }
-      if (kind == "abs" || kind == "floor" || kind == "ceil" || kind == "acos" || kind == "atan" || kind == "cos" || kind == "erf") {
+      if (kind == "abs" || kind == "floor" || kind == "ceil" || kind == "acos" || kind == "atan" || kind == "cos" || kind == "erf" || kind == "log") {
         shape_env[out] = get_shape(op.inputs[0]);
         dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
@@ -3739,7 +3746,7 @@ int main(int argc, char** argv) {
         dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
       }
-      if (kind == "rsqrt" || kind == "exp" || kind == "relu" || kind == "softmax") {
+      if (kind == "rsqrt" || kind == "exp" || kind == "log" || kind == "relu" || kind == "softmax") {
         shape_env[out] = get_shape(op.inputs[0]);
         dtype_env[out] = "f32";
         continue;

@@ -49,6 +49,7 @@ CUDA_SUPPORTED_OPS: set[str] = {
     "relu",
     "abs",
     "exp",
+    "log",
     "acos",
     "atan",
     "cos",

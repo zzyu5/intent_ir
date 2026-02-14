@@ -10,15 +10,19 @@ entrypoints while still providing a single source of truth for:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import json
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from intent_ir.macros import expand_macros
 from pipeline.triton.execution_policy import (
     ExecutionPathPolicy,
     INTENTIR_MODE_VALUES as POLICY_INTENTIR_MODE_VALUES,
     make_execution_policy,
 )
+from pipeline.triton.flaggems_intent_normalize import canonical_flaggems_intent_for_spec
 
 
 FLAGGEMS_PATH_VALUES = ("original", "intentir")
@@ -90,7 +94,7 @@ def sync_seed_into_run_dir(*, spec_name: str, seed_cache_dir: Path, run_out_dir:
     """
     Prepare per-kernel seed file in the current run directory.
 
-    Returns one of: "skipped", "hit", "miss".
+    Returns one of: "skipped", "hit", "miss", "synthesized".
     """
     mode = str(intentir_mode)
     if mode not in INTENTIR_MODE_VALUES:
@@ -106,6 +110,9 @@ def sync_seed_into_run_dir(*, spec_name: str, seed_cache_dir: Path, run_out_dir:
         return "hit"
     if mode == "force_cache":
         raise RuntimeError(f"missing seed cache for {spec_name}: {cache_seed}")
+    synthesized = _write_canonical_seed_if_available(spec_name=spec_name, cache_seed=cache_seed, run_seed=run_seed)
+    if synthesized:
+        return "synthesized"
     return "miss"
 
 
@@ -127,4 +134,31 @@ def sync_seed_back_to_cache(*, spec_name: str, seed_cache_dir: Path, run_out_dir
     cache_seed = Path(seed_cache_dir) / f"{spec_name}.intent_seed.json"
     cache_seed.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(run_seed, cache_seed)
+    return True
+
+
+def _write_canonical_seed_if_available(*, spec_name: str, cache_seed: Path, run_seed: Path) -> bool:
+    canonical = canonical_flaggems_intent_for_spec(str(spec_name))
+    if canonical is None:
+        return False
+
+    expanded = expand_macros(canonical)
+    payload = {
+        "schema_version": "intent_seed_v1",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "kernel": str(spec_name),
+        "triton_provider": "flaggems",
+        "backend_target": None,
+        "intent": canonical.to_json_dict(),
+        "intent_expanded": expanded.to_json_dict(),
+        "problem_params": {},
+        "schedule_params": {},
+        "raw_json": {"fallback": True, "source": "provider_canonical_seed"},
+        "llm_trace": {"fallback": True, "source": "provider_canonical_seed"},
+    }
+    txt = json.dumps(payload, indent=2, ensure_ascii=False)
+    run_seed.parent.mkdir(parents=True, exist_ok=True)
+    run_seed.write_text(txt, encoding="utf-8")
+    cache_seed.parent.mkdir(parents=True, exist_ok=True)
+    cache_seed.write_text(txt, encoding="utf-8")
     return True

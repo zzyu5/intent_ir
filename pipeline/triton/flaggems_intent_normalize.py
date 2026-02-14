@@ -480,6 +480,114 @@ def _canonical_logspace1d_intent() -> IntentFunction:
     )
 
 
+def _canonical_le2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "le2d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "B": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "le", "inputs": ["A", "B"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_log2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "log2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "log", "inputs": ["inp"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_log_sigmoid2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "log_sigmoid2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "abs", "inputs": ["inp"], "output": "abs_inp"},
+                {"op": "const", "inputs": [], "output": "neg_one", "attrs": {"value": -1.0}},
+                {"op": "mul", "inputs": ["abs_inp", "neg_one"], "output": "neg_abs"},
+                {"op": "exp", "inputs": ["neg_abs"], "output": "exp_neg_abs"},
+                {"op": "const", "inputs": [], "output": "one", "attrs": {"value": 1.0}},
+                {"op": "add", "inputs": ["exp_neg_abs", "one"], "output": "one_plus_exp"},
+                {"op": "log", "inputs": ["one_plus_exp"], "output": "log_one_plus_exp"},
+                {"op": "const", "inputs": [], "output": "zero", "attrs": {"value": 0.0}},
+                {"op": "min", "inputs": ["inp", "zero"], "output": "min_inp_zero"},
+                {"op": "sub", "inputs": ["min_inp_zero", "log_one_plus_exp"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_log_softmax2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "log_softmax2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "softmax", "inputs": ["inp"], "output": "softmax_out", "attrs": {"axis": 1}},
+                {"op": "log", "inputs": ["softmax_out"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_logical_and2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "logical_and2d",
+            "tensors": {
+                "A": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                "B": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "and", "inputs": ["A", "B"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_logical_not2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "logical_not2d",
+            "tensors": {
+                "inp": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "not", "inputs": ["inp"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def _canonical_masked_scatter2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -1467,6 +1575,18 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_linspace1d_intent()
     if name == "logspace1d":
         return _canonical_logspace1d_intent()
+    if name == "le2d":
+        return _canonical_le2d_intent()
+    if name == "log2d":
+        return _canonical_log2d_intent()
+    if name == "log_sigmoid2d":
+        return _canonical_log_sigmoid2d_intent()
+    if name == "log_softmax2d":
+        return _canonical_log_softmax2d_intent()
+    if name == "logical_and2d":
+        return _canonical_logical_and2d_intent()
+    if name == "logical_not2d":
+        return _canonical_logical_not2d_intent()
     if name == "masked_select2d":
         return _canonical_masked_select2d_intent()
     if name == "masked_scatter2d":

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -84,6 +85,32 @@ def test_sync_seed_into_run_dir_modes(tmp_path: Path) -> None:
     run_seed = run_out_dir / "add2d.intent_seed.json"
     assert run_seed.is_file()
     assert run_seed.read_text(encoding="utf-8") == '{"kernel":"add2d"}'
+
+
+def test_sync_seed_into_run_dir_auto_synthesizes_provider_canonical_seed(tmp_path: Path) -> None:
+    seed_cache_dir = tmp_path / "seed_cache"
+    run_out_dir = tmp_path / "run_out"
+    seed_cache_dir.mkdir()
+    run_out_dir.mkdir()
+
+    event = sync_seed_into_run_dir(
+        spec_name="le2d",
+        seed_cache_dir=seed_cache_dir,
+        run_out_dir=run_out_dir,
+        intentir_mode="auto",
+    )
+    assert event == "synthesized"
+
+    run_seed = run_out_dir / "le2d.intent_seed.json"
+    cache_seed = seed_cache_dir / "le2d.intent_seed.json"
+    assert run_seed.is_file()
+    assert cache_seed.is_file()
+
+    payload = json.loads(run_seed.read_text(encoding="utf-8"))
+    assert payload.get("kernel") == "le2d"
+    assert payload.get("triton_provider") == "flaggems"
+    assert payload.get("intent", {}).get("name") == "le2d"
+    assert payload.get("raw_json", {}).get("source") == "provider_canonical_seed"
 
 
 def test_sync_seed_back_to_cache(tmp_path: Path) -> None:

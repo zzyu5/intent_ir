@@ -47,21 +47,24 @@ def test_cuda_lowering_supports_eye_like_rectangular_iota_graph(monkeypatch) -> 
     assert "v_idx_col = (int)(i1);" in lowered.cuda_src
 
 
-def test_cuda_lowering_supports_cos_erf_fused_elementwise(monkeypatch) -> None:
+def test_cuda_lowering_supports_cos_erf_log_fused_elementwise(monkeypatch) -> None:
     monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
-            "name": "cos_erf_cuda_lowering",
+            "name": "cos_erf_log_cuda_lowering",
             "tensors": {
                 "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
                 "C": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
                 "E": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "L": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
                 "Out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
             },
             "ops": [
                 {"op": "cos", "inputs": ["A"], "output": "C"},
                 {"op": "erf", "inputs": ["A"], "output": "E"},
-                {"op": "add", "inputs": ["C", "E"], "output": "Out"},
+                {"op": "log", "inputs": ["A"], "output": "L"},
+                {"op": "add", "inputs": ["C", "E"], "output": "T"},
+                {"op": "add", "inputs": ["T", "L"], "output": "Out"},
             ],
             "outputs": ["Out"],
             "parallel_axes": ["M", "N"],
@@ -69,9 +72,35 @@ def test_cuda_lowering_supports_cos_erf_fused_elementwise(monkeypatch) -> None:
         }
     )
     lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 8})
-    assert lowered.kernel_name == "cos_erf_cuda_lowering"
+    assert lowered.kernel_name == "cos_erf_log_cuda_lowering"
     assert "cosf(" in lowered.cuda_src
     assert "erff(" in lowered.cuda_src
+    assert "logf(" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_log_softmax_pattern(monkeypatch) -> None:
+    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "log_softmax2d_cuda_lowering",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "tmp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "softmax", "inputs": ["inp"], "output": "tmp", "attrs": {"axis": 1}},
+                {"op": "log", "inputs": ["tmp"], "output": "out"},
+            ],
+            "outputs": ["out"],
+            "parallel_axes": ["M", "N"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
+        }
+    )
+    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 64})
+    assert lowered.kernel_name == "log_softmax2d_cuda_lowering"
+    assert "softmax_2d_last_f32<BLOCK_THREADS, EPT," in lowered.cuda_src
+    assert "logf(" in lowered.cuda_src
 
 
 def test_cuda_lowering_respects_broadcast_in_dim_axes(monkeypatch) -> None:
