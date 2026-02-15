@@ -21,13 +21,14 @@ def _unary_intent(op_name: str, fn_name: str) -> IntentFunction:
     )
 
 
-def test_rvv_opset_contains_cos_erf_and_log() -> None:
+def test_rvv_opset_contains_sin_cos_erf_and_log() -> None:
+    assert "sin" in SPMD_RVV_SUPPORTED_OPS
     assert "cos" in SPMD_RVV_SUPPORTED_OPS
     assert "erf" in SPMD_RVV_SUPPORTED_OPS
     assert "log" in SPMD_RVV_SUPPORTED_OPS
 
 
-def test_rvv_lowering_preflight_accepts_cos_erf_and_log(monkeypatch) -> None:
+def test_rvv_lowering_preflight_accepts_sin_cos_erf_and_log(monkeypatch) -> None:
     calls: list[str] = []
 
     def _fake_cpp_lower(
@@ -45,14 +46,18 @@ def test_rvv_lowering_preflight_accepts_cos_erf_and_log(monkeypatch) -> None:
     monkeypatch.setattr(intentir_to_c, "lower_intent_to_c_with_files_cpp", _fake_cpp_lower)
 
     c0 = intentir_to_c.lower_intent_to_c_with_files(
-        _unary_intent("cos", "rvv_cos"),
+        _unary_intent("sin", "rvv_sin"),
         shape_bindings={"M": 4, "N": 8},
     )
     c1 = intentir_to_c.lower_intent_to_c_with_files(
-        _unary_intent("erf", "rvv_erf"),
+        _unary_intent("cos", "rvv_cos"),
         shape_bindings={"M": 4, "N": 8},
     )
     c2 = intentir_to_c.lower_intent_to_c_with_files(
+        _unary_intent("erf", "rvv_erf"),
+        shape_bindings={"M": 4, "N": 8},
+    )
+    c3 = intentir_to_c.lower_intent_to_c_with_files(
         _unary_intent("log", "rvv_log"),
         shape_bindings={"M": 4, "N": 8},
     )
@@ -60,4 +65,5 @@ def test_rvv_lowering_preflight_accepts_cos_erf_and_log(monkeypatch) -> None:
     assert c0 == "ok"
     assert c1 == "ok"
     assert c2 == "ok"
-    assert calls == ["rvv_cos", "rvv_erf", "rvv_log"]
+    assert c3 == "ok"
+    assert calls == ["rvv_sin", "rvv_cos", "rvv_erf", "rvv_log"]

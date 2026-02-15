@@ -436,7 +436,7 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
     Generic fused elementwise lowering for small IntentIR graphs.
 
     Supports:
-      - unary/binary float ops: add/sub/mul/div/pow/max/min/relu/abs/exp/log/cos/erf/floor/rsqrt
+      - unary/binary float ops: add/sub/mul/div/pow/max/min/relu/abs/exp/log/sin/cos/erf/floor/rsqrt
       - comparisons -> bool: ne/lt/le/gt/ge
       - bool ops: and/or/not
       - where(cond, a, b)
@@ -760,6 +760,11 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
                 raise CudaLoweringError("cos expects 1 input")
             x = val(op.inputs[0])
             emit_assign(f"cosf({x})")
+        elif opname == "sin":
+            if len(op.inputs) != 1:
+                raise CudaLoweringError("sin expects 1 input")
+            x = val(op.inputs[0])
+            emit_assign(f"sinf({x})")
         elif opname == "acos":
             if len(op.inputs) != 1:
                 raise CudaLoweringError("acos expects 1 input")
@@ -1743,6 +1748,155 @@ extern "C" __global__ void {intent.name}(
     out_bindings: Dict[str, Any] = dict(bindings)
     out_bindings.setdefault("eps", float(eps))
     return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[Y_name, Mean_name, Rstd_name], bindings=out_bindings)
+
+
+def _kernel_rms_norm_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    produced = {o.output for o in (intent.ops or [])}
+    outs = set(intent.outputs or [])
+    inputs = [n for n in intent.tensors.keys() if n not in produced and n not in outs]
+
+    x_name = None
+    for n in inputs:
+        t = intent.tensors[n]
+        if str(t.dtype) == "f32" and len(t.shape or []) == 2:
+            x_name = n
+            break
+    if not x_name:
+        raise CudaLoweringError("rms_norm lowering cannot find rank-2 f32 input tensor")
+
+    x_shape = _shape_values(intent, x_name)
+    if len(x_shape) != 2:
+        raise CudaLoweringError("rms_norm expects rank-2 input")
+    M_dim, N_dim = x_shape
+    M = _resolve_dim_int(M_dim, bindings, name="M")
+    N = _resolve_dim_int(N_dim, bindings, name="N")
+
+    w_name = None
+    for n in inputs:
+        if n == x_name:
+            continue
+        t = intent.tensors[n]
+        if str(t.dtype) != "f32" or len(t.shape or []) != 1:
+            continue
+        w_n = _shape_values(intent, n)
+        if len(w_n) == 1 and _resolve_dim_int(w_n[0], bindings, name="N_weight") == N:
+            w_name = n
+            break
+    if not w_name:
+        raise CudaLoweringError("rms_norm lowering cannot find weight vector")
+
+    out_names = [str(n) for n in (intent.outputs or [])]
+    if len(out_names) != 2:
+        raise CudaLoweringError("rms_norm lowering expects exactly 2 outputs: [out, inv_rms]")
+
+    y_name: str | None = None
+    inv_name: str | None = None
+    for n in out_names:
+        shp = _shape_values(intent, n)
+        if len(shp) == 2 and _resolve_dim_int(shp[0], bindings, name=f"{n}_M") == M and _resolve_dim_int(shp[1], bindings, name=f"{n}_N") == N:
+            y_name = n
+            continue
+        if len(shp) == 1 and _resolve_dim_int(shp[0], bindings, name=f"{n}_M") == M:
+            inv_name = n
+            continue
+        if len(shp) == 2:
+            m_ok = _resolve_dim_int(shp[0], bindings, name=f"{n}_M") == M
+            n_ok = _resolve_dim_int(shp[1], bindings, name=f"{n}_N") == 1
+            if m_ok and n_ok:
+                inv_name = n
+                continue
+    if not y_name or not inv_name:
+        raise CudaLoweringError("rms_norm output shape mismatch")
+
+    inv_shape = _shape_values(intent, inv_name)
+    inv_rank2 = len(inv_shape) == 2
+    inv_stride = 1 if not inv_rank2 else _resolve_dim_int(inv_shape[1], bindings, name="INV_STRIDE")
+
+    eps = None
+    for op in intent.ops or []:
+        if str(op.op) != "const":
+            continue
+        if str(op.output) == "eps":
+            try:
+                eps = float(op.attrs.get("value"))
+            except Exception:
+                eps = None
+            break
+    if eps is None:
+        eps = float(bindings.get("eps", 1e-5))
+
+    m_is_tensor = _is_scalar_tensor(intent, "M", dtype="i32")
+    n_is_tensor = _is_scalar_tensor(intent, "N", dtype="i32")
+    m_param = "const int* M_ptr" if m_is_tensor else "int M"
+    n_param = "const int* N_ptr" if n_is_tensor else "int N"
+    m_load = "const int M = M_ptr ? M_ptr[0] : 0;" if m_is_tensor else ""
+    n_load = "const int N = N_ptr ? N_ptr[0] : 0;" if n_is_tensor else ""
+
+    inv_store = f"{inv_name}[row] = inv_rms;"
+    if inv_rank2:
+        inv_store = f"{inv_name}[(size_t)row * (size_t){inv_stride}] = inv_rms;"
+
+    cuda_src = f"""
+#include <math.h>
+#include <stdint.h>
+
+extern "C" __global__ void {intent.name}(
+    const float* __restrict__ {x_name},
+    const float* __restrict__ {w_name},
+    float* __restrict__ {y_name},
+    float* __restrict__ {inv_name},
+    {m_param},
+    {n_param},
+    float eps) {{
+  {m_load}
+  {n_load}
+  const int row = (int)blockIdx.x;
+  if (row >= M) return;
+  if ((int)threadIdx.x != 0) return;
+
+  const float* x_row = {x_name} + (size_t)row * (size_t)N;
+  float sq_sum = 0.0f;
+  for (int col = 0; col < N; ++col) {{
+    const float v = x_row[(size_t)col];
+    sq_sum += v * v;
+  }}
+  const float mean = sq_sum / (float)N;
+  const float inv_rms = rsqrtf(mean + eps);
+  {inv_store}
+
+  float* y_row = {y_name} + (size_t)row * (size_t)N;
+  for (int col = 0; col < N; ++col) {{
+    y_row[(size_t)col] = x_row[(size_t)col] * inv_rms * {w_name}[(size_t)col];
+  }}
+}}
+""".lstrip()
+
+    tensor_args = [x_name, w_name, y_name, inv_name]
+    scalar_args: Dict[str, str] = {"eps": "f32"}
+    arg_names = [x_name, w_name, y_name, inv_name]
+    for dim_name in ["M", "N"]:
+        if _is_scalar_tensor(intent, dim_name, dtype="i32"):
+            tensor_args.append(dim_name)
+            arg_names.append(dim_name)
+        else:
+            scalar_args[dim_name] = "i32"
+            arg_names.append(dim_name)
+    arg_names.append("eps")
+
+    io_spec = _io_spec_from_args(intent, tensor_args=tensor_args, scalar_args=scalar_args, arg_names=arg_names)
+    launch = CudaLaunch(grid=(M, 1, 1), block=(32, 1, 1), shared_mem=0)
+    out_bindings: Dict[str, Any] = dict(bindings)
+    out_bindings.setdefault("M", int(M))
+    out_bindings.setdefault("N", int(N))
+    out_bindings.setdefault("eps", float(eps))
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=[y_name, inv_name],
+        bindings=out_bindings,
+    )
 
 
 def _kernel_glu_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
@@ -4303,6 +4457,246 @@ extern "C" __global__ void {intent.name}(
     return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=lowered_bindings)
 
 
+def _kernel_scatter_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != "scatter":
+        raise CudaLoweringError("scatter lowering expects a single scatter op")
+    op = intent.ops[0]
+    if len(op.inputs) != 3:
+        raise CudaLoweringError("scatter expects inputs [inp, index, src]")
+    inp_name, index_name, src_name = (str(x) for x in op.inputs)
+    out_name = str(op.output)
+
+    axis = int((op.attrs or {}).get("dim", (op.attrs or {}).get("axis", 0)))
+    if axis < 0:
+        axis += 2
+    if axis != 1:
+        raise CudaLoweringError("scatter lowering currently supports dim=1 only")
+
+    in_shape = _shape_values(intent, inp_name)
+    idx_shape = _shape_values(intent, index_name)
+    src_shape = _shape_values(intent, src_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(in_shape) != 2 or len(idx_shape) != 2 or len(src_shape) != 2 or len(out_shape) != 2:
+        raise CudaLoweringError("scatter lowering currently supports rank-2 tensors")
+
+    M = _resolve_dim_int(in_shape[0], bindings, name="M")
+    N = _resolve_dim_int(in_shape[1], bindings, name="N")
+    if _resolve_dim_int(idx_shape[0], bindings, name="idx_M") != M or _resolve_dim_int(idx_shape[1], bindings, name="idx_N") != N:
+        raise CudaLoweringError("scatter index shape mismatch")
+    if _resolve_dim_int(src_shape[0], bindings, name="src_M") != M or _resolve_dim_int(src_shape[1], bindings, name="src_N") != N:
+        raise CudaLoweringError("scatter src shape mismatch")
+    if _resolve_dim_int(out_shape[0], bindings, name="out_M") != M or _resolve_dim_int(out_shape[1], bindings, name="out_N") != N:
+        raise CudaLoweringError("scatter out shape mismatch")
+
+    cuda_src = f"""
+#include <stdint.h>
+extern "C" __global__ void {intent.name}(
+    const float* __restrict__ {inp_name},
+    const int* __restrict__ {index_name},
+    const float* __restrict__ {src_name},
+    float* __restrict__ {out_name},
+    int M, int N) {{
+  const int row = (int)blockIdx.x;
+  if (row >= M) return;
+  if ((int)threadIdx.x != 0) return;
+
+  const size_t base = (size_t)row * (size_t)N;
+  for (int col = 0; col < N; ++col) {{
+    {out_name}[base + (size_t)col] = {inp_name}[base + (size_t)col];
+  }}
+  for (int col = 0; col < N; ++col) {{
+    const int dst = {index_name}[base + (size_t)col];
+    if ((unsigned)dst < (unsigned)N) {{
+      {out_name}[base + (size_t)dst] = {src_name}[base + (size_t)col];
+    }}
+  }}
+}}
+""".lstrip()
+
+    io_spec = _io_spec_from_args(
+        intent,
+        tensor_args=[inp_name, index_name, src_name, out_name],
+        scalar_args={"M": "i32", "N": "i32"},
+        arg_names=[inp_name, index_name, src_name, out_name, "M", "N"],
+    )
+    launch = CudaLaunch(grid=(M, 1, 1), block=(32, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.setdefault("M", int(M))
+    lowered_bindings.setdefault("N", int(N))
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=[out_name],
+        bindings=lowered_bindings,
+    )
+
+
+def _kernel_select_scatter_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != "select_scatter":
+        raise CudaLoweringError("select_scatter lowering expects a single select_scatter op")
+    op = intent.ops[0]
+    if len(op.inputs) != 2:
+        raise CudaLoweringError("select_scatter expects inputs [inp, src]")
+    inp_name, src_name = (str(x) for x in op.inputs)
+    out_name = str(op.output)
+
+    axis = int((op.attrs or {}).get("dim", (op.attrs or {}).get("axis", 0)))
+    if axis < 0:
+        axis += 2
+    if axis != 1:
+        raise CudaLoweringError("select_scatter lowering currently supports dim=1 only")
+    index = int((op.attrs or {}).get("index", 0))
+
+    in_shape = _shape_values(intent, inp_name)
+    src_shape = _shape_values(intent, src_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(in_shape) != 2 or len(out_shape) != 2 or len(src_shape) != 1:
+        raise CudaLoweringError("select_scatter lowering expects inp/out rank-2 and src rank-1")
+    M = _resolve_dim_int(in_shape[0], bindings, name="M")
+    N = _resolve_dim_int(in_shape[1], bindings, name="N")
+    if _resolve_dim_int(src_shape[0], bindings, name="src_M") != M:
+        raise CudaLoweringError("select_scatter src shape mismatch")
+    if _resolve_dim_int(out_shape[0], bindings, name="out_M") != M or _resolve_dim_int(out_shape[1], bindings, name="out_N") != N:
+        raise CudaLoweringError("select_scatter out shape mismatch")
+    if index < 0:
+        index += N
+    if index < 0 or index >= N:
+        raise CudaLoweringError("select_scatter index out of range")
+
+    cuda_src = f"""
+#include <stdint.h>
+extern "C" __global__ void {intent.name}(
+    const float* __restrict__ {inp_name},
+    const float* __restrict__ {src_name},
+    float* __restrict__ {out_name},
+    int M, int N, int INDEX_COL) {{
+  const int row = (int)blockIdx.x;
+  if (row >= M) return;
+  if ((int)threadIdx.x != 0) return;
+
+  const size_t base = (size_t)row * (size_t)N;
+  for (int col = 0; col < N; ++col) {{
+    {out_name}[base + (size_t)col] = {inp_name}[base + (size_t)col];
+  }}
+  {out_name}[base + (size_t)INDEX_COL] = {src_name}[(size_t)row];
+}}
+""".lstrip()
+
+    io_spec = _io_spec_from_args(
+        intent,
+        tensor_args=[inp_name, src_name, out_name],
+        scalar_args={"M": "i32", "N": "i32", "INDEX_COL": "i32"},
+        arg_names=[inp_name, src_name, out_name, "M", "N", "INDEX_COL"],
+    )
+    launch = CudaLaunch(grid=(M, 1, 1), block=(32, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.setdefault("M", int(M))
+    lowered_bindings.setdefault("N", int(N))
+    lowered_bindings["INDEX_COL"] = int(index)
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=[out_name],
+        bindings=lowered_bindings,
+    )
+
+
+def _kernel_slice_scatter_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != "slice_scatter":
+        raise CudaLoweringError("slice_scatter lowering expects a single slice_scatter op")
+    op = intent.ops[0]
+    if len(op.inputs) != 2:
+        raise CudaLoweringError("slice_scatter expects inputs [inp, src]")
+    inp_name, src_name = (str(x) for x in op.inputs)
+    out_name = str(op.output)
+
+    axis = int((op.attrs or {}).get("dim", (op.attrs or {}).get("axis", 0)))
+    if axis < 0:
+        axis += 2
+    if axis != 1:
+        raise CudaLoweringError("slice_scatter lowering currently supports dim=1 only")
+
+    in_shape = _shape_values(intent, inp_name)
+    src_shape = _shape_values(intent, src_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(in_shape) != 2 or len(src_shape) != 2 or len(out_shape) != 2:
+        raise CudaLoweringError("slice_scatter lowering expects rank-2 tensors")
+    M = _resolve_dim_int(in_shape[0], bindings, name="M")
+    N = _resolve_dim_int(in_shape[1], bindings, name="N")
+    L = _resolve_dim_int(src_shape[1], bindings, name="L")
+    if _resolve_dim_int(src_shape[0], bindings, name="src_M") != M:
+        raise CudaLoweringError("slice_scatter src shape mismatch on dim0")
+    if _resolve_dim_int(out_shape[0], bindings, name="out_M") != M or _resolve_dim_int(out_shape[1], bindings, name="out_N") != N:
+        raise CudaLoweringError("slice_scatter out shape mismatch")
+
+    start = int((op.attrs or {}).get("start", 0))
+    end_raw = int((op.attrs or {}).get("end", N))
+    step = int((op.attrs or {}).get("step", 1))
+    if step <= 0:
+        raise CudaLoweringError("slice_scatter lowering requires step > 0")
+    if start < 0:
+        start += N
+    end = end_raw
+    if end < 0:
+        end += N
+    start = max(0, min(N, start))
+    end = max(0, min(N, end))
+    span = max(0, end - start)
+    expected_l = (span + step - 1) // step if span > 0 else 0
+    if L != expected_l:
+        raise CudaLoweringError("slice_scatter src shape mismatch with (start,end,step)")
+
+    cuda_src = f"""
+#include <stdint.h>
+extern "C" __global__ void {intent.name}(
+    const float* __restrict__ {inp_name},
+    const float* __restrict__ {src_name},
+    float* __restrict__ {out_name},
+    int M, int N) {{
+  const int row = (int)blockIdx.x;
+  if (row >= M) return;
+  if ((int)threadIdx.x != 0) return;
+
+  const size_t base = (size_t)row * (size_t)N;
+  for (int col = 0; col < N; ++col) {{
+    {out_name}[base + (size_t)col] = {inp_name}[base + (size_t)col];
+  }}
+  for (int k = 0; k < {L}; ++k) {{
+    const int dst = {start} + k * {step};
+    if ((unsigned)dst < (unsigned)N) {{
+      {out_name}[base + (size_t)dst] = {src_name}[(size_t)row * (size_t){L} + (size_t)k];
+    }}
+  }}
+}}
+""".lstrip()
+
+    io_spec = _io_spec_from_args(
+        intent,
+        tensor_args=[inp_name, src_name, out_name],
+        scalar_args={"M": "i32", "N": "i32"},
+        arg_names=[inp_name, src_name, out_name, "M", "N"],
+    )
+    launch = CudaLaunch(grid=(M, 1, 1), block=(32, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.setdefault("M", int(M))
+    lowered_bindings.setdefault("N", int(N))
+    lowered_bindings["L"] = int(L)
+    lowered_bindings["SLICE_START"] = int(start)
+    lowered_bindings["SLICE_STEP"] = int(step)
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=[out_name],
+        bindings=lowered_bindings,
+    )
+
+
 def _kernel_index_add_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
     if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != "index_add":
         raise CudaLoweringError("index_add lowering expects a single index_add op")
@@ -5448,6 +5842,135 @@ extern "C" __global__ __launch_bounds__({block_x * block_y}) void {intent.name}(
     launch = CudaLaunch(grid=(grid_x, grid_y, 1), block=(block_x, block_y, 1), shared_mem=0)
     lowered_bindings = dict(bindings)
     lowered_bindings.update({"M": int(M), "N": int(N), "MO": int(MO), "NO": int(NO)})
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=[out_name],
+        bindings=lowered_bindings,
+    )
+
+
+def _kernel_quantile_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != "quantile":
+        raise CudaLoweringError("quantile lowering expects a single quantile op")
+    op = intent.ops[0]
+    if len(op.inputs) != 2:
+        raise CudaLoweringError("quantile expects inputs [inp, q]")
+    inp_name = str(op.inputs[0])
+    q_name = str(op.inputs[1])
+    out_name = str(op.output)
+    in_shape = _shape_values(intent, inp_name)
+    q_shape = _shape_values(intent, q_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(in_shape) != 2:
+        raise CudaLoweringError("quantile lowering currently supports rank-2 input")
+    if len(q_shape) != 0:
+        raise CudaLoweringError("quantile expects scalar q input (rank-0)")
+    if len(out_shape) not in {1, 2}:
+        raise CudaLoweringError("quantile lowering supports output rank-1 or rank-2 keepdim")
+
+    dim = (op.attrs or {}).get("dim", (op.attrs or {}).get("axis", 1))
+    try:
+        axis = int(dim)
+    except Exception as exc:
+        raise CudaLoweringError(f"quantile dim/axis must be int, got {dim!r}") from exc
+    if axis < 0:
+        axis += 2
+    if axis != 1:
+        raise CudaLoweringError("quantile lowering currently supports dim=1 only")
+    keepdim = bool((op.attrs or {}).get("keepdim", False))
+    interpolation = str((op.attrs or {}).get("interpolation", "linear"))
+    if interpolation != "linear":
+        raise CudaLoweringError("quantile lowering currently supports interpolation='linear' only")
+
+    M = _resolve_dim_int(in_shape[0], bindings, name="M")
+    N = _resolve_dim_int(in_shape[1], bindings, name="N")
+    if N <= 0:
+        raise CudaLoweringError("quantile lowering requires N > 0")
+    if N > 4096:
+        raise CudaLoweringError(f"quantile lowering currently limits N<=4096, got {N}")
+    if len(out_shape) == 1:
+        if _resolve_dim_int(out_shape[0], bindings, name="OUT_M") != M:
+            raise CudaLoweringError("quantile output shape mismatch: expected [M]")
+    else:
+        if not keepdim:
+            raise CudaLoweringError("rank-2 quantile output requires keepdim=true")
+        out_m = _resolve_dim_int(out_shape[0], bindings, name="OUT_M")
+        out_n = _resolve_dim_int(out_shape[1], bindings, name="OUT_N")
+        if out_m != M or out_n != 1:
+            raise CudaLoweringError("quantile output shape mismatch: expected [M,1]")
+
+    m_is_tensor = _is_scalar_tensor(intent, "M", dtype="i32")
+    n_is_tensor = _is_scalar_tensor(intent, "N", dtype="i32")
+    m_param = "const int* M_ptr" if m_is_tensor else "int M"
+    n_param = "const int* N_ptr" if n_is_tensor else "int N"
+    m_load = "const int M = M_ptr ? M_ptr[0] : 0;" if m_is_tensor else ""
+    n_load = "const int N = N_ptr ? N_ptr[0] : 0;" if n_is_tensor else ""
+    n_stack = int(N)
+
+    cuda_src = f"""
+#include <math.h>
+#include <stdint.h>
+
+extern "C" __global__ void {intent.name}(const float* __restrict__ {inp_name},
+                                         const float* __restrict__ {q_name},
+                                         float* __restrict__ {out_name},
+                                         {m_param},
+                                         {n_param}) {{
+  {m_load}
+  {n_load}
+  const int m = (int)blockIdx.x;
+  if (m >= M) return;
+  if ((int)threadIdx.x != 0) return;
+  constexpr int N_STACK = {n_stack};
+  if (N != N_STACK) return;
+  float __q_scalar = {q_name} ? {q_name}[0] : 0.5f;
+  __q_scalar = fminf(1.0f, fmaxf(0.0f, __q_scalar));
+  float vals[N_STACK];
+  const float* row = {inp_name} + (size_t)m * (size_t)N;
+  for (int i = 0; i < N_STACK; ++i) vals[i] = row[i];
+  for (int i = 1; i < N_STACK; ++i) {{
+    const float v = vals[i];
+    int j = i - 1;
+    while (j >= 0 && vals[j] > v) {{
+      vals[j + 1] = vals[j];
+      --j;
+    }}
+    vals[j + 1] = v;
+  }}
+  float out_v = vals[0];
+  if (N_STACK > 1) {{
+    const float pos = __q_scalar * (float)(N_STACK - 1);
+    int lo = (int)floorf(pos);
+    if (lo < 0) lo = 0;
+    if (lo > N_STACK - 1) lo = N_STACK - 1;
+    int hi = lo + 1;
+    if (hi > N_STACK - 1) hi = N_STACK - 1;
+    const float t = pos - (float)lo;
+    out_v = vals[lo] + (vals[hi] - vals[lo]) * t;
+  }}
+  {out_name}[m] = out_v;
+}}
+""".lstrip()
+
+    tensor_args = [inp_name, q_name, out_name]
+    scalar_args: Dict[str, str] = {}
+    arg_names = [inp_name, q_name, out_name]
+    for dim_name in ["M", "N"]:
+        if _is_scalar_tensor(intent, dim_name, dtype="i32"):
+            tensor_args.append(dim_name)
+            arg_names.append(dim_name)
+        else:
+            scalar_args[dim_name] = "i32"
+            arg_names.append(dim_name)
+
+    io_spec = _io_spec_from_args(intent, tensor_args=tensor_args, scalar_args=scalar_args, arg_names=arg_names)
+    launch = CudaLaunch(grid=(M, 1, 1), block=(32, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.setdefault("M", int(M))
+    lowered_bindings.setdefault("N", int(N))
     return CudaLoweredKernel(
         kernel_name=intent.name,
         cuda_src=cuda_src,
@@ -7046,6 +7569,12 @@ def lower_intent_to_cuda_kernel(
                 return _kernel_reduce_min_2d_axis1_f32(intent, bindings)
             if op0 == "gather":
                 return _kernel_gather2d_f32(intent, bindings)
+            if op0 == "scatter":
+                return _kernel_scatter_2d_f32(intent, bindings)
+            if op0 == "select_scatter":
+                return _kernel_select_scatter_2d_f32(intent, bindings)
+            if op0 == "slice_scatter":
+                return _kernel_slice_scatter_2d_f32(intent, bindings)
             if op0 == "nonzero":
                 return _kernel_nonzero_2d_i64(intent, bindings)
             if op0 == "polar":
@@ -7062,6 +7591,8 @@ def lower_intent_to_cuda_kernel(
                 return _kernel_kron_2d_f32(intent, bindings)
             if op0 in {"argmax", "argmin"}:
                 return _kernel_arg_reduce_2d_axis1_i32(intent, bindings)
+            if op0 == "quantile":
+                return _kernel_quantile_2d_f32(intent, bindings)
             if op0 == "avg_pool2d":
                 return _kernel_avg_pool2d_nchw_f32(intent, bindings)
             if op0 == "max_pool2d_with_indices":
@@ -7133,6 +7664,8 @@ def lower_intent_to_cuda_kernel(
     name_l = str(intent.name).lower()
     if {"Y", "Mean", "Rstd"}.issubset(outs) or (len(outs) == 3 and ("layer_norm" in name_l or "layernorm" in name_l)):
         return _kernel_layernorm_2d_f32(intent, bindings)
+    if ("rms_norm" in name_l or "rmsnorm" in name_l) and {"reduce_sum", "rsqrt", "broadcast_in_dim", "mul"}.issubset(op_names):
+        return _kernel_rms_norm_2d_f32(intent, bindings)
     if (
         ("per_token_group_quant_fp8" in name_l)
         and op_seq == ["reshape", "abs", "reduce_max", "max", "div", "reshape", "broadcast_in_dim", "div", "max", "min", "reshape"]
@@ -7164,6 +7697,7 @@ def lower_intent_to_cuda_kernel(
         "log",
         "acos",
         "atan",
+        "sin",
         "cos",
         "erf",
         "floor",

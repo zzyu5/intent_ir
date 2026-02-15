@@ -78,6 +78,161 @@ def test_cuda_lowering_supports_cos_erf_log_fused_elementwise(monkeypatch) -> No
     assert "logf(" in lowered.cuda_src
 
 
+def test_cuda_lowering_supports_sin_fused_elementwise(monkeypatch) -> None:
+    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "sin2d_cuda_lowering",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "A_f32": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "Out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cast", "inputs": ["A"], "output": "A_f32", "attrs": {"to": "f32"}},
+                {"op": "sin", "inputs": ["A_f32"], "output": "Out"},
+            ],
+            "outputs": ["Out"],
+            "parallel_axes": ["M", "N"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
+        }
+    )
+    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 8})
+    assert lowered.kernel_name == "sin2d_cuda_lowering"
+    assert "sinf(" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_rms_norm_pattern(monkeypatch) -> None:
+    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "rms_norm2d_cuda_lowering",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "weight": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "eps": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "N_const": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "x_squared": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "var": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "var_eps": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "rrms": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "rrms_bcast": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "weight_bcast": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "x_norm": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "y": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "INV_RMS": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "const", "inputs": [], "output": "eps", "attrs": {"value": 1.0e-5, "dtype": "f32"}},
+                {"op": "const", "inputs": [], "output": "N_const", "attrs": {"value": "N", "dtype": "f32"}},
+                {"op": "mul", "inputs": ["input", "input"], "output": "x_squared"},
+                {"op": "reduce_sum", "inputs": ["x_squared"], "output": "var", "attrs": {"dims": [1], "scale": "1.0/N"}},
+                {"op": "add", "inputs": ["var", "eps"], "output": "var_eps"},
+                {"op": "rsqrt", "inputs": ["var_eps"], "output": "rrms"},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["rrms"],
+                    "output": "rrms_bcast",
+                    "attrs": {"out_shape": ["M", "N"], "broadcast_dims": [0]},
+                },
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["weight"],
+                    "output": "weight_bcast",
+                    "attrs": {"out_shape": ["M", "N"], "broadcast_dims": [1]},
+                },
+                {"op": "mul", "inputs": ["input", "rrms_bcast"], "output": "x_norm"},
+                {"op": "mul", "inputs": ["x_norm", "weight_bcast"], "output": "y"},
+                {"op": "identity", "inputs": ["y"], "output": "out"},
+                {"op": "identity", "inputs": ["rrms"], "output": "INV_RMS"},
+            ],
+            "outputs": ["out", "INV_RMS"],
+            "parallel_axes": ["M", "N"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
+        }
+    )
+    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 8})
+    assert lowered.kernel_name == "rms_norm2d_cuda_lowering"
+    assert "rsqrtf(" in lowered.cuda_src
+    assert "inv_rms" in lowered.cuda_src
+    assert lowered.output_names == ["out", "INV_RMS"]
+
+
+def test_cuda_lowering_supports_scatter_2d(monkeypatch) -> None:
+    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "scatter2d_cuda_lowering",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "index": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "src": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [{"op": "scatter", "inputs": ["inp", "index", "src"], "output": "out", "attrs": {"dim": 1}}],
+            "outputs": ["out"],
+            "parallel_axes": ["M", "N"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
+        }
+    )
+    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 8})
+    assert lowered.kernel_name == "scatter2d_cuda_lowering"
+    assert "const int dst = index" in lowered.cuda_src
+    assert "(unsigned)dst < (unsigned)N" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_select_scatter_2d(monkeypatch) -> None:
+    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "select_scatter2d_cuda_lowering",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "src": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [{"op": "select_scatter", "inputs": ["inp", "src"], "output": "out", "attrs": {"dim": 1, "index": 0}}],
+            "outputs": ["out"],
+            "parallel_axes": ["M", "N"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
+        }
+    )
+    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 8})
+    assert lowered.kernel_name == "select_scatter2d_cuda_lowering"
+    assert "INDEX_COL" in lowered.cuda_src
+    assert "src[(size_t)row]" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_slice_scatter_2d(monkeypatch) -> None:
+    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "slice_scatter2d_cuda_lowering",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "src": {"dtype": "f32", "shape": ["M", "L"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "slice_scatter",
+                    "inputs": ["inp", "src"],
+                    "output": "out",
+                    "attrs": {"dim": 1, "start": 0, "end": 4, "step": 1},
+                }
+            ],
+            "outputs": ["out"],
+            "parallel_axes": ["M", "N"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
+        }
+    )
+    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 8, "L": 4})
+    assert lowered.kernel_name == "slice_scatter2d_cuda_lowering"
+    assert "for (int k = 0; k < 4; ++k)" in lowered.cuda_src
+    assert "src[(size_t)row * (size_t)4 + (size_t)k]" in lowered.cuda_src
+
+
 def test_cuda_lowering_supports_log_softmax_pattern(monkeypatch) -> None:
     monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
@@ -125,6 +280,36 @@ def test_cuda_lowering_supports_remainder_elementwise(monkeypatch) -> None:
     assert lowered.kernel_name == "remainder2d_cuda_lowering"
     assert "floorf" in lowered.cuda_src
     assert "NAN" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_quantile_axis1(monkeypatch) -> None:
+    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "quantile2d_cuda_lowering",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "q": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "quantile",
+                    "inputs": ["inp", "q"],
+                    "output": "out",
+                    "attrs": {"dim": 1, "keepdim": False, "interpolation": "linear"},
+                }
+            ],
+            "outputs": ["out"],
+            "parallel_axes": ["M"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M"]},
+        }
+    )
+    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 32})
+    assert lowered.kernel_name == "quantile2d_cuda_lowering"
+    assert "N_STACK = 32" in lowered.cuda_src
+    assert "floorf(" in lowered.cuda_src
+    assert "vals[N_STACK]" in lowered.cuda_src
 
 
 def test_cuda_lowering_respects_broadcast_in_dim_axes(monkeypatch) -> None:

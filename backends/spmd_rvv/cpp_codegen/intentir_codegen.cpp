@@ -856,6 +856,11 @@ void emit_cos(CodeWriter& w, const std::string& out, const std::string& a, const
   w.line("intentir_cos_f32(" + a + ", " + out + ", (size_t)" + std::to_string(n) + ");");
 }
 
+void emit_sin(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
+  const int64_t n = numel(out_shape);
+  w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) " + out + "[i] = sinf(" + a + "[i]);");
+}
+
 void emit_acos(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
   const int64_t n = numel(out_shape);
   w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) " + out + "[i] = acosf(" + a + "[i]);");
@@ -2760,6 +2765,8 @@ struct CProgramEmitter {
 	        emit_acos(w, out_var, v(op.inputs[0]), out_shape);
 	      } else if (op.op == "atan") {
 	        emit_atan(w, out_var, v(op.inputs[0]), out_shape);
+	      } else if (op.op == "sin") {
+	        emit_sin(w, out_var, v(op.inputs[0]), out_shape);
 	      } else if (op.op == "cos") {
 	        emit_cos(w, out_var, v(op.inputs[0]), out_shape);
 	      } else if (op.op == "erf") {
@@ -2805,6 +2812,129 @@ struct CProgramEmitter {
 	      } else if (op.op == "cummin") {
 	        int axis = op.attrs.value("axis", 0);
 	        emit_cumext_1d(w, out_var, v(op.inputs[0]), out_shape, axis, dtype_env.at(out), /*is_max=*/false);
+	      } else if (op.op == "scatter") {
+	        if (op.inputs.size() != 3) fail("scatter expects inputs [inp, index, src]");
+	        const auto& in_shape = shape_env.at(op.inputs[0]);
+	        const auto& idx_shape = shape_env.at(op.inputs[1]);
+	        const auto& src_shape = shape_env.at(op.inputs[2]);
+	        if (in_shape.size() != 2 || idx_shape.size() != 2 || src_shape.size() != 2 || out_shape.size() != 2) {
+	          fail("scatter currently supports rank-2 tensors only");
+	        }
+	        if (idx_shape != in_shape || src_shape != in_shape || out_shape != in_shape) {
+	          fail("scatter shape mismatch: expected inp/index/src/out all [M,N]");
+	        }
+	        if (dtype_env.at(op.inputs[0]) != "f32" || dtype_env.at(op.inputs[2]) != "f32" || dtype_env.at(out) != "f32") {
+	          fail("scatter currently supports f32 inp/src/out");
+	        }
+	        const std::string idx_dt = dtype_env.at(op.inputs[1]);
+	        if (!(idx_dt == "i32" || idx_dt == "i64")) fail("scatter index dtype must be i32/i64");
+	        int axis = op.attrs.value("dim", op.attrs.value("axis", 0));
+	        if (axis < 0) axis += 2;
+	        if (axis != 1) fail("scatter currently supports dim=1 only");
+	        const int64_t M = in_shape[0];
+	        const int64_t N = in_shape[1];
+	        w.line("for (int64_t i = 0; i < " + std::to_string(M) + "; ++i) {");
+	        w.indent();
+	        w.line("for (int64_t j = 0; j < " + std::to_string(N) + "; ++j) {");
+	        w.indent();
+	        w.line(out_var + "[(size_t)i * (size_t)" + std::to_string(N) + " + (size_t)j] = " + v(op.inputs[0]) + "[(size_t)i * (size_t)" + std::to_string(N) +
+	               " + (size_t)j];");
+	        w.dedent();
+	        w.line("}");
+	        w.line("for (int64_t j = 0; j < " + std::to_string(N) + "; ++j) {");
+	        w.indent();
+	        w.line("const int64_t dst = (int64_t)" + v(op.inputs[1]) + "[(size_t)i * (size_t)" + std::to_string(N) + " + (size_t)j];");
+	        w.line("if (dst >= 0 && dst < " + std::to_string(N) + ") {");
+	        w.indent();
+	        w.line(out_var + "[(size_t)i * (size_t)" + std::to_string(N) + " + (size_t)dst] = " + v(op.inputs[2]) + "[(size_t)i * (size_t)" + std::to_string(N) +
+	               " + (size_t)j];");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	      } else if (op.op == "select_scatter") {
+	        if (op.inputs.size() != 2) fail("select_scatter expects inputs [inp, src]");
+	        const auto& in_shape = shape_env.at(op.inputs[0]);
+	        const auto& src_shape = shape_env.at(op.inputs[1]);
+	        if (in_shape.size() != 2 || out_shape.size() != 2 || src_shape.size() != 1) {
+	          fail("select_scatter currently supports inp/out rank-2 and src rank-1");
+	        }
+	        if (in_shape != out_shape) fail("select_scatter output shape must equal input shape");
+	        if (src_shape[0] != in_shape[0]) fail("select_scatter src shape mismatch: expected [M]");
+	        if (dtype_env.at(op.inputs[0]) != "f32" || dtype_env.at(op.inputs[1]) != "f32" || dtype_env.at(out) != "f32") {
+	          fail("select_scatter currently supports f32 tensors");
+	        }
+	        int axis = op.attrs.value("dim", op.attrs.value("axis", 0));
+	        if (axis < 0) axis += 2;
+	        if (axis != 1) fail("select_scatter currently supports dim=1 only");
+	        int64_t idx = 0;
+	        if (op.attrs.contains("index")) idx = static_cast<int64_t>(resolve_const_value(op.attrs["index"], bindings));
+	        const int64_t M = in_shape[0];
+	        const int64_t N = in_shape[1];
+	        if (idx < 0 || idx >= N) fail("select_scatter index out of range");
+	        w.line("for (int64_t i = 0; i < " + std::to_string(M) + "; ++i) {");
+	        w.indent();
+	        w.line("for (int64_t j = 0; j < " + std::to_string(N) + "; ++j) {");
+	        w.indent();
+	        w.line(out_var + "[(size_t)i * (size_t)" + std::to_string(N) + " + (size_t)j] = " + v(op.inputs[0]) + "[(size_t)i * (size_t)" + std::to_string(N) +
+	               " + (size_t)j];");
+	        w.dedent();
+	        w.line("}");
+	        w.line(out_var + "[(size_t)i * (size_t)" + std::to_string(N) + " + (size_t)" + std::to_string(idx) + "] = " + v(op.inputs[1]) + "[(size_t)i];");
+	        w.dedent();
+	        w.line("}");
+	      } else if (op.op == "slice_scatter") {
+	        if (op.inputs.size() != 2) fail("slice_scatter expects inputs [inp, src]");
+	        const auto& in_shape = shape_env.at(op.inputs[0]);
+	        const auto& src_shape = shape_env.at(op.inputs[1]);
+	        if (in_shape.size() != 2 || out_shape.size() != 2 || src_shape.size() != 2) {
+	          fail("slice_scatter currently supports rank-2 tensors");
+	        }
+	        if (in_shape != out_shape) fail("slice_scatter output shape must equal input shape");
+	        if (src_shape[0] != in_shape[0]) fail("slice_scatter src first dim must match M");
+	        if (dtype_env.at(op.inputs[0]) != "f32" || dtype_env.at(op.inputs[1]) != "f32" || dtype_env.at(out) != "f32") {
+	          fail("slice_scatter currently supports f32 tensors");
+	        }
+	        int axis = op.attrs.value("dim", op.attrs.value("axis", 0));
+	        if (axis < 0) axis += 2;
+	        if (axis != 1) fail("slice_scatter currently supports dim=1 only");
+	        int64_t start = op.attrs.contains("start") ? static_cast<int64_t>(resolve_const_value(op.attrs["start"], bindings)) : 0;
+	        int64_t end = op.attrs.contains("end") ? static_cast<int64_t>(resolve_const_value(op.attrs["end"], bindings)) : in_shape[1];
+	        int64_t step = op.attrs.contains("step") ? static_cast<int64_t>(resolve_const_value(op.attrs["step"], bindings)) : 1;
+	        if (step <= 0) fail("slice_scatter requires step > 0");
+	        const int64_t M = in_shape[0];
+	        const int64_t N = in_shape[1];
+	        if (end > N) end = N;
+	        if (start < 0) start += N;
+	        if (end < 0) end += N;
+	        if (start < 0) start = 0;
+	        if (end < 0) end = 0;
+	        const int64_t span = (end > start) ? (end - start) : 0;
+	        const int64_t expected_L = (span + step - 1) / step;
+	        if (src_shape[1] != expected_L) fail("slice_scatter src second dim mismatch with (start,end,step)");
+	        w.line("for (int64_t i = 0; i < " + std::to_string(M) + "; ++i) {");
+	        w.indent();
+	        w.line("for (int64_t j = 0; j < " + std::to_string(N) + "; ++j) {");
+	        w.indent();
+	        w.line(out_var + "[(size_t)i * (size_t)" + std::to_string(N) + " + (size_t)j] = " + v(op.inputs[0]) + "[(size_t)i * (size_t)" + std::to_string(N) +
+	               " + (size_t)j];");
+	        w.dedent();
+	        w.line("}");
+	        w.line("for (int64_t k = 0; k < " + std::to_string(expected_L) + "; ++k) {");
+	        w.indent();
+	        w.line("const int64_t dst = " + std::to_string(start) + " + k * " + std::to_string(step) + ";");
+	        w.line("if (dst >= 0 && dst < " + std::to_string(N) + ") {");
+	        w.indent();
+	        w.line(out_var + "[(size_t)i * (size_t)" + std::to_string(N) + " + (size_t)dst] = " + v(op.inputs[1]) + "[(size_t)i * (size_t)" +
+	               std::to_string(expected_L) + " + (size_t)k];");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
 	      } else if (op.op == "nonzero") {
 	        if (op.inputs.size() != 1) fail("nonzero expects 1 input");
 	        const auto& in_shape = shape_env.at(op.inputs[0]);
@@ -3493,9 +3623,76 @@ struct CProgramEmitter {
           }
         } else {
           fail("reduce_any missing dims/axes");
-	        }
+        }
 	        bool keepdims = op.attrs.value("keepdims", false);
 	        emit_reduce_any(w, out_var, v(op.inputs[0]), shape_env.at(op.inputs[0]), out_shape, dims, keepdims, dtype_env.at(op.inputs[0]), dtype_env.at(out));
+	      } else if (op.op == "quantile") {
+	        if (op.inputs.size() != 2) fail("quantile expects inputs [inp, q]");
+	        const auto& in_shape = shape_env.at(op.inputs[0]);
+	        const auto& q_shape = shape_env.at(op.inputs[1]);
+	        if (in_shape.size() != 2) fail("quantile currently supports rank-2 input");
+	        if (!q_shape.empty()) fail("quantile q must be a scalar tensor (rank-0)");
+	        if (dtype_env.at(op.inputs[0]) != "f32" || dtype_env.at(op.inputs[1]) != "f32" || dtype_env.at(out) != "f32") {
+	          fail("quantile currently supports only f32 tensors");
+	        }
+	        int axis = op.attrs.value("dim", op.attrs.value("axis", 1));
+	        if (axis < 0) axis += 2;
+	        if (axis != 1) fail("quantile currently supports dim=1 only");
+	        bool keepdim = op.attrs.value("keepdim", false);
+	        std::string interpolation = op.attrs.value("interpolation", std::string("linear"));
+	        if (interpolation != "linear") fail("quantile currently supports interpolation=linear only");
+	        const int64_t M = in_shape[0];
+	        const int64_t N = in_shape[1];
+	        if (N <= 0) fail("quantile expects N > 0");
+	        if (out_shape.size() == 1) {
+	          if (out_shape[0] != M) fail("quantile output shape mismatch: expect [M]");
+	        } else if (out_shape.size() == 2) {
+	          if (!keepdim) fail("quantile rank-2 output requires keepdim=true");
+	          if (out_shape[0] != M || out_shape[1] != 1) fail("quantile output shape mismatch: expect [M,1]");
+	        } else {
+	          fail("quantile currently supports output rank 1 or 2");
+	        }
+	        w.line("float __q = " + v(op.inputs[1]) + "[0];");
+	        w.line("if (__q < 0.0f) __q = 0.0f;");
+	        w.line("if (__q > 1.0f) __q = 1.0f;");
+	        w.line("float* __quantile_row = (float*)malloc(sizeof(float) * (size_t)" + std::to_string(N) + ");");
+	        w.line("if (!__quantile_row) { fprintf(stderr, \"alloc failed: quantile_row\\n\"); return; }");
+	        w.line("for (int64_t i = 0; i < " + std::to_string(M) + "; ++i) {");
+	        w.indent();
+	        w.line("const float* __row = " + v(op.inputs[0]) + " + (size_t)i * (size_t)" + std::to_string(N) + ";");
+	        w.line("for (int64_t j = 0; j < " + std::to_string(N) + "; ++j) __quantile_row[(size_t)j] = __row[(size_t)j];");
+	        w.line("for (int64_t __ii = 1; __ii < " + std::to_string(N) + "; ++__ii) {");
+	        w.indent();
+	        w.line("float __v = __quantile_row[(size_t)__ii];");
+	        w.line("int64_t __jj = __ii - 1;");
+	        w.line("while (__jj >= 0 && __quantile_row[(size_t)__jj] > __v) {");
+	        w.indent();
+	        w.line("__quantile_row[(size_t)(__jj + 1)] = __quantile_row[(size_t)__jj];");
+	        w.line("--__jj;");
+	        w.dedent();
+	        w.line("}");
+	        w.line("__quantile_row[(size_t)(__jj + 1)] = __v;");
+	        w.dedent();
+	        w.line("}");
+	        if (N == 1) {
+	          w.line("const float __qv = __quantile_row[(size_t)0];");
+	        } else {
+	          w.line("const float __pos = __q * (float)" + std::to_string(N - 1) + ";");
+	          w.line("int64_t __lo = (int64_t)__pos;");
+	          w.line("if (__lo < 0) __lo = 0;");
+	          w.line("if (__lo > " + std::to_string(N - 1) + ") __lo = " + std::to_string(N - 1) + ";");
+	          w.line("int64_t __hi = (__lo + 1 <= " + std::to_string(N - 1) + ") ? (__lo + 1) : __lo;");
+	          w.line("const float __t = __pos - (float)__lo;");
+	          w.line("const float __qv = __quantile_row[(size_t)__lo] + (__quantile_row[(size_t)__hi] - __quantile_row[(size_t)__lo]) * __t;");
+	        }
+	        if (out_shape.size() == 1) {
+	          w.line(out_var + "[(size_t)i] = __qv;");
+	        } else {
+	          w.line(out_var + "[(size_t)i * (size_t)" + std::to_string(out_shape[1]) + "] = __qv;");
+	        }
+	        w.dedent();
+	        w.line("}");
+	        w.line("free(__quantile_row);");
 	      } else if (op.op == "argmax" || op.op == "argmin") {
         int axis = op.attrs.value("axis", -1);
         emit_arg_reduce_axis1(w, op.op, out_var, v(op.inputs[0]), shape_env.at(op.inputs[0]), out_shape, axis);
