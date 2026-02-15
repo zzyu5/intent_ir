@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-15T14:43:50+00:00",
+  "updated_at": "2026-02-15T15:28:18+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -9,29 +9,8 @@
     "workflow/flaggems/state/active_batch_backend_compiler.json",
     "workflow/flaggems/state/handoff.md"
   ],
-  "git_log_short": "d081b20 backend: default compiler lane to cpp+pybind strict\n59186ce workflow: refresh status snapshot after backend wave3 closure\n8b1ca91 workflow: close backend wave3 and queue profile specialization wave4\n2980a9a backend: export op-family schedule profiles and enforce strict wave3 stages\n51d6157 workflow: refresh status snapshot after backend wave2 closure\ne523717 workflow: close backend wave2 and queue op-family schedule wave3\nf226046 backend: add rewrite-aware legalize artifacts and timing baseline compare\n41a142d workflow: refresh status snapshot after wave progress commits\n5afc231 workflow: close ir_arch macro guard and queue backend wave2 task\n128c378 compiler/workflow: add staged pipeline contracts and timing delta tooling\n9cc5ff3 workflow: close mixed lanes and refresh maintenance snapshots\nc4dad84 backend: wire legacy codegen entries to staged pipelines\ndfc9d8f workflow: advance ir/backend lanes with gate runners and timing enforcement\n38368a9 workflow: land v2 mixed-lane long-task harness and compilerization scaffolding\n512cdbc workflow: record scheduler wiring handoff for nightly maintenance\n162405d workflow: wire nightly maintenance into cron/systemd scheduler wrappers\n8fd875c workflow: record nightly automation handoff and next maintenance focus\n91cae8c workflow: add nightly maintenance runner for post-coverage drift checks\n7899577 workflow: record maintenance-mode handoff after 196/196 closure\n206c8cb workflow: finalize post-coverage maintenance flow and ci gate tests",
+  "git_log_short": "7e6e617 workflow: refresh status snapshots after cpp strict defaults\nd081b20 backend: default compiler lane to cpp+pybind strict\n59186ce workflow: refresh status snapshot after backend wave3 closure\n8b1ca91 workflow: close backend wave3 and queue profile specialization wave4\n2980a9a backend: export op-family schedule profiles and enforce strict wave3 stages\n51d6157 workflow: refresh status snapshot after backend wave2 closure\ne523717 workflow: close backend wave2 and queue op-family schedule wave3\nf226046 backend: add rewrite-aware legalize artifacts and timing baseline compare\n41a142d workflow: refresh status snapshot after wave progress commits\n5afc231 workflow: close ir_arch macro guard and queue backend wave2 task\n128c378 compiler/workflow: add staged pipeline contracts and timing delta tooling\n9cc5ff3 workflow: close mixed lanes and refresh maintenance snapshots\nc4dad84 backend: wire legacy codegen entries to staged pipelines\ndfc9d8f workflow: advance ir/backend lanes with gate runners and timing enforcement\n38368a9 workflow: land v2 mixed-lane long-task harness and compilerization scaffolding\n512cdbc workflow: record scheduler wiring handoff for nightly maintenance\n162405d workflow: wire nightly maintenance into cron/systemd scheduler wrappers\n8fd875c workflow: record nightly automation handoff and next maintenance focus\n91cae8c workflow: add nightly maintenance runner for post-coverage drift checks\n7899577 workflow: record maintenance-mode handoff after 196/196 closure",
   "progress_tail": [
-    {
-      "ts": "2026-02-15T13:19:24+00:00",
-      "commit": "dfc9d8f5d27f14811d9e8fd63f0477b13281a6be",
-      "lane": "ir_arch",
-      "summary": "ir_arch semantic rule consistency checks passed (primitive/mapping/interpreter)",
-      "batch_ops": [
-        ""
-      ],
-      "active_batch_path": "workflow/flaggems/state/active_batch_ir_arch.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v3/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v3/status_converged.json",
-      "next_focus": "Close backend_compiler modularization lane with pipeline-shim evidence",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v3/batch_gate_ir_arch.json",
-        "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v3/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v3/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v3",
-      "counts_by_status": {}
-    },
     {
       "ts": "2026-02-15T13:21:54+00:00",
       "commit": "dfc9d8f5d27f14811d9e8fd63f0477b13281a6be",
@@ -200,8 +179,36 @@
       "run_ok": true,
       "run_out_dir": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_policy_pybind_v1",
       "counts_by_status": {}
+    },
+    {
+      "ts": "2026-02-15T15:28:13+00:00",
+      "commit": "7e6e61759c9f96b8f090943bd4fb426af7304bb3",
+      "lane": "backend_compiler",
+      "summary": "Pure-compiler cutover landed; backend compiler smoke shows rvv runtime_fail and cuda compile_timeout on add2d/mul2d under strict staged path",
+      "batch_ops": [
+        ""
+      ],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_pure_compiler_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_pure_compiler_v1/status_converged.json",
+      "next_focus": "Fix rvv local staged run rc=2 and reduce cuda compile latency/timeouts for add2d/mul2d, then rerun backend_compiler gate",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_pure_compiler_v1/batch_gate_backend_compiler.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_pure_compiler_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_pure_compiler_v1/status_converged.json",
+        "tests/backends/cuda/test_cuda_backend_smoke_script.py",
+        "tests/backends/cuda/test_cuda_pipeline_driver.py",
+        "tests/backends/spmd_rvv/test_rvv_pipeline_driver.py"
+      ],
+      "run_ok": false,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_pure_compiler_v1",
+      "counts_by_status": {
+        "blocked_backend": 196
+      }
     }
   ],
-  "next_focus": "Execute wave4 profile specialization run on expanded kernel set with cpp strict defaults",
-  "known_risks": []
+  "next_focus": "Fix rvv local staged run rc=2 and reduce cuda compile latency/timeouts for add2d/mul2d, then rerun backend_compiler gate",
+  "known_risks": [
+    "Pure-compiler cutover landed; backend compiler smoke shows rvv runtime_fail and cuda compile_timeout on add2d/mul2d under strict staged path"
+  ]
 }

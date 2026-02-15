@@ -1,11 +1,11 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-15T14:43:13+00:00
-- Commit: `59186ce0b1f8b36af59ef2f8ff0732bbab32bd48`
+- Timestamp: 2026-02-15T15:28:13+00:00
+- Commit: `7e6e61759c9f96b8f090943bd4fb426af7304bb3`
 - Lane: `backend_compiler`
-- Summary: Switch backend_compiler defaults to CUDA cpp+pybind(strict) and add strict-flag propagation tests
+- Summary: Pure-compiler cutover landed; backend compiler smoke shows rvv runtime_fail and cuda compile_timeout on add2d/mul2d under strict staged path
 - Batch Ops (1): 
-- Run Summary: `artifacts/flaggems_matrix/daily/20260215/backend_compiler_policy_pybind_v1/backend_compiler_batch_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260215/backend_compiler_policy_pybind_v1/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260215/backend_compiler_policy_pybind_v1/backend_compiler_batch_summary.json, artifacts/flaggems_matrix/daily/20260215/backend_compiler_policy_pybind_v1/status_converged.json, tests/backends/cuda/test_cuda_backend_smoke_script.py, tests/frontends/triton/test_flaggems_lane_runners.py, tests/frontends/triton/test_flaggems_matrix_suite_resolution.py
-- Next Focus: Execute wave4 profile specialization run on expanded kernel set with cpp strict defaults
+- Run Summary: `artifacts/flaggems_matrix/daily/20260215/backend_compiler_pure_compiler_v1/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260215/backend_compiler_pure_compiler_v1/status_converged.json`
+- Evidence Paths: artifacts/flaggems_matrix/daily/20260215/backend_compiler_pure_compiler_v1/batch_gate_backend_compiler.json, artifacts/flaggems_matrix/daily/20260215/backend_compiler_pure_compiler_v1/run_summary.json, artifacts/flaggems_matrix/daily/20260215/backend_compiler_pure_compiler_v1/status_converged.json, tests/backends/cuda/test_cuda_backend_smoke_script.py, tests/backends/cuda/test_cuda_pipeline_driver.py, tests/backends/spmd_rvv/test_rvv_pipeline_driver.py
+- Next Focus: Fix rvv local staged run rc=2 and reduce cuda compile latency/timeouts for add2d/mul2d, then rerun backend_compiler gate
