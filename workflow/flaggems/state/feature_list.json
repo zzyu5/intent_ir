@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_feature_list_v2",
-  "generated_at": "2026-02-15T13:43:20+00:00",
+  "generated_at": "2026-02-15T13:50:24+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
@@ -16,11 +16,11 @@
       "conv_pool_interp": 9,
       "attention_sequence": 5
     },
-    "tasks_total": 206,
+    "tasks_total": 207,
     "by_track": {
       "coverage": 196,
       "ir_arch": 3,
-      "backend_compiler": 7
+      "backend_compiler": 8
     }
   },
   "features": [
@@ -5540,10 +5540,10 @@
       "id": "backend_compiler::op_family_schedule_wave3",
       "semantic_op": "",
       "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "pending",
-      "next_action": "op_family_schedule_tuning",
+      "status": "done",
+      "passes": true,
+      "reason_code": "ok",
+      "next_action": "none",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "backend_compiler",
@@ -5558,8 +5558,39 @@
       "depends_on": [
         "backend_compiler::legalize_schedule_optimization_wave2"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v6/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v6/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v6/batch_gate_backend_compiler_strict.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v6/schedule_profiles.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v6/timing_delta.json"
+      ],
       "description": "Introduce op-family specific schedule profiles and validate stage timing deltas against wave2 baseline."
+    },
+    {
+      "id": "backend_compiler::profile_specialization_wave4",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending",
+      "next_action": "profile_specialization_tuning",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "backend_compiler",
+      "task_type": "performance",
+      "priority": 80,
+      "acceptance": [
+        "schedule_profiles_export_contains_wave4_tags",
+        "backend_matrix_uses_profile_override_knobs",
+        "timing_delta_report_has_wave4_baseline_compare"
+      ],
+      "gate_profile": "backend_compiler",
+      "depends_on": [
+        "backend_compiler::op_family_schedule_wave3"
+      ],
+      "evidence_paths": [],
+      "description": "Add profile-specialized schedule override knobs and validate timing deltas against wave3 baseline."
     }
   ]
 }
