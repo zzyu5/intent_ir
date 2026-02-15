@@ -410,7 +410,7 @@ def _run_launch_stage(
     lower_ms = (time.perf_counter() - t_lower) * 1000.0
 
     t_compile = time.perf_counter()
-    compile_cuda_extension(
+    compiled_mod = compile_cuda_extension(
         kernel_name=lowered.kernel_name,
         cuda_src=lowered.cuda_src,
         io_spec=lowered.io_spec,
@@ -434,6 +434,7 @@ def _run_launch_stage(
         bindings=lowered.bindings,
         inputs_np=inputs_np,
         output_names=lowered.output_names or ctx["outputs"],
+        compiled_module=compiled_mod,
     )
     out = _with_io_aliases_for_diff(ctx["intent"], out)
     launch_ms = (time.perf_counter() - t_launch) * 1000.0

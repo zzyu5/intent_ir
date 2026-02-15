@@ -994,6 +994,7 @@ def run_cuda_kernel_io(
     output_names: Iterable[str],
     device: str = "cuda",
     extra_cuda_cflags: Optional[Iterable[str]] = None,
+    compiled_module: Any = None,
 ) -> Dict[str, np.ndarray]:
     """
     Execute a CUDA kernel, returning a numpy IO dict (inputs + outputs).
@@ -1079,7 +1080,16 @@ def run_cuda_kernel_io(
     bx, by, bz = (int(x) for x in launch.block)
     args += [gx, gy, gz, bx, by, bz, int(launch.shared_mem)]
 
-    mod = compile_cuda_extension(kernel_name=kernel_name, cuda_src=cuda_src, io_spec=io_spec, extra_cuda_cflags=extra_cuda_cflags)
+    mod = (
+        compiled_module
+        if compiled_module is not None
+        else compile_cuda_extension(
+            kernel_name=kernel_name,
+            cuda_src=cuda_src,
+            io_spec=io_spec,
+            extra_cuda_cflags=extra_cuda_cflags,
+        )
+    )
     try:
         mod.launch(*args)
         torch.cuda.synchronize()

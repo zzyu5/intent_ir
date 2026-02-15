@@ -29,6 +29,7 @@ def run_cuda_kernel(
     inputs_np: Dict[str, np.ndarray],
     output_names: Iterable[str],
     extra_cuda_cflags: Optional[Iterable[str]] = None,
+    compiled_module: Any = None,
 ) -> Dict[str, np.ndarray]:
     """
     Thin wrapper around `frontends.cuda.runtime.run_cuda_kernel_io`.
@@ -42,6 +43,7 @@ def run_cuda_kernel(
         inputs_np=inputs_np,
         output_names=output_names,
         extra_cuda_cflags=extra_cuda_cflags,
+        compiled_module=compiled_module,
     )
 
 
