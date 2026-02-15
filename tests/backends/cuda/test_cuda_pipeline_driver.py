@@ -35,6 +35,9 @@ def test_run_cuda_pipeline_reports_stage_artifacts_for_valid_intent() -> None:
     assert "total_rewrite_candidates" in legalize.artifacts["rewrite_counts"]
     emit = next(s for s in result.stages if s.name == "emit")
     assert emit.artifacts.get("codegen_mode") in {"cpp", "py"}
+    schedule = next(s for s in result.stages if s.name == "schedule")
+    assert schedule.artifacts.get("op_family") == "elementwise_reduction"
+    assert str(schedule.artifacts.get("schedule_profile") or "").startswith("cuda_")
 
 
 def test_run_cuda_pipeline_marks_schedule_rewrite_aware_for_transform_heavy_intent() -> None:
@@ -57,6 +60,28 @@ def test_run_cuda_pipeline_marks_schedule_rewrite_aware_for_transform_heavy_inte
     assert result.ok is True
     schedule = next(s for s in result.stages if s.name == "schedule")
     assert schedule.artifacts.get("rewrite_aware") is True
+
+
+def test_run_cuda_pipeline_matmul_conv_profile_exported() -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "cuda_pipeline_mm",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "K"], "layout": "row_major"},
+                "B": {"dtype": "f32", "shape": ["K", "N"], "layout": "row_major"},
+                "C": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [{"op": "matmul", "inputs": ["A", "B"], "output": "C", "attrs": {}}],
+            "outputs": ["C"],
+            "parallel_axes": ["M", "N"],
+            "schedule": {"tile_m": 32, "tile_n": 64, "tile_k": 16, "parallel_axes": ["M", "N"]},
+        }
+    )
+    result = run_cuda_pipeline(intent)
+    assert result.ok is True
+    schedule = next(s for s in result.stages if s.name == "schedule")
+    assert schedule.artifacts.get("op_family") == "matmul_conv"
+    assert schedule.artifacts.get("schedule_profile") == "cuda_matmul_conv_v1"
 
 
 def test_run_cuda_pipeline_rejects_invalid_payload() -> None:

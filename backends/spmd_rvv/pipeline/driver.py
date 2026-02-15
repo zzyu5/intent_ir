@@ -95,10 +95,38 @@ def _legalize_rewrite_counts(op_names: list[str]) -> dict[str, int]:
     return counts
 
 
+def _op_family(op_names: list[str]) -> str:
+    matmul_conv = {"matmul", "conv1d", "conv2d", "conv3d", "conv_depthwise2d"}
+    reduction = {
+        "reduce_sum",
+        "reduce_prod",
+        "reduce_max",
+        "reduce_min",
+        "reduce_any",
+        "argmax",
+        "argmin",
+        "cumsum",
+        "cummax",
+        "cummin",
+        "mean",
+        "var",
+        "std",
+        "quantile",
+        "softmax",
+    }
+    ops = set(op_names)
+    if any(op in matmul_conv for op in ops):
+        return "matmul_conv"
+    if any(op in reduction for op in ops) or bool(ops):
+        return "elementwise_reduction"
+    return "other"
+
+
 def run_rvv_pipeline(intent_payload: Any) -> RvvPipelineResult:
     name, op_names, tensor_shapes, schedule_info = _collect_intent_info(intent_payload)
     stages: list[RvvPipelineStage] = []
     rewrite_counts = _legalize_rewrite_counts(op_names)
+    family = _op_family(op_names)
 
     def _legalize() -> tuple[str, dict[str, Any]]:
         if not op_names:
@@ -135,11 +163,12 @@ def run_rvv_pipeline(intent_payload: Any) -> RvvPipelineResult:
 
     def _schedule() -> tuple[str, dict[str, Any]]:
         defaults = {"tile_m": 1, "tile_n": 128, "tile_k": 1}
-        if any(op in {"matmul", "conv1d", "conv2d", "conv3d"} for op in op_names):
+        if family == "matmul_conv":
             defaults = {"tile_m": 32, "tile_n": 64, "tile_k": 16}
         if int(rewrite_counts.get("total_rewrite_candidates", 0)) > 0:
             defaults = dict(defaults)
             defaults["tile_n"] = min(int(defaults.get("tile_n", 128)), 64)
+        profile = "rvv_matmul_conv_v1" if family == "matmul_conv" else "rvv_elementwise_reduction_v1"
         merged = dict(defaults)
         merged.update({k: v for k, v in schedule_info.items() if v is not None})
         return (
@@ -147,6 +176,8 @@ def run_rvv_pipeline(intent_payload: Any) -> RvvPipelineResult:
             {
                 "schedule_hints": merged,
                 "rewrite_aware": bool(int(rewrite_counts.get("total_rewrite_candidates", 0)) > 0),
+                "op_family": family,
+                "schedule_profile": profile,
             },
         )
 

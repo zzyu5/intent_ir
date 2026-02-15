@@ -115,6 +115,9 @@ def main() -> None:
     timing_delta_path = ""
     timing_delta_ok = True
     timing_delta_stderr = ""
+    schedule_profiles_path = ""
+    schedule_profiles_ok = True
+    schedule_profiles_stderr = ""
     baseline_dir = Path(args.timing_baseline_dir) if args.timing_baseline_dir is not None else _guess_baseline_dir(Path(args.out_dir))
     if bool(args.emit_timing_delta) and not bool(args.dry_run) and int(rc) == 0:
         current_rvv = Path(args.out_dir) / "rvv_local.json"
@@ -160,9 +163,40 @@ def main() -> None:
             run_summary["stages"] = stages
             run_summary["ok"] = bool(run_summary.get("ok")) and bool(timing_delta_ok)
             run_summary_path.write_text(json.dumps(run_summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    if not bool(args.dry_run) and int(rc) == 0:
+        schedule_profiles = Path(args.out_dir) / "schedule_profiles.json"
+        profiles_cmd = [
+            sys.executable,
+            "scripts/flaggems/export_schedule_profiles.py",
+            "--out",
+            str(schedule_profiles),
+        ]
+        rc_profiles, _out_profiles, err_profiles = _run(profiles_cmd, dry_run=False)
+        schedule_profiles_ok = int(rc_profiles) == 0
+        schedule_profiles_stderr = str(err_profiles).strip()
+        schedule_profiles_path = str(schedule_profiles)
+        run_summary_path = Path(args.out_dir) / "run_summary.json"
+        if run_summary_path.is_file():
+            run_summary = _load_json(run_summary_path)
+            stages = [s for s in list(run_summary.get("stages") or []) if isinstance(s, dict)]
+            stages = [s for s in stages if str(s.get("stage") or "") != "schedule_profiles"]
+            stages.append(
+                {
+                    "stage": "schedule_profiles",
+                    "rc": 0 if bool(schedule_profiles_ok) else 1,
+                    "ok": bool(schedule_profiles_ok),
+                    "stdout": f"schedule profiles generated at {schedule_profiles_path}" if schedule_profiles_path else "",
+                    "stderr": str(schedule_profiles_stderr),
+                    "cmd": profiles_cmd,
+                    "json_path": schedule_profiles_path,
+                }
+            )
+            run_summary["stages"] = stages
+            run_summary["ok"] = bool(run_summary.get("ok")) and bool(schedule_profiles_ok)
+            run_summary_path.write_text(json.dumps(run_summary, indent=2, ensure_ascii=False), encoding="utf-8")
 
     summary = {
-        "ok": bool(rc == 0),
+        "ok": bool(rc == 0 and timing_delta_ok and schedule_profiles_ok),
         "lane": "backend_compiler",
         "cmd": cmd,
         "out_dir": str(args.out_dir),
@@ -173,6 +207,11 @@ def main() -> None:
             "path": timing_delta_path,
             "baseline_dir": str(baseline_dir) if baseline_dir is not None else "",
             "stderr": timing_delta_stderr,
+        },
+        "schedule_profiles": {
+            "ok": bool(schedule_profiles_ok),
+            "path": schedule_profiles_path,
+            "stderr": schedule_profiles_stderr,
         },
     }
     out = Path(args.out_dir)

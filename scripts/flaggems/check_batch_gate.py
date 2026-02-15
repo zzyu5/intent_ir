@@ -196,7 +196,10 @@ def main() -> None:
             )
         )
         timing_failures: list[str] = []
+        timing_required_stages = {"rvv_local", "cuda_local"}
         for stage_name in required:
+            if stage_name not in timing_required_stages:
+                continue
             stage = stage_map.get(stage_name) or {}
             json_path = str(stage.get("json_path") or "").strip()
             if not json_path:
