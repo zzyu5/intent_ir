@@ -1,0 +1,198 @@
+{
+  "schema_version": "flaggems_session_context_v1",
+  "updated_at": "2026-02-15T13:06:26+00:00",
+  "read_order": [
+    "workflow/flaggems/state/current_status.json",
+    "workflow/flaggems/state/session_context.json",
+    "workflow/flaggems/state/active_batch_coverage.json",
+    "workflow/flaggems/state/active_batch_ir_arch.json",
+    "workflow/flaggems/state/active_batch_backend_compiler.json",
+    "workflow/flaggems/state/handoff.md"
+  ],
+  "git_log_short": "512cdbc workflow: record scheduler wiring handoff for nightly maintenance\n162405d workflow: wire nightly maintenance into cron/systemd scheduler wrappers\n8fd875c workflow: record nightly automation handoff and next maintenance focus\n91cae8c workflow: add nightly maintenance runner for post-coverage drift checks\n7899577 workflow: record maintenance-mode handoff after 196/196 closure\n206c8cb workflow: finalize post-coverage maintenance flow and ci gate tests\n6b882eb workflow: close final backend trio and reach 196/196 dual-pass\n668885f workflow: close wave-u batch, write registry, and roll final backend trio\n5b50952 cuda: add upsample_bicubic2d_aa lowering and close wave-u final blocker\n1e2ec79 workflow: record wave-u rvv remote validation and final cuda blocker\n8ecc2dc workflow: record wave-u progress at 9/10 dual-pass and next blocker\n0aea157 intentir/flaggems: push wave-u active batch to 9/10 dual-pass\n659d935 workflow: close twave 10/10 dual-pass, write registry, and roll next batch\n319fa99 intentir/flaggems: harden twave pipeline and close tile/topk/trace/unique backends\n4687f00 workflow: close qr6 at 10/10 dual-pass and advance twave baseline\n27d571b intentir: add tan dual-backend lowering for active twave\n6cc5540 intentir: close qr6 backend gaps and align non-finite diff semantics\ndf3155b workflow: close qr5 batch at 10/10 dual-pass and roll active batch to qr6\ne57811d intentir: close qr5 backend gaps with sin/rms_norm/scatter-family dual-backend lowering\nb0a1e8f workflow: record qr4 progress at 9/10 dual-pass and refresh registry baseline",
+  "progress_tail": [
+    {
+      "ts": "2026-02-15T08:24:23+00:00",
+      "commit": "4687f0057307009d68a1dc11605bbb728fd730a7",
+      "summary": "Closed twave active batch to scoped dual_pass 10/10 by fixing tile/topk/trace/unique and to_copy CUDA f16 path with full RVV local+remote and CUDA nvrtc verification.",
+      "batch_ops": [
+        "tan",
+        "tanh",
+        "threshold",
+        "tile",
+        "to_copy",
+        "topk",
+        "trace",
+        "triu",
+        "true_divide",
+        "unique2"
+      ],
+      "active_batch_path": "workflow/flaggems/state/active_batch.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260215/batch_active10_twave_v5_nvrtc/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260215/batch_active10_twave_v5_nvrtc/status_converged_registry_write.json",
+      "next_focus": "Run plan_next_batch for remaining 13 blocked_backend ops (Wave-U), keep strict pipeline reports and dual-backend gate discipline.",
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260215/batch_active10_twave_v5_nvrtc",
+      "counts_by_status": {
+        "blocked_backend": 184,
+        "dual_pass": 12
+      }
+    },
+    {
+      "ts": "2026-02-15T09:22:01+00:00",
+      "commit": "0aea157",
+      "summary": "Advanced active wave-u batch from 3->9 dual_pass by landing deterministic canonical intents and RVV/CUDA lowerings for where/vstack/vdot/var_mean/vector_norm/weight_norm and nearest upsample.",
+      "batch_ops": [
+        "upsample_bicubic2d_aa",
+        "upsample_nearest1d",
+        "upsample_nearest2d",
+        "var_mean",
+        "vdot",
+        "vector_norm",
+        "vstack",
+        "weight_norm_interface",
+        "where_scalar_other",
+        "where_scalar_self"
+      ],
+      "active_batch_path": "workflow/flaggems/state/active_batch.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260215/batch_active10_waveu_v6_local/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260215/batch_active10_waveu_v6_local/status_converged.json",
+      "next_focus": "Close the final active blocker upsample_bicubic2d_aa on CUDA, then rerun full active matrix (pipeline+rvv local/remote+cuda), pass gate, write registry, and roll next batch.",
+      "run_ok": false,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260215/batch_active10_waveu_v6_local",
+      "counts_by_status": {
+        "blocked_backend": 185,
+        "dual_pass": 10,
+        "rvv_only": 1
+      }
+    },
+    {
+      "ts": "2026-02-15T09:22:58+00:00",
+      "commit": "8ecc2dc",
+      "summary": "Validated active wave-u with RVV local+remote and CUDA local; scoped status is 9/10 dual_pass with only upsample_bicubic2d_aa blocked on CUDA lowering.",
+      "batch_ops": [
+        "upsample_bicubic2d_aa",
+        "upsample_nearest1d",
+        "upsample_nearest2d",
+        "var_mean",
+        "vdot",
+        "vector_norm",
+        "vstack",
+        "weight_norm_interface",
+        "where_scalar_other",
+        "where_scalar_self"
+      ],
+      "active_batch_path": "workflow/flaggems/state/active_batch.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260215/batch_active10_waveu_v6_local/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260215/batch_active10_waveu_v6_local/status_converged.json",
+      "next_focus": "Implement CUDA lowering for upsample_bicubic2d_aa expanded pattern, rerun full active matrix with --run-rvv-remote + CUDA, pass batch gate, then write registry and roll next batch.",
+      "run_ok": false,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260215/batch_active10_waveu_v6_local",
+      "counts_by_status": {
+        "blocked_backend": 185,
+        "dual_pass": 10,
+        "rvv_only": 1
+      }
+    },
+    {
+      "ts": "2026-02-15T09:39:18+00:00",
+      "commit": "5b509522d44ce7efae0a2184aea77158aebd0a30",
+      "summary": "Closed active wave-u batch to scoped dual_pass 10/10 by adding CUDA upsample_bicubic2d_aa lowering and passing pipeline + RVV local/remote + CUDA.",
+      "batch_ops": [
+        "upsample_bicubic2d_aa",
+        "upsample_nearest1d",
+        "upsample_nearest2d",
+        "var_mean",
+        "vdot",
+        "vector_norm",
+        "vstack",
+        "weight_norm_interface",
+        "where_scalar_other",
+        "where_scalar_self"
+      ],
+      "active_batch_path": "workflow/flaggems/state/active_batch.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260215/batch_active10_waveu_v7_full/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260215/batch_active10_waveu_v7_full/status_converged_registry_write.json",
+      "next_focus": "Plan and close the final blocked_backend trio (zeros, zeros_like, where_self) to reach full 196/196 dual_pass coverage.",
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260215/batch_active10_waveu_v7_full",
+      "counts_by_status": {
+        "blocked_backend": 185,
+        "dual_pass": 11
+      }
+    },
+    {
+      "ts": "2026-02-15T09:41:45+00:00",
+      "commit": "668885fee0daa59ea228b75653a9000312d836b0",
+      "summary": "Closed final active backend trio (where_self/zeros/zeros_like) to scoped dual_pass 3/3 with pipeline + RVV local/remote + CUDA pass; global registry reached 196/196 dual_pass.",
+      "batch_ops": [
+        "where_self",
+        "zeros",
+        "zeros_like"
+      ],
+      "active_batch_path": "workflow/flaggems/state/active_batch.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260215/batch_active3_finaltrio_v1_full/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260215/batch_active3_finaltrio_v1_full/status_converged_registry_write.json",
+      "next_focus": "Run CI gate aggregation and document final full-coverage state; keep traditional path as compatibility-only.",
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260215/batch_active3_finaltrio_v1_full",
+      "counts_by_status": {
+        "blocked_backend": 185,
+        "dual_pass": 11
+      }
+    },
+    {
+      "ts": "2026-02-15T09:47:08+00:00",
+      "commit": "206c8cb279103749a770689c4bbe7ed5ff0988ab",
+      "summary": "Switched workflow to post-coverage maintenance mode: updated roadmap/docs/init behavior and added CI gate script tests for empty-active-batch + reason-code enforcement.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260215/batch_active3_finaltrio_v1_full/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260215/batch_active3_finaltrio_v1_full/status_converged_registry_write.json",
+      "next_focus": "Run scheduled/nightly matrix + ci_gate for drift detection; keep registry as single source and preserve compatibility-only traditional path.",
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260215/batch_active3_finaltrio_v1_full",
+      "counts_by_status": {
+        "blocked_backend": 185,
+        "dual_pass": 11
+      }
+    },
+    {
+      "ts": "2026-02-15T09:49:54+00:00",
+      "commit": "91cae8c0717ff10554a0671ce8695ea9dacfd30f",
+      "summary": "Added nightly maintenance automation (matrix+ci_gate), updated workflow docs/roadmap to maintenance-complete, and added script tests for dry-run flag composition.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260215/batch_active3_finaltrio_v1_full/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260215/batch_active3_finaltrio_v1_full/status_converged_registry_write.json",
+      "next_focus": "Wire nightly_maintenance.py into scheduler/CI runner and keep daily drift checks against registry truth source.",
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260215/batch_active3_finaltrio_v1_full",
+      "counts_by_status": {
+        "blocked_backend": 185,
+        "dual_pass": 11
+      }
+    },
+    {
+      "ts": "2026-02-15T09:55:13+00:00",
+      "commit": "162405dc931bc39bf163b0a5c0edd0515362d898",
+      "summary": "Wired nightly maintenance into scheduler-ready wrappers (cron/systemd), added wrapper dry-run control, and validated maintenance scripts/tests.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260215/batch_active3_finaltrio_v1_full/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260215/batch_active3_finaltrio_v1_full/status_converged_registry_write.json",
+      "next_focus": "Connect workflow/flaggems/nightly.sh to host scheduler and keep daily ci_gate drift checks; escalate only on status regression.",
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260215/batch_active3_finaltrio_v1_full",
+      "counts_by_status": {
+        "blocked_backend": 185,
+        "dual_pass": 11
+      }
+    }
+  ],
+  "next_focus": "Execute lane `ir_arch` with primitive reuse guard (`scripts/intentir/check_primitive_reuse.py`) and wire its report into `check_batch_gate --profile ir_arch`; then execute lane `backend_compiler` to replace compat shim stages with real CUDA/RVV stage pipelines and timing output.",
+  "known_risks": [
+    "Advanced active wave-u batch from 3->9 dual_pass by landing deterministic canonical intents and RVV/CUDA lowerings for where/vstack/vdot/var_mean/vector_norm/weight_norm and nearest upsample.",
+    "Validated active wave-u with RVV local+remote and CUDA local; scoped status is 9/10 dual_pass with only upsample_bicubic2d_aa blocked on CUDA lowering."
+  ]
+}

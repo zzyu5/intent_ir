@@ -7,9 +7,12 @@ from pipeline.triton.flaggems_workflow import (
     append_progress_log,
     append_metrics_history,
     build_active_batch_payload,
+    build_current_status_payload,
+    build_session_context_payload,
     build_feature_list_payload,
     freeze_baseline_snapshot,
     load_json,
+    load_progress_tail,
     select_next_batch,
     summarize_registry,
     validate_feature_list_sync,
@@ -74,8 +77,10 @@ def test_feature_list_payload_and_batch_priority() -> None:
     assert by_op["acos"]["next_action"] == "semantic_mapping"
     assert by_op["argmax"]["next_action"] == "add_e2e_spec"
     assert by_op["cumsum"]["next_action"] == "backend_lowering"
+    assert by_op["acos"]["track"] == "coverage"
+    assert payload["summary"]["tasks_total"] == 4
 
-    batch = select_next_batch(feature_payload=payload, batch_size=3)
+    batch = select_next_batch(feature_payload=payload, batch_size=3, lane="coverage")
     assert [str(x["semantic_op"]) for x in batch] == ["acos", "argmax", "cumsum"]
     ok, errs = validate_feature_list_sync(
         feature_payload=payload,
@@ -99,13 +104,14 @@ def test_feature_list_payload_and_batch_priority() -> None:
         batch=batch,
         branch="flaggems",
         batch_size=3,
+        lane="coverage",
         feature_list_path="workflow/flaggems/state/feature_list.json",
-        progress_log_path="workflow/flaggems/state/progress_log.jsonl",
-        git_log="abc",
-        progress_tail=[],
+        status_snapshot_path="workflow/flaggems/state/current_status.json",
+        session_context_path="workflow/flaggems/state/session_context.json",
     )
-    assert active["schema_version"] == "flaggems_active_batch_v1"
+    assert active["schema_version"] == "flaggems_active_batch_v2"
     assert [str(x["semantic_op"]) for x in active["items"]] == ["acos", "argmax", "cumsum"]
+    assert active["lane"] == "coverage"
 
 
 def test_freeze_baseline_snapshot_writes_latest_and_stamped(tmp_path: Path) -> None:
@@ -149,3 +155,40 @@ def test_progress_log_append_and_handoff_write(tmp_path: Path) -> None:
     lines = metrics.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 1
     assert json.loads(lines[0])["semantic_ops"] == 4
+    tail = load_progress_tail(progress_log_path=progress_log, lines=1)
+    assert tail and tail[0]["commit"] == "b"
+
+
+def test_current_status_and_session_context_builders() -> None:
+    feature_payload = build_feature_list_payload(
+        registry_payload=_sample_registry_payload(),
+        source_registry_path="pipeline/triton/flaggems_registry.json",
+        manual_tasks=[
+            {
+                "id": "ir_arch::primitive",
+                "track": "ir_arch",
+                "status": "pending",
+                "passes": False,
+            }
+        ],
+    )
+    current = build_current_status_payload(
+        branch="flaggems",
+        head_commit="abc123",
+        feature_payload=feature_payload,
+        latest_run_summary_path="artifacts/run_summary.json",
+        latest_status_converged_path="artifacts/status_converged.json",
+        lane_batch_paths={"coverage": "a.json", "ir_arch": "b.json", "backend_compiler": "c.json"},
+    )
+    assert current["schema_version"] == "flaggems_current_status_v1"
+    assert current["mode"] == "mixed_development"
+    assert current["lanes"]["ir_arch"]["pending"] == 1
+
+    ctx = build_session_context_payload(
+        git_log_short="a\nb",
+        progress_tail=[{"summary": "x"}],
+        next_focus="run primitive guard",
+        known_risks=["risk-a"],
+    )
+    assert ctx["schema_version"] == "flaggems_session_context_v1"
+    assert ctx["next_focus"] == "run primitive guard"

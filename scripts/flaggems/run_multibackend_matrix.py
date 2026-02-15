@@ -159,9 +159,15 @@ def main() -> None:
     )
     ap.add_argument("--seed-cache-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_seed_cache"))
     ap.add_argument("--pipeline-out-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_triton_full_pipeline"))
-    ap.add_argument("--active-batch", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch.json"))
+    ap.add_argument("--active-batch", type=Path, default=None)
     ap.add_argument("--flaggems-opset", choices=["deterministic_forward"], default="deterministic_forward")
     ap.add_argument("--backend-target", choices=["rvv", "cuda_h100", "cuda_5090d"], default="rvv")
+    ap.add_argument(
+        "--lane",
+        choices=["coverage", "ir_arch", "backend_compiler"],
+        default="coverage",
+        help="Workflow lane used to resolve active semantic scope (default: coverage).",
+    )
     ap.add_argument("--skip-pipeline", action="store_true")
     ap.add_argument("--skip-rvv", action="store_true")
     ap.add_argument("--skip-cuda", action="store_true")
@@ -244,7 +250,11 @@ def main() -> None:
             flaggems_opset=str(args.flaggems_opset),
             backend_target=str(args.backend_target),
         )
-    scoped_semantic_ops = _load_active_semantic_ops(Path(args.active_batch))
+    default_active = ROOT / "workflow" / "flaggems" / "state" / f"active_batch_{args.lane}.json"
+    if str(args.lane) == "coverage" and not default_active.is_file():
+        default_active = ROOT / "workflow" / "flaggems" / "state" / "active_batch.json"
+    active_batch_path = Path(args.active_batch) if args.active_batch is not None else default_active
+    scoped_semantic_ops = _load_active_semantic_ops(active_batch_path)
 
     def _record(stage: str, rc: int, stdout: str, stderr: str, extra: dict | None = None) -> None:
         row = {
@@ -440,6 +450,7 @@ def main() -> None:
     ok = all(bool(r.get("ok")) for r in stage_results)
     summary = {
         "ok": bool(ok),
+        "lane": str(args.lane),
         "requested_suite": str(args.suite),
         "suite": str(effective_suite),
         "kernel_filter": list(kernel_filter),
@@ -464,6 +475,7 @@ def main() -> None:
         "cuda_codegen_mode": str(args.cuda_codegen_mode),
         "seed_cache_dir": str(seed_cache_dir),
         "pipeline_out_dir": str(pipeline_out_dir),
+        "active_batch_path": str(active_batch_path),
         "stages": stage_results,
         "out_dir": str(out_dir),
     }

@@ -33,17 +33,77 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--registry", type=Path, default=(ROOT / "pipeline" / "triton" / "flaggems_registry.json"))
     ap.add_argument("--feature-list", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "feature_list.json"))
-    ap.add_argument("--active-batch", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch.json"))
+    ap.add_argument(
+        "--active-batch-coverage",
+        type=Path,
+        default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch_coverage.json"),
+    )
+    ap.add_argument(
+        "--active-batch",
+        type=Path,
+        default=None,
+        help="Compatibility alias for --active-batch-coverage.",
+    )
+    ap.add_argument(
+        "--active-batch-ir-arch",
+        type=Path,
+        default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch_ir_arch.json"),
+    )
+    ap.add_argument(
+        "--active-batch-backend-compiler",
+        type=Path,
+        default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch_backend_compiler.json"),
+    )
+    ap.add_argument(
+        "--profiles",
+        action="append",
+        default=[],
+        help="Profiles to evaluate (repeatable or comma-separated). Default: coverage,ir_arch,backend_compiler",
+    )
     ap.add_argument("--run-summary", type=Path, required=True)
     ap.add_argument("--status-converged", type=Path, required=True)
     ap.add_argument("--progress-log", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "progress_log.jsonl"))
     ap.add_argument("--handoff", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "handoff.md"))
     ap.add_argument("--out", type=Path, default=(ROOT / "artifacts" / "flaggems_matrix" / "ci_gate.json"))
     args = ap.parse_args()
+    active_legacy = ROOT / "workflow" / "flaggems" / "state" / "active_batch.json"
+
+    def _parse_profiles(raw: list[str]) -> list[str]:
+        out: list[str] = []
+        src = raw or ["coverage"]
+        for item in src:
+            for token in str(item).split(","):
+                p = str(token).strip()
+                if p and p not in out:
+                    out.append(p)
+        return out
+
+    profiles = _parse_profiles(list(args.profiles))
+    coverage_active = Path(args.active_batch) if args.active_batch is not None else args.active_batch_coverage
+    active_by_profile: dict[str, Path] = {
+        "coverage": coverage_active if coverage_active.is_file() else active_legacy,
+        "ir_arch": args.active_batch_ir_arch,
+        "backend_compiler": args.active_batch_backend_compiler,
+    }
 
     checks: list[dict[str, Any]] = []
-    for p in (args.registry, args.feature_list, args.active_batch, args.run_summary, args.status_converged):
+    for p in (args.registry, args.feature_list, args.run_summary, args.status_converged):
         checks.append(_check(f"exists::{_to_repo_rel(p)}", p.is_file(), "file exists" if p.is_file() else "missing file"))
+    for profile in profiles:
+        p = active_by_profile.get(profile)
+        if p is None:
+            checks.append(_check(f"active_batch::{profile}", False, "unsupported profile"))
+            continue
+        if profile == "coverage":
+            checks.append(_check(f"exists::active_batch::{profile}", p.is_file(), "file exists" if p.is_file() else "missing file"))
+        else:
+            checks.append(
+                _check(
+                    f"exists::active_batch::{profile}",
+                    True,
+                    "file exists" if p.is_file() else "missing optional lane batch (treated as empty)",
+                )
+            )
 
     if args.registry.is_file() and args.feature_list.is_file():
         registry_payload = load_json(args.registry)
@@ -61,31 +121,50 @@ def main() -> None:
             )
         )
 
-    batch_gate_path = args.out.with_name("batch_gate_ci.json")
-    cmd = [
-        sys.executable,
-        "scripts/flaggems/check_batch_gate.py",
-        "--active-batch",
-        str(args.active_batch),
-        "--run-summary",
-        str(args.run_summary),
-        "--status-converged",
-        str(args.status_converged),
-        "--progress-log",
-        str(args.progress_log),
-        "--handoff",
-        str(args.handoff),
-        "--out",
-        str(batch_gate_path),
-    ]
-    p = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
-    checks.append(
-        _check(
-            "batch_gate",
-            p.returncode == 0,
-            "check_batch_gate passed" if p.returncode == 0 else f"check_batch_gate failed: {(p.stderr or p.stdout).strip()}",
+    for profile in profiles:
+        active_path = active_by_profile.get(profile)
+        if active_path is None:
+            continue
+        run_gate = True
+        if active_path.is_file():
+            payload = load_json(active_path)
+            items = [e for e in list(payload.get("items") or []) if isinstance(e, dict)]
+            if profile != "coverage" and not items:
+                run_gate = False
+        if not active_path.is_file() and profile != "coverage":
+            run_gate = False
+        if not run_gate:
+            checks.append(_check(f"batch_gate::{profile}", True, "skipped (no active items for profile)"))
+            continue
+        batch_gate_path = args.out.with_name(f"batch_gate_ci_{profile}.json")
+        cmd = [
+            sys.executable,
+            "scripts/flaggems/check_batch_gate.py",
+            "--profile",
+            str(profile),
+            "--active-batch",
+            str(active_path),
+            "--run-summary",
+            str(args.run_summary),
+            "--status-converged",
+            str(args.status_converged),
+            "--progress-log",
+            str(args.progress_log),
+            "--handoff",
+            str(args.handoff),
+            "--out",
+            str(batch_gate_path),
+        ]
+        if profile != "coverage":
+            cmd.append("--no-require-active-dual-pass")
+        p = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
+        checks.append(
+            _check(
+                f"batch_gate::{profile}",
+                p.returncode == 0,
+                "check_batch_gate passed" if p.returncode == 0 else f"check_batch_gate failed: {(p.stderr or p.stdout).strip()}",
+            )
         )
-    )
 
     if args.status_converged.is_file():
         converged = load_json(args.status_converged)
@@ -106,10 +185,12 @@ def main() -> None:
         "artifacts": {
             "registry": _to_repo_rel(args.registry),
             "feature_list": _to_repo_rel(args.feature_list),
-            "active_batch": _to_repo_rel(args.active_batch),
+            "active_batch_coverage": _to_repo_rel(active_by_profile["coverage"]),
+            "active_batch_ir_arch": _to_repo_rel(active_by_profile["ir_arch"]),
+            "active_batch_backend_compiler": _to_repo_rel(active_by_profile["backend_compiler"]),
             "run_summary": _to_repo_rel(args.run_summary),
             "status_converged": _to_repo_rel(args.status_converged),
-            "batch_gate": _to_repo_rel(batch_gate_path),
+            "profiles": profiles,
         },
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)

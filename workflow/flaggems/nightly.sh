@@ -16,6 +16,8 @@ RVV_USER="${FLAGGEMS_NIGHTLY_RVV_USER:-ubuntu}"
 RVV_PORT="${FLAGGEMS_NIGHTLY_RVV_PORT:-22}"
 CUDA_RUNTIME_BACKEND="${FLAGGEMS_NIGHTLY_CUDA_RUNTIME_BACKEND:-nvrtc}"
 CUDA_CODEGEN_MODE="${FLAGGEMS_NIGHTLY_CUDA_CODEGEN_MODE:-py}"
+LANE="${FLAGGEMS_NIGHTLY_LANE:-coverage}"
+CI_PROFILES="${FLAGGEMS_NIGHTLY_CI_PROFILES:-coverage}"
 
 RUN_RVV_REMOTE="${FLAGGEMS_NIGHTLY_RUN_RVV_REMOTE:-1}"
 RVV_USE_KEY="${FLAGGEMS_NIGHTLY_RVV_USE_KEY:-1}"
@@ -43,6 +45,7 @@ CMD=(
   --rvv-port "$RVV_PORT"
   --cuda-runtime-backend "$CUDA_RUNTIME_BACKEND"
   --cuda-codegen-mode "$CUDA_CODEGEN_MODE"
+  --lane "$LANE"
 )
 
 if [[ "$RUN_RVV_REMOTE" == "1" ]]; then
@@ -66,6 +69,12 @@ fi
 if [[ "$WRITE_REGISTRY" == "1" ]]; then
   CMD+=(--write-registry)
 fi
+
+for profile in ${CI_PROFILES//,/ }; do
+  if [[ -n "${profile}" ]]; then
+    CMD+=(--ci-profiles "$profile")
+  fi
+done
 
 if [[ "$DRY_RUN" == "1" ]]; then
   CMD+=(--dry-run)

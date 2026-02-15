@@ -12,7 +12,7 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 
 def utc_now_iso() -> str:
@@ -46,7 +46,52 @@ def summarize_registry(registry_payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_feature_list_payload(*, registry_payload: dict[str, Any], source_registry_path: str) -> dict[str, Any]:
+LANES: tuple[str, ...] = ("coverage", "ir_arch", "backend_compiler")
+
+
+def normalize_lane(raw: str) -> str:
+    lane = str(raw or "").strip()
+    if lane not in LANES:
+        raise ValueError(f"unsupported lane: {lane}")
+    return lane
+
+
+def _normalized_task(task: Mapping[str, Any]) -> dict[str, Any]:
+    lane = normalize_lane(str(task.get("track") or "coverage"))
+    status = str(task.get("status") or "pending")
+    passes = bool(task.get("passes", False))
+    if status == "done":
+        passes = True
+    gate_profile = str(task.get("gate_profile") or lane)
+    if gate_profile not in LANES:
+        gate_profile = lane
+    return {
+        "id": str(task.get("id") or ""),
+        "semantic_op": str(task.get("semantic_op") or ""),
+        "family": str(task.get("family") or "workflow"),
+        "status": status,
+        "passes": bool(passes),
+        "reason_code": str(task.get("reason_code") or ""),
+        "next_action": str(task.get("next_action") or "none"),
+        "e2e_spec": task.get("e2e_spec"),
+        "intent_ops": list(task.get("intent_ops") or []),
+        "track": lane,
+        "task_type": str(task.get("task_type") or "task"),
+        "priority": int(task.get("priority") or 100),
+        "acceptance": list(task.get("acceptance") or []),
+        "gate_profile": gate_profile,
+        "depends_on": list(task.get("depends_on") or []),
+        "evidence_paths": list(task.get("evidence_paths") or []),
+        "description": str(task.get("description") or ""),
+    }
+
+
+def build_feature_list_payload(
+    *,
+    registry_payload: dict[str, Any],
+    source_registry_path: str,
+    manual_tasks: Iterable[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
     entries = list(registry_payload.get("entries") or [])
     features: list[dict[str, Any]] = []
     for e in entries:
@@ -71,14 +116,42 @@ def build_feature_list_payload(*, registry_payload: dict[str, Any], source_regis
                 "next_action": next_action,
                 "e2e_spec": e.get("e2e_spec"),
                 "intent_ops": list(e.get("intent_ops") or []),
+                "track": "coverage",
+                "task_type": "semantic_op",
+                "priority": 0,
+                "acceptance": [
+                    "intentir_mapping_present",
+                    "pipeline_diff_ok",
+                    "rvv_local_or_remote_pass",
+                    "cuda_pass",
+                ],
+                "gate_profile": "coverage",
+                "depends_on": [],
+                "evidence_paths": [],
+                "description": "",
             }
         )
 
+    for task in list(manual_tasks or []):
+        normalized = _normalized_task(task)
+        if not normalized["id"]:
+            continue
+        features.append(normalized)
+
+    by_track: dict[str, int] = {}
+    for f in features:
+        t = str(f.get("track") or "coverage")
+        by_track[t] = int(by_track.get(t, 0)) + 1
+
     return {
-        "schema_version": "flaggems_feature_list_v1",
+        "schema_version": "flaggems_feature_list_v2",
         "generated_at": utc_now_iso(),
         "source_registry_path": str(source_registry_path),
-        "summary": summarize_registry(registry_payload),
+        "summary": {
+            **summarize_registry(registry_payload),
+            "tasks_total": len(features),
+            "by_track": by_track,
+        },
         "features": features,
     }
 
@@ -98,6 +171,9 @@ def validate_feature_list_sync(
         errors.append("feature_list.summary.by_status mismatches registry")
     if dict(feat_summary.get("by_family") or {}) != dict(reg_summary.get("by_family") or {}):
         errors.append("feature_list.summary.by_family mismatches registry")
+    coverage_features = [f for f in list(feature_payload.get("features") or []) if str(f.get("track") or "coverage") == "coverage"]
+    if len(coverage_features) != int(reg_summary.get("semantic_ops", 0)):
+        errors.append("feature_list.coverage_features count mismatches registry semantic ops")
     if expected_source_registry_path is not None:
         src = str(feature_payload.get("source_registry_path") or "")
         if src != str(expected_source_registry_path):
@@ -113,30 +189,49 @@ def build_active_batch_payload(
     batch: list[dict[str, Any]],
     branch: str,
     batch_size: int,
-    feature_list_path: str,
-    progress_log_path: str,
-    git_log: str,
-    progress_tail: list[str],
+    lane: str = "coverage",
+    feature_list_path: str = "",
+    progress_log_path: str = "",
+    git_log: str = "",
+    progress_tail: list[str] | None = None,
+    status_snapshot_path: str = "",
+    session_context_path: str = "",
 ) -> dict[str, Any]:
+    lane_norm = normalize_lane(lane)
     return {
-        "schema_version": "flaggems_active_batch_v1",
+        "schema_version": "flaggems_active_batch_v2",
         "generated_at": utc_now_iso(),
         "branch": str(branch),
+        "lane": lane_norm,
         "batch_size": int(batch_size),
-        "selection_policy": ["blocked_ir", "missing_e2e_spec", "backend_missing_ops"],
+        "selection_policy": (
+            ["blocked_ir", "missing_e2e_spec", "backend_missing_ops"]
+            if lane_norm == "coverage"
+            else ["status:blocking", "priority", "dependency"]
+        ),
         "items": list(batch),
         "context": {
             "feature_list_path": str(feature_list_path),
             "progress_log_path": str(progress_log_path),
             "git_log": str(git_log),
-            "progress_tail": list(progress_tail),
+            "progress_tail": list(progress_tail or []),
+            "status_snapshot_path": str(status_snapshot_path),
+            "session_context_path": str(session_context_path),
         },
     }
 
 
-def select_next_batch(*, feature_payload: dict[str, Any], batch_size: int) -> list[dict[str, Any]]:
+def _is_task_pending(f: Mapping[str, Any]) -> bool:
+    if bool(f.get("passes")):
+        return False
+    status = str(f.get("status") or "").strip()
+    return status not in {"dual_pass", "done"}
+
+
+def select_next_batch(*, feature_payload: dict[str, Any], batch_size: int, lane: str = "coverage") -> list[dict[str, Any]]:
     feats = list(feature_payload.get("features") or [])
     n = max(1, int(batch_size))
+    lane_norm = normalize_lane(lane)
 
     def _priority(f: dict[str, Any]) -> tuple[int, str]:
         status = str(f.get("status") or "")
@@ -150,8 +245,26 @@ def select_next_batch(*, feature_payload: dict[str, Any], batch_size: int) -> li
             return (2, name)
         return (3, name)
 
-    pending = [f for f in feats if str(f.get("status")) in {"blocked_ir", "blocked_backend"}]
-    pending.sort(key=_priority)
+    if lane_norm == "coverage":
+        pending = [f for f in feats if str(f.get("track") or "coverage") == "coverage" and _is_task_pending(f)]
+        pending.sort(key=_priority)
+        return pending[:n]
+
+    blocking_rank = {"blocked": 0, "in_progress": 1, "pending": 2}
+
+    def _task_priority(f: dict[str, Any]) -> tuple[int, int, str]:
+        status = str(f.get("status") or "pending")
+        rank = int(blocking_rank.get(status, 3))
+        prio = int(f.get("priority") or 100)
+        name = str(f.get("id") or f.get("semantic_op") or "")
+        return (rank, prio, name)
+
+    pending = [
+        f
+        for f in feats
+        if str(f.get("track") or "coverage") == lane_norm and _is_task_pending(f)
+    ]
+    pending.sort(key=_task_priority)
     return pending[:n]
 
 
@@ -235,3 +348,97 @@ def write_handoff(*, handoff_path: Path, content: str) -> Path:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
     return p
+
+
+def load_progress_tail(*, progress_log_path: Path, lines: int = 5) -> list[dict[str, Any]]:
+    p = Path(progress_log_path)
+    if not p.is_file():
+        return []
+    out: list[dict[str, Any]] = []
+    raw_lines = [ln for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    for line in raw_lines[-max(1, int(lines)) :]:
+        try:
+            val = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(val, dict):
+            out.append(val)
+    return out
+
+
+def build_current_status_payload(
+    *,
+    branch: str,
+    head_commit: str,
+    feature_payload: Mapping[str, Any],
+    latest_run_summary_path: str = "",
+    latest_status_converged_path: str = "",
+    lane_batch_paths: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    summary = dict(feature_payload.get("summary") or {})
+    by_status = dict(summary.get("by_status") or {})
+    semantic_ops = int(summary.get("semantic_ops") or 0)
+    dual_pass = int(by_status.get("dual_pass") or 0)
+    blocked_ir = int(by_status.get("blocked_ir") or 0)
+    blocked_backend = int(by_status.get("blocked_backend") or 0)
+    features = [f for f in list(feature_payload.get("features") or []) if isinstance(f, dict)]
+
+    lanes: dict[str, dict[str, int]] = {}
+    pending_any = False
+    for lane in LANES:
+        rows = [f for f in features if str(f.get("track") or "coverage") == lane]
+        pending = sum(1 for f in rows if _is_task_pending(f))
+        done = sum(1 for f in rows if not _is_task_pending(f))
+        lanes[lane] = {"pending": pending, "done": done, "total": len(rows)}
+        pending_any = pending_any or pending > 0
+
+    mode = "mixed_development" if pending_any else "maintenance"
+    return {
+        "schema_version": "flaggems_current_status_v1",
+        "updated_at": utc_now_iso(),
+        "branch": str(branch),
+        "head_commit": str(head_commit),
+        "mode": mode,
+        "coverage": {
+            "semantic_ops": semantic_ops,
+            "dual_pass": dual_pass,
+            "blocked_ir": blocked_ir,
+            "blocked_backend": blocked_backend,
+        },
+        "latest_artifacts": {
+            "run_summary": str(latest_run_summary_path),
+            "status_converged": str(latest_status_converged_path),
+        },
+        "lanes": {
+            lane: {
+                **metrics,
+                "active_batch_path": str((lane_batch_paths or {}).get(lane, "")),
+            }
+            for lane, metrics in lanes.items()
+        },
+    }
+
+
+def build_session_context_payload(
+    *,
+    git_log_short: str,
+    progress_tail: list[dict[str, Any]],
+    next_focus: str,
+    known_risks: list[str],
+) -> dict[str, Any]:
+    return {
+        "schema_version": "flaggems_session_context_v1",
+        "updated_at": utc_now_iso(),
+        "read_order": [
+            "workflow/flaggems/state/current_status.json",
+            "workflow/flaggems/state/session_context.json",
+            "workflow/flaggems/state/active_batch_coverage.json",
+            "workflow/flaggems/state/active_batch_ir_arch.json",
+            "workflow/flaggems/state/active_batch_backend_compiler.json",
+            "workflow/flaggems/state/handoff.md",
+        ],
+        "git_log_short": str(git_log_short),
+        "progress_tail": list(progress_tail),
+        "next_focus": str(next_focus),
+        "known_risks": list(known_risks),
+    }

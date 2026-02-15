@@ -43,7 +43,8 @@ def _run_ci_gate(tmp_path: Path, *, reason_code: str) -> subprocess.CompletedPro
     active.write_text(
         json.dumps(
             {
-                "schema_version": "flaggems_active_batch_v1",
+                "schema_version": "flaggems_active_batch_v2",
+                "lane": "coverage",
                 "items": [],
             }
         ),

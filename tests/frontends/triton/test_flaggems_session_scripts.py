@@ -14,6 +14,8 @@ def test_plan_next_batch_and_start_session(tmp_path: Path) -> None:
     feature = tmp_path / "feature_list.json"
     progress = tmp_path / "progress.jsonl"
     active = tmp_path / "active_batch.json"
+    current_status = tmp_path / "current_status.json"
+    session_context = tmp_path / "session_context.json"
 
     registry.write_text(
         json.dumps(
@@ -29,18 +31,43 @@ def test_plan_next_batch_and_start_session(tmp_path: Path) -> None:
     feature.write_text(
         json.dumps(
             {
-                "schema_version": "flaggems_feature_list_v1",
+                "schema_version": "flaggems_feature_list_v2",
                 "source_registry_path": str(registry),
-                "summary": {"semantic_ops": 2, "by_status": {"blocked_ir": 1, "dual_pass": 1}, "by_family": {"elementwise_broadcast": 2}},
+                "summary": {
+                    "semantic_ops": 2,
+                    "by_status": {"blocked_ir": 1, "dual_pass": 1},
+                    "by_family": {"elementwise_broadcast": 2},
+                    "tasks_total": 2,
+                    "by_track": {"coverage": 2},
+                },
                 "features": [
-                    {"semantic_op": "a", "status": "blocked_ir", "reason_code": "no_intentir_mapping"},
-                    {"semantic_op": "b", "status": "dual_pass", "reason_code": "ok"},
+                    {"semantic_op": "a", "status": "blocked_ir", "reason_code": "no_intentir_mapping", "track": "coverage", "passes": False},
+                    {"semantic_op": "b", "status": "dual_pass", "reason_code": "ok", "track": "coverage", "passes": True},
                 ],
             }
         ),
         encoding="utf-8",
     )
     progress.write_text("", encoding="utf-8")
+    current_status.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_current_status_v1",
+                "mode": "mixed_development",
+            }
+        ),
+        encoding="utf-8",
+    )
+    session_context.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_session_context_v1",
+                "read_order": ["current_status", "active_batch"],
+                "next_focus": "focus-a",
+            }
+        ),
+        encoding="utf-8",
+    )
 
     p1 = subprocess.run(
         [
@@ -50,8 +77,8 @@ def test_plan_next_batch_and_start_session(tmp_path: Path) -> None:
             str(registry),
             "--feature-list",
             str(feature),
-            "--progress-log",
-            str(progress),
+            "--lane",
+            "coverage",
             "--active-batch",
             str(active),
             "--batch-size",
@@ -70,8 +97,14 @@ def test_plan_next_batch_and_start_session(tmp_path: Path) -> None:
         [
             sys.executable,
             "scripts/flaggems/start_session.py",
+            "--lane",
+            "coverage",
             "--active-batch",
             str(active),
+            "--current-status",
+            str(current_status),
+            "--session-context",
+            str(session_context),
             "--print-json",
         ],
         cwd=str(ROOT),
@@ -100,24 +133,41 @@ def test_end_session_requires_run_and_status_artifacts(tmp_path: Path) -> None:
 
 def test_start_session_allows_empty_batch_when_opted_out(tmp_path: Path) -> None:
     active = tmp_path / "active_batch.json"
+    current_status = tmp_path / "current_status.json"
+    session_context = tmp_path / "session_context.json"
     active.write_text(
         json.dumps(
             {
-                "schema_version": "flaggems_active_batch_v1",
+                "schema_version": "flaggems_active_batch_v2",
                 "generated_at": "2026-02-15T00:00:00+00:00",
                 "branch": "flaggems",
+                "lane": "coverage",
                 "batch_size": 10,
                 "items": [],
             }
         ),
         encoding="utf-8",
     )
+    current_status.write_text(
+        json.dumps({"schema_version": "flaggems_current_status_v1", "mode": "maintenance"}),
+        encoding="utf-8",
+    )
+    session_context.write_text(
+        json.dumps({"schema_version": "flaggems_session_context_v1", "read_order": [], "next_focus": ""}),
+        encoding="utf-8",
+    )
     p = subprocess.run(
         [
             sys.executable,
             "scripts/flaggems/start_session.py",
+            "--lane",
+            "coverage",
             "--active-batch",
             str(active),
+            "--current-status",
+            str(current_status),
+            "--session-context",
+            str(session_context),
             "--no-require-non-empty",
             "--print-json",
         ],

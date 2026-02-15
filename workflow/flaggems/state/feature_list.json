@@ -1,6 +1,6 @@
 {
-  "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-15T09:41:39+00:00",
+  "schema_version": "flaggems_feature_list_v2",
+  "generated_at": "2026-02-15T13:02:49+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
@@ -15,6 +15,12 @@
       "matmul_linear": 8,
       "conv_pool_interp": 9,
       "attention_sequence": 5
+    },
+    "tasks_total": 201,
+    "by_track": {
+      "coverage": 196,
+      "ir_arch": 2,
+      "backend_compiler": 3
     }
   },
   "features": [
@@ -29,7 +35,20 @@
       "e2e_spec": "abs2d",
       "intent_ops": [
         "abs"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::acos",
@@ -42,7 +61,20 @@
       "e2e_spec": "acos2d",
       "intent_ops": [
         "acos"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::add",
@@ -55,7 +87,20 @@
       "e2e_spec": "add2d",
       "intent_ops": [
         "add"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::addcdiv",
@@ -71,7 +116,20 @@
         "mul",
         "div",
         "add"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::addcmul",
@@ -87,7 +145,20 @@
         "mul",
         "mul",
         "add"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::addmv",
@@ -101,7 +172,20 @@
       "intent_ops": [
         "matmul",
         "add"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::addr",
@@ -119,7 +203,20 @@
         "const",
         "mul",
         "add"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::angle",
@@ -132,7 +229,20 @@
       "e2e_spec": "angle2d",
       "intent_ops": [
         "angle"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::arange",
@@ -145,7 +255,20 @@
       "e2e_spec": "arange1d",
       "intent_ops": [
         "iota"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::atan",
@@ -158,7 +281,20 @@
       "e2e_spec": "atan2d",
       "intent_ops": [
         "atan"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::bitwise_and_scalar",
@@ -171,7 +307,20 @@
       "e2e_spec": "bitwise_and2d",
       "intent_ops": [
         "bitwise_and"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::bitwise_and_scalar_tensor",
@@ -184,7 +333,20 @@
       "e2e_spec": "bitwise_and2d",
       "intent_ops": [
         "bitwise_and"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::bitwise_and_tensor",
@@ -197,7 +359,20 @@
       "e2e_spec": "bitwise_and2d",
       "intent_ops": [
         "bitwise_and"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::bitwise_left_shift",
@@ -210,7 +385,20 @@
       "e2e_spec": "bitwise_left_shift2d",
       "intent_ops": [
         "bitwise_left_shift"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::bitwise_not",
@@ -223,7 +411,20 @@
       "e2e_spec": "bitwise_not2d",
       "intent_ops": [
         "bitwise_not"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::bitwise_or_scalar",
@@ -236,7 +437,20 @@
       "e2e_spec": "bitwise_or2d",
       "intent_ops": [
         "bitwise_or"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::bitwise_or_scalar_tensor",
@@ -249,7 +463,20 @@
       "e2e_spec": "bitwise_or2d",
       "intent_ops": [
         "bitwise_or"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::bitwise_or_tensor",
@@ -262,7 +489,20 @@
       "e2e_spec": "bitwise_or2d",
       "intent_ops": [
         "bitwise_or"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::bitwise_right_shift",
@@ -275,7 +515,20 @@
       "e2e_spec": "bitwise_right_shift2d",
       "intent_ops": [
         "bitwise_right_shift"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::cat",
@@ -288,7 +541,20 @@
       "e2e_spec": "cat2d",
       "intent_ops": [
         "concat"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::ceil",
@@ -304,7 +570,20 @@
         "mul",
         "floor",
         "mul"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::celu",
@@ -322,7 +601,20 @@
         "const",
         "sub",
         "where"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::clamp",
@@ -336,7 +628,20 @@
       "intent_ops": [
         "max",
         "min"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::clamp_min",
@@ -349,7 +654,20 @@
       "e2e_spec": "maximum2d",
       "intent_ops": [
         "max"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::clamp_tensor",
@@ -363,7 +681,20 @@
       "intent_ops": [
         "max",
         "min"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::constant_pad_nd",
@@ -376,7 +707,20 @@
       "e2e_spec": "constant_pad_nd2d",
       "intent_ops": [
         "pad"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::contiguous",
@@ -389,7 +733,20 @@
       "e2e_spec": "identity2d",
       "intent_ops": [
         "identity"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::copy",
@@ -402,7 +759,20 @@
       "e2e_spec": "identity2d",
       "intent_ops": [
         "identity"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::cos",
@@ -415,7 +785,20 @@
       "e2e_spec": "cos2d",
       "intent_ops": [
         "cos"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::diag",
@@ -428,7 +811,20 @@
       "e2e_spec": "diag2d",
       "intent_ops": [
         "diag"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::diag_embed",
@@ -441,7 +837,20 @@
       "e2e_spec": "diag_embed2d",
       "intent_ops": [
         "diag_embed"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::div_mode",
@@ -454,7 +863,20 @@
       "e2e_spec": "div2d",
       "intent_ops": [
         "div"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::elu",
@@ -472,7 +894,20 @@
         "const",
         "sub",
         "where"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::eq",
@@ -486,7 +921,20 @@
       "intent_ops": [
         "ne",
         "not"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::eq_scalar",
@@ -500,7 +948,20 @@
       "intent_ops": [
         "ne",
         "not"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::equal",
@@ -514,7 +975,20 @@
       "intent_ops": [
         "ne",
         "not"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::erf",
@@ -527,7 +1001,20 @@
       "e2e_spec": "erf2d",
       "intent_ops": [
         "erf"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::exp",
@@ -540,7 +1027,20 @@
       "e2e_spec": "exp2d",
       "intent_ops": [
         "exp"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::exp2",
@@ -555,7 +1055,20 @@
         "const",
         "mul",
         "exp"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::eye",
@@ -572,7 +1085,20 @@
         "ne",
         "not",
         "cast"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::eye_m",
@@ -589,7 +1115,20 @@
         "ne",
         "not",
         "cast"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::fill_scalar",
@@ -603,7 +1142,20 @@
       "intent_ops": [
         "const",
         "broadcast_in_dim"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::fill_tensor",
@@ -617,7 +1169,20 @@
       "intent_ops": [
         "const",
         "broadcast_in_dim"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::floor_divide",
@@ -630,7 +1195,20 @@
       "e2e_spec": "div2d",
       "intent_ops": [
         "div"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::full",
@@ -644,7 +1222,20 @@
       "intent_ops": [
         "const",
         "broadcast_in_dim"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::full_like",
@@ -658,7 +1249,20 @@
       "intent_ops": [
         "const",
         "broadcast_in_dim"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::ge",
@@ -671,7 +1275,20 @@
       "e2e_spec": "ge2d",
       "intent_ops": [
         "ge"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::ge_scalar",
@@ -684,7 +1301,20 @@
       "e2e_spec": "ge2d",
       "intent_ops": [
         "ge"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::glu",
@@ -697,7 +1327,20 @@
       "e2e_spec": "glu2d",
       "intent_ops": [
         "glu"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::gt",
@@ -710,7 +1353,20 @@
       "e2e_spec": "gt2d",
       "intent_ops": [
         "gt"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::gt_scalar",
@@ -723,7 +1379,20 @@
       "e2e_spec": "gt2d",
       "intent_ops": [
         "gt"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::hstack",
@@ -736,7 +1405,20 @@
       "e2e_spec": "hstack2d",
       "intent_ops": [
         "concat"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::isclose",
@@ -754,7 +1436,20 @@
         "mul",
         "add",
         "le"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::isfinite",
@@ -769,7 +1464,20 @@
         "abs",
         "const",
         "le"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::isin",
@@ -786,7 +1494,20 @@
         "ne",
         "not",
         "reduce_any"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::isinf",
@@ -801,7 +1522,20 @@
         "abs",
         "const",
         "gt"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::isnan",
@@ -814,7 +1548,20 @@
       "e2e_spec": "isnan2d",
       "intent_ops": [
         "ne"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::kron",
@@ -827,7 +1574,20 @@
       "e2e_spec": "kron2d",
       "intent_ops": [
         "kron"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::le",
@@ -840,7 +1600,20 @@
       "e2e_spec": "le2d",
       "intent_ops": [
         "le"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::le_scalar",
@@ -853,7 +1626,20 @@
       "e2e_spec": "le2d",
       "intent_ops": [
         "le"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::lerp_scalar",
@@ -868,7 +1654,20 @@
         "sub",
         "mul",
         "add"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::lerp_tensor",
@@ -883,7 +1682,20 @@
         "sub",
         "mul",
         "add"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::linspace",
@@ -901,7 +1713,20 @@
         "div",
         "mul",
         "add"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::log",
@@ -914,7 +1739,20 @@
       "e2e_spec": "log2d",
       "intent_ops": [
         "log"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::logical_and",
@@ -927,7 +1765,20 @@
       "e2e_spec": "logical_and2d",
       "intent_ops": [
         "and"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::logical_not",
@@ -940,7 +1791,20 @@
       "e2e_spec": "logical_not2d",
       "intent_ops": [
         "not"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::logical_or",
@@ -953,7 +1817,20 @@
       "e2e_spec": "logical_or2d",
       "intent_ops": [
         "or"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::logical_xor",
@@ -969,7 +1846,20 @@
         "and",
         "not",
         "and"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::logspace",
@@ -989,7 +1879,20 @@
         "add",
         "mul",
         "exp"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::lt",
@@ -1002,7 +1905,20 @@
       "e2e_spec": "lt2d",
       "intent_ops": [
         "lt"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::lt_scalar",
@@ -1015,7 +1931,20 @@
       "e2e_spec": "lt2d",
       "intent_ops": [
         "lt"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::masked_fill",
@@ -1028,7 +1957,20 @@
       "e2e_spec": "masked_fill2d",
       "intent_ops": [
         "where"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::max",
@@ -1041,7 +1983,20 @@
       "e2e_spec": "row_max",
       "intent_ops": [
         "reduce_max"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::max_dim",
@@ -1054,7 +2009,20 @@
       "e2e_spec": "row_max",
       "intent_ops": [
         "reduce_max"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::maximum",
@@ -1067,7 +2035,20 @@
       "e2e_spec": "maximum2d",
       "intent_ops": [
         "max"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::min",
@@ -1080,7 +2061,20 @@
       "e2e_spec": "min2d",
       "intent_ops": [
         "reduce_min"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::min_dim",
@@ -1093,7 +2087,20 @@
       "e2e_spec": "min_dim2d",
       "intent_ops": [
         "reduce_min"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::minimum",
@@ -1106,7 +2113,20 @@
       "e2e_spec": "minimum2d",
       "intent_ops": [
         "min"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::mse_loss",
@@ -1119,7 +2139,20 @@
       "e2e_spec": "mse_loss2d",
       "intent_ops": [
         "mse_loss"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::mul",
@@ -1132,7 +2165,20 @@
       "e2e_spec": "mul2d",
       "intent_ops": [
         "mul"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::mv",
@@ -1145,7 +2191,20 @@
       "e2e_spec": "mv2d",
       "intent_ops": [
         "matmul"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::nan_to_num",
@@ -1158,7 +2217,20 @@
       "e2e_spec": "nan_to_num2d",
       "intent_ops": [
         "nan_to_num"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::ne",
@@ -1171,7 +2243,20 @@
       "e2e_spec": "ne2d",
       "intent_ops": [
         "ne"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::ne_scalar",
@@ -1184,7 +2269,20 @@
       "e2e_spec": "ne2d",
       "intent_ops": [
         "ne"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::neg",
@@ -1198,7 +2296,20 @@
       "intent_ops": [
         "const",
         "mul"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::nll_loss2d_forward",
@@ -1211,7 +2322,20 @@
       "e2e_spec": "nll_loss2d_forward",
       "intent_ops": [
         "nll_loss2d_forward"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::nll_loss_forward",
@@ -1224,7 +2348,20 @@
       "e2e_spec": "nll_loss_forward",
       "intent_ops": [
         "nll_loss_forward"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::nonzero",
@@ -1237,7 +2374,20 @@
       "e2e_spec": "nonzero2d",
       "intent_ops": [
         "nonzero"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::one_hot",
@@ -1254,7 +2404,20 @@
         "ne",
         "not",
         "cast"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::ones",
@@ -1268,7 +2431,20 @@
       "intent_ops": [
         "const",
         "broadcast_in_dim"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::ones_like",
@@ -1282,7 +2458,20 @@
       "intent_ops": [
         "const",
         "broadcast_in_dim"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::pad",
@@ -1295,7 +2484,20 @@
       "e2e_spec": "pad2d",
       "intent_ops": [
         "pad"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::per_token_group_quant_fp8",
@@ -1308,7 +2510,20 @@
       "e2e_spec": "per_token_group_quant_fp8_2d",
       "intent_ops": [
         "per_token_group_quant_fp8"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::polar",
@@ -1321,7 +2536,20 @@
       "e2e_spec": "polar2d",
       "intent_ops": [
         "polar"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::pow_scalar",
@@ -1334,7 +2562,20 @@
       "e2e_spec": "pow_scalar2d",
       "intent_ops": [
         "pow"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::pow_tensor_scalar",
@@ -1347,7 +2588,20 @@
       "e2e_spec": "pow_tensor_scalar2d",
       "intent_ops": [
         "pow"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::pow_tensor_tensor",
@@ -1360,7 +2614,20 @@
       "e2e_spec": "pow_tensor_tensor2d",
       "intent_ops": [
         "pow"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::quantile",
@@ -1373,7 +2640,20 @@
       "e2e_spec": "quantile2d",
       "intent_ops": [
         "quantile"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::reciprocal",
@@ -1387,7 +2667,20 @@
       "intent_ops": [
         "const",
         "div"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::remainder",
@@ -1400,7 +2693,20 @@
       "e2e_spec": "remainder2d",
       "intent_ops": [
         "remainder"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::repeat",
@@ -1413,7 +2719,20 @@
       "e2e_spec": "repeat2d",
       "intent_ops": [
         "repeat"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::repeat_interleave_self_int",
@@ -1426,7 +2745,20 @@
       "e2e_spec": "repeat_interleave_self_int1d",
       "intent_ops": [
         "repeat_interleave"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::repeat_interleave_self_tensor",
@@ -1439,7 +2771,20 @@
       "e2e_spec": "repeat_interleave_self_tensor1d",
       "intent_ops": [
         "repeat_interleave"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::repeat_interleave_tensor",
@@ -1452,7 +2797,20 @@
       "e2e_spec": "repeat_interleave_tensor1d",
       "intent_ops": [
         "repeat_interleave"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::resolve_conj",
@@ -1465,7 +2823,20 @@
       "e2e_spec": "identity2d",
       "intent_ops": [
         "identity"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::resolve_neg",
@@ -1478,7 +2849,20 @@
       "e2e_spec": "identity2d",
       "intent_ops": [
         "identity"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::rsqrt",
@@ -1491,7 +2875,20 @@
       "e2e_spec": "rsqrt2d",
       "intent_ops": [
         "rsqrt"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::sin",
@@ -1504,7 +2901,20 @@
       "e2e_spec": "sin2d",
       "intent_ops": [
         "sin"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::sort",
@@ -1517,7 +2927,20 @@
       "e2e_spec": "sort2d",
       "intent_ops": [
         "sort"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::sort_stable",
@@ -1530,7 +2953,20 @@
       "e2e_spec": "sort_stable2d",
       "intent_ops": [
         "sort"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::sqrt",
@@ -1544,7 +2980,20 @@
       "intent_ops": [
         "rsqrt",
         "mul"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::stack",
@@ -1557,7 +3006,20 @@
       "e2e_spec": "stack2d",
       "intent_ops": [
         "stack"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::sub",
@@ -1570,7 +3032,20 @@
       "e2e_spec": "sub2d",
       "intent_ops": [
         "sub"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::tan",
@@ -1583,7 +3058,20 @@
       "e2e_spec": "tan2d",
       "intent_ops": [
         "tan"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::threshold",
@@ -1598,7 +3086,20 @@
         "const",
         "gt",
         "where"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::tile",
@@ -1611,7 +3112,20 @@
       "e2e_spec": "tile2d",
       "intent_ops": [
         "tile"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::to_copy",
@@ -1624,7 +3138,20 @@
       "e2e_spec": "cast2d",
       "intent_ops": [
         "cast"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::topk",
@@ -1637,7 +3164,20 @@
       "e2e_spec": "topk2d",
       "intent_ops": [
         "topk"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::trace",
@@ -1650,7 +3190,20 @@
       "e2e_spec": "trace2d",
       "intent_ops": [
         "trace"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::triu",
@@ -1663,7 +3216,20 @@
       "e2e_spec": "triu2d",
       "intent_ops": [
         "triu"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::true_divide",
@@ -1676,7 +3242,20 @@
       "e2e_spec": "div2d",
       "intent_ops": [
         "div"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::unique2",
@@ -1689,7 +3268,20 @@
       "e2e_spec": "unique2d",
       "intent_ops": [
         "unique"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::vstack",
@@ -1702,7 +3294,20 @@
       "e2e_spec": "vstack2d",
       "intent_ops": [
         "concat"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::zeros",
@@ -1716,7 +3321,20 @@
       "intent_ops": [
         "const",
         "broadcast_in_dim"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::zeros_like",
@@ -1730,7 +3348,20 @@
       "intent_ops": [
         "const",
         "broadcast_in_dim"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::all",
@@ -1745,7 +3376,20 @@
         "not",
         "reduce_any",
         "not"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::allclose",
@@ -1766,7 +3410,20 @@
         "not",
         "reduce_any",
         "not"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::amax",
@@ -1779,7 +3436,20 @@
       "e2e_spec": "row_max",
       "intent_ops": [
         "reduce_max"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::any",
@@ -1792,7 +3462,20 @@
       "e2e_spec": "any_kernel_dim",
       "intent_ops": [
         "reduce_any"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::argmax",
@@ -1805,7 +3488,20 @@
       "e2e_spec": "argmax2d",
       "intent_ops": [
         "argmax"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::argmin",
@@ -1818,7 +3514,20 @@
       "e2e_spec": "argmin2d",
       "intent_ops": [
         "argmin"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::count_nonzero",
@@ -1831,7 +3540,20 @@
       "e2e_spec": "count_nonzero2d",
       "intent_ops": [
         "count_nonzero"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::cumsum",
@@ -1844,7 +3566,20 @@
       "e2e_spec": "cumsum2d",
       "intent_ops": [
         "cumsum"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::flash_attn_varlen_func",
@@ -1859,7 +3594,20 @@
         "matmul",
         "softmax",
         "matmul"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::log_softmax",
@@ -1873,7 +3621,20 @@
       "intent_ops": [
         "softmax",
         "log"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::mean",
@@ -1887,7 +3648,20 @@
       "intent_ops": [
         "reduce_sum",
         "div"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::mean_dim",
@@ -1901,7 +3675,20 @@
       "intent_ops": [
         "reduce_sum",
         "div"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::prod",
@@ -1914,7 +3701,20 @@
       "e2e_spec": "prod2d",
       "intent_ops": [
         "reduce_prod"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::prod_dim",
@@ -1927,7 +3727,20 @@
       "e2e_spec": "prod_dim2d",
       "intent_ops": [
         "reduce_prod"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::scaled_softmax_forward",
@@ -1940,7 +3753,20 @@
       "e2e_spec": "softmax_inner",
       "intent_ops": [
         "softmax"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::softmax",
@@ -1953,7 +3779,20 @@
       "e2e_spec": "softmax_inner",
       "intent_ops": [
         "softmax"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::std",
@@ -1966,7 +3805,20 @@
       "e2e_spec": "std2d",
       "intent_ops": [
         "std"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::sum",
@@ -1979,7 +3831,20 @@
       "e2e_spec": "row_sum",
       "intent_ops": [
         "reduce_sum"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::sum_dim",
@@ -1992,7 +3857,20 @@
       "e2e_spec": "row_sum",
       "intent_ops": [
         "reduce_sum"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::var_mean",
@@ -2006,7 +3884,20 @@
       "intent_ops": [
         "var",
         "mean"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::batch_norm",
@@ -2025,7 +3916,20 @@
         "rsqrt",
         "broadcast_in_dim",
         "div"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::gelu",
@@ -2043,7 +3947,20 @@
         "add",
         "mul",
         "mul"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::group_norm",
@@ -2062,7 +3979,20 @@
         "rsqrt",
         "broadcast_in_dim",
         "div"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::layer_norm",
@@ -2081,7 +4011,20 @@
         "rsqrt",
         "broadcast_in_dim",
         "div"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::log_sigmoid",
@@ -2095,7 +4038,20 @@
       "intent_ops": [
         "sigmoid",
         "log"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::normed_cumsum",
@@ -2109,7 +4065,20 @@
       "intent_ops": [
         "cumsum",
         "div"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::relu",
@@ -2122,7 +4091,20 @@
       "e2e_spec": "relu2d",
       "intent_ops": [
         "relu"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::rms_norm",
@@ -2139,7 +4121,20 @@
         "add",
         "rsqrt",
         "mul"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::rms_norm_forward",
@@ -2156,7 +4151,20 @@
         "add",
         "rsqrt",
         "mul"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::sigmoid",
@@ -2173,7 +4181,20 @@
         "exp",
         "add",
         "div"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::silu",
@@ -2191,7 +4212,20 @@
         "add",
         "div",
         "mul"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::softplus",
@@ -2206,7 +4240,20 @@
         "exp",
         "add",
         "log"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::tanh",
@@ -2224,7 +4271,20 @@
         "sub",
         "add",
         "div"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::vector_norm",
@@ -2239,7 +4299,20 @@
         "mul",
         "reduce_sum",
         "sqrt"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::weight_norm_interface",
@@ -2252,7 +4325,20 @@
       "e2e_spec": "weight_norm2d",
       "intent_ops": [
         "weight_norm_interface"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::flip",
@@ -2265,7 +4351,20 @@
       "e2e_spec": "flip2d",
       "intent_ops": [
         "gather"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::gather",
@@ -2278,7 +4377,20 @@
       "e2e_spec": "gather2d",
       "intent_ops": [
         "gather"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::index",
@@ -2291,7 +4403,20 @@
       "e2e_spec": "index_select2d",
       "intent_ops": [
         "gather"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::index_add",
@@ -2304,7 +4429,20 @@
       "e2e_spec": "index_add2d",
       "intent_ops": [
         "index_add"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::index_put",
@@ -2317,7 +4455,20 @@
       "e2e_spec": "index_put2d",
       "intent_ops": [
         "index_put"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::index_select",
@@ -2330,7 +4481,20 @@
       "e2e_spec": "index_select2d",
       "intent_ops": [
         "gather"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::masked_scatter",
@@ -2343,7 +4507,20 @@
       "e2e_spec": "masked_scatter2d",
       "intent_ops": [
         "masked_scatter"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::masked_select",
@@ -2356,7 +4533,20 @@
       "e2e_spec": "masked_select2d",
       "intent_ops": [
         "masked_select"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::scatter",
@@ -2369,7 +4559,20 @@
       "e2e_spec": "scatter2d",
       "intent_ops": [
         "scatter"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::select_scatter",
@@ -2382,7 +4585,20 @@
       "e2e_spec": "select_scatter2d",
       "intent_ops": [
         "select_scatter"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::slice_scatter",
@@ -2395,7 +4611,20 @@
       "e2e_spec": "slice_scatter2d",
       "intent_ops": [
         "slice_scatter"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::where_scalar_other",
@@ -2408,7 +4637,20 @@
       "e2e_spec": "where2d",
       "intent_ops": [
         "where"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::where_scalar_self",
@@ -2421,7 +4663,20 @@
       "e2e_spec": "where2d",
       "intent_ops": [
         "where"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::where_self",
@@ -2435,7 +4690,20 @@
       "intent_ops": [
         "gt",
         "where"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::addmm",
@@ -2449,7 +4717,20 @@
       "intent_ops": [
         "matmul",
         "add"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::baddbmm",
@@ -2463,7 +4744,20 @@
       "intent_ops": [
         "matmul",
         "add"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::bmm",
@@ -2476,7 +4770,20 @@
       "e2e_spec": "bmm3d",
       "intent_ops": [
         "matmul"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::cummax",
@@ -2489,7 +4796,20 @@
       "e2e_spec": "cummax1d",
       "intent_ops": [
         "cummax"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::cummin",
@@ -2502,7 +4822,20 @@
       "e2e_spec": "cummin1d",
       "intent_ops": [
         "cummin"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::dot",
@@ -2515,7 +4848,20 @@
       "e2e_spec": "dot1d",
       "intent_ops": [
         "matmul"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::mm",
@@ -2528,7 +4874,20 @@
       "e2e_spec": "mm2d",
       "intent_ops": [
         "matmul"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::vdot",
@@ -2541,7 +4900,20 @@
       "e2e_spec": "vdot1d",
       "intent_ops": [
         "matmul"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::avg_pool2d",
@@ -2554,7 +4926,20 @@
       "e2e_spec": "avg_pool2d_nchw",
       "intent_ops": [
         "avg_pool2d"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::conv1d",
@@ -2567,7 +4952,20 @@
       "e2e_spec": "conv1d_ncl",
       "intent_ops": [
         "conv1d"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::conv2d",
@@ -2580,7 +4978,20 @@
       "e2e_spec": "conv2d_nchw",
       "intent_ops": [
         "conv2d"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::conv3d",
@@ -2593,7 +5004,20 @@
       "e2e_spec": "conv3d_ncdhw",
       "intent_ops": [
         "conv3d"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::conv_depthwise2d",
@@ -2606,7 +5030,20 @@
       "e2e_spec": "conv_depthwise2d_nchw",
       "intent_ops": [
         "conv_depthwise2d"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::max_pool2d_with_indices",
@@ -2620,7 +5057,20 @@
       "intent_ops": [
         "max_pool2d_with_indices",
         "max_pool2d_with_indices"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::upsample_bicubic2d_aa",
@@ -2633,7 +5083,20 @@
       "e2e_spec": "upsample_bicubic2d_aa",
       "intent_ops": [
         "upsample_bicubic2d_aa"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::upsample_nearest1d",
@@ -2646,7 +5109,20 @@
       "e2e_spec": "upsample_nearest1d_ncl",
       "intent_ops": [
         "upsample_nearest1d"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::upsample_nearest2d",
@@ -2659,7 +5135,20 @@
       "e2e_spec": "upsample_nearest2d_nchw",
       "intent_ops": [
         "upsample_nearest2d"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::ScaleDotProductAttention",
@@ -2672,7 +5161,20 @@
       "e2e_spec": "scaled_dot_product_attention_bhsd",
       "intent_ops": [
         "scaled_dot_product_attention"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::embedding",
@@ -2685,7 +5187,20 @@
       "e2e_spec": "embedding2d",
       "intent_ops": [
         "gather"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::flash_attention_forward",
@@ -2698,7 +5213,20 @@
       "e2e_spec": "scaled_dot_product_attention_bhsd",
       "intent_ops": [
         "scaled_dot_product_attention"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::scaled_dot_product_attention",
@@ -2711,7 +5239,20 @@
       "e2e_spec": "scaled_dot_product_attention_bhsd",
       "intent_ops": [
         "scaled_dot_product_attention"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
     },
     {
       "id": "flaggems::scaled_dot_product_attention_forward",
@@ -2724,7 +5265,136 @@
       "e2e_spec": "scaled_dot_product_attention_bhsd",
       "intent_ops": [
         "scaled_dot_product_attention"
-      ]
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
+    },
+    {
+      "id": "ir_arch::primitive_catalog_guard",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending",
+      "next_action": "primitive_reuse_guard",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "ir_arch",
+      "task_type": "quality_guard",
+      "priority": 10,
+      "acceptance": [
+        "check_primitive_reuse_passes",
+        "no_provider_specific_primitive_leak"
+      ],
+      "gate_profile": "ir_arch",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": "Enforce primitive catalog reuse and prevent semantic-to-primitive regressions."
+    },
+    {
+      "id": "ir_arch::semantic_rule_consistency",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending",
+      "next_action": "mapping_consistency",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "ir_arch",
+      "task_type": "semantic_mapping",
+      "priority": 20,
+      "acceptance": [
+        "semantic_rules_tests_pass",
+        "intentir_interpreter_consistency_pass"
+      ],
+      "gate_profile": "ir_arch",
+      "depends_on": [
+        "ir_arch::primitive_catalog_guard"
+      ],
+      "evidence_paths": [],
+      "description": "Keep semantic rules canonical and mapped to shared IntentIR primitives."
+    },
+    {
+      "id": "backend_compiler::cuda_pipeline_modularization",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending",
+      "next_action": "cuda_pipeline_split",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "backend_compiler",
+      "task_type": "compilerization",
+      "priority": 10,
+      "acceptance": [
+        "cuda_stage_pipeline_exists",
+        "legacy_codegen_entry_acts_as_shim"
+      ],
+      "gate_profile": "backend_compiler",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": "Split CUDA lowering/codegen into compiler-style stage modules."
+    },
+    {
+      "id": "backend_compiler::rvv_pipeline_modularization",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending",
+      "next_action": "rvv_pipeline_split",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "backend_compiler",
+      "task_type": "compilerization",
+      "priority": 20,
+      "acceptance": [
+        "rvv_stage_pipeline_exists",
+        "legacy_codegen_entry_acts_as_shim"
+      ],
+      "gate_profile": "backend_compiler",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": "Split RVV codegen path into compiler-style stage modules."
+    },
+    {
+      "id": "backend_compiler::stage_timing_unification",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending",
+      "next_action": "timing_unification",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "backend_compiler",
+      "task_type": "observability",
+      "priority": 30,
+      "acceptance": [
+        "cuda_smoke_emits_stage_timing",
+        "rvv_smoke_emits_stage_timing",
+        "reason_code_non_empty"
+      ],
+      "gate_profile": "backend_compiler",
+      "depends_on": [
+        "backend_compiler::cuda_pipeline_modularization",
+        "backend_compiler::rvv_pipeline_modularization"
+      ],
+      "evidence_paths": [],
+      "description": "Unify stage timing and failure reason reporting across RVV/CUDA backends."
     }
   ]
 }

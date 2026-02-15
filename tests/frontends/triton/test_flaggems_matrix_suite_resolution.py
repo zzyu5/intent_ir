@@ -62,7 +62,8 @@ def test_load_active_semantic_ops_reads_items(tmp_path: Path) -> None:
     active.write_text(
         json.dumps(
             {
-                "schema_version": "flaggems_active_batch_v1",
+                "schema_version": "flaggems_active_batch_v2",
+                "lane": "coverage",
                 "items": [
                     {"semantic_op": "diag"},
                     {"semantic_op": "angle"},

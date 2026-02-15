@@ -26,7 +26,8 @@ def _run_gate(
     active.write_text(
         json.dumps(
             {
-                "schema_version": "flaggems_active_batch_v1",
+                "schema_version": "flaggems_active_batch_v2",
+                "lane": "coverage",
                 "items": [{"semantic_op": "angle"}],
             }
         ),
@@ -114,7 +115,8 @@ def test_check_batch_gate_uses_scoped_entries_when_scope_enabled(tmp_path: Path)
     active.write_text(
         json.dumps(
             {
-                "schema_version": "flaggems_active_batch_v1",
+                "schema_version": "flaggems_active_batch_v2",
+                "lane": "coverage",
                 "items": [{"semantic_op": "angle"}],
             }
         ),
@@ -183,7 +185,8 @@ def test_check_batch_gate_fails_when_active_op_missing_in_scope(tmp_path: Path) 
     active.write_text(
         json.dumps(
             {
-                "schema_version": "flaggems_active_batch_v1",
+                "schema_version": "flaggems_active_batch_v2",
+                "lane": "coverage",
                 "items": [{"semantic_op": "angle"}],
             }
         ),

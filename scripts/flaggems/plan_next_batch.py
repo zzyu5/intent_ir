@@ -15,9 +15,9 @@ if str(ROOT) not in sys.path:
 
 from pipeline.triton.providers.flaggems.workflow import (  # noqa: E402
     build_active_batch_payload,
+    normalize_lane,
     dump_json,
     load_json,
-    read_git_log,
     select_next_batch,
     validate_feature_list_sync,
 )
@@ -37,23 +37,41 @@ def _git_branch(cwd: Path) -> str:
     return str(p.stdout or "").strip() or "unknown"
 
 
-def _tail_progress(progress_log: Path, lines: int = 5) -> list[str]:
-    if not progress_log.is_file():
-        return []
-    raw = progress_log.read_text(encoding="utf-8").strip().splitlines()
-    return raw[-max(1, int(lines)) :]
-
-
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--registry", type=Path, default=(ROOT / "pipeline" / "triton" / "flaggems_registry.json"))
     ap.add_argument("--feature-list", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "feature_list.json"))
-    ap.add_argument("--progress-log", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "progress_log.jsonl"))
-    ap.add_argument("--active-batch", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch.json"))
+    ap.add_argument(
+        "--lane",
+        choices=["coverage", "ir_arch", "backend_compiler"],
+        default="coverage",
+        help="Batch lane selector (default: coverage).",
+    )
+    ap.add_argument("--active-batch", type=Path, default=None, help="Optional explicit active batch output path.")
+    ap.add_argument(
+        "--status-snapshot",
+        type=Path,
+        default=(ROOT / "workflow" / "flaggems" / "state" / "current_status.json"),
+        help="Current status snapshot path recorded into active batch context.",
+    )
+    ap.add_argument(
+        "--session-context",
+        type=Path,
+        default=(ROOT / "workflow" / "flaggems" / "state" / "session_context.json"),
+        help="Session context path recorded into active batch context.",
+    )
     ap.add_argument("--batch-size", type=int, default=10)
-    ap.add_argument("--git-log-lines", type=int, default=20)
+    ap.add_argument(
+        "--progress-log",
+        type=Path,
+        default=(ROOT / "workflow" / "flaggems" / "state" / "progress_log.jsonl"),
+        help="Compatibility arg retained; progress history now lives in progress_log.jsonl only.",
+    )
     ap.add_argument("--strict-sync", action=argparse.BooleanOptionalAction, default=True)
     args = ap.parse_args()
+    lane = normalize_lane(str(args.lane))
+    default_active = ROOT / "workflow" / "flaggems" / "state" / f"active_batch_{lane}.json"
+    active_batch_path = Path(args.active_batch) if args.active_batch is not None else default_active
 
     registry_payload = load_json(args.registry)
     feature_payload = load_json(args.feature_list)
@@ -66,25 +84,27 @@ def main() -> None:
     if not sync_ok and bool(args.strict_sync):
         raise SystemExit("feature_list is out-of-sync with registry: " + "; ".join(sync_errors))
 
-    batch = select_next_batch(feature_payload=feature_payload, batch_size=int(args.batch_size))
+    batch = select_next_batch(feature_payload=feature_payload, batch_size=int(args.batch_size), lane=lane)
     branch = _git_branch(ROOT)
-    git_log = read_git_log(cwd=ROOT, lines=int(args.git_log_lines))
-    progress_tail = _tail_progress(args.progress_log, lines=5)
-
     active = build_active_batch_payload(
         batch=batch,
         branch=branch,
         batch_size=int(args.batch_size),
+        lane=lane,
         feature_list_path=_to_repo_rel(args.feature_list),
-        progress_log_path=_to_repo_rel(args.progress_log),
-        git_log=git_log,
-        progress_tail=progress_tail,
+        status_snapshot_path=_to_repo_rel(args.status_snapshot),
+        session_context_path=_to_repo_rel(args.session_context),
     )
-    out = dump_json(args.active_batch, active)
+    out = dump_json(active_batch_path, active)
+    if lane == "coverage" and active_batch_path.resolve() == default_active.resolve():
+        # Backward-compat alias used by existing tooling.
+        legacy = ROOT / "workflow" / "flaggems" / "state" / "active_batch.json"
+        dump_json(legacy, active)
     print(f"Active batch planned: {out}")
-    print(f"Selected {len(batch)} ops on branch {branch}")
+    print(f"Selected {len(batch)} items on branch {branch} for lane={lane}")
     if batch:
-        print("Ops:", ", ".join(str(x.get("semantic_op")) for x in batch))
+        names = [str(x.get("semantic_op") or x.get("id") or "") for x in batch]
+        print("Items:", ", ".join(n for n in names if n))
     if sync_errors:
         print("Sync warnings:", "; ".join(sync_errors))
 

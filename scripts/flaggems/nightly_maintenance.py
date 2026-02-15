@@ -44,6 +44,18 @@ def main() -> None:
     ap.add_argument("--flaggems-opset", choices=["deterministic_forward"], default="deterministic_forward")
     ap.add_argument("--backend-target", choices=["rvv", "cuda_h100", "cuda_5090d"], default="rvv")
     ap.add_argument(
+        "--lane",
+        choices=["coverage", "ir_arch", "backend_compiler"],
+        default="coverage",
+        help="Workflow lane for matrix scope (default: coverage).",
+    )
+    ap.add_argument(
+        "--ci-profiles",
+        action="append",
+        default=[],
+        help="CI gate profiles (repeatable/comma-separated). Default: coverage",
+    )
+    ap.add_argument(
         "--run-rvv-remote",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -78,6 +90,12 @@ def main() -> None:
     ap.add_argument("--out-root", type=Path, default=(ROOT / "artifacts" / "flaggems_matrix" / "daily"))
     ap.add_argument("--date-tag", default=_utc_date_tag())
     ap.add_argument("--run-name", default="nightly_maintenance")
+    ap.add_argument(
+        "--update-workflow-state",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Update current_status/session_context snapshots after nightly run.",
+    )
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -104,6 +122,8 @@ def main() -> None:
         str(args.flaggems_opset),
         "--backend-target",
         str(args.backend_target),
+        "--lane",
+        str(args.lane),
         "--rvv-host",
         str(args.rvv_host),
         "--rvv-user",
@@ -143,6 +163,11 @@ def main() -> None:
         "--out",
         str(ci_gate_path),
     ]
+    profiles_raw = list(args.ci_profiles or [])
+    if not profiles_raw:
+        profiles_raw = ["coverage"]
+    for raw in profiles_raw:
+        ci_cmd += ["--profiles", str(raw)]
 
     ci_rc = 0
     ci_out = ""
@@ -182,6 +207,23 @@ def main() -> None:
     }
     summary_path = out_dir / "nightly_maintenance_summary.json"
     summary_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    workflow_state_cmd = [
+        sys.executable,
+        "scripts/flaggems/build_workflow_state.py",
+    ]
+    workflow_state_rc = 0
+    workflow_state_out = ""
+    workflow_state_err = ""
+    if bool(args.update_workflow_state):
+        workflow_state_rc, workflow_state_out, workflow_state_err = _run(workflow_state_cmd, cwd=ROOT, dry_run=bool(args.dry_run))
+        payload["results"]["workflow_state"] = {
+            "rc": int(workflow_state_rc),
+            "stdout": str(workflow_state_out).strip(),
+            "stderr": str(workflow_state_err).strip(),
+        }
+        payload["commands"]["workflow_state"] = workflow_state_cmd
+        payload["ok"] = bool(payload.get("ok")) and bool(workflow_state_rc == 0)
+        summary_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"Nightly maintenance summary written: {summary_path}")
     raise SystemExit(0 if bool(payload.get("ok")) else 1)
 
