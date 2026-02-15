@@ -1202,6 +1202,63 @@ void emit_index_put_2d(CodeWriter& w, const std::string& out, const std::string&
   w.line("}");
 }
 
+void emit_masked_select_flat(CodeWriter& w, const std::string& out, const std::string& inp, const std::string& mask,
+                             const std::vector<int64_t>& inp_shape, const std::vector<int64_t>& mask_shape,
+                             const std::vector<int64_t>& out_shape, const std::string& inp_dtype,
+                             const std::string& mask_dtype, const std::string& out_dtype) {
+  if (inp_shape != mask_shape) fail("masked_select expects input/mask shapes to match");
+  if (out_shape.size() != 1) fail("masked_select currently expects rank-1 output");
+  const std::string inp_ct = ctype_for_dtype(inp_dtype);
+  const std::string mask_ct = ctype_for_dtype(mask_dtype);
+  const std::string out_ct = ctype_for_dtype(out_dtype);
+  if (inp_ct != out_ct) fail("masked_select currently expects input/output dtype to match");
+  if (mask_ct != "uint8_t") fail("masked_select expects bool/u8 mask");
+  const int64_t total = numel(inp_shape);
+  const int64_t L = out_shape[0];
+  w.line("int64_t out_pos = 0;");
+  w.line("for (int64_t i = 0; i < " + std::to_string(total) + "; ++i) {");
+  w.indent();
+  w.line("if (" + mask + "[i] != 0) {");
+  w.indent();
+  w.line("if (out_pos < " + std::to_string(L) + ") " + out + "[out_pos] = " + inp + "[i];");
+  w.line("out_pos += 1;");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+  w.line("for (int64_t i = out_pos; i < " + std::to_string(L) + "; ++i) " + out + "[i] = (" + out_ct + ")0;");
+}
+
+void emit_masked_scatter_flat(CodeWriter& w, const std::string& out, const std::string& inp, const std::string& mask,
+                              const std::string& src, const std::vector<int64_t>& inp_shape,
+                              const std::vector<int64_t>& mask_shape, const std::vector<int64_t>& src_shape,
+                              const std::vector<int64_t>& out_shape, const std::string& inp_dtype,
+                              const std::string& mask_dtype, const std::string& src_dtype, const std::string& out_dtype) {
+  if (inp_shape != mask_shape) fail("masked_scatter expects input/mask shapes to match");
+  if (out_shape != inp_shape) fail("masked_scatter expects output shape to match input shape");
+  if (src_shape.size() != 1) fail("masked_scatter currently expects rank-1 source tensor");
+  const std::string inp_ct = ctype_for_dtype(inp_dtype);
+  const std::string mask_ct = ctype_for_dtype(mask_dtype);
+  const std::string src_ct = ctype_for_dtype(src_dtype);
+  const std::string out_ct = ctype_for_dtype(out_dtype);
+  if (inp_ct != out_ct || src_ct != out_ct) fail("masked_scatter expects input/source/output dtype to match");
+  if (mask_ct != "uint8_t") fail("masked_scatter expects bool/u8 mask");
+  const int64_t total = numel(inp_shape);
+  const int64_t L = src_shape[0];
+  w.line("for (int64_t i = 0; i < " + std::to_string(total) + "; ++i) " + out + "[i] = " + inp + "[i];");
+  w.line("int64_t src_pos = 0;");
+  w.line("for (int64_t i = 0; i < " + std::to_string(total) + "; ++i) {");
+  w.indent();
+  w.line("if (" + mask + "[i] != 0) {");
+  w.indent();
+  w.line("if (src_pos < " + std::to_string(L) + ") " + out + "[i] = " + src + "[src_pos];");
+  w.line("src_pos += 1;");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+}
+
 void emit_kron_2d(CodeWriter& w, const std::string& out, const std::string& a, const std::string& b, const std::vector<int64_t>& a_shape,
                   const std::vector<int64_t>& b_shape, const std::vector<int64_t>& out_shape) {
   if (a_shape.size() != 2 || b_shape.size() != 2 || out_shape.size() != 2) fail("kron currently supports rank-2 tensors");
@@ -2998,6 +3055,35 @@ struct CProgramEmitter {
 	            dtype_env.at(op.inputs[1]),
 	            dtype_env.at(op.inputs[2]),
 	            accumulate);
+	      } else if (op.op == "masked_select") {
+	        if (op.inputs.size() != 2) fail("masked_select expects inputs [inp, mask]");
+	        emit_masked_select_flat(
+	            w,
+	            out_var,
+	            v(op.inputs[0]),
+	            v(op.inputs[1]),
+	            shape_env.at(op.inputs[0]),
+	            shape_env.at(op.inputs[1]),
+	            out_shape,
+	            dtype_env.at(op.inputs[0]),
+	            dtype_env.at(op.inputs[1]),
+	            dtype_env.at(out));
+	      } else if (op.op == "masked_scatter") {
+	        if (op.inputs.size() != 3) fail("masked_scatter expects inputs [inp, mask, source]");
+	        emit_masked_scatter_flat(
+	            w,
+	            out_var,
+	            v(op.inputs[0]),
+	            v(op.inputs[1]),
+	            v(op.inputs[2]),
+	            shape_env.at(op.inputs[0]),
+	            shape_env.at(op.inputs[1]),
+	            shape_env.at(op.inputs[2]),
+	            out_shape,
+	            dtype_env.at(op.inputs[0]),
+	            dtype_env.at(op.inputs[1]),
+	            dtype_env.at(op.inputs[2]),
+	            dtype_env.at(out));
 	      } else if (op.op == "kron") {
 	        if (op.inputs.size() != 2) fail("kron expects inputs [A, B]");
 	        emit_kron_2d(w, out_var, v(op.inputs[0]), v(op.inputs[1]), shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape);

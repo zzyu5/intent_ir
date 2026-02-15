@@ -150,6 +150,25 @@ def _np_dtype(dt: str) -> "np.dtype":
     return m.get(str(dt), np.float32)
 
 
+def _to_raw_bytes(arr: "np.ndarray", dt: str) -> bytes:
+    arr_np = np.asarray(arr)
+    # Prefer runtime array dtype for bool tensors to avoid mismatches when
+    # declared dtypes are widened in upstream intent metadata.
+    if arr_np.dtype.kind == "b" or dt in {"bool", "i1"}:
+        return np.asarray(arr_np, dtype=np.uint8).tobytes(order="C")
+    if dt == "i8":
+        return np.asarray(arr_np, dtype=np.int8).tobytes(order="C")
+    if dt == "i16":
+        return np.asarray(arr_np, dtype=np.int16).tobytes(order="C")
+    if dt == "u8":
+        return np.asarray(arr_np, dtype=np.uint8).tobytes(order="C")
+    if dt == "i32":
+        return np.asarray(arr_np, dtype=np.int32).tobytes(order="C")
+    if dt == "i64":
+        return np.asarray(arr_np, dtype=np.int64).tobytes(order="C")
+    return np.asarray(arr_np, dtype=np.float32).tobytes(order="C")
+
+
 def _derive_scalar_input_array(name: str, *, dtype: str, bindings: dict) -> "np.ndarray" | None:
     """
     Derive a semantic scalar input (rank-0 tensor) that may be absent from the
@@ -751,42 +770,14 @@ def run_remote(
                             baseline[name] = arrn
             if name not in baseline:
                 raise RuntimeError(f"baseline missing input tensor {name} for {kernel}")
-            arr = np.asarray(baseline[name])
-            if dt in {"bool", "i1"}:
-                raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
-            elif dt == "i8":
-                raw = np.asarray(arr, dtype=np.int8).tobytes(order="C")
-            elif dt == "i16":
-                raw = np.asarray(arr, dtype=np.int16).tobytes(order="C")
-            elif dt == "u8":
-                raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
-            elif dt == "i32":
-                raw = np.asarray(arr, dtype=np.int32).tobytes(order="C")
-            elif dt == "i64":
-                raw = np.asarray(arr, dtype=np.int64).tobytes(order="C")
-            else:
-                raw = np.asarray(arr, dtype=np.float32).tobytes(order="C")
+            raw = _to_raw_bytes(np.asarray(baseline[name]), str(dt))
             _sftp_write_bytes(sftp, f"{remote_dir}/{name}.bin", raw)
 
         for name in outputs:
             if name not in baseline:
                 raise RuntimeError(f"baseline missing output tensor {name} for {kernel}")
             dt = intent.tensors[name].dtype
-            arr = np.asarray(baseline[name])
-            if dt in {"bool", "i1"}:
-                raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
-            elif dt == "i8":
-                raw = np.asarray(arr, dtype=np.int8).tobytes(order="C")
-            elif dt == "i16":
-                raw = np.asarray(arr, dtype=np.int16).tobytes(order="C")
-            elif dt == "u8":
-                raw = np.asarray(arr, dtype=np.uint8).tobytes(order="C")
-            elif dt == "i32":
-                raw = np.asarray(arr, dtype=np.int32).tobytes(order="C")
-            elif dt == "i64":
-                raw = np.asarray(arr, dtype=np.int64).tobytes(order="C")
-            else:
-                raw = np.asarray(arr, dtype=np.float32).tobytes(order="C")
+            raw = _to_raw_bytes(np.asarray(baseline[name]), str(dt))
             _sftp_write_bytes(sftp, f"{remote_dir}/{name}_ref.bin", raw)
 
     # Lower the IntentIR op list to C and run on RVV target.

@@ -26,6 +26,8 @@ CUDA_SUPPORTED_OPS: set[str] = {
     "gather",
     "index_add",
     "index_put",
+    "masked_select",
+    "masked_scatter",
     "kron",
     "concat",
     "pad",

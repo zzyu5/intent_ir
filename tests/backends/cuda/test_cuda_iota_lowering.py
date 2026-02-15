@@ -384,3 +384,52 @@ def test_cuda_lowering_supports_bitwise_or_and_right_shift(monkeypatch) -> None:
     assert lowered.kernel_name == "bitwise_or_right_shift_cuda_lowering"
     assert "|" in lowered.cuda_src
     assert ">>" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_masked_select_2d(monkeypatch) -> None:
+    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "masked_select2d_cuda_lowering",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "mask": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["L"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "masked_select", "inputs": ["inp", "mask"], "output": "out"},
+            ],
+            "outputs": ["out"],
+            "parallel_axes": [],
+            "schedule": {"tile_n": 64},
+        }
+    )
+    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 16, "L": 24})
+    assert lowered.kernel_name == "masked_select2d_cuda_lowering"
+    assert "if (mask[i] != 0)" in lowered.cuda_src
+    assert "out_pos < L" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_masked_scatter_2d(monkeypatch) -> None:
+    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "masked_scatter2d_cuda_lowering",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "mask": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                "source": {"dtype": "f32", "shape": ["L"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "masked_scatter", "inputs": ["inp", "mask", "source"], "output": "out"},
+            ],
+            "outputs": ["out"],
+            "parallel_axes": [],
+            "schedule": {"tile_n": 64},
+        }
+    )
+    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 16, "L": 24})
+    assert lowered.kernel_name == "masked_scatter2d_cuda_lowering"
+    assert "src_pos < L" in lowered.cuda_src
+    assert "out[i] = source[src_pos]" in lowered.cuda_src

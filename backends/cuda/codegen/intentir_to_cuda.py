@@ -3680,6 +3680,160 @@ extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(
     return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=lowered_bindings)
 
 
+def _kernel_masked_select_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != "masked_select":
+        raise CudaLoweringError("masked_select lowering expects a single masked_select op")
+    op = intent.ops[0]
+    if len(op.inputs) != 2:
+        raise CudaLoweringError("masked_select expects inputs [inp, mask]")
+    inp_name, mask_name = (str(x) for x in op.inputs)
+    out_name = str(op.output)
+
+    inp_shape = _shape_values(intent, inp_name)
+    mask_shape = _shape_values(intent, mask_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(inp_shape) != 2 or len(mask_shape) != 2:
+        raise CudaLoweringError("masked_select lowering currently supports rank-2 input/mask")
+    if len(out_shape) != 1:
+        raise CudaLoweringError("masked_select lowering expects rank-1 output")
+    if _resolve_dim_int(inp_shape[0], bindings, name="M_in") != _resolve_dim_int(mask_shape[0], bindings, name="M_mask"):
+        raise CudaLoweringError("masked_select input/mask shape mismatch (M)")
+    if _resolve_dim_int(inp_shape[1], bindings, name="N_in") != _resolve_dim_int(mask_shape[1], bindings, name="N_mask"):
+        raise CudaLoweringError("masked_select input/mask shape mismatch (N)")
+    if str(intent.tensors[inp_name].dtype) != "f32" or str(intent.tensors[out_name].dtype) != "f32":
+        raise CudaLoweringError("masked_select lowering currently supports f32 input/output")
+    if str(intent.tensors[mask_name].dtype) not in {"bool", "i1", "u8"}:
+        raise CudaLoweringError("masked_select lowering expects bool/u8 mask")
+
+    M = _resolve_dim_int(inp_shape[0], bindings, name="M")
+    N = _resolve_dim_int(inp_shape[1], bindings, name="N")
+    L = _resolve_dim_int(out_shape[0], bindings, name="L")
+
+    cuda_src = f"""
+#include <stdint.h>
+extern "C" __global__ void {intent.name}(
+    const float* __restrict__ {inp_name},
+    const uint8_t* __restrict__ {mask_name},
+    float* __restrict__ {out_name},
+    int M, int N, int L) {{
+  if (blockIdx.x != 0 || threadIdx.x != 0) return;
+  int out_pos = 0;
+  const int total = M * N;
+  for (int i = 0; i < total; ++i) {{
+    if ({mask_name}[i] != 0) {{
+      if (out_pos < L) {{
+        {out_name}[out_pos] = {inp_name}[i];
+      }}
+      out_pos += 1;
+    }}
+  }}
+  for (int i = out_pos; i < L; ++i) {{
+    {out_name}[i] = 0.0f;
+  }}
+}}
+""".lstrip()
+
+    io_spec = _io_spec_from_args(
+        intent,
+        tensor_args=[inp_name, mask_name, out_name],
+        scalar_args={"M": "i32", "N": "i32", "L": "i32"},
+        arg_names=[inp_name, mask_name, out_name, "M", "N", "L"],
+    )
+    launch = CudaLaunch(grid=(1, 1, 1), block=(1, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.update({"M": int(M), "N": int(N), "L": int(L)})
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=[out_name],
+        bindings=lowered_bindings,
+    )
+
+
+def _kernel_masked_scatter_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != "masked_scatter":
+        raise CudaLoweringError("masked_scatter lowering expects a single masked_scatter op")
+    op = intent.ops[0]
+    if len(op.inputs) != 3:
+        raise CudaLoweringError("masked_scatter expects inputs [inp, mask, source]")
+    inp_name, mask_name, source_name = (str(x) for x in op.inputs)
+    out_name = str(op.output)
+
+    inp_shape = _shape_values(intent, inp_name)
+    mask_shape = _shape_values(intent, mask_name)
+    src_shape = _shape_values(intent, source_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(inp_shape) != 2 or len(mask_shape) != 2 or len(out_shape) != 2:
+        raise CudaLoweringError("masked_scatter lowering currently supports rank-2 inp/mask/out")
+    if len(src_shape) != 1:
+        raise CudaLoweringError("masked_scatter lowering currently expects rank-1 source")
+    if _resolve_dim_int(inp_shape[0], bindings, name="M_in") != _resolve_dim_int(mask_shape[0], bindings, name="M_mask"):
+        raise CudaLoweringError("masked_scatter input/mask shape mismatch (M)")
+    if _resolve_dim_int(inp_shape[1], bindings, name="N_in") != _resolve_dim_int(mask_shape[1], bindings, name="N_mask"):
+        raise CudaLoweringError("masked_scatter input/mask shape mismatch (N)")
+    if _resolve_dim_int(inp_shape[0], bindings, name="M_out") != _resolve_dim_int(out_shape[0], bindings, name="M_out_expect"):
+        raise CudaLoweringError("masked_scatter input/output shape mismatch (M)")
+    if _resolve_dim_int(inp_shape[1], bindings, name="N_out") != _resolve_dim_int(out_shape[1], bindings, name="N_out_expect"):
+        raise CudaLoweringError("masked_scatter input/output shape mismatch (N)")
+    if (
+        str(intent.tensors[inp_name].dtype) != "f32"
+        or str(intent.tensors[source_name].dtype) != "f32"
+        or str(intent.tensors[out_name].dtype) != "f32"
+    ):
+        raise CudaLoweringError("masked_scatter lowering currently supports f32 inp/source/out")
+    if str(intent.tensors[mask_name].dtype) not in {"bool", "i1", "u8"}:
+        raise CudaLoweringError("masked_scatter lowering expects bool/u8 mask")
+
+    M = _resolve_dim_int(inp_shape[0], bindings, name="M")
+    N = _resolve_dim_int(inp_shape[1], bindings, name="N")
+    L = _resolve_dim_int(src_shape[0], bindings, name="L")
+
+    cuda_src = f"""
+#include <stdint.h>
+extern "C" __global__ void {intent.name}(
+    const float* __restrict__ {inp_name},
+    const uint8_t* __restrict__ {mask_name},
+    const float* __restrict__ {source_name},
+    float* __restrict__ {out_name},
+    int M, int N, int L) {{
+  if (blockIdx.x != 0 || threadIdx.x != 0) return;
+  const int total = M * N;
+  for (int i = 0; i < total; ++i) {{
+    {out_name}[i] = {inp_name}[i];
+  }}
+  int src_pos = 0;
+  for (int i = 0; i < total; ++i) {{
+    if ({mask_name}[i] != 0) {{
+      if (src_pos < L) {{
+        {out_name}[i] = {source_name}[src_pos];
+      }}
+      src_pos += 1;
+    }}
+  }}
+}}
+""".lstrip()
+
+    io_spec = _io_spec_from_args(
+        intent,
+        tensor_args=[inp_name, mask_name, source_name, out_name],
+        scalar_args={"M": "i32", "N": "i32", "L": "i32"},
+        arg_names=[inp_name, mask_name, source_name, out_name, "M", "N", "L"],
+    )
+    launch = CudaLaunch(grid=(1, 1, 1), block=(1, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.update({"M": int(M), "N": int(N), "L": int(L)})
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=[out_name],
+        bindings=lowered_bindings,
+    )
+
+
 def _kernel_kron_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
     if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != "kron":
         raise CudaLoweringError("kron lowering expects a single kron op")
@@ -5738,6 +5892,10 @@ def lower_intent_to_cuda_kernel(
                 return _kernel_index_add_2d_f32(intent, bindings)
             if op0 == "index_put":
                 return _kernel_index_put_2d_f32(intent, bindings)
+            if op0 == "masked_select":
+                return _kernel_masked_select_2d_f32(intent, bindings)
+            if op0 == "masked_scatter":
+                return _kernel_masked_scatter_2d_f32(intent, bindings)
             if op0 == "kron":
                 return _kernel_kron_2d_f32(intent, bindings)
             if op0 in {"argmax", "argmin"}:
