@@ -4,7 +4,7 @@ import pytest
 from intent_ir.ir import IntentFunction
 from verify.interpreter import execute_intent
 from verify.gen_cases import generate_cases, TestCase
-from verify.diff_runner import run_diff
+from verify.diff_runner import _with_io_aliases, run_diff
 
 
 def _intent_matmul_bias_relu():
@@ -99,3 +99,30 @@ def test_interpreter_softmax_row_broadcast_from_reduce_vector():
     E = np.exp(X - mx)
     expected = E / np.sum(E, axis=1, keepdims=True)
     assert np.allclose(out, expected, atol=1e-6, rtol=1e-6)
+
+
+def test_io_aliases_map_quantized_output_names():
+    js = {
+        "name": "q_alias",
+        "tensors": {
+            "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            "y_q": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            "y_s": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+        },
+        "ops": [
+            {"op": "identity", "inputs": ["inp"], "output": "y_q"},
+            {"op": "reduce_sum", "inputs": ["inp"], "output": "y_s", "attrs": {"dims": [1]}},
+        ],
+        "outputs": ["y_q", "y_s"],
+    }
+    intent = IntentFunction.from_json_dict(js)
+    ref = {
+        "inp": np.ones((2, 3), dtype=np.float32),
+        "out": np.ones((2, 3), dtype=np.float32),
+        "scales": np.ones((2,), dtype=np.float32),
+    }
+    aliased = _with_io_aliases(intent, ref)
+    assert "y_q" in aliased
+    assert "y_s" in aliased
+    assert np.array_equal(aliased["y_q"], ref["out"])
+    assert np.array_equal(aliased["y_s"], ref["scales"])

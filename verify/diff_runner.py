@@ -104,14 +104,61 @@ def run_diff(
             bindings["Z"] = bindings["batch"]
         if "Z" in bindings and "batch" not in bindings:
             bindings["batch"] = bindings["Z"]
+        if "GROUP_SIZE" in bindings and "group_size" not in bindings:
+            bindings["group_size"] = bindings["GROUP_SIZE"]
+        if "group_size" in bindings and "GROUP_SIZE" not in bindings:
+            bindings["GROUP_SIZE"] = bindings["group_size"]
+        if "EPS" in bindings and "eps" not in bindings:
+            bindings["eps"] = bindings["EPS"]
+        if "eps" in bindings and "EPS" not in bindings:
+            bindings["EPS"] = bindings["eps"]
         if "group" in bindings and "num_groups" not in bindings:
             bindings["num_groups"] = bindings["group"]
+        if "G" in bindings and "num_groups" not in bindings:
+            bindings["num_groups"] = bindings["G"]
+        if "num_groups" in bindings and "G" not in bindings:
+            bindings["G"] = bindings["num_groups"]
+        # Surface scalar inputs from cases (when present) as shape bindings.
+        # This keeps symbolic reshape dims resolvable for kernels that expose
+        # scalar semantic params (e.g., group_size).
+        if case.inputs:
+            for k, v in case.inputs.items():
+                try:
+                    arr = np.asarray(v)
+                except Exception:
+                    continue
+                if arr.size != 1:
+                    continue
+                key = str(k)
+                if key in bindings:
+                    continue
+                try:
+                    scalar = arr.reshape(()).item()
+                except Exception:
+                    continue
+                if isinstance(scalar, (np.integer, int)):
+                    bindings[key] = int(scalar)
+                elif isinstance(scalar, (np.floating, float)):
+                    bindings[key] = float(scalar)
         if "num_groups" in bindings and "C" in bindings and "group_size" not in bindings:
             g = int(bindings["num_groups"])
             c = int(bindings["C"])
             if g <= 0:
                 raise ValueError(f"invalid num_groups: {g}")
             bindings["group_size"] = c // g if (c % g == 0) else (c + g - 1) // g
+        if "N" in bindings and "group_size" in bindings and "num_groups" not in bindings:
+            try:
+                n = int(bindings["N"])
+                gs = int(bindings["group_size"])
+                if gs > 0 and n % gs == 0:
+                    bindings["num_groups"] = n // gs
+            except Exception:
+                pass
+        if "num_groups" in bindings and "N" not in bindings and "group_size" in bindings:
+            try:
+                bindings["N"] = int(bindings["num_groups"]) * int(bindings["group_size"])
+            except Exception:
+                pass
         if "group_size" in bindings and "HW" in bindings and "num_elements" not in bindings:
             try:
                 bindings["num_elements"] = int(bindings["group_size"]) * int(bindings["HW"])
@@ -317,9 +364,20 @@ def _normalize_io_name(name: str) -> str:
         s = "input"
     if s == "out":
         s = "output"
+    # Common quantization naming aliases:
+    # - y_q / yq / quantized -> primary output tensor
+    # - y_s / ys / scales -> scale tensor
+    if s in {"y_q", "yq", "quantized"}:
+        s = "output"
+    if s in {"y_s", "ys", "scales"}:
+        s = "scale"
     # Make common style differences alias-friendly (row_mask vs RowMask).
     # Do this late so *_ptr handling above can still match.
     s = s.replace("_", "")
+    if s in {"yq", "quantized"}:
+        s = "output"
+    if s in {"ys", "scales"}:
+        s = "scale"
     return s
 
 

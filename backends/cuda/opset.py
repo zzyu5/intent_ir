@@ -87,6 +87,7 @@ CUDA_SUPPORTED_OPS: set[str] = {
     "avg_pool2d",
     "scaled_dot_product_attention",
     "polar",
+    "per_token_group_quant_fp8",
     "nll_loss_forward",
     "nll_loss2d_forward",
 }

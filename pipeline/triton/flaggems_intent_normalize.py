@@ -384,6 +384,50 @@ def _canonical_prod_dim2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_per_token_group_quant_fp8_2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "per_token_group_quant_fp8_2d",
+            "tensors": {
+                "y": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "eps": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "fp8_min": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "fp8_max": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "y_grouped": {"dtype": "f32", "shape": ["MG", "GROUP_SIZE"], "layout": "row_major"},
+                "y_abs": {"dtype": "f32", "shape": ["MG", "GROUP_SIZE"], "layout": "row_major"},
+                "absmax": {"dtype": "f32", "shape": ["MG", 1], "layout": "row_major"},
+                "absmax_clamped": {"dtype": "f32", "shape": ["MG", 1], "layout": "row_major"},
+                "y_s_2d": {"dtype": "f32", "shape": ["MG", 1], "layout": "row_major"},
+                "y_s_broadcast": {"dtype": "f32", "shape": ["MG", "GROUP_SIZE"], "layout": "row_major"},
+                "y_scaled": {"dtype": "f32", "shape": ["MG", "GROUP_SIZE"], "layout": "row_major"},
+                "y_clamped_min": {"dtype": "f32", "shape": ["MG", "GROUP_SIZE"], "layout": "row_major"},
+                "y_clamped": {"dtype": "f32", "shape": ["MG", "GROUP_SIZE"], "layout": "row_major"},
+                "y_q": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "y_s": {"dtype": "f32", "shape": ["M", "G"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "reshape", "inputs": ["y"], "output": "y_grouped", "attrs": {"shape": ["MG", "GROUP_SIZE"]}},
+                {"op": "abs", "inputs": ["y_grouped"], "output": "y_abs"},
+                {"op": "reduce_max", "inputs": ["y_abs"], "output": "absmax", "attrs": {"dims": [1], "keepdims": True}},
+                {"op": "max", "inputs": ["absmax", "eps"], "output": "absmax_clamped"},
+                {"op": "div", "inputs": ["absmax_clamped", "fp8_max"], "output": "y_s_2d"},
+                {"op": "reshape", "inputs": ["y_s_2d"], "output": "y_s", "attrs": {"shape": ["M", "G"]}},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["y_s_2d"],
+                    "output": "y_s_broadcast",
+                    "attrs": {"out_shape": ["MG", "GROUP_SIZE"], "broadcast_dims": [0, 1]},
+                },
+                {"op": "div", "inputs": ["y_grouped", "y_s_broadcast"], "output": "y_scaled"},
+                {"op": "max", "inputs": ["y_scaled", "fp8_min"], "output": "y_clamped_min"},
+                {"op": "min", "inputs": ["y_clamped_min", "fp8_max"], "output": "y_clamped"},
+                {"op": "reshape", "inputs": ["y_clamped"], "output": "y_q", "attrs": {"shape": ["M", "N"]}},
+            ],
+            "outputs": ["y_q", "y_s"],
+        }
+    )
+
+
 def _canonical_gather2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -1708,6 +1752,8 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_prod2d_intent()
     if name == "prod_dim2d":
         return _canonical_prod_dim2d_intent()
+    if name == "per_token_group_quant_fp8_2d":
+        return _canonical_per_token_group_quant_fp8_2d_intent()
     if name == "gather2d":
         return _canonical_gather2d_intent()
     if name == "index_select2d":

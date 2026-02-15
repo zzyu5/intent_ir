@@ -1957,6 +1957,116 @@ extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(const floa
     )
 
 
+def _kernel_per_token_group_quant_fp8_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    outs = list(intent.outputs or [])
+    if len(outs) != 2:
+        raise CudaLoweringError("per_token_group_quant_fp8 lowering expects outputs [y_q, y_s]")
+    y_q_name, y_s_name = str(outs[0]), str(outs[1])
+
+    produced = {o.output for o in (intent.ops or []) if o.output}
+    ext_inputs = [n for n in intent.tensors.keys() if n not in produced and n not in set(outs)]
+    y_name = next((n for n in ext_inputs if len(_shape_values(intent, str(n))) == 2 and str(intent.tensors[str(n)].dtype) == "f32"), None)
+    if y_name is None:
+        raise CudaLoweringError("per_token_group_quant_fp8 lowering cannot find rank-2 float input tensor")
+    y_name = str(y_name)
+
+    eps_name = next((str(n) for n in ext_inputs if str(n).lower() == "eps"), "eps")
+    fp8_min_name = next((str(n) for n in ext_inputs if str(n).lower() == "fp8_min"), "fp8_min")
+    fp8_max_name = next((str(n) for n in ext_inputs if str(n).lower() == "fp8_max"), "fp8_max")
+
+    y_shape = _shape_values(intent, y_name)
+    y_q_shape = _shape_values(intent, y_q_name)
+    y_s_shape = _shape_values(intent, y_s_name)
+    if len(y_shape) != 2 or len(y_q_shape) != 2 or len(y_s_shape) != 2:
+        raise CudaLoweringError("per_token_group_quant_fp8 lowering expects y/y_q/y_s as rank-2 tensors")
+
+    M = _resolve_dim_int(y_shape[0], bindings, name="M")
+    N = _resolve_dim_int(y_shape[1], bindings, name="N")
+    if _resolve_dim_int(y_q_shape[0], bindings, name="y_q.M") != M or _resolve_dim_int(y_q_shape[1], bindings, name="y_q.N") != N:
+        raise CudaLoweringError("per_token_group_quant_fp8 y_q shape mismatch")
+
+    group_size = int(bindings.get("GROUP_SIZE", bindings.get("group_size", 0)) or 0)
+    if group_size <= 0:
+        # Fallback from y_s width when explicit GROUP_SIZE is absent.
+        g_tmp = _resolve_dim_int(y_s_shape[1], bindings, name="G")
+        if g_tmp <= 0 or N % g_tmp != 0:
+            raise CudaLoweringError("per_token_group_quant_fp8 requires positive GROUP_SIZE or resolvable N/G")
+        group_size = N // g_tmp
+    if group_size <= 0 or N % group_size != 0:
+        raise CudaLoweringError("per_token_group_quant_fp8 requires N divisible by GROUP_SIZE")
+    G = N // group_size
+    if _resolve_dim_int(y_s_shape[0], bindings, name="y_s.M") != M or _resolve_dim_int(y_s_shape[1], bindings, name="y_s.G") != G:
+        raise CudaLoweringError("per_token_group_quant_fp8 y_s shape mismatch")
+
+    total_groups = int(M) * int(G)
+    sched = intent.schedule or ScheduleSketch()
+    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=128)
+    if block_x <= 0:
+        block_x = 128
+    if block_x > 1024:
+        block_x = 1024
+    grid_x = (total_groups + block_x - 1) // block_x
+
+    cuda_src = f"""
+#include <math.h>
+#include <stdint.h>
+
+extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(const float* __restrict__ {y_name},
+                                                                       const float* __restrict__ {eps_name},
+                                                                       const float* __restrict__ {fp8_min_name},
+                                                                       const float* __restrict__ {fp8_max_name},
+                                                                       float* __restrict__ {y_q_name},
+                                                                       float* __restrict__ {y_s_name}) {{
+  const int gid = (int)blockIdx.x * (int)blockDim.x + (int)threadIdx.x;
+  if (gid >= {total_groups}) return;
+  const int m = gid / {G};
+  const int g = gid % {G};
+  const int base = m * {N} + g * {group_size};
+
+  const float eps_v = {eps_name}[0];
+  const float qmin = {fp8_min_name}[0];
+  const float qmax = {fp8_max_name}[0];
+
+  float absmax = 0.0f;
+  for (int i = 0; i < {group_size}; ++i) {{
+    const float v = {y_name}[base + i];
+    const float av = fabsf(v);
+    absmax = fmaxf(absmax, av);
+  }}
+  const float scale = fmaxf(absmax, eps_v) / qmax;
+  {y_s_name}[gid] = scale;
+
+  for (int i = 0; i < {group_size}; ++i) {{
+    float q = {y_name}[base + i] / scale;
+    q = fmaxf(q, qmin);
+    q = fminf(q, qmax);
+    {y_q_name}[base + i] = q;
+  }}
+}}
+""".lstrip()
+
+    io_spec = _io_spec_from_args(
+        intent,
+        tensor_args=[y_name, eps_name, fp8_min_name, fp8_max_name, y_q_name, y_s_name],
+        scalar_args={},
+        arg_names=[y_name, eps_name, fp8_min_name, fp8_max_name, y_q_name, y_s_name],
+    )
+    launch = CudaLaunch(grid=(grid_x, 1, 1), block=(block_x, 1, 1), shared_mem=0)
+    out_bindings: Dict[str, Any] = dict(bindings)
+    out_bindings.setdefault("GROUP_SIZE", int(group_size))
+    out_bindings.setdefault("group_size", int(group_size))
+    out_bindings.setdefault("G", int(G))
+    out_bindings.setdefault("num_groups", int(G))
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=[y_q_name, y_s_name],
+        bindings=out_bindings,
+    )
+
+
 def _kernel_rope_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
     # Respect scalar-tensor dims when present; fall back to scalar args otherwise.
     SEQ = _as_int(bindings.get("SEQ_LEN"), name="SEQ_LEN")
@@ -7021,6 +7131,11 @@ def lower_intent_to_cuda_kernel(
     name_l = str(intent.name).lower()
     if {"Y", "Mean", "Rstd"}.issubset(outs) or (len(outs) == 3 and ("layer_norm" in name_l or "layernorm" in name_l)):
         return _kernel_layernorm_2d_f32(intent, bindings)
+    if (
+        ("per_token_group_quant_fp8" in name_l)
+        and op_seq == ["reshape", "abs", "reduce_max", "max", "div", "reshape", "broadcast_in_dim", "div", "max", "min", "reshape"]
+    ):
+        return _kernel_per_token_group_quant_fp8_2d_f32(intent, bindings)
     # Softmax: recognize by name or by presence of reduce_max + exp + reduce_sum.
     if ("softmax" in str(intent.name).lower()) or ({"reduce_max", "reduce_sum", "exp", "div"}.issubset(op_names)):
         return _kernel_softmax_2d_last_f32(intent, bindings)

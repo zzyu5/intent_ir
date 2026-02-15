@@ -93,6 +93,18 @@ def _normalize_io_name(name: str) -> str:
         s = "input"
     if s == "out":
         s = "output"
+    # Common quantization naming aliases:
+    # - y_q / yq / quantized -> primary output tensor
+    # - y_s / ys / scales -> scale tensor
+    if s in {"y_q", "yq", "quantized"}:
+        s = "output"
+    if s in {"y_s", "ys", "scales"}:
+        s = "scale"
+    s = s.replace("_", "")
+    if s in {"yq", "quantized"}:
+        s = "output"
+    if s in {"ys", "scales"}:
+        s = "scale"
     return s
 
 
@@ -230,7 +242,17 @@ def _augment_bindings_from_arrays(*, intent: IntentFunction, bindings: dict[str,
         tensor = intent.tensors.get(str(name))
         if tensor is None:
             continue
+        arr_np = np.asarray(arr)
         spec_shape = list(getattr(tensor, "shape", []) or [])
+        if len(spec_shape) == 0 and arr_np.size == 1:
+            # Scalar tensors often carry symbolic shape params (e.g., group_size).
+            # Bind by tensor name so codegen can resolve reshape expressions.
+            key = str(name)
+            if key and key not in out:
+                try:
+                    out[key] = int(arr_np.reshape(()).item())
+                except Exception:
+                    pass
         arr_shape = tuple(int(v) for v in np.asarray(arr).shape)
         if len(spec_shape) != len(arr_shape):
             continue
@@ -778,6 +800,9 @@ def run_remote(
         outputs = [n for n in list(intent.outputs) if n in produced]
     if not outputs:
         outputs = [n for n in list(intent.outputs) if n in baseline] if has_baseline else list(intent.outputs)
+    if not outputs:
+        # Keep declared outputs to avoid constructing an invalid empty-output intent.
+        outputs = list(intent.outputs)
     intent_codegen = intent
     if outputs != list(intent.outputs):
         intent_j = intent.to_json_dict()

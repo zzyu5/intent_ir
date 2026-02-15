@@ -128,6 +128,21 @@ def test_flaggems_provider_forces_canonical_for_hstack(monkeypatch) -> None:
     assert out_expanded is not None
 
 
+def test_flaggems_provider_forces_canonical_for_per_token(monkeypatch) -> None:
+    monkeypatch.delenv("INTENTIR_TRITON_FLAGGEMS_CANONICAL_NORMALIZE", raising=False)
+    cand = _dummy_candidate("old")
+    out, out_expanded, info = maybe_normalize_provider_candidate(
+        provider="flaggems",
+        spec_name="per_token_group_quant_fp8_2d",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info is not None
+    assert info.get("enabled_by") == "provider_required_deterministic_override"
+    assert out.intent.name == "per_token_group_quant_fp8_2d"
+    assert out_expanded is not None
+
+
 def test_annotate_and_validate_provider_meta_generic() -> None:
     cand = _dummy_candidate("plain")
     annotate_provider_intent_meta(

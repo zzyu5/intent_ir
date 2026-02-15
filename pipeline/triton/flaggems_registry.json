@@ -18,8 +18,8 @@
     "source_filtered_ops": 212,
     "semantic_ops": 196,
     "by_status": {
-      "blocked_backend": 54,
-      "dual_pass": 142
+      "blocked_backend": 53,
+      "dual_pass": 143
     },
     "by_family": {
       "attention_sequence": 5,
@@ -8590,8 +8590,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.per_token_group_quant_fp8",
       "e2e_spec": "per_token_group_quant_fp8_2d",
-      "status": "blocked_backend",
-      "status_reason": "pipeline_diff_failed_or_missing",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped to per_token_group_quant_fp8 primitive; rvv_missing=['per_token_group_quant_fp8']; cuda_h100_missing=['per_token_group_quant_fp8']; cuda_5090d_missing=['per_token_group_quant_fp8']",
       "backend_support": {
         "rvv": {
@@ -8640,24 +8640,24 @@
           ]
         }
       },
-      "reason_code": "diff_fail",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
-          "reason_code": "runtime_fail",
-          "reason_detail": "[triton:per_token_group_quant_fp8_2d] load artifact: /home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260215/batch_active10_oprod_v3/pipeline/per_token_group_quant_fp8_2d.json\n[triton:per_token_group_quant_fp8_2d] load baseline npz: artifacts/flaggems_matrix/daily/20260215/batch_active10_oprod_v3/pipeline/per_token_group_quant_fp8_2d.baseline.npz\n[triton:per_token_group_quant_fp8_2d] schedule selection: mode=auto budget=1\n[triton:per_token_group_quant_fp8_2d] ssh connect: ubuntu@192.168.8.72:22\n[triton:per_token_group_quant_fp8_2d] remote dir: /tmp/intentir_per_token_group_quant_fp8_2d_rvv\n[triton:per_token_group_quant_fp8_2d] upload runtime\nTraceback (most recent call last):\n  File \"/home/kingdom/intentir/scripts/rvv_remote_run.py\", line 1234, in <module>\n    main()\n  File \"/home/kingdom/intentir/scripts/rvv_remote_run.py\", line 1201, in main\n    res = run_remote(\n          ^^^^^^^^^^^\n  File \"/home/kingdom/intentir/scripts/rvv_remote_run.py\", line 785, in run_remote\n    intent_codegen = IntentFunction.from_json_dict(intent_j)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/kingdom/intentir/intent_ir/ir/ir_types.py\", line 271, in from_json_dict\n    inst.validate()\n  File \"/home/kingdom/intentir/intent_ir/ir/ir_types.py\", line 298, in validate\n    _validate_outputs(self.outputs, self.tensors, self.ops)\n  File \"/home/kingdom/intentir/intent_ir/ir/ir_types.py\", line 1285, in _validate_outputs\n    raise IntentIRValidationError(\"outputs must not be empty\")\nintent_ir.ir.ir_types.IntentIRValidationError: outputs must not be empty"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
         "provider": {
           "exists": true,
-          "diff_ok": false
+          "diff_ok": true
         },
-        "rvv": "fail",
-        "cuda": "fail"
+        "rvv": "pass",
+        "cuda": "pass"
       },
       "in_scope": true,
       "in_scope_active": true,

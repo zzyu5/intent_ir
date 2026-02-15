@@ -69,6 +69,7 @@ _ALWAYS_CANONICAL_SPECS = frozenset(
         "pad2d",
         "prod2d",
         "prod_dim2d",
+        "per_token_group_quant_fp8_2d",
         "upsample_nearest1d_ncl",
         "upsample_nearest2d_nchw",
         "glu2d",
