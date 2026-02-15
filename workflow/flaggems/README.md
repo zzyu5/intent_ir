@@ -1,6 +1,13 @@
 # FlagGems Long-Run Workflow
 
 This directory is a session handoff harness for long-running FlagGems work.
+FlagGems is integrated as a Triton provider (not a separate frontend type).
+
+## Current Baseline
+
+- Registry truth source: `pipeline/triton/flaggems_registry.json`
+- Current coverage target: `196` semantic ops (`deterministic_forward`)
+- Current status: `dual_pass=196`, `blocked_ir=0`, `blocked_backend=0`
 
 ## Quick Start
 
@@ -12,7 +19,7 @@ This will:
 - sync `state/feature_list.json` from `pipeline/triton/flaggems_registry.json`
 - freeze a baseline snapshot under `state/baselines/`
 - plan the next active batch into `state/active_batch.json`
-- validate session context snapshot
+- validate session context snapshot (allows empty batch when full coverage is reached)
 
 ## Session Lifecycle
 
@@ -36,6 +43,28 @@ python scripts/flaggems/check_batch_gate.py \
   --status-converged artifacts/flaggems_matrix/<run>/status_converged.json
 ```
 
+## Matrix + Gate (Canonical)
+
+```bash
+python scripts/flaggems/run_multibackend_matrix.py \
+  --suite coverage \
+  --flaggems-path intentir \
+  --intentir-mode auto \
+  --run-rvv-remote \
+  --rvv-host 192.168.8.72 \
+  --rvv-user ubuntu \
+  --rvv-use-key \
+  --cuda-runtime-backend nvrtc \
+  --cuda-codegen-mode py \
+  --out-dir artifacts/flaggems_matrix/daily/<YYYYMMDD>/<run_name>
+```
+
+```bash
+python scripts/flaggems/ci_gate.py \
+  --run-summary artifacts/flaggems_matrix/daily/<YYYYMMDD>/<run_name>/run_summary.json \
+  --status-converged artifacts/flaggems_matrix/daily/<YYYYMMDD>/<run_name>/status_converged_registry_write.json
+```
+
 ## State Files
 
 - `state/feature_list.json`: registry-derived feature truth for scheduling.
@@ -45,3 +74,8 @@ python scripts/flaggems/check_batch_gate.py \
 - `state/baselines/*.json`: frozen metric snapshots.
 - `state/metrics_history.jsonl`: time-series metrics from registry snapshots.
 - `state/roadmap.json`: persistent milestone checklist for long-run handoff.
+
+## Notes
+
+- `plan_next_batch.py` returning `Selected 0 ops` means full coverage is complete; switch to maintenance mode (nightly matrix + CI gate).
+- Registry write-back policy remains: only after batch gate passes.

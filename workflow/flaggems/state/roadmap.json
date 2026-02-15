@@ -1,32 +1,37 @@
 {
   "schema_version": "flaggems_roadmap_v1",
-  "generated_at": "2026-02-13T12:18:00+00:00",
+  "generated_at": "2026-02-15T09:45:00+00:00",
   "milestones": [
     {
       "id": "M1",
       "target": "blocked_ir<=50 + e2e_specs>=75 + workflow hard gate",
-      "status": "in_progress"
+      "status": "completed"
     },
     {
       "id": "M2",
       "target": "blocked_ir<=35 + wave-a batch leaves blocked_ir",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "M3",
       "target": "blocked_ir<=20 + reason_code standardized",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "M4",
       "target": "blocked_ir==0",
-      "status": "pending"
+      "status": "completed"
     },
     {
       "id": "M5",
       "target": "blocked_backend<=15 + cuda determinism>=95%",
-      "status": "pending"
+      "status": "completed"
+    },
+    {
+      "id": "M6",
+      "target": "196/196 dual_pass maintenance: CI drift checks + compatibility-only traditional path",
+      "status": "in_progress"
     }
   ],
-  "notes": "Update milestone status as phases converge; do not delete history."
+  "notes": "Core convergence complete (196 semantic ops dual_pass). Keep this file for maintenance-phase status only."
 }

@@ -9,6 +9,6 @@ echo "[flaggems:init] branch: $(git branch --show-current)"
 
 python scripts/flaggems/sync_feature_list_from_registry.py --freeze-baseline
 python scripts/flaggems/plan_next_batch.py --batch-size "${1:-10}"
-python scripts/flaggems/start_session.py
+python scripts/flaggems/start_session.py --no-require-non-empty
 
 echo "[flaggems:init] done"

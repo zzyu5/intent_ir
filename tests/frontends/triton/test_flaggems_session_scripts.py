@@ -96,3 +96,35 @@ def test_end_session_requires_run_and_status_artifacts(tmp_path: Path) -> None:
         text=True,
     )
     assert p.returncode != 0
+
+
+def test_start_session_allows_empty_batch_when_opted_out(tmp_path: Path) -> None:
+    active = tmp_path / "active_batch.json"
+    active.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_active_batch_v1",
+                "generated_at": "2026-02-15T00:00:00+00:00",
+                "branch": "flaggems",
+                "batch_size": 10,
+                "items": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/start_session.py",
+            "--active-batch",
+            str(active),
+            "--no-require-non-empty",
+            "--print-json",
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0
+    payload = json.loads(p.stdout)
+    assert int(payload["summary"]["selected_items"]) == 0

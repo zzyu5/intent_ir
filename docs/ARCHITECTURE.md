@@ -45,3 +45,36 @@ To add a new frontend (e.g., CUDA C / TileLang), aim for the same artifacts:
 - Optional: a frontend IR dump (like TTIR) from which you can extract constraints
 
 IntentIR + verification + backend can then be reused with minimal changes.
+
+## Triton Provider Layer (FlagGems)
+
+FlagGems integration is implemented as a Triton provider plugin, not as a new
+frontend category.
+
+- Provider plugin path: `pipeline/triton/providers/flaggems/`
+- Shared frontend core path: `pipeline/triton/core.py`
+- Workflow + long-run state path: `workflow/flaggems/`
+
+Provider responsibilities:
+- semantic mapping from provider ops to IntentIR patterns
+- deterministic spec generation for reproducible e2e regression
+- registry-driven status accounting (`dual_pass/blocked_*`)
+
+Non-responsibilities:
+- no provider-specific IR dialect forks
+- no separate backend stack for FlagGems (RVV/CUDA are shared backends)
+
+## Long-Run Gate Stack
+
+The mature integration loop is:
+
+1. `run_multibackend_matrix.py` (pipeline + RVV local/remote + CUDA)
+2. `converge_status.py` (scoped + global reason-coded convergence)
+3. `check_batch_gate.py` (batch hard gate)
+4. `ci_gate.py` (registry sync + batch gate + reason-code completeness)
+
+Primary artifacts:
+- `artifacts/flaggems_matrix/daily/<date>/<run>/run_summary.json`
+- `artifacts/flaggems_matrix/daily/<date>/<run>/status_converged*.json`
+- `workflow/flaggems/state/progress_log.jsonl`
+- `workflow/flaggems/state/handoff.md`

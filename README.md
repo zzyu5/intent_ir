@@ -21,6 +21,20 @@ IntentIR is a research prototype that extracts **high-level kernel intent** from
 - Backend codegen (no LLM, no remote): `python scripts/backend_codegen_smoke.py`
 - Full pipeline (LLM + Triton launch + TTIR + verify): `python scripts/triton/full_pipeline_verify.py`
 
+## FlagGems Integration Status
+
+- Integration mode: Triton provider plugin (`pipeline/triton/providers/flaggems/`)
+- Coverage baseline: `196` semantic ops (`deterministic_forward`)
+- Current convergence: `196/196 dual_pass` (RVV + CUDA)
+
+Primary matrix runner:
+
+`python scripts/flaggems/run_multibackend_matrix.py --suite coverage --flaggems-path intentir --intentir-mode auto --run-rvv-remote --rvv-host 192.168.8.72 --rvv-user ubuntu --rvv-use-key --cuda-runtime-backend nvrtc --cuda-codegen-mode py --out-dir artifacts/flaggems_matrix/daily/<YYYYMMDD>/<run_name>`
+
+CI-style gate aggregation:
+
+`python scripts/flaggems/ci_gate.py --run-summary artifacts/flaggems_matrix/daily/<YYYYMMDD>/<run_name>/run_summary.json --status-converged artifacts/flaggems_matrix/daily/<YYYYMMDD>/<run_name>/status_converged_registry_write.json`
+
 ## Remote RVV (Task6)
 
 Run a kernel end-to-end and compare remote outputs against the saved Triton baseline:
