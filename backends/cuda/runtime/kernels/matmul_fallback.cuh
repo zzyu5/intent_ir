@@ -2,13 +2,24 @@
 
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <cuda_fp16.h>
 
 namespace intentir_cuda {
 
-template <int BLOCK_M, int BLOCK_N, int BLOCK_K, int THREAD_M, int ROWS_PER_THREAD>
-__device__ __forceinline__ void matmul_f32_fallback(
-    const float* __restrict__ A,
-    const float* __restrict__ B,
+template <typename T>
+__device__ __forceinline__ float to_f32(T v) {
+  return static_cast<float>(v);
+}
+
+template <>
+__device__ __forceinline__ float to_f32<__half>(__half v) {
+  return __half2float(v);
+}
+
+template <int BLOCK_M, int BLOCK_N, int BLOCK_K, int THREAD_M, int ROWS_PER_THREAD, typename TA, typename TB>
+__device__ __forceinline__ void matmul_f32_accum_fallback(
+    const TA* __restrict__ A,
+    const TB* __restrict__ B,
     float* __restrict__ C,
     int M,
     int N,
@@ -26,7 +37,6 @@ __device__ __forceinline__ void matmul_f32_fallback(
   for (int i = 0; i < ROWS_PER_THREAD; ++i) acc[i] = 0.0f;
 
   for (int kt = 0; kt < K; kt += BLOCK_K) {
-    // Cooperative load (guarded).
     if (tx < BLOCK_K) {
       #pragma unroll
       for (int i = 0; i < ROWS_PER_THREAD; ++i) {
@@ -34,7 +44,7 @@ __device__ __forceinline__ void matmul_f32_fallback(
         if (r < BLOCK_M) {
           const int row = block_row + r;
           if (row < M && (kt + tx) < K)
-            As[r * BLOCK_K + tx] = A[(size_t)row * (size_t)K + (size_t)(kt + tx)];
+            As[r * BLOCK_K + tx] = to_f32(A[(size_t)row * (size_t)K + (size_t)(kt + tx)]);
           else
             As[r * BLOCK_K + tx] = 0.0f;
         }
@@ -42,7 +52,7 @@ __device__ __forceinline__ void matmul_f32_fallback(
     }
     if (ty < BLOCK_K) {
       if (col < N && (kt + ty) < K)
-        Bs[ty * BLOCK_N + tx] = B[(size_t)(kt + ty) * (size_t)N + (size_t)col];
+        Bs[ty * BLOCK_N + tx] = to_f32(B[(size_t)(kt + ty) * (size_t)N + (size_t)col]);
       else
         Bs[ty * BLOCK_N + tx] = 0.0f;
     }
@@ -69,5 +79,17 @@ __device__ __forceinline__ void matmul_f32_fallback(
   }
 }
 
-}  // namespace intentir_cuda
+template <int BLOCK_M, int BLOCK_N, int BLOCK_K, int THREAD_M, int ROWS_PER_THREAD>
+__device__ __forceinline__ void matmul_f32_fallback(
+    const float* __restrict__ A,
+    const float* __restrict__ B,
+    float* __restrict__ C,
+    int M,
+    int N,
+    int K,
+    float* __restrict__ As,
+    float* __restrict__ Bs) {
+  matmul_f32_accum_fallback<BLOCK_M, BLOCK_N, BLOCK_K, THREAD_M, ROWS_PER_THREAD, float, float>(A, B, C, M, N, K, As, Bs);
+}
 
+}  // namespace intentir_cuda

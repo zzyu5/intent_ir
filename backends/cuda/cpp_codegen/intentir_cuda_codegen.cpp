@@ -226,6 +226,7 @@ std::string c_ident(std::string_view name) {
 
 std::string c_type_for_dtype(const std::string& dt) {
   if (dt == "f32") return "float";
+  if (dt == "f16") return "__half";
   if (dt == "bf16") return "__nv_bfloat16";
   if (dt == "i32") return "int";
   if (dt == "i64") return "int64_t";
@@ -1180,8 +1181,22 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
 
   auto a_it = intent.tensors.find(a);
   auto b_it = intent.tensors.find(b);
-  if (a_it == intent.tensors.end() || b_it == intent.tensors.end()) fail("matmul missing A/B tensors in intent.tensors");
+  auto c_it = intent.tensors.find(c);
+  if (a_it == intent.tensors.end() || b_it == intent.tensors.end() || c_it == intent.tensors.end())
+    fail("matmul missing A/B/C tensors in intent.tensors");
   if (a_it->second.shape.size() != 2 || b_it->second.shape.size() != 2) fail("matmul expects rank-2 inputs");
+
+  const std::string a_dtype = a_it->second.dtype;
+  const std::string b_dtype = b_it->second.dtype;
+  const std::string c_dtype = c_it->second.dtype;
+  const bool a_supported = (a_dtype == "f32" || a_dtype == "f16");
+  const bool b_supported = (b_dtype == "f32" || b_dtype == "f16");
+  if (!a_supported || !b_supported) {
+    fail("matmul input dtype unsupported for CUDA matmul fallback: A=" + a_dtype + " B=" + b_dtype);
+  }
+  if (c_dtype != "f32") {
+    fail("matmul output dtype unsupported for CUDA matmul fallback: C=" + c_dtype + " (expected f32)");
+  }
 
   const json M_dim = a_it->second.shape[0];
   const json K_dim = a_it->second.shape[1];
@@ -1214,7 +1229,8 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
       else if (it->is_number()) allow_tf32 = allow_tf32 || (it->get<double>() != 0.0);
     }
   }
-  const bool use_wmma = allow_tf32 && ((M % 16) == 0) && ((N % 16) == 0) && ((K % 8) == 0);
+  const bool use_wmma = (a_dtype == "f32") && (b_dtype == "f32") && (c_dtype == "f32") && allow_tf32 && ((M % 16) == 0) && ((N % 16) == 0) &&
+                        ((K % 8) == 0);
   const bool respect_schedule = binding_int(bindings, "CUDA_RESPECT_SCHEDULE").value_or(0) != 0;
 
   int64_t thread_m = std::min<int64_t>(16, block_y);
@@ -2350,9 +2366,11 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     w.line("#include \"kernels/matmul_fallback.cuh\"");
     w.blank();
     emit_selected_api(w);
+    const std::string a_ptr_cty = c_type_for_dtype(a_dtype);
+    const std::string b_ptr_cty = c_type_for_dtype(b_dtype);
     w.line("extern \"C\" __global__ void " + intent.name + "(");
     w.indent();
-    w.line("const float* __restrict__ A, const float* __restrict__ B, float* __restrict__ C,");
+    w.line("const " + a_ptr_cty + "* __restrict__ A, const " + b_ptr_cty + "* __restrict__ B, float* __restrict__ C,");
     w.line(m_param + ", " + n_param + ", " + k_param + ") {");
     w.dedent();
     w.indent();
@@ -2369,7 +2387,8 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
     w.line("constexpr int ROWS_PER_THREAD = " + std::to_string(rows_per_thread) + ";");
     w.line("__shared__ float As[BLOCK_M * BLOCK_K];");
     w.line("__shared__ float Bs[BLOCK_K * BLOCK_N];");
-    w.line("intentir_cuda::matmul_f32_fallback<BLOCK_M, BLOCK_N, BLOCK_K, THREAD_M, ROWS_PER_THREAD>(A, B, C, M, N, K, As, Bs);");
+    w.line("intentir_cuda::matmul_f32_accum_fallback<BLOCK_M, BLOCK_N, BLOCK_K, THREAD_M, ROWS_PER_THREAD, " + a_ptr_cty + ", " + b_ptr_cty +
+           ">(A, B, C, M, N, K, As, Bs);");
     w.dedent();
     w.line("}");
 
@@ -4739,10 +4758,9 @@ json emit_gather2d_f32(const Intent& intent, const json& bindings) {
 
   const int64_t M = binding_int(bindings, "M").value_or(-1);
   const int64_t N = binding_int(bindings, "N").value_or(-1);
-  int64_t L = binding_int(bindings, "L").value_or(-1);
-  if (L <= 0) {
-    auto out_it = intent.tensors.find(out_name);
-    if (out_it == intent.tensors.end()) fail("gather: output tensor not found in intent.tensors");
+  int64_t total_elems = -1;
+  auto out_it = intent.tensors.find(out_name);
+  if (out_it != intent.tensors.end()) {
     const auto resolve_dim = [&](const json& d) -> int64_t {
       if (d.is_number_integer()) return d.get<int64_t>();
       if (d.is_number()) return static_cast<int64_t>(d.get<double>());
@@ -4756,19 +4774,20 @@ json emit_gather2d_f32(const Intent& intent, const json& bindings) {
     };
     const auto& out_shape = out_it->second.shape;
     if (out_shape.size() == 1) {
-      L = resolve_dim(out_shape[0]);
+      total_elems = resolve_dim(out_shape[0]);
     } else if (out_shape.size() == 2) {
-      L = resolve_dim(out_shape[0]) * resolve_dim(out_shape[1]);
-    } else {
+      total_elems = resolve_dim(out_shape[0]) * resolve_dim(out_shape[1]);
+    } else if (!out_shape.empty()) {
       fail("gather2d MVP supports output rank<=2");
     }
   }
-  if (M <= 0 || N <= 0 || L <= 0) fail("gather missing/invalid bindings: M/N/L");
+  if (total_elems <= 0) total_elems = binding_int(bindings, "L").value_or(-1);
+  if (M <= 0 || N <= 0 || total_elems <= 0) fail("gather missing/invalid bindings: M/N/L");
 
   int64_t block_x = resolve_schedule_int(intent, bindings, "tile_n", 256);
   if (block_x <= 0) block_x = 256;
   if (block_x > 1024) block_x = 1024;
-  const int64_t grid_x = (L + block_x - 1) / block_x;
+  const int64_t grid_x = (total_elems + block_x - 1) / block_x;
 
   const std::string other_lit = c_float(other);
 
@@ -4781,11 +4800,11 @@ json emit_gather2d_f32(const Intent& intent, const json& bindings) {
   w.line("const int* __restrict__ " + row_name + ",");
   w.line("const int* __restrict__ " + col_name + ",");
   w.line("float* __restrict__ " + out_name + ",");
-  w.line("int M, int N, int L) {");
+  w.line("int M, int N, int T) {");
   w.dedent();
   w.indent();
   w.line("const int tid = (int)blockIdx.x * (int)blockDim.x + (int)threadIdx.x;");
-  w.line("if (tid >= L) return;");
+  w.line("if (tid >= T) return;");
   w.line("const int r = " + row_name + "[tid];");
   w.line("const int c = " + col_name + "[tid];");
   w.line("float v = " + other_lit + ";");
@@ -4804,12 +4823,12 @@ json emit_gather2d_f32(const Intent& intent, const json& bindings) {
   out["io_spec"] = io_spec_from_args(
       intent,
       /*tensor_args=*/{inp_name, row_name, col_name, out_name},
-      /*scalar_args=*/{{"M", "i32"}, {"N", "i32"}, {"L", "i32"}},
-      /*arg_names=*/{inp_name, row_name, col_name, out_name, "M", "N", "L"});
+      /*scalar_args=*/{{"M", "i32"}, {"N", "i32"}, {"T", "i32"}},
+      /*arg_names=*/{inp_name, row_name, col_name, out_name, "M", "N", "T"});
   out["launch"] = {{"grid", {grid_x, 1, 1}}, {"block", {block_x, 1, 1}}, {"shared_mem", 0}};
   out["output_names"] = {out_name};
   json out_bindings = bindings;
-  out_bindings["L"] = L;
+  out_bindings["T"] = total_elems;
   out["bindings"] = out_bindings;
   return out;
 }
@@ -5803,6 +5822,10 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
       const std::string from_dt = dtype_of(in_name);
       if (from_dt == "bf16" && out_dt == "f32") {
         emit_assign("__bfloat162float(" + val(in_name) + ")");
+      } else if (from_dt == "f16" && out_dt == "f32") {
+        emit_assign("__half2float(" + val(in_name) + ")");
+      } else if (from_dt == "f32" && out_dt == "f16") {
+        emit_assign("__float2half(" + val(in_name) + ")");
       } else if (from_dt == "f32" && out_dt == "bf16") {
         emit_assign("__float2bfloat16(" + val(in_name) + ")");
       } else {
@@ -5949,6 +5972,7 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
   CodeWriter w(cuda_ss);
   w.line("#include <math.h>");
   w.line("#include <stdint.h>");
+  w.line("#include <cuda_fp16.h>");
   w.line("#include <cuda_bf16.h>");
   w.blank();
   w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_x) + ") void " + intent.name + "(");
@@ -7039,6 +7063,19 @@ json lower_intent_to_cuda(const Intent& intent, const json& bindings_json) {
   if (!bindings_json.is_object()) fail("bindings must be object");
 
   if (intent.ops.size() == 1 && intent.ops[0].op == "matmul") return emit_matmul_f32(intent, bindings_json);
+  if (intent.ops.size() == 2 && intent.ops[0].op == "matmul" && intent.ops[1].op == "cast") {
+    const Op& mm = intent.ops[0];
+    const Op& cs = intent.ops[1];
+    if (cs.inputs.size() == 1 && cs.inputs[0] == mm.output) {
+      const std::string to_dtype = cs.attrs.value("to", std::string("f32"));
+      if (to_dtype == "f32") {
+        Intent tmp = intent;
+        tmp.ops = {mm};
+        tmp.ops[0].output = cs.output;
+        return emit_matmul_f32(tmp, bindings_json);
+      }
+    }
+  }
   if (intent.ops.size() == 1 && intent.ops[0].op == "transpose") return emit_transpose_2d_f32(intent, bindings_json);
   if (intent.ops.size() == 1 && intent.ops[0].op == "reduce_sum") return emit_reduce_sum_2d_axis1_f32(intent, bindings_json);
   if (intent.ops.size() == 1 && intent.ops[0].op == "reduce_max") return emit_reduce_max_2d_axis1_f32(intent, bindings_json);

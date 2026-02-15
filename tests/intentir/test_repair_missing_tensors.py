@@ -72,3 +72,31 @@ def test_materialize_missing_tensor_for_cast_dtype() -> None:
     assert "x_f32" in intent.tensors
     assert intent.tensors["x_f32"].dtype == "f32"
     assert _shape_vals(intent, "x_f32") == ["M", "N"]
+
+
+def test_materialize_missing_tensor_for_matmul_shape_and_dtype() -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "mm2d",
+            "tensors": {
+                "A": {"dtype": "f16", "shape": ["M", "K"], "layout": "row_major"},
+                "B": {"dtype": "f16", "shape": ["K", "N"], "layout": "row_major"},
+                "C": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "matmul",
+                    "inputs": ["A", "B"],
+                    "output": "acc_main",
+                    "attrs": {"transpose_a": False, "transpose_b": False, "accumulator_dtype": "f32"},
+                },
+                {"op": "cast", "inputs": ["acc_main"], "output": "C", "attrs": {"to": "f32"}},
+            ],
+            "outputs": ["C"],
+        }
+    )
+    actions = materialize_missing_op_output_tensors(intent)
+    assert actions
+    assert "acc_main" in intent.tensors
+    assert intent.tensors["acc_main"].dtype == "f32"
+    assert _shape_vals(intent, "acc_main") == ["M", "N"]

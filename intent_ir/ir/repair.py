@@ -297,6 +297,14 @@ def _infer_dtype(op: Op, tensors: Dict[str, TensorType]) -> str:
         return "bool"
     if opname in {"argmax", "argmin"}:
         return "i32"
+    if opname == "matmul":
+        acc_dt = op.attrs.get("accumulator_dtype")
+        if isinstance(acc_dt, str) and _is_supported_dtype(acc_dt):
+            return _dtype_alias(acc_dt)
+        for key in ("accum_dtype", "out_dtype", "dtype"):
+            cand = op.attrs.get(key)
+            if isinstance(cand, str) and _is_supported_dtype(cand):
+                return _dtype_alias(cand)
     if opname == "cast":
         to_dt = op.attrs.get("to")
         if isinstance(to_dt, str) and _is_supported_dtype(to_dt):
@@ -359,6 +367,25 @@ def _infer_shape(op: Op, tensors: Dict[str, TensorType]) -> List[Dim]:
             if len(out) == len(base):
                 return out
         return _clone_shape(base)
+    if opname == "matmul" and len(input_tensors) >= 2:
+        a = list(input_tensors[0].shape)
+        b = list(input_tensors[1].shape)
+        if len(a) == 0 or len(b) == 0:
+            return []
+        if len(a) == 1 and len(b) == 1:
+            return []
+        if len(a) == 1 and len(b) >= 2:
+            batch = _clone_shape(b[:-2])
+            n = _clone_dim(b[-1])
+            return batch + [n]
+        if len(b) == 1 and len(a) >= 2:
+            batch = _clone_shape(a[:-2])
+            m = _clone_dim(a[-2])
+            return batch + [m]
+        batch = _broadcast_shape([a[:-2], b[:-2]]) if (len(a) > 2 or len(b) > 2) else []
+        m = _clone_dim(a[-2])
+        n = _clone_dim(b[-1])
+        return list(batch) + [m, n]
     if opname in {"reduce_sum", "reduce_prod", "reduce_max", "reduce_min", "reduce_any", "reduce_all", "mean", "var", "std", "argmax", "argmin"}:
         if input_tensors:
             base = list(input_tensors[0].shape)

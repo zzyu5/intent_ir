@@ -1259,3 +1259,79 @@ def test_cuda_lowering_supports_argmax_argmin_axis1(monkeypatch) -> None:
     assert lowered_min.kernel_name == "argmin2d_cuda_lowering"
     assert "int* __restrict__ out_index" in lowered_max.cuda_src
     assert "int* __restrict__ out_index" in lowered_min.cuda_src
+
+
+def test_cuda_lowering_supports_f16_cast_pattern(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "cast2d_cuda_lowering",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f16", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cast", "inputs": ["x"], "output": "out", "attrs": {"to": "f16"}},
+            ],
+            "outputs": ["out"],
+            "parallel_axes": ["M", "N"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
+    assert lowered.kernel_name == "cast2d_cuda_lowering"
+    assert "__half" in lowered.cuda_src
+    assert "__float2half(" in lowered.cuda_src
+
+
+def test_cuda_gather_uses_total_output_elements_for_rank2(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "index_select2d_cuda_lowering",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "row_idx": {"dtype": "i32", "shape": ["L", "N"], "layout": "row_major"},
+                "col_idx": {"dtype": "i32", "shape": ["L", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["L", "N"], "layout": "row_major"},
+            },
+            "ops": [{"op": "gather", "inputs": ["inp", "row_idx", "col_idx"], "output": "out"}],
+            "outputs": ["out"],
+            "parallel_axes": ["L", "N"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["L", "N"]},
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 16, "N": 32, "L": 8})
+    assert lowered.kernel_name == "index_select2d_cuda_lowering"
+    assert lowered.bindings["L"] == 8
+    assert lowered.bindings["T"] == 8 * 32
+    assert "if (tid >= T) return;" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_matmul_then_cast_pattern(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "mm2d_cuda_lowering",
+            "tensors": {
+                "A": {"dtype": "f16", "shape": ["M", "K"], "layout": "row_major"},
+                "B": {"dtype": "f16", "shape": ["K", "N"], "layout": "row_major"},
+                "acc_main": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "C": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "matmul",
+                    "inputs": ["A", "B"],
+                    "output": "acc_main",
+                    "attrs": {"transpose_a": False, "transpose_b": False, "accumulator_dtype": "f32"},
+                },
+                {"op": "cast", "inputs": ["acc_main"], "output": "C", "attrs": {"to": "f32"}},
+            ],
+            "outputs": ["C"],
+            "parallel_axes": ["M", "N"],
+            "schedule": {"tile_m": 16, "tile_n": 16, "tile_k": 16, "parallel_axes": ["M", "N"]},
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 16, "N": 16, "K": 32})
+    assert lowered.kernel_name == "mm2d_cuda_lowering"
+    assert "const __half* __restrict__ A" in lowered.cuda_src
+    assert "const __half* __restrict__ B" in lowered.cuda_src
+    assert "matmul_f32_accum_fallback" in lowered.cuda_src
