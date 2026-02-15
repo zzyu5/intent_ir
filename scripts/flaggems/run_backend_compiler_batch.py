@@ -27,6 +27,31 @@ def _default_out_dir() -> Path:
     return ROOT / "artifacts" / "flaggems_matrix" / "daily" / date_tag / run_name
 
 
+def _load_json(path: Path) -> dict:
+    if not path.is_file():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _guess_baseline_dir(out_dir: Path) -> Path | None:
+    current_status = ROOT / "workflow" / "flaggems" / "state" / "current_status.json"
+    if not current_status.is_file():
+        return None
+    payload = _load_json(current_status)
+    run_summary = str((payload.get("latest_artifacts") or {}).get("run_summary") or "").strip()
+    if not run_summary:
+        return None
+    p = Path(run_summary)
+    if not p.is_absolute():
+        p = ROOT / p
+    if not p.is_file():
+        return None
+    baseline_dir = p.parent
+    if baseline_dir.resolve() == out_dir.resolve():
+        return None
+    return baseline_dir
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out-dir", type=Path, default=_default_out_dir())
@@ -39,6 +64,13 @@ def main() -> None:
     ap.add_argument("--cuda-runtime-backend", choices=["auto", "nvcc", "nvrtc"], default="nvrtc")
     ap.add_argument("--cuda-codegen-mode", choices=["auto", "cpp", "py"], default="py")
     ap.add_argument("--allow-cuda-skip", action=argparse.BooleanOptionalAction, default=True)
+    ap.add_argument(
+        "--emit-timing-delta",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Emit stage timing delta report against previous backend run.",
+    )
+    ap.add_argument("--timing-baseline-dir", type=Path, default=None)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -80,6 +112,35 @@ def main() -> None:
         cmd += ["--kernel", str(k)]
 
     rc, stdout, stderr = _run(cmd, dry_run=bool(args.dry_run))
+    timing_delta_path = ""
+    timing_delta_ok = True
+    timing_delta_stderr = ""
+    baseline_dir = Path(args.timing_baseline_dir) if args.timing_baseline_dir is not None else _guess_baseline_dir(Path(args.out_dir))
+    if bool(args.emit_timing_delta) and not bool(args.dry_run) and int(rc) == 0:
+        current_rvv = Path(args.out_dir) / "rvv_local.json"
+        current_cuda = Path(args.out_dir) / "cuda_local.json"
+        baseline_rvv = (baseline_dir / "rvv_local.json") if baseline_dir is not None else None
+        baseline_cuda = (baseline_dir / "cuda_local.json") if baseline_dir is not None else None
+        timing_delta = Path(args.out_dir) / "timing_delta.json"
+        delta_cmd = [
+            sys.executable,
+            "scripts/flaggems/compute_stage_timing_delta.py",
+            "--current-rvv",
+            str(current_rvv),
+            "--current-cuda",
+            str(current_cuda),
+            "--out",
+            str(timing_delta),
+        ]
+        if baseline_rvv is not None:
+            delta_cmd += ["--baseline-rvv", str(baseline_rvv)]
+        if baseline_cuda is not None:
+            delta_cmd += ["--baseline-cuda", str(baseline_cuda)]
+        rc_delta, _out_delta, err_delta = _run(delta_cmd, dry_run=False)
+        timing_delta_ok = int(rc_delta) == 0
+        timing_delta_stderr = str(err_delta).strip()
+        timing_delta_path = str(timing_delta)
+
     summary = {
         "ok": bool(rc == 0),
         "lane": "backend_compiler",
@@ -87,6 +148,12 @@ def main() -> None:
         "out_dir": str(args.out_dir),
         "stdout": stdout.strip(),
         "stderr": stderr.strip(),
+        "timing_delta": {
+            "ok": bool(timing_delta_ok),
+            "path": timing_delta_path,
+            "baseline_dir": str(baseline_dir) if baseline_dir is not None else "",
+            "stderr": timing_delta_stderr,
+        },
     }
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)

@@ -61,6 +61,10 @@ def main() -> None:
         "--intentir-semantics-cmd",
         default=f"{sys.executable} -m pytest -q tests/test_ir_types.py tests/test_opset_matrix.py",
     )
+    ap.add_argument(
+        "--macro-composition-cmd",
+        default=f"{sys.executable} scripts/intentir/check_macro_composition.py",
+    )
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -69,6 +73,7 @@ def main() -> None:
     run_summary_path = out_dir / "run_summary.json"
     status_converged_path = out_dir / "status_converged.json"
     primitive_report = out_dir / "primitive_reuse_report.json"
+    macro_report = out_dir / "macro_composition_report.json"
 
     primitive_cmd = [
         sys.executable,
@@ -82,6 +87,7 @@ def main() -> None:
         primitive_cmd.append("--allow-macro")
     stage_defs = [
         ("primitive_reuse", primitive_cmd),
+        ("macro_composition", _parse_cmd(str(args.macro_composition_cmd)) + ["--registry", str(args.registry), "--out", str(macro_report)]),
         ("mapping_tests", _parse_cmd(str(args.mapping_tests_cmd))),
         ("intentir_semantics", _parse_cmd(str(args.intentir_semantics_cmd))),
     ]
@@ -99,6 +105,8 @@ def main() -> None:
         }
         if stage_name == "primitive_reuse":
             row["json_path"] = str(primitive_report)
+        if stage_name == "macro_composition":
+            row["json_path"] = str(macro_report)
         stage_rows.append(row)
         overall_ok = overall_ok and bool(row["ok"])
 

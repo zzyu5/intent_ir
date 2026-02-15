@@ -1,31 +1,162 @@
 """
 RVV compiler pipeline driver.
 
-Current implementation is compatibility shim for incremental migration.
+This keeps a staged contract while legacy RVV codegen entrypoints remain
+compatibility shims.
 """
 
 from __future__ import annotations
 
 from time import perf_counter
-from typing import Any
+from typing import Any, Mapping
 
+from ..opset import SPMD_RVV_SUPPORTED_OPS
 from .stages import RVV_PIPELINE_STAGES, RvvPipelineResult, RvvPipelineStage
 
 
 def _stage(name: str, fn) -> RvvPipelineStage:
     t0 = perf_counter()
     try:
-        detail = str(fn() or "")
+        out = fn()
+        detail = ""
+        artifacts: dict[str, Any] = {}
+        if isinstance(out, tuple):
+            detail = str(out[0] or "")
+            if len(out) > 1 and isinstance(out[1], Mapping):
+                artifacts = dict(out[1])
+        else:
+            detail = str(out or "")
     except Exception as e:  # pragma: no cover - defensive path
-        return RvvPipelineStage(name=name, ok=False, ms=(perf_counter() - t0) * 1000.0, detail=str(e))
-    return RvvPipelineStage(name=name, ok=True, ms=(perf_counter() - t0) * 1000.0, detail=detail)
+        return RvvPipelineStage(name=name, ok=False, ms=(perf_counter() - t0) * 1000.0, detail=str(e), artifacts={})
+    return RvvPipelineStage(name=name, ok=True, ms=(perf_counter() - t0) * 1000.0, detail=detail, artifacts=artifacts)
+
+
+def _dim_value(dim: Any) -> Any:
+    try:
+        return dim.value  # type: ignore[attr-defined]
+    except Exception:
+        return dim
+
+
+def _shape_values(tensor: Any) -> list[Any]:
+    try:
+        shape = list(getattr(tensor, "shape") or [])
+    except Exception:
+        shape = []
+    return [_dim_value(d) for d in shape]
+
+
+def _collect_intent_info(intent_payload: Any) -> tuple[str, list[str], dict[str, list[Any]], dict[str, Any]]:
+    name = str(getattr(intent_payload, "name", "intent"))
+    ops_raw = list(getattr(intent_payload, "ops", []) or [])
+    op_names = [str(getattr(op, "op", "") or "") for op in ops_raw if str(getattr(op, "op", "") or "")]
+    tensors_raw = getattr(intent_payload, "tensors", {})
+    if not isinstance(tensors_raw, Mapping):
+        tensors_raw = {}
+    tensor_shapes: dict[str, list[Any]] = {}
+    for key, tensor in tensors_raw.items():
+        tensor_shapes[str(key)] = _shape_values(tensor)
+    schedule = getattr(intent_payload, "schedule", None)
+    schedule_info: dict[str, Any] = {}
+    if schedule is not None:
+        for field in ("tile_m", "tile_n", "tile_k", "vec_width", "pipeline_depth"):
+            val = getattr(schedule, field, None)
+            if val is not None:
+                schedule_info[field] = val
+    return name, op_names, tensor_shapes, schedule_info
+
+
+def _classify_failure(detail: str) -> str:
+    msg = str(detail).lower()
+    if "unsupported" in msg or "missing op" in msg:
+        return "lowering_missing_op"
+    if "invalid" in msg or "empty" in msg:
+        return "invalid_intent"
+    return "runtime_fail"
 
 
 def run_rvv_pipeline(intent_payload: Any) -> RvvPipelineResult:
-    _ = intent_payload
+    name, op_names, tensor_shapes, schedule_info = _collect_intent_info(intent_payload)
     stages: list[RvvPipelineStage] = []
-    for stage_name in RVV_PIPELINE_STAGES:
-        stages.append(_stage(stage_name, lambda: "compat_shim"))
-    ok = all(s.ok for s in stages)
-    return RvvPipelineResult(ok=ok, stages=stages, reason_code=("ok" if ok else "runtime_fail"))
 
+    def _legalize() -> tuple[str, dict[str, Any]]:
+        if not op_names:
+            raise ValueError("invalid intent: empty ops")
+        if not tensor_shapes:
+            raise ValueError("invalid intent: empty tensors")
+        unsupported = sorted([op for op in op_names if op not in SPMD_RVV_SUPPORTED_OPS])
+        if unsupported:
+            raise ValueError(f"unsupported ops for rvv pipeline: {unsupported}")
+        return (
+            "validated rvv intent payload",
+            {
+                "intent_name": name,
+                "op_count": len(op_names),
+                "tensor_count": len(tensor_shapes),
+                "ops": op_names,
+            },
+        )
+
+    def _shape_infer() -> tuple[str, dict[str, Any]]:
+        symbolic_dims: dict[str, list[str]] = {}
+        for tensor_name, shape in tensor_shapes.items():
+            syms = [str(d) for d in shape if not isinstance(d, int)]
+            if syms:
+                symbolic_dims[tensor_name] = syms
+        return (
+            "collected symbolic shape requirements",
+            {
+                "symbolic_tensor_count": len(symbolic_dims),
+                "symbolic_dims": symbolic_dims,
+            },
+        )
+
+    def _schedule() -> tuple[str, dict[str, Any]]:
+        defaults = {"tile_m": 1, "tile_n": 128, "tile_k": 1}
+        if any(op in {"matmul", "conv1d", "conv2d", "conv3d"} for op in op_names):
+            defaults = {"tile_m": 32, "tile_n": 64, "tile_k": 16}
+        merged = dict(defaults)
+        merged.update({k: v for k, v in schedule_info.items() if v is not None})
+        return ("resolved rvv schedule hints", {"schedule_hints": merged})
+
+    def _emit_cpp() -> tuple[str, dict[str, Any]]:
+        return ("selected C++ codegen emit path", {"emit_backend": "cpp"})
+
+    def _compile() -> tuple[str, dict[str, Any]]:
+        return ("deferred compile to codegen runner", {"compile_mode": "deferred"})
+
+    def _run() -> tuple[str, dict[str, Any]]:
+        return ("deferred runtime execution to smoke runner", {"run_mode": "deferred"})
+
+    stage_impls = {
+        "legalize": _legalize,
+        "shape_infer": _shape_infer,
+        "schedule": _schedule,
+        "emit_cpp": _emit_cpp,
+        "compile": _compile,
+        "run": _run,
+    }
+    failed = False
+    fail_reason = "ok"
+    fail_detail = ""
+    for stage_name in RVV_PIPELINE_STAGES:
+        if failed:
+            stages.append(
+                RvvPipelineStage(
+                    name=stage_name,
+                    ok=False,
+                    ms=0.0,
+                    detail="skipped_after_failure",
+                    artifacts={"skipped": True},
+                )
+            )
+            continue
+        stage = _stage(stage_name, stage_impls[stage_name])
+        stages.append(stage)
+        if not stage.ok:
+            failed = True
+            fail_detail = str(stage.detail)
+            fail_reason = _classify_failure(fail_detail)
+
+    ok = not failed and all(s.ok for s in stages)
+    return RvvPipelineResult(ok=ok, stages=stages, reason_code=("ok" if ok else fail_reason), reason_detail=fail_detail)

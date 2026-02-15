@@ -171,7 +171,7 @@ def main() -> None:
             )
     elif profile == "ir_arch":
         stage_map = _stage_map(run_summary)
-        required = list(args.require_stage or ["primitive_reuse", "mapping_tests", "intentir_semantics"])
+        required = list(args.require_stage or ["primitive_reuse", "macro_composition", "mapping_tests", "intentir_semantics"])
         missing_or_fail = [s for s in required if not bool((stage_map.get(s) or {}).get("ok"))]
         checks.append(
             _check(
