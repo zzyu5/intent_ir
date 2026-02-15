@@ -1,0 +1,74 @@
+from intent_ir.ir import IntentFunction
+from intent_ir.ir.repair import materialize_missing_op_output_tensors
+
+
+def _shape_vals(intent: IntentFunction, name: str) -> list[object]:
+    return [d.value for d in intent.tensors[name].shape]
+
+
+def test_materialize_missing_tensor_for_elementwise_chain() -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "add2d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "y": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "alpha": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "mul", "inputs": ["y", "alpha"], "output": "y_scaled"},
+                {"op": "add", "inputs": ["x", "y_scaled"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+    actions = materialize_missing_op_output_tensors(intent)
+    assert actions
+    assert "y_scaled" in intent.tensors
+    assert intent.tensors["y_scaled"].dtype == "f32"
+    assert _shape_vals(intent, "y_scaled") == ["M", "N"]
+
+
+def test_materialize_missing_tensor_for_reduce_shape() -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "reduce_sum2d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "reduce_sum", "inputs": ["x"], "output": "row_sum", "attrs": {"dims": [1], "keepdims": False}},
+                {"op": "identity", "inputs": ["row_sum"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+    actions = materialize_missing_op_output_tensors(intent)
+    assert actions
+    assert "row_sum" in intent.tensors
+    assert intent.tensors["row_sum"].dtype == "f32"
+    assert _shape_vals(intent, "row_sum") == ["M"]
+
+
+def test_materialize_missing_tensor_for_cast_dtype() -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "cast2d",
+            "tensors": {
+                "x": {"dtype": "f16", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cast", "inputs": ["x"], "output": "x_f32", "attrs": {"to": "f32"}},
+                {"op": "identity", "inputs": ["x_f32"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+    actions = materialize_missing_op_output_tensors(intent)
+    assert actions
+    assert "x_f32" in intent.tensors
+    assert intent.tensors["x_f32"].dtype == "f32"
+    assert _shape_vals(intent, "x_f32") == ["M", "N"]

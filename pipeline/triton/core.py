@@ -25,6 +25,7 @@ from intent_ir.llm import LLMIntentHub
 from intent_ir.macros import expand_macros, enrich_intent_macros
 from intent_ir.parser import CandidateIntent
 from intent_ir.ir.printer_mlir_like import print_mlir_like
+from intent_ir.ir.repair import materialize_missing_op_output_tensors
 from frontends.common.static_validate import static_validate
 from pipeline import registry as pipeline_registry
 from pipeline.interfaces import FrontendConstraints
@@ -84,6 +85,36 @@ def llm_to_intent(desc, feedback: Optional[List[str]] = None) -> CandidateIntent
     Backward-compatible helper: lift a KernelDescriptor into a CandidateIntent.
     """
     return _LLM_HUB.lift(desc, feedback=list(feedback or []))
+
+
+def _materialize_missing_tensors_for_report(intent: IntentFunction, report: Dict[str, object], *, phase: str) -> None:
+    try:
+        actions = materialize_missing_op_output_tensors(intent)
+    except Exception as e:  # pragma: no cover - defensive path
+        report.setdefault("intent_tensor_repairs", [])
+        repairs = report.get("intent_tensor_repairs")
+        if isinstance(repairs, list):
+            repairs.append(
+                {
+                    "phase": str(phase),
+                    "ok": False,
+                    "error": f"{type(e).__name__}: {e}",
+                }
+            )
+        return
+    if not actions:
+        return
+    report.setdefault("intent_tensor_repairs", [])
+    repairs = report.get("intent_tensor_repairs")
+    if isinstance(repairs, list):
+        repairs.append(
+            {
+                "phase": str(phase),
+                "ok": True,
+                "count": int(len(actions)),
+                "actions": list(actions),
+            }
+        )
 
 
 def _intent_seed_path(out_dir: Path, kernel_name: str) -> Path:
@@ -2810,7 +2841,7 @@ def run_pipeline_for_spec(
         backend_target=backend_target,
     )
     report["provider_meta_validation"] = provider_plugin.validate_intent_meta(cand.intent)
-    report["intent"] = cand.intent.to_json_dict()
+    _materialize_missing_tensors_for_report(cand.intent, report, phase="initial")
     if cand_expanded is not None:
         _ensure_schedule(cand_expanded.intent, kernel_name=spec.name, triton_src=src)
         _attach_access_witness_meta(cand_expanded.intent, cert_v2=cert_v2, canonical_shapes=dict(spec.canonical_shapes))
@@ -2820,6 +2851,8 @@ def run_pipeline_for_spec(
             capability_state=(str(provider_capability_state) if provider_capability_state is not None else None),
             backend_target=backend_target,
         )
+        _materialize_missing_tensors_for_report(cand_expanded.intent, report, phase="initial_expanded")
+    report["intent"] = cand.intent.to_json_dict()
     report["intent_expanded"] = (cand_expanded.intent.to_json_dict() if cand_expanded is not None else None)
     if llm_generated:
         source_mode = "llm"
@@ -2893,6 +2926,8 @@ def run_pipeline_for_spec(
                     print_mlir_like(cand_expanded.intent), encoding="utf-8"
                 )
                 report["provider_meta_validation"] = provider_plugin.validate_intent_meta(cand.intent)
+                _materialize_missing_tensors_for_report(cand.intent, report, phase="stage6_repair")
+                _materialize_missing_tensors_for_report(cand_expanded.intent, report, phase="stage6_repair_expanded")
                 report["intent"] = cand.intent.to_json_dict()
                 report["intent_expanded"] = cand_expanded.intent.to_json_dict()
                 sv = static_validate((cand_expanded.intent if cand_expanded is not None else cand.intent), sv_cert)
@@ -3057,6 +3092,8 @@ def run_pipeline_for_spec(
                 )
                 (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_fix), encoding="utf-8")
                 report["provider_meta_validation"] = provider_plugin.validate_intent_meta(cand_fix.intent)
+                _materialize_missing_tensors_for_report(cand_fix.intent, report, phase="stage7_repair")
+                _materialize_missing_tensors_for_report(expanded_fix, report, phase="stage7_repair_expanded")
                 report["intent"] = cand_fix.intent.to_json_dict()
                 report["intent_expanded"] = expanded_fix.to_json_dict()
                 cand_for_run = cand_expanded
