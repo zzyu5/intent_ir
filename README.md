@@ -35,6 +35,10 @@ CI-style gate aggregation:
 
 `python scripts/flaggems/ci_gate.py --run-summary artifacts/flaggems_matrix/daily/<YYYYMMDD>/<run_name>/run_summary.json --status-converged artifacts/flaggems_matrix/daily/<YYYYMMDD>/<run_name>/status_converged_registry_write.json`
 
+Nightly maintenance runner (matrix + ci_gate in one command):
+
+`python scripts/flaggems/nightly_maintenance.py --suite coverage --run-rvv-remote --rvv-host 192.168.8.72 --rvv-user ubuntu --rvv-use-key --cuda-runtime-backend nvrtc --cuda-codegen-mode py`
+
 ## Remote RVV (Task6)
 
 Run a kernel end-to-end and compare remote outputs against the saved Triton baseline:

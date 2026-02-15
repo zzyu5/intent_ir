@@ -30,8 +30,8 @@
     {
       "id": "M6",
       "target": "196/196 dual_pass maintenance: CI drift checks + compatibility-only traditional path",
-      "status": "in_progress"
+      "status": "completed"
     }
   ],
-  "notes": "Core convergence complete (196 semantic ops dual_pass). Keep this file for maintenance-phase status only."
+  "notes": "Core convergence complete (196 semantic ops dual_pass). Maintenance automation (nightly matrix + ci_gate) is now in place; keep this file for future phase tracking."
 }

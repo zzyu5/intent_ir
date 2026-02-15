@@ -65,6 +65,23 @@ python scripts/flaggems/ci_gate.py \
   --status-converged artifacts/flaggems_matrix/daily/<YYYYMMDD>/<run_name>/status_converged_registry_write.json
 ```
 
+## Nightly Maintenance (Post-Coverage)
+
+When `active_batch` is empty (full coverage reached), use nightly drift checks:
+
+```bash
+python scripts/flaggems/nightly_maintenance.py \
+  --suite coverage \
+  --run-rvv-remote \
+  --rvv-host 192.168.8.72 \
+  --rvv-user ubuntu \
+  --rvv-use-key \
+  --cuda-runtime-backend nvrtc \
+  --cuda-codegen-mode py
+```
+
+Use `--dry-run` to verify command composition without executing pipeline/backend jobs.
+
 ## State Files
 
 - `state/feature_list.json`: registry-derived feature truth for scheduling.
