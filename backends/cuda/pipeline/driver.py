@@ -229,6 +229,7 @@ def run_cuda_pipeline(
     intent_payload: Any,
     *,
     shape_bindings: Mapping[str, Any] | None = None,
+    execute_backend_stages: bool = True,
 ) -> CudaPipelineResult:
     name, op_names, tensor_shapes, schedule_info = _collect_intent_info(intent_payload)
     stages: list[CudaPipelineStage] = []
@@ -321,6 +322,8 @@ def run_cuda_pipeline(
         )
 
     def _compile() -> tuple[str, dict[str, Any]]:
+        if not bool(execute_backend_stages):
+            return ("compile skipped: compatibility mode", {"compile_mode": "skipped_compatibility"})
         if not can_execute:
             return ("compile skipped: missing bindings", {"compile_mode": "skipped_missing_bindings"})
         if "kernel_name" not in state or "cuda_src" not in state or "io_spec" not in state:
@@ -339,6 +342,8 @@ def run_cuda_pipeline(
         )
 
     def _launch() -> tuple[str, dict[str, Any]]:
+        if not bool(execute_backend_stages):
+            return ("launch skipped: compatibility mode", {"launch_mode": "skipped_compatibility"})
         if not can_execute:
             return ("launch skipped: missing bindings", {"launch_mode": "skipped_missing_bindings"})
         if "kernel_name" not in state or "cuda_src" not in state or "io_spec" not in state or "launch" not in state:

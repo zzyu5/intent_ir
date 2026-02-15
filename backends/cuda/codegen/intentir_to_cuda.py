@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, Sequence
 
-from intent_ir.ir import IntentFunction, ScheduleSketch
+from intent_ir.ir import Dim, IntentFunction, ScheduleSketch, TensorLayout, TensorType
 
 from backends.cuda.runtime import CudaLaunch
 
@@ -43,7 +43,7 @@ def _run_pipeline_compat_check(intent: IntentFunction, *, shape_bindings: Mappin
     """
     from backends.cuda.pipeline.driver import run_cuda_pipeline  # noqa: PLC0415
 
-    result = run_cuda_pipeline(intent, shape_bindings=shape_bindings)
+    result = run_cuda_pipeline(intent, shape_bindings=shape_bindings, execute_backend_stages=False)
     if bool(result.ok):
         return
     reason = str(getattr(result, "reason_code", "") or "pipeline_failed")
@@ -52,6 +52,181 @@ def _run_pipeline_compat_check(intent: IntentFunction, *, shape_bindings: Mappin
     if detail:
         msg = f"{msg} ({detail})"
     raise CudaLoweringError(msg)
+
+
+_ELEMENTWISE_INFER_OPS: set[str] = {
+    "abs",
+    "acos",
+    "asin",
+    "atan",
+    "ceil",
+    "cos",
+    "div",
+    "exp",
+    "exp2",
+    "floor",
+    "gelu",
+    "log",
+    "log2",
+    "mul",
+    "neg",
+    "pow",
+    "relu",
+    "remainder",
+    "rsqrt",
+    "sigmoid",
+    "sin",
+    "sqrt",
+    "sub",
+    "tan",
+    "tanh",
+    "add",
+    "max",
+    "maximum",
+    "min",
+    "minimum",
+}
+_CMP_OPS: set[str] = {"lt", "le", "gt", "ge", "eq", "ne"}
+_BOOL_OPS: set[str] = {"and", "or", "not"}
+_REDUCE_OPS: set[str] = {
+    "reduce_sum",
+    "reduce_max",
+    "reduce_min",
+    "reduce_prod",
+    "mean",
+    "var",
+    "std",
+    "sum_dim",
+    "max_dim",
+    "argmax",
+    "argmin",
+}
+
+
+def _dim_from_any(v: Any) -> Dim:
+    raw = _dim_value(v)
+    if isinstance(raw, int):
+        return Dim(kind="const", value=int(raw))
+    s = str(raw)
+    try:
+        return Dim(kind="const", value=int(s))
+    except Exception:
+        return Dim(kind="sym", value=s)
+
+
+def _clone_tensor_type(base: TensorType, *, dtype: str | None = None, shape: Sequence[Any] | None = None) -> TensorType:
+    out_dtype = str(dtype) if dtype is not None else str(base.dtype)
+    out_shape = list(shape) if shape is not None else list(base.shape or [])
+    return TensorType(
+        dtype=out_dtype,  # type: ignore[arg-type]
+        shape=[_dim_from_any(d) for d in out_shape],
+        layout=(base.layout if isinstance(base.layout, TensorLayout) else TensorLayout(kind="row_major")),
+    )
+
+
+def _first_tensor_input(intent: IntentFunction, op_inputs: Sequence[str]) -> TensorType | None:
+    for name in op_inputs:
+        tt = intent.tensors.get(str(name))
+        if tt is not None:
+            return tt
+    return None
+
+
+def _infer_missing_output_tensor(intent: IntentFunction, *, op_name: str, op_inputs: Sequence[str], attrs: Mapping[str, Any]) -> TensorType | None:
+    base = _first_tensor_input(intent, op_inputs)
+    op = str(op_name)
+    if op == "const":
+        shape_raw = attrs.get("shape")
+        if not isinstance(shape_raw, list):
+            shape_raw = []
+        dtype = attrs.get("dtype")
+        if not isinstance(dtype, str) or not dtype.strip():
+            value = attrs.get("value")
+            if isinstance(value, bool):
+                dtype = "bool"
+            elif isinstance(value, int):
+                dtype = "i32"
+            elif isinstance(value, float):
+                dtype = "f32"
+            else:
+                dtype = "f32"
+        return TensorType(
+            dtype=str(dtype),  # type: ignore[arg-type]
+            shape=[_dim_from_any(d) for d in shape_raw],
+            layout=TensorLayout(kind="row_major"),
+        )
+    if base is None:
+        return None
+    if op in _ELEMENTWISE_INFER_OPS:
+        return _clone_tensor_type(base)
+    if op in _CMP_OPS or op in _BOOL_OPS:
+        return _clone_tensor_type(base, dtype="bool")
+    if op == "identity":
+        return _clone_tensor_type(base)
+    if op == "cast":
+        to_dtype = attrs.get("to") if isinstance(attrs.get("to"), str) else attrs.get("dtype")
+        if not isinstance(to_dtype, str) or not to_dtype.strip():
+            to_dtype = str(base.dtype)
+        return _clone_tensor_type(base, dtype=str(to_dtype))
+    if op == "where":
+        if len(op_inputs) >= 2 and op_inputs[1] in intent.tensors:
+            return _clone_tensor_type(intent.tensors[op_inputs[1]])
+        if len(op_inputs) >= 3 and op_inputs[2] in intent.tensors:
+            return _clone_tensor_type(intent.tensors[op_inputs[2]])
+        return _clone_tensor_type(base)
+    if op == "broadcast_in_dim":
+        out_shape = attrs.get("out_shape")
+        if not isinstance(out_shape, list):
+            out_shape = attrs.get("shape")
+        if not isinstance(out_shape, list):
+            out_shape = attrs.get("output_shape")
+        if isinstance(out_shape, list):
+            return _clone_tensor_type(base, shape=out_shape)
+        return _clone_tensor_type(base)
+    if op in _REDUCE_OPS:
+        axes_raw = attrs.get("axes")
+        if isinstance(axes_raw, int):
+            axes = [int(axes_raw)]
+        elif isinstance(axes_raw, list):
+            axes = []
+            for ax in axes_raw:
+                try:
+                    axes.append(int(ax))
+                except Exception:
+                    pass
+        else:
+            axes = list(range(len(base.shape)))
+        rank = len(base.shape)
+        norm_axes: set[int] = set()
+        for ax in axes:
+            a = int(ax)
+            if a < 0:
+                a += rank
+            if 0 <= a < rank:
+                norm_axes.add(a)
+        keepdim = bool(attrs.get("keepdim", False))
+        if keepdim:
+            out_shape = [Dim(kind="const", value=1) if i in norm_axes else d for i, d in enumerate(base.shape)]
+        else:
+            out_shape = [d for i, d in enumerate(base.shape) if i not in norm_axes]
+        out_dtype = "i32" if op in {"argmax", "argmin"} else str(base.dtype)
+        return _clone_tensor_type(base, dtype=out_dtype, shape=out_shape)
+    return None
+
+
+def _materialize_missing_output_tensors(intent: IntentFunction) -> None:
+    for op in list(intent.ops or []):
+        out_name = str(getattr(op, "output", "") or "")
+        if not out_name or out_name in intent.tensors:
+            continue
+        inferred = _infer_missing_output_tensor(
+            intent,
+            op_name=str(getattr(op, "op", "") or ""),
+            op_inputs=[str(x) for x in list(getattr(op, "inputs", []) or [])],
+            attrs=(dict(getattr(op, "attrs", {}) or {})),
+        )
+        if inferred is not None:
+            intent.tensors[out_name] = inferred
 
 
 def _as_int(v: Any, *, name: str) -> int:
@@ -8631,6 +8806,7 @@ def lower_intent_to_cuda_kernel(
             continue
         bindings[key] = int(fv) if float(fv).is_integer() else float(fv)
 
+    _materialize_missing_output_tensors(intent)
     _run_pipeline_compat_check(intent, shape_bindings=bindings)
 
     # When a caller provides an explicit schedule override (e.g., freeze/retune
@@ -8659,6 +8835,16 @@ def lower_intent_to_cuda_kernel(
             )
 
     from .cpp_driver import lower_intent_to_cuda_kernel_cpp  # noqa: PLC0415
+
+    unresolved_outputs = sorted(
+        {
+            str(op.output)
+            for op in list(intent.ops or [])
+            if str(getattr(op, "output", "") or "") and str(op.output) not in intent.tensors
+        }
+    )
+    if unresolved_outputs:
+        raise CudaLoweringError(f"missing tensor metadata for outputs: {unresolved_outputs}")
 
     j = lower_intent_to_cuda_kernel_cpp(intent, bindings=bindings)
     launch_j = j.get("launch") if isinstance(j.get("launch"), dict) else {}

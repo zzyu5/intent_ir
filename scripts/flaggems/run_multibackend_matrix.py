@@ -84,7 +84,11 @@ def _resolve_suite_and_kernel_filter(
     backend_target: str,
 ) -> tuple[str, list[str]]:
     suite = str(requested_suite)
-    kernels = [str(k) for k in (requested_kernels or []) if str(k).strip()]
+    kernels_raw = [str(k) for k in (requested_kernels or []) if str(k).strip()]
+    kernels: list[str] = []
+    for k in kernels_raw:
+        if k not in kernels:
+            kernels.append(k)
 
     if not kernels:
         if suite in {"coverage", "all"}:

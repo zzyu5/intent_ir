@@ -40,7 +40,7 @@ def _run_pipeline_compat_check(intent: IntentFunction, *, shape_bindings: Mappin
     """
     from ..pipeline.driver import run_rvv_pipeline  # noqa: PLC0415
 
-    result = run_rvv_pipeline(intent, shape_bindings=shape_bindings)
+    result = run_rvv_pipeline(intent, shape_bindings=shape_bindings, execute_backend_stages=False)
     if bool(result.ok):
         return
     reason = str(getattr(result, "reason_code", "") or "pipeline_failed")

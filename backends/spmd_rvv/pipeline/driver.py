@@ -154,9 +154,11 @@ def _has_symbolic_dims(tensor_shapes: Mapping[str, list[Any]]) -> bool:
 
 
 def _resolve_dim_int(dim: Any, bindings: Mapping[str, Any]) -> int:
-    if isinstance(dim, int):
-        return int(dim)
-    key = str(dim)
+    # Support IR Dim objects directly; `str(Dim(...))` is not a usable symbol key.
+    raw = _dim_value(dim)
+    if isinstance(raw, int):
+        return int(raw)
+    key = str(raw)
     if key in bindings:
         try:
             return int(bindings[key])
@@ -274,6 +276,7 @@ def run_rvv_pipeline(
     intent_payload: Any,
     *,
     shape_bindings: Mapping[str, Any] | None = None,
+    execute_backend_stages: bool = True,
 ) -> RvvPipelineResult:
     name, op_names, tensor_shapes, schedule_info = _collect_intent_info(intent_payload)
     stages: list[RvvPipelineStage] = []
@@ -352,6 +355,8 @@ def run_rvv_pipeline(
         )
 
     def _compile() -> tuple[str, dict[str, Any]]:
+        if not bool(execute_backend_stages):
+            return ("compile skipped: compatibility mode", {"compile_mode": "skipped_compatibility"})
         if not can_execute:
             return ("compile skipped: missing bindings", {"compile_mode": "skipped_missing_bindings"})
         c_src = str(state.get("c_src") or "")
@@ -384,6 +389,8 @@ def run_rvv_pipeline(
         )
 
     def _run() -> tuple[str, dict[str, Any]]:
+        if not bool(execute_backend_stages):
+            return ("run skipped: compatibility mode", {"run_mode": "skipped_compatibility"})
         if not can_execute:
             return ("run skipped: missing bindings", {"run_mode": "skipped_missing_bindings"})
         td = state.get("tmp_dir")

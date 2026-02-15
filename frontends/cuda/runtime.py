@@ -12,6 +12,7 @@ import hashlib
 import os
 import shutil
 import sys
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -816,6 +817,27 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {{
     return src
 
 
+def _prune_stale_torch_lock(build_dir: Path) -> None:
+    lock_path = build_dir / "lock"
+    if not lock_path.is_file():
+        return
+    raw = os.getenv("INTENTIR_CUDA_RUNTIME_LOCK_STALE_SEC", "300")
+    try:
+        stale_sec = max(30, int(raw))
+    except Exception:
+        stale_sec = 300
+    try:
+        age_sec = max(0.0, float(time.time()) - float(lock_path.stat().st_mtime))
+    except Exception:
+        return
+    if age_sec < float(stale_sec):
+        return
+    try:
+        lock_path.unlink()
+    except Exception:
+        return
+
+
 @lru_cache(maxsize=32)
 def _load_ext_cached(name: str, cuda_src: str, extra_cuda_cflags: Tuple[str, ...]) -> Any:
     torch = _torch()
@@ -839,6 +861,7 @@ def _load_ext_cached(name: str, cuda_src: str, extra_cuda_cflags: Tuple[str, ...
 
     build_dir = _torch_ext_build_dir(name)
     build_dir.mkdir(parents=True, exist_ok=True)
+    _prune_stale_torch_lock(build_dir)
     # Torch uses Ninja by default; some remote machines (e.g. SSH-only clusters)
     # may not have it installed. Fall back to the distutils builder if needed.
     if os.getenv("USE_NINJA") is None and (shutil.which("ninja") is None or not is_ninja_available()):

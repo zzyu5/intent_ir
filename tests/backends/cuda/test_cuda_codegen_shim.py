@@ -30,8 +30,14 @@ def test_cuda_legacy_codegen_entry_calls_pipeline_shim(monkeypatch: pytest.Monke
     calls: list[str] = []
     lowered_calls: list[tuple[str, dict[str, int]]] = []
 
-    def _fake_run_pipeline(intent_payload: Any, *, shape_bindings: dict[str, int] | None = None) -> CudaPipelineResult:
+    def _fake_run_pipeline(
+        intent_payload: Any,
+        *,
+        shape_bindings: dict[str, int] | None = None,
+        execute_backend_stages: bool = True,
+    ) -> CudaPipelineResult:
         name = str(getattr(intent_payload, "name", "unknown"))
+        _ = execute_backend_stages
         calls.append(f"{name}:{sorted((shape_bindings or {}).items())}")
         return CudaPipelineResult(
             ok=True,
@@ -62,8 +68,13 @@ def test_cuda_legacy_codegen_entry_calls_pipeline_shim(monkeypatch: pytest.Monke
 
 
 def test_cuda_legacy_codegen_entry_bubbles_pipeline_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    def _fake_run_pipeline(_intent_payload: Any, *, shape_bindings: dict[str, int] | None = None) -> CudaPipelineResult:
-        _ = shape_bindings
+    def _fake_run_pipeline(
+        _intent_payload: Any,
+        *,
+        shape_bindings: dict[str, int] | None = None,
+        execute_backend_stages: bool = True,
+    ) -> CudaPipelineResult:
+        _ = shape_bindings, execute_backend_stages
         return CudaPipelineResult(
             ok=False,
             stages=[CudaPipelineStage(name="compile", ok=False, ms=1.0, detail="timeout")],

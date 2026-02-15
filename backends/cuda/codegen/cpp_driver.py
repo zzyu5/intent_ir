@@ -3,9 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import sys
 import subprocess
+import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
@@ -62,6 +63,28 @@ def _maybe_add_python_ninja_to_path() -> None:
 _CPP_CODEGEN_EXT: Optional[Any] = None
 
 
+def _prune_stale_torch_lock(build_dir: Path) -> None:
+    lock_path = build_dir / "lock"
+    if not lock_path.is_file():
+        return
+    raw = os.getenv("INTENTIR_CUDA_CPP_CODEGEN_LOCK_STALE_SEC", "300")
+    try:
+        stale_sec = max(30, int(raw))
+    except Exception:
+        stale_sec = 300
+    try:
+        age_sec = max(0.0, time.time() - float(lock_path.stat().st_mtime))
+    except Exception:
+        return
+    if age_sec < float(stale_sec):
+        return
+    try:
+        lock_path.unlink()
+    except Exception:
+        # Best effort only. If removal fails, torch's own lock handling still applies.
+        return
+
+
 def ensure_cpp_codegen_ext_loaded(*, verbose: bool = False) -> Any:
     """
     Ensure the pybind11 module is built and importable, returning the loaded module.
@@ -95,6 +118,7 @@ def ensure_cpp_codegen_ext_loaded(*, verbose: bool = False) -> Any:
     name = f"intentir_cuda_codegen_ext_{src_tag}_{py_tag}_v1"
     build_dir = _cpp_codegen_ext_build_dir() / py_tag
     build_dir.mkdir(parents=True, exist_ok=True)
+    _prune_stale_torch_lock(build_dir)
 
     third_party = (src_dir.parents[1] / "spmd_rvv" / "cpp_codegen" / "third_party").resolve()
     extra_includes = [str(src_dir), str(third_party)]

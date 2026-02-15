@@ -56,7 +56,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out-dir", type=Path, default=_default_out_dir())
     ap.add_argument("--suite", choices=["smoke", "coverage", "all"], default="smoke")
-    ap.add_argument("--kernel", action="append", default=["add2d", "mul2d"])
+    ap.add_argument("--kernel", action="append", default=[])
     ap.add_argument("--run-rvv-remote", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--rvv-host", default="192.168.8.72")
     ap.add_argument("--rvv-user", default="ubuntu")
@@ -72,6 +72,13 @@ def main() -> None:
     ap.add_argument("--timing-baseline-dir", type=Path, default=None)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+    kernels = [str(k) for k in list(args.kernel or []) if str(k).strip()]
+    if not kernels:
+        kernels = ["add2d", "mul2d"]
+    dedup_kernels: list[str] = []
+    for k in kernels:
+        if k not in dedup_kernels:
+            dedup_kernels.append(k)
 
     cmd = [
         sys.executable,
@@ -105,7 +112,7 @@ def main() -> None:
         cmd.append("--allow-cuda-skip")
     else:
         cmd.append("--no-allow-cuda-skip")
-    for k in list(args.kernel or []):
+    for k in dedup_kernels:
         cmd += ["--kernel", str(k)]
 
     rc, stdout, stderr = _run(cmd, dry_run=bool(args.dry_run))

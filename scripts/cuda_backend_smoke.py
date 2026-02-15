@@ -552,7 +552,17 @@ def _run_worker_with_timeout(
     runtime_backend: str,
     timeout_sec: int,
 ) -> dict[str, Any]:
-    ctx = mp.get_context("spawn")
+    preferred = str(os.getenv("INTENTIR_CUDA_SMOKE_MP_START_METHOD", "spawn")).strip().lower()
+    available = list(mp.get_all_start_methods())
+    if preferred in available:
+        start_method = preferred
+    elif "spawn" in available:
+        start_method = "spawn"
+    elif available:
+        start_method = str(available[0])
+    else:
+        start_method = "spawn"
+    ctx = mp.get_context(start_method)
     q: mp.Queue = ctx.Queue()
     proc = ctx.Process(
         target=worker,
