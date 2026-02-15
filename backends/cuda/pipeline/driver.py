@@ -7,6 +7,7 @@ legalize -> shape_infer -> schedule -> emit -> compile -> launch.
 
 from __future__ import annotations
 
+import os
 import numpy as np
 from time import perf_counter
 from typing import Any, Mapping
@@ -132,6 +133,37 @@ def _op_family(op_names: list[str]) -> str:
     if any(op in reduction for op in ops) or bool(ops):
         return "elementwise_reduction"
     return "other"
+
+
+def _env_int(*keys: str) -> int | None:
+    for key in keys:
+        raw = os.getenv(str(key))
+        if raw is None or not str(raw).strip():
+            continue
+        try:
+            return int(str(raw).strip())
+        except Exception:
+            continue
+    return None
+
+
+def _schedule_overrides_from_env() -> tuple[dict[str, int], str]:
+    overrides: dict[str, int] = {}
+    tile_m = _env_int("INTENTIR_CUDA_TILE_M", "INTENTIR_TILE_M")
+    tile_n = _env_int("INTENTIR_CUDA_TILE_N", "INTENTIR_TILE_N")
+    tile_k = _env_int("INTENTIR_CUDA_TILE_K", "INTENTIR_TILE_K")
+    if tile_m is not None:
+        overrides["tile_m"] = int(tile_m)
+    if tile_n is not None:
+        overrides["tile_n"] = int(tile_n)
+    if tile_k is not None:
+        overrides["tile_k"] = int(tile_k)
+    tag = str(
+        os.getenv("INTENTIR_CUDA_SCHEDULE_PROFILE_TAG")
+        or os.getenv("INTENTIR_SCHEDULE_PROFILE_TAG")
+        or ""
+    ).strip()
+    return overrides, tag
 
 
 def _normalize_bindings(shape_bindings: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -282,6 +314,11 @@ def run_cuda_pipeline(
         profile = "cuda_matmul_conv_v1" if family == "matmul_conv" else "cuda_elementwise_reduction_v1"
         merged = dict(defaults)
         merged.update({k: v for k, v in schedule_info.items() if v is not None})
+        env_overrides, profile_tag = _schedule_overrides_from_env()
+        if env_overrides:
+            merged.update(env_overrides)
+        if profile_tag:
+            profile = f"{profile}_{profile_tag}"
         return (
             "resolved schedule hints",
             {
@@ -289,6 +326,8 @@ def run_cuda_pipeline(
                 "rewrite_aware": bool(int(rewrite_counts.get("total_rewrite_candidates", 0)) > 0),
                 "op_family": family,
                 "schedule_profile": profile,
+                "profile_tag": profile_tag,
+                "overrides_applied": dict(env_overrides),
             },
         )
 

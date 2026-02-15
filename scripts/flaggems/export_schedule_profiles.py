@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -65,7 +66,38 @@ def _schedule_stage(result: Any) -> dict[str, Any]:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--schedule-profile-tag", default="")
+    ap.add_argument("--cuda-tile-m", type=int, default=None)
+    ap.add_argument("--cuda-tile-n", type=int, default=None)
+    ap.add_argument("--cuda-tile-k", type=int, default=None)
+    ap.add_argument("--rvv-tile-m", type=int, default=None)
+    ap.add_argument("--rvv-tile-n", type=int, default=None)
+    ap.add_argument("--rvv-tile-k", type=int, default=None)
     args = ap.parse_args()
+
+    env_updates: dict[str, str] = {}
+    profile_tag = str(args.schedule_profile_tag or "").strip()
+    if profile_tag:
+        env_updates["INTENTIR_SCHEDULE_PROFILE_TAG"] = profile_tag
+        env_updates["INTENTIR_CUDA_SCHEDULE_PROFILE_TAG"] = profile_tag
+        env_updates["INTENTIR_RVV_SCHEDULE_PROFILE_TAG"] = profile_tag
+    if args.cuda_tile_m is not None:
+        env_updates["INTENTIR_CUDA_TILE_M"] = str(int(args.cuda_tile_m))
+    if args.cuda_tile_n is not None:
+        env_updates["INTENTIR_CUDA_TILE_N"] = str(int(args.cuda_tile_n))
+    if args.cuda_tile_k is not None:
+        env_updates["INTENTIR_CUDA_TILE_K"] = str(int(args.cuda_tile_k))
+    if args.rvv_tile_m is not None:
+        env_updates["INTENTIR_RVV_TILE_M"] = str(int(args.rvv_tile_m))
+    if args.rvv_tile_n is not None:
+        env_updates["INTENTIR_RVV_TILE_N"] = str(int(args.rvv_tile_n))
+    if args.rvv_tile_k is not None:
+        env_updates["INTENTIR_RVV_TILE_K"] = str(int(args.rvv_tile_k))
+
+    old_env: dict[str, str | None] = {}
+    for key, value in env_updates.items():
+        old_env[key] = os.getenv(key)
+        os.environ[key] = value
 
     families = ["matmul_conv", "elementwise_reduction"]
     backends = {
@@ -75,25 +107,36 @@ def main() -> None:
     payload: dict[str, Any] = {
         "ok": True,
         "schema_version": "flaggems_schedule_profiles_v1",
+        "profile_tag": profile_tag,
+        "overrides": dict(env_updates),
         "profiles": {},
         "missing": [],
     }
-    for backend_name, runner in backends.items():
-        backend_profiles: dict[str, Any] = {}
-        for family in families:
-            intent = _build_intent(family, backend_tag=backend_name)
-            result = runner(intent)
-            stage = _schedule_stage(result)
-            if not bool(getattr(result, "ok", False)) or not stage:
-                payload["missing"].append({"backend": backend_name, "family": family, "reason": "missing_schedule_stage"})
-                continue
-            backend_profiles[family] = {
-                "schedule_profile": stage.get("schedule_profile"),
-                "op_family": stage.get("op_family"),
-                "schedule_hints": stage.get("schedule_hints"),
-                "rewrite_aware": bool(stage.get("rewrite_aware")),
-            }
-        payload["profiles"][backend_name] = backend_profiles
+    try:
+        for backend_name, runner in backends.items():
+            backend_profiles: dict[str, Any] = {}
+            for family in families:
+                intent = _build_intent(family, backend_tag=backend_name)
+                result = runner(intent, execute_backend_stages=False)
+                stage = _schedule_stage(result)
+                if not bool(getattr(result, "ok", False)) or not stage:
+                    payload["missing"].append({"backend": backend_name, "family": family, "reason": "missing_schedule_stage"})
+                    continue
+                backend_profiles[family] = {
+                    "schedule_profile": stage.get("schedule_profile"),
+                    "op_family": stage.get("op_family"),
+                    "schedule_hints": stage.get("schedule_hints"),
+                    "rewrite_aware": bool(stage.get("rewrite_aware")),
+                    "profile_tag": stage.get("profile_tag"),
+                    "overrides_applied": stage.get("overrides_applied"),
+                }
+            payload["profiles"][backend_name] = backend_profiles
+    finally:
+        for key, old_value in old_env.items():
+            if old_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old_value
 
     required_pairs = [(b, f) for b in backends.keys() for f in families]
     missing_pairs = [

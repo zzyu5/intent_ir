@@ -12,6 +12,7 @@ It does not try to cover the full IntentIR op-set yet.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Any, Dict, Mapping, Optional, Sequence
 
 from intent_ir.ir import Dim, IntentFunction, ScheduleSketch, TensorLayout, TensorType
@@ -227,6 +228,31 @@ def _materialize_missing_output_tensors(intent: IntentFunction) -> None:
         )
         if inferred is not None:
             intent.tensors[out_name] = inferred
+
+
+def _schedule_overrides_from_env() -> dict[str, int]:
+    def _env_int(*keys: str) -> int | None:
+        for key in keys:
+            raw = os.getenv(str(key))
+            if raw is None or not str(raw).strip():
+                continue
+            try:
+                return int(str(raw).strip())
+            except Exception:
+                continue
+        return None
+
+    out: dict[str, int] = {}
+    tile_m = _env_int("INTENTIR_CUDA_TILE_M", "INTENTIR_TILE_M")
+    tile_n = _env_int("INTENTIR_CUDA_TILE_N", "INTENTIR_TILE_N")
+    tile_k = _env_int("INTENTIR_CUDA_TILE_K", "INTENTIR_TILE_K")
+    if tile_m is not None:
+        out["tile_m"] = int(tile_m)
+    if tile_n is not None:
+        out["tile_n"] = int(tile_n)
+    if tile_k is not None:
+        out["tile_k"] = int(tile_k)
+    return out
 
 
 def _as_int(v: Any, *, name: str) -> int:
@@ -8833,6 +8859,17 @@ def lower_intent_to_cuda_kernel(
                 parallel_axes=[str(x) for x in (schedule_override.get("parallel_axes") or [])],
                 memory_hint=dict(schedule_override.get("memory_hint") or {}),
             )
+
+    env_schedule = _schedule_overrides_from_env()
+    if env_schedule:
+        if intent.schedule is None:
+            intent.schedule = ScheduleSketch()
+        try:
+            intent.schedule.tile_m = env_schedule.get("tile_m", intent.schedule.tile_m)
+            intent.schedule.tile_n = env_schedule.get("tile_n", intent.schedule.tile_n)
+            intent.schedule.tile_k = env_schedule.get("tile_k", intent.schedule.tile_k)
+        except Exception:
+            pass
 
     from .cpp_driver import lower_intent_to_cuda_kernel_cpp  # noqa: PLC0415
 

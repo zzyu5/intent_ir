@@ -29,6 +29,15 @@ def _run(cmd: list[str], *, cwd: Path) -> tuple[int, str, str]:
     return int(p.returncode), str(p.stdout or ""), str(p.stderr or "")
 
 
+def _with_env_prefix(cmd: list[str], env_map: dict[str, str] | None) -> list[str]:
+    if not env_map:
+        return list(cmd)
+    pairs = [f"{k}={v}" for k, v in sorted(env_map.items()) if str(k).strip() and str(v).strip()]
+    if not pairs:
+        return list(cmd)
+    return ["env", *pairs, *list(cmd)]
+
+
 def _load_active_semantic_ops(active_batch_path: Path) -> list[str]:
     if not active_batch_path.is_file():
         return []
@@ -220,6 +229,17 @@ def main() -> None:
         default="auto",
         help="Runtime backend selector passed to cuda_backend_smoke.py (default: auto).",
     )
+    ap.add_argument(
+        "--schedule-profile-tag",
+        default="",
+        help="Optional profile tag suffix for backend schedule selection.",
+    )
+    ap.add_argument("--cuda-tile-m", type=int, default=None)
+    ap.add_argument("--cuda-tile-n", type=int, default=None)
+    ap.add_argument("--cuda-tile-k", type=int, default=None)
+    ap.add_argument("--rvv-tile-m", type=int, default=None)
+    ap.add_argument("--rvv-tile-n", type=int, default=None)
+    ap.add_argument("--rvv-tile-k", type=int, default=None)
     date_tag = datetime.now(timezone.utc).strftime("%Y%m%d")
     ap.add_argument("--out-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_matrix" / "daily" / date_tag))
     ap.add_argument("--write-registry", action="store_true")
@@ -253,6 +273,26 @@ def main() -> None:
         default_active = ROOT / "workflow" / "flaggems" / "state" / "active_batch.json"
     active_batch_path = Path(args.active_batch) if args.active_batch is not None else default_active
     scoped_semantic_ops = _load_active_semantic_ops(active_batch_path)
+    profile_tag = str(args.schedule_profile_tag or "").strip()
+    rvv_env: dict[str, str] = {}
+    cuda_env: dict[str, str] = {}
+    if profile_tag:
+        rvv_env["INTENTIR_RVV_SCHEDULE_PROFILE_TAG"] = profile_tag
+        cuda_env["INTENTIR_CUDA_SCHEDULE_PROFILE_TAG"] = profile_tag
+        rvv_env["INTENTIR_SCHEDULE_PROFILE_TAG"] = profile_tag
+        cuda_env["INTENTIR_SCHEDULE_PROFILE_TAG"] = profile_tag
+    if args.rvv_tile_m is not None:
+        rvv_env["INTENTIR_RVV_TILE_M"] = str(int(args.rvv_tile_m))
+    if args.rvv_tile_n is not None:
+        rvv_env["INTENTIR_RVV_TILE_N"] = str(int(args.rvv_tile_n))
+    if args.rvv_tile_k is not None:
+        rvv_env["INTENTIR_RVV_TILE_K"] = str(int(args.rvv_tile_k))
+    if args.cuda_tile_m is not None:
+        cuda_env["INTENTIR_CUDA_TILE_M"] = str(int(args.cuda_tile_m))
+    if args.cuda_tile_n is not None:
+        cuda_env["INTENTIR_CUDA_TILE_N"] = str(int(args.cuda_tile_n))
+    if args.cuda_tile_k is not None:
+        cuda_env["INTENTIR_CUDA_TILE_K"] = str(int(args.cuda_tile_k))
 
     def _record(stage: str, rc: int, stdout: str, stderr: str, extra: dict | None = None) -> None:
         row = {
@@ -338,8 +378,15 @@ def main() -> None:
         ]
         for k in kernel_filter:
             cmd += ["--kernel", str(k)]
-        rc, out, err = _run(cmd, cwd=ROOT)
-        _record("rvv_local", rc, out, err, extra={"cmd": cmd, "json_path": str(rvv_json)})
+        cmd_run = _with_env_prefix(cmd, rvv_env)
+        rc, out, err = _run(cmd_run, cwd=ROOT)
+        _record(
+            "rvv_local",
+            rc,
+            out,
+            err,
+            extra={"cmd": cmd_run, "json_path": str(rvv_json), "env_overrides": dict(rvv_env)},
+        )
 
     rvv_remote_json = out_dir / "rvv_remote.json"
     if bool(args.run_rvv_remote) and not bool(args.skip_rvv) and not missing_provider_reports:
@@ -371,8 +418,15 @@ def main() -> None:
             cmd.append("--use-key")
         for k in kernel_filter:
             cmd += ["--kernel", str(k)]
-        rc, out, err = _run(cmd, cwd=ROOT)
-        _record("rvv_remote", rc, out, err, extra={"cmd": cmd, "json_path": str(rvv_remote_json)})
+        cmd_run = _with_env_prefix(cmd, rvv_env)
+        rc, out, err = _run(cmd_run, cwd=ROOT)
+        _record(
+            "rvv_remote",
+            rc,
+            out,
+            err,
+            extra={"cmd": cmd_run, "json_path": str(rvv_remote_json), "env_overrides": dict(rvv_env)},
+        )
 
     cuda_json = out_dir / "cuda_local.json"
     if not bool(args.skip_cuda) and not missing_provider_reports:
@@ -415,8 +469,15 @@ def main() -> None:
             cmd.append("--allow-skip")
         for k in kernel_filter:
             cmd += ["--kernel", str(k)]
-        rc, out, err = _run(cmd, cwd=ROOT)
-        _record("cuda_local", rc, out, err, extra={"cmd": cmd, "json_path": str(cuda_json)})
+        cmd_run = _with_env_prefix(cmd, cuda_env)
+        rc, out, err = _run(cmd_run, cwd=ROOT)
+        _record(
+            "cuda_local",
+            rc,
+            out,
+            err,
+            extra={"cmd": cmd_run, "json_path": str(cuda_json), "env_overrides": dict(cuda_env)},
+        )
 
     converged = out_dir / "status_converged.json"
     cmd = [
@@ -468,6 +529,9 @@ def main() -> None:
             else int(args.cuda_timeout_sec)
         ),
         "cuda_runtime_backend": str(args.cuda_runtime_backend),
+        "schedule_profile_tag": profile_tag,
+        "rvv_schedule_overrides": dict(rvv_env),
+        "cuda_schedule_overrides": dict(cuda_env),
         "seed_cache_dir": str(seed_cache_dir),
         "pipeline_out_dir": str(pipeline_out_dir),
         "active_batch_path": str(active_batch_path),

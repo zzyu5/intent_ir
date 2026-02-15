@@ -62,6 +62,17 @@ def main() -> None:
     ap.add_argument("--rvv-user", default="ubuntu")
     ap.add_argument("--rvv-use-key", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--cuda-runtime-backend", choices=["auto", "nvcc", "nvrtc"], default="auto")
+    ap.add_argument(
+        "--schedule-profile-tag",
+        default="wave4",
+        help="Profile tag passed to backend schedule override env (default: wave4).",
+    )
+    ap.add_argument("--cuda-tile-m", type=int, default=None)
+    ap.add_argument("--cuda-tile-n", type=int, default=None)
+    ap.add_argument("--cuda-tile-k", type=int, default=None)
+    ap.add_argument("--rvv-tile-m", type=int, default=None)
+    ap.add_argument("--rvv-tile-n", type=int, default=None)
+    ap.add_argument("--rvv-tile-k", type=int, default=None)
     ap.add_argument("--allow-cuda-skip", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument(
         "--emit-timing-delta",
@@ -95,11 +106,25 @@ def main() -> None:
         str(args.out_dir),
         "--cuda-runtime-backend",
         str(args.cuda_runtime_backend),
+        "--schedule-profile-tag",
+        str(args.schedule_profile_tag),
         "--rvv-host",
         str(args.rvv_host),
         "--rvv-user",
         str(args.rvv_user),
     ]
+    if args.cuda_tile_m is not None:
+        cmd += ["--cuda-tile-m", str(int(args.cuda_tile_m))]
+    if args.cuda_tile_n is not None:
+        cmd += ["--cuda-tile-n", str(int(args.cuda_tile_n))]
+    if args.cuda_tile_k is not None:
+        cmd += ["--cuda-tile-k", str(int(args.cuda_tile_k))]
+    if args.rvv_tile_m is not None:
+        cmd += ["--rvv-tile-m", str(int(args.rvv_tile_m))]
+    if args.rvv_tile_n is not None:
+        cmd += ["--rvv-tile-n", str(int(args.rvv_tile_n))]
+    if args.rvv_tile_k is not None:
+        cmd += ["--rvv-tile-k", str(int(args.rvv_tile_k))]
     if bool(args.run_rvv_remote):
         cmd.append("--run-rvv-remote")
     else:
@@ -174,7 +199,21 @@ def main() -> None:
             "scripts/flaggems/export_schedule_profiles.py",
             "--out",
             str(schedule_profiles),
+            "--schedule-profile-tag",
+            str(args.schedule_profile_tag),
         ]
+        if args.cuda_tile_m is not None:
+            profiles_cmd += ["--cuda-tile-m", str(int(args.cuda_tile_m))]
+        if args.cuda_tile_n is not None:
+            profiles_cmd += ["--cuda-tile-n", str(int(args.cuda_tile_n))]
+        if args.cuda_tile_k is not None:
+            profiles_cmd += ["--cuda-tile-k", str(int(args.cuda_tile_k))]
+        if args.rvv_tile_m is not None:
+            profiles_cmd += ["--rvv-tile-m", str(int(args.rvv_tile_m))]
+        if args.rvv_tile_n is not None:
+            profiles_cmd += ["--rvv-tile-n", str(int(args.rvv_tile_n))]
+        if args.rvv_tile_k is not None:
+            profiles_cmd += ["--rvv-tile-k", str(int(args.rvv_tile_k))]
         rc_profiles, _out_profiles, err_profiles = _run(profiles_cmd, dry_run=False)
         schedule_profiles_ok = int(rc_profiles) == 0
         schedule_profiles_stderr = str(err_profiles).strip()
@@ -205,6 +244,13 @@ def main() -> None:
         "cmd": cmd,
         "out_dir": str(args.out_dir),
         "cuda_runtime_backend": str(args.cuda_runtime_backend),
+        "schedule_profile_tag": str(args.schedule_profile_tag),
+        "cuda_tile_m": (int(args.cuda_tile_m) if args.cuda_tile_m is not None else None),
+        "cuda_tile_n": (int(args.cuda_tile_n) if args.cuda_tile_n is not None else None),
+        "cuda_tile_k": (int(args.cuda_tile_k) if args.cuda_tile_k is not None else None),
+        "rvv_tile_m": (int(args.rvv_tile_m) if args.rvv_tile_m is not None else None),
+        "rvv_tile_n": (int(args.rvv_tile_n) if args.rvv_tile_n is not None else None),
+        "rvv_tile_k": (int(args.rvv_tile_k) if args.rvv_tile_k is not None else None),
         "stdout": stdout.strip(),
         "stderr": stderr.strip(),
         "timing_delta": {
