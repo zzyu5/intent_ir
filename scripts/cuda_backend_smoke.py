@@ -30,7 +30,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backends.cuda.codegen.cpp_driver import CudaLoweringError, lower_intent_to_cuda_kernel  # noqa: E402
+from backends.cuda.codegen.cpp_driver import (  # noqa: E402
+    CudaLoweringError,
+    ensure_cpp_codegen_ext_loaded,
+    lower_intent_to_cuda_kernel,
+)
 from backends.cuda.runtime import CudaRuntimeError, compile_cuda_extension, run_cuda_kernel  # noqa: E402
 from intent_ir.ir import IntentFunction  # noqa: E402
 from intent_ir.macros import expand_macros  # noqa: E402
@@ -603,6 +607,16 @@ def _cuda_stage_worker_loop(
     artifact_dir: str | None,
     runtime_backend: str,
 ) -> None:
+    # Compile worker prewarm: pay pybind extension load once per worker process
+    # so first kernel lowering no longer absorbs this cold-start cost.
+    if stage == "compile" and str(runtime_backend).strip().lower() == "nvcc":
+        raw = str(os.getenv("INTENTIR_CUDA_SMOKE_PREWARM_COMPILE_WORKER", "1")).strip().lower()
+        if raw in {"1", "true", "yes", "y"}:
+            try:
+                ensure_cpp_codegen_ext_loaded(verbose=False)
+            except Exception:
+                # Best-effort only; functional path remains unchanged.
+                pass
     while True:
         item = in_q.get()
         if item is None:
