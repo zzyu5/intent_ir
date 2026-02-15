@@ -3957,12 +3957,11 @@ def _run_flaggems_remainder2d_reference(case: TestCase) -> Dict[str, np.ndarray]
         b_np = (rg.random((m, n), dtype=np.float32) * np.float32(3.0)) + np.float32(0.5)
         b = torch.from_numpy(b_np).to(device)
 
-    with flag_gems.use_gems(include=["remainder"]):
-        out = torch.remainder(a, b)
-
-    a_np = _to_np(a)
-    b_np = _to_np(b)
-    out_np = _to_np(out)
+    # Keep a deterministic semantic baseline for correctness gating.
+    # Some environments may not reliably dispatch FlagGems remainder kernels.
+    a_np = _to_np(a).astype(np.float32, copy=False)
+    b_np = _to_np(b).astype(np.float32, copy=False)
+    out_np = np.remainder(a_np, b_np).astype(np.float32, copy=False)
     return {
         "A": a_np,
         "B": b_np,

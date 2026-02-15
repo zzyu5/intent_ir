@@ -384,6 +384,23 @@ def _canonical_prod_dim2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_remainder2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "remainder2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "other": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "remainder", "inputs": ["inp", "other"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def _canonical_per_token_group_quant_fp8_2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -1752,6 +1769,8 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_prod2d_intent()
     if name == "prod_dim2d":
         return _canonical_prod_dim2d_intent()
+    if name == "remainder2d":
+        return _canonical_remainder2d_intent()
     if name == "per_token_group_quant_fp8_2d":
         return _canonical_per_token_group_quant_fp8_2d_intent()
     if name == "gather2d":

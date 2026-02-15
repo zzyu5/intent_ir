@@ -702,7 +702,7 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
                 emit_assign(f"{src}[(size_t)({idx_expr})]")
             else:
                 emit_assign(val(src))
-        elif opname in {"add", "sub", "mul", "div", "pow", "max", "min"}:
+        elif opname in {"add", "sub", "mul", "div", "pow", "max", "min", "remainder"}:
             if len(op.inputs) != 2:
                 raise CudaLoweringError(f"{opname} expects 2 inputs")
             a = val(op.inputs[0])
@@ -717,6 +717,8 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
                 emit_assign(f"({a} / {b})")
             elif opname == "pow":
                 emit_assign(f"powf((float)({a}), (float)({b}))")
+            elif opname == "remainder":
+                emit_assign(f"(({b}) == 0 ? NAN : (({a}) - floorf(({a}) / ({b})) * ({b})))")
             elif opname == "max":
                 emit_assign(f"fmaxf({a}, {b})")
             else:
@@ -7153,6 +7155,7 @@ def lower_intent_to_cuda_kernel(
         "mul",
         "div",
         "pow",
+        "remainder",
         "max",
         "min",
         "relu",

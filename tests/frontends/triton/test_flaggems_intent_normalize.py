@@ -245,6 +245,10 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert [op.op for op in prod_dim2d.ops] == ["reduce_prod"]
     assert (prod_dim2d.ops[0].attrs or {}).get("dims") == [1]
 
+    remainder2d = canonical_flaggems_intent_for_spec("remainder2d")
+    assert remainder2d is not None
+    assert [op.op for op in remainder2d.ops] == ["remainder"]
+
     per_token = canonical_flaggems_intent_for_spec("per_token_group_quant_fp8_2d")
     assert per_token is not None
     assert per_token.outputs == ["y_q", "y_s"]

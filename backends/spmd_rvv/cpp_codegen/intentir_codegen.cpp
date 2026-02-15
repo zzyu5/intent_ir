@@ -524,6 +524,10 @@ void emit_elemwise_bin(CodeWriter& w, const Intent& intent, const std::unordered
       if (op == "pow") {
         if (out_ct == "float") expr = "powf(" + a_var + "[" + a_idx + "], " + b_var + "[" + b_idx + "])";
         else expr = "pow(" + a_var + "[" + a_idx + "], " + b_var + "[" + b_idx + "])";
+      } else if (op == "remainder") {
+        const std::string a_expr = a_var + "[" + a_idx + "]";
+        const std::string b_expr = b_var + "[" + b_idx + "]";
+        expr = "((" + b_expr + ") == 0.0f ? NAN : (" + a_expr + " - floorf((" + a_expr + ")/(" + b_expr + ")) * (" + b_expr + ")))";
       } else {
         const std::string c_op = (op == "add"   ? "+"
                                   : op == "sub" ? "-"
@@ -2699,7 +2703,7 @@ struct CProgramEmitter {
 	        w.line("}");
 	        w.dedent();
 	        w.line("}");
-	      } else if (op.op == "add" || op.op == "sub" || op.op == "mul" || op.op == "div" || op.op == "max" || op.op == "min" || op.op == "pow") {
+	      } else if (op.op == "add" || op.op == "sub" || op.op == "mul" || op.op == "div" || op.op == "max" || op.op == "min" || op.op == "pow" || op.op == "remainder") {
 		        if (op.inputs.size() == 2) {
 		          emit_elemwise_bin(w, intent, bindings, op.op, out_var, v(op.inputs[0]), v(op.inputs[1]), op.inputs[0], op.inputs[1],
 		                            shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape,
@@ -3863,7 +3867,7 @@ int main(int argc, char** argv) {
         dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
       }
-      if (kind == "add" || kind == "sub" || kind == "mul" || kind == "div" || kind == "max" || kind == "min" || kind == "pow") {
+      if (kind == "add" || kind == "sub" || kind == "mul" || kind == "div" || kind == "max" || kind == "min" || kind == "pow" || kind == "remainder") {
         if (op.inputs.size() == 2) {
           const auto& sa = get_shape(op.inputs[0]);
           const auto& sb = get_shape(op.inputs[1]);

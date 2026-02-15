@@ -28,6 +28,7 @@ SPMD_RVV_SUPPORTED_OPS: set[str] = {
     "mul",
     "div",
     "pow",
+    "remainder",
     "max",
     "min",
     "ne",

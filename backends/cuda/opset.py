@@ -51,6 +51,7 @@ CUDA_SUPPORTED_OPS: set[str] = {
     "mul",
     "div",
     "pow",
+    "remainder",
     "max",
     "min",
     "relu",

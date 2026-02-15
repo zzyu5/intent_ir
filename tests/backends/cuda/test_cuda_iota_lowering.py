@@ -103,6 +103,30 @@ def test_cuda_lowering_supports_log_softmax_pattern(monkeypatch) -> None:
     assert "logf(" in lowered.cuda_src
 
 
+def test_cuda_lowering_supports_remainder_elementwise(monkeypatch) -> None:
+    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "remainder2d_cuda_lowering",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "other": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "remainder", "inputs": ["inp", "other"], "output": "out"},
+            ],
+            "outputs": ["out"],
+            "parallel_axes": ["M", "N"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
+        }
+    )
+    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 64})
+    assert lowered.kernel_name == "remainder2d_cuda_lowering"
+    assert "floorf" in lowered.cuda_src
+    assert "NAN" in lowered.cuda_src
+
+
 def test_cuda_lowering_respects_broadcast_in_dim_axes(monkeypatch) -> None:
     monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
