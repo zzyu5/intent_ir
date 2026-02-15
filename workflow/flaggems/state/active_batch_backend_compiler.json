@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_active_batch_v2",
-  "generated_at": "2026-02-15T20:59:32+00:00",
+  "generated_at": "2026-02-15T21:58:00+00:00",
   "branch": "flaggems",
   "lane": "backend_compiler",
   "batch_size": 10,
@@ -11,18 +11,18 @@
   ],
   "items": [
     {
-      "id": "backend_compiler::expanded_family_wave11",
+      "id": "backend_compiler::expanded_family_wave13",
       "semantic_op": "",
       "family": "workflow",
       "status": "pending",
       "passes": false,
       "reason_code": "",
-      "next_action": "run_expanded_family_backend_batch_wave11",
+      "next_action": "run_expanded_family_backend_batch_wave13",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "backend_compiler",
       "task_type": "performance",
-      "priority": 160,
+      "priority": 180,
       "acceptance": [
         "expanded_kernel_family_batch_pass",
         "rvv_local_remote_cuda_all_pass",
@@ -30,10 +30,10 @@
       ],
       "gate_profile": "backend_compiler",
       "depends_on": [
-        "backend_compiler::expanded_family_wave10"
+        "backend_compiler::expanded_family_wave12"
       ],
       "evidence_paths": [],
-      "description": "Execute backend compiler wave11 on the next expanded kernel family set and keep backend gate green."
+      "description": "Execute backend compiler wave13 on the next expanded kernel family set and keep backend gate green."
     }
   ],
   "context": {

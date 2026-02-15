@@ -61,6 +61,22 @@
     "min2d",
     "min_dim2d",
     "argmax2d",
-    "argmin2d"
+    "argmin2d",
+    "addcdiv2d",
+    "addcmul2d",
+    "identity2d",
+    "cast2d",
+    "logical_xor2d",
+    "isnan2d",
+    "isinf2d",
+    "masked_fill2d",
+    "any_kernel_dim",
+    "softmax_inner",
+    "flip2d",
+    "gather2d",
+    "index_select2d",
+    "embedding2d",
+    "mm2d",
+    "repeat2d"
   ]
 }
