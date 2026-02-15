@@ -45,6 +45,22 @@
     "silu2d",
     "softplus2d",
     "sub2d",
-    "mul2d"
+    "mul2d",
+    "logical_and2d",
+    "logical_or2d",
+    "logical_not2d",
+    "tan2d",
+    "sin2d",
+    "relu2d",
+    "threshold2d",
+    "row_sum",
+    "exp22d",
+    "tanh2d",
+    "row_max",
+    "row_mean",
+    "min2d",
+    "min_dim2d",
+    "argmax2d",
+    "argmin2d"
   ]
 }

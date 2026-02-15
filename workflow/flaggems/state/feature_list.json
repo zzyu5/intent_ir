@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_feature_list_v2",
-  "generated_at": "2026-02-15T20:13:03+00:00",
+  "generated_at": "2026-02-15T20:59:31+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
@@ -16,11 +16,11 @@
       "conv_pool_interp": 9,
       "attention_sequence": 5
     },
-    "tasks_total": 213,
+    "tasks_total": 215,
     "by_track": {
       "coverage": 196,
       "ir_arch": 3,
-      "backend_compiler": 14
+      "backend_compiler": 16
     }
   },
   "features": [
@@ -5759,10 +5759,10 @@
       "id": "backend_compiler::expanded_family_wave9",
       "semantic_op": "",
       "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "",
-      "next_action": "run_expanded_family_backend_batch_wave9",
+      "status": "done",
+      "passes": true,
+      "reason_code": "ok",
+      "next_action": "none",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "backend_compiler",
@@ -5777,8 +5777,70 @@
       "depends_on": [
         "backend_compiler::expanded_family_wave8"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave9_manifest_chunk5_v1/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave9_manifest_chunk6_v1/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave9_manifest_chunk6_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave9_manifest_chunk6_v1/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave9_manifest_chunk6_v1/batch_gate.json"
+      ],
       "description": "Execute backend compiler wave9 on the next expanded kernel family set and keep backend gate green."
+    },
+    {
+      "id": "backend_compiler::expanded_family_wave10",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "done",
+      "passes": true,
+      "reason_code": "ok",
+      "next_action": "none",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "backend_compiler",
+      "task_type": "performance",
+      "priority": 150,
+      "acceptance": [
+        "expanded_kernel_family_batch_pass",
+        "rvv_local_remote_cuda_all_pass",
+        "timing_delta_budget_within_threshold"
+      ],
+      "gate_profile": "backend_compiler",
+      "depends_on": [
+        "backend_compiler::expanded_family_wave9"
+      ],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave10_manifest_chunk6_v2/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave10_manifest_chunk7_v3/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave10_manifest_chunk7_v3/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave10_manifest_chunk7_v3/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave10_manifest_chunk7_v3/batch_gate.json"
+      ],
+      "description": "Execute backend compiler wave10 on the next expanded kernel family set and keep backend gate green."
+    },
+    {
+      "id": "backend_compiler::expanded_family_wave11",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "",
+      "next_action": "run_expanded_family_backend_batch_wave11",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "backend_compiler",
+      "task_type": "performance",
+      "priority": 160,
+      "acceptance": [
+        "expanded_kernel_family_batch_pass",
+        "rvv_local_remote_cuda_all_pass",
+        "timing_delta_budget_within_threshold"
+      ],
+      "gate_profile": "backend_compiler",
+      "depends_on": [
+        "backend_compiler::expanded_family_wave10"
+      ],
+      "evidence_paths": [],
+      "description": "Execute backend compiler wave11 on the next expanded kernel family set and keep backend gate green."
     }
   ]
 }
