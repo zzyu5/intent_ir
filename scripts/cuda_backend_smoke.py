@@ -328,12 +328,32 @@ def _build_inputs_np(
     return inputs_np
 
 
-def _set_codegen_mode_env(codegen_mode: str) -> None:
+def _set_codegen_mode_env(
+    codegen_mode: str,
+    *,
+    codegen_strict: bool = False,
+    cpp_engine: str = "pybind",
+    cpp_engine_strict: bool = False,
+) -> None:
     mode = str(codegen_mode).strip().lower()
     if mode in {"py", "cpp"}:
         os.environ["INTENTIR_CUDA_CODEGEN"] = mode
     else:
         os.environ.pop("INTENTIR_CUDA_CODEGEN", None)
+    if mode == "cpp":
+        os.environ["INTENTIR_CUDA_CPP_CODEGEN_ENGINE"] = str(cpp_engine).strip().lower() or "pybind"
+        if bool(codegen_strict):
+            os.environ["INTENTIR_CUDA_CODEGEN_STRICT"] = "1"
+        else:
+            os.environ.pop("INTENTIR_CUDA_CODEGEN_STRICT", None)
+        if bool(cpp_engine_strict):
+            os.environ["INTENTIR_CUDA_CPP_CODEGEN_ENGINE_STRICT"] = "1"
+        else:
+            os.environ.pop("INTENTIR_CUDA_CPP_CODEGEN_ENGINE_STRICT", None)
+    else:
+        os.environ.pop("INTENTIR_CUDA_CODEGEN_STRICT", None)
+        os.environ.pop("INTENTIR_CUDA_CPP_CODEGEN_ENGINE", None)
+        os.environ.pop("INTENTIR_CUDA_CPP_CODEGEN_ENGINE_STRICT", None)
 
 
 def _set_runtime_backend_env(runtime_backend: str) -> None:
@@ -497,9 +517,17 @@ def _cuda_compile_worker(
     artifact_dir: str | None,
     codegen_mode: str,
     runtime_backend: str,
+    codegen_strict: bool,
+    cpp_engine: str,
+    cpp_engine_strict: bool,
 ) -> None:
     try:
-        _set_codegen_mode_env(codegen_mode)
+        _set_codegen_mode_env(
+            codegen_mode,
+            codegen_strict=bool(codegen_strict),
+            cpp_engine=str(cpp_engine),
+            cpp_engine_strict=bool(cpp_engine_strict),
+        )
         _set_runtime_backend_env(runtime_backend)
         res = _run_compile_stage(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
         queue.put({"ok": True, "result": res})
@@ -524,9 +552,17 @@ def _cuda_launch_worker(
     artifact_dir: str | None,
     codegen_mode: str,
     runtime_backend: str,
+    codegen_strict: bool,
+    cpp_engine: str,
+    cpp_engine_strict: bool,
 ) -> None:
     try:
-        _set_codegen_mode_env(codegen_mode)
+        _set_codegen_mode_env(
+            codegen_mode,
+            codegen_strict=bool(codegen_strict),
+            cpp_engine=str(cpp_engine),
+            cpp_engine_strict=bool(cpp_engine_strict),
+        )
         _set_runtime_backend_env(runtime_backend)
         res = _run_launch_stage(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
         queue.put({"ok": True, "result": res})
@@ -552,13 +588,27 @@ def _run_worker_with_timeout(
     artifact_dir: str | None,
     codegen_mode: str,
     runtime_backend: str,
+    codegen_strict: bool = False,
+    cpp_engine: str = "pybind",
+    cpp_engine_strict: bool = False,
     timeout_sec: int,
 ) -> dict[str, Any]:
     ctx = mp.get_context("spawn")
     q: mp.Queue = ctx.Queue()
     proc = ctx.Process(
         target=worker,
-        args=(q, str(kernel), str(frontend), str(triton_provider), artifact_dir, str(codegen_mode), str(runtime_backend)),
+        args=(
+            q,
+            str(kernel),
+            str(frontend),
+            str(triton_provider),
+            artifact_dir,
+            str(codegen_mode),
+            str(runtime_backend),
+            bool(codegen_strict),
+            str(cpp_engine),
+            bool(cpp_engine_strict),
+        ),
     )
     proc.start()
     timeout = None if int(timeout_sec) <= 0 else float(timeout_sec)
@@ -595,6 +645,9 @@ def _run_one_with_stage_timeouts(
     launch_timeout_sec: int,
     codegen_mode: str,
     runtime_backend: str,
+    codegen_strict: bool = False,
+    cpp_engine: str = "pybind",
+    cpp_engine_strict: bool = False,
 ) -> dict[str, Any]:
     compile_res = _run_worker_with_timeout(
         _cuda_compile_worker,
@@ -604,6 +657,9 @@ def _run_one_with_stage_timeouts(
         artifact_dir=artifact_dir,
         codegen_mode=codegen_mode,
         runtime_backend=runtime_backend,
+        codegen_strict=bool(codegen_strict),
+        cpp_engine=str(cpp_engine),
+        cpp_engine_strict=bool(cpp_engine_strict),
         timeout_sec=int(compile_timeout_sec),
     )
     if bool(compile_res.get("timed_out")):
@@ -631,6 +687,9 @@ def _run_one_with_stage_timeouts(
         artifact_dir=artifact_dir,
         codegen_mode=codegen_mode,
         runtime_backend=runtime_backend,
+        codegen_strict=bool(codegen_strict),
+        cpp_engine=str(cpp_engine),
+        cpp_engine_strict=bool(cpp_engine_strict),
         timeout_sec=int(launch_timeout_sec),
     )
     if bool(launch_res.get("timed_out")):
@@ -687,6 +746,9 @@ def _probe_timeout_runtime_detail(
         launch_timeout_sec=max(1, min(int(launch_timeout_sec), 30)),
         codegen_mode="py",
         runtime_backend=runtime_backend,
+        codegen_strict=False,
+        cpp_engine="pybind",
+        cpp_engine_strict=False,
     )
     detail = {
         "ok": bool(probe.get("ok")),
@@ -757,6 +819,24 @@ def main() -> None:
         help="CUDA codegen mode for smoke run (default: auto).",
     )
     ap.add_argument(
+        "--codegen-strict",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="When true and --codegen-mode=cpp, disable python lower fallback.",
+    )
+    ap.add_argument(
+        "--cpp-engine",
+        choices=["pybind", "bin"],
+        default="pybind",
+        help="C++ codegen engine used when --codegen-mode=cpp (default: pybind).",
+    )
+    ap.add_argument(
+        "--cpp-engine-strict",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="When true, do not fall back from the selected --cpp-engine.",
+    )
+    ap.add_argument(
         "--runtime-backend",
         choices=["auto", "nvcc", "nvrtc"],
         default="auto",
@@ -806,6 +886,9 @@ def main() -> None:
             "runtime_backend": str(runtime_backend),
             "codegen_mode": str(requested_codegen_mode),
             "effective_codegen_mode": str(effective_codegen_mode),
+            "codegen_strict": bool(args.codegen_strict),
+            "cpp_engine": str(args.cpp_engine),
+            "cpp_engine_strict": bool(args.cpp_engine_strict),
             "timeout_sec": int(args.timeout_sec),
             "compile_timeout_sec": int(compile_timeout_sec),
             "launch_timeout_sec": int(launch_timeout_sec),
@@ -836,6 +919,9 @@ def main() -> None:
                 launch_timeout_sec=int(launch_timeout_sec),
                 codegen_mode=str(effective_codegen_mode),
                 runtime_backend=runtime_backend,
+                codegen_strict=bool(args.codegen_strict),
+                cpp_engine=str(args.cpp_engine),
+                cpp_engine_strict=bool(args.cpp_engine_strict),
             )
         except (CudaLoweringError, CudaRuntimeError, FileNotFoundError, RuntimeError, ValueError) as e:
             r = {
@@ -898,6 +984,9 @@ def main() -> None:
         "runtime_backend": str(runtime_backend),
         "codegen_mode": str(requested_codegen_mode),
         "effective_codegen_mode": str(effective_codegen_mode),
+        "codegen_strict": bool(args.codegen_strict),
+        "cpp_engine": str(args.cpp_engine),
+        "cpp_engine_strict": bool(args.cpp_engine_strict),
         "timeout_sec": int(args.timeout_sec),
         "compile_timeout_sec": int(compile_timeout_sec),
         "launch_timeout_sec": int(launch_timeout_sec),

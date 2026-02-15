@@ -217,6 +217,24 @@ def main() -> None:
         help="Codegen mode passed to cuda_backend_smoke.py (default: auto).",
     )
     ap.add_argument(
+        "--cuda-codegen-strict",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="When true and codegen mode is cpp, disable python lowering fallback.",
+    )
+    ap.add_argument(
+        "--cuda-cpp-engine",
+        choices=["pybind", "bin"],
+        default="pybind",
+        help="C++ codegen engine when using cpp mode (default: pybind).",
+    )
+    ap.add_argument(
+        "--cuda-cpp-engine-strict",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="When true, do not fall back from selected --cuda-cpp-engine.",
+    )
+    ap.add_argument(
         "--cuda-runtime-backend",
         choices=["auto", "nvcc", "nvrtc"],
         default="auto",
@@ -409,12 +427,16 @@ def main() -> None:
             str(int(cuda_launch_timeout_sec)),
             "--codegen-mode",
             str(args.cuda_codegen_mode),
+            "--cpp-engine",
+            str(args.cuda_cpp_engine),
             "--runtime-backend",
             str(args.cuda_runtime_backend),
             "--json",
             "--out",
             str(cuda_json),
         ]
+        cmd.append("--codegen-strict" if bool(args.cuda_codegen_strict) else "--no-codegen-strict")
+        cmd.append("--cpp-engine-strict" if bool(args.cuda_cpp_engine_strict) else "--no-cpp-engine-strict")
         if bool(args.allow_cuda_skip):
             cmd.append("--allow-skip")
         for k in kernel_filter:
@@ -473,6 +495,9 @@ def main() -> None:
         ),
         "cuda_runtime_backend": str(args.cuda_runtime_backend),
         "cuda_codegen_mode": str(args.cuda_codegen_mode),
+        "cuda_codegen_strict": bool(args.cuda_codegen_strict),
+        "cuda_cpp_engine": str(args.cuda_cpp_engine),
+        "cuda_cpp_engine_strict": bool(args.cuda_cpp_engine_strict),
         "seed_cache_dir": str(seed_cache_dir),
         "pipeline_out_dir": str(pipeline_out_dir),
         "active_batch_path": str(active_batch_path),

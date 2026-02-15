@@ -1,8 +1,8 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-15T13:51:30+00:00",
+  "updated_at": "2026-02-15T14:43:18+00:00",
   "branch": "flaggems",
-  "head_commit": "8b1ca91f569101043d1b1cfd9100128e11fe0ce3",
+  "head_commit": "59186ce0b1f8b36af59ef2f8ff0732bbab32bd48",
   "mode": "mixed_development",
   "coverage": {
     "semantic_ops": 196,
@@ -11,8 +11,8 @@
     "blocked_backend": 0
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v6/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v6/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_policy_pybind_v1/backend_compiler_batch_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_policy_pybind_v1/status_converged.json"
   },
   "lanes": {
     "coverage": {

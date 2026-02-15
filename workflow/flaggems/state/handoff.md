@@ -1,11 +1,11 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-15T13:49:11+00:00
-- Commit: `51d61576a47c6431a76af0e26ace3171adc1a062`
+- Timestamp: 2026-02-15T14:43:13+00:00
+- Commit: `59186ce0b1f8b36af59ef2f8ff0732bbab32bd48`
 - Lane: `backend_compiler`
-- Summary: Completed wave3 op-family schedule profile export with wave2 baseline timing compare
+- Summary: Switch backend_compiler defaults to CUDA cpp+pybind(strict) and add strict-flag propagation tests
 - Batch Ops (1): 
-- Run Summary: `artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v6/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v6/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v6/backend_compiler_batch_summary.json, artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v6/run_summary.json, artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v6/schedule_profiles.json, artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v6/status_converged.json, artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v6/timing_delta.json
-- Next Focus: Queue backend wave4 for profile-specialized tuning and larger kernel set
+- Run Summary: `artifacts/flaggems_matrix/daily/20260215/backend_compiler_policy_pybind_v1/backend_compiler_batch_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260215/backend_compiler_policy_pybind_v1/status_converged.json`
+- Evidence Paths: artifacts/flaggems_matrix/daily/20260215/backend_compiler_policy_pybind_v1/backend_compiler_batch_summary.json, artifacts/flaggems_matrix/daily/20260215/backend_compiler_policy_pybind_v1/status_converged.json, tests/backends/cuda/test_cuda_backend_smoke_script.py, tests/frontends/triton/test_flaggems_lane_runners.py, tests/frontends/triton/test_flaggems_matrix_suite_resolution.py
+- Next Focus: Execute wave4 profile specialization run on expanded kernel set with cpp strict defaults

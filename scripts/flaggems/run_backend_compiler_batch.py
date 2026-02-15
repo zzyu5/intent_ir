@@ -61,8 +61,26 @@ def main() -> None:
     ap.add_argument("--rvv-host", default="192.168.8.72")
     ap.add_argument("--rvv-user", default="ubuntu")
     ap.add_argument("--rvv-use-key", action=argparse.BooleanOptionalAction, default=True)
-    ap.add_argument("--cuda-runtime-backend", choices=["auto", "nvcc", "nvrtc"], default="nvrtc")
-    ap.add_argument("--cuda-codegen-mode", choices=["auto", "cpp", "py"], default="py")
+    ap.add_argument("--cuda-runtime-backend", choices=["auto", "nvcc", "nvrtc"], default="auto")
+    ap.add_argument("--cuda-codegen-mode", choices=["auto", "cpp", "py"], default="cpp")
+    ap.add_argument(
+        "--cuda-codegen-strict",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="When true and codegen mode is cpp, disable python lowering fallback.",
+    )
+    ap.add_argument(
+        "--cuda-cpp-engine",
+        choices=["pybind", "bin"],
+        default="pybind",
+        help="C++ codegen engine when using cpp mode (default: pybind).",
+    )
+    ap.add_argument(
+        "--cuda-cpp-engine-strict",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="When true, do not fall back from selected --cuda-cpp-engine.",
+    )
     ap.add_argument("--allow-cuda-skip", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument(
         "--emit-timing-delta",
@@ -91,11 +109,15 @@ def main() -> None:
         str(args.cuda_runtime_backend),
         "--cuda-codegen-mode",
         str(args.cuda_codegen_mode),
+        "--cuda-cpp-engine",
+        str(args.cuda_cpp_engine),
         "--rvv-host",
         str(args.rvv_host),
         "--rvv-user",
         str(args.rvv_user),
     ]
+    cmd.append("--cuda-codegen-strict" if bool(args.cuda_codegen_strict) else "--no-cuda-codegen-strict")
+    cmd.append("--cuda-cpp-engine-strict" if bool(args.cuda_cpp_engine_strict) else "--no-cuda-cpp-engine-strict")
     if bool(args.run_rvv_remote):
         cmd.append("--run-rvv-remote")
     else:
@@ -200,6 +222,11 @@ def main() -> None:
         "lane": "backend_compiler",
         "cmd": cmd,
         "out_dir": str(args.out_dir),
+        "cuda_runtime_backend": str(args.cuda_runtime_backend),
+        "cuda_codegen_mode": str(args.cuda_codegen_mode),
+        "cuda_codegen_strict": bool(args.cuda_codegen_strict),
+        "cuda_cpp_engine": str(args.cuda_cpp_engine),
+        "cuda_cpp_engine_strict": bool(args.cuda_cpp_engine_strict),
         "stdout": stdout.strip(),
         "stderr": stderr.strip(),
         "timing_delta": {
