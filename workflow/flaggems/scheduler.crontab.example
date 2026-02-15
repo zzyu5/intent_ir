@@ -1,0 +1,11 @@
+# Example crontab entry for FlagGems nightly maintenance (UTC 02:30 daily).
+# Install with:
+#   crontab workflow/flaggems/scheduler.crontab.example
+#
+# NOTE:
+# - Adjust python path / repo path as needed.
+# - This runs the maintained wrapper script which writes logs under:
+#   artifacts/flaggems_matrix/nightly_logs/
+
+30 2 * * * cd /home/kingdom/intentir && /bin/bash workflow/flaggems/nightly.sh
+

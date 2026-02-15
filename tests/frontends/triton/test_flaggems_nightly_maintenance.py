@@ -59,3 +59,28 @@ def test_nightly_maintenance_toggle_flags(tmp_path: Path) -> None:
     assert "--no-rvv-use-key" in matrix_cmd
     assert "--no-allow-cuda-skip" in matrix_cmd
     assert "--write-registry" in matrix_cmd
+
+
+def test_nightly_maintenance_rejects_intentir_mode_for_original_path(tmp_path: Path) -> None:
+    out_root = tmp_path / "daily"
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/nightly_maintenance.py",
+            "--dry-run",
+            "--out-root",
+            str(out_root),
+            "--date-tag",
+            "20990101",
+            "--run-name",
+            "ut_invalid",
+            "--flaggems-path",
+            "original",
+            "--intentir-mode",
+            "force_compile",
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode != 0

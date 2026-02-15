@@ -82,6 +82,33 @@ python scripts/flaggems/nightly_maintenance.py \
 
 Use `--dry-run` to verify command composition without executing pipeline/backend jobs.
 
+Scheduler wrapper (for cron/systemd):
+
+```bash
+bash workflow/flaggems/nightly.sh
+```
+
+Environment overrides (optional):
+- `FLAGGEMS_NIGHTLY_SUITE`
+- `FLAGGEMS_NIGHTLY_CASES_LIMIT`
+- `FLAGGEMS_NIGHTLY_RVV_HOST`
+- `FLAGGEMS_NIGHTLY_RVV_USER`
+- `FLAGGEMS_NIGHTLY_RUN_RVV_REMOTE` (`1|0`)
+- `FLAGGEMS_NIGHTLY_RVV_USE_KEY` (`1|0`)
+- `FLAGGEMS_NIGHTLY_ALLOW_CUDA_SKIP` (`1|0`)
+- `FLAGGEMS_NIGHTLY_WRITE_REGISTRY` (`1|0`)
+- `FLAGGEMS_NIGHTLY_DRY_RUN` (`1|0`)
+
+Cron example:
+
+```bash
+crontab workflow/flaggems/scheduler.crontab.example
+```
+
+Systemd timer example (copy and adjust paths/user):
+- `workflow/flaggems/flaggems-nightly.service.example`
+- `workflow/flaggems/flaggems-nightly.timer.example`
+
 ## State Files
 
 - `state/feature_list.json`: registry-derived feature truth for scheduling.

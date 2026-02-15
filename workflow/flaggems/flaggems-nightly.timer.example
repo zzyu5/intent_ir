@@ -1,0 +1,10 @@
+[Unit]
+Description=Run IntentIR FlagGems Nightly Maintenance Daily
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+

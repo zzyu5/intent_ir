@@ -39,6 +39,14 @@ Nightly maintenance runner (matrix + ci_gate in one command):
 
 `python scripts/flaggems/nightly_maintenance.py --suite coverage --run-rvv-remote --rvv-host 192.168.8.72 --rvv-user ubuntu --rvv-use-key --cuda-runtime-backend nvrtc --cuda-codegen-mode py`
 
+Scheduler-friendly wrapper:
+
+`bash workflow/flaggems/nightly.sh`
+
+Wrapper supports env-based dry-run:
+
+`FLAGGEMS_NIGHTLY_DRY_RUN=1 bash workflow/flaggems/nightly.sh`
+
 ## Remote RVV (Task6)
 
 Run a kernel end-to-end and compare remote outputs against the saved Triton baseline:

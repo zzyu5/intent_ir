@@ -1,0 +1,21 @@
+[Unit]
+Description=IntentIR FlagGems Nightly Maintenance
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=kingdom
+WorkingDirectory=/home/kingdom/intentir
+Environment=FLAGGEMS_NIGHTLY_SUITE=coverage
+Environment=FLAGGEMS_NIGHTLY_RUN_RVV_REMOTE=1
+Environment=FLAGGEMS_NIGHTLY_RVV_HOST=192.168.8.72
+Environment=FLAGGEMS_NIGHTLY_RVV_USER=ubuntu
+Environment=FLAGGEMS_NIGHTLY_RVV_USE_KEY=1
+Environment=FLAGGEMS_NIGHTLY_CUDA_RUNTIME_BACKEND=nvrtc
+Environment=FLAGGEMS_NIGHTLY_CUDA_CODEGEN_MODE=py
+ExecStart=/bin/bash /home/kingdom/intentir/workflow/flaggems/nightly.sh
+
+[Install]
+WantedBy=multi-user.target
+
