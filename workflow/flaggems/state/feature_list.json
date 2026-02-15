@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_feature_list_v2",
-  "generated_at": "2026-02-15T13:15:08+00:00",
+  "generated_at": "2026-02-15T13:25:57+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
@@ -5310,10 +5310,10 @@
       "id": "ir_arch::semantic_rule_consistency",
       "semantic_op": "",
       "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "pending",
-      "next_action": "mapping_consistency",
+      "status": "done",
+      "passes": true,
+      "reason_code": "ok",
+      "next_action": "none",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "ir_arch",
@@ -5327,17 +5327,21 @@
       "depends_on": [
         "ir_arch::primitive_catalog_guard"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v3/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v3/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v3/batch_gate_ir_arch_pass.json"
+      ],
       "description": "Keep semantic rules canonical and mapped to shared IntentIR primitives."
     },
     {
       "id": "backend_compiler::cuda_pipeline_modularization",
       "semantic_op": "",
       "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "pending",
-      "next_action": "cuda_pipeline_split",
+      "status": "done",
+      "passes": true,
+      "reason_code": "ok",
+      "next_action": "none",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "backend_compiler",
@@ -5349,17 +5353,21 @@
       ],
       "gate_profile": "backend_compiler",
       "depends_on": [],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v3/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v3/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v3/batch_gate_backend_compiler.json"
+      ],
       "description": "Split CUDA lowering/codegen into compiler-style stage modules."
     },
     {
       "id": "backend_compiler::rvv_pipeline_modularization",
       "semantic_op": "",
       "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "pending",
-      "next_action": "rvv_pipeline_split",
+      "status": "done",
+      "passes": true,
+      "reason_code": "ok",
+      "next_action": "none",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "backend_compiler",
@@ -5371,17 +5379,21 @@
       ],
       "gate_profile": "backend_compiler",
       "depends_on": [],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v3/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v3/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v3/batch_gate_backend_compiler.json"
+      ],
       "description": "Split RVV codegen path into compiler-style stage modules."
     },
     {
       "id": "backend_compiler::stage_timing_unification",
       "semantic_op": "",
       "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "pending",
-      "next_action": "timing_unification",
+      "status": "done",
+      "passes": true,
+      "reason_code": "ok",
+      "next_action": "none",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "backend_compiler",
@@ -5397,7 +5409,11 @@
         "backend_compiler::cuda_pipeline_modularization",
         "backend_compiler::rvv_pipeline_modularization"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v3/rvv_local.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v3/cuda_local.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v3/batch_gate_backend_compiler.json"
+      ],
       "description": "Unify stage timing and failure reason reporting across RVV/CUDA backends."
     }
   ]

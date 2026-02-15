@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_active_batch_v2",
-  "generated_at": "2026-02-15T13:15:09+00:00",
+  "generated_at": "2026-02-15T13:25:58+00:00",
   "branch": "flaggems",
   "lane": "backend_compiler",
   "batch_size": 8,
@@ -9,52 +9,7 @@
     "priority",
     "dependency"
   ],
-  "items": [
-    {
-      "id": "backend_compiler::cuda_pipeline_modularization",
-      "semantic_op": "",
-      "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "pending",
-      "next_action": "cuda_pipeline_split",
-      "e2e_spec": null,
-      "intent_ops": [],
-      "track": "backend_compiler",
-      "task_type": "compilerization",
-      "priority": 10,
-      "acceptance": [
-        "cuda_stage_pipeline_exists",
-        "legacy_codegen_entry_acts_as_shim"
-      ],
-      "gate_profile": "backend_compiler",
-      "depends_on": [],
-      "evidence_paths": [],
-      "description": "Split CUDA lowering/codegen into compiler-style stage modules."
-    },
-    {
-      "id": "backend_compiler::rvv_pipeline_modularization",
-      "semantic_op": "",
-      "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "pending",
-      "next_action": "rvv_pipeline_split",
-      "e2e_spec": null,
-      "intent_ops": [],
-      "track": "backend_compiler",
-      "task_type": "compilerization",
-      "priority": 20,
-      "acceptance": [
-        "rvv_stage_pipeline_exists",
-        "legacy_codegen_entry_acts_as_shim"
-      ],
-      "gate_profile": "backend_compiler",
-      "depends_on": [],
-      "evidence_paths": [],
-      "description": "Split RVV codegen path into compiler-style stage modules."
-    }
-  ],
+  "items": [],
   "context": {
     "feature_list_path": "workflow/flaggems/state/feature_list.json",
     "progress_log_path": "",

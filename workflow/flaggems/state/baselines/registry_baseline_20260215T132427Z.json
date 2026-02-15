@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_baseline_v1",
-  "captured_at": "2026-02-15T13:25:58+00:00",
+  "captured_at": "2026-02-15T13:24:27+00:00",
   "metrics": {
     "semantic_ops": 196,
     "dual_pass": 196,

@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_active_batch_v2",
-  "generated_at": "2026-02-15T13:15:09+00:00",
+  "generated_at": "2026-02-15T13:25:58+00:00",
   "branch": "flaggems",
   "lane": "ir_arch",
   "batch_size": 8,
@@ -9,32 +9,7 @@
     "priority",
     "dependency"
   ],
-  "items": [
-    {
-      "id": "ir_arch::semantic_rule_consistency",
-      "semantic_op": "",
-      "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "pending",
-      "next_action": "mapping_consistency",
-      "e2e_spec": null,
-      "intent_ops": [],
-      "track": "ir_arch",
-      "task_type": "semantic_mapping",
-      "priority": 20,
-      "acceptance": [
-        "semantic_rules_tests_pass",
-        "intentir_interpreter_consistency_pass"
-      ],
-      "gate_profile": "ir_arch",
-      "depends_on": [
-        "ir_arch::primitive_catalog_guard"
-      ],
-      "evidence_paths": [],
-      "description": "Keep semantic rules canonical and mapped to shared IntentIR primitives."
-    }
-  ],
+  "items": [],
   "context": {
     "feature_list_path": "workflow/flaggems/state/feature_list.json",
     "progress_log_path": "",
