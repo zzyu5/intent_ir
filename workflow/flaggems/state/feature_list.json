@@ -1,12 +1,11 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-15T09:38:35+00:00",
+  "generated_at": "2026-02-15T09:41:39+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
-      "dual_pass": 193,
-      "blocked_backend": 3
+      "dual_pass": 196
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -1709,10 +1708,10 @@
       "id": "flaggems::zeros",
       "semantic_op": "zeros",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "full2d",
       "intent_ops": [
         "const",
@@ -1723,10 +1722,10 @@
       "id": "flaggems::zeros_like",
       "semantic_op": "zeros_like",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "full2d",
       "intent_ops": [
         "const",
@@ -2428,10 +2427,10 @@
       "id": "flaggems::where_self",
       "semantic_op": "where_self",
       "family": "index_scatter_gather",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "where2d",
       "intent_ops": [
         "gt",
