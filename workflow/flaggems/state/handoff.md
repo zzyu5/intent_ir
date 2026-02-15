@@ -1,11 +1,11 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-15T17:51:29+00:00
-- Commit: `1297af35ab0c265a84118c7358c317f137ff4633`
+- Timestamp: 2026-02-15T18:06:24+00:00
+- Commit: `d00c2b292859b14afba5d3cdae9054758c459ff8`
 - Lane: `backend_compiler`
-- Summary: Aligned run_backend_compiler_batch lane routing to backend_compiler; dry-run confirms scoped gate now uses backend_compiler lane.
+- Summary: Implemented CUDA cpp lowering for topk2d/trace2d; wave6 8-kernel backend_compiler subbatch is now full dual-pass.
 - Batch Ops (1): 
-- Run Summary: `artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_trio_v1/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_trio_v1/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260216/backend_compiler_dryrun_lane_fix/backend_compiler_batch_summary.json, artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_trio_v1/run_summary.json, artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_trio_v1/status_converged.json
-- Next Focus: Implement CUDA cpp lowering for topk2d and trace2d, then rerun backend_compiler wave6 scoped gate.
+- Run Summary: `artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_subbatch_v2/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_subbatch_v2/status_converged.json`
+- Evidence Paths: artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_subbatch_v2/backend_compiler_batch_summary.json, artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_subbatch_v2/cuda_local.json, artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_subbatch_v2/run_summary.json, artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_subbatch_v2/status_converged.json
+- Next Focus: Run expanded wave6 manifest and close backend_compiler::expanded_family_wave6 gate with fresh evidence.
