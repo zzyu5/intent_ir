@@ -1494,7 +1494,12 @@ def _execute_op(intent: IntentFunction, op: Op, env: Dict[str, np.ndarray], shap
         dims_raw = op.attrs.get("axes", op.attrs.get("dims", op.attrs.get("axis")))
         dims = _resolve_dims(dims_raw, x)
         keepdims = bool(op.attrs.get("keepdims", False))
-        return np.std(x, axis=dims, keepdims=keepdims)
+        correction = op.attrs.get("correction", op.attrs.get("ddof", 0))
+        try:
+            ddof = int(correction)
+        except Exception:
+            ddof = 0
+        return np.std(x, axis=dims, keepdims=keepdims, ddof=ddof)
     if op.op == "argmax":
         x = _get(env, op.inputs[0])
         axis = op.attrs.get("axis", -1)

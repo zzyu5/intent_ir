@@ -490,8 +490,14 @@ def _compare_outputs(pred: Dict[str, np.ndarray], ref: Dict[str, np.ndarray], ou
             if np.any(p_nonfinite) or np.any(r_nonfinite):
                 if not np.array_equal(p_nonfinite, r_nonfinite):
                     return DiffResult(False, float("inf"), float("inf"), None, f"non-finite pattern mismatch in {name}")
-                if not np.array_equal(p[p_nonfinite], ref_arr[r_nonfinite]):
-                    return DiffResult(False, float("inf"), float("inf"), None, f"non-finite values mismatch in {name}")
+                if np.any(p_nonfinite):
+                    p_nf = p[p_nonfinite]
+                    r_nf = ref_arr[r_nonfinite]
+                    same_nan = np.isnan(p_nf) & np.isnan(r_nf)
+                    same_pos_inf = np.isposinf(p_nf) & np.isposinf(r_nf)
+                    same_neg_inf = np.isneginf(p_nf) & np.isneginf(r_nf)
+                    if not np.all(same_nan | same_pos_inf | same_neg_inf):
+                        return DiffResult(False, float("inf"), float("inf"), None, f"non-finite values mismatch in {name}")
             finite = ~(p_nonfinite | r_nonfinite)
             abs_err = np.zeros_like(ref_arr, dtype=np.float64)
             rel_err = np.zeros_like(ref_arr, dtype=np.float64)

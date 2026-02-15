@@ -240,6 +240,104 @@ def _canonical_row_all_intent() -> IntentFunction:
     )
 
 
+def _canonical_sub2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "sub2d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "y": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "sub", "inputs": ["x", "y"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_sqrt2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "sqrt2d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "sqrt", "inputs": ["A"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_std2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "std2d",
+            "tensors": {
+                "X": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "Out": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "std", "inputs": ["X"], "output": "Out", "attrs": {"axis": 1, "dims": [1], "keepdims": False, "correction": 1}},
+            ],
+            "outputs": ["Out"],
+        }
+    )
+
+
+def _canonical_stack2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "stack2d",
+            "tensors": {
+                "input0": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "input1": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out_ptr": {"dtype": "f32", "shape": [2, "M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "stack", "inputs": ["input0", "input1"], "output": "out_ptr", "attrs": {"axis": 0}},
+            ],
+            "outputs": ["out_ptr"],
+        }
+    )
+
+
+def _canonical_sort2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "sort2d",
+            "tensors": {
+                "in_ptr": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out_ptr": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "sort", "inputs": ["in_ptr"], "output": "out_ptr", "attrs": {"axis": 1, "descending": False, "stable": False}},
+            ],
+            "outputs": ["out_ptr"],
+        }
+    )
+
+
+def _canonical_sort_stable2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "sort_stable2d",
+            "tensors": {
+                "in_ptr": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out_ptr": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "sort", "inputs": ["in_ptr"], "output": "out_ptr", "attrs": {"axis": 1, "descending": False, "stable": True}},
+            ],
+            "outputs": ["out_ptr"],
+        }
+    )
+
+
 def _canonical_threshold2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -1911,6 +2009,18 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_trace2d_intent()
     if name == "triu2d":
         return _canonical_triu2d_intent()
+    if name == "sub2d":
+        return _canonical_sub2d_intent()
+    if name == "sqrt2d":
+        return _canonical_sqrt2d_intent()
+    if name == "std2d":
+        return _canonical_std2d_intent()
+    if name == "stack2d":
+        return _canonical_stack2d_intent()
+    if name == "sort2d":
+        return _canonical_sort2d_intent()
+    if name == "sort_stable2d":
+        return _canonical_sort_stable2d_intent()
     if name == "upsample_nearest1d_ncl":
         return _canonical_upsample_nearest1d_ncl_intent()
     if name == "upsample_nearest2d_nchw":

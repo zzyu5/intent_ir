@@ -846,6 +846,16 @@ void emit_rsqrt(CodeWriter& w, const std::string& out, const std::string& a, con
   w.line("intentir_rsqrt_f32(" + a + ", " + out + ", (size_t)" + std::to_string(n) + ");");
 }
 
+void emit_sqrt(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
+  const int64_t n = numel(out_shape);
+  w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) {");
+  w.indent();
+  w.line("const float __v = " + a + "[i];");
+  w.line(out + "[i] = sqrtf(__v);");
+  w.dedent();
+  w.line("}");
+}
+
 void emit_log(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
   const int64_t n = numel(out_shape);
   w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) " + out + "[i] = logf(" + a + "[i]);");
@@ -874,6 +884,129 @@ void emit_atan(CodeWriter& w, const std::string& out, const std::string& a, cons
 void emit_erf(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
   const int64_t n = numel(out_shape);
   w.line("intentir_erf_f32(" + a + ", " + out + ", (size_t)" + std::to_string(n) + ");");
+}
+
+void emit_std_axis1(CodeWriter& w, const std::string& out, const std::string& inp, const std::vector<int64_t>& in_shape,
+                    const std::vector<int64_t>& out_shape, int axis, bool keepdims, int correction) {
+  if (in_shape.size() != 2) fail("std lowering currently supports rank-2 input");
+  int axis_norm = axis;
+  if (axis_norm < 0) axis_norm += 2;
+  if (axis_norm != 1) fail("std lowering currently supports axis=1");
+  const int64_t M = in_shape[0];
+  const int64_t N = in_shape[1];
+  if (out_shape.size() == 1) {
+    if (out_shape[0] != M) fail("std output shape mismatch: expect [M]");
+  } else if (out_shape.size() == 2) {
+    if (!keepdims) fail("std rank-2 output requires keepdims=true");
+    if (out_shape[0] != M || out_shape[1] != 1) fail("std output shape mismatch: expect [M,1]");
+  } else {
+    fail("std output rank must be 1 or 2");
+  }
+  w.line("for (int64_t i = 0; i < " + std::to_string(M) + "; ++i) {");
+  w.indent();
+  w.line("const float* __row = " + inp + " + (size_t)i * (size_t)" + std::to_string(N) + ";");
+  w.line("double __sum = 0.0;");
+  w.line("for (int64_t j = 0; j < " + std::to_string(N) + "; ++j) __sum += (double)__row[(size_t)j];");
+  w.line("const double __mean = __sum / (double)" + std::to_string(N) + ";");
+  w.line("double __sq = 0.0;");
+  w.line("for (int64_t j = 0; j < " + std::to_string(N) + "; ++j) {");
+  w.indent();
+  w.line("const double __d = (double)__row[(size_t)j] - __mean;");
+  w.line("__sq += __d * __d;");
+  w.dedent();
+  w.line("}");
+  w.line("double __den = (double)" + std::to_string(N) + " - (double)" + std::to_string(correction) + ";");
+  w.line("if (__den <= 0.0) {");
+  w.indent();
+  if (out_shape.size() == 1) {
+    w.line(out + "[(size_t)i] = nanf(\"\");");
+  } else {
+    w.line(out + "[(size_t)i * (size_t)" + std::to_string(out_shape[1]) + "] = nanf(\"\");");
+  }
+  w.line("continue;");
+  w.dedent();
+  w.line("}");
+  w.line("double __var = __sq / __den;");
+  w.line("if (__var < 0.0) __var = 0.0;");
+  w.line("const float __std = (float)sqrt(__var);");
+  if (out_shape.size() == 1) {
+    w.line(out + "[(size_t)i] = __std;");
+  } else {
+    w.line(out + "[(size_t)i * (size_t)" + std::to_string(out_shape[1]) + "] = __std;");
+  }
+  w.dedent();
+  w.line("}");
+}
+
+void emit_sort_axis1(CodeWriter& w, const std::string& out, const std::string& inp, const std::vector<int64_t>& in_shape,
+                     const std::vector<int64_t>& out_shape, int axis, bool descending) {
+  if (in_shape.size() != 2 || out_shape.size() != 2) fail("sort lowering currently supports rank-2 tensors");
+  if (in_shape != out_shape) fail("sort output shape mismatch");
+  int axis_norm = axis;
+  if (axis_norm < 0) axis_norm += 2;
+  if (axis_norm != 1) fail("sort lowering currently supports axis=1");
+  const int64_t M = in_shape[0];
+  const int64_t N = in_shape[1];
+  w.line("float* __sort_row = (float*)malloc(sizeof(float) * (size_t)" + std::to_string(N) + ");");
+  w.line("if (!__sort_row) { fprintf(stderr, \"alloc failed: sort_row\\n\"); return; }");
+  w.line("for (int64_t i = 0; i < " + std::to_string(M) + "; ++i) {");
+  w.indent();
+  w.line("const float* __row = " + inp + " + (size_t)i * (size_t)" + std::to_string(N) + ";");
+  w.line("for (int64_t j = 0; j < " + std::to_string(N) + "; ++j) __sort_row[(size_t)j] = __row[(size_t)j];");
+  w.line("for (int64_t __ii = 1; __ii < " + std::to_string(N) + "; ++__ii) {");
+  w.indent();
+  w.line("float __v = __sort_row[(size_t)__ii];");
+  w.line("int64_t __jj = __ii - 1;");
+  w.line("while (__jj >= 0 && __sort_row[(size_t)__jj] > __v) {");
+  w.indent();
+  w.line("__sort_row[(size_t)(__jj + 1)] = __sort_row[(size_t)__jj];");
+  w.line("--__jj;");
+  w.dedent();
+  w.line("}");
+  w.line("__sort_row[(size_t)(__jj + 1)] = __v;");
+  w.dedent();
+  w.line("}");
+  if (descending) {
+    w.line("for (int64_t j = 0; j < " + std::to_string(N) + "; ++j) {");
+    w.indent();
+    w.line(out + "[(size_t)i * (size_t)" + std::to_string(N) + " + (size_t)j] = __sort_row[(size_t)(" + std::to_string(N - 1) + " - j)];");
+    w.dedent();
+    w.line("}");
+  } else {
+    w.line("for (int64_t j = 0; j < " + std::to_string(N) + "; ++j) {");
+    w.indent();
+    w.line(out + "[(size_t)i * (size_t)" + std::to_string(N) + " + (size_t)j] = __sort_row[(size_t)j];");
+    w.dedent();
+    w.line("}");
+  }
+  w.dedent();
+  w.line("}");
+  w.line("free(__sort_row);");
+}
+
+void emit_stack_axis0_2x2d(CodeWriter& w, const std::string& out, const std::string& a, const std::string& b,
+                           const std::vector<int64_t>& a_shape, const std::vector<int64_t>& b_shape,
+                           const std::vector<int64_t>& out_shape) {
+  if (a_shape.size() != 2 || b_shape.size() != 2 || out_shape.size() != 3) {
+    fail("stack lowering currently supports rank-2 inputs -> rank-3 output");
+  }
+  if (a_shape != b_shape) fail("stack inputs shape mismatch");
+  const int64_t M = a_shape[0];
+  const int64_t N = a_shape[1];
+  if (out_shape[0] != 2 || out_shape[1] != M || out_shape[2] != N) {
+    fail("stack output shape mismatch: expect [2,M,N]");
+  }
+  w.line("for (int64_t i = 0; i < " + std::to_string(M) + "; ++i) {");
+  w.indent();
+  w.line("for (int64_t j = 0; j < " + std::to_string(N) + "; ++j) {");
+  w.indent();
+  w.line("const size_t in_idx = (size_t)i * (size_t)" + std::to_string(N) + " + (size_t)j;");
+  w.line(out + "[(size_t)0 * (size_t)" + std::to_string(M * N) + " + in_idx] = " + a + "[in_idx];");
+  w.line(out + "[(size_t)1 * (size_t)" + std::to_string(M * N) + " + in_idx] = " + b + "[in_idx];");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
 }
 
 void emit_glu(CodeWriter& w, const std::string& out, const std::string& x, const std::vector<int64_t>& in_shape,
@@ -2755,6 +2888,8 @@ struct CProgramEmitter {
 	                                 dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(out));
 	      } else if (op.op == "rsqrt") {
 	        emit_rsqrt(w, out_var, v(op.inputs[0]), out_shape);
+	      } else if (op.op == "sqrt") {
+	        emit_sqrt(w, out_var, v(op.inputs[0]), out_shape);
 	      } else if (op.op == "abs") {
 	        emit_unary_abs(w, out_var, v(op.inputs[0]), out_shape, dtype_env.at(op.inputs[0]), dtype_env.at(out));
 	      } else if (op.op == "floor") {
@@ -3783,6 +3918,20 @@ struct CProgramEmitter {
 	      } else if (op.op == "softmax") {
 	        int axis = op.attrs.value("axis", -1);
 	        emit_softmax(w, out_var, v(op.inputs[0]), shape_env.at(op.inputs[0]), axis);
+	      } else if (op.op == "std") {
+	        int axis = op.attrs.value("axis", 1);
+	        bool keepdims = op.attrs.value("keepdims", false);
+	        int correction = op.attrs.value("correction", op.attrs.value("ddof", 0));
+	        emit_std_axis1(w, out_var, v(op.inputs[0]), shape_env.at(op.inputs[0]), out_shape, axis, keepdims, correction);
+	      } else if (op.op == "sort") {
+	        int axis = op.attrs.value("axis", -1);
+	        bool descending = op.attrs.value("descending", false);
+	        emit_sort_axis1(w, out_var, v(op.inputs[0]), shape_env.at(op.inputs[0]), out_shape, axis, descending);
+	      } else if (op.op == "stack") {
+	        if (op.inputs.size() != 2) fail("stack currently supports exactly 2 inputs");
+	        int axis = op.attrs.value("axis", 0);
+	        if (axis != 0) fail("stack lowering currently supports axis=0 only");
+	        emit_stack_axis0_2x2d(w, out_var, v(op.inputs[0]), v(op.inputs[1]), shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape);
 	      } else if (op.op == "matmul") {
 	        bool ta = op.attrs.value("transpose_a", false);
 	        bool tb = op.attrs.value("transpose_b", false);
@@ -4358,7 +4507,7 @@ int main(int argc, char** argv) {
         dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
       }
-      if (kind == "abs" || kind == "floor" || kind == "ceil" || kind == "acos" || kind == "atan" || kind == "cos" || kind == "erf" || kind == "log") {
+      if (kind == "abs" || kind == "floor" || kind == "ceil" || kind == "acos" || kind == "atan" || kind == "cos" || kind == "erf" || kind == "log" || kind == "sqrt") {
         shape_env[out] = get_shape(op.inputs[0]);
         dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
@@ -4435,6 +4584,58 @@ int main(int argc, char** argv) {
         oshape = broadcast_shape(oshape, get_shape(op.inputs[2]));
         shape_env[out] = oshape;
         dtype_env[out] = get_dtype(op.inputs[1]);
+        continue;
+      }
+      if (kind == "std") {
+        if (op.inputs.size() != 1) fail("std infer expects 1 input");
+        const auto& in_shape = get_shape(op.inputs[0]);
+        if (in_shape.size() != 2) fail("std infer currently supports rank-2 input");
+        int axis = 1;
+        if (op.attrs.contains("axis")) {
+          if (op.attrs["axis"].is_array()) {
+            if (op.attrs["axis"].size() != 1) fail("std infer currently supports one reduction axis");
+            axis = op.attrs["axis"][0].get<int>();
+          } else {
+            axis = op.attrs["axis"].get<int>();
+          }
+        } else if (op.attrs.contains("dims") && op.attrs["dims"].is_array()) {
+          if (op.attrs["dims"].size() != 1) fail("std infer currently supports one reduction axis");
+          axis = op.attrs["dims"][0].get<int>();
+        } else if (op.attrs.contains("axes") && op.attrs["axes"].is_array()) {
+          if (op.attrs["axes"].size() != 1) fail("std infer currently supports one reduction axis");
+          axis = op.attrs["axes"][0].get<int>();
+        }
+        int axis_norm = axis;
+        if (axis_norm < 0) axis_norm += static_cast<int>(in_shape.size());
+        if (axis_norm != 1) fail("std infer currently supports axis=1");
+        const bool keepdims = op.attrs.value("keepdims", false);
+        if (keepdims) shape_env[out] = {in_shape[0], 1};
+        else shape_env[out] = {in_shape[0]};
+        dtype_env[out] = get_dtype(op.inputs[0]);
+        continue;
+      }
+      if (kind == "sort") {
+        if (op.inputs.size() != 1) fail("sort infer expects 1 input");
+        const auto& in_shape = get_shape(op.inputs[0]);
+        if (in_shape.size() != 2) fail("sort infer currently supports rank-2 input");
+        int axis = op.attrs.value("axis", -1);
+        if (axis < 0) axis += static_cast<int>(in_shape.size());
+        if (axis != 1) fail("sort infer currently supports axis=1");
+        shape_env[out] = in_shape;
+        dtype_env[out] = get_dtype(op.inputs[0]);
+        continue;
+      }
+      if (kind == "stack") {
+        if (op.inputs.size() != 2) fail("stack infer currently supports exactly 2 inputs");
+        const auto& a_shape = get_shape(op.inputs[0]);
+        const auto& b_shape = get_shape(op.inputs[1]);
+        if (a_shape.size() != 2 || b_shape.size() != 2) fail("stack infer currently supports rank-2 inputs");
+        if (a_shape != b_shape) fail("stack infer input shape mismatch");
+        int axis = op.attrs.value("axis", 0);
+        if (axis < 0) axis += 3;
+        if (axis != 0) fail("stack infer currently supports axis=0");
+        shape_env[out] = {2, a_shape[0], a_shape[1]};
+        dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
       }
       if (kind == "cumsum" || kind == "cummax" || kind == "cummin") {
