@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_active_batch_v2",
-  "generated_at": "2026-02-15T15:54:53+00:00",
+  "generated_at": "2026-02-15T16:05:45+00:00",
   "branch": "flaggems",
   "lane": "backend_compiler",
   "batch_size": 8,
@@ -9,7 +9,32 @@
     "priority",
     "dependency"
   ],
-  "items": [],
+  "items": [
+    {
+      "id": "backend_compiler::nightly_perf_budget_wave5",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "",
+      "next_action": "nightly_perf_regression_gate",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "backend_compiler",
+      "task_type": "performance",
+      "priority": 100,
+      "acceptance": [
+        "timing_delta_total_regression_within_budget",
+        "nightly_ci_gate_backend_compiler_pass"
+      ],
+      "gate_profile": "backend_compiler",
+      "depends_on": [
+        "backend_compiler::compiler_purity_gate_wave5"
+      ],
+      "evidence_paths": [],
+      "description": "Add nightly backend performance budget gate with timing_delta regression thresholds."
+    }
+  ],
   "context": {
     "feature_list_path": "workflow/flaggems/state/feature_list.json",
     "progress_log_path": "",
