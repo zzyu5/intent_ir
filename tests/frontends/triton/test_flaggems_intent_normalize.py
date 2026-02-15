@@ -162,9 +162,25 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert mse_loss is not None
     assert [op.op for op in mse_loss.ops] == ["mse_loss"]
 
+    mv = canonical_flaggems_intent_for_spec("mv2d")
+    assert mv is not None
+    assert [op.op for op in mv.ops] == ["matmul", "mul", "mul", "add"]
+
     nan_to_num = canonical_flaggems_intent_for_spec("nan_to_num2d")
     assert nan_to_num is not None
-    assert [op.op for op in nan_to_num.ops] == ["nan_to_num"]
+    assert [op.op for op in nan_to_num.ops] == [
+        "abs",
+        "const",
+        "gt",
+        "ne",
+        "const",
+        "const",
+        "const",
+        "ge",
+        "where",
+        "where",
+        "where",
+    ]
 
     nll_loss = canonical_flaggems_intent_for_spec("nll_loss2d_forward")
     assert nll_loss is not None
@@ -310,6 +326,14 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     count_nonzero = canonical_flaggems_intent_for_spec("count_nonzero2d")
     assert count_nonzero is not None
     assert [op.op for op in count_nonzero.ops] == ["const", "ne", "cast", "reduce_sum"]
+
+    nonzero = canonical_flaggems_intent_for_spec("nonzero2d")
+    assert nonzero is not None
+    assert [op.op for op in nonzero.ops] == ["nonzero"]
+
+    normed_cumsum = canonical_flaggems_intent_for_spec("normed_cumsum2d")
+    assert normed_cumsum is not None
+    assert [op.op for op in normed_cumsum.ops] == ["cumsum", "reduce_sum", "add", "div"]
 
     diag = canonical_flaggems_intent_for_spec("diag2d")
     assert diag is not None

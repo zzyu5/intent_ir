@@ -314,3 +314,33 @@ def test_flaggems_plugin_forces_deterministic_overrides_for_known_unstable_specs
     assert info25.get("enabled_by") == "provider_required_deterministic_override"
     assert out25.intent.name == "log_softmax2d"
     assert out25_exp is not None
+
+    out26, out26_exp, info26 = plugin.maybe_normalize_candidate(
+        spec_name="mv2d",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info26 is not None
+    assert info26.get("enabled_by") == "provider_required_deterministic_override"
+    assert out26.intent.name == "mv2d"
+    assert out26_exp is not None
+
+    out27, out27_exp, info27 = plugin.maybe_normalize_candidate(
+        spec_name="nonzero2d",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info27 is not None
+    assert info27.get("enabled_by") == "provider_required_deterministic_override"
+    assert out27.intent.name == "nonzero2d"
+    assert out27_exp is not None
+
+    out28, out28_exp, info28 = plugin.maybe_normalize_candidate(
+        spec_name="normed_cumsum2d",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info28 is not None
+    assert info28.get("enabled_by") == "provider_required_deterministic_override"
+    assert out28.intent.name == "normed_cumsum2d"
+    assert out28_exp is not None

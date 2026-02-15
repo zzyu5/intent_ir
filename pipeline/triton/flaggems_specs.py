@@ -2363,10 +2363,16 @@ def _run_flaggems_mv2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     mat_np = _to_np(mat)
     vec_np = _to_np(vec)
     out_np = _to_np(out)
+    inp_np = np.zeros((n,), dtype=np.float32)
+    alpha_np = np.array(1.0, dtype=np.float32)
+    beta_np = np.array(0.0, dtype=np.float32)
     return {
         "A": mat_np,
         "B": vec_np,
         "C": out_np,
+        "Inp": inp_np,
+        "alpha": alpha_np,
+        "beta": beta_np,
         "mat": mat_np,
         "vec": vec_np,
         "out": out_np,

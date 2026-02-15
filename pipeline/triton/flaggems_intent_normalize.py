@@ -640,6 +640,29 @@ def _canonical_mse_loss2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_mv2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "mv2d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["N", "M"], "layout": "row_major"},
+                "B": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "Inp": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "alpha": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "beta": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "C": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "matmul", "inputs": ["A", "B"], "output": "mv_out"},
+                {"op": "mul", "inputs": ["mv_out", "alpha"], "output": "mv_scaled"},
+                {"op": "mul", "inputs": ["Inp", "beta"], "output": "inp_scaled"},
+                {"op": "add", "inputs": ["mv_scaled", "inp_scaled"], "output": "C"},
+            ],
+            "outputs": ["C"],
+        }
+    )
+
+
 def _canonical_nan_to_num2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -649,12 +672,17 @@ def _canonical_nan_to_num2d_intent() -> IntentFunction:
                 "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
             },
             "ops": [
-                {
-                    "op": "nan_to_num",
-                    "inputs": ["A"],
-                    "output": "out",
-                    "attrs": {"nan": 0.0, "posinf": 9.0, "neginf": -9.0},
-                },
+                {"op": "abs", "inputs": ["A"], "output": "abs_a"},
+                {"op": "const", "inputs": [], "output": "finite_max", "attrs": {"value": _F32_FINITE_MAX}},
+                {"op": "gt", "inputs": ["abs_a", "finite_max"], "output": "is_inf"},
+                {"op": "ne", "inputs": ["A", "A"], "output": "is_nan"},
+                {"op": "const", "inputs": [], "output": "zero_const", "attrs": {"value": 0.0}},
+                {"op": "const", "inputs": [], "output": "posinf_const", "attrs": {"value": 9.0}},
+                {"op": "const", "inputs": [], "output": "neginf_const", "attrs": {"value": -9.0}},
+                {"op": "ge", "inputs": ["A", "zero_const"], "output": "is_nonnegative"},
+                {"op": "where", "inputs": ["is_nonnegative", "posinf_const", "neginf_const"], "output": "inf_repl"},
+                {"op": "where", "inputs": ["is_inf", "inf_repl", "A"], "output": "no_inf"},
+                {"op": "where", "inputs": ["is_nan", "zero_const", "no_inf"], "output": "out"},
             ],
             "outputs": ["out"],
         }
@@ -726,6 +754,42 @@ def _canonical_one_hot2d_intent() -> IntentFunction:
                 {"op": "ne", "inputs": ["token_idx", "class_idx"], "output": "neq_mask"},
                 {"op": "not", "inputs": ["neq_mask"], "output": "eq_mask"},
                 {"op": "cast", "inputs": ["eq_mask"], "output": "out", "attrs": {"to": "i64"}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_nonzero2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "nonzero2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "i64", "shape": ["num_nonzeros", 2], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "nonzero", "inputs": ["inp"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_normed_cumsum2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "normed_cumsum2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "eps": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cumsum", "inputs": ["inp"], "output": "y_cumsum", "attrs": {"axis": 1}},
+                {"op": "reduce_sum", "inputs": ["inp"], "output": "y_sum", "attrs": {"dims": [1], "keepdims": True}},
+                {"op": "add", "inputs": ["y_sum", "eps"], "output": "y_sum_eps"},
+                {"op": "div", "inputs": ["y_cumsum", "y_sum_eps"], "output": "out"},
             ],
             "outputs": ["out"],
         }
@@ -1611,12 +1675,18 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_masked_scatter2d_intent()
     if name == "mse_loss2d":
         return _canonical_mse_loss2d_intent()
+    if name == "mv2d":
+        return _canonical_mv2d_intent()
     if name == "nan_to_num2d":
         return _canonical_nan_to_num2d_intent()
     if name == "nll_loss2d_forward":
         return _canonical_nll_loss2d_forward_intent()
     if name == "nll_loss_forward":
         return _canonical_nll_loss_forward_intent()
+    if name == "nonzero2d":
+        return _canonical_nonzero2d_intent()
+    if name == "normed_cumsum2d":
+        return _canonical_normed_cumsum2d_intent()
     if name == "one_hot2d":
         return _canonical_one_hot2d_intent()
     if name == "max_pool2d_with_indices_nchw":
