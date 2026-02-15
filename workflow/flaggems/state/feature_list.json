@@ -1,12 +1,12 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-15T05:15:24+00:00",
+  "generated_at": "2026-02-15T06:38:05+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
-      "dual_pass": 152,
-      "blocked_backend": 44
+      "dual_pass": 163,
+      "blocked_backend": 33
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -1367,10 +1367,10 @@
       "id": "flaggems::quantile",
       "semantic_op": "quantile",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "quantile2d",
       "intent_ops": [
         "quantile"
@@ -1485,10 +1485,10 @@
       "id": "flaggems::rsqrt",
       "semantic_op": "rsqrt",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "rsqrt2d",
       "intent_ops": [
         "rsqrt"
@@ -1498,10 +1498,10 @@
       "id": "flaggems::sin",
       "semantic_op": "sin",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "sin2d",
       "intent_ops": [
         "sin"
@@ -1934,10 +1934,10 @@
       "id": "flaggems::scaled_softmax_forward",
       "semantic_op": "scaled_softmax_forward",
       "family": "reduction",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "softmax_inner",
       "intent_ops": [
         "softmax"
@@ -2129,10 +2129,10 @@
       "id": "flaggems::rms_norm",
       "semantic_op": "rms_norm",
       "family": "norm_activation",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "rms_norm2d",
       "intent_ops": [
         "mul",
@@ -2146,10 +2146,10 @@
       "id": "flaggems::rms_norm_forward",
       "semantic_op": "rms_norm_forward",
       "family": "norm_activation",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "rms_norm2d",
       "intent_ops": [
         "mul",
@@ -2163,10 +2163,10 @@
       "id": "flaggems::sigmoid",
       "semantic_op": "sigmoid",
       "family": "norm_activation",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "sigmoid2d",
       "intent_ops": [
         "const",
@@ -2180,10 +2180,10 @@
       "id": "flaggems::silu",
       "semantic_op": "silu",
       "family": "norm_activation",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "silu2d",
       "intent_ops": [
         "const",
@@ -2363,10 +2363,10 @@
       "id": "flaggems::scatter",
       "semantic_op": "scatter",
       "family": "index_scatter_gather",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "scatter2d",
       "intent_ops": [
         "scatter"
@@ -2376,10 +2376,10 @@
       "id": "flaggems::select_scatter",
       "semantic_op": "select_scatter",
       "family": "index_scatter_gather",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "select_scatter2d",
       "intent_ops": [
         "select_scatter"
@@ -2389,10 +2389,10 @@
       "id": "flaggems::slice_scatter",
       "semantic_op": "slice_scatter",
       "family": "index_scatter_gather",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "slice_scatter2d",
       "intent_ops": [
         "slice_scatter"
