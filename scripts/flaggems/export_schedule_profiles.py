@@ -117,7 +117,7 @@ def main() -> None:
             backend_profiles: dict[str, Any] = {}
             for family in families:
                 intent = _build_intent(family, backend_tag=backend_name)
-                result = runner(intent, execute_backend_stages=False)
+                result = runner(intent, pipeline_mode="schedule_only")
                 stage = _schedule_stage(result)
                 if not bool(getattr(result, "ok", False)) or not stage:
                     payload["missing"].append({"backend": backend_name, "family": family, "reason": "missing_schedule_stage"})

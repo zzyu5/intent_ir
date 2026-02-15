@@ -513,6 +513,30 @@ def main() -> None:
     rc, out, err = _run(cmd, cwd=ROOT)
     _record("converge", rc, out, err, extra={"cmd": cmd, "json_path": str(converged)})
 
+    coverage_integrity = out_dir / "coverage_integrity.json"
+    if converged.is_file():
+        cmd = [
+            sys.executable,
+            "scripts/flaggems/recompute_coverage_integrity.py",
+            "--registry",
+            str(ROOT / "pipeline" / "triton" / "flaggems_registry.json"),
+            "--run-summary",
+            str(out_dir / "run_summary.json"),
+            "--status-converged",
+            str(converged),
+            "--out",
+            str(coverage_integrity),
+        ]
+        # run_summary.json is written after this stage block; emit a temporary run summary
+        # with stages seen so far to satisfy recompute input contract.
+        tmp_summary = {
+            "ok": all(bool(r.get("ok")) for r in stage_results),
+            "stages": stage_results,
+        }
+        (out_dir / "run_summary.json").write_text(json.dumps(tmp_summary, indent=2, ensure_ascii=False), encoding="utf-8")
+        rc, out, err = _run(cmd, cwd=ROOT)
+        _record("coverage_integrity", rc, out, err, extra={"cmd": cmd, "json_path": str(coverage_integrity)})
+
     ok = all(bool(r.get("ok")) for r in stage_results)
     summary = {
         "ok": bool(ok),

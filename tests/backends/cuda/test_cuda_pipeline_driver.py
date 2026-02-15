@@ -90,3 +90,12 @@ def test_run_cuda_pipeline_rejects_invalid_payload() -> None:
     assert result.ok is False
     assert result.reason_code == "invalid_intent"
     assert any((not s.ok) for s in result.stages)
+
+
+def test_run_cuda_pipeline_schedule_only_mode_marks_compile_launch_as_schedule_only() -> None:
+    result = run_cuda_pipeline(_add_intent(), pipeline_mode="schedule_only")
+    assert result.ok is True
+    compile_stage = next(s for s in result.stages if s.name == "compile")
+    launch_stage = next(s for s in result.stages if s.name == "launch")
+    assert compile_stage.artifacts.get("compile_mode") in {"skipped_schedule_only", "skipped_missing_bindings"}
+    assert launch_stage.artifacts.get("launch_mode") in {"skipped_schedule_only", "skipped_missing_bindings"}

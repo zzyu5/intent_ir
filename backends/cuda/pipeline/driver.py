@@ -261,8 +261,11 @@ def run_cuda_pipeline(
     intent_payload: Any,
     *,
     shape_bindings: Mapping[str, Any] | None = None,
-    execute_backend_stages: bool = True,
+    pipeline_mode: str = "full",
 ) -> CudaPipelineResult:
+    mode = str(pipeline_mode or "full").strip().lower()
+    if mode not in {"full", "schedule_only"}:
+        raise ValueError(f"unsupported cuda pipeline_mode: {pipeline_mode}")
     name, op_names, tensor_shapes, schedule_info = _collect_intent_info(intent_payload)
     stages: list[CudaPipelineStage] = []
     rewrite_counts = _legalize_rewrite_counts(op_names)
@@ -361,8 +364,8 @@ def run_cuda_pipeline(
         )
 
     def _compile() -> tuple[str, dict[str, Any]]:
-        if not bool(execute_backend_stages):
-            return ("compile skipped: compatibility mode", {"compile_mode": "skipped_compatibility"})
+        if mode == "schedule_only":
+            return ("compile skipped: schedule_only mode", {"compile_mode": "skipped_schedule_only", "pipeline_mode": mode})
         if not can_execute:
             return ("compile skipped: missing bindings", {"compile_mode": "skipped_missing_bindings"})
         if "kernel_name" not in state or "cuda_src" not in state or "io_spec" not in state:
@@ -381,8 +384,8 @@ def run_cuda_pipeline(
         )
 
     def _launch() -> tuple[str, dict[str, Any]]:
-        if not bool(execute_backend_stages):
-            return ("launch skipped: compatibility mode", {"launch_mode": "skipped_compatibility"})
+        if mode == "schedule_only":
+            return ("launch skipped: schedule_only mode", {"launch_mode": "skipped_schedule_only", "pipeline_mode": mode})
         if not can_execute:
             return ("launch skipped: missing bindings", {"launch_mode": "skipped_missing_bindings"})
         if "kernel_name" not in state or "cuda_src" not in state or "io_spec" not in state or "launch" not in state:
