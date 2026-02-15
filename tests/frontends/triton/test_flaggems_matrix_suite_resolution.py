@@ -92,6 +92,9 @@ def test_matrix_forwards_cuda_stage_timeout_flags(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(mod, "_run", _fake_run)
     monkeypatch.setattr(mod, "_suite_kernel_names", lambda **kwargs: ["angle2d"])
     monkeypatch.setattr(mod, "_load_active_semantic_ops", lambda _: ["angle"])
+    pipeline_dir = tmp_path / "pipeline"
+    pipeline_dir.mkdir(parents=True, exist_ok=True)
+    (pipeline_dir / "angle2d.json").write_text(json.dumps({"diff": {"ok": True}}), encoding="utf-8")
     out_dir = tmp_path / "matrix_out"
     monkeypatch.setattr(
         sys,
@@ -103,13 +106,13 @@ def test_matrix_forwards_cuda_stage_timeout_flags(monkeypatch: pytest.MonkeyPatc
             "--kernel",
             "angle2d",
             "--skip-pipeline",
-            "--skip-rvv",
-            "--active-batch",
-            str(tmp_path / "active.json"),
-            "--pipeline-out-dir",
-            str(tmp_path / "pipeline"),
-            "--seed-cache-dir",
-            str(tmp_path / "seed"),
+                "--skip-rvv",
+                "--active-batch",
+                str(tmp_path / "active.json"),
+                "--pipeline-out-dir",
+                str(pipeline_dir),
+                "--seed-cache-dir",
+                str(tmp_path / "seed"),
             "--out-dir",
             str(out_dir),
             "--cuda-timeout-sec",
@@ -137,3 +140,63 @@ def test_matrix_forwards_cuda_stage_timeout_flags(monkeypatch: pytest.MonkeyPatc
     assert summary["cuda_compile_timeout_sec"] == 222
     assert summary["cuda_launch_timeout_sec"] == 333
     assert summary["cuda_runtime_backend"] == "nvrtc"
+
+
+def test_matrix_skips_backend_stages_when_provider_report_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    mod = _load_matrix_module()
+    recorded_cmds: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], *, cwd: Path):
+        _ = cwd
+        recorded_cmds.append(list(cmd))
+        if "--out" in cmd:
+            out = Path(cmd[cmd.index("--out") + 1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps({"results": []}), encoding="utf-8")
+        return 0, "", ""
+
+    monkeypatch.setattr(mod, "_run", _fake_run)
+    monkeypatch.setattr(mod, "_suite_kernel_names", lambda **kwargs: ["tile2d"])
+    monkeypatch.setattr(mod, "_load_active_semantic_ops", lambda _: ["tile"])
+    pipeline_dir = tmp_path / "pipeline"
+    out_dir = tmp_path / "matrix_out"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_multibackend_matrix.py",
+            "--suite",
+            "coverage",
+            "--kernel",
+            "tile2d",
+            "--active-batch",
+            str(tmp_path / "active.json"),
+            "--pipeline-out-dir",
+            str(pipeline_dir),
+            "--seed-cache-dir",
+            str(tmp_path / "seed"),
+            "--out-dir",
+            str(out_dir),
+        ],
+    )
+    with pytest.raises(SystemExit) as exc:
+        mod.main()
+    assert int(exc.value.code) == 1
+
+    pipeline_cmds = [c for c in recorded_cmds if "scripts/triton/flaggems_full_pipeline_verify.py" in c]
+    assert len(pipeline_cmds) == 1
+    assert "--strict-kernel-failure" in pipeline_cmds[0]
+
+    assert not any("scripts/backend_codegen_smoke.py" in c for c in recorded_cmds)
+    assert not any("scripts/cuda_backend_smoke.py" in c for c in recorded_cmds)
+
+    converge_cmds = [c for c in recorded_cmds if "scripts/flaggems/converge_status.py" in c]
+    assert len(converge_cmds) == 1
+    converge_cmd = converge_cmds[0]
+    assert converge_cmd[converge_cmd.index("--scope-mode") + 1] == "active_only"
+    assert converge_cmd[converge_cmd.index("--scope-semantic-ops") + 1] == "tile"
+    summary = json.loads((out_dir / "run_summary.json").read_text(encoding="utf-8"))
+    assert summary["missing_provider_reports"] == ["tile2d"]

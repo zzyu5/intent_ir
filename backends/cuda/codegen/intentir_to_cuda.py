@@ -303,6 +303,8 @@ def _c_type(dtype: str) -> str:
     dt = str(dtype)
     if dt == "f32":
         return "float"
+    if dt == "f16":
+        return "half"
     if dt == "i32":
         return "int"
     if dt == "i64":
@@ -873,7 +875,14 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
             if len(op.inputs) != 1:
                 raise CudaLoweringError("cast expects 1 input")
             x = val(op.inputs[0])
-            emit_assign(f"({cty})({x})")
+            if str(out_dt) == "f16":
+                in_dt = _dtype_of(op.inputs[0])
+                if str(in_dt) == "f16":
+                    emit_assign(x)
+                else:
+                    emit_assign(f"__float2half((float)({x}))")
+            else:
+                emit_assign(f"({cty})({x})")
         else:
             raise CudaLoweringError(f"elementwise lowering unsupported op: {opname}")
 
@@ -894,9 +903,12 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
                 parts.append(f"(int64_t){dim_expr[str(d)]}")
         total_expr = " * ".join(parts) if parts else "1"
 
+    needs_fp16 = any(str(intent.tensors.get(n).dtype) == "f16" for n in tensor_args if n in intent.tensors)
+    fp16_include = "#include <cuda_fp16.h>\n" if needs_fp16 else ""
     cuda_src = f"""
 #include <math.h>
 #include <stdint.h>
+{fp16_include}
 
 extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(
     {", ".join([f"const {_c_type(intent.tensors[n].dtype)}* __restrict__ {n}" for n in external_inputs])}{"," if external_inputs else ""}
@@ -5152,6 +5164,243 @@ extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(
     )
 
 
+def _kernel_trace_2d_f32_from_mask_pattern(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    ops = list(intent.ops or [])
+    if len(ops) != 6 or [o.op for o in ops] != ["iota", "iota", "eq", "const", "where", "reduce_sum"]:
+        raise CudaLoweringError("trace lowering expects iota,iota,eq,const,where,reduce_sum pattern")
+    where_op = ops[4]
+    red_op = ops[5]
+    if len(where_op.inputs) != 3:
+        raise CudaLoweringError("trace where op must have inputs [mask, input, zero]")
+    input_name = str(where_op.inputs[1])
+    if len(red_op.inputs) != 1 or str(red_op.inputs[0]) != str(where_op.output):
+        raise CudaLoweringError("trace reduce_sum must consume where output")
+    out_name = str(intent.outputs[0]) if intent.outputs else str(red_op.output)
+    in_shape = _shape_values(intent, input_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(in_shape) != 2:
+        raise CudaLoweringError("trace lowering expects rank-2 input")
+    if len(out_shape) > 1 or (len(out_shape) == 1 and _resolve_dim_int(out_shape[0], bindings, name="OUT") != 1):
+        raise CudaLoweringError("trace lowering expects scalar output")
+    if str(intent.tensors[input_name].dtype) != "f32" or str(intent.tensors[out_name].dtype) != "f32":
+        raise CudaLoweringError("trace lowering currently supports f32 input/output")
+    M = _resolve_dim_int(in_shape[0], bindings, name="M")
+    N = _resolve_dim_int(in_shape[1], bindings, name="N")
+
+    cuda_src = f"""
+#include <stdint.h>
+
+extern "C" __global__ void {intent.name}(
+    const float* __restrict__ {input_name},
+    float* __restrict__ {out_name},
+    int M, int N) {{
+  if (blockIdx.x != 0 || threadIdx.x != 0) return;
+  const int D = (M < N) ? M : N;
+  float acc = 0.0f;
+  for (int i = 0; i < D; ++i) {{
+    acc += {input_name}[(size_t)i * (size_t)N + (size_t)i];
+  }}
+  {out_name}[0] = acc;
+}}
+""".lstrip()
+
+    io_spec = _io_spec_from_args(
+        intent,
+        tensor_args=[input_name, out_name],
+        scalar_args={"M": "i32", "N": "i32"},
+        arg_names=[input_name, out_name, "M", "N"],
+    )
+    launch = CudaLaunch(grid=(1, 1, 1), block=(1, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.update({"M": int(M), "N": int(N)})
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=[out_name],
+        bindings=lowered_bindings,
+    )
+
+
+def _kernel_topk_from_sort_gather_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    ops = list(intent.ops or [])
+    if len(ops) != 4 or [o.op for o in ops] != ["sort", "iota", "iota", "gather"]:
+        raise CudaLoweringError("topk lowering expects sort,iota,iota,gather pattern")
+    sort_op = ops[0]
+    gather_op = ops[3]
+    if len(sort_op.inputs) != 1:
+        raise CudaLoweringError("topk sort op expects one input")
+    inp_name = str(sort_op.inputs[0])
+    sorted_name = str(sort_op.output)
+    gather_inputs = [str(x) for x in gather_op.inputs]
+    if len(gather_inputs) != 3 or gather_inputs[0] != sorted_name:
+        raise CudaLoweringError("topk gather must consume sorted output and row/col iota indices")
+    axis = int((sort_op.attrs or {}).get("axis", -1))
+    if axis not in {1, -1}:
+        raise CudaLoweringError("topk lowering currently supports axis=1")
+    descending = bool((sort_op.attrs or {}).get("descending", True))
+    if not descending:
+        raise CudaLoweringError("topk lowering currently supports descending=True")
+    out_name = str(gather_op.output)
+    in_shape = _shape_values(intent, inp_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(in_shape) != 2 or len(out_shape) != 2:
+        raise CudaLoweringError("topk lowering expects rank-2 input/output")
+    if str(intent.tensors[inp_name].dtype) != "f32" or str(intent.tensors[out_name].dtype) != "f32":
+        raise CudaLoweringError("topk lowering currently supports f32 tensors")
+    M = _resolve_dim_int(in_shape[0], bindings, name="M")
+    N = _resolve_dim_int(in_shape[1], bindings, name="N")
+    K = _resolve_dim_int(out_shape[1], bindings, name="K")
+    if K <= 0 or K > N:
+        raise CudaLoweringError(f"topk lowering requires 0 < K <= N, got K={K}, N={N}")
+
+    cuda_src = f"""
+#include <stdint.h>
+#include <math.h>
+
+extern "C" __global__ void {intent.name}(
+    const float* __restrict__ {inp_name},
+    float* __restrict__ {out_name},
+    int M, int N, int K) {{
+  const int row = (int)blockIdx.x;
+  if (row >= M || threadIdx.x != 0) return;
+  const float* __restrict__ row_ptr = {inp_name} + (size_t)row * (size_t)N;
+  float top[{int(K)}];
+
+  for (int i = 0; i < K; ++i) {{
+    top[i] = row_ptr[i];
+  }}
+  for (int i = 1; i < K; ++i) {{
+    float v = top[i];
+    int j = i - 1;
+    while (j >= 0 && top[j] < v) {{
+      top[j + 1] = top[j];
+      --j;
+    }}
+    top[j + 1] = v;
+  }}
+
+  for (int i = K; i < N; ++i) {{
+    const float v = row_ptr[i];
+    if (v > top[K - 1]) {{
+      top[K - 1] = v;
+      int j = K - 1;
+      while (j > 0 && top[j] > top[j - 1]) {{
+        const float t = top[j - 1];
+        top[j - 1] = top[j];
+        top[j] = t;
+        --j;
+      }}
+    }}
+  }}
+
+  for (int i = 0; i < K; ++i) {{
+    {out_name}[(size_t)row * (size_t)K + (size_t)i] = top[i];
+  }}
+}}
+""".lstrip()
+
+    io_spec = _io_spec_from_args(
+        intent,
+        tensor_args=[inp_name, out_name],
+        scalar_args={"M": "i32", "N": "i32", "K": "i32"},
+        arg_names=[inp_name, out_name, "M", "N", "K"],
+    )
+    launch = CudaLaunch(grid=(int(M), 1, 1), block=(1, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.update({"M": int(M), "N": int(N), "K": int(K)})
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=[out_name],
+        bindings=lowered_bindings,
+    )
+
+
+def _kernel_unique_1d_i32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    ops = list(intent.ops or [])
+    if len(ops) != 1 or str(ops[0].op) != "unique":
+        raise CudaLoweringError("unique lowering expects single unique op")
+    op = ops[0]
+    if len(op.inputs) != 1:
+        raise CudaLoweringError("unique expects one input")
+    inp_name = str(op.inputs[0])
+    out_name = str(op.output)
+    in_shape = _shape_values(intent, inp_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(in_shape) != 1 or len(out_shape) != 1:
+        raise CudaLoweringError("unique lowering currently supports rank-1 input/output")
+    in_dt = str(intent.tensors[inp_name].dtype)
+    out_dt = str(intent.tensors[out_name].dtype)
+    if in_dt != "i32" or out_dt != "i32":
+        raise CudaLoweringError("unique lowering currently supports i32 input/output")
+    N = _resolve_dim_int(in_shape[0], bindings, name="N")
+    U = _resolve_dim_int(out_shape[0], bindings, name="U")
+    cuda_src = f"""
+#include <stdint.h>
+
+extern "C" __global__ void {intent.name}(
+    const int* __restrict__ {inp_name},
+    int* __restrict__ {out_name},
+    int N, int U) {{
+  if (blockIdx.x != 0 || threadIdx.x != 0) return;
+  int ucount = 0;
+  for (int i = 0; i < N; ++i) {{
+    const int v = {inp_name}[i];
+    bool seen = false;
+    for (int j = 0; j < ucount; ++j) {{
+      if ({out_name}[j] == v) {{
+        seen = true;
+        break;
+      }}
+    }}
+    if (!seen) {{
+      if (ucount < U) {{
+        {out_name}[ucount] = v;
+      }}
+      ++ucount;
+    }}
+  }}
+  const int fill_from = (ucount < U) ? ucount : U;
+  for (int i = fill_from; i < U; ++i) {{
+    {out_name}[i] = 0;
+  }}
+  if (U > 1) {{
+    for (int i = 1; i < U; ++i) {{
+      int v = {out_name}[i];
+      int j = i - 1;
+      while (j >= 0 && {out_name}[j] > v) {{
+        {out_name}[j + 1] = {out_name}[j];
+        --j;
+      }}
+      {out_name}[j + 1] = v;
+    }}
+  }}
+}}
+""".lstrip()
+
+    io_spec = _io_spec_from_args(
+        intent,
+        tensor_args=[inp_name, out_name],
+        scalar_args={"N": "i32", "U": "i32"},
+        arg_names=[inp_name, out_name, "N", "U"],
+    )
+    launch = CudaLaunch(grid=(1, 1, 1), block=(1, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.update({"N": int(N), "U": int(U)})
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=[out_name],
+        bindings=lowered_bindings,
+    )
+
+
 def _kernel_count_nonzero_2d_i64(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
     ops = list(intent.ops or [])
     if len(ops) != 4 or [o.op for o in ops] != ["const", "ne", "cast", "reduce_sum"]:
@@ -7906,6 +8155,8 @@ def lower_intent_to_cuda_kernel(
                 return _kernel_arg_reduce_2d_axis1_i32(intent, bindings)
             if op0 == "quantile":
                 return _kernel_quantile_2d_f32(intent, bindings)
+            if op0 == "unique":
+                return _kernel_unique_1d_i32(intent, bindings)
             if op0 == "avg_pool2d":
                 return _kernel_avg_pool2d_nchw_f32(intent, bindings)
             if op0 == "max_pool2d_with_indices":
@@ -7948,6 +8199,10 @@ def lower_intent_to_cuda_kernel(
         return _kernel_minimum_cast_chain_2d_f32(intent, bindings)
     if op_seq == ["iota", "gather"]:
         return _kernel_diag_2d_f32(intent, bindings)
+    if op_seq == ["iota", "iota", "eq", "const", "where", "reduce_sum"]:
+        return _kernel_trace_2d_f32_from_mask_pattern(intent, bindings)
+    if op_seq == ["sort", "iota", "iota", "gather"]:
+        return _kernel_topk_from_sort_gather_2d_f32(intent, bindings)
     if op_seq == ["cast", "cast", "mul", "reduce_sum"]:
         return _kernel_dot_1d_f32(intent, bindings)
     if op_seq == ["const", "broadcast_in_dim", "iota", "iota", "iota", "ne", "not", "gather", "where"]:

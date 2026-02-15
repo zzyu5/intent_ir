@@ -4111,14 +4111,24 @@ def _run_flaggems_tile2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         out = flag_gems_ops.tile(inp, (r0, r1))
 
     inp_np = _to_np(inp)
-    inp_2d = inp_np.reshape(1, int(n))
     out_np = _to_np(out)
+    m_out, n_out = int(out_np.shape[0]), int(out_np.shape[1])
+    row_base = (np.arange(m_out, dtype=np.int32) % int(m)).reshape(m_out, 1)
+    col_base = (np.arange(n_out, dtype=np.int32) % int(n)).reshape(1, n_out)
+    row_idx = np.broadcast_to(row_base, (m_out, n_out)).astype(np.int32, copy=False)
+    col_idx = np.broadcast_to(col_base, (m_out, n_out)).astype(np.int32, copy=False)
     return {
-        "inp": inp_2d,
+        "inp": inp_np,
         "input": inp_np,
+        "row_idx": row_idx,
+        "col_idx": col_idx,
         "out": out_np,
         "output": out_np,
         "repeats": np.array([r0, r1], dtype=np.int32),
+        "R0": np.array(r0, dtype=np.int32),
+        "R1": np.array(r1, dtype=np.int32),
+        "M_OUT": np.array(m_out, dtype=np.int32),
+        "N_OUT": np.array(n_out, dtype=np.int32),
     }
 
 
@@ -5334,6 +5344,21 @@ def _norm_quantile2d(shapes: Dict[str, int]) -> Dict[str, int]:
     out["N"] = max(2, int(out.get("N", 32)))
     q = float(out.get("Q", 0.5))
     out["Q"] = min(1.0, max(0.0, q))
+    return out
+
+
+def _norm_topk2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    m = max(1, int(out.get("M", 4)))
+    n = max(1, int(out.get("N", 64)))
+    k = int(out.get("K", min(n, 8)))
+    k = max(1, min(k, n))
+    out["M"] = m
+    out["N"] = n
+    out["K"] = k
+    out["AXIS"] = 1
+    out["LARGEST"] = 1
+    out["SORTED"] = 1
     return out
 
 
@@ -6707,6 +6732,7 @@ _FLAGGEMS_SPEC_BUILDERS = {
         runner=_run_flaggems_topk2d_reference,
         canonical_shapes={"M": 4, "N": 64, "K": 8, "AXIS": 1, "LARGEST": 1, "SORTED": 1},
         vary_axes=["M", "N"],
+        normalize_shapes=_norm_topk2d,
     ),
     "min2d": lambda: KernelSpec(
         name="min2d",
@@ -6917,6 +6943,7 @@ _FLAGGEMS_SPEC_BUILDERS = {
         runner=_run_flaggems_tile2d_reference,
         canonical_shapes={"M": 4, "N": 16, "R0": 2, "R1": 1},
         vary_axes=["M", "N"],
+        normalize_shapes=_norm_repeat2d,
         stage_c_max_cases=6,
         mutation_bounded_max_cases=3,
     ),

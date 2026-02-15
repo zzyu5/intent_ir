@@ -81,6 +81,7 @@ SPMD_RVV_SUPPORTED_OPS: set[str] = {
     "argmax",
     "argmin",
     "sort",
+    "unique",
     "quantile",
     "cumsum",
     "cummax",

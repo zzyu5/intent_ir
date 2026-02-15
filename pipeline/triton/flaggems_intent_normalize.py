@@ -338,6 +338,28 @@ def _canonical_sort_stable2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_topk2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "topk2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "sorted_vals": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "row_idx": {"dtype": "i32", "shape": ["M", "K"], "layout": "row_major"},
+                "col_idx": {"dtype": "i32", "shape": ["M", "K"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "K"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "sort", "inputs": ["inp"], "output": "sorted_vals", "attrs": {"axis": 1, "descending": True, "stable": False}},
+                {"op": "iota", "inputs": [], "output": "row_idx", "attrs": {"axis": 0, "shape": ["M", "K"], "dtype": "i32"}},
+                {"op": "iota", "inputs": [], "output": "col_idx", "attrs": {"axis": 1, "shape": ["M", "K"], "dtype": "i32"}},
+                {"op": "gather", "inputs": ["sorted_vals", "row_idx", "col_idx"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def _canonical_threshold2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -565,6 +587,24 @@ def _canonical_repeat2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
             "name": "repeat2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "row_idx": {"dtype": "i32", "shape": ["M_OUT", "N_OUT"], "layout": "row_major"},
+                "col_idx": {"dtype": "i32", "shape": ["M_OUT", "N_OUT"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M_OUT", "N_OUT"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "gather", "inputs": ["inp", "row_idx", "col_idx"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_tile2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "tile2d",
             "tensors": {
                 "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
                 "row_idx": {"dtype": "i32", "shape": ["M_OUT", "N_OUT"], "layout": "row_major"},
@@ -1193,10 +1233,20 @@ def _canonical_trace2d_intent() -> IntentFunction:
             "name": "trace2d",
             "tensors": {
                 "input": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "row_idx": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "col_idx": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "diag_mask": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                "zero_const": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "diag_vals": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
                 "out": {"dtype": "f32", "shape": [], "layout": "row_major"},
             },
             "ops": [
-                {"op": "trace", "inputs": ["input"], "output": "out"},
+                {"op": "iota", "inputs": [], "output": "row_idx", "attrs": {"axis": 0, "shape": ["M", "N"], "dtype": "i32"}},
+                {"op": "iota", "inputs": [], "output": "col_idx", "attrs": {"axis": 1, "shape": ["M", "N"], "dtype": "i32"}},
+                {"op": "eq", "inputs": ["row_idx", "col_idx"], "output": "diag_mask"},
+                {"op": "const", "inputs": [], "output": "zero_const", "attrs": {"value": 0.0, "dtype": "f32"}},
+                {"op": "where", "inputs": ["diag_mask", "input", "zero_const"], "output": "diag_vals"},
+                {"op": "reduce_sum", "inputs": ["diag_vals"], "output": "out", "attrs": {"dims": [0, 1]}},
             ],
             "outputs": ["out"],
         }
@@ -1209,10 +1259,21 @@ def _canonical_triu2d_intent() -> IntentFunction:
             "name": "triu2d",
             "tensors": {
                 "input": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "diagonal": {"dtype": "i32", "shape": [], "layout": "row_major"},
+                "row_idx": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "col_idx": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "shifted_row": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "keep_mask": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                "zero_const": {"dtype": "f32", "shape": [], "layout": "row_major"},
                 "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
             },
             "ops": [
-                {"op": "triu", "inputs": ["input"], "output": "out", "attrs": {"diagonal": 0}},
+                {"op": "iota", "inputs": [], "output": "row_idx", "attrs": {"axis": 0, "shape": ["M", "N"], "dtype": "i32"}},
+                {"op": "iota", "inputs": [], "output": "col_idx", "attrs": {"axis": 1, "shape": ["M", "N"], "dtype": "i32"}},
+                {"op": "add", "inputs": ["row_idx", "diagonal"], "output": "shifted_row"},
+                {"op": "le", "inputs": ["shifted_row", "col_idx"], "output": "keep_mask"},
+                {"op": "const", "inputs": [], "output": "zero_const", "attrs": {"value": 0.0, "dtype": "f32"}},
+                {"op": "where", "inputs": ["keep_mask", "input", "zero_const"], "output": "out"},
             ],
             "outputs": ["out"],
         }
@@ -1607,7 +1668,7 @@ def _canonical_unique2d_intent() -> IntentFunction:
                 "out": {"dtype": "i32", "shape": ["U"], "layout": "row_major"},
             },
             "ops": [
-                {"op": "unique", "inputs": ["inp"], "output": "out", "attrs": {"sorted": False}},
+                {"op": "unique", "inputs": ["inp"], "output": "out", "attrs": {"sorted": True}},
             ],
             "outputs": ["out"],
         }
@@ -1935,6 +1996,8 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_gather2d_intent()
     if name == "repeat2d":
         return _canonical_repeat2d_intent()
+    if name == "tile2d":
+        return _canonical_tile2d_intent()
     if name == "repeat_interleave_self_int1d":
         return _canonical_repeat_interleave_self_int1d_intent()
     if name == "repeat_interleave_self_tensor1d":
@@ -2021,6 +2084,8 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_sort2d_intent()
     if name == "sort_stable2d":
         return _canonical_sort_stable2d_intent()
+    if name == "topk2d":
+        return _canonical_topk2d_intent()
     if name == "upsample_nearest1d_ncl":
         return _canonical_upsample_nearest1d_ncl_intent()
     if name == "upsample_nearest2d_nchw":

@@ -293,6 +293,10 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert unique2 is not None
     assert [op.op for op in unique2.ops] == ["unique"]
 
+    tile = canonical_flaggems_intent_for_spec("tile2d")
+    assert tile is not None
+    assert [op.op for op in tile.ops] == ["gather"]
+
     weight_norm = canonical_flaggems_intent_for_spec("weight_norm2d")
     assert weight_norm is not None
     assert [op.op for op in weight_norm.ops] == ["weight_norm_interface"]
@@ -348,11 +352,15 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
 
     trace = canonical_flaggems_intent_for_spec("trace2d")
     assert trace is not None
-    assert [op.op for op in trace.ops] == ["trace"]
+    assert [op.op for op in trace.ops] == ["iota", "iota", "eq", "const", "where", "reduce_sum"]
 
     triu = canonical_flaggems_intent_for_spec("triu2d")
     assert triu is not None
-    assert [op.op for op in triu.ops] == ["triu"]
+    assert [op.op for op in triu.ops] == ["iota", "iota", "add", "le", "const", "where"]
+
+    topk = canonical_flaggems_intent_for_spec("topk2d")
+    assert topk is not None
+    assert [op.op for op in topk.ops] == ["sort", "iota", "iota", "gather"]
 
     up1d = canonical_flaggems_intent_for_spec("upsample_nearest1d_ncl")
     assert up1d is not None

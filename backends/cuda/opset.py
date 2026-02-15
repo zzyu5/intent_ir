@@ -89,6 +89,7 @@ CUDA_SUPPORTED_OPS: set[str] = {
     "argmax",
     "argmin",
     "sort",
+    "unique",
     "stack",
     "std",
     "quantile",

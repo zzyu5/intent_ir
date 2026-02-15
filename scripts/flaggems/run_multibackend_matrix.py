@@ -67,6 +67,15 @@ def _suite_kernel_names(*, suite: str, flaggems_opset: str, backend_target: str)
     return [str(s.name) for s in specs]
 
 
+def _collect_missing_provider_reports(provider_report_dir: Path, kernels: list[str]) -> list[str]:
+    missing: list[str] = []
+    for kernel in kernels:
+        report_path = provider_report_dir / f"{kernel}.json"
+        if not report_path.is_file():
+            missing.append(str(kernel))
+    return missing
+
+
 def _resolve_suite_and_kernel_filter(
     *,
     requested_suite: str,
@@ -267,6 +276,7 @@ def main() -> None:
             str(args.intentir_mode),
             "--fallback-policy",
             str(args.fallback_policy),
+            "--strict-kernel-failure",
             "--seed-cache-dir",
             str(seed_cache_dir),
             "--out-dir",
@@ -277,8 +287,30 @@ def main() -> None:
         rc, out, err = _run(cmd, cwd=ROOT)
         _record("pipeline", rc, out, err, extra={"cmd": cmd})
 
+    missing_provider_reports = _collect_missing_provider_reports(pipeline_out_dir, scoped_kernels)
+    if missing_provider_reports:
+        _record(
+            "provider_report_precheck",
+            1,
+            "",
+            "missing provider report(s) for requested kernels",
+            extra={
+                "reason_code": "pipeline_missing_report",
+                "missing_provider_reports": list(missing_provider_reports),
+                "provider_report_dir": str(pipeline_out_dir),
+            },
+        )
+    else:
+        _record(
+            "provider_report_precheck",
+            0,
+            f"provider reports complete for {len(scoped_kernels)} kernel(s)",
+            "",
+            extra={"provider_report_dir": str(pipeline_out_dir)},
+        )
+
     rvv_json = out_dir / "rvv_local.json"
-    if not bool(args.skip_rvv):
+    if not bool(args.skip_rvv) and not missing_provider_reports:
         cmd = [
             sys.executable,
             "scripts/backend_codegen_smoke.py",
@@ -302,7 +334,7 @@ def main() -> None:
         _record("rvv_local", rc, out, err, extra={"cmd": cmd, "json_path": str(rvv_json)})
 
     rvv_remote_json = out_dir / "rvv_remote.json"
-    if bool(args.run_rvv_remote) and not bool(args.skip_rvv):
+    if bool(args.run_rvv_remote) and not bool(args.skip_rvv) and not missing_provider_reports:
         cmd = [
             sys.executable,
             "scripts/rvv_remote_suite.py",
@@ -335,7 +367,7 @@ def main() -> None:
         _record("rvv_remote", rc, out, err, extra={"cmd": cmd, "json_path": str(rvv_remote_json)})
 
     cuda_json = out_dir / "cuda_local.json"
-    if not bool(args.skip_cuda):
+    if not bool(args.skip_cuda) and not missing_provider_reports:
         cuda_compile_timeout_sec = (
             int(args.cuda_compile_timeout_sec)
             if args.cuda_compile_timeout_sec is not None
@@ -412,6 +444,7 @@ def main() -> None:
         "suite": str(effective_suite),
         "kernel_filter": list(kernel_filter),
         "scope_kernels": list(scoped_kernels),
+        "missing_provider_reports": list(missing_provider_reports),
         "flaggems_path": str(args.flaggems_path),
         "intentir_mode": str(args.intentir_mode),
         "flaggems_opset": str(args.flaggems_opset),

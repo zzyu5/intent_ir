@@ -3934,6 +3934,49 @@ struct CProgramEmitter {
 	        int axis = op.attrs.value("axis", -1);
 	        bool descending = op.attrs.value("descending", false);
 	        emit_sort_axis1(w, out_var, v(op.inputs[0]), shape_env.at(op.inputs[0]), out_shape, axis, descending);
+	      } else if (op.op == "unique") {
+	        if (op.inputs.size() != 1) fail("unique expects one input");
+	        const auto& in_shape = shape_env.at(op.inputs[0]);
+	        if (in_shape.size() != 1) fail("unique lowering currently supports rank-1 input");
+	        if (out_shape.size() != 1) fail("unique lowering currently supports rank-1 output");
+	        const std::string in_dt = dtype_env.at(op.inputs[0]);
+	        const std::string out_dt = dtype_env.at(out);
+	        if (in_dt != out_dt) fail("unique dtype mismatch between input and output");
+	        if (in_dt != "i32") fail("unique lowering currently supports i32 tensors");
+	        const int64_t N = in_shape[0];
+	        const int64_t U = out_shape[0];
+	        w.line("int64_t __unique_count = 0;");
+	        w.line("for (int64_t i = 0; i < " + std::to_string(N) + "; ++i) {");
+	        w.indent();
+	        w.line("const int32_t __v = " + v(op.inputs[0]) + "[(size_t)i];");
+	        w.line("int __seen = 0;");
+	        w.line("for (int64_t j = 0; j < __unique_count; ++j) {");
+	        w.indent();
+	        w.line("if (" + out_var + "[(size_t)j] == __v) { __seen = 1; break; }");
+	        w.dedent();
+	        w.line("}");
+	        w.line("if (__seen == 0) {");
+	        w.indent();
+	        w.line("if (__unique_count < " + std::to_string(U) + ") " + out_var + "[(size_t)__unique_count] = __v;");
+	        w.line("++__unique_count;");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.line("for (int64_t i = __unique_count; i < " + std::to_string(U) + "; ++i) " + out_var + "[(size_t)i] = 0;");
+	        w.line("for (int64_t i = 1; i < " + std::to_string(U) + "; ++i) {");
+	        w.indent();
+	        w.line("int32_t __v = " + out_var + "[(size_t)i];");
+	        w.line("int64_t __j = i - 1;");
+	        w.line("while (__j >= 0 && " + out_var + "[(size_t)__j] > __v) {");
+	        w.indent();
+	        w.line(out_var + "[(size_t)(__j + 1)] = " + out_var + "[(size_t)__j];");
+	        w.line("--__j;");
+	        w.dedent();
+	        w.line("}");
+	        w.line(out_var + "[(size_t)(__j + 1)] = __v;");
+	        w.dedent();
+	        w.line("}");
 	      } else if (op.op == "stack") {
 	        if (op.inputs.size() != 2) fail("stack currently supports exactly 2 inputs");
 	        int axis = op.attrs.value("axis", 0);
@@ -4630,6 +4673,30 @@ int main(int argc, char** argv) {
         if (axis < 0) axis += static_cast<int>(in_shape.size());
         if (axis != 1) fail("sort infer currently supports axis=1");
         shape_env[out] = in_shape;
+        dtype_env[out] = get_dtype(op.inputs[0]);
+        continue;
+      }
+      if (kind == "unique") {
+        if (op.inputs.size() != 1) fail("unique infer expects 1 input");
+        const auto& in_shape = get_shape(op.inputs[0]);
+        if (in_shape.size() != 1) fail("unique infer currently supports rank-1 input");
+        if (!intent.tensors.count(out)) fail("unique output tensor must exist in intent.tensors");
+        const auto& out_t = intent.tensors.at(out);
+        std::vector<int64_t> oshape;
+        for (const auto& d : out_t.shape) {
+          if (d.is_number_integer()) {
+            oshape.push_back(d.get<int64_t>());
+          } else if (d.is_string()) {
+            const std::string sym = d.get<std::string>();
+            auto it = bindings.find(sym);
+            if (it == bindings.end()) fail("unbound symbol in unique output shape: " + sym);
+            oshape.push_back(it->second);
+          } else {
+            fail("invalid unique output dim");
+          }
+        }
+        if (oshape.size() != 1) fail("unique infer expects rank-1 output");
+        shape_env[out] = oshape;
         dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
       }

@@ -16,6 +16,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -75,6 +76,12 @@ def main() -> None:
         default="rvv",
         help="Backend preflight target for IntentIR capability checks (default: rvv).",
     )
+    ap.add_argument(
+        "--strict-kernel-failure",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Exit non-zero when any kernel raises pipeline exception after writing failure report.",
+    )
     ap.add_argument("--out-dir", type=str, default=None)
     args = ap.parse_args()
 
@@ -112,6 +119,7 @@ def main() -> None:
         return
 
     wanted = set(args.kernel or [])
+    kernel_failures: list[str] = []
     for spec in specs:
         if wanted and spec.name not in wanted:
             continue
@@ -137,6 +145,8 @@ def main() -> None:
                     run_seed.unlink()
                 except OSError:
                     pass
+        out_path = out_dir / f"{spec.name}.json"
+        report: dict[str, Any]
         try:
             report = run_pipeline_for_spec(
                 spec,
@@ -148,7 +158,35 @@ def main() -> None:
             )
         except Exception as e:
             print("Pipeline failed:", e)
+            kernel_failures.append(str(spec.name))
+            report = {
+                "kernel": str(spec.name),
+                "triton_provider": "flaggems",
+                "backend_target": str(args.backend_target),
+                "execution": {
+                    "flaggems_path": str(args.flaggems_path),
+                    "intentir_mode": str(args.intentir_mode),
+                    "fallback_policy": str(args.fallback_policy),
+                },
+                "diff": {
+                    "ok": False,
+                    "reason_code": "pipeline_exception",
+                    "reason_detail": f"{type(e).__name__}: {e}",
+                },
+                "contract": {
+                    "ok": False,
+                    "level": "pipeline_failed",
+                },
+                "reason_code": "pipeline_exception",
+                "error": {
+                    "type": type(e).__name__,
+                    "message": str(e),
+                },
+            }
+            out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+            print("Report:", out_path)
             continue
+
         if config.use_intent_ir:
             wrote = sync_seed_back_to_cache(
                 spec_name=str(spec.name),
@@ -164,12 +202,15 @@ def main() -> None:
         print(f"TTIR: {report.get('ttir_path', 'N/A')} | contract={contract_level}")
         print(f"Diff: {'OK' if diff.get('ok') else 'FAIL'}")
 
-        out_path = out_dir / f"{spec.name}.json"
         out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
         print("Report:", out_path)
     print(f"Generated pipeline artifacts: {out_dir}")
     if config.use_intent_ir:
         print(f"Intent seed cache dir: {seed_cache_dir}")
+    if kernel_failures:
+        print(f"Kernel pipeline failures: {', '.join(kernel_failures)}")
+        if bool(args.strict_kernel_failure):
+            raise SystemExit(1)
 
 
 if __name__ == "__main__":
