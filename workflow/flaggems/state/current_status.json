@@ -1,8 +1,8 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-15T17:21:40+00:00",
+  "updated_at": "2026-02-15T17:25:14+00:00",
   "branch": "flaggems",
-  "head_commit": "17578fa977797ada7d287f9276e880afedbdc782",
+  "head_commit": "a0fcd236ca041c5f0bcd3282ee0b8e01be67f8cd",
   "mode": "mixed_development",
   "coverage_integrity_phase": "recomputed_ok",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_cpp_port_step1_v1/run_summary.json",
