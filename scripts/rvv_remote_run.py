@@ -742,9 +742,14 @@ def run_remote(
             used.add(n)
     external_inputs = sorted([n for n in used if n in intent.tensors and n not in produced])
     has_baseline = isinstance(baseline, dict)
-    outputs = [n for n in list(intent.outputs) if ((has_baseline and n in baseline) or n in produced)]
+    if has_baseline:
+        # Only verify outputs present in the baseline bundle. Some kernels
+        # expose auxiliary outputs (e.g., indices) that are not exported.
+        outputs = [n for n in list(intent.outputs) if n in baseline]
+    else:
+        outputs = [n for n in list(intent.outputs) if n in produced]
     if not outputs:
-        outputs = list(intent.outputs)
+        outputs = [n for n in list(intent.outputs) if n in baseline] if has_baseline else list(intent.outputs)
     intent_codegen = intent
     if outputs != list(intent.outputs):
         intent_j = intent.to_json_dict()

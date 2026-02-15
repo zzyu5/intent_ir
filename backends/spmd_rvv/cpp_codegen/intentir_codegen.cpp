@@ -898,6 +898,43 @@ void emit_where(CodeWriter& w, const std::string& out, const std::string& cond, 
                 const std::string& out_dtype) {
   const int r = static_cast<int>(out_shape.size());
   if (r > 4) fail("where supports rank<=4");
+
+  // Degenerate form: where(cond, x, x) == broadcast(x). This pattern appears in
+  // placeholder index outputs where cond shape may not match output shape.
+  if (x == y) {
+    if ((int)x_shape.size() > r) fail("where broadcast mismatch (x==y): x rank > out rank");
+    std::vector<int64_t> px(r, 1);
+    for (int i = 0; i < (int)x_shape.size(); ++i) px[r - (int)x_shape.size() + i] = x_shape[i];
+    for (int i = 0; i < r; ++i) {
+      if (px[i] != 1 && px[i] != out_shape[i]) fail("where broadcast mismatch (x==y)");
+    }
+    const std::string out_ct = ctype_for_dtype(out_dtype);
+    std::vector<std::string> idx = {"i0", "i1", "i2", "i3"};
+    idx.resize(r);
+    for (int i = 0; i < r; ++i) {
+      w.line("for (int " + idx[i] + " = 0; " + idx[i] + " < " + std::to_string(out_shape[i]) + "; ++" + idx[i] + ") {");
+      w.indent();
+    }
+    std::string out_idx = flat_idx_expr(idx, out_shape);
+    auto idx_expr = [&](const std::vector<int64_t>& padded) -> std::string {
+      std::vector<std::string> in_vars;
+      in_vars.reserve(r);
+      for (int i = 0; i < r; ++i) in_vars.push_back(padded[i] == 1 ? "0" : idx[i]);
+      return flat_idx_expr(in_vars, padded);
+    };
+    std::string x_idx = idx_expr(px);
+    w.line(out + "[" + out_idx + "] = (" + out_ct + ")" + x + "[" + x_idx + "];");
+    for (int i = 0; i < r; ++i) {
+      w.dedent();
+      w.line("}");
+    }
+    return;
+  }
+
+  if ((int)cond_shape.size() > r) fail("where broadcast mismatch: cond rank > out rank");
+  if ((int)x_shape.size() > r) fail("where broadcast mismatch: x rank > out rank");
+  if ((int)y_shape.size() > r) fail("where broadcast mismatch: y rank > out rank");
+
   std::vector<int64_t> pc(r, 1), px(r, 1), py(r, 1);
   for (int i = 0; i < (int)cond_shape.size(); ++i) pc[r - (int)cond_shape.size() + i] = cond_shape[i];
   for (int i = 0; i < (int)x_shape.size(); ++i) px[r - (int)x_shape.size() + i] = x_shape[i];
@@ -1702,6 +1739,75 @@ void emit_avg_pool2d(CodeWriter& w, const std::string& out, const std::string& i
   w.line("}");
   w.dedent();
   w.line("}");
+}
+
+void emit_max_pool2d_with_indices(CodeWriter& w, const std::string& out, const std::string& inp,
+                                  const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape,
+                                  int kh, int kw, int sh, int sw, int ph, int pw, bool emit_indices) {
+  if (in_shape.size() != 4 || out_shape.size() != 4) fail("max_pool2d_with_indices expects rank-4 NCHW tensors");
+  const int64_t N = in_shape[0], C = in_shape[1], H = in_shape[2], W = in_shape[3];
+  const int64_t ON = out_shape[0], OC = out_shape[1], OH = out_shape[2], OW = out_shape[3];
+  if (N != ON || C != OC) fail("max_pool2d_with_indices output N/C mismatch");
+  w.line("for (int n = 0; n < " + std::to_string(N) + "; ++n) {");
+  w.indent();
+  w.line("for (int c = 0; c < " + std::to_string(C) + "; ++c) {");
+  w.indent();
+  w.line("for (int oh = 0; oh < " + std::to_string(OH) + "; ++oh) {");
+  w.indent();
+  w.line("for (int ow = 0; ow < " + std::to_string(OW) + "; ++ow) {");
+  w.indent();
+  w.line("const int h_start = oh * " + std::to_string(sh) + " - " + std::to_string(ph) + ";");
+  w.line("const int w_start = ow * " + std::to_string(sw) + " - " + std::to_string(pw) + ";");
+  w.line("const int h_end = h_start + " + std::to_string(kh) + ";");
+  w.line("const int w_end = w_start + " + std::to_string(kw) + ";");
+  w.line("float best = -INFINITY;");
+  w.line("int32_t best_idx = 0;");
+  w.line("for (int ih = h_start; ih < h_end; ++ih) {");
+  w.indent();
+  w.line("if (ih < 0 || ih >= " + std::to_string(H) + ") continue;");
+  w.line("for (int iw = w_start; iw < w_end; ++iw) {");
+  w.indent();
+  w.line("if (iw < 0 || iw >= " + std::to_string(W) + ") continue;");
+  w.line("const float v = " + inp + "[idx4(n,c,ih,iw," + std::to_string(C) + "," + std::to_string(H) + "," + std::to_string(W) + ")];");
+  w.line("if (v > best) { best = v; best_idx = ih * " + std::to_string(W) + " + iw; }");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+  if (emit_indices) {
+    w.line(out + "[idx4(n,c,oh,ow," + std::to_string(C) + "," + std::to_string(OH) + "," + std::to_string(OW) + ")] = (int64_t)best_idx;");
+  } else {
+    w.line(out + "[idx4(n,c,oh,ow," + std::to_string(C) + "," + std::to_string(OH) + "," + std::to_string(OW) + ")] = best;");
+  }
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+}
+
+void emit_mse_loss(CodeWriter& w, const std::string& out, const std::string& a, const std::string& b,
+                   const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape, const std::string& reduction) {
+  if (in_shape.empty()) fail("mse_loss expects non-scalar input");
+  const int64_t n = numel(in_shape);
+  if (n <= 0) fail("mse_loss expects positive numel");
+  if (reduction == "none") fail("mse_loss reduction=none lowering not implemented");
+  if (!out_shape.empty()) fail("mse_loss reduced output must be scalar");
+  w.line("double acc = 0.0;");
+  w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) {");
+  w.indent();
+  w.line("const float d = " + a + "[i] - " + b + "[i];");
+  w.line("acc += (double)(d * d);");
+  w.dedent();
+  w.line("}");
+  if (reduction == "sum") {
+    w.line(out + "[0] = (float)acc;");
+  } else {
+    w.line(out + "[0] = (float)(acc / (double)" + std::to_string(n) + ");");
+  }
 }
 
 void emit_scaled_dot_product_attention(CodeWriter& w, const std::string& out,
@@ -3177,6 +3283,45 @@ struct CProgramEmitter {
         bool count_include_pad = op.attrs.value("count_include_pad", true);
         emit_avg_pool2d(w, out_var, v(op.inputs[0]), shape_env.at(op.inputs[0]), out_shape, ksz.first, ksz.second, stride.first, stride.second,
                         padding.first, padding.second, count_include_pad);
+	      } else if (op.op == "max_pool2d_with_indices") {
+        auto parse_pair = [&](const json& value, const std::string& key) -> std::pair<int, int> {
+          if (value.is_array()) {
+            if (value.size() != 2) fail("max_pool2d_with_indices " + key + " must have length 2");
+            return {static_cast<int>(resolve_const_value(value[0], bindings)), static_cast<int>(resolve_const_value(value[1], bindings))};
+          }
+          int v = static_cast<int>(resolve_const_value(value, bindings));
+          return {v, v};
+        };
+        std::pair<int, int> ksz = op.attrs.contains("kernel_size") ? parse_pair(op.attrs["kernel_size"], "kernel_size") : std::pair<int, int>{2, 2};
+        std::pair<int, int> stride = op.attrs.contains("stride") ? parse_pair(op.attrs["stride"], "stride") : ksz;
+        std::pair<int, int> padding = op.attrs.contains("padding") ? parse_pair(op.attrs["padding"], "padding") : std::pair<int, int>{0, 0};
+        std::pair<int, int> dilation = op.attrs.contains("dilation") ? parse_pair(op.attrs["dilation"], "dilation") : std::pair<int, int>{1, 1};
+        bool ceil_mode = op.attrs.value("ceil_mode", false);
+        if (ceil_mode) fail("max_pool2d_with_indices ceil_mode=true is not supported");
+        if (dilation.first != 1 || dilation.second != 1) fail("max_pool2d_with_indices dilation != 1 is not supported");
+        std::string select = op.attrs.value("select", "values");
+        bool emit_indices = (select == "indices") || (dtype_env.at(out) == "i64");
+        emit_max_pool2d_with_indices(w, out_var, v(op.inputs[0]), shape_env.at(op.inputs[0]), out_shape, ksz.first, ksz.second, stride.first, stride.second,
+                                     padding.first, padding.second, emit_indices);
+	      } else if (op.op == "mse_loss") {
+        if (op.inputs.size() != 2) fail("mse_loss expects [input, target]");
+        const auto& in_shape = shape_env.at(op.inputs[0]);
+        const auto& tgt_shape = shape_env.at(op.inputs[1]);
+        if (in_shape != tgt_shape) fail("mse_loss shape mismatch between input and target");
+        std::string reduction;
+        if (op.attrs.contains("reduction")) {
+          if (op.attrs["reduction"].is_number_integer()) {
+            int mode = op.attrs["reduction"].get<int>();
+            if (mode == 0) reduction = "none";
+            else if (mode == 2) reduction = "sum";
+            else reduction = "mean";
+          } else {
+            reduction = op.attrs["reduction"].get<std::string>();
+          }
+        } else {
+          reduction = "mean";
+        }
+        emit_mse_loss(w, out_var, v(op.inputs[0]), v(op.inputs[1]), in_shape, out_shape, reduction);
 	      } else if (op.op == "scaled_dot_product_attention") {
         if (op.inputs.size() < 3) fail("scaled_dot_product_attention requires query/key/value");
         bool is_causal = op.attrs.value("is_causal", false);
@@ -3723,6 +3868,33 @@ int main(int argc, char** argv) {
         dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
       }
+      if (kind == "max_pool2d_with_indices") {
+        const auto& in_shape = get_shape(op.inputs[0]);
+        if (in_shape.size() != 4) fail("max_pool2d_with_indices infer expects rank-4 NCHW input");
+        auto parse_pair = [&](const json& value, const std::string& key) -> std::pair<int64_t, int64_t> {
+          if (value.is_array()) {
+            if (value.size() != 2) fail("max_pool2d_with_indices " + key + " must have length 2");
+            return {static_cast<int64_t>(resolve_const_value(value[0], bindings)), static_cast<int64_t>(resolve_const_value(value[1], bindings))};
+          }
+          int64_t v = static_cast<int64_t>(resolve_const_value(value, bindings));
+          return {v, v};
+        };
+        auto ksz = op.attrs.contains("kernel_size") ? parse_pair(op.attrs["kernel_size"], "kernel_size") : std::pair<int64_t, int64_t>{2, 2};
+        auto stride = op.attrs.contains("stride") ? parse_pair(op.attrs["stride"], "stride") : ksz;
+        auto padding = op.attrs.contains("padding") ? parse_pair(op.attrs["padding"], "padding") : std::pair<int64_t, int64_t>{0, 0};
+        auto dilation = op.attrs.contains("dilation") ? parse_pair(op.attrs["dilation"], "dilation") : std::pair<int64_t, int64_t>{1, 1};
+        bool ceil_mode = op.attrs.value("ceil_mode", false);
+        if (ceil_mode) fail("max_pool2d_with_indices infer ceil_mode=true is not supported");
+        if (dilation.first != 1 || dilation.second != 1) fail("max_pool2d_with_indices infer dilation != 1 is not supported");
+        const int64_t N = in_shape[0], C = in_shape[1], H = in_shape[2], W = in_shape[3];
+        const int64_t OH = ((H + 2 * padding.first - ksz.first) / stride.first) + 1;
+        const int64_t OW = ((W + 2 * padding.second - ksz.second) / stride.second) + 1;
+        if (OH <= 0 || OW <= 0) fail("max_pool2d_with_indices infer produced non-positive output shape");
+        shape_env[out] = {N, C, OH, OW};
+        std::string select = op.attrs.value("select", "values");
+        dtype_env[out] = (select == "indices") ? "i64" : get_dtype(op.inputs[0]);
+        continue;
+      }
       if (kind == "scaled_dot_product_attention") {
         if (op.inputs.size() < 3) fail("scaled_dot_product_attention infer requires query/key/value");
         const auto& q = get_shape(op.inputs[0]);
@@ -3731,6 +3903,30 @@ int main(int argc, char** argv) {
         if (q.size() != 4 || k.size() != 4 || v.size() != 4) fail("scaled_dot_product_attention infer expects rank-4 tensors");
         if (q[0] != k[0] || q[1] != k[1] || k[2] != v[2]) fail("scaled_dot_product_attention infer shape mismatch");
         shape_env[out] = {q[0], q[1], q[2], v[3]};
+        dtype_env[out] = get_dtype(op.inputs[0]);
+        continue;
+      }
+      if (kind == "mse_loss") {
+        if (op.inputs.size() != 2) fail("mse_loss infer expects [input, target]");
+        const auto& in_shape = get_shape(op.inputs[0]);
+        const auto& tgt_shape = get_shape(op.inputs[1]);
+        if (in_shape != tgt_shape) fail("mse_loss infer shape mismatch between input and target");
+        std::string reduction = "mean";
+        if (op.attrs.contains("reduction")) {
+          if (op.attrs["reduction"].is_number_integer()) {
+            int mode = op.attrs["reduction"].get<int>();
+            if (mode == 0) reduction = "none";
+            else if (mode == 2) reduction = "sum";
+            else reduction = "mean";
+          } else {
+            reduction = op.attrs["reduction"].get<std::string>();
+          }
+        }
+        if (reduction == "none") {
+          shape_env[out] = in_shape;
+        } else {
+          shape_env[out] = {};
+        }
         dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
       }

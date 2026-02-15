@@ -217,6 +217,45 @@ def _resolve_schedule_int(v: str | int | None, bindings: Mapping[str, Any], *, d
     return int(default)
 
 
+def _schedule_to_json_dict(sched: Any) -> Dict[str, Any]:
+    if sched is None:
+        return {}
+    if hasattr(sched, "to_json_dict"):
+        try:
+            out = sched.to_json_dict()
+            if isinstance(out, dict):
+                return dict(out)
+        except Exception:
+            pass
+    if hasattr(sched, "to_json"):
+        try:
+            out = sched.to_json()
+            if isinstance(out, dict):
+                return dict(out)
+        except Exception:
+            pass
+    out: Dict[str, Any] = {}
+    for key in (
+        "tile_m",
+        "tile_n",
+        "tile_k",
+        "vec_width",
+        "pipeline_depth",
+        "axis_bindings",
+        "vec_axis",
+        "parallel_axes",
+        "memory_hint",
+    ):
+        try:
+            v = getattr(sched, key)
+        except Exception:
+            continue
+        if v is None:
+            continue
+        out[key] = v
+    return out
+
+
 def _c_ident(name: str) -> str:
     """
     Convert an IntentIR tensor/op name into a C identifier.
@@ -2337,6 +2376,499 @@ extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(const floa
     io_spec = _io_spec_from_args(intent, tensor_args=tensor_args, scalar_args=scalar_args, arg_names=arg_names)
     launch = CudaLaunch(grid=(M, 1, 1), block=(block_x, 1, 1), shared_mem=0)
     return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=dict(bindings))
+
+
+def _kernel_reduce_min_2d_all_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != "reduce_min":
+        raise CudaLoweringError("reduce_min(all) lowering expects a single reduce_min op")
+    op = intent.ops[0]
+    if len(op.inputs) != 1:
+        raise CudaLoweringError("reduce_min(all) expects 1 input")
+    inp_name = str(op.inputs[0])
+    out_name = str(op.output)
+
+    in_shape = _shape_values(intent, inp_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(in_shape) != 2:
+        raise CudaLoweringError("reduce_min(all) lowering currently supports rank-2 input only")
+    if len(out_shape) != 0:
+        raise CudaLoweringError("reduce_min(all) lowering expects scalar output")
+    if str(intent.tensors[inp_name].dtype) != "f32" or str(intent.tensors[out_name].dtype) != "f32":
+        raise CudaLoweringError("reduce_min(all) lowering currently supports f32 tensors")
+
+    M = _as_int(bindings.get("M"), name="M")
+    N = _as_int(bindings.get("N"), name="N")
+    total = max(0, int(M) * int(N))
+    sched = intent.schedule or ScheduleSketch()
+    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=256)
+    if block_x <= 0:
+        block_x = 256
+    if block_x > 1024:
+        block_x = 1024
+    if (block_x & (block_x - 1)) != 0:
+        block_x = 1 << int(block_x - 1).bit_length()
+    block_x = max(32, min(1024, int(block_x)))
+
+    m_is_tensor = _is_scalar_tensor(intent, "M", dtype="i32")
+    n_is_tensor = _is_scalar_tensor(intent, "N", dtype="i32")
+    m_param = "const int* M_ptr" if m_is_tensor else "int M"
+    n_param = "const int* N_ptr" if n_is_tensor else "int N"
+    m_load = "const int M = M_ptr ? M_ptr[0] : 0;" if m_is_tensor else ""
+    n_load = "const int N = N_ptr ? N_ptr[0] : 0;" if n_is_tensor else ""
+
+    cuda_src = f"""
+#include <math.h>
+#include <stdint.h>
+
+#include "intentir_cuda_ops.cuh"
+#include "kernels/reduce.cuh"
+
+extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(const float* __restrict__ {inp_name}, float* __restrict__ {out_name}, {m_param}, {n_param}) {{
+  {m_load}
+  {n_load}
+  constexpr int BLOCK_THREADS = {block_x};
+  __shared__ intentir_cuda::BlockAllreduceF32<BLOCK_THREADS> red;
+  const int total = M * N;
+  float acc = INFINITY;
+  for (int idx = (int)threadIdx.x; idx < total; idx += (int)blockDim.x) acc = fminf(acc, intentir_ldg_f32({inp_name} + (size_t)idx));
+  const float mn = intentir_cuda::block_allreduce_min<BLOCK_THREADS>(acc, &red);
+  if ((int)threadIdx.x == 0) {out_name}[0] = (total > 0) ? mn : INFINITY;
+}}
+""".lstrip()
+
+    tensor_args = [inp_name, out_name]
+    scalar_args: Dict[str, str] = {}
+    arg_names = [inp_name, out_name]
+    for dim_name in ["M", "N"]:
+        if _is_scalar_tensor(intent, dim_name, dtype="i32"):
+            tensor_args.append(dim_name)
+            arg_names.append(dim_name)
+        else:
+            scalar_args[dim_name] = "i32"
+            arg_names.append(dim_name)
+
+    io_spec = _io_spec_from_args(intent, tensor_args=tensor_args, scalar_args=scalar_args, arg_names=arg_names)
+    launch = CudaLaunch(grid=(1, 1, 1), block=(block_x, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.update({"M": int(M), "N": int(N), "TOTAL": int(total)})
+    return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=lowered_bindings)
+
+
+def _kernel_row_mean_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    ops = list(intent.ops or [])
+    if len(ops) != 3:
+        raise CudaLoweringError("row_mean lowering expects 3 ops: const, reduce_sum, div")
+    const_ops = [o for o in ops if o.op == "const"]
+    reduce_ops = [o for o in ops if o.op == "reduce_sum"]
+    div_ops = [o for o in ops if o.op == "div"]
+    if len(const_ops) != 1 or len(reduce_ops) != 1 or len(div_ops) != 1:
+        raise CudaLoweringError("row_mean lowering expects const+reduce_sum+div pattern")
+    red = reduce_ops[0]
+    div = div_ops[0]
+    if len(red.inputs) != 1 or len(div.inputs) != 2:
+        raise CudaLoweringError("row_mean pattern has invalid op arity")
+    inp_name = str(red.inputs[0])
+    out_name = str(div.output)
+    red_out = str(red.output)
+    const_out = str(const_ops[0].output)
+    if sorted([str(x) for x in div.inputs]) != sorted([red_out, const_out]):
+        raise CudaLoweringError("row_mean div must consume reduce_sum output and const scalar")
+    dims = (red.attrs or {}).get("dims")
+    axis = (red.attrs or {}).get("axis")
+    if dims not in ([1], (1,)) and axis not in ([1], 1, "1"):
+        raise CudaLoweringError("row_mean currently supports axis=1 reductions only")
+    if str(intent.tensors[inp_name].dtype) != "f32" or str(intent.tensors[out_name].dtype) != "f32":
+        raise CudaLoweringError("row_mean lowering currently supports f32 input/output")
+
+    M = _as_int(bindings.get("M"), name="M")
+    N = _as_int(bindings.get("N"), name="N")
+    sched = intent.schedule or ScheduleSketch()
+    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=256)
+    if block_x <= 0:
+        block_x = 256
+    if block_x > 1024:
+        block_x = 1024
+    if (block_x & (block_x - 1)) != 0:
+        block_x = 1 << int(block_x - 1).bit_length()
+    block_x = max(32, min(1024, int(block_x)))
+
+    m_is_tensor = _is_scalar_tensor(intent, "M", dtype="i32")
+    n_is_tensor = _is_scalar_tensor(intent, "N", dtype="i32")
+    m_param = "const int* M_ptr" if m_is_tensor else "int M"
+    n_param = "const int* N_ptr" if n_is_tensor else "int N"
+    m_load = "const int M = M_ptr ? M_ptr[0] : 0;" if m_is_tensor else ""
+    n_load = "const int N = N_ptr ? N_ptr[0] : 0;" if n_is_tensor else ""
+
+    cuda_src = f"""
+#include <stdint.h>
+
+#include "intentir_cuda_ops.cuh"
+#include "kernels/reduce.cuh"
+
+extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(const float* __restrict__ {inp_name}, float* __restrict__ {out_name}, {m_param}, {n_param}) {{
+  {m_load}
+  {n_load}
+  const int m = (int)blockIdx.x;
+  if (m >= M || N <= 0) return;
+  constexpr int BLOCK_THREADS = {block_x};
+  __shared__ intentir_cuda::BlockAllreduceF32<BLOCK_THREADS> red;
+  float acc = 0.0f;
+  const float* row = {inp_name} + (size_t)m * (size_t)N;
+  for (int n = (int)threadIdx.x; n < N; n += (int)blockDim.x) acc += intentir_ldg_f32(row + (size_t)n);
+  const float sum = intentir_cuda::block_allreduce_sum<BLOCK_THREADS>(acc, &red);
+  if ((int)threadIdx.x == 0) {out_name}[m] = sum / (float)N;
+}}
+""".lstrip()
+
+    tensor_args = [inp_name, out_name]
+    scalar_args: Dict[str, str] = {}
+    arg_names = [inp_name, out_name]
+    for dim_name in ["M", "N"]:
+        if _is_scalar_tensor(intent, dim_name, dtype="i32"):
+            tensor_args.append(dim_name)
+            arg_names.append(dim_name)
+        else:
+            scalar_args[dim_name] = "i32"
+            arg_names.append(dim_name)
+    io_spec = _io_spec_from_args(intent, tensor_args=tensor_args, scalar_args=scalar_args, arg_names=arg_names)
+    launch = CudaLaunch(grid=(M, 1, 1), block=(block_x, 1, 1), shared_mem=0)
+    return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=dict(bindings))
+
+
+def _kernel_mse_loss_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    if not intent.ops or len(intent.ops) != 1 or intent.ops[0].op != "mse_loss":
+        raise CudaLoweringError("mse_loss lowering expects a single mse_loss op")
+    op = intent.ops[0]
+    if len(op.inputs) != 2:
+        raise CudaLoweringError("mse_loss expects two inputs (inp, target)")
+    inp_name, target_name = (str(x) for x in op.inputs)
+    out_name = str(op.output)
+    if str(intent.tensors[inp_name].dtype) != "f32" or str(intent.tensors[target_name].dtype) != "f32" or str(intent.tensors[out_name].dtype) != "f32":
+        raise CudaLoweringError("mse_loss lowering currently supports f32 tensors only")
+
+    inp_shape = _shape_values(intent, inp_name)
+    target_shape = _shape_values(intent, target_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(inp_shape) != 2 or len(target_shape) != 2:
+        raise CudaLoweringError("mse_loss lowering expects rank-2 inputs")
+    if inp_shape != target_shape:
+        raise CudaLoweringError("mse_loss input/target shape mismatch")
+    if len(out_shape) != 0:
+        raise CudaLoweringError("mse_loss lowering currently expects scalar output")
+
+    M = _resolve_dim_int(inp_shape[0], bindings, name="M")
+    N = _resolve_dim_int(inp_shape[1], bindings, name="N")
+    reduction = (op.attrs or {}).get("reduction", 1)
+    if reduction in {"none", 0}:
+        raise CudaLoweringError("mse_loss reduction=none is not supported in this lowering")
+    use_mean = reduction in {"mean", 1}
+
+    cuda_src = f"""
+#include <stdint.h>
+extern "C" __global__ void {intent.name}(
+    const float* __restrict__ {inp_name},
+    const float* __restrict__ {target_name},
+    float* __restrict__ {out_name},
+    int M, int N) {{
+  if (blockIdx.x != 0 || threadIdx.x != 0) return;
+  const int total = M * N;
+  double acc = 0.0;
+  for (int i = 0; i < total; ++i) {{
+    const float d = {inp_name}[i] - {target_name}[i];
+    acc += (double)(d * d);
+  }}
+  const float v = {("(float)(acc / (double)total)" if use_mean else "(float)acc")};
+  {out_name}[0] = v;
+}}
+""".lstrip()
+    io_spec = _io_spec_from_args(
+        intent,
+        tensor_args=[inp_name, target_name, out_name],
+        scalar_args={"M": "i32", "N": "i32"},
+        arg_names=[inp_name, target_name, out_name, "M", "N"],
+    )
+    launch = CudaLaunch(grid=(1, 1, 1), block=(1, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.update({"M": int(M), "N": int(N)})
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=[out_name],
+        bindings=lowered_bindings,
+    )
+
+
+def _kernel_max_pool2d_with_indices_nchw_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    ops = list(intent.ops or [])
+    if not ops or any(str(o.op) != "max_pool2d_with_indices" for o in ops):
+        raise CudaLoweringError("max_pool2d_with_indices lowering expects only max_pool2d_with_indices ops")
+
+    inp_name = str(ops[0].inputs[0]) if ops[0].inputs else ""
+    if not inp_name:
+        raise CudaLoweringError("max_pool2d_with_indices expects one input tensor")
+    if str(intent.tensors[inp_name].dtype) != "f32":
+        raise CudaLoweringError("max_pool2d_with_indices lowering currently supports f32 input only")
+
+    values_out_name: str | None = None
+    indices_out_name: str | None = None
+    attrs = dict(ops[0].attrs or {})
+    attrs_norm = {str(k): v for k, v in attrs.items() if str(k) != "select"}
+    for op in ops:
+        if len(op.inputs) != 1 or str(op.inputs[0]) != inp_name:
+            raise CudaLoweringError("max_pool2d_with_indices ops must share the same single input")
+        op_attrs = dict(op.attrs or {})
+        select = str(op_attrs.get("select", "values")).strip().lower()
+        out_name = str(op.output)
+        if select == "indices":
+            indices_out_name = out_name
+        else:
+            values_out_name = out_name
+        op_norm = {str(k): v for k, v in op_attrs.items() if str(k) != "select"}
+        if op_norm != attrs_norm:
+            raise CudaLoweringError("max_pool2d_with_indices currently requires identical attrs for value/index outputs")
+
+    if values_out_name is None and indices_out_name is None:
+        raise CudaLoweringError("max_pool2d_with_indices must produce at least one output")
+    if values_out_name is not None and str(intent.tensors[values_out_name].dtype) != "f32":
+        raise CudaLoweringError("max_pool2d_with_indices values output must be f32")
+    if indices_out_name is not None and str(intent.tensors[indices_out_name].dtype) != "i64":
+        raise CudaLoweringError("max_pool2d_with_indices indices output must be i64")
+
+    in_shape = _shape_values(intent, inp_name)
+    if len(in_shape) != 4:
+        raise CudaLoweringError("max_pool2d_with_indices expects input shape [N,C,H,W]")
+    N = _resolve_dim_int(in_shape[0], bindings, name="N")
+    C = _resolve_dim_int(in_shape[1], bindings, name="C")
+    H = _resolve_dim_int(in_shape[2], bindings, name="H")
+    W = _resolve_dim_int(in_shape[3], bindings, name="W")
+
+    def _pair(val: Any, default: int) -> tuple[int, int]:
+        if val is None:
+            return (default, default)
+        if isinstance(val, (list, tuple)):
+            if len(val) != 2:
+                raise CudaLoweringError("max_pool2d_with_indices expects pair attrs")
+            return (
+                _resolve_attr_int(val[0], bindings, name="max_pool2d_with_indices.pair[0]"),
+                _resolve_attr_int(val[1], bindings, name="max_pool2d_with_indices.pair[1]"),
+            )
+        v = _resolve_attr_int(val, bindings, name="max_pool2d_with_indices.pair")
+        return (v, v)
+
+    kh, kw = _pair(attrs.get("kernel_size"), 2)
+    sh, sw = _pair(attrs.get("stride"), kh)
+    ph, pw = _pair(attrs.get("padding"), 0)
+    dh, dw = _pair(attrs.get("dilation"), 1)
+    ceil_mode = bool(attrs.get("ceil_mode", False))
+    if ceil_mode:
+        raise CudaLoweringError("max_pool2d_with_indices ceil_mode=true is not supported")
+    if dh != 1 or dw != 1:
+        raise CudaLoweringError("max_pool2d_with_indices dilation != 1 is not supported")
+    if sh <= 0 or sw <= 0:
+        raise CudaLoweringError("max_pool2d_with_indices stride must be positive")
+    OH = ((H + 2 * ph - kh) // sh) + 1
+    OW = ((W + 2 * pw - kw) // sw) + 1
+    if OH <= 0 or OW <= 0:
+        raise CudaLoweringError("max_pool2d_with_indices invalid output shape")
+
+    if values_out_name is not None:
+        vshape = _shape_values(intent, values_out_name)
+        if [N, C, OH, OW] != [_resolve_dim_int(vshape[0], bindings, name="values.N"), _resolve_dim_int(vshape[1], bindings, name="values.C"), _resolve_dim_int(vshape[2], bindings, name="values.OH"), _resolve_dim_int(vshape[3], bindings, name="values.OW")]:
+            raise CudaLoweringError("max_pool2d_with_indices values output shape mismatch")
+    if indices_out_name is not None:
+        ishape = _shape_values(intent, indices_out_name)
+        if [N, C, OH, OW] != [_resolve_dim_int(ishape[0], bindings, name="indices.N"), _resolve_dim_int(ishape[1], bindings, name="indices.C"), _resolve_dim_int(ishape[2], bindings, name="indices.OH"), _resolve_dim_int(ishape[3], bindings, name="indices.OW")]:
+            raise CudaLoweringError("max_pool2d_with_indices indices output shape mismatch")
+
+    total = N * C * OH * OW
+    sched = intent.schedule or ScheduleSketch()
+    block_x = _resolve_schedule_int(sched.tile_n, bindings, default=256)
+    if block_x <= 0:
+        block_x = 256
+    if block_x > 1024:
+        block_x = 1024
+    grid_x = (total + block_x - 1) // block_x
+
+    values_param = f"float* __restrict__ {values_out_name}" if values_out_name is not None else "float* __restrict__ out_values_unused"
+    indices_param = f"int64_t* __restrict__ {indices_out_name}" if indices_out_name is not None else "int64_t* __restrict__ out_indices_unused"
+    values_store = f"{values_out_name}[tid] = best;" if values_out_name is not None else "(void)best;"
+    indices_store = f"{indices_out_name}[tid] = (int64_t)best_idx;" if indices_out_name is not None else "(void)best_idx;"
+
+    cuda_src = f"""
+#include <math.h>
+#include <stdint.h>
+extern "C" __global__ __launch_bounds__({block_x}) void {intent.name}(
+    const float* __restrict__ {inp_name},
+    {values_param},
+    {indices_param},
+    int N, int C, int H, int W, int OH, int OW) {{
+  const int tid = (int)blockIdx.x * (int)blockDim.x + (int)threadIdx.x;
+  const int total = N * C * OH * OW;
+  if (tid >= total) return;
+  int t = tid;
+  const int ow = t % OW; t /= OW;
+  const int oh = t % OH; t /= OH;
+  const int c = t % C; t /= C;
+  const int n = t;
+  const int h_start = oh * {sh} - {ph};
+  const int w_start = ow * {sw} - {pw};
+  float best = -INFINITY;
+  int best_idx = 0;
+  for (int kh_i = 0; kh_i < {kh}; ++kh_i) {{
+    const int ih = h_start + kh_i;
+    if ((unsigned)ih >= (unsigned)H) continue;
+    for (int kw_i = 0; kw_i < {kw}; ++kw_i) {{
+      const int iw = w_start + kw_i;
+      if ((unsigned)iw >= (unsigned)W) continue;
+      const int64_t in_pos = (((int64_t)n * (int64_t)C + (int64_t)c) * (int64_t)H + (int64_t)ih) * (int64_t)W + (int64_t)iw;
+      const float v = {inp_name}[in_pos];
+      const int idx = ih * W + iw;
+      if (v > best) {{ best = v; best_idx = idx; }}
+    }}
+  }}
+  {values_store}
+  {indices_store}
+}}
+""".lstrip()
+
+    tensor_args = [inp_name]
+    arg_names = [inp_name]
+    if values_out_name is not None:
+        tensor_args.append(values_out_name)
+        arg_names.append(values_out_name)
+    else:
+        arg_names.append("out_values_unused")
+    if indices_out_name is not None:
+        tensor_args.append(indices_out_name)
+        arg_names.append(indices_out_name)
+    else:
+        arg_names.append("out_indices_unused")
+    scalar_args = {"N": "i32", "C": "i32", "H": "i32", "W": "i32", "OH": "i32", "OW": "i32"}
+    arg_names.extend(["N", "C", "H", "W", "OH", "OW"])
+    io_spec = _io_spec_from_args(intent, tensor_args=tensor_args, scalar_args=scalar_args, arg_names=arg_names)
+    launch = CudaLaunch(grid=(grid_x, 1, 1), block=(block_x, 1, 1), shared_mem=0)
+    lowered_bindings = dict(bindings)
+    lowered_bindings.update({"N": int(N), "C": int(C), "H": int(H), "W": int(W), "OH": int(OH), "OW": int(OW)})
+    out_names = []
+    if values_out_name is not None:
+        out_names.append(values_out_name)
+    if indices_out_name is not None:
+        out_names.append(indices_out_name)
+    return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=out_names, bindings=lowered_bindings)
+
+
+def _kernel_reduce_min_with_aux_pattern_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    reduce_ops = [o for o in (intent.ops or []) if str(o.op) == "reduce_min"]
+    if not reduce_ops:
+        raise CudaLoweringError("reduce_min aux-pattern lowering expects a reduce_min op")
+    red = reduce_ops[0]
+    if len(red.inputs) != 1:
+        raise CudaLoweringError("reduce_min aux-pattern expects a single reduce_min input")
+    inp_name = str(red.inputs[0])
+    out_name = str(red.output)
+    if inp_name not in intent.tensors or out_name not in intent.tensors:
+        raise CudaLoweringError("reduce_min aux-pattern requires input/output tensors in intent")
+    synthetic = IntentFunction.from_json_dict(
+        {
+            "name": str(intent.name),
+            "tensors": {
+                str(inp_name): {"dtype": "f32", "shape": _shape_values(intent, inp_name), "layout": "row_major"},
+                str(out_name): {"dtype": "f32", "shape": _shape_values(intent, out_name), "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "reduce_min",
+                    "inputs": [str(inp_name)],
+                    "output": str(out_name),
+                    "attrs": {"dims": [1]},
+                }
+            ],
+            "outputs": [str(out_name)],
+            "parallel_axes": [str(x) for x in (intent.parallel_axes or [])],
+            "schedule": _schedule_to_json_dict(intent.schedule),
+        }
+    )
+    return _kernel_reduce_min_2d_axis1_f32(synthetic, bindings)
+
+
+def _kernel_mm_cast_chain_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    ops = list(intent.ops or [])
+    if len(ops) != 2 or str(ops[0].op) != "matmul" or str(ops[1].op) != "cast":
+        raise CudaLoweringError("mm cast-chain lowering expects matmul->cast")
+    matmul, cast = ops
+    if len(matmul.inputs) != 2 or len(cast.inputs) != 1:
+        raise CudaLoweringError("mm cast-chain has invalid op arity")
+    if str(cast.inputs[0]) != str(matmul.output):
+        raise CudaLoweringError("mm cast-chain expects cast to consume matmul output")
+    a_name = str(matmul.inputs[0])
+    b_name = str(matmul.inputs[1])
+    out_name = str(cast.output)
+    if a_name not in intent.tensors or b_name not in intent.tensors or out_name not in intent.tensors:
+        raise CudaLoweringError("mm cast-chain tensors missing from intent")
+    synthetic = IntentFunction.from_json_dict(
+        {
+            "name": str(intent.name),
+            "tensors": {
+                str(a_name): {"dtype": "f32", "shape": _shape_values(intent, a_name), "layout": "row_major"},
+                str(b_name): {"dtype": "f32", "shape": _shape_values(intent, b_name), "layout": "row_major"},
+                str(out_name): {"dtype": "f32", "shape": _shape_values(intent, out_name), "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "matmul",
+                    "inputs": [str(a_name), str(b_name)],
+                    "output": str(out_name),
+                    "attrs": dict(matmul.attrs or {}),
+                }
+            ],
+            "outputs": [str(out_name)],
+            "parallel_axes": [str(x) for x in (intent.parallel_axes or [])],
+            "schedule": _schedule_to_json_dict(intent.schedule),
+        }
+    )
+    return _kernel_matmul_f32(synthetic, bindings)
+
+
+def _kernel_minimum_cast_chain_2d_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    ops = list(intent.ops or [])
+    if len(ops) != 4 or [str(o.op) for o in ops] != ["cast", "cast", "min", "cast"]:
+        raise CudaLoweringError("minimum cast-chain lowering expects cast, cast, min, cast")
+    c0, c1, min_op, c2 = ops
+    x_name = str(c0.inputs[0]) if c0.inputs else ""
+    y_name = str(c1.inputs[0]) if c1.inputs else ""
+    out_name = str(c2.output)
+    if not x_name or not y_name or out_name not in intent.tensors:
+        raise CudaLoweringError("minimum cast-chain tensors missing")
+    if len(min_op.inputs) != 2:
+        raise CudaLoweringError("minimum cast-chain min op expects 2 inputs")
+    if sorted([str(x) for x in min_op.inputs]) != sorted([str(c0.output), str(c1.output)]):
+        raise CudaLoweringError("minimum cast-chain min must consume cast outputs")
+    if str(c2.inputs[0]) != str(min_op.output):
+        raise CudaLoweringError("minimum cast-chain final cast must consume min output")
+
+    synthetic = IntentFunction.from_json_dict(
+        {
+            "name": str(intent.name),
+            "tensors": {
+                str(x_name): {"dtype": "f32", "shape": _shape_values(intent, x_name), "layout": "row_major"},
+                str(y_name): {"dtype": "f32", "shape": _shape_values(intent, y_name), "layout": "row_major"},
+                str(out_name): {"dtype": "f32", "shape": _shape_values(intent, out_name), "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "min",
+                    "inputs": [str(x_name), str(y_name)],
+                    "output": str(out_name),
+                }
+            ],
+            "outputs": [str(out_name)],
+            "parallel_axes": [str(x) for x in (intent.parallel_axes or [])],
+            "schedule": _schedule_to_json_dict(intent.schedule),
+        }
+    )
+    return _kernel_fused_elementwise(synthetic, bindings)
 
 
 def _kernel_any_dim_f32_to_i1(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
@@ -5885,6 +6417,36 @@ def lower_intent_to_cuda_kernel(
             if op0 == "reduce_max":
                 return _kernel_reduce_max_2d_axis1_f32(intent, bindings)
             if op0 == "reduce_min":
+                op0_node = intent.ops[0]
+                out_name = str(op0_node.output)
+                out_shape = _shape_values(intent, out_name) if out_name in intent.tensors else []
+                dims_raw = (op0_node.attrs or {}).get("dims")
+                axis_raw = (op0_node.attrs or {}).get("axis")
+                dims_norm: list[int] = []
+                if isinstance(dims_raw, (list, tuple)):
+                    for d in dims_raw:
+                        try:
+                            dims_norm.append(int(d))
+                        except Exception:
+                            continue
+                elif dims_raw is not None:
+                    try:
+                        dims_norm.append(int(dims_raw))
+                    except Exception:
+                        pass
+                elif isinstance(axis_raw, (list, tuple)):
+                    for d in axis_raw:
+                        try:
+                            dims_norm.append(int(d))
+                        except Exception:
+                            continue
+                elif axis_raw is not None:
+                    try:
+                        dims_norm.append(int(axis_raw))
+                    except Exception:
+                        pass
+                if len(out_shape) == 0 and sorted(set(dims_norm)) in ([0, 1], [-2, -1]):
+                    return _kernel_reduce_min_2d_all_f32(intent, bindings)
                 return _kernel_reduce_min_2d_axis1_f32(intent, bindings)
             if op0 == "gather":
                 return _kernel_gather2d_f32(intent, bindings)
@@ -5902,6 +6464,10 @@ def lower_intent_to_cuda_kernel(
                 return _kernel_arg_reduce_2d_axis1_i32(intent, bindings)
             if op0 == "avg_pool2d":
                 return _kernel_avg_pool2d_nchw_f32(intent, bindings)
+            if op0 == "max_pool2d_with_indices":
+                return _kernel_max_pool2d_with_indices_nchw_f32(intent, bindings)
+            if op0 == "mse_loss":
+                return _kernel_mse_loss_2d_f32(intent, bindings)
             if op0 == "scaled_dot_product_attention":
                 return _kernel_scaled_dot_product_attention_bhsd_f32(intent, bindings)
 
@@ -5910,12 +6476,26 @@ def lower_intent_to_cuda_kernel(
     op_names = {o.op for o in (intent.ops or [])}
     # any/all row-reduction family.
     op_seq = [o.op for o in (intent.ops or [])]
+    if op_seq and all(str(x) == "max_pool2d_with_indices" for x in op_seq):
+        return _kernel_max_pool2d_with_indices_nchw_f32(intent, bindings)
+    if len(op_seq) == 3 and sorted(op_seq) == ["const", "div", "reduce_sum"]:
+        return _kernel_row_mean_2d_f32(intent, bindings)
     if op_seq in (["const", "ne", "reduce_any"], ["const", "eq", "reduce_any"], ["const", "eq", "reduce_any", "not"], ["const", "ne", "reduce_any", "not"]):
         return _kernel_any_dim_f32_to_i1(intent, bindings)
     if op_seq == ["broadcast_in_dim", "broadcast_in_dim", "ne", "not", "reduce_any"]:
         return _kernel_isin_1d_i32_to_i1(intent, bindings)
     if op_seq == ["const", "ne", "cast", "reduce_sum"]:
         return _kernel_count_nonzero_2d_i64(intent, bindings)
+    if (
+        "reduce_min" in op_names
+        and len(op_seq) >= 2
+        and all(str(x) in {"const", "identity", "broadcast_in_dim", "reduce_min", "where"} for x in op_seq)
+    ):
+        return _kernel_reduce_min_with_aux_pattern_2d_f32(intent, bindings)
+    if op_seq == ["matmul", "cast"]:
+        return _kernel_mm_cast_chain_2d_f32(intent, bindings)
+    if op_seq == ["cast", "cast", "min", "cast"]:
+        return _kernel_minimum_cast_chain_2d_f32(intent, bindings)
     if op_seq == ["iota", "gather"]:
         return _kernel_diag_2d_f32(intent, bindings)
     if op_seq == ["cast", "cast", "mul", "reduce_sum"]:

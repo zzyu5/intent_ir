@@ -1468,6 +1468,22 @@ def _canonical_row_max_intent() -> IntentFunction:
     )
 
 
+def _canonical_min2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "min2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out_value": {"dtype": "f32", "shape": [], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "reduce_min", "inputs": ["inp"], "output": "out_value", "attrs": {"dims": [0, 1], "keepdims": False}},
+            ],
+            "outputs": ["out_value"],
+        }
+    )
+
+
 def _canonical_any_kernel_dim_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -1533,6 +1549,8 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_bitwise_not2d_intent()
     if name == "row_max":
         return _canonical_row_max_intent()
+    if name == "min2d":
+        return _canonical_min2d_intent()
     if name == "any_kernel_dim":
         return _canonical_any_kernel_dim_intent()
     if name == "batch_norm2d":

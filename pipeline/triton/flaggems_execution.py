@@ -102,6 +102,17 @@ def sync_seed_into_run_dir(*, spec_name: str, seed_cache_dir: Path, run_out_dir:
     if mode == "force_compile":
         return "skipped"
 
+    # For specs with a maintained canonical intent, auto mode should prefer the
+    # canonical seed over stale historical cache entries.
+    if mode == "auto":
+        synthesized = _write_canonical_seed_if_available(
+            spec_name=spec_name,
+            cache_seed=Path(seed_cache_dir) / f"{spec_name}.intent_seed.json",
+            run_seed=Path(run_out_dir) / f"{spec_name}.intent_seed.json",
+        )
+        if synthesized:
+            return "synthesized"
+
     cache_seed = Path(seed_cache_dir) / f"{spec_name}.intent_seed.json"
     run_seed = Path(run_out_dir) / f"{spec_name}.intent_seed.json"
     if cache_seed.is_file():

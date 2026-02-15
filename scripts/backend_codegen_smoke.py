@@ -214,9 +214,15 @@ def run_one(
     baseline = _with_io_aliases_for_diff(intent, baseline)
     external_inputs, outputs = _external_inputs(intent)
     produced = {op.output for op in intent.ops if op.output}
-    outputs = [name for name in outputs if (name in baseline or name in produced)]
+    if baseline:
+        # Verify only outputs available in the baseline bundle. Some kernels
+        # expose auxiliary outputs (e.g., indices) that are intentionally not
+        # included in baseline artifacts.
+        outputs = [name for name in outputs if name in baseline]
+    else:
+        outputs = [name for name in outputs if name in produced]
     if not outputs:
-        outputs = list(intent.outputs)
+        outputs = [name for name in intent.outputs if (name in baseline)] if baseline else list(intent.outputs)
     intent_codegen = intent
     if outputs != list(intent.outputs):
         intent_j = intent.to_json_dict()

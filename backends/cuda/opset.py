@@ -15,6 +15,8 @@ CUDA_SUPPORTED_OPS: set[str] = {
     "conv2d",
     "conv3d",
     "conv_depthwise2d",
+    "max_pool2d_with_indices",
+    "mse_loss",
     "dropout",
     "softmax",
     "correlation",
