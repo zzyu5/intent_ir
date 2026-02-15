@@ -79,7 +79,6 @@ def main() -> None:
     ap.add_argument("--cuda-timeout-sec", type=int, default=120)
     ap.add_argument("--cuda-compile-timeout-sec", type=int, default=120)
     ap.add_argument("--cuda-launch-timeout-sec", type=int, default=120)
-    ap.add_argument("--cuda-codegen-mode", choices=["auto", "cpp", "py"], default="py")
     ap.add_argument("--cuda-runtime-backend", choices=["auto", "nvcc", "nvrtc"], default="nvrtc")
     ap.add_argument(
         "--write-registry",
@@ -136,8 +135,6 @@ def main() -> None:
         str(int(args.cuda_compile_timeout_sec)),
         "--cuda-launch-timeout-sec",
         str(int(args.cuda_launch_timeout_sec)),
-        "--cuda-codegen-mode",
-        str(args.cuda_codegen_mode),
         "--cuda-runtime-backend",
         str(args.cuda_runtime_backend),
         "--out-dir",

@@ -70,7 +70,6 @@ python scripts/flaggems/run_multibackend_matrix.py \
   --rvv-user ubuntu \
   --rvv-use-key \
   --cuda-runtime-backend nvrtc \
-  --cuda-codegen-mode py \
   --out-dir artifacts/flaggems_matrix/daily/<YYYYMMDD>/<run_name>
 ```
 
@@ -92,8 +91,7 @@ python scripts/flaggems/nightly_maintenance.py \
   --rvv-host 192.168.8.72 \
   --rvv-user ubuntu \
   --rvv-use-key \
-  --cuda-runtime-backend nvrtc \
-  --cuda-codegen-mode py
+  --cuda-runtime-backend nvrtc
 ```
 
 Use `--dry-run` to inspect composed commands without executing.

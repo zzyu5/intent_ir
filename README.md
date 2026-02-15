@@ -29,7 +29,7 @@ IntentIR is a research prototype that extracts **high-level kernel intent** from
 
 Primary matrix runner:
 
-`python scripts/flaggems/run_multibackend_matrix.py --suite coverage --flaggems-path intentir --intentir-mode auto --run-rvv-remote --rvv-host 192.168.8.72 --rvv-user ubuntu --rvv-use-key --cuda-runtime-backend nvrtc --cuda-codegen-mode py --out-dir artifacts/flaggems_matrix/daily/<YYYYMMDD>/<run_name>`
+`python scripts/flaggems/run_multibackend_matrix.py --suite coverage --flaggems-path intentir --intentir-mode auto --run-rvv-remote --rvv-host 192.168.8.72 --rvv-user ubuntu --rvv-use-key --cuda-runtime-backend nvrtc --out-dir artifacts/flaggems_matrix/daily/<YYYYMMDD>/<run_name>`
 
 CI-style gate aggregation:
 
@@ -37,7 +37,7 @@ CI-style gate aggregation:
 
 Nightly maintenance runner (matrix + ci_gate in one command):
 
-`python scripts/flaggems/nightly_maintenance.py --suite coverage --run-rvv-remote --rvv-host 192.168.8.72 --rvv-user ubuntu --rvv-use-key --cuda-runtime-backend nvrtc --cuda-codegen-mode py`
+`python scripts/flaggems/nightly_maintenance.py --suite coverage --run-rvv-remote --rvv-host 192.168.8.72 --rvv-user ubuntu --rvv-use-key --cuda-runtime-backend nvrtc`
 
 Scheduler-friendly wrapper:
 

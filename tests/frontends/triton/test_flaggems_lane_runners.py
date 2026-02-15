@@ -52,11 +52,8 @@ def test_run_backend_compiler_batch_dry_run(tmp_path: Path) -> None:
     assert payload["lane"] == "backend_compiler"
     assert "scripts/flaggems/run_multibackend_matrix.py" in payload["cmd"]
     cmd = list(payload["cmd"])
-    assert cmd[cmd.index("--cuda-codegen-mode") + 1] == "cpp"
-    assert "--cuda-codegen-strict" in cmd
-    assert cmd[cmd.index("--cuda-cpp-engine") + 1] == "pybind"
-    assert "--cuda-cpp-engine-strict" in cmd
-    assert payload["cuda_codegen_mode"] == "cpp"
-    assert payload["cuda_codegen_strict"] is True
-    assert payload["cuda_cpp_engine"] == "pybind"
-    assert payload["cuda_cpp_engine_strict"] is True
+    assert "--cuda-runtime-backend" in cmd
+    assert "--cuda-codegen-mode" not in cmd
+    assert "--cuda-codegen-strict" not in cmd
+    assert "--cuda-cpp-engine" not in cmd
+    assert "--cuda-cpp-engine-strict" not in cmd

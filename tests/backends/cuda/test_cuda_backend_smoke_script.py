@@ -35,7 +35,6 @@ def test_run_one_with_stage_timeouts_compile_timeout(monkeypatch: pytest.MonkeyP
         artifact_dir=None,
         compile_timeout_sec=3,
         launch_timeout_sec=5,
-        codegen_mode="auto",
         runtime_backend="nvcc",
     )
     assert res["ok"] is False
@@ -66,7 +65,6 @@ def test_run_one_with_stage_timeouts_launch_timeout(monkeypatch: pytest.MonkeyPa
         artifact_dir=None,
         compile_timeout_sec=7,
         launch_timeout_sec=9,
-        codegen_mode="auto",
         runtime_backend="nvcc",
     )
     assert res["ok"] is False
@@ -89,7 +87,6 @@ def test_main_uses_stage_specific_timeouts(monkeypatch: pytest.MonkeyPatch, tmp_
                 "compile_timeout_sec": int(kwargs["compile_timeout_sec"]),
                 "launch_timeout_sec": int(kwargs["launch_timeout_sec"]),
                 "runtime_backend": str(kwargs["runtime_backend"]),
-                "codegen_mode": str(kwargs["codegen_mode"]),
             }
         )
         return {
@@ -129,7 +126,6 @@ def test_main_uses_stage_specific_timeouts(monkeypatch: pytest.MonkeyPatch, tmp_
             "compile_timeout_sec": 7,
             "launch_timeout_sec": 11,
             "runtime_backend": "nvcc",
-            "codegen_mode": "auto",
         }
     ]
     summary = json.loads(out.read_text(encoding="utf-8"))
@@ -137,8 +133,8 @@ def test_main_uses_stage_specific_timeouts(monkeypatch: pytest.MonkeyPatch, tmp_
     assert summary["compile_timeout_sec"] == 7
     assert summary["launch_timeout_sec"] == 11
     assert summary["runtime_backend"] == "nvcc"
-    assert summary["codegen_mode"] == "auto"
-    assert summary["effective_codegen_mode"] == "auto"
+    assert "codegen_mode" not in summary
+    assert "effective_codegen_mode" not in summary
 
 
 def test_main_timeout_probe_only_updates_runtime_detail(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -176,8 +172,6 @@ def test_main_timeout_probe_only_updates_runtime_detail(monkeypatch: pytest.Monk
             "cuda_backend_smoke.py",
             "--kernel",
             "diag2d",
-            "--codegen-mode",
-            "auto",
             "--refine-timeout-reason",
             "--json",
             "--out",
@@ -196,13 +190,13 @@ def test_main_timeout_probe_only_updates_runtime_detail(monkeypatch: pytest.Monk
 def test_main_respects_runtime_backend_nvrtc(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     mod = _load_module()
     out = tmp_path / "cuda.json"
-    seen: list[tuple[str, str]] = []
+    seen: list[str] = []
 
     monkeypatch.setattr(mod, "_cuda_env_ready", lambda: (True, "ok"))
 
     def _fake_run_one_with_stage_timeouts(kernel: str, **kwargs):
         _ = kernel
-        seen.append((str(kwargs["runtime_backend"]), str(kwargs["codegen_mode"])))
+        seen.append(str(kwargs["runtime_backend"]))
         return {
             "kernel": "k",
             "ok": True,
@@ -231,9 +225,8 @@ def test_main_respects_runtime_backend_nvrtc(monkeypatch: pytest.MonkeyPatch, tm
     with pytest.raises(SystemExit) as exc:
         mod.main()
     assert int(exc.value.code) == 0
-    # nvrtc + auto should force py lowering mode.
-    assert seen == [("nvrtc", "py")]
+    assert seen == ["nvrtc"]
     payload = json.loads(out.read_text(encoding="utf-8"))
     assert payload["runtime_backend"] == "nvrtc"
-    assert payload["codegen_mode"] == "auto"
-    assert payload["effective_codegen_mode"] == "py"
+    assert "codegen_mode" not in payload
+    assert "effective_codegen_mode" not in payload

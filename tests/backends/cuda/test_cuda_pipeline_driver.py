@@ -34,7 +34,8 @@ def test_run_cuda_pipeline_reports_stage_artifacts_for_valid_intent() -> None:
     assert "rewrite_counts" in legalize.artifacts
     assert "total_rewrite_candidates" in legalize.artifacts["rewrite_counts"]
     emit = next(s for s in result.stages if s.name == "emit")
-    assert emit.artifacts.get("codegen_mode") in {"cpp", "py"}
+    assert emit.artifacts.get("emit_backend") == "cpp_pybind"
+    assert emit.artifacts.get("emit_mode") in {"kernel_generated", "skipped_missing_bindings"}
     schedule = next(s for s in result.stages if s.name == "schedule")
     assert schedule.artifacts.get("op_family") == "elementwise_reduction"
     assert str(schedule.artifacts.get("schedule_profile") or "").startswith("cuda_")

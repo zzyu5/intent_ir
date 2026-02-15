@@ -11,7 +11,6 @@ It does not try to cover the full IntentIR op-set yet.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, Sequence
 
@@ -35,7 +34,7 @@ class CudaLoweredKernel:
     bindings: Dict[str, Any]
 
 
-def _run_pipeline_compat_check(intent: IntentFunction) -> None:
+def _run_pipeline_compat_check(intent: IntentFunction, *, shape_bindings: Mapping[str, Any] | None = None) -> None:
     """
     Keep legacy lowering entry wired to the staged CUDA pipeline.
 
@@ -44,7 +43,7 @@ def _run_pipeline_compat_check(intent: IntentFunction) -> None:
     """
     from backends.cuda.pipeline.driver import run_cuda_pipeline  # noqa: PLC0415
 
-    result = run_cuda_pipeline(intent)
+    result = run_cuda_pipeline(intent, shape_bindings=shape_bindings)
     if bool(result.ok):
         return
     reason = str(getattr(result, "reason_code", "") or "pipeline_failed")
@@ -8617,8 +8616,6 @@ def lower_intent_to_cuda_kernel(
     Note: The lowering currently targets the AI-Bench8 kernels and a small set
     of common patterns (softmax2d-last, layernorm2d).
     """
-    _run_pipeline_compat_check(intent)
-
     bindings: Dict[str, Any] = {}
     for k, v in dict(shape_bindings).items():
         key = str(k)
@@ -8633,6 +8630,8 @@ def lower_intent_to_cuda_kernel(
         except Exception:
             continue
         bindings[key] = int(fv) if float(fv).is_integer() else float(fv)
+
+    _run_pipeline_compat_check(intent, shape_bindings=bindings)
 
     # When a caller provides an explicit schedule override (e.g., freeze/retune
     # experiments), treat the schedule as authoritative. Otherwise, treat the
@@ -8659,37 +8658,24 @@ def lower_intent_to_cuda_kernel(
                 memory_hint=dict(schedule_override.get("memory_hint") or {}),
             )
 
-    # Default to the C++ codegen tool (real backend feel). Set INTENTIR_CUDA_CODEGEN=py
-    # to force the legacy Python codegen, or INTENTIR_CUDA_CODEGEN_STRICT=1 to
-    # disable fallback.
-    raw_codegen = os.getenv("INTENTIR_CUDA_CODEGEN", "cpp").strip().lower()
-    force_python_codegen = raw_codegen in {"0", "false", "no", "n", "py", "python"}
-    use_cpp_codegen = not force_python_codegen
-    strict_cpp = os.getenv("INTENTIR_CUDA_CODEGEN_STRICT", "0").strip().lower() in {"1", "true", "yes", "y"}
-    if use_cpp_codegen:
-        try:
-            from .cpp_driver import lower_intent_to_cuda_kernel_cpp  # noqa: PLC0415
+    from .cpp_driver import lower_intent_to_cuda_kernel_cpp  # noqa: PLC0415
 
-            j = lower_intent_to_cuda_kernel_cpp(intent, bindings=bindings)
-            launch_j = j.get("launch") if isinstance(j.get("launch"), dict) else {}
-            grid = launch_j.get("grid")
-            block = launch_j.get("block")
-            shared_mem = launch_j.get("shared_mem", 0)
-            if not (isinstance(grid, list) and len(grid) == 3 and isinstance(block, list) and len(block) == 3):
-                raise CudaLoweringError("cuda cpp codegen returned invalid launch config")
-            launch = CudaLaunch(grid=(int(grid[0]), int(grid[1]), int(grid[2])), block=(int(block[0]), int(block[1]), int(block[2])), shared_mem=int(shared_mem))
-            return CudaLoweredKernel(
-                kernel_name=str(j.get("kernel_name") or intent.name),
-                cuda_src=str(j.get("cuda_src") or ""),
-                io_spec=j.get("io_spec") if isinstance(j.get("io_spec"), dict) else {},
-                launch=launch,
-                output_names=[str(x) for x in (j.get("output_names") or [])],
-                bindings=j.get("bindings") if isinstance(j.get("bindings"), dict) else dict(bindings),
-            )
-        except Exception:
-            if strict_cpp:
-                raise
-            # Fallback to the Python codegen for kernels not yet supported by the C++ tool.
+    j = lower_intent_to_cuda_kernel_cpp(intent, bindings=bindings)
+    launch_j = j.get("launch") if isinstance(j.get("launch"), dict) else {}
+    grid = launch_j.get("grid")
+    block = launch_j.get("block")
+    shared_mem = launch_j.get("shared_mem", 0)
+    if not (isinstance(grid, list) and len(grid) == 3 and isinstance(block, list) and len(block) == 3):
+        raise CudaLoweringError("cuda cpp codegen returned invalid launch config")
+    launch = CudaLaunch(grid=(int(grid[0]), int(grid[1]), int(grid[2])), block=(int(block[0]), int(block[1]), int(block[2])), shared_mem=int(shared_mem))
+    return CudaLoweredKernel(
+        kernel_name=str(j.get("kernel_name") or intent.name),
+        cuda_src=str(j.get("cuda_src") or ""),
+        io_spec=j.get("io_spec") if isinstance(j.get("io_spec"), dict) else {},
+        launch=launch,
+        output_names=[str(x) for x in (j.get("output_names") or [])],
+        bindings=j.get("bindings") if isinstance(j.get("bindings"), dict) else dict(bindings),
+    )
 
     # 1) Direct kernels.
     if intent.ops:

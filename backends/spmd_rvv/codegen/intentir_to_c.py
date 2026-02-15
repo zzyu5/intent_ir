@@ -34,13 +34,13 @@ def _preflight_supported_ops(intent: IntentFunction) -> None:
     raise ValueError(msg)
 
 
-def _run_pipeline_compat_check(intent: IntentFunction) -> None:
+def _run_pipeline_compat_check(intent: IntentFunction, *, shape_bindings: Mapping[str, Any] | None = None) -> None:
     """
     Keep legacy RVV codegen entry wired to the staged RVV pipeline driver.
     """
     from ..pipeline.driver import run_rvv_pipeline  # noqa: PLC0415
 
-    result = run_rvv_pipeline(intent)
+    result = run_rvv_pipeline(intent, shape_bindings=shape_bindings)
     if bool(result.ok):
         return
     reason = str(getattr(result, "reason_code", "") or "pipeline_failed")
@@ -59,7 +59,7 @@ def lower_intent_to_c_with_files(
     rtol: float = 1e-3,
     mode: str = "verify",
 ) -> str:
-    _run_pipeline_compat_check(intent)
+    _run_pipeline_compat_check(intent, shape_bindings=shape_bindings)
     _preflight_supported_ops(intent)
     return lower_intent_to_c_with_files_cpp(intent, shape_bindings=shape_bindings, atol=atol, rtol=rtol, mode=str(mode))
 

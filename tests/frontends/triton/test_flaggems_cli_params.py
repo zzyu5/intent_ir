@@ -37,9 +37,10 @@ def test_flaggems_matrix_cli_exposes_cuda_stage_timeout_flags() -> None:
     assert "--cuda-compile-timeout-sec" in text
     assert "--cuda-launch-timeout-sec" in text
     assert "--cuda-runtime-backend" in text
-    assert "--cuda-codegen-strict" in text
-    assert "--cuda-cpp-engine" in text
-    assert "--cuda-cpp-engine-strict" in text
+    assert "--cuda-codegen-mode" not in text
+    assert "--cuda-codegen-strict" not in text
+    assert "--cuda-cpp-engine" not in text
+    assert "--cuda-cpp-engine-strict" not in text
 
 
 def test_generic_full_pipeline_cli_hides_flaggems_only_flags() -> None:

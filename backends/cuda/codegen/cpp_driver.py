@@ -186,50 +186,20 @@ def lower_intent_to_cuda_kernel_cpp(
     build_type: str = "Release",
 ) -> Dict[str, Any]:
     """
-    Lower `IntentFunction` into a single CUDA kernel by invoking the C++ backend codegen.
+    Lower `IntentFunction` into a single CUDA kernel by invoking the C++ pybind backend.
 
     Returns a plain JSON-like dict with keys compatible with `CudaLoweredKernel`:
       - kernel_name, cuda_src, io_spec, launch, output_names, bindings
     """
+    del build_type  # Reserved for future ABI/version routing.
     intent_json = intent.to_json_dict()
     bindings_json = dict(bindings)
-
-    engine = os.getenv("INTENTIR_CUDA_CPP_CODEGEN_ENGINE", "pybind").strip().lower()
-    strict_engine = os.getenv("INTENTIR_CUDA_CPP_CODEGEN_ENGINE_STRICT", "0").strip().lower() in {"1", "true", "yes", "y"}
-    if engine in {"pybind", "ext", "module"}:
-        try:
-            mod = ensure_cpp_codegen_ext_loaded(verbose=False)
-            out_s = mod.lower_from_json_str(json.dumps(intent_json), json.dumps(bindings_json))
-            j = json.loads(str(out_s))
-            if not isinstance(j, dict):
-                raise RuntimeError("cuda cpp codegen ext: output must be a JSON object")
-            return j
-        except Exception:
-            if strict_engine:
-                raise
-
-    bin_path = ensure_cpp_codegen_built(build_type=build_type)
-    with tempfile.TemporaryDirectory(prefix="intentir_cuda_cpp_codegen_") as td:
-        td_path = Path(td)
-        intent_path = td_path / "intent.json"
-        bindings_path = td_path / "bindings.json"
-        intent_path.write_text(json.dumps(intent_json, indent=2))
-        bindings_path.write_text(json.dumps(bindings_json, indent=2))
-
-        cmd = [str(bin_path), "--intent", str(intent_path), "--bindings", str(bindings_path)]
-        res = subprocess.run(cmd, capture_output=True, text=True)
-        if res.returncode != 0:
-            raise RuntimeError(f"cuda cpp codegen failed (rc={res.returncode}):\n{res.stderr or res.stdout}")
-        out = (res.stdout or "").strip()
-        if not out:
-            raise RuntimeError("cuda cpp codegen returned empty output on stdout")
-        try:
-            j = json.loads(out)
-        except Exception as e:
-            raise RuntimeError(f"cuda cpp codegen returned non-JSON output:\n{out[:400]}") from e
-        if not isinstance(j, dict):
-            raise RuntimeError("cuda cpp codegen output must be a JSON object")
-        return j
+    mod = ensure_cpp_codegen_ext_loaded(verbose=False)
+    out_s = mod.lower_from_json_str(json.dumps(intent_json), json.dumps(bindings_json))
+    j = json.loads(str(out_s))
+    if not isinstance(j, dict):
+        raise RuntimeError("cuda cpp codegen ext: output must be a JSON object")
+    return j
 
 
 __all__ = ["ensure_cpp_codegen_built", "ensure_cpp_codegen_ext_loaded", "lower_intent_to_cuda_kernel_cpp"]

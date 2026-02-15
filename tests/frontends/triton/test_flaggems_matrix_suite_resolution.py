@@ -124,12 +124,6 @@ def test_matrix_forwards_cuda_stage_timeout_flags(monkeypatch: pytest.MonkeyPatc
             "333",
             "--cuda-runtime-backend",
             "nvrtc",
-            "--cuda-codegen-mode",
-            "cpp",
-            "--cuda-codegen-strict",
-            "--cuda-cpp-engine",
-            "pybind",
-            "--cuda-cpp-engine-strict",
         ],
     )
     with pytest.raises(SystemExit) as exc:
@@ -142,19 +136,19 @@ def test_matrix_forwards_cuda_stage_timeout_flags(monkeypatch: pytest.MonkeyPatc
     assert cuda_cmd[cuda_cmd.index("--compile-timeout-sec") + 1] == "222"
     assert cuda_cmd[cuda_cmd.index("--launch-timeout-sec") + 1] == "333"
     assert cuda_cmd[cuda_cmd.index("--runtime-backend") + 1] == "nvrtc"
-    assert cuda_cmd[cuda_cmd.index("--codegen-mode") + 1] == "cpp"
-    assert "--codegen-strict" in cuda_cmd
-    assert cuda_cmd[cuda_cmd.index("--cpp-engine") + 1] == "pybind"
-    assert "--cpp-engine-strict" in cuda_cmd
+    assert "--codegen-mode" not in cuda_cmd
+    assert "--codegen-strict" not in cuda_cmd
+    assert "--cpp-engine" not in cuda_cmd
+    assert "--cpp-engine-strict" not in cuda_cmd
     summary = json.loads((out_dir / "run_summary.json").read_text(encoding="utf-8"))
     assert summary["cuda_timeout_sec"] == 111
     assert summary["cuda_compile_timeout_sec"] == 222
     assert summary["cuda_launch_timeout_sec"] == 333
     assert summary["cuda_runtime_backend"] == "nvrtc"
-    assert summary["cuda_codegen_mode"] == "cpp"
-    assert summary["cuda_codegen_strict"] is True
-    assert summary["cuda_cpp_engine"] == "pybind"
-    assert summary["cuda_cpp_engine_strict"] is True
+    assert "cuda_codegen_mode" not in summary
+    assert "cuda_codegen_strict" not in summary
+    assert "cuda_cpp_engine" not in summary
+    assert "cuda_cpp_engine_strict" not in summary
 
 
 def test_matrix_skips_backend_stages_when_provider_report_missing(
