@@ -57,3 +57,30 @@ def test_run_backend_compiler_batch_dry_run(tmp_path: Path) -> None:
     assert "--cuda-codegen-strict" not in cmd
     assert "--cuda-cpp-engine" not in cmd
     assert "--cuda-cpp-engine-strict" not in cmd
+
+
+def test_run_backend_compiler_batch_uses_kernel_manifest_when_kernel_not_given(tmp_path: Path) -> None:
+    out_dir = tmp_path / "backend_manifest"
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"kernels": ["diag2d", "topk2d"]}), encoding="utf-8")
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/run_backend_compiler_batch.py",
+            "--out-dir",
+            str(out_dir),
+            "--dry-run",
+            "--kernel-manifest",
+            str(manifest),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    payload = json.loads((out_dir / "backend_compiler_batch_summary.json").read_text(encoding="utf-8"))
+    cmd = list(payload["cmd"])
+    # Order in command preserves input order; both manifest kernels should be forwarded.
+    assert cmd.count("--kernel") == 2
+    assert "diag2d" in cmd
+    assert "topk2d" in cmd

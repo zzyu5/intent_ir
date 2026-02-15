@@ -65,6 +65,33 @@ def _known_risks(progress_tail: list[dict[str, Any]]) -> list[str]:
     return dedup[:5]
 
 
+def _next_focus_by_lane(progress_tail: list[dict[str, Any]]) -> dict[str, str]:
+    by_lane: dict[str, str] = {}
+    for row in progress_tail:
+        if not isinstance(row, dict):
+            continue
+        lane = str(row.get("lane") or "coverage").strip()
+        if not lane:
+            lane = "coverage"
+        focus = str(row.get("next_focus") or "").strip()
+        if focus:
+            by_lane[lane] = focus
+    return by_lane
+
+
+def _active_lanes(feature_payload: dict[str, Any]) -> list[str]:
+    features = [f for f in list(feature_payload.get("features") or []) if isinstance(f, dict)]
+    lane_pending: dict[str, int] = {}
+    for row in features:
+        lane = str(row.get("track") or "coverage").strip() or "coverage"
+        status = str(row.get("status") or "").strip()
+        passes = bool(row.get("passes"))
+        pending = (not passes) and status not in {"dual_pass", "done"}
+        if pending:
+            lane_pending[lane] = int(lane_pending.get(lane, 0)) + 1
+    return sorted([lane for lane, cnt in lane_pending.items() if cnt > 0])
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--feature-list", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "feature_list.json"))
@@ -79,6 +106,7 @@ def main() -> None:
     )
     ap.add_argument("--current-status-out", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "current_status.json"))
     ap.add_argument("--session-context-out", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "session_context.json"))
+    ap.add_argument("--scripts-catalog", type=Path, default=(ROOT / "scripts" / "CATALOG.json"))
     ap.add_argument("--git-log-lines", type=int, default=20)
     args = ap.parse_args()
 
@@ -91,6 +119,14 @@ def main() -> None:
     head_commit = _git(["git", "rev-parse", "HEAD"]) or "unknown"
     git_log_short = read_git_log(cwd=ROOT, lines=int(args.git_log_lines))
     next_focus = _parse_next_focus(args.handoff) or str(latest.get("next_focus") or "")
+    catalog_exists = bool(args.scripts_catalog.is_file())
+    latest_has_run = bool(latest_run_summary)
+    if not latest_has_run:
+        coverage_integrity_phase = "recompute_pending"
+        full196_last_ok: bool | None = None
+    else:
+        full196_last_ok = bool(latest.get("run_ok"))
+        coverage_integrity_phase = "recomputed_ok" if bool(full196_last_ok) else "recomputed_failed"
 
     current_status = build_current_status_payload(
         branch=branch,
@@ -98,6 +134,10 @@ def main() -> None:
         feature_payload=feature_payload,
         latest_run_summary_path=latest_run_summary,
         latest_status_converged_path=latest_status_converged,
+        coverage_integrity_phase=coverage_integrity_phase,
+        full196_last_ok=full196_last_ok,
+        catalog_path=_to_repo_rel(args.scripts_catalog),
+        catalog_validated=catalog_exists,
         lane_batch_paths={
             "coverage": _to_repo_rel(args.active_batch_coverage),
             "ir_arch": _to_repo_rel(args.active_batch_ir_arch),
@@ -109,6 +149,9 @@ def main() -> None:
         progress_tail=progress_tail,
         next_focus=next_focus,
         known_risks=_known_risks(progress_tail),
+        must_read_scripts_catalog=_to_repo_rel(args.scripts_catalog),
+        active_lanes=_active_lanes(feature_payload),
+        next_focus_by_lane=_next_focus_by_lane(progress_tail),
     )
 
     out_status = dump_json(args.current_status_out, current_status)

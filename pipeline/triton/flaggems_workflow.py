@@ -235,6 +235,66 @@ def _is_task_done(f: Mapping[str, Any]) -> bool:
     return status in {"dual_pass", "done"}
 
 
+def _mapping_quality_summary(features: list[dict[str, Any]]) -> dict[str, Any]:
+    coverage_rows = [f for f in features if str(f.get("track") or "coverage") == "coverage"]
+    by_family: dict[str, dict[str, int]] = {}
+    total = 0
+    single = 0
+    multi = 0
+    zero = 0
+    complex_families = {
+        "index_scatter_gather",
+        "conv_pool_interp",
+        "matmul_linear",
+        "attention_sequence",
+        "reduction",
+        "norm_activation",
+    }
+    complex_total = 0
+    complex_single = 0
+    for row in coverage_rows:
+        fam = str(row.get("family") or "unknown")
+        ops = [str(x) for x in list(row.get("intent_ops") or []) if str(x).strip()]
+        n = len(ops)
+        fam_bucket = by_family.setdefault(
+            fam,
+            {
+                "total": 0,
+                "single_intent_ops": 0,
+                "multi_intent_ops": 0,
+                "zero_intent_ops": 0,
+            },
+        )
+        fam_bucket["total"] += 1
+        total += 1
+        if n == 0:
+            fam_bucket["zero_intent_ops"] += 1
+            zero += 1
+        elif n == 1:
+            fam_bucket["single_intent_ops"] += 1
+            single += 1
+        else:
+            fam_bucket["multi_intent_ops"] += 1
+            multi += 1
+        if fam in complex_families:
+            complex_total += 1
+            if n == 1:
+                complex_single += 1
+    single_ratio = (float(single) / float(total)) if total > 0 else 0.0
+    complex_single_ratio = (float(complex_single) / float(complex_total)) if complex_total > 0 else 0.0
+    return {
+        "coverage_semantic_ops": int(total),
+        "single_intent_ops": int(single),
+        "multi_intent_ops": int(multi),
+        "zero_intent_ops": int(zero),
+        "single_intent_ratio": float(single_ratio),
+        "complex_family_single_intent_ratio": float(complex_single_ratio),
+        "complex_family_total": int(complex_total),
+        "complex_family_single_intent_ops": int(complex_single),
+        "by_family": {k: v for k, v in sorted(by_family.items(), key=lambda kv: kv[0])},
+    }
+
+
 def select_next_batch(*, feature_payload: dict[str, Any], batch_size: int, lane: str = "coverage") -> list[dict[str, Any]]:
     feats = list(feature_payload.get("features") or [])
     n = max(1, int(batch_size))
@@ -401,6 +461,10 @@ def build_current_status_payload(
     latest_run_summary_path: str = "",
     latest_status_converged_path: str = "",
     lane_batch_paths: Mapping[str, str] | None = None,
+    coverage_integrity_phase: str = "recompute_pending",
+    full196_last_ok: bool | None = None,
+    catalog_path: str = "scripts/CATALOG.json",
+    catalog_validated: bool = False,
 ) -> dict[str, Any]:
     summary = dict(feature_payload.get("summary") or {})
     by_status = dict(summary.get("by_status") or {})
@@ -420,17 +484,26 @@ def build_current_status_payload(
         pending_any = pending_any or pending > 0
 
     mode = "mixed_development" if pending_any else "maintenance"
+    mapping_quality = _mapping_quality_summary(features)
     return {
         "schema_version": "flaggems_current_status_v1",
         "updated_at": utc_now_iso(),
         "branch": str(branch),
         "head_commit": str(head_commit),
         "mode": mode,
+        "coverage_integrity_phase": str(coverage_integrity_phase),
+        "full196_last_run": str(latest_run_summary_path),
+        "full196_last_ok": (None if full196_last_ok is None else bool(full196_last_ok)),
         "coverage": {
             "semantic_ops": semantic_ops,
             "dual_pass": dual_pass,
             "blocked_ir": blocked_ir,
             "blocked_backend": blocked_backend,
+        },
+        "mapping_quality": mapping_quality,
+        "script_governance": {
+            "catalog_path": str(catalog_path),
+            "catalog_validated": bool(catalog_validated),
         },
         "latest_artifacts": {
             "run_summary": str(latest_run_summary_path),
@@ -452,6 +525,9 @@ def build_session_context_payload(
     progress_tail: list[dict[str, Any]],
     next_focus: str,
     known_risks: list[str],
+    must_read_scripts_catalog: str = "scripts/CATALOG.json",
+    active_lanes: list[str] | None = None,
+    next_focus_by_lane: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": "flaggems_session_context_v1",
@@ -459,13 +535,17 @@ def build_session_context_payload(
         "read_order": [
             "workflow/flaggems/state/current_status.json",
             "workflow/flaggems/state/session_context.json",
+            str(must_read_scripts_catalog),
             "workflow/flaggems/state/active_batch_coverage.json",
             "workflow/flaggems/state/active_batch_ir_arch.json",
             "workflow/flaggems/state/active_batch_backend_compiler.json",
             "workflow/flaggems/state/handoff.md",
         ],
+        "must_read_scripts_catalog": str(must_read_scripts_catalog),
         "git_log_short": str(git_log_short),
         "progress_tail": list(progress_tail),
         "next_focus": str(next_focus),
+        "active_lanes": [str(x) for x in list(active_lanes or [])],
+        "next_focus_by_lane": {str(k): str(v) for k, v in dict(next_focus_by_lane or {}).items()},
         "known_risks": list(known_risks),
     }

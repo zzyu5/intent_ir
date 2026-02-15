@@ -139,5 +139,10 @@ def test_build_workflow_state_writes_current_and_context(tmp_path: Path) -> None
     context_payload = json.loads(context.read_text(encoding="utf-8"))
     assert status_payload["schema_version"] == "flaggems_current_status_v1"
     assert status_payload["mode"] == "mixed_development"
+    assert "coverage_integrity_phase" in status_payload
+    assert "mapping_quality" in status_payload
+    assert status_payload["script_governance"]["catalog_path"].endswith("scripts/CATALOG.json")
     assert context_payload["schema_version"] == "flaggems_session_context_v1"
     assert context_payload["next_focus"] == "focus-y"
+    assert context_payload["must_read_scripts_catalog"].endswith("scripts/CATALOG.json")
+    assert "ir_arch" in list(context_payload.get("active_lanes") or [])

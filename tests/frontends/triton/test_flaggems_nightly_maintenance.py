@@ -38,6 +38,7 @@ def test_nightly_maintenance_dry_run_writes_summary(tmp_path: Path) -> None:
     assert summary["mode"] == "dry-run"
     matrix_cmd = list(summary["commands"]["matrix"])
     assert "scripts/flaggems/run_multibackend_matrix.py" in matrix_cmd
+    assert "--intentir-miss-policy" in matrix_cmd
     assert "--run-rvv-remote" in matrix_cmd
     assert "--rvv-use-key" in matrix_cmd
     assert "--allow-cuda-skip" in matrix_cmd

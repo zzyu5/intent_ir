@@ -32,6 +32,7 @@ def _check(name: str, ok: bool, detail: str) -> dict[str, Any]:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--registry", type=Path, default=(ROOT / "pipeline" / "triton" / "flaggems_registry.json"))
+    ap.add_argument("--scripts-catalog", type=Path, default=(ROOT / "scripts" / "CATALOG.json"))
     ap.add_argument("--feature-list", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "feature_list.json"))
     ap.add_argument(
         "--active-batch-coverage",
@@ -64,6 +65,24 @@ def main() -> None:
     ap.add_argument("--status-converged", type=Path, required=True)
     ap.add_argument("--progress-log", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "progress_log.jsonl"))
     ap.add_argument("--handoff", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "handoff.md"))
+    ap.add_argument(
+        "--max-total-regression-pct",
+        type=float,
+        default=8.0,
+        help="Pass-through backend_compiler timing budget threshold.",
+    )
+    ap.add_argument(
+        "--min-regression-delta-ms",
+        type=float,
+        default=50.0,
+        help="Pass-through backend_compiler minimum delta-ms regression threshold.",
+    )
+    ap.add_argument(
+        "--max-regression-ratio",
+        type=float,
+        default=0.5,
+        help="Pass-through backend_compiler regression ratio threshold.",
+    )
     ap.add_argument("--out", type=Path, default=(ROOT / "artifacts" / "flaggems_matrix" / "ci_gate.json"))
     args = ap.parse_args()
     active_legacy = ROOT / "workflow" / "flaggems" / "state" / "active_batch.json"
@@ -87,6 +106,8 @@ def main() -> None:
     }
 
     checks: list[dict[str, Any]] = []
+    for p in (args.scripts_catalog,):
+        checks.append(_check(f"exists::{_to_repo_rel(p)}", p.is_file(), "file exists" if p.is_file() else "missing file"))
     for p in (args.registry, args.feature_list, args.run_summary, args.status_converged):
         checks.append(_check(f"exists::{_to_repo_rel(p)}", p.is_file(), "file exists" if p.is_file() else "missing file"))
     for profile in profiles:
@@ -118,6 +139,27 @@ def main() -> None:
                 "feature_list.sync_with_registry",
                 sync_ok,
                 "feature list is synced with registry" if sync_ok else "; ".join(sync_errors),
+            )
+        )
+
+    if args.scripts_catalog.is_file():
+        catalog_report = args.out.with_name("catalog_validation_ci.json")
+        cmd = [
+            sys.executable,
+            "scripts/validate_catalog.py",
+            "--catalog",
+            str(args.scripts_catalog),
+            "--out",
+            str(catalog_report),
+        ]
+        p = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
+        checks.append(
+            _check(
+                "scripts.catalog_valid",
+                p.returncode == 0,
+                "scripts catalog validation passed"
+                if p.returncode == 0
+                else f"scripts catalog validation failed: {(p.stderr or p.stdout).strip()}",
             )
         )
 
@@ -157,6 +199,15 @@ def main() -> None:
         ]
         if profile != "coverage":
             cmd.append("--no-require-active-dual-pass")
+        if profile == "backend_compiler":
+            cmd += [
+                "--max-total-regression-pct",
+                str(float(args.max_total_regression_pct)),
+                "--min-regression-delta-ms",
+                str(float(args.min_regression_delta_ms)),
+                "--max-regression-ratio",
+                str(float(args.max_regression_ratio)),
+            ]
         p = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
         checks.append(
             _check(
@@ -183,6 +234,7 @@ def main() -> None:
         "ok": bool(ok),
         "checks": checks,
         "artifacts": {
+            "scripts_catalog": _to_repo_rel(args.scripts_catalog),
             "registry": _to_repo_rel(args.registry),
             "feature_list": _to_repo_rel(args.feature_list),
             "active_batch_coverage": _to_repo_rel(active_by_profile["coverage"]),

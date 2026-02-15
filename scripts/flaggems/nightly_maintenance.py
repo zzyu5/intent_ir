@@ -40,7 +40,13 @@ def main() -> None:
     ap.add_argument("--cases-limit", type=int, default=8)
     ap.add_argument("--flaggems-path", choices=["original", "intentir"], default="intentir")
     ap.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="auto")
-    ap.add_argument("--fallback-policy", choices=["deterministic", "strict"], default="deterministic")
+    ap.add_argument("--intentir-miss-policy", choices=["deterministic", "strict"], default="deterministic")
+    ap.add_argument(
+        "--fallback-policy",
+        choices=["deterministic", "strict"],
+        default=None,
+        help="Deprecated alias for --intentir-miss-policy.",
+    )
     ap.add_argument("--flaggems-opset", choices=["deterministic_forward"], default="deterministic_forward")
     ap.add_argument("--backend-target", choices=["rvv", "cuda_h100", "cuda_5090d"], default="rvv")
     ap.add_argument(
@@ -81,6 +87,24 @@ def main() -> None:
     ap.add_argument("--cuda-launch-timeout-sec", type=int, default=120)
     ap.add_argument("--cuda-runtime-backend", choices=["auto", "nvcc", "nvrtc"], default="nvrtc")
     ap.add_argument(
+        "--max-total-regression-pct",
+        type=float,
+        default=8.0,
+        help="Backend compiler perf gate threshold passed to ci_gate/check_batch_gate.",
+    )
+    ap.add_argument(
+        "--min-regression-delta-ms",
+        type=float,
+        default=50.0,
+        help="Backend compiler minimum delta-ms threshold passed to ci_gate/check_batch_gate.",
+    )
+    ap.add_argument(
+        "--max-regression-ratio",
+        type=float,
+        default=0.5,
+        help="Backend compiler regression ratio threshold passed to ci_gate/check_batch_gate.",
+    )
+    ap.add_argument(
         "--write-registry",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -90,6 +114,12 @@ def main() -> None:
     ap.add_argument("--date-tag", default=_utc_date_tag())
     ap.add_argument("--run-name", default="nightly_maintenance")
     ap.add_argument(
+        "--recompute-coverage-integrity",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run coverage integrity recompute stage after matrix output is available.",
+    )
+    ap.add_argument(
         "--update-workflow-state",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -97,12 +127,26 @@ def main() -> None:
     )
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+    miss_policy = str(args.intentir_miss_policy)
+    if args.fallback_policy is not None:
+        miss_policy = str(args.fallback_policy)
 
     if str(args.flaggems_path) == "original" and str(args.intentir_mode) != "auto":
         raise SystemExit("--intentir-mode is only valid when --flaggems-path=intentir")
 
     out_dir = Path(args.out_root) / str(args.date_tag) / str(args.run_name)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    catalog_report = out_dir / "catalog_validation.json"
+    catalog_cmd = [
+        sys.executable,
+        "scripts/validate_catalog.py",
+        "--catalog",
+        str(ROOT / "scripts" / "CATALOG.json"),
+        "--out",
+        str(catalog_report),
+    ]
+    catalog_rc, catalog_out, catalog_err = _run(catalog_cmd, cwd=ROOT, dry_run=bool(args.dry_run))
 
     matrix_cmd: list[str] = [
         sys.executable,
@@ -115,8 +159,8 @@ def main() -> None:
         str(args.flaggems_path),
         "--intentir-mode",
         str(args.intentir_mode),
-        "--fallback-policy",
-        str(args.fallback_policy),
+        "--intentir-miss-policy",
+        miss_policy,
         "--flaggems-opset",
         str(args.flaggems_opset),
         "--backend-target",
@@ -146,7 +190,10 @@ def main() -> None:
     if bool(args.write_registry):
         matrix_cmd.append("--write-registry")
 
-    matrix_rc, matrix_out, matrix_err = _run(matrix_cmd, cwd=ROOT, dry_run=bool(args.dry_run))
+    if catalog_rc == 0:
+        matrix_rc, matrix_out, matrix_err = _run(matrix_cmd, cwd=ROOT, dry_run=bool(args.dry_run))
+    else:
+        matrix_rc, matrix_out, matrix_err = (1, "", "catalog validation failed")
     run_summary_path = out_dir / "run_summary.json"
     status_converged_path = out_dir / "status_converged.json"
     ci_gate_path = out_dir / "ci_gate.json"
@@ -157,6 +204,12 @@ def main() -> None:
         str(run_summary_path),
         "--status-converged",
         str(status_converged_path),
+        "--max-total-regression-pct",
+        str(float(args.max_total_regression_pct)),
+        "--min-regression-delta-ms",
+        str(float(args.min_regression_delta_ms)),
+        "--max-regression-ratio",
+        str(float(args.max_regression_ratio)),
         "--out",
         str(ci_gate_path),
     ]
@@ -170,25 +223,58 @@ def main() -> None:
     ci_out = ""
     ci_err = ""
     ci_skipped = False
+    recompute_rc = 0
+    recompute_out = ""
+    recompute_err = ""
+    recompute_skipped = False
     if matrix_rc == 0:
         ci_rc, ci_out, ci_err = _run(ci_cmd, cwd=ROOT, dry_run=bool(args.dry_run))
+        if bool(args.recompute_coverage_integrity):
+            recompute_cmd = [
+                sys.executable,
+                "scripts/flaggems/recompute_coverage_integrity.py",
+                "--registry",
+                str(ROOT / "pipeline" / "triton" / "flaggems_registry.json"),
+                "--run-summary",
+                str(run_summary_path),
+                "--status-converged",
+                str(status_converged_path),
+                "--out",
+                str(out_dir / "coverage_integrity.json"),
+            ]
+            recompute_rc, recompute_out, recompute_err = _run(recompute_cmd, cwd=ROOT, dry_run=bool(args.dry_run))
+            payload_cmds_recompute = recompute_cmd
+        else:
+            recompute_skipped = True
+            payload_cmds_recompute = []
     else:
         ci_skipped = True
+        recompute_skipped = True
+        payload_cmds_recompute = []
 
     payload: dict[str, Any] = {
-        "ok": bool(matrix_rc == 0 and (ci_rc == 0 or ci_skipped)),
+        "ok": bool(matrix_rc == 0 and (ci_rc == 0 or ci_skipped) and (recompute_rc == 0 or recompute_skipped)),
         "mode": "dry-run" if bool(args.dry_run) else "execute",
         "out_dir": str(out_dir),
         "artifacts": {
+            "catalog_validation": str(catalog_report),
             "run_summary": str(run_summary_path),
             "status_converged": str(status_converged_path),
             "ci_gate": str(ci_gate_path),
+            "coverage_integrity": str(out_dir / "coverage_integrity.json"),
         },
         "commands": {
+            "catalog_validate": catalog_cmd,
             "matrix": matrix_cmd,
             "ci_gate": ci_cmd,
+            "coverage_integrity": payload_cmds_recompute,
         },
         "results": {
+            "catalog_validate": {
+                "rc": int(catalog_rc),
+                "stdout": str(catalog_out).strip(),
+                "stderr": str(catalog_err).strip(),
+            },
             "matrix": {
                 "rc": int(matrix_rc),
                 "stdout": str(matrix_out).strip(),
@@ -199,6 +285,12 @@ def main() -> None:
                 "rc": int(ci_rc),
                 "stdout": str(ci_out).strip(),
                 "stderr": str(ci_err).strip(),
+            },
+            "coverage_integrity": {
+                "skipped": bool(recompute_skipped),
+                "rc": int(recompute_rc),
+                "stdout": str(recompute_out).strip(),
+                "stderr": str(recompute_err).strip(),
             },
         },
     }

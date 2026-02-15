@@ -10,6 +10,7 @@ Inputs are optional and can come from:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -180,6 +181,19 @@ def _derive_reason_code(
     return reason
 
 
+def _entry_evidence_hash(*, kernel: str | None, provider_state: dict[str, Any], rvv_state: str, cuda_state: str, reason_code: str) -> str:
+    payload = {
+        "kernel": (kernel or ""),
+        "provider_exists": bool(provider_state.get("exists")),
+        "provider_diff_ok": bool(provider_state.get("diff_ok")),
+        "rvv_state": str(rvv_state),
+        "cuda_state": str(cuda_state),
+        "reason_code": str(reason_code),
+    }
+    txt = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha1(txt.encode("utf-8")).hexdigest()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--registry", type=Path, default=(ROOT / "pipeline" / "triton" / "flaggems_registry.json"))
@@ -278,12 +292,13 @@ def main() -> None:
             cuda_detail,
             skip_reason=cuda_skip_reason,
         )
-        out["reason_code"] = _derive_reason_code(
+        reason_code = _derive_reason_code(
             status_reason=reason,
             provider_state=provider_state,
             rvv_reason_code=rvv_reason_code,
             cuda_reason_code=cuda_reason_code,
         )
+        out["reason_code"] = reason_code
         out["runtime_detail"] = {
             "rvv": {"reason_code": rvv_reason_code, "reason_detail": rvv_reason_detail},
             "cuda": {"reason_code": cuda_reason_code, "reason_detail": cuda_reason_detail},
@@ -293,6 +308,25 @@ def main() -> None:
             "rvv": rvv_state,
             "cuda": cuda_state,
         }
+        provider_exists = bool(provider_state.get("exists"))
+        rvv_has_result = rvv_state != "unknown"
+        cuda_has_result = cuda_state != "unknown"
+        artifact_complete = bool(provider_exists and (kernel is None or (rvv_has_result and cuda_has_result)))
+        determinability = bool(str(reason_code).strip() not in {"", "unknown"})
+        out["compiler_stage"] = {
+            "provider_report": "present" if provider_exists else "missing",
+            "rvv_result": ("present" if rvv_has_result else "missing"),
+            "cuda_result": ("present" if cuda_has_result else "missing"),
+        }
+        out["artifact_complete"] = bool(artifact_complete)
+        out["determinability"] = bool(determinability)
+        out["evidence_hash"] = _entry_evidence_hash(
+            kernel=kernel,
+            provider_state=provider_state,
+            rvv_state=rvv_state,
+            cuda_state=cuda_state,
+            reason_code=reason_code,
+        )
         if not scope_enabled:
             in_scope_active = True
             in_scope_kernel_alias = True
@@ -322,9 +356,11 @@ def main() -> None:
     scoped_entries = [e for e in converged_entries if bool(e.get("in_scope"))]
     scoped_entries_active = [e for e in converged_entries if bool(e.get("in_scope_active"))]
     scoped_entries_kernel_alias = [e for e in converged_entries if bool(e.get("in_scope_kernel_alias"))]
+    determinability_ok_count = sum(1 for e in converged_entries if bool(e.get("determinability")))
+    artifact_complete_count = sum(1 for e in converged_entries if bool(e.get("artifact_complete")))
 
     result = {
-        "schema_version": "flaggems_registry_converged_v2",
+        "schema_version": "flaggems_registry_converged_v3",
         "registry_path": str(args.registry),
         "provider_report_dir": str(args.provider_report_dir),
         "rvv_json": (str(args.rvv_json) if args.rvv_json else None),
@@ -343,6 +379,10 @@ def main() -> None:
         "scope_mode": scope_mode,
         "scope_kernels": list(scope_kernels),
         "scope_semantic_ops": list(scope_semantic_ops),
+        "determinability_ok_count": int(determinability_ok_count),
+        "artifact_complete_count": int(artifact_complete_count),
+        "determinability_ratio": (float(determinability_ok_count) / float(len(converged_entries)) if converged_entries else 0.0),
+        "artifact_complete_ratio": (float(artifact_complete_count) / float(len(converged_entries)) if converged_entries else 0.0),
         "entries": converged_entries,
         "scoped_entries": scoped_entries,
         "scoped_entries_active": scoped_entries_active,

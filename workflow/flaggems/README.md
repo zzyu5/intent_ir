@@ -3,6 +3,13 @@
 This directory is the long-running handoff harness for IntentIR x FlagGems.
 FlagGems remains a Triton provider (not a separate frontend type).
 
+Script governance is enforced by `scripts/CATALOG.json`.
+Always run:
+
+```bash
+python scripts/validate_catalog.py
+```
+
 ## Current Baseline
 
 - Registry truth source: `pipeline/triton/flaggems_registry.json`
@@ -57,6 +64,9 @@ python scripts/flaggems/run_ir_arch_batch.py --out-dir artifacts/flaggems_matrix
 python scripts/flaggems/run_backend_compiler_batch.py --out-dir artifacts/flaggems_matrix/daily/<YYYYMMDD>/backend_compiler_<run>
 ```
 
+Backend compiler runner defaults to `workflow/flaggems/state/backend_kernel_manifest.json`
+when `--kernel` is not explicitly provided.
+
 ## Matrix + CI Gate (Coverage Lane)
 
 ```bash
@@ -65,6 +75,7 @@ python scripts/flaggems/run_multibackend_matrix.py \
   --lane coverage \
   --flaggems-path intentir \
   --intentir-mode auto \
+  --intentir-miss-policy deterministic \
   --run-rvv-remote \
   --rvv-host 192.168.8.72 \
   --rvv-user ubuntu \
@@ -107,6 +118,10 @@ Environment overrides:
 - `FLAGGEMS_NIGHTLY_CASES_LIMIT`
 - `FLAGGEMS_NIGHTLY_RVV_HOST`
 - `FLAGGEMS_NIGHTLY_RVV_USER`
+- `FLAGGEMS_NIGHTLY_INTENTIR_MISS_POLICY`
+- `FLAGGEMS_NIGHTLY_MAX_TOTAL_REGRESSION_PCT`
+- `FLAGGEMS_NIGHTLY_MIN_REGRESSION_DELTA_MS`
+- `FLAGGEMS_NIGHTLY_MAX_REGRESSION_RATIO`
 - `FLAGGEMS_NIGHTLY_LANE`
 - `FLAGGEMS_NIGHTLY_CI_PROFILES` (comma-separated)
 - `FLAGGEMS_NIGHTLY_RUN_RVV_REMOTE` (`1|0`)
@@ -142,3 +157,4 @@ python scripts/flaggems/install_systemd_nightly.py --dry-run
 - Coverage source of truth stays `pipeline/triton/flaggems_registry.json`.
 - Mixed tracks are workflow scheduling overlays, not registry replacements.
 - Registry write-back policy remains: write registry only after gate pass.
+- Deprecated scripts are tracked in `scripts/CATALOG.json` and must not be invoked by workflow wrappers.

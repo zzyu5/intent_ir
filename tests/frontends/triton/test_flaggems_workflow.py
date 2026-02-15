@@ -183,6 +183,9 @@ def test_current_status_and_session_context_builders() -> None:
     assert current["schema_version"] == "flaggems_current_status_v1"
     assert current["mode"] == "mixed_development"
     assert current["lanes"]["ir_arch"]["pending"] == 1
+    assert "mapping_quality" in current
+    assert "coverage_integrity_phase" in current
+    assert current["script_governance"]["catalog_path"] == "scripts/CATALOG.json"
 
     ctx = build_session_context_payload(
         git_log_short="a\nb",
@@ -192,6 +195,7 @@ def test_current_status_and_session_context_builders() -> None:
     )
     assert ctx["schema_version"] == "flaggems_session_context_v1"
     assert ctx["next_focus"] == "run primitive guard"
+    assert ctx["must_read_scripts_catalog"] == "scripts/CATALOG.json"
 
 
 def test_select_next_batch_respects_dependencies_for_non_coverage() -> None:

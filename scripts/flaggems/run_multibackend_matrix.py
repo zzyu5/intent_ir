@@ -165,10 +165,16 @@ def main() -> None:
         help="IntentIR mode (only valid when --flaggems-path=intentir).",
     )
     ap.add_argument(
-        "--fallback-policy",
+        "--intentir-miss-policy",
         choices=["deterministic", "strict"],
         default="deterministic",
-        help="IntentIR fallback policy passed to FlagGems full pipeline script.",
+        help="IntentIR miss policy passed to FlagGems full pipeline script.",
+    )
+    ap.add_argument(
+        "--fallback-policy",
+        choices=["deterministic", "strict"],
+        default=None,
+        help="Deprecated alias for --intentir-miss-policy.",
     )
     ap.add_argument("--seed-cache-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_seed_cache"))
     ap.add_argument("--pipeline-out-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_triton_full_pipeline"))
@@ -244,6 +250,9 @@ def main() -> None:
     ap.add_argument("--out-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_matrix" / "daily" / date_tag))
     ap.add_argument("--write-registry", action="store_true")
     args = ap.parse_args()
+    miss_policy = str(args.intentir_miss_policy)
+    if args.fallback_policy is not None:
+        miss_policy = str(args.fallback_policy)
     if str(args.flaggems_path) == "original" and str(args.intentir_mode) != "auto":
         raise SystemExit("--intentir-mode is only valid when --flaggems-path=intentir")
 
@@ -322,8 +331,8 @@ def main() -> None:
             str(args.flaggems_path),
             "--intentir-mode",
             str(args.intentir_mode),
-            "--fallback-policy",
-            str(args.fallback_policy),
+            "--intentir-miss-policy",
+            miss_policy,
             "--strict-kernel-failure",
             "--seed-cache-dir",
             str(seed_cache_dir),
@@ -529,6 +538,8 @@ def main() -> None:
             else int(args.cuda_timeout_sec)
         ),
         "cuda_runtime_backend": str(args.cuda_runtime_backend),
+        "intentir_miss_policy": miss_policy,
+        "fallback_policy": miss_policy,
         "schedule_profile_tag": profile_tag,
         "rvv_schedule_overrides": dict(rvv_env),
         "cuda_schedule_overrides": dict(cuda_env),

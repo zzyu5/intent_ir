@@ -7,6 +7,7 @@ cd "$ROOT_DIR"
 echo "[flaggems:init] pwd: $(pwd)"
 echo "[flaggems:init] branch: $(git branch --show-current)"
 
+python scripts/validate_catalog.py
 python scripts/flaggems/sync_feature_list_mixed.py --freeze-baseline
 python scripts/flaggems/build_workflow_state.py
 python scripts/flaggems/plan_next_batch.py --lane coverage --batch-size "${1:-10}"

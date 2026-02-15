@@ -1,0 +1,296 @@
+{
+  "schema_version": "intentir_scripts_catalog_v1",
+  "updated_at": "2026-02-15T00:00:00+00:00",
+  "entries": [
+    {
+      "path": "scripts/validate_catalog.py",
+      "owner_lane": "workflow",
+      "purpose": "validate scripts catalog and enforce active-entrypoint references",
+      "inputs": ["scripts/CATALOG.json", "workflow/flaggems/README.md", "scripts/README.md"],
+      "outputs": ["artifacts/flaggems_matrix/catalog_validation.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_script_catalog.py"]
+    },
+    {
+      "path": "scripts/flaggems/build_workflow_state.py",
+      "owner_lane": "workflow",
+      "purpose": "refresh current_status/session_context snapshots",
+      "inputs": ["workflow/flaggems/state/feature_list.json", "workflow/flaggems/state/progress_log.jsonl"],
+      "outputs": ["workflow/flaggems/state/current_status.json", "workflow/flaggems/state/session_context.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_workflow_state_scripts.py"]
+    },
+    {
+      "path": "scripts/flaggems/sync_feature_list_mixed.py",
+      "owner_lane": "workflow",
+      "purpose": "merge registry coverage tasks with manual lane tasks",
+      "inputs": ["pipeline/triton/flaggems_registry.json", "workflow/flaggems/state/task_templates.json"],
+      "outputs": ["workflow/flaggems/state/feature_list.json", "workflow/flaggems/state/metrics_history.jsonl"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_workflow_state_scripts.py"]
+    },
+    {
+      "path": "scripts/flaggems/plan_next_batch.py",
+      "owner_lane": "workflow",
+      "purpose": "select next active batch for one lane",
+      "inputs": ["workflow/flaggems/state/feature_list.json"],
+      "outputs": ["workflow/flaggems/state/active_batch_coverage.json", "workflow/flaggems/state/active_batch_ir_arch.json", "workflow/flaggems/state/active_batch_backend_compiler.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_session_scripts.py"]
+    },
+    {
+      "path": "scripts/flaggems/start_session.py",
+      "owner_lane": "workflow",
+      "purpose": "validate lane session context before implementation",
+      "inputs": ["workflow/flaggems/state/current_status.json", "workflow/flaggems/state/session_context.json"],
+      "outputs": [],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_session_scripts.py"]
+    },
+    {
+      "path": "scripts/flaggems/end_session.py",
+      "owner_lane": "workflow",
+      "purpose": "append progress log and write handoff for one lane",
+      "inputs": ["workflow/flaggems/state/active_batch_*.json", "artifacts/flaggems_matrix/**/run_summary.json", "artifacts/flaggems_matrix/**/status_converged*.json"],
+      "outputs": ["workflow/flaggems/state/progress_log.jsonl", "workflow/flaggems/state/handoff.md"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_session_scripts.py"]
+    },
+    {
+      "path": "scripts/flaggems/run_multibackend_matrix.py",
+      "owner_lane": "coverage_integrity",
+      "purpose": "run pipeline + rvv/cuda stages + convergence in one matrix run",
+      "inputs": ["scripts/triton/flaggems_full_pipeline_verify.py", "scripts/backend_codegen_smoke.py", "scripts/cuda_backend_smoke.py"],
+      "outputs": ["artifacts/flaggems_matrix/**/run_summary.json", "artifacts/flaggems_matrix/**/status_converged.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_matrix_suite_resolution.py"]
+    },
+    {
+      "path": "scripts/flaggems/converge_status.py",
+      "owner_lane": "coverage_integrity",
+      "purpose": "converge provider + rvv + cuda reports into registry status",
+      "inputs": ["pipeline/triton/flaggems_registry.json", "artifacts/flaggems_triton_full_pipeline/*.json"],
+      "outputs": ["artifacts/flaggems_coverage/status_converged.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_converge_status.py"]
+    },
+    {
+      "path": "scripts/flaggems/coverage_report.py",
+      "owner_lane": "coverage_integrity",
+      "purpose": "emit machine-readable coverage summary from registry/status outputs",
+      "inputs": ["pipeline/triton/flaggems_registry.json"],
+      "outputs": ["artifacts/flaggems_coverage/coverage_report.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_registry.py"]
+    },
+    {
+      "path": "scripts/flaggems/recompute_coverage_integrity.py",
+      "owner_lane": "coverage_integrity",
+      "purpose": "recompute trustable 196-op integrity snapshot from run artifacts",
+      "inputs": ["artifacts/flaggems_matrix/**/run_summary.json", "artifacts/flaggems_matrix/**/status_converged*.json"],
+      "outputs": ["artifacts/flaggems_matrix/**/coverage_integrity.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_coverage_integrity.py"]
+    },
+    {
+      "path": "scripts/flaggems/check_batch_gate.py",
+      "owner_lane": "workflow",
+      "purpose": "lane-specific hard gate checker",
+      "inputs": ["workflow/flaggems/state/active_batch_*.json", "artifacts/flaggems_matrix/**/run_summary.json", "artifacts/flaggems_matrix/**/status_converged*.json"],
+      "outputs": ["artifacts/flaggems_matrix/**/batch_gate*.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_batch_gate.py"]
+    },
+    {
+      "path": "scripts/flaggems/ci_gate.py",
+      "owner_lane": "workflow",
+      "purpose": "aggregate coverage/ir_arch/backend_compiler gate checks",
+      "inputs": ["workflow/flaggems/state/feature_list.json", "artifacts/flaggems_matrix/**/run_summary.json", "artifacts/flaggems_matrix/**/status_converged*.json"],
+      "outputs": ["artifacts/flaggems_matrix/ci_gate.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_ci_gate.py"]
+    },
+    {
+      "path": "scripts/flaggems/nightly_maintenance.py",
+      "owner_lane": "workflow",
+      "purpose": "nightly matrix + ci gate + workflow snapshot refresh",
+      "inputs": ["scripts/flaggems/run_multibackend_matrix.py", "scripts/flaggems/ci_gate.py"],
+      "outputs": ["artifacts/flaggems_matrix/daily/**/nightly_maintenance_summary.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_nightly_maintenance.py"]
+    },
+    {
+      "path": "scripts/flaggems/run_backend_compiler_batch.py",
+      "owner_lane": "backend_compiler_rewrite",
+      "purpose": "backend compiler lane runner with timing delta and schedule profile artifacts",
+      "inputs": ["scripts/flaggems/run_multibackend_matrix.py"],
+      "outputs": ["artifacts/flaggems_matrix/**/backend_compiler_batch_summary.json", "artifacts/flaggems_matrix/**/timing_delta.json", "artifacts/flaggems_matrix/**/schedule_profiles.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_lane_runners.py"]
+    },
+    {
+      "path": "scripts/flaggems/run_ir_arch_batch.py",
+      "owner_lane": "ir_arch_quality",
+      "purpose": "IR architecture lane runner for primitive/macro/mapping checks",
+      "inputs": ["scripts/intentir/check_primitive_reuse.py", "scripts/intentir/check_macro_composition.py"],
+      "outputs": ["artifacts/flaggems_matrix/**/run_summary.json", "artifacts/flaggems_matrix/**/status_converged.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_lane_runners.py"]
+    },
+    {
+      "path": "scripts/flaggems/compute_stage_timing_delta.py",
+      "owner_lane": "backend_compiler_rewrite",
+      "purpose": "compute stage timing regression delta vs baseline runs",
+      "inputs": ["artifacts/flaggems_matrix/**/rvv_local.json", "artifacts/flaggems_matrix/**/cuda_local.json"],
+      "outputs": ["artifacts/flaggems_matrix/**/timing_delta.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_timing_delta.py"]
+    },
+    {
+      "path": "scripts/flaggems/export_schedule_profiles.py",
+      "owner_lane": "backend_compiler_rewrite",
+      "purpose": "export active schedule profile knobs used by backend runs",
+      "inputs": [],
+      "outputs": ["artifacts/flaggems_matrix/**/schedule_profiles.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_schedule_profiles.py"]
+    },
+    {
+      "path": "scripts/flaggems/generate_registry.py",
+      "owner_lane": "coverage_integrity",
+      "purpose": "generate semantic registry from flag_gems.ops.__all__",
+      "inputs": ["experiment/FlagGems"],
+      "outputs": ["pipeline/triton/flaggems_registry.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_registry.py"]
+    },
+    {
+      "path": "scripts/flaggems/install_systemd_nightly.py",
+      "owner_lane": "workflow",
+      "purpose": "install/render systemd nightly templates",
+      "inputs": ["workflow/flaggems/flaggems-nightly.service.example", "workflow/flaggems/flaggems-nightly.timer.example"],
+      "outputs": ["~/.config/systemd/user/flaggems-nightly.*"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_systemd_install.py"]
+    },
+    {
+      "path": "scripts/flaggems/sync_feature_list_from_registry.py",
+      "owner_lane": "workflow",
+      "purpose": "legacy coverage-only feature list sync",
+      "inputs": ["pipeline/triton/flaggems_registry.json"],
+      "outputs": ["workflow/flaggems/state/feature_list.json"],
+      "status": "deprecated",
+      "replacement": "scripts/flaggems/sync_feature_list_mixed.py",
+      "tests": ["tests/frontends/triton/test_flaggems_workflow_state_scripts.py"]
+    },
+    {
+      "path": "scripts/intentir/check_primitive_reuse.py",
+      "owner_lane": "ir_arch_quality",
+      "purpose": "guard primitive reuse and provider leakage",
+      "inputs": ["pipeline/triton/flaggems_registry.json"],
+      "outputs": ["artifacts/intentir/primitive_reuse_report.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/intentir/test_primitive_catalog.py"]
+    },
+    {
+      "path": "scripts/intentir/check_macro_composition.py",
+      "owner_lane": "ir_arch_quality",
+      "purpose": "guard macro composition discipline",
+      "inputs": ["pipeline/triton/flaggems_registry.json"],
+      "outputs": ["artifacts/intentir/macro_composition_report.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/intentir/test_macro_composition.py"]
+    },
+    {
+      "path": "scripts/intentir/report_mapping_complexity.py",
+      "owner_lane": "ir_arch_quality",
+      "purpose": "report family-level mapping complexity and single-op ratio",
+      "inputs": ["pipeline/triton/flaggems_registry.json"],
+      "outputs": ["artifacts/intentir/mapping_complexity_report.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/intentir/test_mapping_complexity_report.py"]
+    },
+    {
+      "path": "scripts/triton/flaggems_full_pipeline_verify.py",
+      "owner_lane": "coverage_integrity",
+      "purpose": "flaggems provider pipeline verification entrypoint",
+      "inputs": ["pipeline/triton/core.py"],
+      "outputs": ["artifacts/flaggems_triton_full_pipeline/*.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_full_pipeline_script.py"]
+    },
+    {
+      "path": "scripts/backend_codegen_smoke.py",
+      "owner_lane": "backend_compiler_rewrite",
+      "purpose": "RVV local backend smoke from pipeline artifacts",
+      "inputs": ["artifacts/flaggems_triton_full_pipeline/*.json"],
+      "outputs": ["artifacts/flaggems_matrix/**/rvv_local.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/test_backend_codegen_smoke_timings.py"]
+    },
+    {
+      "path": "scripts/cuda_backend_smoke.py",
+      "owner_lane": "backend_compiler_rewrite",
+      "purpose": "CUDA local backend smoke from pipeline artifacts",
+      "inputs": ["artifacts/flaggems_triton_full_pipeline/*.json"],
+      "outputs": ["artifacts/flaggems_matrix/**/cuda_local.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/backends/cuda/test_cuda_backend_smoke.py"]
+    },
+    {
+      "path": "scripts/rvv_remote_suite.py",
+      "owner_lane": "backend_compiler_rewrite",
+      "purpose": "RVV remote suite runner for host validation",
+      "inputs": ["artifacts/flaggems_triton_full_pipeline/*.json"],
+      "outputs": ["artifacts/flaggems_matrix/**/rvv_remote.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_matrix_suite_resolution.py"]
+    },
+    {
+      "path": "scripts/rvv_remote_run.py",
+      "owner_lane": "backend_compiler_rewrite",
+      "purpose": "single-kernel remote RVV run and diff",
+      "inputs": ["artifacts/flaggems_triton_full_pipeline/*.json"],
+      "outputs": ["artifacts/rvv_remote_suite.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_matrix_suite_resolution.py"]
+    },
+    {
+      "path": "scripts/experiments",
+      "owner_lane": "archive",
+      "purpose": "historical experiments and paper support scripts",
+      "inputs": [],
+      "outputs": [],
+      "status": "deprecated",
+      "replacement": "workflow/flaggems/README.md",
+      "tests": []
+    }
+  ]
+}

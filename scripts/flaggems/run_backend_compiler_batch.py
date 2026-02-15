@@ -33,6 +33,24 @@ def _load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _load_kernel_manifest(path: Path | None) -> list[str]:
+    if path is None:
+        return []
+    p = Path(path)
+    if not p.is_file():
+        return []
+    payload = _load_json(p)
+    raw = payload.get("kernels")
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for k in raw:
+        name = str(k).strip()
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
 def _guess_baseline_dir(out_dir: Path) -> Path | None:
     current_status = ROOT / "workflow" / "flaggems" / "state" / "current_status.json"
     if not current_status.is_file():
@@ -57,6 +75,12 @@ def main() -> None:
     ap.add_argument("--out-dir", type=Path, default=_default_out_dir())
     ap.add_argument("--suite", choices=["smoke", "coverage", "all"], default="smoke")
     ap.add_argument("--kernel", action="append", default=[])
+    ap.add_argument(
+        "--kernel-manifest",
+        type=Path,
+        default=(ROOT / "workflow" / "flaggems" / "state" / "backend_kernel_manifest.json"),
+        help="Optional kernel manifest JSON with `kernels: [..]` used when --kernel is omitted.",
+    )
     ap.add_argument("--run-rvv-remote", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--rvv-host", default="192.168.8.72")
     ap.add_argument("--rvv-user", default="ubuntu")
@@ -84,8 +108,9 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
     kernels = [str(k) for k in list(args.kernel or []) if str(k).strip()]
+    manifest_kernels = _load_kernel_manifest(args.kernel_manifest)
     if not kernels:
-        kernels = ["add2d", "mul2d"]
+        kernels = list(manifest_kernels or ["add2d", "mul2d"])
     dedup_kernels: list[str] = []
     for k in kernels:
         if k not in dedup_kernels:
@@ -243,6 +268,8 @@ def main() -> None:
         "lane": "backend_compiler",
         "cmd": cmd,
         "out_dir": str(args.out_dir),
+        "kernel_manifest": str(args.kernel_manifest),
+        "manifest_kernel_count": len(manifest_kernels),
         "cuda_runtime_backend": str(args.cuda_runtime_backend),
         "schedule_profile_tag": str(args.schedule_profile_tag),
         "cuda_tile_m": (int(args.cuda_tile_m) if args.cuda_tile_m is not None else None),

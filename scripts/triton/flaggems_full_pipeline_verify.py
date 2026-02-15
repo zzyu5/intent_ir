@@ -59,10 +59,16 @@ def main() -> None:
         help="Shared seed cache directory for intentir mode.",
     )
     ap.add_argument(
-        "--fallback-policy",
+        "--intentir-miss-policy",
         choices=["deterministic", "strict"],
         default="deterministic",
-        help="IntentIR fallback policy when cache/LLM paths fail (default: deterministic).",
+        help="IntentIR miss policy when cache/LLM paths fail (default: deterministic).",
+    )
+    ap.add_argument(
+        "--fallback-policy",
+        choices=["deterministic", "strict"],
+        default=None,
+        help="Deprecated alias for --intentir-miss-policy.",
     )
     ap.add_argument(
         "--flaggems-opset",
@@ -84,6 +90,9 @@ def main() -> None:
     )
     ap.add_argument("--out-dir", type=str, default=None)
     args = ap.parse_args()
+    miss_policy = str(args.intentir_miss_policy)
+    if args.fallback_policy is not None:
+        miss_policy = str(args.fallback_policy)
 
     seed_cache_dir = Path(args.seed_cache_dir)
     seed_cache_dir.mkdir(parents=True, exist_ok=True)
@@ -91,7 +100,7 @@ def main() -> None:
         flaggems_path=str(args.flaggems_path),
         intentir_mode=str(args.intentir_mode),
         seed_cache_dir=seed_cache_dir,
-        fallback_policy=str(args.fallback_policy),
+        fallback_policy=miss_policy,
     )
 
     out_dir = Path(args.out_dir) if args.out_dir else (ROOT / "artifacts" / "flaggems_triton_full_pipeline")
@@ -166,7 +175,8 @@ def main() -> None:
                 "execution": {
                     "flaggems_path": str(args.flaggems_path),
                     "intentir_mode": str(args.intentir_mode),
-                    "fallback_policy": str(args.fallback_policy),
+                    "intentir_miss_policy": miss_policy,
+                    "fallback_policy": miss_policy,
                 },
                 "diff": {
                     "ok": False,
