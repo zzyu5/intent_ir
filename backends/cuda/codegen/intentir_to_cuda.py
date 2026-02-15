@@ -775,6 +775,11 @@ def _kernel_fused_elementwise(intent: IntentFunction, bindings: Dict[str, int]) 
                 raise CudaLoweringError("atan expects 1 input")
             x = val(op.inputs[0])
             emit_assign(f"atanf({x})")
+        elif opname == "tan":
+            if len(op.inputs) != 1:
+                raise CudaLoweringError("tan expects 1 input")
+            x = val(op.inputs[0])
+            emit_assign(f"tanf({x})")
         elif opname == "erf":
             if len(op.inputs) != 1:
                 raise CudaLoweringError("erf expects 1 input")
@@ -8005,6 +8010,7 @@ def lower_intent_to_cuda_kernel(
         "log",
         "acos",
         "atan",
+        "tan",
         "sin",
         "cos",
         "erf",

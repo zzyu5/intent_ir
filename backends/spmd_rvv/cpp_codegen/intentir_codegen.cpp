@@ -881,6 +881,11 @@ void emit_atan(CodeWriter& w, const std::string& out, const std::string& a, cons
   w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) " + out + "[i] = atanf(" + a + "[i]);");
 }
 
+void emit_tan(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
+  const int64_t n = numel(out_shape);
+  w.line("for (size_t i = 0; i < (size_t)" + std::to_string(n) + "; ++i) " + out + "[i] = tanf(" + a + "[i]);");
+}
+
 void emit_erf(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& out_shape) {
   const int64_t n = numel(out_shape);
   w.line("intentir_erf_f32(" + a + ", " + out + ", (size_t)" + std::to_string(n) + ");");
@@ -2900,6 +2905,8 @@ struct CProgramEmitter {
 	        emit_acos(w, out_var, v(op.inputs[0]), out_shape);
 	      } else if (op.op == "atan") {
 	        emit_atan(w, out_var, v(op.inputs[0]), out_shape);
+	      } else if (op.op == "tan") {
+	        emit_tan(w, out_var, v(op.inputs[0]), out_shape);
 	      } else if (op.op == "sin") {
 	        emit_sin(w, out_var, v(op.inputs[0]), out_shape);
 	      } else if (op.op == "cos") {
@@ -4507,7 +4514,8 @@ int main(int argc, char** argv) {
         dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
       }
-      if (kind == "abs" || kind == "floor" || kind == "ceil" || kind == "acos" || kind == "atan" || kind == "cos" || kind == "erf" || kind == "log" || kind == "sqrt") {
+      if (kind == "abs" || kind == "floor" || kind == "ceil" || kind == "acos" || kind == "atan" || kind == "tan" || kind == "cos" || kind == "erf" ||
+          kind == "log" || kind == "sqrt") {
         shape_env[out] = get_shape(op.inputs[0]);
         dtype_env[out] = get_dtype(op.inputs[0]);
         continue;

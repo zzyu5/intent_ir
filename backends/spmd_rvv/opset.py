@@ -50,6 +50,7 @@ SPMD_RVV_SUPPORTED_OPS: set[str] = {
     "sqrt",
     "acos",
     "atan",
+    "tan",
     "sin",
     "cos",
     "erf",
