@@ -1,12 +1,12 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-15T07:20:29+00:00",
+  "generated_at": "2026-02-15T08:24:10+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
-      "dual_pass": 173,
-      "blocked_backend": 23
+      "dual_pass": 183,
+      "blocked_backend": 13
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -1577,10 +1577,10 @@
       "id": "flaggems::tan",
       "semantic_op": "tan",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "tan2d",
       "intent_ops": [
         "tan"
@@ -1590,10 +1590,10 @@
       "id": "flaggems::threshold",
       "semantic_op": "threshold",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "threshold2d",
       "intent_ops": [
         "const",
@@ -1605,10 +1605,10 @@
       "id": "flaggems::tile",
       "semantic_op": "tile",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "tile2d",
       "intent_ops": [
         "tile"
@@ -1618,10 +1618,10 @@
       "id": "flaggems::to_copy",
       "semantic_op": "to_copy",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "cast2d",
       "intent_ops": [
         "cast"
@@ -1631,10 +1631,10 @@
       "id": "flaggems::topk",
       "semantic_op": "topk",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "topk2d",
       "intent_ops": [
         "topk"
@@ -1644,10 +1644,10 @@
       "id": "flaggems::trace",
       "semantic_op": "trace",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "trace2d",
       "intent_ops": [
         "trace"
@@ -1657,10 +1657,10 @@
       "id": "flaggems::triu",
       "semantic_op": "triu",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "triu2d",
       "intent_ops": [
         "triu"
@@ -1670,10 +1670,10 @@
       "id": "flaggems::true_divide",
       "semantic_op": "true_divide",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "div2d",
       "intent_ops": [
         "div"
@@ -1683,10 +1683,10 @@
       "id": "flaggems::unique2",
       "semantic_op": "unique2",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "unique2d",
       "intent_ops": [
         "unique"
@@ -2213,10 +2213,10 @@
       "id": "flaggems::tanh",
       "semantic_op": "tanh",
       "family": "norm_activation",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "tanh2d",
       "intent_ops": [
         "const",

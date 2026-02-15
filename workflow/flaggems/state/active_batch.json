@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_active_batch_v1",
-  "generated_at": "2026-02-15T07:20:35+00:00",
+  "generated_at": "2026-02-15T08:24:32+00:00",
   "branch": "flaggems",
   "batch_size": 10,
   "selection_policy": [
@@ -10,153 +10,149 @@
   ],
   "items": [
     {
-      "id": "flaggems::tan",
-      "semantic_op": "tan",
+      "id": "flaggems::upsample_bicubic2d_aa",
+      "semantic_op": "upsample_bicubic2d_aa",
+      "family": "conv_pool_interp",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "runtime_backend_fail",
+      "next_action": "backend_lowering",
+      "e2e_spec": "upsample_bicubic2d_aa",
+      "intent_ops": [
+        "upsample_bicubic2d_aa"
+      ]
+    },
+    {
+      "id": "flaggems::upsample_nearest1d",
+      "semantic_op": "upsample_nearest1d",
+      "family": "conv_pool_interp",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "pipeline_diff_failed_or_missing",
+      "next_action": "backend_lowering",
+      "e2e_spec": "upsample_nearest1d_ncl",
+      "intent_ops": [
+        "upsample_nearest1d"
+      ]
+    },
+    {
+      "id": "flaggems::upsample_nearest2d",
+      "semantic_op": "upsample_nearest2d",
+      "family": "conv_pool_interp",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "pipeline_diff_failed_or_missing",
+      "next_action": "backend_lowering",
+      "e2e_spec": "upsample_nearest2d_nchw",
+      "intent_ops": [
+        "upsample_nearest2d"
+      ]
+    },
+    {
+      "id": "flaggems::var_mean",
+      "semantic_op": "var_mean",
+      "family": "reduction",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "pipeline_diff_failed_or_missing",
+      "next_action": "backend_lowering",
+      "e2e_spec": "var_mean2d",
+      "intent_ops": [
+        "var",
+        "mean"
+      ]
+    },
+    {
+      "id": "flaggems::vdot",
+      "semantic_op": "vdot",
+      "family": "matmul_linear",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "runtime_backend_fail",
+      "next_action": "backend_lowering",
+      "e2e_spec": "vdot1d",
+      "intent_ops": [
+        "matmul"
+      ]
+    },
+    {
+      "id": "flaggems::vector_norm",
+      "semantic_op": "vector_norm",
+      "family": "norm_activation",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "pipeline_diff_failed_or_missing",
+      "next_action": "backend_lowering",
+      "e2e_spec": "vector_norm2d",
+      "intent_ops": [
+        "mul",
+        "reduce_sum",
+        "sqrt"
+      ]
+    },
+    {
+      "id": "flaggems::vstack",
+      "semantic_op": "vstack",
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
       "reason_code": "pipeline_diff_failed_or_missing",
       "next_action": "backend_lowering",
-      "e2e_spec": "tan2d",
+      "e2e_spec": "vstack2d",
       "intent_ops": [
-        "tan"
+        "concat"
       ]
     },
     {
-      "id": "flaggems::tanh",
-      "semantic_op": "tanh",
+      "id": "flaggems::weight_norm_interface",
+      "semantic_op": "weight_norm_interface",
       "family": "norm_activation",
       "status": "blocked_backend",
       "passes": false,
       "reason_code": "runtime_backend_fail",
       "next_action": "backend_lowering",
-      "e2e_spec": "tanh2d",
+      "e2e_spec": "weight_norm2d",
       "intent_ops": [
-        "const",
-        "mul",
-        "exp",
-        "sub",
-        "add",
-        "div"
+        "weight_norm_interface"
       ]
     },
     {
-      "id": "flaggems::threshold",
-      "semantic_op": "threshold",
-      "family": "elementwise_broadcast",
+      "id": "flaggems::where_scalar_other",
+      "semantic_op": "where_scalar_other",
+      "family": "index_scatter_gather",
       "status": "blocked_backend",
       "passes": false,
       "reason_code": "runtime_backend_fail",
       "next_action": "backend_lowering",
-      "e2e_spec": "threshold2d",
+      "e2e_spec": "where2d",
       "intent_ops": [
-        "const",
-        "gt",
         "where"
       ]
     },
     {
-      "id": "flaggems::tile",
-      "semantic_op": "tile",
-      "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
-      "e2e_spec": "tile2d",
-      "intent_ops": [
-        "tile"
-      ]
-    },
-    {
-      "id": "flaggems::to_copy",
-      "semantic_op": "to_copy",
-      "family": "elementwise_broadcast",
+      "id": "flaggems::where_scalar_self",
+      "semantic_op": "where_scalar_self",
+      "family": "index_scatter_gather",
       "status": "blocked_backend",
       "passes": false,
       "reason_code": "runtime_backend_fail",
       "next_action": "backend_lowering",
-      "e2e_spec": "cast2d",
+      "e2e_spec": "where2d",
       "intent_ops": [
-        "cast"
-      ]
-    },
-    {
-      "id": "flaggems::topk",
-      "semantic_op": "topk",
-      "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
-      "e2e_spec": "topk2d",
-      "intent_ops": [
-        "topk"
-      ]
-    },
-    {
-      "id": "flaggems::trace",
-      "semantic_op": "trace",
-      "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
-      "e2e_spec": "trace2d",
-      "intent_ops": [
-        "trace"
-      ]
-    },
-    {
-      "id": "flaggems::triu",
-      "semantic_op": "triu",
-      "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
-      "e2e_spec": "triu2d",
-      "intent_ops": [
-        "triu"
-      ]
-    },
-    {
-      "id": "flaggems::true_divide",
-      "semantic_op": "true_divide",
-      "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
-      "e2e_spec": "div2d",
-      "intent_ops": [
-        "div"
-      ]
-    },
-    {
-      "id": "flaggems::unique2",
-      "semantic_op": "unique2",
-      "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
-      "e2e_spec": "unique2d",
-      "intent_ops": [
-        "unique"
+        "where"
       ]
     }
   ],
   "context": {
     "feature_list_path": "workflow/flaggems/state/feature_list.json",
     "progress_log_path": "workflow/flaggems/state/progress_log.jsonl",
-    "git_log": "6cc5540 intentir: close qr6 backend gaps and align non-finite diff semantics\ndf3155b workflow: close qr5 batch at 10/10 dual-pass and roll active batch to qr6\ne57811d intentir: close qr5 backend gaps with sin/rms_norm/scatter-family dual-backend lowering\nb0a1e8f workflow: record qr4 progress at 9/10 dual-pass and refresh registry baseline\n0348537 flaggems: canonicalize repeat family and converge active qr4 to 9 dual-pass\n3829787 workflow: close oprod batch, roll to qr4 batch, and record dual-pass progress\nb062e7c intentir: add remainder primitive lowering and canonicalize flaggems remainder path\n5f94728 intentir: close per-token active batch blocker with canonical quant path and cuda lowering\n1a4e99e workflow: record active oprod batch progress (9/10 dual-pass) and refresh registry baseline\n82a963e intentir: add pow/reduce_prod/polar backend support and stabilize pad/prod canonical intents\n96ec71f flaggems: canonicalize mv/nonzero/normed_cumsum and decompose nan_to_num\n3ad96dd workflow: close mixed-math batch and plan next backend wave\n263cae9 intentir: close active mixed-math batch on rvv+cuda with min2d canonicalization\n34119d0 workflow: close logic-mask batch and plan next active batch\nabd007b flaggems: fix lt bool serialization and add masked_* backend lowering\n5086865 workflow: close le-logical batch and roll to next backend wave\nf617b80 intentir: close le/log/logical batch blockers with provider seed fallback and log backend lowering\n3e4ab8e workflow: close index-logic batch and roll to next backend wave\nb3e8d6c intentir: close index-logic batch with rvv+cuda lowering coverage\n5b8b49c workflow: close gwave batch and roll to next backend wave",
+    "git_log": "4687f00 workflow: close qr6 at 10/10 dual-pass and advance twave baseline\n27d571b intentir: add tan dual-backend lowering for active twave\n6cc5540 intentir: close qr6 backend gaps and align non-finite diff semantics\ndf3155b workflow: close qr5 batch at 10/10 dual-pass and roll active batch to qr6\ne57811d intentir: close qr5 backend gaps with sin/rms_norm/scatter-family dual-backend lowering\nb0a1e8f workflow: record qr4 progress at 9/10 dual-pass and refresh registry baseline\n0348537 flaggems: canonicalize repeat family and converge active qr4 to 9 dual-pass\n3829787 workflow: close oprod batch, roll to qr4 batch, and record dual-pass progress\nb062e7c intentir: add remainder primitive lowering and canonicalize flaggems remainder path\n5f94728 intentir: close per-token active batch blocker with canonical quant path and cuda lowering\n1a4e99e workflow: record active oprod batch progress (9/10 dual-pass) and refresh registry baseline\n82a963e intentir: add pow/reduce_prod/polar backend support and stabilize pad/prod canonical intents\n96ec71f flaggems: canonicalize mv/nonzero/normed_cumsum and decompose nan_to_num\n3ad96dd workflow: close mixed-math batch and plan next backend wave\n263cae9 intentir: close active mixed-math batch on rvv+cuda with min2d canonicalization\n34119d0 workflow: close logic-mask batch and plan next active batch\nabd007b flaggems: fix lt bool serialization and add masked_* backend lowering\n5086865 workflow: close le-logical batch and roll to next backend wave\nf617b80 intentir: close le/log/logical batch blockers with provider seed fallback and log backend lowering\n3e4ab8e workflow: close index-logic batch and roll to next backend wave",
     "progress_tail": [
-      "{\"ts\": \"2026-02-15T05:15:05+00:00\", \"commit\": \"03485373b9fe494b5f1a511c99aecb7165484c5d\", \"summary\": \"Advanced qr4 batch to 9/10 dual_pass by closing repeat and repeat_interleave families across pipeline, RVV local+remote, and CUDA(nvrtc); only quantile remains blocked.\", \"batch_ops\": [\"quantile\", \"reciprocal\", \"relu\", \"remainder\", \"repeat\", \"repeat_interleave_self_int\", \"repeat_interleave_self_tensor\", \"repeat_interleave_tensor\", \"resolve_conj\", \"resolve_neg\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_qr4_v3_nvrtc/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_qr4_v3_nvrtc/status_converged_registry_write.json\", \"next_focus\": \"Implement quantile backend primitive/lowering (RVV+CUDA) and rerun active qr4 gate with nvrtc runtime to reach 10/10 dual_pass.\", \"run_ok\": false, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_qr4_v3_nvrtc\", \"counts_by_status\": {\"blocked_backend\": 185, \"dual_pass\": 11}}",
-      "{\"ts\": \"2026-02-15T06:16:51+00:00\", \"commit\": \"b0a1e8f0b86c254a792ff7997662c685d8c50ef7\", \"summary\": \"Closed active qr4 batch to scoped dual_pass 10/10 by adding quantile backend lowering on RVV+CUDA and validating pipeline + RVV local/remote + CUDA nvrtc.\", \"batch_ops\": [\"quantile\", \"reciprocal\", \"relu\", \"remainder\", \"repeat\", \"repeat_interleave_self_int\", \"repeat_interleave_self_tensor\", \"repeat_interleave_tensor\", \"resolve_conj\", \"resolve_neg\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_qr4_v4_nvrtc/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_qr4_v4_nvrtc/status_converged_registry_write.json\", \"next_focus\": \"Run plan_next_batch for next backend_missing_ops wave and continue dual-backend closure with scoped gate + workflow artifacts.\", \"run_ok\": true, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_qr4_v4_nvrtc\", \"counts_by_status\": {\"blocked_backend\": 184, \"dual_pass\": 12}}",
       "{\"ts\": \"2026-02-15T06:29:03+00:00\", \"commit\": \"b0a1e8f0b86c254a792ff7997662c685d8c50ef7\", \"summary\": \"Advanced active qr5 batch from 4->7 dual_pass by adding sin dual-backend lowering and CUDA rms_norm pattern lowering; remaining blockers are scatter/select_scatter/slice_scatter on RVV+CUDA.\", \"batch_ops\": [\"rms_norm\", \"rms_norm_forward\", \"rsqrt\", \"scaled_softmax_forward\", \"scatter\", \"select_scatter\", \"sigmoid\", \"silu\", \"sin\", \"slice_scatter\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_qr5_v2_nvrtc/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_qr5_v2_nvrtc/status_converged.json\", \"next_focus\": \"Implement scatter/select_scatter/slice_scatter lowerings in both RVV and CUDA, then rerun qr5 matrix and close batch gate.\", \"run_ok\": false, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_qr5_v2_nvrtc\", \"counts_by_status\": {\"blocked_backend\": 188, \"dual_pass\": 8}}",
       "{\"ts\": \"2026-02-15T06:37:45+00:00\", \"commit\": \"b0a1e8f0b86c254a792ff7997662c685d8c50ef7\", \"summary\": \"Closed active qr5 batch to scoped dual_pass 10/10 by adding sin + scatter/select_scatter/slice_scatter backend lowering and CUDA rms_norm lowering, validated on RVV local/remote and CUDA nvrtc.\", \"batch_ops\": [\"rms_norm\", \"rms_norm_forward\", \"rsqrt\", \"scaled_softmax_forward\", \"scatter\", \"select_scatter\", \"sigmoid\", \"silu\", \"sin\", \"slice_scatter\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_qr5_v3_nvrtc/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_qr5_v3_nvrtc/status_converged_registry_write.json\", \"next_focus\": \"Plan next backend_missing_ops wave and continue dual-backend closure with scoped gate and registry write-back.\", \"run_ok\": true, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_qr5_v3_nvrtc\", \"counts_by_status\": {\"blocked_backend\": 185, \"dual_pass\": 11}}",
-      "{\"ts\": \"2026-02-15T07:20:10+00:00\", \"commit\": \"6cc5540\", \"summary\": \"Closed active qr6 batch to scoped dual_pass 10/10 by landing sort/sqrt/stack/std/sub canonical+backend fixes and validating pipeline + RVV local/remote + CUDA nvrtc.\", \"batch_ops\": [\"softmax\", \"softplus\", \"sort\", \"sort_stable\", \"sqrt\", \"stack\", \"std\", \"sub\", \"sum\", \"sum_dim\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_qr6_v4_nvrtc/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_qr6_v4_nvrtc/status_converged_registry_write.json\", \"next_focus\": \"1) Run check_batch_gate and sync feature list/metrics after registry writeback. 2) Plan next backend_missing_ops batch and keep mandatory RVV local+remote + CUDA cycle. 3) Continue provider-boundary-safe IntentIR backend expansion toward full dual_pass coverage.\", \"run_ok\": true, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_qr6_v4_nvrtc\", \"counts_by_status\": {\"blocked_backend\": 185, \"dual_pass\": 11}}"
+      "{\"ts\": \"2026-02-15T07:20:10+00:00\", \"commit\": \"6cc5540\", \"summary\": \"Closed active qr6 batch to scoped dual_pass 10/10 by landing sort/sqrt/stack/std/sub canonical+backend fixes and validating pipeline + RVV local/remote + CUDA nvrtc.\", \"batch_ops\": [\"softmax\", \"softplus\", \"sort\", \"sort_stable\", \"sqrt\", \"stack\", \"std\", \"sub\", \"sum\", \"sum_dim\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_qr6_v4_nvrtc/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_qr6_v4_nvrtc/status_converged_registry_write.json\", \"next_focus\": \"1) Run check_batch_gate and sync feature list/metrics after registry writeback. 2) Plan next backend_missing_ops batch and keep mandatory RVV local+remote + CUDA cycle. 3) Continue provider-boundary-safe IntentIR backend expansion toward full dual_pass coverage.\", \"run_ok\": true, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_qr6_v4_nvrtc\", \"counts_by_status\": {\"blocked_backend\": 185, \"dual_pass\": 11}}",
+      "{\"ts\": \"2026-02-15T07:30:13+00:00\", \"commit\": \"27d571b\", \"summary\": \"Advanced active twave batch from 3->4 dual_pass by adding tan RVV+CUDA lowering; validated on pipeline + RVV local/remote + CUDA nvrtc.\", \"batch_ops\": [\"tan\", \"tanh\", \"threshold\", \"tile\", \"to_copy\", \"topk\", \"trace\", \"triu\", \"true_divide\", \"unique2\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_twave_v2_nvrtc/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_twave_v2_nvrtc/status_converged.json\", \"next_focus\": \"1) Unblock tile provider report generation (missing tile2d artifact) and rerun full twave matrix. 2) Add backend lowering for trace/triu and resolve topk/unique2 diff_fail paths. 3) Close to_copy CUDA cast(f16) gap to move rvv_only -> dual_pass.\", \"run_ok\": false, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_twave_v2_nvrtc\", \"counts_by_status\": {\"blocked_backend\": 189, \"dual_pass\": 6, \"rvv_only\": 1}}",
+      "{\"ts\": \"2026-02-15T08:24:23+00:00\", \"commit\": \"4687f0057307009d68a1dc11605bbb728fd730a7\", \"summary\": \"Closed twave active batch to scoped dual_pass 10/10 by fixing tile/topk/trace/unique and to_copy CUDA f16 path with full RVV local+remote and CUDA nvrtc verification.\", \"batch_ops\": [\"tan\", \"tanh\", \"threshold\", \"tile\", \"to_copy\", \"topk\", \"trace\", \"triu\", \"true_divide\", \"unique2\"], \"active_batch_path\": \"workflow/flaggems/state/active_batch.json\", \"run_summary_path\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_twave_v5_nvrtc/run_summary.json\", \"status_converged_path\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_twave_v5_nvrtc/status_converged_registry_write.json\", \"next_focus\": \"Run plan_next_batch for remaining 13 blocked_backend ops (Wave-U), keep strict pipeline reports and dual-backend gate discipline.\", \"run_ok\": true, \"run_out_dir\": \"artifacts/flaggems_matrix/daily/20260215/batch_active10_twave_v5_nvrtc\", \"counts_by_status\": {\"blocked_backend\": 184, \"dual_pass\": 12}}"
     ]
   }
 }
