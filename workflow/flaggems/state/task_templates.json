@@ -117,6 +117,105 @@
         "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v3/batch_gate_backend_compiler.json"
       ],
       "description": "Unify stage timing and failure reason reporting across RVV/CUDA backends."
+    },
+    {
+      "id": "backend_compiler::pipeline_stage_semantics_contract",
+      "track": "backend_compiler",
+      "task_type": "compilerization",
+      "status": "done",
+      "passes": true,
+      "priority": 40,
+      "gate_profile": "backend_compiler",
+      "reason_code": "ok",
+      "next_action": "none",
+      "acceptance": [
+        "cuda_pipeline_driver_reports_stage_artifacts",
+        "rvv_pipeline_driver_reports_stage_artifacts",
+        "legacy_codegen_entry_runs_pipeline_check"
+      ],
+      "depends_on": [
+        "backend_compiler::cuda_pipeline_modularization",
+        "backend_compiler::rvv_pipeline_modularization"
+      ],
+      "evidence_paths": [
+        "tests/backends/cuda/test_cuda_pipeline_driver.py",
+        "tests/backends/spmd_rvv/test_rvv_pipeline_driver.py",
+        "tests/backends/cuda/test_cuda_codegen_shim.py",
+        "tests/backends/spmd_rvv/test_rvv_codegen_shim.py"
+      ],
+      "description": "Promote CUDA/RVV pipeline drivers from no-op shims to staged contract validators."
+    },
+    {
+      "id": "backend_compiler::schedule_heuristics_wave1",
+      "track": "backend_compiler",
+      "task_type": "performance",
+      "status": "done",
+      "passes": true,
+      "priority": 50,
+      "gate_profile": "backend_compiler",
+      "reason_code": "ok",
+      "next_action": "none",
+      "acceptance": [
+        "cuda_pipeline_schedule_artifacts_include_heuristics",
+        "rvv_pipeline_schedule_artifacts_include_heuristics",
+        "backend_smoke_reports_stage_timing_delta"
+      ],
+      "depends_on": [
+        "backend_compiler::pipeline_stage_semantics_contract"
+      ],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v4/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v4/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v4/batch_gate_backend_compiler.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v4/timing_delta.json"
+      ],
+      "description": "Start performance-oriented schedule heuristics tuning with measurable stage timing deltas."
+    },
+    {
+      "id": "ir_arch::macro_composition_guard",
+      "track": "ir_arch",
+      "task_type": "quality_guard",
+      "status": "done",
+      "passes": true,
+      "priority": 30,
+      "gate_profile": "ir_arch",
+      "reason_code": "ok",
+      "next_action": "none",
+      "acceptance": [
+        "macro_ops_expand_via_shared_primitives",
+        "no_provider_specific_ir_nodes"
+      ],
+      "depends_on": [
+        "ir_arch::semantic_rule_consistency"
+      ],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v4/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v4/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v4/batch_gate_ir_arch.json",
+        "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v4/macro_composition_report.json"
+      ],
+      "description": "Audit macro-style semantics to ensure they compose from shared IntentIR primitives."
+    },
+    {
+      "id": "backend_compiler::legalize_schedule_optimization_wave2",
+      "track": "backend_compiler",
+      "task_type": "performance",
+      "status": "pending",
+      "passes": false,
+      "priority": 60,
+      "gate_profile": "backend_compiler",
+      "reason_code": "pending",
+      "next_action": "legalize_schedule_optimization",
+      "acceptance": [
+        "cuda_pipeline_legalize_artifacts_include_rewrite_counts",
+        "rvv_pipeline_legalize_artifacts_include_rewrite_counts",
+        "timing_delta_report_has_wave2_baseline_compare"
+      ],
+      "depends_on": [
+        "backend_compiler::schedule_heuristics_wave1"
+      ],
+      "evidence_paths": [],
+      "description": "Implement rewrite-count aware legalize/schedule optimization and validate timing deltas against wave1 baseline."
     }
   ]
 }

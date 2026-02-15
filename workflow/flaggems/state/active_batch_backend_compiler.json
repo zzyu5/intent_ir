@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_active_batch_v2",
-  "generated_at": "2026-02-15T13:25:58+00:00",
+  "generated_at": "2026-02-15T13:36:37+00:00",
   "branch": "flaggems",
   "lane": "backend_compiler",
   "batch_size": 8,
@@ -9,7 +9,33 @@
     "priority",
     "dependency"
   ],
-  "items": [],
+  "items": [
+    {
+      "id": "backend_compiler::legalize_schedule_optimization_wave2",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending",
+      "next_action": "legalize_schedule_optimization",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "backend_compiler",
+      "task_type": "performance",
+      "priority": 60,
+      "acceptance": [
+        "cuda_pipeline_legalize_artifacts_include_rewrite_counts",
+        "rvv_pipeline_legalize_artifacts_include_rewrite_counts",
+        "timing_delta_report_has_wave2_baseline_compare"
+      ],
+      "gate_profile": "backend_compiler",
+      "depends_on": [
+        "backend_compiler::schedule_heuristics_wave1"
+      ],
+      "evidence_paths": [],
+      "description": "Implement rewrite-count aware legalize/schedule optimization and validate timing deltas against wave1 baseline."
+    }
+  ],
   "context": {
     "feature_list_path": "workflow/flaggems/state/feature_list.json",
     "progress_log_path": "",
