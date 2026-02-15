@@ -84,3 +84,60 @@ def test_run_backend_compiler_batch_uses_kernel_manifest_when_kernel_not_given(t
     assert cmd.count("--kernel") == 2
     assert "diag2d" in cmd
     assert "topk2d" in cmd
+
+
+def test_run_backend_compiler_batch_supports_manifest_chunking(tmp_path: Path) -> None:
+    out_dir = tmp_path / "backend_chunk"
+    manifest = tmp_path / "manifest_chunk.json"
+    manifest.write_text(
+        json.dumps({"kernels": ["abs2d", "add2d", "clamp2d", "diag2d", "topk2d"]}),
+        encoding="utf-8",
+    )
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/run_backend_compiler_batch.py",
+            "--out-dir",
+            str(out_dir),
+            "--dry-run",
+            "--kernel-manifest",
+            str(manifest),
+            "--chunk-size",
+            "2",
+            "--chunk-index",
+            "1",
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    payload = json.loads((out_dir / "backend_compiler_batch_summary.json").read_text(encoding="utf-8"))
+    assert payload["kernel_count_requested"] == 5
+    assert payload["kernel_count_selected"] == 2
+    assert payload["kernels_selected"] == ["clamp2d", "diag2d"]
+    assert payload["chunk"]["enabled"] is True
+    cmd = list(payload["cmd"])
+    assert cmd.count("--kernel") == 2
+    assert "clamp2d" in cmd
+    assert "diag2d" in cmd
+
+
+def test_run_backend_compiler_batch_rejects_unknown_kernel(tmp_path: Path) -> None:
+    out_dir = tmp_path / "backend_unknown"
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/run_backend_compiler_batch.py",
+            "--out-dir",
+            str(out_dir),
+            "--dry-run",
+            "--kernel",
+            "not_a_real_kernel",
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode != 0
+    assert "unknown kernel(s)" in str(p.stderr)

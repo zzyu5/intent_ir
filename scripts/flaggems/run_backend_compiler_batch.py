@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -70,16 +71,73 @@ def _guess_baseline_dir(out_dir: Path) -> Path | None:
     return baseline_dir
 
 
+def _coverage_kernel_names(*, flaggems_opset: str, backend_target: str) -> set[str]:
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from pipeline.triton.providers.flaggems.specs import coverage_flaggems_kernel_specs  # noqa: PLC0415
+
+    specs = coverage_flaggems_kernel_specs(
+        flaggems_opset=str(flaggems_opset),
+        backend_target=str(backend_target),
+    )
+    return {str(s.name) for s in specs}
+
+
+def _select_chunk(*, kernels: list[str], chunk_size: int, chunk_index: int) -> tuple[list[str], dict]:
+    total = len(kernels)
+    if chunk_size <= 0:
+        return list(kernels), {
+            "enabled": False,
+            "chunk_size": 0,
+            "chunk_index": 0,
+            "chunk_count": 1,
+            "kernel_count_total": total,
+            "kernel_count_selected": total,
+            "slice_start": 0,
+            "slice_end": total,
+        }
+    if chunk_index < 0:
+        raise SystemExit("--chunk-index must be >= 0")
+    chunk_count = max(1, int(math.ceil(total / float(chunk_size))))
+    if chunk_index >= chunk_count:
+        raise SystemExit(
+            f"--chunk-index out of range: {chunk_index} (chunk_count={chunk_count}, chunk_size={chunk_size}, kernels={total})"
+        )
+    start = int(chunk_index * chunk_size)
+    end = int(min(total, start + int(chunk_size)))
+    selected = list(kernels[start:end])
+    return selected, {
+        "enabled": True,
+        "chunk_size": int(chunk_size),
+        "chunk_index": int(chunk_index),
+        "chunk_count": int(chunk_count),
+        "kernel_count_total": total,
+        "kernel_count_selected": len(selected),
+        "slice_start": start,
+        "slice_end": end,
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out-dir", type=Path, default=_default_out_dir())
     ap.add_argument("--suite", choices=["smoke", "coverage", "all"], default="smoke")
     ap.add_argument("--kernel", action="append", default=[])
+    ap.add_argument("--flaggems-opset", choices=["deterministic_forward"], default="deterministic_forward")
+    ap.add_argument("--backend-target", choices=["rvv", "cuda_h100", "cuda_5090d"], default="rvv")
     ap.add_argument(
         "--kernel-manifest",
         type=Path,
         default=(ROOT / "workflow" / "flaggems" / "state" / "backend_kernel_manifest.json"),
         help="Optional kernel manifest JSON with `kernels: [..]` used when --kernel is omitted.",
+    )
+    ap.add_argument("--chunk-size", type=int, default=0, help="Optional chunk size for manifest kernels.")
+    ap.add_argument("--chunk-index", type=int, default=0, help="Chunk index when --chunk-size > 0.")
+    ap.add_argument(
+        "--validate-kernels",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Validate requested kernels against deterministic coverage specs (default: true).",
     )
     ap.add_argument("--run-rvv-remote", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--rvv-host", default="192.168.8.72")
@@ -115,6 +173,23 @@ def main() -> None:
     for k in kernels:
         if k not in dedup_kernels:
             dedup_kernels.append(k)
+    if bool(args.validate_kernels):
+        valid = _coverage_kernel_names(
+            flaggems_opset=str(args.flaggems_opset),
+            backend_target=str(args.backend_target),
+        )
+        unknown = [k for k in dedup_kernels if k not in valid]
+        if unknown:
+            raise SystemExit(
+                f"unknown kernel(s) for deterministic_forward coverage: {', '.join(sorted(set(unknown)))}"
+            )
+    selected_kernels, chunk_meta = _select_chunk(
+        kernels=dedup_kernels,
+        chunk_size=int(args.chunk_size),
+        chunk_index=int(args.chunk_index),
+    )
+    if not selected_kernels:
+        raise SystemExit("no kernels selected after chunking")
 
     cmd = [
         sys.executable,
@@ -123,6 +198,10 @@ def main() -> None:
         str(args.suite),
         "--lane",
         "backend_compiler",
+        "--flaggems-opset",
+        str(args.flaggems_opset),
+        "--backend-target",
+        str(args.backend_target),
         "--flaggems-path",
         "intentir",
         "--intentir-mode",
@@ -162,7 +241,7 @@ def main() -> None:
         cmd.append("--allow-cuda-skip")
     else:
         cmd.append("--no-allow-cuda-skip")
-    for k in dedup_kernels:
+    for k in selected_kernels:
         cmd += ["--kernel", str(k)]
 
     rc, stdout, stderr = _run(cmd, dry_run=bool(args.dry_run))
@@ -270,6 +349,12 @@ def main() -> None:
         "out_dir": str(args.out_dir),
         "kernel_manifest": str(args.kernel_manifest),
         "manifest_kernel_count": len(manifest_kernels),
+        "kernel_count_requested": len(dedup_kernels),
+        "kernel_count_selected": len(selected_kernels),
+        "kernels_selected": list(selected_kernels),
+        "chunk": dict(chunk_meta),
+        "flaggems_opset": str(args.flaggems_opset),
+        "backend_target": str(args.backend_target),
         "cuda_runtime_backend": str(args.cuda_runtime_backend),
         "schedule_profile_tag": str(args.schedule_profile_tag),
         "cuda_tile_m": (int(args.cuda_tile_m) if args.cuda_tile_m is not None else None),

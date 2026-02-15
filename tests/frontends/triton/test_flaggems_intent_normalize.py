@@ -429,7 +429,11 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
 
     diag_embed = canonical_flaggems_intent_for_spec("diag_embed2d")
     assert diag_embed is not None
-    assert [op.op for op in diag_embed.ops] == ["const", "broadcast_in_dim", "iota", "iota", "iota", "ne", "not", "gather", "where"]
+    assert [op.op for op in diag_embed.ops] == ["const", "broadcast_in_dim", "iota", "iota", "eq", "broadcast_in_dim", "where"]
+
+    eq2d = canonical_flaggems_intent_for_spec("eq2d")
+    assert eq2d is not None
+    assert [op.op for op in eq2d.ops] == ["cast", "cast", "eq"]
 
     elu = canonical_flaggems_intent_for_spec("elu2d")
     assert elu is not None

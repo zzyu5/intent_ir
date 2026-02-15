@@ -1664,15 +1664,37 @@ def _canonical_diag_embed2d_intent() -> IntentFunction:
                     "output": "y_zeros",
                     "attrs": {"broadcast_dims": [], "out_shape": ["B", "N", "N"]},
                 },
-                {"op": "iota", "inputs": [], "output": "idx_b", "attrs": {"axis": 0, "shape": ["B", "N", "N"]}},
                 {"op": "iota", "inputs": [], "output": "idx_row", "attrs": {"axis": 1, "shape": ["B", "N", "N"]}},
                 {"op": "iota", "inputs": [], "output": "idx_col", "attrs": {"axis": 2, "shape": ["B", "N", "N"]}},
-                {"op": "ne", "inputs": ["idx_row", "idx_col"], "output": "offdiag_mask"},
-                {"op": "not", "inputs": ["offdiag_mask"], "output": "diag_mask"},
-                {"op": "gather", "inputs": ["x", "idx_b", "idx_col"], "output": "diag_values"},
-                {"op": "where", "inputs": ["diag_mask", "diag_values", "y_zeros"], "output": "y"},
+                {"op": "eq", "inputs": ["idx_row", "idx_col"], "output": "diag_mask"},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["x"],
+                    "output": "x_bcast",
+                    "attrs": {"broadcast_dims": [0, 2], "out_shape": ["B", "N", "N"]},
+                },
+                {"op": "where", "inputs": ["diag_mask", "x_bcast", "y_zeros"], "output": "y"},
             ],
             "outputs": ["y"],
+        }
+    )
+
+
+def _canonical_eq2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "eq2d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "y": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cast", "inputs": ["x"], "output": "x_f32", "attrs": {"to": "f32"}},
+                {"op": "cast", "inputs": ["y"], "output": "y_f32", "attrs": {"to": "f32"}},
+                {"op": "eq", "inputs": ["x_f32", "y_f32"], "output": "out"},
+            ],
+            "outputs": ["out"],
         }
     )
 
@@ -2229,6 +2251,8 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_diag2d_intent()
     if name == "diag_embed2d":
         return _canonical_diag_embed2d_intent()
+    if name == "eq2d":
+        return _canonical_eq2d_intent()
     if name == "celu2d":
         return _canonical_celu2d_intent()
     if name == "elu2d":

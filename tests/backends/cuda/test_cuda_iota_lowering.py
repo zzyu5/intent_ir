@@ -65,6 +65,7 @@ def test_cuda_lowering_supports_cos_erf_log_fused_elementwise(monkeypatch) -> No
                 "C": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
                 "E": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
                 "L": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "T": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
                 "Out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
             },
             "ops": [
@@ -107,6 +108,55 @@ def test_cuda_lowering_supports_sin_fused_elementwise(monkeypatch) -> None:
     lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
     assert lowered.kernel_name == "sin2d_cuda_lowering"
     assert "sinf(" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_acos_fused_elementwise(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "acos2d_cuda_lowering",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "Out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "acos", "inputs": ["A"], "output": "Out"},
+            ],
+            "outputs": ["Out"],
+            "parallel_axes": ["M", "N"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
+    assert lowered.kernel_name == "acos2d_cuda_lowering"
+    assert "acosf(" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_bitwise_elementwise(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "bitwise2d_cuda_lowering",
+            "tensors": {
+                "A": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "B": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "AndOut": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "OrOut": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "Out": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "bitwise_and", "inputs": ["A", "B"], "output": "AndOut"},
+                {"op": "bitwise_or", "inputs": ["A", "B"], "output": "OrOut"},
+                {"op": "bitwise_not", "inputs": ["OrOut"], "output": "Out"},
+            ],
+            "outputs": ["Out"],
+            "parallel_axes": ["M", "N"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
+    assert lowered.kernel_name == "bitwise2d_cuda_lowering"
+    assert " & " in lowered.cuda_src
+    assert " | " in lowered.cuda_src
+    assert "~v_OrOut" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_rms_norm_pattern(monkeypatch) -> None:
@@ -912,3 +962,112 @@ def test_cuda_lowering_supports_trace2d_pattern(monkeypatch) -> None:
     assert lowered.kernel_name == "trace2d_cuda_lowering"
     assert "const int L = (M < N) ? M : N;" in lowered.cuda_src
     assert "acc += input[(size_t)i * (size_t)N + (size_t)i];" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_diag2d_pattern(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "diag2d_cuda_lowering",
+            "tensors": {
+                "data": {"dtype": "f32", "shape": ["M", "M"], "layout": "row_major"},
+                "diag_idx": {"dtype": "i32", "shape": ["M"], "layout": "row_major"},
+                "output": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "iota", "inputs": [], "output": "diag_idx", "attrs": {"axis": 0, "shape": ["M"], "dtype": "i32"}},
+                {"op": "gather", "inputs": ["data", "diag_idx", "diag_idx"], "output": "output"},
+            ],
+            "outputs": ["output"],
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 16})
+    assert lowered.kernel_name == "diag2d_cuda_lowering"
+    assert "data[(size_t)row * (size_t)M + (size_t)row]" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_diag_embed2d_pattern(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "diag_embed2d_cuda_lowering",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["B", "N"], "layout": "row_major"},
+                "y": {"dtype": "f32", "shape": ["B", "N", "N"], "layout": "row_major"},
+                "zero_scalar": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "y_zeros": {"dtype": "f32", "shape": ["B", "N", "N"], "layout": "row_major"},
+                "idx_row": {"dtype": "i32", "shape": ["B", "N", "N"], "layout": "row_major"},
+                "idx_col": {"dtype": "i32", "shape": ["B", "N", "N"], "layout": "row_major"},
+                "diag_mask": {"dtype": "bool", "shape": ["B", "N", "N"], "layout": "row_major"},
+                "x_bcast": {"dtype": "f32", "shape": ["B", "N", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "const", "inputs": [], "output": "zero_scalar", "attrs": {"value": 0.0, "dtype": "f32"}},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["zero_scalar"],
+                    "output": "y_zeros",
+                    "attrs": {"broadcast_dims": [], "out_shape": ["B", "N", "N"]},
+                },
+                {"op": "iota", "inputs": [], "output": "idx_row", "attrs": {"axis": 1, "shape": ["B", "N", "N"], "dtype": "i32"}},
+                {"op": "iota", "inputs": [], "output": "idx_col", "attrs": {"axis": 2, "shape": ["B", "N", "N"], "dtype": "i32"}},
+                {"op": "eq", "inputs": ["idx_row", "idx_col"], "output": "diag_mask"},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["x"],
+                    "output": "x_bcast",
+                    "attrs": {"broadcast_dims": [0, 2], "out_shape": ["B", "N", "N"]},
+                },
+                {"op": "where", "inputs": ["diag_mask", "x_bcast", "y_zeros"], "output": "y"},
+            ],
+            "outputs": ["y"],
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"B": 2, "N": 8})
+    assert lowered.kernel_name == "diag_embed2d_cuda_lowering"
+    assert "const float v = (row == col)" in lowered.cuda_src
+    assert "x[(size_t)b * (size_t)N + (size_t)col]" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_nonzero2d_pattern(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "nonzero2d_cuda_lowering",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "i64", "shape": ["num_nonzeros", 2], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "nonzero", "inputs": ["inp"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8, "num_nonzeros": 16})
+    assert lowered.kernel_name == "nonzero2d_cuda_lowering"
+    assert "if (v != 0.0f)" in lowered.cuda_src
+    assert "out[(size_t)write_idx * 2]" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_count_nonzero2d_pattern(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "count_nonzero2d_cuda_lowering",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "i64", "shape": [], "layout": "row_major"},
+                "zero_const": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "is_nonzero_bool": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                "is_nonzero_i64": {"dtype": "i64", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "const", "inputs": [], "output": "zero_const", "attrs": {"value": 0}},
+                {"op": "ne", "inputs": ["x", "zero_const"], "output": "is_nonzero_bool"},
+                {"op": "cast", "inputs": ["is_nonzero_bool"], "output": "is_nonzero_i64", "attrs": {"to": "i64"}},
+                {"op": "reduce_sum", "inputs": ["is_nonzero_i64"], "output": "out", "attrs": {"dims": [0, 1]}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
+    assert lowered.kernel_name == "count_nonzero2d_cuda_lowering"
+    assert "if (x[(size_t)i] != 0.0f) ++acc;" in lowered.cuda_src
+    assert "out[0] = acc;" in lowered.cuda_src
