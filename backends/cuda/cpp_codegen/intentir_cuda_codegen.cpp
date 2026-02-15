@@ -4719,6 +4719,9 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
     } else if (opname == "exp") {
       if (op.inputs.size() != 1) fail("exp expects 1 input");
       emit_assign("__expf(" + val(op.inputs[0]) + ")");
+    } else if (opname == "log") {
+      if (op.inputs.size() != 1) fail("log expects 1 input");
+      emit_assign("logf(" + val(op.inputs[0]) + ")");
     } else if (opname == "floor") {
       if (op.inputs.size() != 1) fail("floor expects 1 input");
       emit_assign("floorf(" + val(op.inputs[0]) + ")");
@@ -5922,7 +5925,8 @@ json lower_intent_to_cuda(const Intent& intent, const json& bindings_json) {
       static const std::unordered_map<std::string, bool> k = {
           {"const", true}, {"iota", true},     {"identity", true},         {"broadcast_in_dim", true}, {"cast", true},
           {"add", true},   {"sub", true},      {"mul", true},              {"div", true},              {"max", true},
-          {"min", true},   {"relu", true},     {"abs", true},              {"exp", true},              {"floor", true},
+          {"min", true},   {"relu", true},     {"abs", true},              {"exp", true},              {"log", true},
+          {"floor", true},
           {"rsqrt", true}, {"ne", true},       {"lt", true},               {"le", true},               {"gt", true},
           {"ge", true},    {"and", true},      {"or", true},               {"not", true},              {"where", true},
       };
