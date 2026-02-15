@@ -1,7 +1,7 @@
 """
 CUDA backend supported op set (WIP).
 
-This reflects currently implemented lowering paths in `intentir_to_cuda.py`
+This reflects currently implemented lowering paths in `cpp_driver.py`
 (direct kernels + fused patterns + generic fused elementwise).
 """
 

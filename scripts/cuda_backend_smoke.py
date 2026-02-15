@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backends.cuda.codegen.intentir_to_cuda import CudaLoweringError, lower_intent_to_cuda_kernel  # noqa: E402
+from backends.cuda.codegen.cpp_driver import CudaLoweringError, lower_intent_to_cuda_kernel  # noqa: E402
 from backends.cuda.runtime import CudaRuntimeError, compile_cuda_extension, run_cuda_kernel  # noqa: E402
 from intent_ir.ir import IntentFunction  # noqa: E402
 from intent_ir.macros import expand_macros  # noqa: E402

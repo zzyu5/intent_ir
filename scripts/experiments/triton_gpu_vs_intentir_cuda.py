@@ -29,7 +29,7 @@ if str(ROOT) not in sys.path:
 
 import torch  # noqa: E402
 
-from backends.cuda.codegen.intentir_to_cuda import lower_intent_to_cuda_kernel  # noqa: E402
+from backends.cuda.codegen.cpp_driver import lower_intent_to_cuda_kernel  # noqa: E402
 from frontends.cuda.runtime import CudaLaunch, compile_cuda_extension  # noqa: E402
 from intent_ir.ir import IntentFunction  # noqa: E402
 

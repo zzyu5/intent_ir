@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backends.spmd_rvv.codegen.intentir_to_c import lower_intent_to_c_with_files  # noqa: E402
+from backends.spmd_rvv.codegen.cpp_driver import lower_intent_to_c_with_files  # noqa: E402
 from backends.spmd_rvv.analysis.device_query import load_profile  # noqa: E402
 from backends.spmd_rvv.analysis.tuning import TuningRequest, parse_constraints, parse_locks, select_schedule  # noqa: E402
 from intent_ir.ir import IntentFunction  # noqa: E402

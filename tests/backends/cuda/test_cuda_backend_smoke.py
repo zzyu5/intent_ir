@@ -25,7 +25,7 @@ def _cuda_available() -> bool:
 @pytest.mark.skipif(not _cuda_available(), reason="CUDA not available")
 @pytest.mark.skipif(shutil.which("nvcc") is None, reason="nvcc not available (torch extension build)")
 def test_cuda_backend_matmul_matches_numpy():
-    from backends.cuda.codegen.intentir_to_cuda import lower_intent_to_cuda_kernel
+    from backends.cuda.codegen.cpp_driver import lower_intent_to_cuda_kernel
     from backends.cuda.runtime import run_cuda_kernel
 
     intent = IntentFunction.from_json_dict(
@@ -69,7 +69,7 @@ def test_cuda_backend_matmul_matches_numpy():
 @pytest.mark.skipif(not _cuda_available(), reason="CUDA not available")
 @pytest.mark.skipif(shutil.which("nvcc") is None, reason="nvcc not available (torch extension build)")
 def test_cuda_backend_fused_elementwise_broadcast_relu_matches_numpy():
-    from backends.cuda.codegen.intentir_to_cuda import lower_intent_to_cuda_kernel
+    from backends.cuda.codegen.cpp_driver import lower_intent_to_cuda_kernel
     from backends.cuda.runtime import run_cuda_kernel
 
     intent = IntentFunction.from_json_dict(
@@ -117,7 +117,7 @@ def test_cuda_backend_fused_elementwise_broadcast_relu_matches_numpy():
 @pytest.mark.skipif(not _cuda_available(), reason="CUDA not available")
 @pytest.mark.skipif(shutil.which("nvcc") is None, reason="nvcc not available (torch extension build)")
 def test_cuda_backend_transpose2d_matches_numpy():
-    from backends.cuda.codegen.intentir_to_cuda import lower_intent_to_cuda_kernel
+    from backends.cuda.codegen.cpp_driver import lower_intent_to_cuda_kernel
     from backends.cuda.runtime import run_cuda_kernel
 
     intent = IntentFunction.from_json_dict(
@@ -159,7 +159,7 @@ def test_cuda_backend_transpose2d_matches_numpy():
 @pytest.mark.skipif(not _cuda_available(), reason="CUDA not available")
 @pytest.mark.skipif(shutil.which("nvcc") is None, reason="nvcc not available (torch extension build)")
 def test_cuda_backend_reduce_sum_row_matches_numpy():
-    from backends.cuda.codegen.intentir_to_cuda import lower_intent_to_cuda_kernel
+    from backends.cuda.codegen.cpp_driver import lower_intent_to_cuda_kernel
     from backends.cuda.runtime import run_cuda_kernel
 
     intent = IntentFunction.from_json_dict(
@@ -201,7 +201,7 @@ def test_cuda_backend_reduce_sum_row_matches_numpy():
 @pytest.mark.skipif(not _cuda_available(), reason="CUDA not available")
 @pytest.mark.skipif(shutil.which("nvcc") is None, reason="nvcc not available (torch extension build)")
 def test_cuda_backend_reduce_max_row_matches_numpy():
-    from backends.cuda.codegen.intentir_to_cuda import lower_intent_to_cuda_kernel
+    from backends.cuda.codegen.cpp_driver import lower_intent_to_cuda_kernel
     from backends.cuda.runtime import run_cuda_kernel
 
     intent = IntentFunction.from_json_dict(
@@ -243,7 +243,7 @@ def test_cuda_backend_reduce_max_row_matches_numpy():
 @pytest.mark.skipif(not _cuda_available(), reason="CUDA not available")
 @pytest.mark.skipif(shutil.which("nvcc") is None, reason="nvcc not available (torch extension build)")
 def test_cuda_backend_any_dim_matches_numpy():
-    from backends.cuda.codegen.intentir_to_cuda import lower_intent_to_cuda_kernel
+    from backends.cuda.codegen.cpp_driver import lower_intent_to_cuda_kernel
     from backends.cuda.runtime import run_cuda_kernel
 
     intent = IntentFunction.from_json_dict(
@@ -292,7 +292,7 @@ def test_cuda_backend_any_dim_matches_numpy():
 @pytest.mark.skipif(not _cuda_available(), reason="CUDA not available")
 @pytest.mark.skipif(shutil.which("nvcc") is None, reason="nvcc not available (torch extension build)")
 def test_cuda_backend_gather2d_matches_numpy():
-    from backends.cuda.codegen.intentir_to_cuda import lower_intent_to_cuda_kernel
+    from backends.cuda.codegen.cpp_driver import lower_intent_to_cuda_kernel
     from backends.cuda.runtime import run_cuda_kernel
 
     intent = IntentFunction.from_json_dict(

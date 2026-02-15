@@ -4634,7 +4634,53 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
       emit_assign(val(op.inputs[0]));
     } else if (opname == "broadcast_in_dim") {
       if (op.inputs.size() != 1) fail("broadcast_in_dim expects 1 input");
-      emit_assign(val(op.inputs[0]));
+      const std::string& in_name = op.inputs[0];
+      const auto in_it = intent.tensors.find(in_name);
+      if (in_it == intent.tensors.end()) fail("broadcast_in_dim input tensor missing: " + in_name);
+      const Tensor& in_t = in_it->second;
+      const bool has_bdims = op.attrs.is_object() && op.attrs.contains("broadcast_dims") && op.attrs["broadcast_dims"].is_array();
+      if (!has_bdims) {
+        emit_assign(val(in_name));
+      } else {
+        const auto& bdims = op.attrs["broadcast_dims"];
+        const int in_rank = static_cast<int>(in_t.shape.size());
+        if (static_cast<int>(bdims.size()) != in_rank) fail("broadcast_in_dim expects len(broadcast_dims) == input rank");
+        std::vector<std::string> in_dim_expr;
+        in_dim_expr.reserve(static_cast<size_t>(in_rank));
+        for (const auto& d : in_t.shape) {
+          if (d.is_number_integer()) {
+            in_dim_expr.push_back(std::to_string(d.get<int64_t>()));
+          } else if (d.is_number()) {
+            in_dim_expr.push_back(std::to_string(static_cast<int64_t>(d.get<double>())));
+          } else if (d.is_string()) {
+            const std::string sym = d.get<std::string>();
+            auto it_sym = dim_expr.find(sym);
+            if (it_sym == dim_expr.end()) fail("broadcast_in_dim missing dim binding: " + sym);
+            in_dim_expr.push_back(it_sym->second);
+          } else {
+            fail("broadcast_in_dim unsupported shape token");
+          }
+        }
+        std::vector<std::string> strides(static_cast<size_t>(in_rank), "1");
+        for (int i = in_rank - 2; i >= 0; --i) {
+          strides[static_cast<size_t>(i)] = "(" + in_dim_expr[static_cast<size_t>(i + 1)] + " * " + strides[static_cast<size_t>(i + 1)] + ")";
+        }
+        std::string idx = "0";
+        for (int i = 0; i < in_rank; ++i) {
+          int axis = 0;
+          const auto& tok = bdims[static_cast<size_t>(i)];
+          if (tok.is_number_integer())
+            axis = static_cast<int>(tok.get<int64_t>());
+          else if (tok.is_number())
+            axis = static_cast<int>(tok.get<double>());
+          else
+            fail("broadcast_in_dim dims must be integer");
+          if (axis < 0) axis += out_rank;
+          if (axis < 0 || axis >= out_rank) fail("broadcast_in_dim axis out of range");
+          idx += " + ((int64_t)(" + idx_vars[static_cast<size_t>(axis)] + ") * (" + strides[static_cast<size_t>(i)] + "))";
+        }
+        emit_assign(in_name + "[(size_t)(" + idx + ")]");
+      }
     } else if (opname == "cast") {
       if (op.inputs.size() != 1) fail("cast expects 1 input");
       emit_assign("(" + cty + ")(" + val(op.inputs[0]) + ")");
@@ -4782,6 +4828,14 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
 
 json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
   const std::string out_name = !intent.outputs.empty() ? intent.outputs[0] : std::string("out");
+  bool emit_log_output = false;
+  if (intent.ops.size() == 2 && intent.ops[0].op == "softmax" && intent.ops[1].op == "log") {
+    const auto& softmax_op = intent.ops[0];
+    const auto& log_op = intent.ops[1];
+    if (!softmax_op.inputs.empty() && log_op.inputs.size() == 1 && log_op.inputs[0] == softmax_op.output) {
+      emit_log_output = true;
+    }
+  }
 
   std::string in_name;
   for (const auto& op : intent.ops) {
@@ -4904,7 +4958,7 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	  w.line("#include \"kernels/softmax.cuh\"");
 	  w.blank();
 	  emit_selected_api(w);
-	  const bool enable_host_dispatch = want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims;
+	  const bool enable_host_dispatch = (!emit_log_output) && want_host_dispatch(bindings) && (!respect_schedule) && specialize_dims;
 	  const bool enable_host_dispatch_select = want_host_dispatch_select(bindings);
 	  bool host_launch = false;
 
@@ -4925,8 +4979,10 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
 	    w.line("constexpr int BLOCK_THREADS = " + std::to_string(block_threads) + ";");
 	    w.line("constexpr int EPT = " + std::to_string(ept) + ";");
       const bool full_tile = contract_full && specialize_dims && (C == (int64_t)block_threads * (int64_t)ept);
-	    w.line(std::string("intentir_cuda::softmax_2d_last_f32<BLOCK_THREADS, EPT, ") + (softmax_use_exp2 ? "true" : "false") +
-	           ", " + std::string(full_tile ? "true" : "false") + ">(" + in_name + ", " + out_name + ", R, C);");
+      w.line(
+          std::string("intentir_cuda::softmax_2d_last_f32<BLOCK_THREADS, EPT, ") + (softmax_use_exp2 ? "true" : "false") +
+          ", " + std::string(full_tile ? "true" : "false") + ", " + std::string(emit_log_output ? "true" : "false") + ">(" +
+          in_name + ", " + out_name + ", R, C);");
 	    w.dedent();
 	    w.line("}");
 		  } else {

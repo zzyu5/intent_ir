@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 import json
 import os
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
 from intent_ir.ir import IntentFunction
+from backends.cuda.runtime import CudaLaunch
 
 
 def _cpp_codegen_dir() -> Path:
@@ -226,4 +228,73 @@ def lower_intent_to_cuda_kernel_cpp(
     return j
 
 
-__all__ = ["ensure_cpp_codegen_built", "ensure_cpp_codegen_ext_loaded", "lower_intent_to_cuda_kernel_cpp"]
+class CudaLoweringError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class CudaLoweredKernel:
+    kernel_name: str
+    cuda_src: str
+    io_spec: Dict[str, Any]
+    launch: CudaLaunch
+    output_names: list[str]
+    bindings: Dict[str, Any]
+
+
+def _normalize_bindings(shape_bindings: Mapping[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key_raw, value in dict(shape_bindings).items():
+        key = str(key_raw)
+        if isinstance(value, bool):
+            out[key] = int(value)
+            continue
+        if isinstance(value, int):
+            out[key] = int(value)
+            continue
+        try:
+            f = float(value)
+        except Exception:
+            continue
+        out[key] = int(f) if float(f).is_integer() else float(f)
+    return out
+
+
+def lower_intent_to_cuda_kernel(
+    intent: IntentFunction,
+    *,
+    shape_bindings: Mapping[str, Any],
+) -> CudaLoweredKernel:
+    try:
+        j = lower_intent_to_cuda_kernel_cpp(intent, bindings=_normalize_bindings(shape_bindings))
+    except Exception as exc:
+        raise CudaLoweringError(str(exc)) from exc
+    launch_j = j.get("launch") if isinstance(j.get("launch"), dict) else {}
+    grid = launch_j.get("grid")
+    block = launch_j.get("block")
+    shared_mem = launch_j.get("shared_mem", 0)
+    if not (isinstance(grid, list) and len(grid) == 3 and isinstance(block, list) and len(block) == 3):
+        raise CudaLoweringError("cuda cpp codegen returned invalid launch config")
+    launch = CudaLaunch(
+        grid=(int(grid[0]), int(grid[1]), int(grid[2])),
+        block=(int(block[0]), int(block[1]), int(block[2])),
+        shared_mem=int(shared_mem),
+    )
+    return CudaLoweredKernel(
+        kernel_name=str(j.get("kernel_name") or intent.name),
+        cuda_src=str(j.get("cuda_src") or ""),
+        io_spec=j.get("io_spec") if isinstance(j.get("io_spec"), dict) else {},
+        launch=launch,
+        output_names=[str(x) for x in (j.get("output_names") or [])],
+        bindings=j.get("bindings") if isinstance(j.get("bindings"), dict) else {},
+    )
+
+
+__all__ = [
+    "ensure_cpp_codegen_built",
+    "ensure_cpp_codegen_ext_loaded",
+    "lower_intent_to_cuda_kernel_cpp",
+    "CudaLoweringError",
+    "CudaLoweredKernel",
+    "lower_intent_to_cuda_kernel",
+]

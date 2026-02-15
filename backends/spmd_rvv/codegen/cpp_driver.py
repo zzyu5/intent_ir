@@ -145,4 +145,23 @@ def lower_intent_to_c_with_files_cpp(
         return res.stdout
 
 
-__all__ = ["ensure_cpp_codegen_built", "lower_intent_to_c_with_files_cpp"]
+def lower_intent_to_c_with_files(
+    intent: IntentFunction,
+    *,
+    shape_bindings: Mapping[str, Any],
+    atol: float = 1e-3,
+    rtol: float = 1e-3,
+    mode: str = "verify",
+    build_type: str = "Release",
+) -> str:
+    return lower_intent_to_c_with_files_cpp(
+        intent,
+        shape_bindings=shape_bindings,
+        atol=float(atol),
+        rtol=float(rtol),
+        mode=str(mode),
+        build_type=str(build_type),
+    )
+
+
+__all__ = ["ensure_cpp_codegen_built", "lower_intent_to_c_with_files_cpp", "lower_intent_to_c_with_files"]

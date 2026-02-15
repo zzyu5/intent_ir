@@ -5,7 +5,7 @@ We deliberately generate readable scalar code (no RVV yet) to validate the
 schedule mapping and allow compilation in environments without RVV.
 
 Note: For the current end-to-end pipeline (IntentIR ops -> C -> remote RVV run),
-use `backends.spmd_rvv.codegen.intentir_to_c.lower_intent_to_c_with_files`. This module remains
+use `backends.spmd_rvv.codegen.cpp_driver.lower_intent_to_c_with_files`. This module remains
 as a matmul-only prototype for tiling search experiments.
 """
 

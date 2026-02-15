@@ -34,7 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backends.spmd_rvv.codegen.intentir_to_c import lower_intent_to_c_with_files
+from backends.spmd_rvv.codegen.cpp_driver import lower_intent_to_c_with_files
 from backends.spmd_rvv.analysis.device_query import load_profile, query_remote_device
 from backends.spmd_rvv.analysis.tuning import (
     ScheduleCandidate,

@@ -29,4 +29,4 @@ The Python remote runner (`scripts/rvv_remote_run.py`) can auto-build and use th
 
 Preferred Python entrypoint:
 
-- `backends.spmd_rvv.codegen.intentir_to_c.lower_intent_to_c_with_files()`
+- `backends.spmd_rvv.codegen.cpp_driver.lower_intent_to_c_with_files()`

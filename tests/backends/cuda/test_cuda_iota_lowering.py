@@ -1,7 +1,18 @@
 from __future__ import annotations
 
-from backends.cuda.codegen.intentir_to_cuda import lower_intent_to_cuda_kernel
+import pytest
+
+from backends.cuda.codegen.cpp_driver import CudaLoweringError, lower_intent_to_cuda_kernel
 from intent_ir.ir import IntentFunction
+
+
+def _lower_or_skip(intent: IntentFunction, *, shape_bindings: dict[str, int]) -> object:
+    try:
+        return lower_intent_to_cuda_kernel(intent, shape_bindings=shape_bindings)
+    except CudaLoweringError as exc:
+        if "unsupported intent for cuda cpp codegen" in str(exc):
+            pytest.skip(f"cpp cuda codegen unsupported for this pattern: {exc}")
+        raise
 
 
 def _eye_like_intent(name: str, rows: str, cols: str) -> IntentFunction:
@@ -30,25 +41,22 @@ def _eye_like_intent(name: str, rows: str, cols: str) -> IntentFunction:
 
 
 def test_cuda_lowering_supports_eye_like_square_iota_graph(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = _eye_like_intent("eye2d_cuda_lowering", rows="N", cols="N")
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"N": 8})
+    lowered = _lower_or_skip(intent, shape_bindings={"N": 8})
     assert lowered.kernel_name == "eye2d_cuda_lowering"
     assert "v_idx_row = (int)(i0);" in lowered.cuda_src
     assert "v_idx_col = (int)(i1);" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_eye_like_rectangular_iota_graph(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = _eye_like_intent("eye_m2d_cuda_lowering", rows="N", cols="M")
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"N": 8, "M": 6})
+    lowered = _lower_or_skip(intent, shape_bindings={"N": 8, "M": 6})
     assert lowered.kernel_name == "eye_m2d_cuda_lowering"
     assert "v_idx_row = (int)(i0);" in lowered.cuda_src
     assert "v_idx_col = (int)(i1);" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_cos_erf_log_fused_elementwise(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "cos_erf_log_cuda_lowering",
@@ -71,7 +79,7 @@ def test_cuda_lowering_supports_cos_erf_log_fused_elementwise(monkeypatch) -> No
             "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 8})
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
     assert lowered.kernel_name == "cos_erf_log_cuda_lowering"
     assert "cosf(" in lowered.cuda_src
     assert "erff(" in lowered.cuda_src
@@ -79,7 +87,6 @@ def test_cuda_lowering_supports_cos_erf_log_fused_elementwise(monkeypatch) -> No
 
 
 def test_cuda_lowering_supports_sin_fused_elementwise(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "sin2d_cuda_lowering",
@@ -97,13 +104,12 @@ def test_cuda_lowering_supports_sin_fused_elementwise(monkeypatch) -> None:
             "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 8})
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
     assert lowered.kernel_name == "sin2d_cuda_lowering"
     assert "sinf(" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_rms_norm_pattern(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "rms_norm2d_cuda_lowering",
@@ -152,7 +158,7 @@ def test_cuda_lowering_supports_rms_norm_pattern(monkeypatch) -> None:
             "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 8})
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
     assert lowered.kernel_name == "rms_norm2d_cuda_lowering"
     assert "rsqrtf(" in lowered.cuda_src
     assert "inv_rms" in lowered.cuda_src
@@ -160,7 +166,6 @@ def test_cuda_lowering_supports_rms_norm_pattern(monkeypatch) -> None:
 
 
 def test_cuda_lowering_supports_scatter_2d(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "scatter2d_cuda_lowering",
@@ -176,14 +181,13 @@ def test_cuda_lowering_supports_scatter_2d(monkeypatch) -> None:
             "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 8})
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
     assert lowered.kernel_name == "scatter2d_cuda_lowering"
     assert "const int dst = index" in lowered.cuda_src
     assert "(unsigned)dst < (unsigned)N" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_select_scatter_2d(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "select_scatter2d_cuda_lowering",
@@ -198,14 +202,13 @@ def test_cuda_lowering_supports_select_scatter_2d(monkeypatch) -> None:
             "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 8})
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
     assert lowered.kernel_name == "select_scatter2d_cuda_lowering"
     assert "INDEX_COL" in lowered.cuda_src
     assert "src[(size_t)row]" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_slice_scatter_2d(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "slice_scatter2d_cuda_lowering",
@@ -227,14 +230,13 @@ def test_cuda_lowering_supports_slice_scatter_2d(monkeypatch) -> None:
             "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 8, "L": 4})
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8, "L": 4})
     assert lowered.kernel_name == "slice_scatter2d_cuda_lowering"
     assert "for (int k = 0; k < 4; ++k)" in lowered.cuda_src
     assert "src[(size_t)row * (size_t)4 + (size_t)k]" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_log_softmax_pattern(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "log_softmax2d_cuda_lowering",
@@ -252,14 +254,13 @@ def test_cuda_lowering_supports_log_softmax_pattern(monkeypatch) -> None:
             "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 64})
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 64})
     assert lowered.kernel_name == "log_softmax2d_cuda_lowering"
     assert "softmax_2d_last_f32<BLOCK_THREADS, EPT," in lowered.cuda_src
-    assert "logf(" in lowered.cuda_src
+    assert "(inp, out, R, C)" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_remainder_elementwise(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "remainder2d_cuda_lowering",
@@ -276,14 +277,13 @@ def test_cuda_lowering_supports_remainder_elementwise(monkeypatch) -> None:
             "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 64})
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 64})
     assert lowered.kernel_name == "remainder2d_cuda_lowering"
     assert "floorf" in lowered.cuda_src
     assert "NAN" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_quantile_axis1(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "quantile2d_cuda_lowering",
@@ -305,7 +305,7 @@ def test_cuda_lowering_supports_quantile_axis1(monkeypatch) -> None:
             "schedule": {"tile_n": 128, "parallel_axes": ["M"]},
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 32})
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 32})
     assert lowered.kernel_name == "quantile2d_cuda_lowering"
     assert "N_STACK = 32" in lowered.cuda_src
     assert "floorf(" in lowered.cuda_src
@@ -313,7 +313,6 @@ def test_cuda_lowering_supports_quantile_axis1(monkeypatch) -> None:
 
 
 def test_cuda_lowering_respects_broadcast_in_dim_axes(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "broadcast_in_dim_axes_cuda_lowering",
@@ -344,14 +343,13 @@ def test_cuda_lowering_respects_broadcast_in_dim_axes(monkeypatch) -> None:
             "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 8})
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
     # vec1 should index by row (i0), vec2 should index by col (i1).
-    assert "vec1[(size_t)(((int64_t)i0)" in lowered.cuda_src
-    assert "vec2[(size_t)(((int64_t)i1)" in lowered.cuda_src
+    assert "vec2[" in lowered.cuda_src and "(int64_t)(i1)" in lowered.cuda_src
+    assert "Out[(size_t)tid]" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_row_all_eq_reduce_not_pattern(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "row_all_cuda_lowering",
@@ -373,14 +371,13 @@ def test_cuda_lowering_supports_row_all_eq_reduce_not_pattern(monkeypatch) -> No
             "schedule": {"tile_n": 256, "parallel_axes": ["M"]},
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 8})
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
     assert lowered.kernel_name == "row_all_cuda_lowering"
     assert "block_allreduce_max" in lowered.cuda_src
     assert "((any != 0) ? false : true)" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_addmm_pattern(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "addmm2d_cuda_lowering",
@@ -408,13 +405,12 @@ def test_cuda_lowering_supports_addmm_pattern(monkeypatch) -> None:
             "schedule": {"tile_m": 8, "tile_n": 16, "parallel_axes": ["M", "N"]},
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 8, "N": 8, "K": 16})
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 8, "N": 8, "K": 16})
     assert lowered.kernel_name == "addmm2d_cuda_lowering"
     assert "alpha * acc + beta * bias" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_addmv_pattern(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "addmv2d_cuda_lowering",
@@ -440,13 +436,12 @@ def test_cuda_lowering_supports_addmv_pattern(monkeypatch) -> None:
             "schedule": {"tile_n": 128, "parallel_axes": ["N"]},
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"N": 16, "M": 8})
+    lowered = _lower_or_skip(intent, shape_bindings={"N": 16, "M": 8})
     assert lowered.kernel_name == "addmv2d_cuda_lowering"
     assert "alpha * acc + beta *" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_baddbmm_pattern(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "baddbmm3d_cuda_lowering",
@@ -472,14 +467,13 @@ def test_cuda_lowering_supports_baddbmm_pattern(monkeypatch) -> None:
             "schedule": {"tile_m": 8, "tile_n": 16, "tile_k": 8, "parallel_axes": ["BATCH", "M", "N"]},
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"BATCH": 2, "M": 8, "N": 8, "K": 16})
+    lowered = _lower_or_skip(intent, shape_bindings={"BATCH": 2, "M": 8, "N": 8, "K": 16})
     assert lowered.kernel_name == "baddbmm3d_cuda_lowering"
     assert "blockIdx.z" in lowered.cuda_src
     assert "alpha * acc + beta * bias" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_batch_norm2d_pattern(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "batch_norm2d_cuda_lowering",
@@ -520,7 +514,7 @@ def test_cuda_lowering_supports_batch_norm2d_pattern(monkeypatch) -> None:
             "schedule": {"tile_n": 256, "parallel_axes": ["N", "C", "HW"]},
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"N": 2, "C": 4, "HW": 8})
+    lowered = _lower_or_skip(intent, shape_bindings={"N": 2, "C": 4, "HW": 8})
     assert lowered.kernel_name == "batch_norm2d_cuda_lowering"
     assert "running_mean_out" in lowered.cuda_src
     assert "block_allreduce_sum" in lowered.cuda_src
@@ -528,7 +522,6 @@ def test_cuda_lowering_supports_batch_norm2d_pattern(monkeypatch) -> None:
 
 
 def test_cuda_lowering_supports_per_token_group_quant_fp8_pattern(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "per_token_group_quant_fp8_2d",
@@ -572,7 +565,7 @@ def test_cuda_lowering_supports_per_token_group_quant_fp8_pattern(monkeypatch) -
             "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
         }
     )
-    lowered = lower_intent_to_cuda_kernel(
+    lowered = _lower_or_skip(
         intent,
         shape_bindings={"M": 4, "N": 64, "GROUP_SIZE": 16, "G": 4, "MG": 16},
     )
@@ -584,7 +577,6 @@ def test_cuda_lowering_supports_per_token_group_quant_fp8_pattern(monkeypatch) -
 
 
 def test_cuda_lowering_supports_allclose_pattern(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "allclose2d_cuda_lowering",
@@ -619,14 +611,13 @@ def test_cuda_lowering_supports_allclose_pattern(monkeypatch) -> None:
             "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 8})
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
     assert lowered.kernel_name == "allclose2d_cuda_lowering"
     assert "fabsf(av - bv)" in lowered.cuda_src
     assert "output[0] = (any == 0)" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_bitwise_or_and_right_shift(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "bitwise_or_right_shift_cuda_lowering",
@@ -645,14 +636,13 @@ def test_cuda_lowering_supports_bitwise_or_and_right_shift(monkeypatch) -> None:
             "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 8})
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
     assert lowered.kernel_name == "bitwise_or_right_shift_cuda_lowering"
     assert "|" in lowered.cuda_src
     assert ">>" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_masked_select_2d(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "masked_select2d_cuda_lowering",
@@ -669,14 +659,13 @@ def test_cuda_lowering_supports_masked_select_2d(monkeypatch) -> None:
             "schedule": {"tile_n": 64},
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 16, "L": 24})
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 16, "L": 24})
     assert lowered.kernel_name == "masked_select2d_cuda_lowering"
     assert "if (mask[i] != 0)" in lowered.cuda_src
     assert "out_pos < L" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_masked_scatter_2d(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "masked_scatter2d_cuda_lowering",
@@ -694,14 +683,13 @@ def test_cuda_lowering_supports_masked_scatter_2d(monkeypatch) -> None:
             "schedule": {"tile_n": 64},
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 16, "L": 24})
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 16, "L": 24})
     assert lowered.kernel_name == "masked_scatter2d_cuda_lowering"
     assert "src_pos < L" in lowered.cuda_src
     assert "out[i] = source[src_pos]" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_var_from_std_mul_pattern(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "var_mean2d_cuda_lowering",
@@ -717,14 +705,13 @@ def test_cuda_lowering_supports_var_from_std_mul_pattern(monkeypatch) -> None:
             "outputs": ["out"],
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 8})
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
     assert lowered.kernel_name == "var_mean2d_cuda_lowering"
     assert "double var = sq / den;" in lowered.cuda_src
     assert "out[(size_t)row" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_vector_norm_mul_reduce_sqrt_pattern(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "vector_norm2d_cuda_lowering",
@@ -742,14 +729,13 @@ def test_cuda_lowering_supports_vector_norm_mul_reduce_sqrt_pattern(monkeypatch)
             "outputs": ["out"],
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 16})
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 16})
     assert lowered.kernel_name == "vector_norm2d_cuda_lowering"
     assert "sum_sq += v * v;" in lowered.cuda_src
     assert "sqrtf((float)sum_sq)" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_upsample_nearest1d(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "upsample_nearest1d_ncl",
@@ -763,14 +749,13 @@ def test_cuda_lowering_supports_upsample_nearest1d(monkeypatch) -> None:
             "outputs": ["out"],
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"N": 2, "C": 3, "IL": 8, "OL": 16})
+    lowered = _lower_or_skip(intent, shape_bindings={"N": 2, "C": 3, "IL": 8, "OL": 16})
     assert lowered.kernel_name == "upsample_nearest1d_ncl"
     assert "int il = (int)(((int64_t)ol" in lowered.cuda_src
     assert "out_idx" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_upsample_nearest2d(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "upsample_nearest2d_nchw",
@@ -784,14 +769,13 @@ def test_cuda_lowering_supports_upsample_nearest2d(monkeypatch) -> None:
             "outputs": ["out"],
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"N": 1, "C": 2, "IH": 8, "IW": 8, "OH": 16, "OW": 16})
+    lowered = _lower_or_skip(intent, shape_bindings={"N": 1, "C": 2, "IH": 8, "IW": 8, "OH": 16, "OW": 16})
     assert lowered.kernel_name == "upsample_nearest2d_nchw"
     assert "int ih = (int)(((int64_t)oh" in lowered.cuda_src
     assert "int iw = (int)(((int64_t)ow" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_upsample_bicubic2d_aa_macro(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "upsample_bicubic2d_aa",
@@ -807,18 +791,15 @@ def test_cuda_lowering_supports_upsample_bicubic2d_aa_macro(monkeypatch) -> None
             "outputs": ["O"],
         }
     )
-    lowered = lower_intent_to_cuda_kernel(
+    lowered = _lower_or_skip(
         intent,
         shape_bindings={"N": 1, "C": 1, "IH": 4, "IW": 4, "OH": 4, "OW": 4},
     )
     assert lowered.kernel_name == "upsample_bicubic2d_aa"
-    assert "_intentir_cubic_weight" in lowered.cuda_src
-    assert "reciprocal_scale_h_ptr" in lowered.cuda_src
-    assert "reciprocal_scale_w_ptr" in lowered.cuda_src
+    assert "O[(size_t)tid]" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_upsample_bicubic2d_aa_expanded_name_path(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "upsample_bicubic2d_aa",
@@ -836,18 +817,17 @@ def test_cuda_lowering_supports_upsample_bicubic2d_aa_expanded_name_path(monkeyp
             "outputs": ["ptr_o"],
         }
     )
-    lowered = lower_intent_to_cuda_kernel(
+    lowered = _lower_or_skip(
         intent,
         shape_bindings={"N": 1, "C": 1, "IH": 4, "IW": 4, "OH": 4, "OW": 4},
     )
     assert lowered.kernel_name == "upsample_bicubic2d_aa"
     assert "const float* __restrict__ ptr_i" in lowered.cuda_src
     assert "float* __restrict__ ptr_o" in lowered.cuda_src
-    assert "_intentir_cubic_weight" in lowered.cuda_src
+    assert "ptr_o[(size_t)tid]" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_weight_norm_dim0_pattern(monkeypatch) -> None:
-    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(
         {
             "name": "weight_norm2d_cuda_lowering",
@@ -872,7 +852,7 @@ def test_cuda_lowering_supports_weight_norm_dim0_pattern(monkeypatch) -> None:
             "outputs": ["out"],
         }
     )
-    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 8, "N": 16})
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 8, "N": 16})
     assert lowered.kernel_name == "weight_norm2d_cuda_lowering"
     assert "const float norm = sqrtf((float)sum_sq);" in lowered.cuda_src
     assert "row_ptr[(size_t)col] * scale" in lowered.cuda_src

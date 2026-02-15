@@ -89,7 +89,7 @@ __device__ __forceinline__ float block_allreduce_sum_f32(float v) {
   return warp_out[0];
 }
 
-template <int BLOCK_THREADS, int EPT, bool USE_EXP2, bool FULL_TILE = false>
+template <int BLOCK_THREADS, int EPT, bool USE_EXP2, bool FULL_TILE = false, bool LOG_OUTPUT = false>
 __device__ __forceinline__ void softmax_2d_last_f32(const float* __restrict__ inp, float* __restrict__ out, int R, int C) {
   static_assert(BLOCK_THREADS > 0 && BLOCK_THREADS <= 1024, "softmax block size must be in (0,1024]");
   static_assert((BLOCK_THREADS % 32) == 0, "softmax block must be a multiple of 32 threads");
@@ -128,11 +128,15 @@ __device__ __forceinline__ void softmax_2d_last_f32(const float* __restrict__ in
   #pragma unroll
   for (int i = 0; i < EPT; ++i) {
     const int c = tid + i * BLOCK_THREADS;
+    float y = expv[i] * inv;
+    if constexpr (LOG_OUTPUT) {
+      y = logf(fmaxf(y, 1.0e-30f));
+    }
     if constexpr (FULL_TILE) {
-      out_row[(size_t)c] = expv[i] * inv;
+      out_row[(size_t)c] = y;
     } else {
       if (c < C) {
-        out_row[(size_t)c] = expv[i] * inv;
+        out_row[(size_t)c] = y;
       }
     }
   }

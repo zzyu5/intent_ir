@@ -35,7 +35,7 @@ if str(ROOT) not in sys.path:
 
 from pipeline.triton.core import coverage_kernel_specs, run_pipeline_for_spec  # noqa: E402
 from intent_ir.ir import IntentFunction, ScheduleSketch  # noqa: E402
-from backends.cuda.codegen.intentir_to_cuda import CudaLoweringError, lower_intent_to_cuda_kernel  # noqa: E402
+from backends.cuda.codegen.cpp_driver import CudaLoweringError, lower_intent_to_cuda_kernel  # noqa: E402
 from frontends.cuda.runtime import CudaLaunch, compile_cuda_extension  # noqa: E402
 
 

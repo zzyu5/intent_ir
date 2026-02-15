@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from backends.spmd_rvv.codegen import intentir_to_c
+from backends.spmd_rvv.codegen import cpp_driver as rvv_compiler
 from backends.spmd_rvv.opset import SPMD_RVV_SUPPORTED_OPS
 from intent_ir.ir import IntentFunction
 
@@ -38,26 +38,27 @@ def test_rvv_lowering_preflight_accepts_sin_cos_erf_and_log(monkeypatch) -> None
         atol: float = 1e-3,
         rtol: float = 1e-3,
         mode: str = "verify",
+        build_type: str = "Release",
     ) -> str:
-        del shape_bindings, atol, rtol, mode
+        del shape_bindings, atol, rtol, mode, build_type
         calls.append(str(intent.name))
         return "ok"
 
-    monkeypatch.setattr(intentir_to_c, "lower_intent_to_c_with_files_cpp", _fake_cpp_lower)
+    monkeypatch.setattr(rvv_compiler, "lower_intent_to_c_with_files_cpp", _fake_cpp_lower)
 
-    c0 = intentir_to_c.lower_intent_to_c_with_files(
+    c0 = rvv_compiler.lower_intent_to_c_with_files(
         _unary_intent("sin", "rvv_sin"),
         shape_bindings={"M": 4, "N": 8},
     )
-    c1 = intentir_to_c.lower_intent_to_c_with_files(
+    c1 = rvv_compiler.lower_intent_to_c_with_files(
         _unary_intent("cos", "rvv_cos"),
         shape_bindings={"M": 4, "N": 8},
     )
-    c2 = intentir_to_c.lower_intent_to_c_with_files(
+    c2 = rvv_compiler.lower_intent_to_c_with_files(
         _unary_intent("erf", "rvv_erf"),
         shape_bindings={"M": 4, "N": 8},
     )
-    c3 = intentir_to_c.lower_intent_to_c_with_files(
+    c3 = rvv_compiler.lower_intent_to_c_with_files(
         _unary_intent("log", "rvv_log"),
         shape_bindings={"M": 4, "N": 8},
     )

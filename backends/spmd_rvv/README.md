@@ -10,7 +10,7 @@ This package contains the Task6 backend components.
 
 **Key API**
 
-- `backends.spmd_rvv.codegen.intentir_to_c.lower_intent_to_c_with_files()`:
+- `backends.spmd_rvv.codegen.cpp_driver.lower_intent_to_c_with_files()`:
   Generates a standalone `main.c` that reads `<tensor>.bin` inputs and compares
   outputs against `<output>_ref.bin`.
 

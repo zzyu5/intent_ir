@@ -12,7 +12,7 @@ import paramiko
 from backends.spmd_rvv.analysis.cost_model import GEMMCostModel
 from backends.spmd_rvv.analysis.device_query import load_profile, query_remote_device
 from backends.spmd_rvv.analysis.hardware_profile import RVVHardwareProfile
-from backends.spmd_rvv.codegen.intentir_to_c import lower_intent_to_c_with_files
+from backends.spmd_rvv.codegen.cpp_driver import lower_intent_to_c_with_files
 from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, TensorType
 
 
