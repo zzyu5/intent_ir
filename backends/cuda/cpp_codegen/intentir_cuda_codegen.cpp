@@ -4038,6 +4038,37 @@ bool _reduce_axis_is_1(const json& attrs) {
   return false;
 }
 
+bool _reduce_axis_is_all_2d(const json& attrs) {
+  if (!attrs.is_object()) return false;
+  auto dims = attrs.value("dims", json());
+  if (!dims.is_array() || dims.size() != 2) return false;
+  bool has0 = false, has1 = false;
+  for (const auto& d : dims) {
+    try {
+      const int v = d.get<int>();
+      if (v == 0) has0 = true;
+      if (v == 1) has1 = true;
+    } catch (...) {
+      return false;
+    }
+  }
+  return has0 && has1;
+}
+
+bool _attrs_return_indices(const json& attrs) {
+  if (!attrs.is_object()) return false;
+  auto it = attrs.find("return_indices");
+  if (it == attrs.end()) return false;
+  if (it->is_boolean()) return it->get<bool>();
+  if (it->is_number_integer()) return it->get<int64_t>() != 0;
+  if (it->is_number()) return it->get<double>() != 0.0;
+  if (it->is_string()) {
+    const std::string s = ascii_lower(it->get<std::string>());
+    return s == "1" || s == "true" || s == "yes";
+  }
+  return false;
+}
+
 int64_t _pow2_block(int64_t x) {
   if (x <= 0) return 256;
   if (x > 1024) x = 1024;
@@ -4181,6 +4212,386 @@ json emit_reduce_max_2d_axis1_f32(const Intent& intent, const json& bindings) {
   w.line("__shared__ intentir_cuda::BlockAllreduceF32<BLOCK_THREADS> red;");
   w.line("const float mx = intentir_cuda::block_allreduce_max<BLOCK_THREADS>(acc, &red);");
   w.line("if ((int)threadIdx.x == 0) " + out_name + "[(size_t)m] = mx;");
+  w.dedent();
+  w.line("}");
+
+  std::vector<std::string> tensor_args = {inp_name, out_name};
+  std::unordered_map<std::string, std::string> scalar_args;
+  std::vector<std::string> arg_names = {inp_name, out_name};
+  for (const auto& dim_name : {"M", "N"}) {
+    if (is_scalar_tensor(intent, dim_name, "i32")) {
+      tensor_args.push_back(dim_name);
+      arg_names.push_back(dim_name);
+    } else {
+      scalar_args.emplace(dim_name, "i32");
+      arg_names.push_back(dim_name);
+    }
+  }
+
+  json out;
+  out["kernel_name"] = intent.name;
+  out["cuda_src"] = cuda_ss.str();
+  out["io_spec"] = io_spec_from_args(intent, tensor_args, scalar_args, arg_names);
+  out["launch"] = {{"grid", {M, 1, 1}}, {"block", {block_x, 1, 1}}, {"shared_mem", 0}};
+  out["output_names"] = {out_name};
+  out["bindings"] = bindings;
+  return out;
+}
+
+json emit_reduce_mean_2d_axis1_f32(const Intent& intent, const json& bindings) {
+  if (!(intent.ops.size() == 3 && intent.ops[0].op == "const" && intent.ops[1].op == "reduce_sum" && intent.ops[2].op == "div")) {
+    fail("reduce_mean lowering expects const->reduce_sum->div");
+  }
+  const Op& const_op = intent.ops[0];
+  const Op& sum_op = intent.ops[1];
+  const Op& div_op = intent.ops[2];
+  if (sum_op.inputs.size() != 1) fail("reduce_mean reduce_sum expects 1 input");
+  if (!_reduce_axis_is_1(sum_op.attrs)) fail("reduce_mean MVP supports only axis=1 for 2D tensors");
+  if (div_op.inputs.size() != 2) fail("reduce_mean div expects 2 inputs");
+  if (div_op.inputs[0] != sum_op.output || div_op.inputs[1] != const_op.output) {
+    fail("reduce_mean expects div(sum_out, const_out)");
+  }
+  const std::string inp_name = sum_op.inputs[0];
+  const std::string out_name = div_op.output;
+
+  const int64_t M = binding_int(bindings, "M").value_or(-1);
+  const int64_t N = binding_int(bindings, "N").value_or(-1);
+  if (M <= 0 || N <= 0) fail("reduce_mean missing/invalid bindings: M/N");
+
+  int64_t block_x = resolve_schedule_int(intent, bindings, "tile_n", 256);
+  block_x = _pow2_block(block_x);
+
+  const bool m_is_tensor = is_scalar_tensor(intent, "M", "i32");
+  const bool n_is_tensor = is_scalar_tensor(intent, "N", "i32");
+  const std::string m_param = m_is_tensor ? "const int* M_ptr" : "int M";
+  const std::string n_param = n_is_tensor ? "const int* N_ptr" : "int N";
+  const std::string m_load = m_is_tensor ? "const int M = M_ptr ? M_ptr[0] : 0;" : "";
+  const std::string n_load = n_is_tensor ? "const int N = N_ptr ? N_ptr[0] : 0;" : "";
+
+  std::ostringstream cuda_ss;
+  CodeWriter w(cuda_ss);
+  w.line("#include <stddef.h>");
+  w.line("#include <stdint.h>");
+  w.line("#include \"intentir_cuda_ops.cuh\"");
+  w.line("#include \"kernels/reduce.cuh\"");
+  w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_x) + ") void " + intent.name +
+         "(const float* __restrict__ " + inp_name + ", float* __restrict__ " + out_name + ", " +
+         m_param + ", " + n_param + ") {");
+  w.indent();
+  if (!m_load.empty()) w.line(m_load);
+  if (!n_load.empty()) w.line(n_load);
+  w.line("const int m = (int)blockIdx.x;");
+  w.line("if (m >= M) return;");
+  w.line("float acc = 0.0f;");
+  w.line("const float* row = " + inp_name + " + (size_t)m * (size_t)N;");
+  w.line("for (int n = (int)threadIdx.x; n < N; n += (int)blockDim.x) acc += intentir_ldg_f32(row + (size_t)n);");
+  w.line("constexpr int BLOCK_THREADS = " + std::to_string(block_x) + ";");
+  w.line("__shared__ intentir_cuda::BlockAllreduceF32<BLOCK_THREADS> red;");
+  w.line("const float sum = intentir_cuda::block_allreduce_sum<BLOCK_THREADS>(acc, &red);");
+  w.line("if ((int)threadIdx.x == 0) " + out_name + "[(size_t)m] = (N > 0 ? (sum / (float)N) : 0.0f);");
+  w.dedent();
+  w.line("}");
+
+  std::vector<std::string> tensor_args = {inp_name, out_name};
+  std::unordered_map<std::string, std::string> scalar_args;
+  std::vector<std::string> arg_names = {inp_name, out_name};
+  for (const auto& dim_name : {"M", "N"}) {
+    if (is_scalar_tensor(intent, dim_name, "i32")) {
+      tensor_args.push_back(dim_name);
+      arg_names.push_back(dim_name);
+    } else {
+      scalar_args.emplace(dim_name, "i32");
+      arg_names.push_back(dim_name);
+    }
+  }
+
+  json out;
+  out["kernel_name"] = intent.name;
+  out["cuda_src"] = cuda_ss.str();
+  out["io_spec"] = io_spec_from_args(intent, tensor_args, scalar_args, arg_names);
+  out["launch"] = {{"grid", {M, 1, 1}}, {"block", {block_x, 1, 1}}, {"shared_mem", 0}};
+  out["output_names"] = {out_name};
+  out["bindings"] = bindings;
+  return out;
+}
+
+json emit_reduce_min_2d_all_f32(const Intent& intent, const json& bindings) {
+  if (!(intent.ops.size() == 1 && intent.ops[0].op == "reduce_min")) fail("reduce_min(all) lowering expects a single reduce_min op");
+  const Op& op = intent.ops[0];
+  if (op.inputs.size() != 1) fail("reduce_min(all) expects 1 input");
+  if (!_reduce_axis_is_all_2d(op.attrs)) fail("reduce_min(all) expects dims=[0,1]");
+  const std::string inp_name = op.inputs[0];
+  const std::string out_name = op.output;
+
+  const int64_t M = binding_int(bindings, "M").value_or(-1);
+  const int64_t N = binding_int(bindings, "N").value_or(-1);
+  if (M <= 0 || N <= 0) fail("reduce_min(all) missing/invalid bindings: M/N");
+
+  int64_t block_x = resolve_schedule_int(intent, bindings, "tile_n", 256);
+  block_x = _pow2_block(block_x);
+
+  const bool m_is_tensor = is_scalar_tensor(intent, "M", "i32");
+  const bool n_is_tensor = is_scalar_tensor(intent, "N", "i32");
+  const std::string m_param = m_is_tensor ? "const int* M_ptr" : "int M";
+  const std::string n_param = n_is_tensor ? "const int* N_ptr" : "int N";
+  const std::string m_load = m_is_tensor ? "const int M = M_ptr ? M_ptr[0] : 0;" : "";
+  const std::string n_load = n_is_tensor ? "const int N = N_ptr ? N_ptr[0] : 0;" : "";
+
+  std::ostringstream cuda_ss;
+  CodeWriter w(cuda_ss);
+  w.line("#include <math.h>");
+  w.line("#include <stddef.h>");
+  w.line("#include <stdint.h>");
+  w.line("#include \"intentir_cuda_ops.cuh\"");
+  w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_x) + ") void " + intent.name +
+         "(const float* __restrict__ " + inp_name + ", float* __restrict__ " + out_name + ", " + m_param + ", " + n_param + ") {");
+  w.indent();
+  if (!m_load.empty()) w.line(m_load);
+  if (!n_load.empty()) w.line(n_load);
+  w.line("const int total = M * N;");
+  w.line("float acc = INFINITY;");
+  w.line("for (int i = (int)threadIdx.x; i < total; i += (int)blockDim.x) acc = fminf(acc, intentir_ldg_f32(" + inp_name + " + (size_t)i));");
+  w.line("__shared__ float smin[" + std::to_string(block_x) + "];");
+  w.line("smin[(int)threadIdx.x] = acc;");
+  w.line("__syncthreads();");
+  w.line("for (int step = (int)blockDim.x >> 1; step > 0; step >>= 1) {");
+  w.indent();
+  w.line("if ((int)threadIdx.x < step) smin[(int)threadIdx.x] = fminf(smin[(int)threadIdx.x], smin[(int)threadIdx.x + step]);");
+  w.line("__syncthreads();");
+  w.dedent();
+  w.line("}");
+  w.line("if ((int)threadIdx.x == 0) " + out_name + "[0] = smin[0];");
+  w.dedent();
+  w.line("}");
+
+  std::vector<std::string> tensor_args = {inp_name, out_name};
+  std::unordered_map<std::string, std::string> scalar_args;
+  std::vector<std::string> arg_names = {inp_name, out_name};
+  for (const auto& dim_name : {"M", "N"}) {
+    if (is_scalar_tensor(intent, dim_name, "i32")) {
+      tensor_args.push_back(dim_name);
+      arg_names.push_back(dim_name);
+    } else {
+      scalar_args.emplace(dim_name, "i32");
+      arg_names.push_back(dim_name);
+    }
+  }
+
+  json out;
+  out["kernel_name"] = intent.name;
+  out["cuda_src"] = cuda_ss.str();
+  out["io_spec"] = io_spec_from_args(intent, tensor_args, scalar_args, arg_names);
+  out["launch"] = {{"grid", {1, 1, 1}}, {"block", {block_x, 1, 1}}, {"shared_mem", 0}};
+  out["output_names"] = {out_name};
+  out["bindings"] = bindings;
+  return out;
+}
+
+json emit_reduce_min_2d_axis1_with_indices_f32_i64(const Intent& intent, const json& bindings) {
+  if (!(intent.ops.size() >= 1 && intent.ops.back().op == "reduce_min")) fail("reduce_min(axis=1,indices) expects trailing reduce_min");
+  const Op& op = intent.ops.back();
+  if (op.inputs.size() != 1) fail("reduce_min(axis=1,indices) expects 1 input");
+  if (!_reduce_axis_is_1(op.attrs)) fail("reduce_min(axis=1,indices) expects axis=1");
+  if (!_attrs_return_indices(op.attrs)) fail("reduce_min(axis=1,indices) expects return_indices=true");
+  const auto idx_it = op.attrs.find("index_output");
+  if (idx_it == op.attrs.end() || !idx_it->is_string()) fail("reduce_min(axis=1,indices) missing index_output");
+
+  const std::string inp_name = op.inputs[0];
+  const std::string out_name = op.output;
+  const std::string idx_name = idx_it->get<std::string>();
+  auto idx_tensor_it = intent.tensors.find(idx_name);
+  if (idx_tensor_it == intent.tensors.end()) fail("reduce_min(axis=1,indices) index_output tensor not found");
+  const std::string idx_dtype = idx_tensor_it->second.dtype;
+  const std::string idx_ctype = (idx_dtype == "i64") ? "int64_t" : ((idx_dtype == "i32") ? "int" : "");
+  if (idx_ctype.empty()) fail("reduce_min(axis=1,indices) index_output dtype must be i32/i64");
+
+  const int64_t M = binding_int(bindings, "M").value_or(-1);
+  const int64_t N = binding_int(bindings, "N").value_or(-1);
+  if (M <= 0 || N <= 0) fail("reduce_min(axis=1,indices) missing/invalid bindings: M/N");
+
+  int64_t block_x = resolve_schedule_int(intent, bindings, "tile_n", 256);
+  block_x = _pow2_block(block_x);
+
+  const bool m_is_tensor = is_scalar_tensor(intent, "M", "i32");
+  const bool n_is_tensor = is_scalar_tensor(intent, "N", "i32");
+  const std::string m_param = m_is_tensor ? "const int* M_ptr" : "int M";
+  const std::string n_param = n_is_tensor ? "const int* N_ptr" : "int N";
+  const std::string m_load = m_is_tensor ? "const int M = M_ptr ? M_ptr[0] : 0;" : "";
+  const std::string n_load = n_is_tensor ? "const int N = N_ptr ? N_ptr[0] : 0;" : "";
+
+  std::ostringstream cuda_ss;
+  CodeWriter w(cuda_ss);
+  w.line("#include <math.h>");
+  w.line("#include <stddef.h>");
+  w.line("#include <stdint.h>");
+  w.line("#include \"intentir_cuda_ops.cuh\"");
+  w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_x) + ") void " + intent.name + "(");
+  w.indent();
+  w.line("const float* __restrict__ " + inp_name + ",");
+  w.line("float* __restrict__ " + out_name + ",");
+  w.line(idx_ctype + "* __restrict__ " + idx_name + ",");
+  w.line(m_param + ",");
+  w.line(n_param + ") {");
+  w.dedent();
+  w.indent();
+  if (!m_load.empty()) w.line(m_load);
+  if (!n_load.empty()) w.line(n_load);
+  w.line("const int m = (int)blockIdx.x;");
+  w.line("if (m >= M) return;");
+  w.line("const float* row = " + inp_name + " + (size_t)m * (size_t)N;");
+  w.line("float best = INFINITY;");
+  w.line("int best_idx = 0;");
+  w.line("for (int n = (int)threadIdx.x; n < N; n += (int)blockDim.x) {");
+  w.indent();
+  w.line("const float v = intentir_ldg_f32(row + (size_t)n);");
+  w.line("if (v < best || (v == best && n < best_idx)) { best = v; best_idx = n; }");
+  w.dedent();
+  w.line("}");
+  w.line("__shared__ float s_val[" + std::to_string(block_x) + "];");
+  w.line("__shared__ int s_idx[" + std::to_string(block_x) + "];");
+  w.line("s_val[(int)threadIdx.x] = best;");
+  w.line("s_idx[(int)threadIdx.x] = best_idx;");
+  w.line("__syncthreads();");
+  w.line("for (int step = (int)blockDim.x >> 1; step > 0; step >>= 1) {");
+  w.indent();
+  w.line("if ((int)threadIdx.x < step) {");
+  w.indent();
+  w.line("const float ov = s_val[(int)threadIdx.x + step];");
+  w.line("const int oi = s_idx[(int)threadIdx.x + step];");
+  w.line("if (ov < s_val[(int)threadIdx.x] || (ov == s_val[(int)threadIdx.x] && oi < s_idx[(int)threadIdx.x])) {");
+  w.indent();
+  w.line("s_val[(int)threadIdx.x] = ov;");
+  w.line("s_idx[(int)threadIdx.x] = oi;");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+  w.line("__syncthreads();");
+  w.dedent();
+  w.line("}");
+  w.line("if ((int)threadIdx.x == 0) {");
+  w.indent();
+  w.line(out_name + "[(size_t)m] = s_val[0];");
+  w.line(idx_name + "[(size_t)m] = (" + idx_ctype + ")s_idx[0];");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+
+  std::vector<std::string> tensor_args = {inp_name, out_name, idx_name};
+  std::unordered_map<std::string, std::string> scalar_args;
+  std::vector<std::string> arg_names = {inp_name, out_name, idx_name};
+  for (const auto& dim_name : {"M", "N"}) {
+    if (is_scalar_tensor(intent, dim_name, "i32")) {
+      tensor_args.push_back(dim_name);
+      arg_names.push_back(dim_name);
+    } else {
+      scalar_args.emplace(dim_name, "i32");
+      arg_names.push_back(dim_name);
+    }
+  }
+
+  json out;
+  out["kernel_name"] = intent.name;
+  out["cuda_src"] = cuda_ss.str();
+  out["io_spec"] = io_spec_from_args(intent, tensor_args, scalar_args, arg_names);
+  out["launch"] = {{"grid", {M, 1, 1}}, {"block", {block_x, 1, 1}}, {"shared_mem", 0}};
+  out["output_names"] = {out_name, idx_name};
+  out["bindings"] = bindings;
+  return out;
+}
+
+json emit_arg_extrema_2d_axis1_i64(const Intent& intent, const json& bindings, bool is_max) {
+  if (!(intent.ops.size() == 1 && (intent.ops[0].op == "argmax" || intent.ops[0].op == "argmin"))) {
+    fail("arg extrema lowering expects a single argmax/argmin op");
+  }
+  const Op& op = intent.ops[0];
+  if (op.inputs.size() != 1) fail("arg extrema expects 1 input");
+  if (!_reduce_axis_is_1(op.attrs)) fail("arg extrema MVP supports only axis=1");
+  const std::string inp_name = op.inputs[0];
+  const std::string out_name = op.output;
+  auto out_tensor_it = intent.tensors.find(out_name);
+  if (out_tensor_it == intent.tensors.end()) fail("arg extrema output tensor not found");
+  const std::string out_dtype = out_tensor_it->second.dtype;
+  const std::string out_ctype = (out_dtype == "i64") ? "int64_t" : ((out_dtype == "i32") ? "int" : "");
+  if (out_ctype.empty()) fail("arg extrema output dtype must be i32/i64");
+
+  const int64_t M = binding_int(bindings, "M").value_or(-1);
+  const int64_t N = binding_int(bindings, "N").value_or(-1);
+  if (M <= 0 || N <= 0) fail("arg extrema missing/invalid bindings: M/N");
+
+  int64_t block_x = resolve_schedule_int(intent, bindings, "tile_n", 256);
+  block_x = _pow2_block(block_x);
+
+  const bool m_is_tensor = is_scalar_tensor(intent, "M", "i32");
+  const bool n_is_tensor = is_scalar_tensor(intent, "N", "i32");
+  const std::string m_param = m_is_tensor ? "const int* M_ptr" : "int M";
+  const std::string n_param = n_is_tensor ? "const int* N_ptr" : "int N";
+  const std::string m_load = m_is_tensor ? "const int M = M_ptr ? M_ptr[0] : 0;" : "";
+  const std::string n_load = n_is_tensor ? "const int N = N_ptr ? N_ptr[0] : 0;" : "";
+
+  std::ostringstream cuda_ss;
+  CodeWriter w(cuda_ss);
+  w.line("#include <math.h>");
+  w.line("#include <stddef.h>");
+  w.line("#include <stdint.h>");
+  w.line("#include \"intentir_cuda_ops.cuh\"");
+  w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_x) + ") void " + intent.name + "(");
+  w.indent();
+  w.line("const float* __restrict__ " + inp_name + ",");
+  w.line(out_ctype + "* __restrict__ " + out_name + ",");
+  w.line(m_param + ",");
+  w.line(n_param + ") {");
+  w.dedent();
+  w.indent();
+  if (!m_load.empty()) w.line(m_load);
+  if (!n_load.empty()) w.line(n_load);
+  w.line("const int m = (int)blockIdx.x;");
+  w.line("if (m >= M) return;");
+  w.line("const float* row = " + inp_name + " + (size_t)m * (size_t)N;");
+  if (is_max) {
+    w.line("float best = -INFINITY;");
+  } else {
+    w.line("float best = INFINITY;");
+  }
+  w.line("int best_idx = 0;");
+  w.line("for (int n = (int)threadIdx.x; n < N; n += (int)blockDim.x) {");
+  w.indent();
+  w.line("const float v = intentir_ldg_f32(row + (size_t)n);");
+  if (is_max) {
+    w.line("if (v > best || (v == best && n < best_idx)) { best = v; best_idx = n; }");
+  } else {
+    w.line("if (v < best || (v == best && n < best_idx)) { best = v; best_idx = n; }");
+  }
+  w.dedent();
+  w.line("}");
+  w.line("__shared__ float s_val[" + std::to_string(block_x) + "];");
+  w.line("__shared__ int s_idx[" + std::to_string(block_x) + "];");
+  w.line("s_val[(int)threadIdx.x] = best;");
+  w.line("s_idx[(int)threadIdx.x] = best_idx;");
+  w.line("__syncthreads();");
+  w.line("for (int step = (int)blockDim.x >> 1; step > 0; step >>= 1) {");
+  w.indent();
+  w.line("if ((int)threadIdx.x < step) {");
+  w.indent();
+  w.line("const float ov = s_val[(int)threadIdx.x + step];");
+  w.line("const int oi = s_idx[(int)threadIdx.x + step];");
+  if (is_max) {
+    w.line("if (ov > s_val[(int)threadIdx.x] || (ov == s_val[(int)threadIdx.x] && oi < s_idx[(int)threadIdx.x])) {");
+  } else {
+    w.line("if (ov < s_val[(int)threadIdx.x] || (ov == s_val[(int)threadIdx.x] && oi < s_idx[(int)threadIdx.x])) {");
+  }
+  w.indent();
+  w.line("s_val[(int)threadIdx.x] = ov;");
+  w.line("s_idx[(int)threadIdx.x] = oi;");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+  w.line("__syncthreads();");
+  w.dedent();
+  w.line("}");
+  w.line("if ((int)threadIdx.x == 0) " + out_name + "[(size_t)m] = (" + out_ctype + ")s_idx[0];");
   w.dedent();
   w.line("}");
 
@@ -5443,7 +5854,17 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
       emit_assign("erff(" + val(op.inputs[0]) + ")");
     } else if (opname == "exp") {
       if (op.inputs.size() != 1) fail("exp expects 1 input");
-      emit_assign("__expf(" + val(op.inputs[0]) + ")");
+      bool use_exp2 = false;
+      if (op.attrs.is_object() && op.attrs.contains("base")) {
+        const auto& base = op.attrs["base"];
+        if (base.is_number()) {
+          const double v = base.get<double>();
+          use_exp2 = std::abs(v - 2.0) < 1e-9;
+        } else if (base.is_string()) {
+          use_exp2 = (base.get<std::string>() == "2" || base.get<std::string>() == "2.0");
+        }
+      }
+      emit_assign(use_exp2 ? ("exp2f(" + val(op.inputs[0]) + ")") : ("__expf(" + val(op.inputs[0]) + ")"));
     } else if (opname == "acos") {
       if (op.inputs.size() != 1) fail("acos expects 1 input");
       emit_assign("acosf(" + val(op.inputs[0]) + ")");
@@ -6621,6 +7042,20 @@ json lower_intent_to_cuda(const Intent& intent, const json& bindings_json) {
   if (intent.ops.size() == 1 && intent.ops[0].op == "transpose") return emit_transpose_2d_f32(intent, bindings_json);
   if (intent.ops.size() == 1 && intent.ops[0].op == "reduce_sum") return emit_reduce_sum_2d_axis1_f32(intent, bindings_json);
   if (intent.ops.size() == 1 && intent.ops[0].op == "reduce_max") return emit_reduce_max_2d_axis1_f32(intent, bindings_json);
+  if (intent.ops.size() == 1 && intent.ops[0].op == "reduce_min") {
+    if (_reduce_axis_is_all_2d(intent.ops[0].attrs) && !_attrs_return_indices(intent.ops[0].attrs)) {
+      return emit_reduce_min_2d_all_f32(intent, bindings_json);
+    }
+  }
+  if (!intent.ops.empty() && intent.ops.back().op == "reduce_min" && _reduce_axis_is_1(intent.ops.back().attrs) &&
+      _attrs_return_indices(intent.ops.back().attrs)) {
+    return emit_reduce_min_2d_axis1_with_indices_f32_i64(intent, bindings_json);
+  }
+  if (intent.ops.size() == 1 && intent.ops[0].op == "argmax") return emit_arg_extrema_2d_axis1_i64(intent, bindings_json, true);
+  if (intent.ops.size() == 1 && intent.ops[0].op == "argmin") return emit_arg_extrema_2d_axis1_i64(intent, bindings_json, false);
+  if (intent.ops.size() == 3 && intent.ops[0].op == "const" && intent.ops[1].op == "reduce_sum" && intent.ops[2].op == "div") {
+    return emit_reduce_mean_2d_axis1_f32(intent, bindings_json);
+  }
   if (intent.ops.size() == 1 && intent.ops[0].op == "gather") return emit_gather2d_f32(intent, bindings_json);
   if (intent.ops.size() == 1 && intent.ops[0].op == "dropout") return emit_dropout(intent, bindings_json);
   if (intent.ops.size() == 1 && intent.ops[0].op == "warp") return emit_warp(intent, bindings_json);
@@ -6737,7 +7172,7 @@ json lower_intent_to_cuda(const Intent& intent, const json& bindings_json) {
 
   fail(
       "unsupported intent for cuda cpp codegen (supported: matmul, dropout, softmax, layernorm, correlation, resize, rope, warp, transpose, "
-      "reduce_sum, reduce_max, any_dim, gather, diag, diag_embed, nonzero, count_nonzero, topk, trace, fused_elementwise)");
+      "reduce_sum, reduce_max, reduce_min, reduce_mean_pattern, argmax, argmin, any_dim, gather, diag, diag_embed, nonzero, count_nonzero, topk, trace, fused_elementwise)");
 }
 
 }  // namespace

@@ -1121,3 +1121,141 @@ def test_cuda_lowering_supports_bf16_cast_minimum_pattern(monkeypatch) -> None:
     assert lowered.kernel_name == "minimum2d_cuda_lowering"
     assert "__bfloat162float(" in lowered.cuda_src
     assert "__float2bfloat16(" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_exp_base2_attr(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "exp22d_cuda_lowering",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "exp", "inputs": ["x"], "output": "out", "attrs": {"base": 2.0}},
+            ],
+            "outputs": ["out"],
+            "parallel_axes": ["M", "N"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
+    assert lowered.kernel_name == "exp22d_cuda_lowering"
+    assert "exp2f(" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_row_mean_sum_div_pattern(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "row_mean_cuda_lowering",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "sum_result": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "N_scalar": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "const", "inputs": [], "output": "N_scalar", "attrs": {"value": "N"}},
+                {"op": "reduce_sum", "inputs": ["inp"], "output": "sum_result", "attrs": {"dims": [1]}},
+                {"op": "div", "inputs": ["sum_result", "N_scalar"], "output": "out"},
+            ],
+            "outputs": ["out"],
+            "parallel_axes": ["M"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M"]},
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
+    assert lowered.kernel_name == "row_mean_cuda_lowering"
+    assert "block_allreduce_sum" in lowered.cuda_src
+    assert "sum / (float)N" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_reduce_min_all_2d(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "min2d_cuda_lowering",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out_value": {"dtype": "f32", "shape": [], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "reduce_min", "inputs": ["inp"], "output": "out_value", "attrs": {"dims": [0, 1], "keepdims": False}},
+            ],
+            "outputs": ["out_value"],
+            "parallel_axes": [],
+            "schedule": {"tile_n": 128},
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
+    assert lowered.kernel_name == "min2d_cuda_lowering"
+    assert "fminf" in lowered.cuda_src
+    assert "out_value[0]" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_reduce_min_axis1_with_indices(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "min_dim2d_cuda_lowering",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "max_value": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "min_values_init": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "argmin_values_init": {"dtype": "i64", "shape": ["M"], "layout": "row_major"},
+                "out_value": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "out_index": {"dtype": "i64", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "const", "inputs": [], "output": "max_value", "attrs": {"value": 3.4028235e38}},
+                {"op": "broadcast_in_dim", "inputs": ["max_value"], "output": "min_values_init", "attrs": {"out_shape": ["M"], "broadcast_dims": []}},
+                {"op": "const", "inputs": [], "output": "argmin_values_init", "attrs": {"value": 0, "dtype": "i64", "shape": ["M"]}},
+                {
+                    "op": "reduce_min",
+                    "inputs": ["inp"],
+                    "output": "out_value",
+                    "attrs": {"dims": [1], "keepdims": False, "return_indices": True, "index_output": "out_index"},
+                },
+            ],
+            "outputs": ["out_value", "out_index"],
+            "parallel_axes": ["M"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M"]},
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
+    assert lowered.kernel_name == "min_dim2d_cuda_lowering"
+    assert "int64_t* __restrict__ out_index" in lowered.cuda_src
+    assert "out_index[(size_t)m]" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_argmax_argmin_axis1(monkeypatch) -> None:
+    argmax = IntentFunction.from_json_dict(
+        {
+            "name": "argmax2d_cuda_lowering",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out_index": {"dtype": "i32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [{"op": "argmax", "inputs": ["inp"], "output": "out_index", "attrs": {"axis": 1}}],
+            "outputs": ["out_index"],
+            "parallel_axes": ["M"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M"]},
+        }
+    )
+    argmin = IntentFunction.from_json_dict(
+        {
+            "name": "argmin2d_cuda_lowering",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out_index": {"dtype": "i32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [{"op": "argmin", "inputs": ["inp"], "output": "out_index", "attrs": {"axis": 1}}],
+            "outputs": ["out_index"],
+            "parallel_axes": ["M"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M"]},
+        }
+    )
+    lowered_max = _lower_or_skip(argmax, shape_bindings={"M": 4, "N": 8})
+    lowered_min = _lower_or_skip(argmin, shape_bindings={"M": 4, "N": 8})
+    assert lowered_max.kernel_name == "argmax2d_cuda_lowering"
+    assert lowered_min.kernel_name == "argmin2d_cuda_lowering"
+    assert "int* __restrict__ out_index" in lowered_max.cuda_src
+    assert "int* __restrict__ out_index" in lowered_min.cuda_src
