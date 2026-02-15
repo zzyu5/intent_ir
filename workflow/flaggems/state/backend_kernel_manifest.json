@@ -77,6 +77,14 @@
     "index_select2d",
     "embedding2d",
     "mm2d",
-    "repeat2d"
+    "repeat2d",
+    "addmv2d",
+    "addr2d",
+    "atan2d",
+    "bitwise_left_shift2d",
+    "bitwise_right_shift2d",
+    "celu2d",
+    "elu2d",
+    "eye_m2d"
   ]
 }
