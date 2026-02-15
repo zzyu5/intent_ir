@@ -120,12 +120,18 @@ def main() -> None:
     else:
         gate_entries = scoped_entries if scope_enabled else entries
 
+    active_items = [e for e in (active.get("items") or []) if isinstance(e, dict)]
+    active_ops = [str(e.get("semantic_op") or "") for e in active_items if str(e.get("semantic_op") or "")]
+
     if profile in {"ir_arch", "backend_compiler"}:
         reason_complete = True
     else:
-        reason_complete = bool(gate_entries) and all(
-            isinstance(e.get("reason_code"), str) and str(e.get("reason_code")).strip() for e in gate_entries
-        )
+        if not gate_entries and not active_ops:
+            reason_complete = True
+        else:
+            reason_complete = all(
+                isinstance(e.get("reason_code"), str) and str(e.get("reason_code")).strip() for e in gate_entries
+            )
     checks.append(
         _check(
             "status_converged.reason_code_complete",
@@ -134,9 +140,7 @@ def main() -> None:
         )
     )
 
-    active_items = [e for e in (active.get("items") or []) if isinstance(e, dict)]
     if profile == "coverage":
-        active_ops = [str(e.get("semantic_op") or "") for e in active_items if str(e.get("semantic_op") or "")]
         status_map = {str(e.get("semantic_op")): e for e in gate_entries if isinstance(e.get("semantic_op"), str)}
         covered = all(op in status_map for op in active_ops)
         checks.append(

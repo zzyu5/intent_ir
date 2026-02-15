@@ -35,6 +35,26 @@ class CudaLoweredKernel:
     bindings: Dict[str, Any]
 
 
+def _run_pipeline_compat_check(intent: IntentFunction) -> None:
+    """
+    Keep legacy lowering entry wired to the staged CUDA pipeline.
+
+    This preserves a single backend compiler lifecycle while the concrete
+    lowering implementation is still split between C++/Python codegen paths.
+    """
+    from backends.cuda.pipeline.driver import run_cuda_pipeline  # noqa: PLC0415
+
+    result = run_cuda_pipeline(intent)
+    if bool(result.ok):
+        return
+    reason = str(getattr(result, "reason_code", "") or "pipeline_failed")
+    detail = str(getattr(result, "reason_detail", "") or "")
+    msg = f"cuda pipeline compatibility stage failed: {reason}"
+    if detail:
+        msg = f"{msg} ({detail})"
+    raise CudaLoweringError(msg)
+
+
 def _as_int(v: Any, *, name: str) -> int:
     try:
         return int(v)
@@ -8597,6 +8617,8 @@ def lower_intent_to_cuda_kernel(
     Note: The lowering currently targets the AI-Bench8 kernels and a small set
     of common patterns (softmax2d-last, layernorm2d).
     """
+    _run_pipeline_compat_check(intent)
+
     bindings: Dict[str, Any] = {}
     for k, v in dict(shape_bindings).items():
         key = str(k)
