@@ -1,12 +1,12 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-15T01:58:17+00:00",
+  "generated_at": "2026-02-15T03:10:15+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
-      "dual_pass": 123,
-      "blocked_backend": 73
+      "dual_pass": 133,
+      "blocked_backend": 63
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -1139,10 +1139,10 @@
       "id": "flaggems::mv",
       "semantic_op": "mv",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "mv2d",
       "intent_ops": [
         "matmul"
@@ -1152,10 +1152,10 @@
       "id": "flaggems::nan_to_num",
       "semantic_op": "nan_to_num",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "nan_to_num2d",
       "intent_ops": [
         "nan_to_num"
@@ -1165,10 +1165,10 @@
       "id": "flaggems::ne",
       "semantic_op": "ne",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "ne2d",
       "intent_ops": [
         "ne"
@@ -1178,10 +1178,10 @@
       "id": "flaggems::ne_scalar",
       "semantic_op": "ne_scalar",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "ne2d",
       "intent_ops": [
         "ne"
@@ -1191,10 +1191,10 @@
       "id": "flaggems::neg",
       "semantic_op": "neg",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "neg2d",
       "intent_ops": [
         "const",
@@ -1205,10 +1205,10 @@
       "id": "flaggems::nll_loss2d_forward",
       "semantic_op": "nll_loss2d_forward",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "nll_loss2d_forward",
       "intent_ops": [
         "nll_loss2d_forward"
@@ -1218,10 +1218,10 @@
       "id": "flaggems::nll_loss_forward",
       "semantic_op": "nll_loss_forward",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "nll_loss_forward",
       "intent_ops": [
         "nll_loss_forward"
@@ -1231,10 +1231,10 @@
       "id": "flaggems::nonzero",
       "semantic_op": "nonzero",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "nonzero2d",
       "intent_ops": [
         "nonzero"
@@ -1244,10 +1244,10 @@
       "id": "flaggems::one_hot",
       "semantic_op": "one_hot",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "one_hot2d",
       "intent_ops": [
         "iota",
@@ -2102,10 +2102,10 @@
       "id": "flaggems::normed_cumsum",
       "semantic_op": "normed_cumsum",
       "family": "norm_activation",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "normed_cumsum2d",
       "intent_ops": [
         "cumsum",
