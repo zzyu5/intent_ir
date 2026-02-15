@@ -2434,6 +2434,168 @@ json emit_matmul_f32(const Intent& intent, const json& bindings) {
   return out;
 }
 
+json emit_addmv_f32(const Intent& intent, const json& bindings) {
+  if (intent.ops.size() != 4) fail("addmv lowering expects 4 ops (matmul,mul,mul,add)");
+  const Op& mm = intent.ops[0];
+  const Op& mul_mv = intent.ops[1];
+  const Op& mul_inp = intent.ops[2];
+  const Op& add = intent.ops[3];
+  if (mm.op != "matmul" || mul_mv.op != "mul" || mul_inp.op != "mul" || add.op != "add") {
+    fail("addmv lowering pattern mismatch");
+  }
+  if (mm.inputs.size() != 2 || mul_mv.inputs.size() != 2 || mul_inp.inputs.size() != 2 || add.inputs.size() != 2) {
+    fail("addmv lowering: invalid arity in pattern ops");
+  }
+
+  const std::string A = mm.inputs[0];
+  const std::string B = mm.inputs[1];
+  const std::string mv_out = mm.output;
+
+  auto A_it = intent.tensors.find(A);
+  auto B_it = intent.tensors.find(B);
+  if (A_it == intent.tensors.end() || B_it == intent.tensors.end()) fail("addmv lowering missing A/B tensors");
+  if (A_it->second.shape.size() != 2 || B_it->second.shape.size() != 1) fail("addmv lowering expects A[2D], B[1D]");
+  if (A_it->second.dtype != "f32" || B_it->second.dtype != "f32") fail("addmv lowering currently supports f32 tensors only");
+
+  const std::string Out = add.output;
+  auto Out_it = intent.tensors.find(Out);
+  if (Out_it == intent.tensors.end()) fail("addmv lowering missing output tensor");
+  if (Out_it->second.dtype != "f32" || Out_it->second.shape.size() != 1) fail("addmv lowering expects Out as f32 rank-1");
+
+  // mul(mv_out, alpha) -> scaled_mv
+  std::string alpha_name;
+  if (mul_mv.inputs[0] == mv_out)
+    alpha_name = mul_mv.inputs[1];
+  else if (mul_mv.inputs[1] == mv_out)
+    alpha_name = mul_mv.inputs[0];
+  else
+    fail("addmv lowering expects one mul input from matmul output");
+  auto alpha_it = intent.tensors.find(alpha_name);
+  if (alpha_it == intent.tensors.end()) fail("addmv lowering missing alpha tensor");
+  if (alpha_it->second.dtype != "f32" || !alpha_it->second.shape.empty()) fail("addmv lowering expects alpha scalar f32 tensor");
+
+  // mul(inp, beta) -> scaled_inp
+  std::string Inp;
+  std::string beta_name;
+  auto is_rank1_f32 = [&](const std::string& n) -> bool {
+    auto it = intent.tensors.find(n);
+    return it != intent.tensors.end() && it->second.dtype == "f32" && it->second.shape.size() == 1;
+  };
+  auto is_scalar_f32 = [&](const std::string& n) -> bool {
+    auto it = intent.tensors.find(n);
+    return it != intent.tensors.end() && it->second.dtype == "f32" && it->second.shape.empty();
+  };
+  if (is_rank1_f32(mul_inp.inputs[0]) && is_scalar_f32(mul_inp.inputs[1])) {
+    Inp = mul_inp.inputs[0];
+    beta_name = mul_inp.inputs[1];
+  } else if (is_rank1_f32(mul_inp.inputs[1]) && is_scalar_f32(mul_inp.inputs[0])) {
+    Inp = mul_inp.inputs[1];
+    beta_name = mul_inp.inputs[0];
+  } else {
+    fail("addmv lowering expects mul(input,beta_scalar) pattern");
+  }
+  auto Inp_it = intent.tensors.find(Inp);
+  if (Inp_it == intent.tensors.end()) fail("addmv lowering missing input vector tensor");
+  if (Inp_it->second.dtype != "f32" || Inp_it->second.shape.size() != 1) fail("addmv lowering expects input vector f32 rank-1");
+
+  const std::string scaled_mv = mul_mv.output;
+  const std::string scaled_inp = mul_inp.output;
+  const bool add_inputs_ok =
+      ((add.inputs[0] == scaled_mv && add.inputs[1] == scaled_inp) || (add.inputs[0] == scaled_inp && add.inputs[1] == scaled_mv));
+  if (!add_inputs_ok) fail("addmv lowering expects add(scaled_mv, scaled_inp)");
+
+  const json N_dim = A_it->second.shape[0];
+  const json M_dim = A_it->second.shape[1];
+  const json M2_dim = B_it->second.shape[0];
+  const json N2_dim = Inp_it->second.shape[0];
+  if (dim_str(M_dim) != dim_str(M2_dim)) fail("addmv lowering: A second dim must match B first dim");
+  if (dim_str(N_dim) != dim_str(N2_dim)) fail("addmv lowering: A first dim must match input vector dim");
+
+  auto N_opt = resolve_dim_token(N_dim, bindings);
+  auto M_opt = resolve_dim_token(M_dim, bindings);
+  if (!N_opt.has_value() || !M_opt.has_value()) fail("addmv lowering missing bindings for N/M");
+  const int64_t N = *N_opt;
+  const int64_t M = *M_opt;
+
+  int64_t block_x = resolve_schedule_int(intent, bindings, "tile_n", 256);
+  if (block_x <= 0) block_x = 256;
+  if (block_x < 32) block_x = 32;
+  if (block_x > 1024) block_x = 1024;
+  const int64_t grid_x = (N + block_x - 1) / block_x;
+
+  const bool n_is_tensor = is_scalar_tensor(intent, "N", "i32");
+  const bool m_is_tensor = is_scalar_tensor(intent, "M", "i32");
+  const std::string n_param = n_is_tensor ? "const int* N_ptr" : "int N_in";
+  const std::string m_param = m_is_tensor ? "const int* M_ptr" : "int M_in";
+  const std::string n_load = n_is_tensor ? "(N_ptr ? N_ptr[0] : 0)" : "N_in";
+  const std::string m_load = m_is_tensor ? "(M_ptr ? M_ptr[0] : 0)" : "M_in";
+
+  std::ostringstream cuda_ss;
+  CodeWriter w(cuda_ss);
+  w.line("#include <math.h>");
+  w.blank();
+  emit_selected_api(w);
+  w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_x) + ") void " + intent.name + "(");
+  w.indent();
+  w.line("const float* __restrict__ " + A + ",");
+  w.line("const float* __restrict__ " + B + ",");
+  w.line("const float* __restrict__ " + Inp + ",");
+  w.line("float* __restrict__ " + Out + ",");
+  w.line("const float* __restrict__ " + alpha_name + ",");
+  w.line("const float* __restrict__ " + beta_name + ",");
+  w.line(n_param + ",");
+  w.line(m_param);
+  w.dedent();
+  w.line(") {");
+  w.indent();
+  w.line("const int N = " + n_load + ";");
+  w.line("const int M = " + m_load + ";");
+  w.line("const int64_t tid = (int64_t)blockIdx.x * (int64_t)blockDim.x + (int64_t)threadIdx.x;");
+  w.line("if (tid >= (int64_t)N) return;");
+  w.line("const float alpha_v = " + alpha_name + " ? " + alpha_name + "[0] : 1.0f;");
+  w.line("const float beta_v = " + beta_name + " ? " + beta_name + "[0] : 1.0f;");
+  w.line("float acc = 0.0f;");
+  w.line("for (int k = 0; k < M; ++k) {");
+  w.indent();
+  w.line("acc = fmaf(" + A + "[(size_t)tid * (size_t)M + (size_t)k], " + B + "[(size_t)k], acc);");
+  w.dedent();
+  w.line("}");
+  w.line(Out + "[(size_t)tid] = acc * alpha_v + " + Inp + "[(size_t)tid] * beta_v;");
+  w.dedent();
+  w.line("}");
+
+  std::vector<std::string> tensor_args = {A, B, Inp, Out, alpha_name, beta_name};
+  std::unordered_map<std::string, std::string> scalar_args;
+  std::vector<std::string> arg_names = {A, B, Inp, Out, alpha_name, beta_name};
+  if (n_is_tensor) {
+    tensor_args.push_back("N");
+    arg_names.push_back("N");
+  } else {
+    scalar_args.emplace("N", "i32");
+    arg_names.push_back("N");
+  }
+  if (m_is_tensor) {
+    tensor_args.push_back("M");
+    arg_names.push_back("M");
+  } else {
+    scalar_args.emplace("M", "i32");
+    arg_names.push_back("M");
+  }
+
+  json out_bindings = bindings;
+  if (!out_bindings.contains("N")) out_bindings["N"] = N;
+  if (!out_bindings.contains("M")) out_bindings["M"] = M;
+
+  json out;
+  out["kernel_name"] = intent.name;
+  out["cuda_src"] = cuda_ss.str();
+  out["io_spec"] = io_spec_from_args(intent, tensor_args, scalar_args, arg_names);
+  out["launch"] = {{"grid", {grid_x, 1, 1}}, {"block", {block_x, 1, 1}}, {"shared_mem", 0}};
+  out["output_names"] = {Out};
+  out["bindings"] = out_bindings;
+  return out;
+}
+
 json emit_warp(const Intent& intent, const json& bindings) {
   if (!(intent.ops.size() == 1 && intent.ops[0].op == "warp")) fail("warp lowering expects a single warp op");
   const Op& op = intent.ops[0];
@@ -5891,6 +6053,9 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
     } else if (opname == "acos") {
       if (op.inputs.size() != 1) fail("acos expects 1 input");
       emit_assign("acosf(" + val(op.inputs[0]) + ")");
+    } else if (opname == "atan") {
+      if (op.inputs.size() != 1) fail("atan expects 1 input");
+      emit_assign("atanf(" + val(op.inputs[0]) + ")");
     } else if (opname == "log") {
       if (op.inputs.size() != 1) fail("log expects 1 input");
       emit_assign("logf(" + val(op.inputs[0]) + ")");
@@ -5929,6 +6094,10 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
     } else if (opname == "bitwise_not") {
       if (op.inputs.size() != 1) fail("bitwise_not expects 1 input");
       emit_assign("(~" + val(op.inputs[0]) + ")");
+    } else if (opname == "bitwise_left_shift" || opname == "bitwise_right_shift") {
+      if (op.inputs.size() != 2) fail(opname + " expects 2 inputs");
+      const std::string bop = (opname == "bitwise_left_shift") ? "<<" : ">>";
+      emit_assign("(" + val(op.inputs[0]) + " " + bop + " " + val(op.inputs[1]) + ")");
     } else {
       fail("elementwise lowering unsupported op: " + opname);
     }
@@ -7062,6 +7231,9 @@ json emit_layernorm_2d_f32(const Intent& intent, const json& bindings) {
 json lower_intent_to_cuda(const Intent& intent, const json& bindings_json) {
   if (!bindings_json.is_object()) fail("bindings must be object");
 
+  if (intent.ops.size() == 4 && intent.ops[0].op == "matmul" && intent.ops[1].op == "mul" && intent.ops[2].op == "mul" && intent.ops[3].op == "add") {
+    return emit_addmv_f32(intent, bindings_json);
+  }
   if (intent.ops.size() == 1 && intent.ops[0].op == "matmul") return emit_matmul_f32(intent, bindings_json);
   if (intent.ops.size() == 2 && intent.ops[0].op == "matmul" && intent.ops[1].op == "cast") {
     const Op& mm = intent.ops[0];
@@ -7189,11 +7361,11 @@ json lower_intent_to_cuda(const Intent& intent, const json& bindings_json) {
           {"const", true}, {"iota", true},     {"identity", true},         {"broadcast_in_dim", true}, {"cast", true},
           {"add", true},   {"sub", true},      {"mul", true},              {"div", true},              {"max", true},
           {"min", true},   {"relu", true},     {"abs", true},              {"sin", true},              {"cos", true},
-          {"tan", true},   {"erf", true},      {"exp", true},              {"acos", true},             {"log", true},
+          {"tan", true},   {"erf", true},      {"exp", true},              {"acos", true},             {"atan", true},             {"log", true},
           {"ceil", true},  {"sqrt", true},     {"floor", true},            {"rsqrt", true},            {"eq", true},               {"ne", true},
           {"lt", true},    {"le", true},       {"gt", true},               {"ge", true},               {"and", true},
           {"or", true},    {"not", true},      {"bitwise_and", true},      {"bitwise_or", true},
-          {"bitwise_not", true},               {"where", true},
+          {"bitwise_not", true},               {"bitwise_left_shift", true}, {"bitwise_right_shift", true}, {"where", true},
       };
       return k.find(op) != k.end();
     };
@@ -7208,7 +7380,7 @@ json lower_intent_to_cuda(const Intent& intent, const json& bindings_json) {
   }
 
   fail(
-      "unsupported intent for cuda cpp codegen (supported: matmul, dropout, softmax, layernorm, correlation, resize, rope, warp, transpose, "
+      "unsupported intent for cuda cpp codegen (supported: addmv, matmul, dropout, softmax, layernorm, correlation, resize, rope, warp, transpose, "
       "reduce_sum, reduce_max, reduce_min, reduce_mean_pattern, argmax, argmin, any_dim, gather, diag, diag_embed, nonzero, count_nonzero, topk, trace, fused_elementwise)");
 }
 

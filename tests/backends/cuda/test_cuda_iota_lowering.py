@@ -1335,3 +1335,78 @@ def test_cuda_lowering_supports_matmul_then_cast_pattern(monkeypatch) -> None:
     assert "const __half* __restrict__ A" in lowered.cuda_src
     assert "const __half* __restrict__ B" in lowered.cuda_src
     assert "matmul_f32_accum_fallback" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_atan_fused_pattern(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "atan2d_cuda_lowering",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "x_f32": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cast", "inputs": ["x"], "output": "x_f32", "attrs": {"to": "f32"}},
+                {"op": "atan", "inputs": ["x_f32"], "output": "out"},
+            ],
+            "outputs": ["out"],
+            "parallel_axes": ["M", "N"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
+    assert lowered.kernel_name == "atan2d_cuda_lowering"
+    assert "atanf(" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_bitwise_shift_pattern(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "bitwise_left_shift2d_cuda_lowering",
+            "tensors": {
+                "A": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "B": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [{"op": "bitwise_left_shift", "inputs": ["A", "B"], "output": "out"}],
+            "outputs": ["out"],
+            "parallel_axes": ["M", "N"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
+    assert lowered.kernel_name == "bitwise_left_shift2d_cuda_lowering"
+    assert " << " in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_addmv_macro_pattern(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "addmv2d_cuda_lowering",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["N", "M"], "layout": "row_major"},
+                "B": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "Inp": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "alpha": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "beta": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "mv_result": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "scaled_mv": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "scaled_inp": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "Out": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "matmul", "inputs": ["A", "B"], "output": "mv_result"},
+                {"op": "mul", "inputs": ["mv_result", "alpha"], "output": "scaled_mv"},
+                {"op": "mul", "inputs": ["Inp", "beta"], "output": "scaled_inp"},
+                {"op": "add", "inputs": ["scaled_mv", "scaled_inp"], "output": "Out"},
+            ],
+            "outputs": ["Out"],
+            "parallel_axes": ["N"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["N"]},
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"N": 32, "M": 16})
+    assert lowered.kernel_name == "addmv2d_cuda_lowering"
+    assert "acc = fmaf(" in lowered.cuda_src
+    assert "Out[(size_t)tid] = acc * alpha_v + Inp[(size_t)tid] * beta_v;" in lowered.cuda_src
