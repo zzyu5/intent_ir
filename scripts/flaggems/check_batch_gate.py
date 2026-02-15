@@ -67,6 +67,104 @@ def _validate_backend_timing(summary_path: Path) -> tuple[bool, str]:
     return True, "backend stage timing fields present"
 
 
+def _validate_backend_stage_realized(summary_path: Path) -> tuple[bool, str]:
+    if not summary_path.is_file():
+        return False, f"backend stage json missing: {summary_path}"
+    payload = _load_json(summary_path)
+    results = payload.get("results")
+    if not isinstance(results, list):
+        return False, "backend stage json missing results[]"
+    for idx, row in enumerate(results):
+        if not isinstance(row, dict):
+            return False, f"backend stage result[{idx}] is not object"
+        reason = str(row.get("reason_code") or "").strip()
+        if reason in {"", "unknown"}:
+            return False, f"backend stage result[{idx}] has empty/unknown reason_code"
+        for field in ("compile_ms", "launch_ms"):
+            if field not in row:
+                return False, f"backend stage result[{idx}] missing {field}"
+            try:
+                ms = float(row.get(field, 0.0))
+            except Exception:
+                return False, f"backend stage result[{idx}] invalid {field}"
+            if ms < 0.0:
+                return False, f"backend stage result[{idx}] negative {field}"
+        for marker in ("pipeline_mode", "compile_stage_mode", "launch_stage_mode", "mode"):
+            val = str(row.get(marker) or "").strip().lower()
+            if val == "deferred":
+                return False, f"backend stage result[{idx}] still deferred ({marker}=deferred)"
+    return True, "backend stages realized (no deferred marker, reason_code complete)"
+
+
+def _validate_codegen_purity(stage_map: dict[str, dict[str, Any]]) -> tuple[bool, str]:
+    forbidden_flags = {
+        "--codegen-mode",
+        "--codegen-strict",
+        "--cpp-engine",
+        "--cpp-engine-strict",
+        "--cuda-codegen-mode",
+        "--cuda-codegen-strict",
+        "--cuda-cpp-engine",
+        "--cuda-cpp-engine-strict",
+    }
+    forbidden_env_prefixes = (
+        "INTENTIR_CUDA_CODEGEN",
+        "INTENTIR_CUDA_CPP_CODEGEN_ENGINE",
+    )
+    violations: list[str] = []
+    for stage_name, row in stage_map.items():
+        cmd = row.get("cmd")
+        tokens: list[str] = []
+        if isinstance(cmd, list):
+            tokens = [str(x) for x in cmd]
+        elif isinstance(cmd, str):
+            tokens = str(cmd).split()
+        for flag in forbidden_flags:
+            if flag in tokens:
+                violations.append(f"{stage_name}:forbidden_flag={flag}")
+        env_overrides = row.get("env_overrides")
+        if isinstance(env_overrides, dict):
+            for key in env_overrides.keys():
+                key_s = str(key)
+                if any(key_s.startswith(prefix) for prefix in forbidden_env_prefixes):
+                    violations.append(f"{stage_name}:forbidden_env={key_s}")
+    if violations:
+        return False, "; ".join(violations)
+    return True, "no deprecated codegen fallback flags/env in stage commands"
+
+
+def _validate_timing_delta_budget(timing_delta_path: Path, *, max_total_regression_pct: float) -> tuple[bool, str]:
+    if not timing_delta_path.is_file():
+        return False, f"timing_delta json missing: {timing_delta_path}"
+    payload = _load_json(timing_delta_path)
+    regressions: list[str] = []
+    compare_enabled_any = False
+    for backend in ("rvv", "cuda"):
+        section = payload.get(backend)
+        if not isinstance(section, dict):
+            continue
+        if not bool(section.get("compare_enabled")):
+            continue
+        compare_enabled_any = True
+        rows = [r for r in list(section.get("rows") or []) if isinstance(r, dict)]
+        for row in rows:
+            kernel = str(row.get("kernel") or "")
+            total = row.get("total_ms")
+            if not isinstance(total, dict):
+                continue
+            try:
+                delta_pct = float(total.get("delta_pct", 0.0))
+            except Exception:
+                continue
+            if delta_pct > float(max_total_regression_pct):
+                regressions.append(f"{backend}:{kernel}:{delta_pct:.2f}%")
+    if not compare_enabled_any:
+        return True, "timing_delta compare disabled (no baseline), budget check skipped"
+    if regressions:
+        return False, f"total_ms regression > {max_total_regression_pct:.2f}%: {', '.join(regressions)}"
+    return True, f"timing_delta total_ms regression <= {max_total_regression_pct:.2f}%"
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -91,6 +189,12 @@ def main() -> None:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Require every active semantic op to be dual_pass (default: true).",
+    )
+    ap.add_argument(
+        "--max-total-regression-pct",
+        type=float,
+        default=8.0,
+        help="Max allowed total_ms regression percentage for backend_compiler timing_delta checks.",
     )
     ap.add_argument("--out", type=Path, default=(ROOT / "artifacts" / "flaggems_matrix" / "batch_gate.json"))
     args = ap.parse_args()
@@ -213,6 +317,51 @@ def main() -> None:
                 "backend_compiler.stage_timing_complete",
                 not timing_failures,
                 "backend timing fields complete" if not timing_failures else "; ".join(timing_failures),
+            )
+        )
+        realized_failures: list[str] = []
+        for stage_name in required:
+            if stage_name not in timing_required_stages:
+                continue
+            stage = stage_map.get(stage_name) or {}
+            json_path = str(stage.get("json_path") or "").strip()
+            if not json_path:
+                realized_failures.append(f"{stage_name}:missing_json_path")
+                continue
+            ok_realized, detail_realized = _validate_backend_stage_realized(Path(json_path))
+            if not ok_realized:
+                realized_failures.append(f"{stage_name}:{detail_realized}")
+        checks.append(
+            _check(
+                "backend_compiler.pipeline_stage_realized",
+                not realized_failures,
+                "backend compile/launch stages are realized"
+                if not realized_failures
+                else "; ".join(realized_failures),
+            )
+        )
+        purity_ok, purity_detail = _validate_codegen_purity(stage_map)
+        checks.append(
+            _check(
+                "backend_compiler.compiler_purity.no_fallback_path",
+                purity_ok,
+                purity_detail,
+            )
+        )
+        timing_delta_stage = stage_map.get("timing_delta") or {}
+        timing_delta_json = str(timing_delta_stage.get("json_path") or "").strip()
+        if timing_delta_json:
+            budget_ok, budget_detail = _validate_timing_delta_budget(
+                Path(timing_delta_json),
+                max_total_regression_pct=float(args.max_total_regression_pct),
+            )
+        else:
+            budget_ok, budget_detail = (True, "timing_delta stage missing; regression budget skipped")
+        checks.append(
+            _check(
+                "backend_compiler.performance_budget",
+                budget_ok,
+                budget_detail,
             )
         )
 

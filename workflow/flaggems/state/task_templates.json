@@ -277,6 +277,53 @@
         "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/rvv_remote.json"
       ],
       "description": "Add profile-specialized schedule override knobs and validate timing deltas against wave3 baseline."
+    },
+    {
+      "id": "backend_compiler::compiler_purity_gate_wave5",
+      "track": "backend_compiler",
+      "task_type": "quality_guard",
+      "status": "done",
+      "passes": true,
+      "priority": 90,
+      "gate_profile": "backend_compiler",
+      "reason_code": "ok",
+      "next_action": "none",
+      "acceptance": [
+        "backend_gate_no_codegen_fallback_flags",
+        "backend_gate_pipeline_stage_realized"
+      ],
+      "depends_on": [
+        "backend_compiler::profile_specialization_wave4"
+      ],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_purity_v1/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_purity_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_purity_v1/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_purity_v1/batch_gate_backend_compiler_wave5_purity_pass.json",
+        "tests/frontends/triton/test_flaggems_batch_gate.py",
+        "scripts/flaggems/check_batch_gate.py"
+      ],
+      "description": "Enforce backend compiler purity gate: no deprecated codegen fallback path and no deferred compile/launch stages."
+    },
+    {
+      "id": "backend_compiler::nightly_perf_budget_wave5",
+      "track": "backend_compiler",
+      "task_type": "performance",
+      "status": "pending",
+      "passes": false,
+      "priority": 100,
+      "gate_profile": "backend_compiler",
+      "reason_code": "",
+      "next_action": "nightly_perf_regression_gate",
+      "acceptance": [
+        "timing_delta_total_regression_within_budget",
+        "nightly_ci_gate_backend_compiler_pass"
+      ],
+      "depends_on": [
+        "backend_compiler::compiler_purity_gate_wave5"
+      ],
+      "evidence_paths": [],
+      "description": "Add nightly backend performance budget gate with timing_delta regression thresholds."
     }
   ]
 }
