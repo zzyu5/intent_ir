@@ -37,3 +37,21 @@ def test_infer_tolerances_matmul_is_looser_than_legacy():
     tol = infer_tolerances(intent).to_dict()
     assert tol["atol"] > 1e-3
     assert tol["rtol"] > 1e-3
+
+
+def test_infer_tolerances_bf16_minimum_is_looser_than_legacy():
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "bf16_minimum",
+            "tensors": {
+                "X": {"dtype": "bf16", "shape": ["M", "N"], "layout": "row_major"},
+                "Y": {"dtype": "bf16", "shape": ["M", "N"], "layout": "row_major"},
+                "Out": {"dtype": "bf16", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [{"op": "min", "inputs": ["X", "Y"], "output": "Out"}],
+            "outputs": ["Out"],
+        }
+    )
+    tol = infer_tolerances(intent).to_dict()
+    assert tol["atol"] >= 1e-2
+    assert tol["rtol"] >= 1e-2

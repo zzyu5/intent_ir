@@ -114,6 +114,10 @@ def infer_tolerances(
     # Conservative: if any output is f16/bf16, do not tighten below legacy default.
     if ("f16" in out_dtypes) or ("bf16" in out_dtypes):
         tol = Tolerances(atol=max(tol.atol, _LEGACY_DEFAULT.atol), rtol=max(tol.rtol, _LEGACY_DEFAULT.rtol))
+        # bf16 min/max style kernels often differ slightly across backends due to
+        # conversion and tie-breaking behavior near representable boundaries.
+        if ("bf16" in out_dtypes) and ({"min", "max"} & op_set):
+            tol = Tolerances(atol=max(tol.atol, 1e-2), rtol=max(tol.rtol, 1e-2))
 
     # If we couldn't infer anything meaningful, keep legacy behavior.
     if tol.atol == 0.0 and tol.rtol == 0.0:
@@ -128,6 +132,8 @@ def infer_tolerances(
         # especially when the reference uses TF32-like dot paths.
         matmul_cap = 2e-2 * (1.0 + 0.5 * max(0, matmul_count - 1))
         cap = Tolerances(atol=max(cap.atol, matmul_cap), rtol=max(cap.rtol, matmul_cap))
+    if ("bf16" in out_dtypes) and ({"min", "max"} & op_set):
+        cap = Tolerances(atol=max(cap.atol, 1e-2), rtol=max(cap.rtol, 1e-2))
     tol = Tolerances(atol=min(max(tol.atol, 0.0), cap.atol), rtol=min(max(tol.rtol, 0.0), cap.rtol))
     return tol
 

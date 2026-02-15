@@ -131,6 +131,27 @@ def test_cuda_lowering_supports_acos_fused_elementwise(monkeypatch) -> None:
     assert "acosf(" in lowered.cuda_src
 
 
+def test_cuda_lowering_supports_sqrt_fused_elementwise(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "sqrt2d_cuda_lowering",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "Out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "sqrt", "inputs": ["A"], "output": "Out"},
+            ],
+            "outputs": ["Out"],
+            "parallel_axes": ["M", "N"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
+    assert lowered.kernel_name == "sqrt2d_cuda_lowering"
+    assert "sqrtf(" in lowered.cuda_src
+
+
 def test_cuda_lowering_supports_bitwise_elementwise(monkeypatch) -> None:
     intent = IntentFunction.from_json_dict(
         {
@@ -1071,3 +1092,32 @@ def test_cuda_lowering_supports_count_nonzero2d_pattern(monkeypatch) -> None:
     assert lowered.kernel_name == "count_nonzero2d_cuda_lowering"
     assert "if (x[(size_t)i] != 0.0f) ++acc;" in lowered.cuda_src
     assert "out[0] = acc;" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_bf16_cast_minimum_pattern(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "minimum2d_cuda_lowering",
+            "tensors": {
+                "X": {"dtype": "bf16", "shape": ["M", "N"], "layout": "row_major"},
+                "Y": {"dtype": "bf16", "shape": ["M", "N"], "layout": "row_major"},
+                "x_f32": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "y_f32": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "result_f32": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "Out": {"dtype": "bf16", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cast", "inputs": ["X"], "output": "x_f32", "attrs": {"to": "f32"}},
+                {"op": "cast", "inputs": ["Y"], "output": "y_f32", "attrs": {"to": "f32"}},
+                {"op": "min", "inputs": ["x_f32", "y_f32"], "output": "result_f32"},
+                {"op": "cast", "inputs": ["result_f32"], "output": "Out", "attrs": {"to": "bf16"}},
+            ],
+            "outputs": ["Out"],
+            "parallel_axes": ["M", "N"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
+    assert lowered.kernel_name == "minimum2d_cuda_lowering"
+    assert "__bfloat162float(" in lowered.cuda_src
+    assert "__float2bfloat16(" in lowered.cuda_src

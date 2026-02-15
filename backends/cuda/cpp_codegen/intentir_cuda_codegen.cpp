@@ -226,6 +226,7 @@ std::string c_ident(std::string_view name) {
 
 std::string c_type_for_dtype(const std::string& dt) {
   if (dt == "f32") return "float";
+  if (dt == "bf16") return "__nv_bfloat16";
   if (dt == "i32") return "int";
   if (dt == "i64") return "int64_t";
   if (dt == "u8") return "uint8_t";
@@ -302,6 +303,19 @@ std::string c_scalar_literal(const std::string& dt, const json& value) {
       }
     }
     return "__float2half(" + c_float(v) + ")";
+  }
+  if (dt == "bf16") {
+    double v = 0.0;
+    if (value.is_number()) v = value.get<double>();
+    else if (value.is_number_integer()) v = static_cast<double>(value.get<int64_t>());
+    else if (value.is_string()) {
+      try {
+        v = std::stod(value.get<std::string>());
+      } catch (...) {
+        v = 0.0;
+      }
+    }
+    return "__float2bfloat16(" + c_float(v) + ")";
   }
   fail("unsupported const dtype for CUDA elementwise: " + dt);
 }
@@ -5266,6 +5280,14 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
 
   std::unordered_map<std::string, std::string> value_expr;
   std::unordered_map<std::string, std::string> value_type;
+  auto dtype_of = [&](const std::string& name) -> std::string {
+    auto it_local = value_type.find(name);
+    if (it_local != value_type.end()) return it_local->second;
+    auto it_tensor = intent.tensors.find(name);
+    if (it_tensor != intent.tensors.end()) return it_tensor->second.dtype;
+    fail("elementwise: unknown dtype source for " + name);
+    return "f32";
+  };
 
   auto load_tensor = [&](const std::string& name) -> std::string {
     auto it = intent.tensors.find(name);
@@ -5366,7 +5388,15 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
       }
     } else if (opname == "cast") {
       if (op.inputs.size() != 1) fail("cast expects 1 input");
-      emit_assign("(" + cty + ")(" + val(op.inputs[0]) + ")");
+      const std::string in_name = op.inputs[0];
+      const std::string from_dt = dtype_of(in_name);
+      if (from_dt == "bf16" && out_dt == "f32") {
+        emit_assign("__bfloat162float(" + val(in_name) + ")");
+      } else if (from_dt == "f32" && out_dt == "bf16") {
+        emit_assign("__float2bfloat16(" + val(in_name) + ")");
+      } else {
+        emit_assign("(" + cty + ")(" + val(in_name) + ")");
+      }
     } else if (opname == "where") {
       if (op.inputs.size() != 3) fail("where expects 3 inputs (cond, x, y)");
       emit_assign("(" + val(op.inputs[0]) + " ? " + val(op.inputs[1]) + " : " + val(op.inputs[2]) + ")");
@@ -5423,6 +5453,9 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
     } else if (opname == "ceil") {
       if (op.inputs.size() != 1) fail("ceil expects 1 input");
       emit_assign("ceilf(" + val(op.inputs[0]) + ")");
+    } else if (opname == "sqrt") {
+      if (op.inputs.size() != 1) fail("sqrt expects 1 input");
+      emit_assign("sqrtf(" + val(op.inputs[0]) + ")");
     } else if (opname == "floor") {
       if (op.inputs.size() != 1) fail("floor expects 1 input");
       emit_assign("floorf(" + val(op.inputs[0]) + ")");
@@ -5495,6 +5528,7 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
   CodeWriter w(cuda_ss);
   w.line("#include <math.h>");
   w.line("#include <stdint.h>");
+  w.line("#include <cuda_bf16.h>");
   w.blank();
   w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_x) + ") void " + intent.name + "(");
   w.indent();
@@ -6684,7 +6718,7 @@ json lower_intent_to_cuda(const Intent& intent, const json& bindings_json) {
           {"add", true},   {"sub", true},      {"mul", true},              {"div", true},              {"max", true},
           {"min", true},   {"relu", true},     {"abs", true},              {"sin", true},              {"cos", true},
           {"tan", true},   {"erf", true},      {"exp", true},              {"acos", true},             {"log", true},
-          {"ceil", true},  {"floor", true},    {"rsqrt", true},            {"eq", true},               {"ne", true},
+          {"ceil", true},  {"sqrt", true},     {"floor", true},            {"rsqrt", true},            {"eq", true},               {"ne", true},
           {"lt", true},    {"le", true},       {"gt", true},               {"ge", true},               {"and", true},
           {"or", true},    {"not", true},      {"bitwise_and", true},      {"bitwise_or", true},
           {"bitwise_not", true},               {"where", true},

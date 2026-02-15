@@ -79,6 +79,8 @@ def _dtype_to_torch(dt: str):
         return torch.float16
     if s == "f32":
         return torch.float32
+    if s == "bf16":
+        return torch.bfloat16
     if s == "i8":
         return torch.int8
     if s == "i16":
@@ -100,6 +102,8 @@ def _c_type(dt: str) -> str:
         return "__half"
     if s == "f32":
         return "float"
+    if s == "bf16":
+        return "__nv_bfloat16"
     if s == "i8":
         return "int8_t"
     if s == "i16":
@@ -663,6 +667,8 @@ def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, 
             # dtype check (minimal)
             if dt == "f32":
                 checks.append(f"TORCH_CHECK({name}.scalar_type() == at::kFloat, \"{name} must be float32\");")
+            elif dt == "bf16":
+                checks.append(f"TORCH_CHECK({name}.scalar_type() == at::kBFloat16, \"{name} must be bfloat16\");")
             elif dt == "f16":
                 checks.append(f"TORCH_CHECK({name}.scalar_type() == at::kHalf, \"{name} must be float16\");")
             elif dt == "u8":
@@ -799,6 +805,7 @@ def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <cuda_bf16.h>
 #include <stdint.h>
 
 {cuda_src}
@@ -965,6 +972,17 @@ def compile_cuda_extension(
         return _load_nvrtc_cached(mod_name, kernel_name, cuda_src, json.dumps(io_spec, sort_keys=True), flags)
 
 
+def _tensor_to_numpy(tensor: Any) -> np.ndarray:
+    torch = _torch()
+    host = tensor.detach().cpu()
+    try:
+        return host.numpy()
+    except TypeError:
+        if host.dtype == torch.bfloat16:
+            return host.to(dtype=torch.float32).numpy()
+        raise
+
+
 def run_cuda_kernel_io(
     *,
     kernel_name: str,
@@ -1070,7 +1088,7 @@ def run_cuda_kernel_io(
 
     out: Dict[str, np.ndarray] = {k: np.asarray(v) for k, v in inputs_np.items()}
     for name, t in outputs_torch.items():
-        out[name] = t.detach().cpu().numpy()
+        out[name] = _tensor_to_numpy(t)
     return out
 
 
