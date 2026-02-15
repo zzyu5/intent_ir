@@ -40,6 +40,7 @@ def _backend_delta(current_payload: dict[str, Any], baseline_payload: dict[str, 
     base = _result_map(baseline_payload)
     kernels = sorted(set(cur.keys()) & set(base.keys()))
     missing_baseline = sorted(set(cur.keys()) - set(base.keys()))
+    baseline_available = bool(base)
     rows: list[dict[str, Any]] = []
     for kernel in kernels:
         c = cur[kernel]
@@ -56,8 +57,10 @@ def _backend_delta(current_payload: dict[str, Any], baseline_payload: dict[str, 
                 row[key] = {"current_ms": 0.0, "baseline_ms": 0.0, "delta_ms": 0.0, "delta_pct": 0.0}
         rows.append(row)
     return {
+        "baseline_available": baseline_available,
         "matched_kernels": len(kernels),
         "missing_baseline_kernels": missing_baseline,
+        "compare_enabled": bool(baseline_available and len(kernels) > 0),
         "rows": rows,
     }
 
@@ -78,6 +81,7 @@ def main() -> None:
 
     payload = {
         "ok": True,
+        "schema_version": "flaggems_timing_delta_v2",
         "current": {
             "rvv": str(args.current_rvv),
             "cuda": str(args.current_cuda),
@@ -89,6 +93,10 @@ def main() -> None:
         "rvv": _backend_delta(current_rvv, baseline_rvv),
         "cuda": _backend_delta(current_cuda, baseline_cuda),
     }
+    payload["summary"] = {
+        "baseline_compare_ready": bool(payload["rvv"]["compare_enabled"] or payload["cuda"]["compare_enabled"]),
+        "matched_kernels_total": int(payload["rvv"]["matched_kernels"]) + int(payload["cuda"]["matched_kernels"]),
+    }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"Stage timing delta report written: {args.out}")
@@ -96,4 +104,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

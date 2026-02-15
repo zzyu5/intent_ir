@@ -83,9 +83,30 @@ def _classify_failure(detail: str) -> str:
     return "runtime_fail"
 
 
+def _legalize_rewrite_counts(op_names: list[str]) -> dict[str, int]:
+    counts = {
+        "identity_noop": 0,
+        "layout_cast_noop": 0,
+        "reshape_rewrite_candidates": 0,
+        "transpose_rewrite_candidates": 0,
+    }
+    for op in op_names:
+        if op == "identity":
+            counts["identity_noop"] += 1
+        elif op == "layout_cast":
+            counts["layout_cast_noop"] += 1
+        elif op == "reshape":
+            counts["reshape_rewrite_candidates"] += 1
+        elif op == "transpose":
+            counts["transpose_rewrite_candidates"] += 1
+    counts["total_rewrite_candidates"] = sum(int(v) for v in counts.values())
+    return counts
+
+
 def run_cuda_pipeline(intent_payload: Any) -> CudaPipelineResult:
     name, op_names, tensor_shapes, schedule_info = _collect_intent_info(intent_payload)
     stages: list[CudaPipelineStage] = []
+    rewrite_counts = _legalize_rewrite_counts(op_names)
 
     def _legalize() -> tuple[str, dict[str, Any]]:
         if not op_names:
@@ -99,6 +120,7 @@ def run_cuda_pipeline(intent_payload: Any) -> CudaPipelineResult:
                 "op_count": len(op_names),
                 "tensor_count": len(tensor_shapes),
                 "ops": op_names,
+                "rewrite_counts": rewrite_counts,
             },
         )
 
@@ -120,9 +142,19 @@ def run_cuda_pipeline(intent_payload: Any) -> CudaPipelineResult:
         defaults = {"tile_m": 64, "tile_n": 128, "tile_k": 32}
         if not any(op in {"matmul", "conv1d", "conv2d", "conv3d"} for op in op_names):
             defaults = {"tile_m": 1, "tile_n": 256, "tile_k": 1}
+        if int(rewrite_counts.get("total_rewrite_candidates", 0)) > 0:
+            # Conservative scheduling when legalize has extra normalization work.
+            defaults = dict(defaults)
+            defaults["tile_n"] = min(int(defaults.get("tile_n", 256)), 128)
         merged = dict(defaults)
         merged.update({k: v for k, v in schedule_info.items() if v is not None})
-        return ("resolved schedule hints", {"schedule_hints": merged})
+        return (
+            "resolved schedule hints",
+            {
+                "schedule_hints": merged,
+                "rewrite_aware": bool(int(rewrite_counts.get("total_rewrite_candidates", 0)) > 0),
+            },
+        )
 
     def _emit() -> tuple[str, dict[str, Any]]:
         raw_codegen = os.getenv("INTENTIR_CUDA_CODEGEN", "cpp").strip().lower()

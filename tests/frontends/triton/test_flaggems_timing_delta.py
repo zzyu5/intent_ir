@@ -61,8 +61,11 @@ def test_compute_stage_timing_delta_script(tmp_path: Path) -> None:
     )
     assert p.returncode == 0, p.stderr
     payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == "flaggems_timing_delta_v2"
     assert payload["rvv"]["matched_kernels"] == 1
     assert payload["cuda"]["matched_kernels"] == 1
+    assert payload["rvv"]["baseline_available"] is True
+    assert payload["cuda"]["compare_enabled"] is True
+    assert payload["summary"]["baseline_compare_ready"] is True
     rvv_row = payload["rvv"]["rows"][0]
     assert rvv_row["total_ms"]["delta_ms"] == 12.0
-

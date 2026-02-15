@@ -140,6 +140,26 @@ def main() -> None:
         timing_delta_ok = int(rc_delta) == 0
         timing_delta_stderr = str(err_delta).strip()
         timing_delta_path = str(timing_delta)
+        run_summary_path = Path(args.out_dir) / "run_summary.json"
+        if run_summary_path.is_file():
+            run_summary = _load_json(run_summary_path)
+            stages = [s for s in list(run_summary.get("stages") or []) if isinstance(s, dict)]
+            stages = [s for s in stages if str(s.get("stage") or "") != "timing_delta"]
+            stages.append(
+                {
+                    "stage": "timing_delta",
+                    "rc": 0 if bool(timing_delta_ok) else 1,
+                    "ok": bool(timing_delta_ok),
+                    "stdout": f"timing delta generated at {timing_delta_path}" if timing_delta_path else "",
+                    "stderr": str(timing_delta_stderr),
+                    "cmd": delta_cmd,
+                    "json_path": timing_delta_path,
+                    "baseline_dir": str(baseline_dir) if baseline_dir is not None else "",
+                }
+            )
+            run_summary["stages"] = stages
+            run_summary["ok"] = bool(run_summary.get("ok")) and bool(timing_delta_ok)
+            run_summary_path.write_text(json.dumps(run_summary, indent=2, ensure_ascii=False), encoding="utf-8")
 
     summary = {
         "ok": bool(rc == 0),

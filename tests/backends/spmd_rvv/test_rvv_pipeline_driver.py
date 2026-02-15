@@ -31,6 +31,30 @@ def test_run_rvv_pipeline_reports_stage_artifacts_for_supported_intent() -> None
     assert legalize.ok is True
     assert legalize.artifacts["op_count"] == 1
     assert legalize.artifacts["tensor_count"] == 3
+    assert "rewrite_counts" in legalize.artifacts
+    assert "total_rewrite_candidates" in legalize.artifacts["rewrite_counts"]
+
+
+def test_run_rvv_pipeline_marks_schedule_rewrite_aware_for_transform_heavy_intent() -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "rvv_pipeline_transform_heavy",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "B": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "identity", "inputs": ["A"], "output": "B", "attrs": {}},
+            ],
+            "outputs": ["B"],
+            "parallel_axes": ["M", "N"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
+        }
+    )
+    result = run_rvv_pipeline(intent)
+    assert result.ok is True
+    schedule = next(s for s in result.stages if s.name == "schedule")
+    assert schedule.artifacts.get("rewrite_aware") is True
 
 
 def test_run_rvv_pipeline_flags_unsupported_ops() -> None:
@@ -38,4 +62,3 @@ def test_run_rvv_pipeline_flags_unsupported_ops() -> None:
     assert result.ok is False
     assert result.reason_code == "lowering_missing_op"
     assert any((not s.ok) for s in result.stages)
-
