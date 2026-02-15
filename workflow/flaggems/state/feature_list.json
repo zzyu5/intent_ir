@@ -1,12 +1,12 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-15T04:03:43+00:00",
+  "generated_at": "2026-02-15T05:15:24+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
-      "dual_pass": 143,
-      "blocked_backend": 53
+      "dual_pass": 152,
+      "blocked_backend": 44
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -1369,7 +1369,7 @@
       "family": "elementwise_broadcast",
       "status": "blocked_backend",
       "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
+      "reason_code": "runtime_backend_fail",
       "next_action": "backend_lowering",
       "e2e_spec": "quantile2d",
       "intent_ops": [
@@ -1380,10 +1380,10 @@
       "id": "flaggems::reciprocal",
       "semantic_op": "reciprocal",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "reciprocal2d",
       "intent_ops": [
         "const",
@@ -1394,10 +1394,10 @@
       "id": "flaggems::remainder",
       "semantic_op": "remainder",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "remainder2d",
       "intent_ops": [
         "remainder"
@@ -1407,10 +1407,10 @@
       "id": "flaggems::repeat",
       "semantic_op": "repeat",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "repeat2d",
       "intent_ops": [
         "repeat"
@@ -1420,10 +1420,10 @@
       "id": "flaggems::repeat_interleave_self_int",
       "semantic_op": "repeat_interleave_self_int",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "repeat_interleave_self_int1d",
       "intent_ops": [
         "repeat_interleave"
@@ -1433,10 +1433,10 @@
       "id": "flaggems::repeat_interleave_self_tensor",
       "semantic_op": "repeat_interleave_self_tensor",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "repeat_interleave_self_tensor1d",
       "intent_ops": [
         "repeat_interleave"
@@ -1446,10 +1446,10 @@
       "id": "flaggems::repeat_interleave_tensor",
       "semantic_op": "repeat_interleave_tensor",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "repeat_interleave_tensor1d",
       "intent_ops": [
         "repeat_interleave"
@@ -1459,10 +1459,10 @@
       "id": "flaggems::resolve_conj",
       "semantic_op": "resolve_conj",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "identity2d",
       "intent_ops": [
         "identity"
@@ -1472,10 +1472,10 @@
       "id": "flaggems::resolve_neg",
       "semantic_op": "resolve_neg",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "identity2d",
       "intent_ops": [
         "identity"
@@ -2116,10 +2116,10 @@
       "id": "flaggems::relu",
       "semantic_op": "relu",
       "family": "norm_activation",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "relu2d",
       "intent_ops": [
         "relu"
