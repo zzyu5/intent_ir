@@ -350,8 +350,77 @@ def test_cuda_lowering_supports_remainder_elementwise(monkeypatch) -> None:
     )
     lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 64})
     assert lowered.kernel_name == "remainder2d_cuda_lowering"
-    assert "floorf" in lowered.cuda_src
+    assert "floorf(" in lowered.cuda_src
     assert "NAN" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_concat_2d(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "concat2d_cuda_lowering",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N0"], "layout": "row_major"},
+                "B": {"dtype": "f32", "shape": ["M", "N1"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N_OUT"], "layout": "row_major"},
+            },
+            "ops": [{"op": "concat", "inputs": ["A", "B"], "output": "out", "attrs": {"axis": 1}}],
+            "outputs": ["out"],
+            "parallel_axes": ["M", "N_OUT"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M", "N_OUT"]},
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N0": 8, "N1": 6, "N_OUT": 14})
+    assert lowered.kernel_name == "concat2d_cuda_lowering"
+    assert "if (col < N0)" in lowered.cuda_src
+    assert "c1 = col - N0" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_constant_pad_nd_2d(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "constant_pad_nd2d_cuda_lowering",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M_OUT", "N_OUT"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "pad",
+                    "inputs": ["inp"],
+                    "output": "out",
+                    "attrs": {"pad_width": {"pairs": [[1, 0], [1, 2]]}, "mode": "constant", "value": 0.0},
+                }
+            ],
+            "outputs": ["out"],
+            "parallel_axes": ["M_OUT", "N_OUT"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M_OUT", "N_OUT"]},
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8, "M_OUT": 5, "N_OUT": 11})
+    assert lowered.kernel_name == "constant_pad_nd2d_cuda_lowering"
+    assert "in_row = row - 1" in lowered.cuda_src
+    assert "in_col = col - 1" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_mse_loss_2d(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "mse_loss2d_cuda_lowering",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "target": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": [], "layout": "row_major"},
+            },
+            "ops": [{"op": "mse_loss", "inputs": ["inp", "target"], "output": "out", "attrs": {"reduction": 1}}],
+            "outputs": ["out"],
+            "parallel_axes": [],
+            "schedule": {"tile_n": 128, "parallel_axes": []},
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
+    assert lowered.kernel_name == "mse_loss2d_cuda_lowering"
+    assert "acc += d * d" in lowered.cuda_src
+    assert "acc / (float)total" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_quantile_axis1(monkeypatch) -> None:
