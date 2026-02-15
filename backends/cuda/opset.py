@@ -98,6 +98,8 @@ CUDA_SUPPORTED_OPS: set[str] = {
     "cummin",
     "avg_pool2d",
     "scaled_dot_product_attention",
+    "upsample_nearest1d",
+    "upsample_nearest2d",
     "polar",
     "per_token_group_quant_fp8",
     "nll_loss_forward",

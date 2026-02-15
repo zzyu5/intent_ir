@@ -3573,6 +3573,60 @@ struct CProgramEmitter {
 	        if (op.attrs.contains("hw_fl")) hw_fl = (int)resolve_const_value(op.attrs["hw_fl"], bindings);
 	        w.line("intentir_resize_bilinear2x_i8(" + v(op.inputs[0]) + ", " + out_var + ", " + std::to_string(s[0]) + ", " + std::to_string(s[1]) + ", " +
 	               std::to_string(s[2]) + ", " + std::to_string(hw_fl) + ");");
+	      } else if (op.op == "upsample_nearest1d") {
+	        if (op.inputs.size() != 1) fail("upsample_nearest1d requires 1 input");
+	        if (dtype_env.at(op.inputs[0]) != "f32" || dtype_env.at(out) != "f32") fail("upsample_nearest1d supports only f32 tensors");
+	        const auto& s = shape_env.at(op.inputs[0]);
+	        if (s.size() != 3 || out_shape.size() != 3) fail("upsample_nearest1d expects input/output rank-3 [N,C,L]");
+	        if (s[0] != out_shape[0] || s[1] != out_shape[1]) fail("upsample_nearest1d N/C mismatch");
+	        const int64_t N = s[0], C = s[1], IL = s[2], OL = out_shape[2];
+	        if (IL <= 0 || OL <= 0) fail("upsample_nearest1d expects positive IL/OL");
+	        w.line("for (int n = 0; n < " + std::to_string(N) + "; ++n) {");
+	        w.indent();
+	        w.line("for (int c = 0; c < " + std::to_string(C) + "; ++c) {");
+	        w.indent();
+	        w.line("for (int ol = 0; ol < " + std::to_string(OL) + "; ++ol) {");
+	        w.indent();
+	        w.line("int il = (int)(((int64_t)ol * " + std::to_string(IL) + ") / " + std::to_string(OL) + ");");
+	        w.line("if (il >= " + std::to_string(IL) + ") il = " + std::to_string(IL - 1) + ";");
+	        w.line(out_var + "[((n * " + std::to_string(C) + " + c) * " + std::to_string(OL) + " + ol)] = " + v(op.inputs[0]) +
+	               "[((n * " + std::to_string(C) + " + c) * " + std::to_string(IL) + " + il)];");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	      } else if (op.op == "upsample_nearest2d") {
+	        if (op.inputs.size() != 1) fail("upsample_nearest2d requires 1 input");
+	        if (dtype_env.at(op.inputs[0]) != "f32" || dtype_env.at(out) != "f32") fail("upsample_nearest2d supports only f32 tensors");
+	        const auto& s = shape_env.at(op.inputs[0]);
+	        if (s.size() != 4 || out_shape.size() != 4) fail("upsample_nearest2d expects input/output rank-4 [N,C,H,W]");
+	        if (s[0] != out_shape[0] || s[1] != out_shape[1]) fail("upsample_nearest2d N/C mismatch");
+	        const int64_t N = s[0], C = s[1], IH = s[2], IW = s[3], OH = out_shape[2], OW = out_shape[3];
+	        if (IH <= 0 || IW <= 0 || OH <= 0 || OW <= 0) fail("upsample_nearest2d expects positive H/W");
+	        w.line("for (int n = 0; n < " + std::to_string(N) + "; ++n) {");
+	        w.indent();
+	        w.line("for (int c = 0; c < " + std::to_string(C) + "; ++c) {");
+	        w.indent();
+	        w.line("for (int oh = 0; oh < " + std::to_string(OH) + "; ++oh) {");
+	        w.indent();
+	        w.line("int ih = (int)(((int64_t)oh * " + std::to_string(IH) + ") / " + std::to_string(OH) + ");");
+	        w.line("if (ih >= " + std::to_string(IH) + ") ih = " + std::to_string(IH - 1) + ";");
+	        w.line("for (int ow = 0; ow < " + std::to_string(OW) + "; ++ow) {");
+	        w.indent();
+	        w.line("int iw = (int)(((int64_t)ow * " + std::to_string(IW) + ") / " + std::to_string(OW) + ");");
+	        w.line("if (iw >= " + std::to_string(IW) + ") iw = " + std::to_string(IW - 1) + ";");
+	        w.line(out_var + "[(((n * " + std::to_string(C) + " + c) * " + std::to_string(OH) + " + oh) * " + std::to_string(OW) + " + ow)] = " +
+	               v(op.inputs[0]) + "[(((n * " + std::to_string(C) + " + c) * " + std::to_string(IH) + " + ih) * " + std::to_string(IW) + " + iw)];");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
 	      } else if (op.op == "warp") {
 	        if (op.inputs.size() != 2) fail("warp requires 2 inputs (src, offset)");
 	        if (dtype_env.at(op.inputs[0]) != "i8" || dtype_env.at(op.inputs[1]) != "i16" || dtype_env.at(out) != "i8") fail("warp expects src/out i8 and offset i16");
@@ -4520,6 +4574,50 @@ int main(int argc, char** argv) {
         shape_env[out] = {N, C, OH, OW};
         std::string select = op.attrs.value("select", "values");
         dtype_env[out] = (select == "indices") ? "i64" : get_dtype(op.inputs[0]);
+        continue;
+      }
+      if (kind == "upsample_nearest1d") {
+        if (op.inputs.size() != 1) fail("upsample_nearest1d infer expects 1 input");
+        const auto& in_shape = get_shape(op.inputs[0]);
+        if (in_shape.size() != 3) fail("upsample_nearest1d infer expects rank-3 input [N,C,IL]");
+        if (!intent.tensors.count(out)) fail("upsample_nearest1d output tensor must exist in intent.tensors");
+        const auto& out_t = intent.tensors.at(out);
+        std::vector<int64_t> oshape;
+        for (const auto& d : out_t.shape) {
+          if (d.is_number_integer()) oshape.push_back(d.get<int64_t>());
+          else if (d.is_string()) {
+            const std::string sym = d.get<std::string>();
+            auto it = bindings.find(sym);
+            if (it == bindings.end()) fail("unbound symbol in upsample_nearest1d output shape: " + sym);
+            oshape.push_back(it->second);
+          } else fail("invalid upsample_nearest1d output dim");
+        }
+        if (oshape.size() != 3) fail("upsample_nearest1d infer expects rank-3 output [N,C,OL]");
+        if (oshape[0] != in_shape[0] || oshape[1] != in_shape[1]) fail("upsample_nearest1d N/C mismatch");
+        shape_env[out] = oshape;
+        dtype_env[out] = get_dtype(op.inputs[0]);
+        continue;
+      }
+      if (kind == "upsample_nearest2d") {
+        if (op.inputs.size() != 1) fail("upsample_nearest2d infer expects 1 input");
+        const auto& in_shape = get_shape(op.inputs[0]);
+        if (in_shape.size() != 4) fail("upsample_nearest2d infer expects rank-4 input [N,C,IH,IW]");
+        if (!intent.tensors.count(out)) fail("upsample_nearest2d output tensor must exist in intent.tensors");
+        const auto& out_t = intent.tensors.at(out);
+        std::vector<int64_t> oshape;
+        for (const auto& d : out_t.shape) {
+          if (d.is_number_integer()) oshape.push_back(d.get<int64_t>());
+          else if (d.is_string()) {
+            const std::string sym = d.get<std::string>();
+            auto it = bindings.find(sym);
+            if (it == bindings.end()) fail("unbound symbol in upsample_nearest2d output shape: " + sym);
+            oshape.push_back(it->second);
+          } else fail("invalid upsample_nearest2d output dim");
+        }
+        if (oshape.size() != 4) fail("upsample_nearest2d infer expects rank-4 output [N,C,OH,OW]");
+        if (oshape[0] != in_shape[0] || oshape[1] != in_shape[1]) fail("upsample_nearest2d N/C mismatch");
+        shape_env[out] = oshape;
+        dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
       }
       if (kind == "scaled_dot_product_attention") {

@@ -299,7 +299,28 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
 
     weight_norm = canonical_flaggems_intent_for_spec("weight_norm2d")
     assert weight_norm is not None
-    assert [op.op for op in weight_norm.ops] == ["weight_norm_interface"]
+    assert [op.op for op in weight_norm.ops] == ["mul", "reduce_sum", "sqrt", "div", "broadcast_in_dim", "mul"]
+
+    where2d = canonical_flaggems_intent_for_spec("where2d")
+    assert where2d is not None
+    assert [op.op for op in where2d.ops] == ["where"]
+
+    vstack = canonical_flaggems_intent_for_spec("vstack2d")
+    assert vstack is not None
+    assert [op.op for op in vstack.ops] == ["concat"]
+    assert (vstack.ops[0].attrs or {}).get("axis") == 0
+
+    vdot = canonical_flaggems_intent_for_spec("vdot1d")
+    assert vdot is not None
+    assert [op.op for op in vdot.ops] == ["cast", "cast", "mul", "reduce_sum"]
+
+    var_mean = canonical_flaggems_intent_for_spec("var_mean2d")
+    assert var_mean is not None
+    assert [op.op for op in var_mean.ops] == ["std", "mul"]
+
+    vector_norm = canonical_flaggems_intent_for_spec("vector_norm2d")
+    assert vector_norm is not None
+    assert [op.op for op in vector_norm.ops] == ["mul", "reduce_sum", "sqrt"]
 
     sdpa = canonical_flaggems_intent_for_spec("scaled_dot_product_attention_bhsd")
     assert sdpa is not None

@@ -520,10 +520,10 @@ _MACRO_TEMPLATE: dict[str, SemanticMapping] = {
     ),
     "var_mean": _mk(
         "var_mean",
-        ("var", "mean"),
+        ("std", "mul"),
         mapping_kind="macro_template",
-        pattern_id="macro.var_mean",
-        detail="mapped to var/mean primitives",
+        pattern_id="macro.var_mean_via_std",
+        detail="mapped as variance via std(x)^2",
     ),
     "normed_cumsum": _mk(
         "normed_cumsum",
@@ -562,10 +562,10 @@ _MACRO_TEMPLATE: dict[str, SemanticMapping] = {
     ),
     "vdot": _mk(
         "vdot",
-        ("matmul",),
+        ("cast", "cast", "mul", "reduce_sum"),
         mapping_kind="macro_template",
         pattern_id="macro.vdot",
-        detail="mapped to vector matmul primitive",
+        detail="mapped as cast+mul+reduce_sum dot pattern",
     ),
     "mv": _mk(
         "mv",
@@ -807,10 +807,10 @@ _MACRO_TEMPLATE: dict[str, SemanticMapping] = {
     ),
     "weight_norm_interface": _mk(
         "weight_norm_interface",
-        ("weight_norm_interface",),
+        ("mul", "reduce_sum", "sqrt", "div", "broadcast_in_dim", "mul"),
         mapping_kind="macro_template",
-        pattern_id="macro.weight_norm_interface",
-        detail="mapped to weight_norm_interface primitive",
+        pattern_id="macro.weight_norm_interface_via_reduce",
+        detail="mapped as v * broadcast(g / sqrt(reduce_sum(v*v)))",
     ),
     "per_token_group_quant_fp8": _mk(
         "per_token_group_quant_fp8",

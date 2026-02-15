@@ -289,6 +289,102 @@ def _canonical_std2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_var_mean2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "var_mean2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "std_out": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "std", "inputs": ["inp"], "output": "std_out", "attrs": {"axis": 1, "dims": [1], "keepdims": False, "correction": 1}},
+                {"op": "mul", "inputs": ["std_out", "std_out"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_vector_norm2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "vector_norm2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "sq": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "sum_sq": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "mul", "inputs": ["inp", "inp"], "output": "sq"},
+                {"op": "reduce_sum", "inputs": ["sq"], "output": "sum_sq", "attrs": {"dims": [1], "keepdims": False}},
+                {"op": "sqrt", "inputs": ["sum_sq"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_vdot1d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "vdot1d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "B": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "A_f32": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "B_f32": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "mul_out": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": [], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cast", "inputs": ["A"], "output": "A_f32", "attrs": {"to": "f32"}},
+                {"op": "cast", "inputs": ["B"], "output": "B_f32", "attrs": {"to": "f32"}},
+                {"op": "mul", "inputs": ["A_f32", "B_f32"], "output": "mul_out"},
+                {"op": "reduce_sum", "inputs": ["mul_out"], "output": "out", "attrs": {"dims": [0], "keepdims": False}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_vstack2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "vstack2d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "B": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M_OUT", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "concat", "inputs": ["A", "B"], "output": "out", "attrs": {"axis": 0}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_where2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "where2d",
+            "tensors": {
+                "condition": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                "self": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "other": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "where", "inputs": ["condition", "self", "other"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def _canonical_stack2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -1681,11 +1777,26 @@ def _canonical_weight_norm2d_intent() -> IntentFunction:
             "name": "weight_norm2d",
             "tensors": {
                 "v": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
-                "g": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "g": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "vv": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "norm_sq": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "norm": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "scale": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "scale_bc": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
                 "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
             },
             "ops": [
-                {"op": "weight_norm_interface", "inputs": ["v", "g"], "output": "out", "attrs": {"dim": 1}},
+                {"op": "mul", "inputs": ["v", "v"], "output": "vv"},
+                {"op": "reduce_sum", "inputs": ["vv"], "output": "norm_sq", "attrs": {"dims": [1], "keepdims": False}},
+                {"op": "sqrt", "inputs": ["norm_sq"], "output": "norm"},
+                {"op": "div", "inputs": ["g", "norm"], "output": "scale"},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["scale"],
+                    "output": "scale_bc",
+                    "attrs": {"out_shape": ["M", "N"], "broadcast_dims": [0]},
+                },
+                {"op": "mul", "inputs": ["v", "scale_bc"], "output": "out"},
             ],
             "outputs": ["out"],
         }
@@ -2078,6 +2189,16 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_sqrt2d_intent()
     if name == "std2d":
         return _canonical_std2d_intent()
+    if name == "var_mean2d":
+        return _canonical_var_mean2d_intent()
+    if name == "vector_norm2d":
+        return _canonical_vector_norm2d_intent()
+    if name == "vdot1d":
+        return _canonical_vdot1d_intent()
+    if name == "vstack2d":
+        return _canonical_vstack2d_intent()
+    if name == "where2d":
+        return _canonical_where2d_intent()
     if name == "stack2d":
         return _canonical_stack2d_intent()
     if name == "sort2d":

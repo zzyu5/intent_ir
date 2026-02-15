@@ -698,3 +698,125 @@ def test_cuda_lowering_supports_masked_scatter_2d(monkeypatch) -> None:
     assert lowered.kernel_name == "masked_scatter2d_cuda_lowering"
     assert "src_pos < L" in lowered.cuda_src
     assert "out[i] = source[src_pos]" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_var_from_std_mul_pattern(monkeypatch) -> None:
+    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "var_mean2d_cuda_lowering",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "std_out": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "std", "inputs": ["inp"], "output": "std_out", "attrs": {"axis": 1, "dims": [1], "keepdims": False, "correction": 1}},
+                {"op": "mul", "inputs": ["std_out", "std_out"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 8})
+    assert lowered.kernel_name == "var_mean2d_cuda_lowering"
+    assert "double var = sq / den;" in lowered.cuda_src
+    assert "out[(size_t)row" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_vector_norm_mul_reduce_sqrt_pattern(monkeypatch) -> None:
+    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "vector_norm2d_cuda_lowering",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "sq": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "sum_sq": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "mul", "inputs": ["inp", "inp"], "output": "sq"},
+                {"op": "reduce_sum", "inputs": ["sq"], "output": "sum_sq", "attrs": {"dims": [1], "keepdims": False}},
+                {"op": "sqrt", "inputs": ["sum_sq"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 4, "N": 16})
+    assert lowered.kernel_name == "vector_norm2d_cuda_lowering"
+    assert "sum_sq += v * v;" in lowered.cuda_src
+    assert "sqrtf((float)sum_sq)" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_upsample_nearest1d(monkeypatch) -> None:
+    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "upsample_nearest1d_ncl",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["N", "C", "IL"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N", "C", "OL"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "upsample_nearest1d", "inputs": ["input"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"N": 2, "C": 3, "IL": 8, "OL": 16})
+    assert lowered.kernel_name == "upsample_nearest1d_ncl"
+    assert "int il = (int)(((int64_t)ol" in lowered.cuda_src
+    assert "out_idx" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_upsample_nearest2d(monkeypatch) -> None:
+    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "upsample_nearest2d_nchw",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["N", "C", "IH", "IW"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N", "C", "OH", "OW"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "upsample_nearest2d", "inputs": ["input"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"N": 1, "C": 2, "IH": 8, "IW": 8, "OH": 16, "OW": 16})
+    assert lowered.kernel_name == "upsample_nearest2d_nchw"
+    assert "int ih = (int)(((int64_t)oh" in lowered.cuda_src
+    assert "int iw = (int)(((int64_t)ow" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_weight_norm_dim0_pattern(monkeypatch) -> None:
+    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "weight_norm2d_cuda_lowering",
+            "tensors": {
+                "v": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "g": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "vv": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "norm_sq": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "norm": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "scale": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "scale_bc": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "mul", "inputs": ["v", "v"], "output": "vv"},
+                {"op": "reduce_sum", "inputs": ["vv"], "output": "norm_sq", "attrs": {"dims": [1], "keepdims": False}},
+                {"op": "sqrt", "inputs": ["norm_sq"], "output": "norm"},
+                {"op": "div", "inputs": ["g", "norm"], "output": "scale"},
+                {"op": "broadcast_in_dim", "inputs": ["scale"], "output": "scale_bc", "attrs": {"out_shape": ["M", "N"], "broadcast_dims": [0]}},
+                {"op": "mul", "inputs": ["v", "scale_bc"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+    lowered = lower_intent_to_cuda_kernel(intent, shape_bindings={"M": 8, "N": 16})
+    assert lowered.kernel_name == "weight_norm2d_cuda_lowering"
+    assert "const float norm = sqrtf((float)sum_sq);" in lowered.cuda_src
+    assert "row_ptr[(size_t)col] * scale" in lowered.cuda_src
