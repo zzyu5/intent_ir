@@ -1,12 +1,12 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-15T08:24:10+00:00",
+  "generated_at": "2026-02-15T09:38:35+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
-      "dual_pass": 183,
-      "blocked_backend": 13
+      "dual_pass": 193,
+      "blocked_backend": 3
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -1696,10 +1696,10 @@
       "id": "flaggems::vstack",
       "semantic_op": "vstack",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "vstack2d",
       "intent_ops": [
         "concat"
@@ -1999,10 +1999,10 @@
       "id": "flaggems::var_mean",
       "semantic_op": "var_mean",
       "family": "reduction",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "var_mean2d",
       "intent_ops": [
         "var",
@@ -2231,10 +2231,10 @@
       "id": "flaggems::vector_norm",
       "semantic_op": "vector_norm",
       "family": "norm_activation",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "vector_norm2d",
       "intent_ops": [
         "mul",
@@ -2246,10 +2246,10 @@
       "id": "flaggems::weight_norm_interface",
       "semantic_op": "weight_norm_interface",
       "family": "norm_activation",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "weight_norm2d",
       "intent_ops": [
         "weight_norm_interface"
@@ -2402,10 +2402,10 @@
       "id": "flaggems::where_scalar_other",
       "semantic_op": "where_scalar_other",
       "family": "index_scatter_gather",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "where2d",
       "intent_ops": [
         "where"
@@ -2415,10 +2415,10 @@
       "id": "flaggems::where_scalar_self",
       "semantic_op": "where_scalar_self",
       "family": "index_scatter_gather",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "where2d",
       "intent_ops": [
         "where"
@@ -2535,10 +2535,10 @@
       "id": "flaggems::vdot",
       "semantic_op": "vdot",
       "family": "matmul_linear",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "vdot1d",
       "intent_ops": [
         "matmul"
@@ -2627,10 +2627,10 @@
       "id": "flaggems::upsample_bicubic2d_aa",
       "semantic_op": "upsample_bicubic2d_aa",
       "family": "conv_pool_interp",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "upsample_bicubic2d_aa",
       "intent_ops": [
         "upsample_bicubic2d_aa"
@@ -2640,10 +2640,10 @@
       "id": "flaggems::upsample_nearest1d",
       "semantic_op": "upsample_nearest1d",
       "family": "conv_pool_interp",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "upsample_nearest1d_ncl",
       "intent_ops": [
         "upsample_nearest1d"
@@ -2653,10 +2653,10 @@
       "id": "flaggems::upsample_nearest2d",
       "semantic_op": "upsample_nearest2d",
       "family": "conv_pool_interp",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "upsample_nearest2d_nchw",
       "intent_ops": [
         "upsample_nearest2d"
