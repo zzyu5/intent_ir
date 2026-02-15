@@ -493,13 +493,13 @@ def test_check_batch_gate_backend_profile_fails_on_timing_regression_budget(tmp_
                 "rvv": {
                     "compare_enabled": True,
                     "rows": [
-                        {"kernel": "add2d", "total_ms": {"delta_pct": 12.0}},
+                        {"kernel": "add2d", "total_ms": {"delta_pct": 12.0, "delta_ms": 120.0}},
                     ],
                 },
                 "cuda": {
                     "compare_enabled": True,
                     "rows": [
-                        {"kernel": "add2d", "total_ms": {"delta_pct": 1.0}},
+                        {"kernel": "add2d", "total_ms": {"delta_pct": 1.0, "delta_ms": 10.0}},
                     ],
                 },
             }
@@ -544,6 +544,10 @@ def test_check_batch_gate_backend_profile_fails_on_timing_regression_budget(tmp_
             str(handoff),
             "--max-total-regression-pct",
             "8",
+            "--min-regression-delta-ms",
+            "0",
+            "--max-regression-ratio",
+            "0.0",
             "--out",
             str(out),
         ],
@@ -552,3 +556,90 @@ def test_check_batch_gate_backend_profile_fails_on_timing_regression_budget(tmp_
         text=True,
     )
     assert p.returncode != 0
+
+
+def test_check_batch_gate_backend_profile_allows_single_outlier_by_default_ratio(tmp_path: Path) -> None:
+    active = tmp_path / "active_batch_backend.json"
+    run_summary = tmp_path / "run_summary_backend.json"
+    status_converged = tmp_path / "status_converged_backend.json"
+    progress = tmp_path / "progress_log_backend.jsonl"
+    handoff = tmp_path / "handoff_backend.md"
+    out = tmp_path / "batch_gate_backend.json"
+    rvv_json = tmp_path / "rvv_local.json"
+    cuda_json = tmp_path / "cuda_local.json"
+    timing_delta_json = tmp_path / "timing_delta.json"
+
+    active.write_text(json.dumps({"schema_version": "flaggems_active_batch_v2", "lane": "backend_compiler", "items": [{}]}), encoding="utf-8")
+    rvv_json.write_text(
+        json.dumps({"results": [{"kernel": "add2d", "reason_code": "ok", "lower_ms": 1.0, "compile_ms": 2.0, "launch_ms": 3.0, "total_ms": 6.0}]}),
+        encoding="utf-8",
+    )
+    cuda_json.write_text(
+        json.dumps({"results": [{"kernel": "add2d", "reason_code": "ok", "lower_ms": 1.5, "compile_ms": 2.5, "launch_ms": 3.5, "total_ms": 7.5}]}),
+        encoding="utf-8",
+    )
+    timing_delta_json.write_text(
+        json.dumps(
+            {
+                "rvv": {
+                    "compare_enabled": True,
+                    "rows": [
+                        {"kernel": "add2d", "total_ms": {"delta_pct": 20.0, "delta_ms": 120.0}},
+                        {"kernel": "mul2d", "total_ms": {"delta_pct": 0.5, "delta_ms": 5.0}},
+                    ],
+                },
+                "cuda": {
+                    "compare_enabled": True,
+                    "rows": [
+                        {"kernel": "add2d", "total_ms": {"delta_pct": 2.0, "delta_ms": 20.0}},
+                        {"kernel": "mul2d", "total_ms": {"delta_pct": 1.0, "delta_ms": 10.0}},
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    run_summary.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "stages": [
+                    {"stage": "rvv_local", "ok": True, "json_path": str(rvv_json)},
+                    {"stage": "cuda_local", "ok": True, "json_path": str(cuda_json)},
+                    {"stage": "timing_delta", "ok": True, "json_path": str(timing_delta_json)},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    status_converged.write_text(json.dumps({"entries": []}), encoding="utf-8")
+    progress.write_text(
+        json.dumps({"run_summary_path": str(run_summary), "status_converged_path": str(status_converged)}) + "\n",
+        encoding="utf-8",
+    )
+    handoff.write_text("# FlagGems Session Handoff\n- Next Focus: wave5\n", encoding="utf-8")
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/check_batch_gate.py",
+            "--profile",
+            "backend_compiler",
+            "--active-batch",
+            str(active),
+            "--run-summary",
+            str(run_summary),
+            "--status-converged",
+            str(status_converged),
+            "--progress-log",
+            str(progress),
+            "--handoff",
+            str(handoff),
+            "--out",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr

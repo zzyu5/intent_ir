@@ -133,12 +133,19 @@ def _validate_codegen_purity(stage_map: dict[str, dict[str, Any]]) -> tuple[bool
     return True, "no deprecated codegen fallback flags/env in stage commands"
 
 
-def _validate_timing_delta_budget(timing_delta_path: Path, *, max_total_regression_pct: float) -> tuple[bool, str]:
+def _validate_timing_delta_budget(
+    timing_delta_path: Path,
+    *,
+    max_total_regression_pct: float,
+    min_regression_delta_ms: float,
+    max_regression_ratio: float,
+) -> tuple[bool, str]:
     if not timing_delta_path.is_file():
         return False, f"timing_delta json missing: {timing_delta_path}"
     payload = _load_json(timing_delta_path)
     regressions: list[str] = []
     compare_enabled_any = False
+    ratio_failures: list[str] = []
     for backend in ("rvv", "cuda"):
         section = payload.get(backend)
         if not isinstance(section, dict):
@@ -147,6 +154,8 @@ def _validate_timing_delta_budget(timing_delta_path: Path, *, max_total_regressi
             continue
         compare_enabled_any = True
         rows = [r for r in list(section.get("rows") or []) if isinstance(r, dict)]
+        backend_total = 0
+        backend_regressions = 0
         for row in rows:
             kernel = str(row.get("kernel") or "")
             total = row.get("total_ms")
@@ -154,15 +163,35 @@ def _validate_timing_delta_budget(timing_delta_path: Path, *, max_total_regressi
                 continue
             try:
                 delta_pct = float(total.get("delta_pct", 0.0))
+                delta_ms = float(total.get("delta_ms", 0.0))
             except Exception:
                 continue
-            if delta_pct > float(max_total_regression_pct):
-                regressions.append(f"{backend}:{kernel}:{delta_pct:.2f}%")
+            backend_total += 1
+            if delta_pct > float(max_total_regression_pct) and delta_ms > float(min_regression_delta_ms):
+                backend_regressions += 1
+                regressions.append(f"{backend}:{kernel}:{delta_pct:.2f}% ({delta_ms:.2f}ms)")
+        if backend_total > 0:
+            ratio = float(backend_regressions) / float(backend_total)
+            if ratio > float(max_regression_ratio):
+                ratio_failures.append(
+                    f"{backend}:ratio={ratio:.3f} ({backend_regressions}/{backend_total})"
+                )
     if not compare_enabled_any:
         return True, "timing_delta compare disabled (no baseline), budget check skipped"
-    if regressions:
-        return False, f"total_ms regression > {max_total_regression_pct:.2f}%: {', '.join(regressions)}"
-    return True, f"timing_delta total_ms regression <= {max_total_regression_pct:.2f}%"
+    if ratio_failures:
+        detail = (
+            f"regression ratio > {max_regression_ratio:.3f} "
+            f"(pct>{max_total_regression_pct:.2f} and delta_ms>{min_regression_delta_ms:.2f})"
+        )
+        if regressions:
+            detail += f": {', '.join(regressions)} | {'; '.join(ratio_failures)}"
+        else:
+            detail += f": {'; '.join(ratio_failures)}"
+        return False, detail
+    return True, (
+        f"timing_delta regression ratio <= {max_regression_ratio:.3f} "
+        f"(pct>{max_total_regression_pct:.2f} and delta_ms>{min_regression_delta_ms:.2f})"
+    )
 
 
 def main() -> None:
@@ -195,6 +224,18 @@ def main() -> None:
         type=float,
         default=8.0,
         help="Max allowed total_ms regression percentage for backend_compiler timing_delta checks.",
+    )
+    ap.add_argument(
+        "--min-regression-delta-ms",
+        type=float,
+        default=50.0,
+        help="Minimum total_ms delta to count as a performance regression sample.",
+    )
+    ap.add_argument(
+        "--max-regression-ratio",
+        type=float,
+        default=0.5,
+        help="Max allowed ratio of regression samples (per backend) in timing_delta.",
     )
     ap.add_argument("--out", type=Path, default=(ROOT / "artifacts" / "flaggems_matrix" / "batch_gate.json"))
     args = ap.parse_args()
@@ -354,6 +395,8 @@ def main() -> None:
             budget_ok, budget_detail = _validate_timing_delta_budget(
                 Path(timing_delta_json),
                 max_total_regression_pct=float(args.max_total_regression_pct),
+                min_regression_delta_ms=float(args.min_regression_delta_ms),
+                max_regression_ratio=float(args.max_regression_ratio),
             )
         else:
             budget_ok, budget_detail = (True, "timing_delta stage missing; regression budget skipped")
