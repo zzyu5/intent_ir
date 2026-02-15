@@ -1,12 +1,12 @@
 {
   "schema_version": "flaggems_feature_list_v1",
-  "generated_at": "2026-02-15T03:10:15+00:00",
+  "generated_at": "2026-02-15T04:03:43+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
-      "dual_pass": 133,
-      "blocked_backend": 63
+      "dual_pass": 143,
+      "blocked_backend": 53
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -1261,10 +1261,10 @@
       "id": "flaggems::ones",
       "semantic_op": "ones",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "full2d",
       "intent_ops": [
         "const",
@@ -1275,10 +1275,10 @@
       "id": "flaggems::ones_like",
       "semantic_op": "ones_like",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "runtime_backend_fail",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "full2d",
       "intent_ops": [
         "const",
@@ -1289,10 +1289,10 @@
       "id": "flaggems::pad",
       "semantic_op": "pad",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "pad2d",
       "intent_ops": [
         "pad"
@@ -1302,10 +1302,10 @@
       "id": "flaggems::per_token_group_quant_fp8",
       "semantic_op": "per_token_group_quant_fp8",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "per_token_group_quant_fp8_2d",
       "intent_ops": [
         "per_token_group_quant_fp8"
@@ -1315,10 +1315,10 @@
       "id": "flaggems::polar",
       "semantic_op": "polar",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "polar2d",
       "intent_ops": [
         "polar"
@@ -1328,10 +1328,10 @@
       "id": "flaggems::pow_scalar",
       "semantic_op": "pow_scalar",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "pow_scalar2d",
       "intent_ops": [
         "pow"
@@ -1341,10 +1341,10 @@
       "id": "flaggems::pow_tensor_scalar",
       "semantic_op": "pow_tensor_scalar",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "pow_tensor_scalar2d",
       "intent_ops": [
         "pow"
@@ -1354,10 +1354,10 @@
       "id": "flaggems::pow_tensor_tensor",
       "semantic_op": "pow_tensor_tensor",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "pow_tensor_tensor2d",
       "intent_ops": [
         "pow"
@@ -1908,10 +1908,10 @@
       "id": "flaggems::prod",
       "semantic_op": "prod",
       "family": "reduction",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "prod2d",
       "intent_ops": [
         "reduce_prod"
@@ -1921,10 +1921,10 @@
       "id": "flaggems::prod_dim",
       "semantic_op": "prod_dim",
       "family": "reduction",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "pipeline_diff_failed_or_missing",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "prod_dim2d",
       "intent_ops": [
         "reduce_prod"
