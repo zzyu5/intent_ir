@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-15T15:46:03+00:00",
+  "updated_at": "2026-02-15T15:55:07+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -9,29 +9,8 @@
     "workflow/flaggems/state/active_batch_backend_compiler.json",
     "workflow/flaggems/state/handoff.md"
   ],
-  "git_log_short": "497f307 workflow: record backend compiler v2 closure and next wave focus\n9bdc028 backend: fix rvv staged io binding and stabilize cuda compiler stages\n4602293 workflow: record pure-compiler cutover session and backend gate blockers\nff2d9a5 backend: hard-cut cuda codegen fallback and stage pipeline execution\n7e6e617 workflow: refresh status snapshots after cpp strict defaults\nd081b20 backend: default compiler lane to cpp+pybind strict\n59186ce workflow: refresh status snapshot after backend wave3 closure\n8b1ca91 workflow: close backend wave3 and queue profile specialization wave4\n2980a9a backend: export op-family schedule profiles and enforce strict wave3 stages\n51d6157 workflow: refresh status snapshot after backend wave2 closure\ne523717 workflow: close backend wave2 and queue op-family schedule wave3\nf226046 backend: add rewrite-aware legalize artifacts and timing baseline compare\n41a142d workflow: refresh status snapshot after wave progress commits\n5afc231 workflow: close ir_arch macro guard and queue backend wave2 task\n128c378 compiler/workflow: add staged pipeline contracts and timing delta tooling\n9cc5ff3 workflow: close mixed lanes and refresh maintenance snapshots\nc4dad84 backend: wire legacy codegen entries to staged pipelines\ndfc9d8f workflow: advance ir/backend lanes with gate runners and timing enforcement\n38368a9 workflow: land v2 mixed-lane long-task harness and compilerization scaffolding\n512cdbc workflow: record scheduler wiring handoff for nightly maintenance",
+  "git_log_short": "e1f1796 workflow: align session state with backend stabilization commits\n497f307 workflow: record backend compiler v2 closure and next wave focus\n9bdc028 backend: fix rvv staged io binding and stabilize cuda compiler stages\n4602293 workflow: record pure-compiler cutover session and backend gate blockers\nff2d9a5 backend: hard-cut cuda codegen fallback and stage pipeline execution\n7e6e617 workflow: refresh status snapshots after cpp strict defaults\nd081b20 backend: default compiler lane to cpp+pybind strict\n59186ce workflow: refresh status snapshot after backend wave3 closure\n8b1ca91 workflow: close backend wave3 and queue profile specialization wave4\n2980a9a backend: export op-family schedule profiles and enforce strict wave3 stages\n51d6157 workflow: refresh status snapshot after backend wave2 closure\ne523717 workflow: close backend wave2 and queue op-family schedule wave3\nf226046 backend: add rewrite-aware legalize artifacts and timing baseline compare\n41a142d workflow: refresh status snapshot after wave progress commits\n5afc231 workflow: close ir_arch macro guard and queue backend wave2 task\n128c378 compiler/workflow: add staged pipeline contracts and timing delta tooling\n9cc5ff3 workflow: close mixed lanes and refresh maintenance snapshots\nc4dad84 backend: wire legacy codegen entries to staged pipelines\ndfc9d8f workflow: advance ir/backend lanes with gate runners and timing enforcement\n38368a9 workflow: land v2 mixed-lane long-task harness and compilerization scaffolding",
   "progress_tail": [
-    {
-      "ts": "2026-02-15T13:32:10+00:00",
-      "commit": "9cc5ff35891ae80d7d7e241a0e308b054667ae36",
-      "lane": "ir_arch",
-      "summary": "Added macro composition guard stage and validated ir_arch lane with shared macro semantics checks",
-      "batch_ops": [
-        ""
-      ],
-      "active_batch_path": "workflow/flaggems/state/active_batch_ir_arch.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v4/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v4/status_converged.json",
-      "next_focus": "Close backend_compiler schedule heuristics wave1 with measurable stage-timing deltas",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v4/macro_composition_report.json",
-        "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v4/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v4/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v4",
-      "counts_by_status": {}
-    },
     {
       "ts": "2026-02-15T13:35:59+00:00",
       "commit": "9cc5ff35891ae80d7d7e241a0e308b054667ae36",
@@ -207,9 +186,36 @@
         "blocked_backend": 194,
         "dual_pass": 2
       }
+    },
+    {
+      "ts": "2026-02-15T15:54:42+00:00",
+      "commit": "e1f179687ee9992e242fd2b614e50e491ecdb4b5",
+      "lane": "backend_compiler",
+      "summary": "Completed backend_compiler wave4 profile specialization with override knobs, rvv local+remote and cuda local all passing",
+      "batch_ops": [
+        ""
+      ],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/status_converged.json",
+      "next_focus": "Replan backend_compiler lane for next optimization wave with expanded kernel families and nightly perf thresholds",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/rvv_remote.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/schedule_profiles.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/timing_delta.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1",
+      "counts_by_status": {
+        "blocked_backend": 194,
+        "dual_pass": 2
+      }
     }
   ],
-  "next_focus": "Execute backend_compiler wave4 profile_specialization on expanded kernels and include daily rvv_remote evidence",
+  "next_focus": "Replan backend_compiler lane for next optimization wave with expanded kernel families and nightly perf thresholds",
   "known_risks": [
     "Pure-compiler cutover landed; backend compiler smoke shows rvv runtime_fail and cuda compile_timeout on add2d/mul2d under strict staged path"
   ]

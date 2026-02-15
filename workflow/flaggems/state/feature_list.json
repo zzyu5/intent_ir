@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_feature_list_v2",
-  "generated_at": "2026-02-15T13:50:24+00:00",
+  "generated_at": "2026-02-15T15:54:33+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
@@ -5571,10 +5571,10 @@
       "id": "backend_compiler::profile_specialization_wave4",
       "semantic_op": "",
       "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "pending",
-      "next_action": "profile_specialization_tuning",
+      "status": "done",
+      "passes": true,
+      "reason_code": "ok",
+      "next_action": "none",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "backend_compiler",
@@ -5589,7 +5589,15 @@
       "depends_on": [
         "backend_compiler::op_family_schedule_wave3"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/batch_gate_backend_compiler_wave4_pass.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/schedule_profiles.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/timing_delta.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/rvv_remote.json"
+      ],
       "description": "Add profile-specialized schedule override knobs and validate timing deltas against wave3 baseline."
     }
   ]

@@ -253,12 +253,12 @@
       "id": "backend_compiler::profile_specialization_wave4",
       "track": "backend_compiler",
       "task_type": "performance",
-      "status": "pending",
-      "passes": false,
+      "status": "done",
+      "passes": true,
       "priority": 80,
       "gate_profile": "backend_compiler",
-      "reason_code": "pending",
-      "next_action": "profile_specialization_tuning",
+      "reason_code": "ok",
+      "next_action": "none",
       "acceptance": [
         "schedule_profiles_export_contains_wave4_tags",
         "backend_matrix_uses_profile_override_knobs",
@@ -267,7 +267,15 @@
       "depends_on": [
         "backend_compiler::op_family_schedule_wave3"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/batch_gate_backend_compiler_wave4_pass.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/schedule_profiles.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/timing_delta.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/rvv_remote.json"
+      ],
       "description": "Add profile-specialized schedule override knobs and validate timing deltas against wave3 baseline."
     }
   ]
