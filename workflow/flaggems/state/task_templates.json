@@ -200,12 +200,12 @@
       "id": "backend_compiler::legalize_schedule_optimization_wave2",
       "track": "backend_compiler",
       "task_type": "performance",
-      "status": "pending",
-      "passes": false,
+      "status": "done",
+      "passes": true,
       "priority": 60,
       "gate_profile": "backend_compiler",
-      "reason_code": "pending",
-      "next_action": "legalize_schedule_optimization",
+      "reason_code": "ok",
+      "next_action": "none",
       "acceptance": [
         "cuda_pipeline_legalize_artifacts_include_rewrite_counts",
         "rvv_pipeline_legalize_artifacts_include_rewrite_counts",
@@ -214,8 +214,34 @@
       "depends_on": [
         "backend_compiler::schedule_heuristics_wave1"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v5/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v5/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v5/batch_gate_backend_compiler.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v5/timing_delta.json"
+      ],
       "description": "Implement rewrite-count aware legalize/schedule optimization and validate timing deltas against wave1 baseline."
+    },
+    {
+      "id": "backend_compiler::op_family_schedule_wave3",
+      "track": "backend_compiler",
+      "task_type": "performance",
+      "status": "pending",
+      "passes": false,
+      "priority": 70,
+      "gate_profile": "backend_compiler",
+      "reason_code": "pending",
+      "next_action": "op_family_schedule_tuning",
+      "acceptance": [
+        "matmul_conv_schedule_profiles_exported",
+        "elementwise_reduction_schedule_profiles_exported",
+        "timing_delta_report_has_wave3_baseline_compare"
+      ],
+      "depends_on": [
+        "backend_compiler::legalize_schedule_optimization_wave2"
+      ],
+      "evidence_paths": [],
+      "description": "Introduce op-family specific schedule profiles and validate stage timing deltas against wave2 baseline."
     }
   ]
 }

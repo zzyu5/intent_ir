@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_active_batch_v2",
-  "generated_at": "2026-02-15T13:36:37+00:00",
+  "generated_at": "2026-02-15T13:43:21+00:00",
   "branch": "flaggems",
   "lane": "backend_compiler",
   "batch_size": 8,
@@ -11,29 +11,29 @@
   ],
   "items": [
     {
-      "id": "backend_compiler::legalize_schedule_optimization_wave2",
+      "id": "backend_compiler::op_family_schedule_wave3",
       "semantic_op": "",
       "family": "workflow",
       "status": "pending",
       "passes": false,
       "reason_code": "pending",
-      "next_action": "legalize_schedule_optimization",
+      "next_action": "op_family_schedule_tuning",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "backend_compiler",
       "task_type": "performance",
-      "priority": 60,
+      "priority": 70,
       "acceptance": [
-        "cuda_pipeline_legalize_artifacts_include_rewrite_counts",
-        "rvv_pipeline_legalize_artifacts_include_rewrite_counts",
-        "timing_delta_report_has_wave2_baseline_compare"
+        "matmul_conv_schedule_profiles_exported",
+        "elementwise_reduction_schedule_profiles_exported",
+        "timing_delta_report_has_wave3_baseline_compare"
       ],
       "gate_profile": "backend_compiler",
       "depends_on": [
-        "backend_compiler::schedule_heuristics_wave1"
+        "backend_compiler::legalize_schedule_optimization_wave2"
       ],
       "evidence_paths": [],
-      "description": "Implement rewrite-count aware legalize/schedule optimization and validate timing deltas against wave1 baseline."
+      "description": "Introduce op-family specific schedule profiles and validate stage timing deltas against wave2 baseline."
     }
   ],
   "context": {

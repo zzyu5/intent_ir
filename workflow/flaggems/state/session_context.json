@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-15T13:37:35+00:00",
+  "updated_at": "2026-02-15T13:43:21+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -9,24 +9,8 @@
     "workflow/flaggems/state/active_batch_backend_compiler.json",
     "workflow/flaggems/state/handoff.md"
   ],
-  "git_log_short": "5afc231 workflow: close ir_arch macro guard and queue backend wave2 task\n128c378 compiler/workflow: add staged pipeline contracts and timing delta tooling\n9cc5ff3 workflow: close mixed lanes and refresh maintenance snapshots\nc4dad84 backend: wire legacy codegen entries to staged pipelines\ndfc9d8f workflow: advance ir/backend lanes with gate runners and timing enforcement\n38368a9 workflow: land v2 mixed-lane long-task harness and compilerization scaffolding\n512cdbc workflow: record scheduler wiring handoff for nightly maintenance\n162405d workflow: wire nightly maintenance into cron/systemd scheduler wrappers\n8fd875c workflow: record nightly automation handoff and next maintenance focus\n91cae8c workflow: add nightly maintenance runner for post-coverage drift checks\n7899577 workflow: record maintenance-mode handoff after 196/196 closure\n206c8cb workflow: finalize post-coverage maintenance flow and ci gate tests\n6b882eb workflow: close final backend trio and reach 196/196 dual-pass\n668885f workflow: close wave-u batch, write registry, and roll final backend trio\n5b50952 cuda: add upsample_bicubic2d_aa lowering and close wave-u final blocker\n1e2ec79 workflow: record wave-u rvv remote validation and final cuda blocker\n8ecc2dc workflow: record wave-u progress at 9/10 dual-pass and next blocker\n0aea157 intentir/flaggems: push wave-u active batch to 9/10 dual-pass\n659d935 workflow: close twave 10/10 dual-pass, write registry, and roll next batch\n319fa99 intentir/flaggems: harden twave pipeline and close tile/topk/trace/unique backends",
+  "git_log_short": "41a142d workflow: refresh status snapshot after wave progress commits\n5afc231 workflow: close ir_arch macro guard and queue backend wave2 task\n128c378 compiler/workflow: add staged pipeline contracts and timing delta tooling\n9cc5ff3 workflow: close mixed lanes and refresh maintenance snapshots\nc4dad84 backend: wire legacy codegen entries to staged pipelines\ndfc9d8f workflow: advance ir/backend lanes with gate runners and timing enforcement\n38368a9 workflow: land v2 mixed-lane long-task harness and compilerization scaffolding\n512cdbc workflow: record scheduler wiring handoff for nightly maintenance\n162405d workflow: wire nightly maintenance into cron/systemd scheduler wrappers\n8fd875c workflow: record nightly automation handoff and next maintenance focus\n91cae8c workflow: add nightly maintenance runner for post-coverage drift checks\n7899577 workflow: record maintenance-mode handoff after 196/196 closure\n206c8cb workflow: finalize post-coverage maintenance flow and ci gate tests\n6b882eb workflow: close final backend trio and reach 196/196 dual-pass\n668885f workflow: close wave-u batch, write registry, and roll final backend trio\n5b50952 cuda: add upsample_bicubic2d_aa lowering and close wave-u final blocker\n1e2ec79 workflow: record wave-u rvv remote validation and final cuda blocker\n8ecc2dc workflow: record wave-u progress at 9/10 dual-pass and next blocker\n0aea157 intentir/flaggems: push wave-u active batch to 9/10 dual-pass\n659d935 workflow: close twave 10/10 dual-pass, write registry, and roll next batch",
   "progress_tail": [
-    {
-      "ts": "2026-02-15T09:55:13+00:00",
-      "commit": "162405dc931bc39bf163b0a5c0edd0515362d898",
-      "summary": "Wired nightly maintenance into scheduler-ready wrappers (cron/systemd), added wrapper dry-run control, and validated maintenance scripts/tests.",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260215/batch_active3_finaltrio_v1_full/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260215/batch_active3_finaltrio_v1_full/status_converged_registry_write.json",
-      "next_focus": "Connect workflow/flaggems/nightly.sh to host scheduler and keep daily ci_gate drift checks; escalate only on status regression.",
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260215/batch_active3_finaltrio_v1_full",
-      "counts_by_status": {
-        "blocked_backend": 185,
-        "dual_pass": 11
-      }
-    },
     {
       "ts": "2026-02-15T13:10:58+00:00",
       "commit": "38368a9350302fb89ce41532a008b3b9d7d4f446",
@@ -191,8 +175,33 @@
         "blocked_backend": 194,
         "dual_pass": 2
       }
+    },
+    {
+      "ts": "2026-02-15T13:42:18+00:00",
+      "commit": "41a142d244a1da2ffb0077da638b295a45a82af6",
+      "lane": "backend_compiler",
+      "summary": "Completed wave2 legalize/schedule optimization evidence run with rewrite-aware pipeline artifacts and baseline timing compare",
+      "batch_ops": [
+        ""
+      ],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v5/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v5/status_converged.json",
+      "next_focus": "Plan backend wave3 for legalize rewrite-count optimization and op-family-specific scheduling",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v5/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v5/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v5/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v5/timing_delta.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v5",
+      "counts_by_status": {
+        "blocked_backend": 194,
+        "dual_pass": 2
+      }
     }
   ],
-  "next_focus": "Replan next backend compiler wave with deeper legalize/schedule optimization tasks",
+  "next_focus": "Plan backend wave3 for legalize rewrite-count optimization and op-family-specific scheduling",
   "known_risks": []
 }
