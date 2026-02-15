@@ -217,6 +217,25 @@ def _resolve_schedule_int(v: str | int | None, bindings: Mapping[str, Any], *, d
     return int(default)
 
 
+def _external_tensor_inputs(intent: IntentFunction) -> list[str]:
+    produced = {str(op.output) for op in (intent.ops or []) if getattr(op, "output", None)}
+    used: list[str] = []
+    for op in (intent.ops or []):
+        for inp in list(getattr(op, "inputs", []) or []):
+            s = str(inp)
+            if s in intent.tensors and s not in produced:
+                used.append(s)
+    # Preserve first-seen order while de-duplicating.
+    seen: set[str] = set()
+    out: list[str] = []
+    for n in used:
+        if n in seen:
+            continue
+        seen.add(n)
+        out.append(n)
+    return out
+
+
 def _schedule_to_json_dict(sched: Any) -> Dict[str, Any]:
     if sched is None:
         return {}
@@ -8229,6 +8248,213 @@ extern "C" __global__ void {intent.name}(const float* __restrict__ {inp_name},
     return CudaLoweredKernel(kernel_name=intent.name, cuda_src=cuda_src, io_spec=io_spec, launch=launch, output_names=[out_name], bindings=lowered_bindings)
 
 
+def _kernel_upsample_bicubic2d_aa_nchw_f32(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
+    out_name = str((intent.outputs or [None])[0] or "")
+    if out_name not in intent.tensors:
+        if intent.ops and getattr(intent.ops[-1], "output", None):
+            out_name = str(intent.ops[-1].output)
+    if out_name not in intent.tensors:
+        raise CudaLoweringError("upsample_bicubic2d_aa expects a valid output tensor")
+
+    external_inputs = _external_tensor_inputs(intent)
+    in_name: str | None = None
+    for cand in external_inputs:
+        t = intent.tensors.get(str(cand))
+        if t is None:
+            continue
+        if str(getattr(t, "dtype", "")) != "f32":
+            continue
+        if len(list(getattr(t, "shape", []) or [])) == 4:
+            in_name = str(cand)
+            break
+    if in_name is None and intent.ops:
+        first = intent.ops[0]
+        if getattr(first, "inputs", None):
+            cand = str(first.inputs[0])
+            if cand in intent.tensors:
+                in_name = cand
+    if in_name is None or in_name not in intent.tensors:
+        raise CudaLoweringError("upsample_bicubic2d_aa expects one rank-4 f32 input tensor")
+
+    in_shape = _shape_values(intent, in_name)
+    out_shape = _shape_values(intent, out_name)
+    if len(in_shape) != 4 or len(out_shape) != 4:
+        raise CudaLoweringError("upsample_bicubic2d_aa expects rank-4 input/output [N,C,H,W]")
+
+    N = _resolve_dim_int(in_shape[0], bindings, name="N")
+    C = _resolve_dim_int(in_shape[1], bindings, name="C")
+    IH = _resolve_dim_int(in_shape[2], bindings, name="IH")
+    IW = _resolve_dim_int(in_shape[3], bindings, name="IW")
+    ON = _resolve_dim_int(out_shape[0], bindings, name="ON")
+    OC = _resolve_dim_int(out_shape[1], bindings, name="OC")
+    OH = _resolve_dim_int(out_shape[2], bindings, name="OH")
+    OW = _resolve_dim_int(out_shape[3], bindings, name="OW")
+    if ON != N or OC != C:
+        raise CudaLoweringError("upsample_bicubic2d_aa N/C mismatch")
+    if IH <= 0 or IW <= 0 or OH <= 0 or OW <= 0:
+        raise CudaLoweringError("upsample_bicubic2d_aa expects positive H/W")
+
+    reciprocal_scale_h_name = "reciprocal_scale_h" if _is_scalar_tensor(intent, "reciprocal_scale_h", dtype="f32") else None
+    reciprocal_scale_w_name = "reciprocal_scale_w" if _is_scalar_tensor(intent, "reciprocal_scale_w", dtype="f32") else None
+
+    rs_h_param = "const float* reciprocal_scale_h_ptr" if reciprocal_scale_h_name else "float reciprocal_scale_h"
+    rs_w_param = "const float* reciprocal_scale_w_ptr" if reciprocal_scale_w_name else "float reciprocal_scale_w"
+    rs_h_load = (
+        "float reciprocal_scale_h = reciprocal_scale_h_ptr ? reciprocal_scale_h_ptr[0] : ((OH > 0) ? ((float)IH / (float)OH) : 1.0f);"
+        if reciprocal_scale_h_name
+        else "if (!(reciprocal_scale_h > 0.0f)) reciprocal_scale_h = (OH > 0) ? ((float)IH / (float)OH) : 1.0f;"
+    )
+    rs_w_load = (
+        "float reciprocal_scale_w = reciprocal_scale_w_ptr ? reciprocal_scale_w_ptr[0] : ((OW > 0) ? ((float)IW / (float)OW) : 1.0f);"
+        if reciprocal_scale_w_name
+        else "if (!(reciprocal_scale_w > 0.0f)) reciprocal_scale_w = (OW > 0) ? ((float)IW / (float)OW) : 1.0f;"
+    )
+
+    total = N * C * OH * OW
+    block_x = 256
+    grid_x = (total + block_x - 1) // block_x
+    cuda_src = f"""
+#include <math.h>
+#include <stdint.h>
+
+__device__ __forceinline__ float _intentir_cubic_weight(float t) {{
+  const float a = -0.5f;
+  if (t < 1.0f) {{
+    return ((a + 2.0f) * t - (a + 3.0f)) * t * t + 1.0f;
+  }}
+  if (t < 2.0f) {{
+    return (((t - 5.0f) * t + 8.0f) * t - 4.0f) * a;
+  }}
+  return 0.0f;
+}}
+
+extern "C" __global__ void {intent.name}(const float* __restrict__ {in_name},
+                                         float* __restrict__ {out_name},
+                                         {rs_h_param},
+                                         {rs_w_param},
+                                         int N, int C, int IH, int IW, int OH, int OW, int TOTAL) {{
+  const int tid = (int)blockIdx.x * (int)blockDim.x + (int)threadIdx.x;
+  if (tid >= TOTAL) return;
+  int t = tid;
+  const int ow = t % OW; t /= OW;
+  const int oh = t % OH; t /= OH;
+  const int c = t % C; t /= C;
+  const int n = t;
+
+  {rs_h_load}
+  {rs_w_load}
+
+  const float center_h = ((float)oh + 0.5f) * reciprocal_scale_h;
+  const float center_w = ((float)ow + 0.5f) * reciprocal_scale_w;
+  int span_start_h = (int)fmaxf(center_h - 2.0f + 0.5f, 0.0f);
+  int span_start_w = (int)fmaxf(center_w - 2.0f + 0.5f, 0.0f);
+  int span_size_h = (int)(fminf(center_h + 2.0f + 0.5f, (float)IH) - (float)span_start_h);
+  int span_size_w = (int)(fminf(center_w + 2.0f + 0.5f, (float)IW) - (float)span_start_w);
+  if (span_size_h < 0) span_size_h = 0;
+  if (span_size_w < 0) span_size_w = 0;
+  if (span_size_h > 5) span_size_h = 5;
+  if (span_size_w > 5) span_size_w = 5;
+
+  const float start_minus_center_h = (float)span_start_h - center_h;
+  const float start_minus_center_w = (float)span_start_w - center_w;
+
+  float wy[5];
+  float wx[5];
+  float sumy = 0.0f;
+  float sumx = 0.0f;
+#pragma unroll
+  for (int ky = 0; ky < 5; ++ky) {{
+    float w = 0.0f;
+    if (ky < span_size_h) {{
+      const float t_h = fabsf(((float)ky + start_minus_center_h + 0.5f));
+      w = _intentir_cubic_weight(t_h);
+    }}
+    wy[ky] = w;
+    sumy += w;
+  }}
+#pragma unroll
+  for (int kx = 0; kx < 5; ++kx) {{
+    float w = 0.0f;
+    if (kx < span_size_w) {{
+      const float t_w = fabsf(((float)kx + start_minus_center_w + 0.5f));
+      w = _intentir_cubic_weight(t_w);
+    }}
+    wx[kx] = w;
+    sumx += w;
+  }}
+  if (sumy == 0.0f) sumy = 1.0f;
+  if (sumx == 0.0f) sumx = 1.0f;
+#pragma unroll
+  for (int ky = 0; ky < 5; ++ky) wy[ky] /= sumy;
+#pragma unroll
+  for (int kx = 0; kx < 5; ++kx) wx[kx] /= sumx;
+
+  float acc = 0.0f;
+#pragma unroll
+  for (int ky = 0; ky < 5; ++ky) {{
+    const int iy = span_start_h + ky;
+    const bool my = (ky < span_size_h) && ((unsigned)iy < (unsigned)IH);
+    float row = 0.0f;
+#pragma unroll
+    for (int kx = 0; kx < 5; ++kx) {{
+      const int ix = span_start_w + kx;
+      const bool mx = (kx < span_size_w) && ((unsigned)ix < (unsigned)IW);
+      float v = 0.0f;
+      if (my && mx) {{
+        const size_t in_idx = (((size_t)n * (size_t)C + (size_t)c) * (size_t)IH + (size_t)iy) * (size_t)IW + (size_t)ix;
+        v = {in_name}[in_idx];
+      }}
+      row += v * wx[kx];
+    }}
+    acc += row * wy[ky];
+  }}
+
+  {out_name}[(size_t)tid] = acc;
+}}
+""".lstrip()
+
+    lowered_bindings = dict(bindings)
+    lowered_bindings.update(
+        {
+            "N": int(N),
+            "C": int(C),
+            "IH": int(IH),
+            "IW": int(IW),
+            "OH": int(OH),
+            "OW": int(OW),
+            "TOTAL": int(total),
+        }
+    )
+    tensor_args = [in_name, out_name]
+    scalar_args: Dict[str, str] = {"N": "i32", "C": "i32", "IH": "i32", "IW": "i32", "OH": "i32", "OW": "i32", "TOTAL": "i32"}
+    arg_names: list[str] = [in_name, out_name]
+    if reciprocal_scale_h_name:
+        tensor_args.append(reciprocal_scale_h_name)
+        arg_names.append(reciprocal_scale_h_name)
+    else:
+        scalar_args["reciprocal_scale_h"] = "f32"
+        arg_names.append("reciprocal_scale_h")
+        lowered_bindings.setdefault("reciprocal_scale_h", float(IH) / float(OH))
+    if reciprocal_scale_w_name:
+        tensor_args.append(reciprocal_scale_w_name)
+        arg_names.append(reciprocal_scale_w_name)
+    else:
+        scalar_args["reciprocal_scale_w"] = "f32"
+        arg_names.append("reciprocal_scale_w")
+        lowered_bindings.setdefault("reciprocal_scale_w", float(IW) / float(OW))
+    arg_names.extend(["N", "C", "IH", "IW", "OH", "OW", "TOTAL"])
+    io_spec = _io_spec_from_args(intent, tensor_args=tensor_args, scalar_args=scalar_args, arg_names=arg_names)
+    launch = CudaLaunch(grid=(grid_x, 1, 1), block=(block_x, 1, 1), shared_mem=0)
+    return CudaLoweredKernel(
+        kernel_name=intent.name,
+        cuda_src=cuda_src,
+        io_spec=io_spec,
+        launch=launch,
+        output_names=[out_name],
+        bindings=lowered_bindings,
+    )
+
+
 def _kernel_warp_q8_8_i8_i16(intent: IntentFunction, bindings: Dict[str, int]) -> CudaLoweredKernel:
     if not intent.ops or intent.ops[0].op != "warp":
         raise CudaLoweringError("warp lowering expects a single warp op")
@@ -8481,6 +8707,8 @@ def lower_intent_to_cuda_kernel(
                 return _kernel_upsample_nearest1d_ncl_f32(intent, bindings)
             if op0 == "upsample_nearest2d":
                 return _kernel_upsample_nearest2d_nchw_f32(intent, bindings)
+            if op0 == "upsample_bicubic2d_aa":
+                return _kernel_upsample_bicubic2d_aa_nchw_f32(intent, bindings)
             if op0 == "warp":
                 return _kernel_warp_q8_8_i8_i16(intent, bindings)
             if op0 == "transpose":
@@ -8593,6 +8821,8 @@ def lower_intent_to_cuda_kernel(
         return _kernel_isin_1d_i32_to_i1(intent, bindings)
     if op_seq == ["const", "ne", "cast", "reduce_sum"]:
         return _kernel_count_nonzero_2d_i64(intent, bindings)
+    if str(intent.name).lower() == "upsample_bicubic2d_aa":
+        return _kernel_upsample_bicubic2d_aa_nchw_f32(intent, bindings)
     if (
         "reduce_min" in op_names
         and len(op_seq) >= 2

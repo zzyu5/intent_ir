@@ -790,6 +790,62 @@ def test_cuda_lowering_supports_upsample_nearest2d(monkeypatch) -> None:
     assert "int iw = (int)(((int64_t)ow" in lowered.cuda_src
 
 
+def test_cuda_lowering_supports_upsample_bicubic2d_aa_macro(monkeypatch) -> None:
+    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "upsample_bicubic2d_aa",
+            "tensors": {
+                "I": {"dtype": "f32", "shape": ["N", "C", "IH", "IW"], "layout": "row_major"},
+                "reciprocal_scale_h": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "reciprocal_scale_w": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "O": {"dtype": "f32", "shape": ["N", "C", "OH", "OW"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "upsample_bicubic2d_aa", "inputs": ["I"], "output": "O", "attrs": {}},
+            ],
+            "outputs": ["O"],
+        }
+    )
+    lowered = lower_intent_to_cuda_kernel(
+        intent,
+        shape_bindings={"N": 1, "C": 1, "IH": 4, "IW": 4, "OH": 4, "OW": 4},
+    )
+    assert lowered.kernel_name == "upsample_bicubic2d_aa"
+    assert "_intentir_cubic_weight" in lowered.cuda_src
+    assert "reciprocal_scale_h_ptr" in lowered.cuda_src
+    assert "reciprocal_scale_w_ptr" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_upsample_bicubic2d_aa_expanded_name_path(monkeypatch) -> None:
+    monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "upsample_bicubic2d_aa",
+            "tensors": {
+                "ptr_i": {"dtype": "f32", "shape": ["N", "C", "IH", "IW"], "layout": "row_major"},
+                "reciprocal_scale_h": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "reciprocal_scale_w": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "tmp": {"dtype": "f32", "shape": ["N", "C", "OH", "OW"], "layout": "row_major"},
+                "ptr_o": {"dtype": "f32", "shape": ["N", "C", "OH", "OW"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "identity", "inputs": ["ptr_i"], "output": "tmp"},
+                {"op": "identity", "inputs": ["tmp"], "output": "ptr_o"},
+            ],
+            "outputs": ["ptr_o"],
+        }
+    )
+    lowered = lower_intent_to_cuda_kernel(
+        intent,
+        shape_bindings={"N": 1, "C": 1, "IH": 4, "IW": 4, "OH": 4, "OW": 4},
+    )
+    assert lowered.kernel_name == "upsample_bicubic2d_aa"
+    assert "const float* __restrict__ ptr_i" in lowered.cuda_src
+    assert "float* __restrict__ ptr_o" in lowered.cuda_src
+    assert "_intentir_cubic_weight" in lowered.cuda_src
+
+
 def test_cuda_lowering_supports_weight_norm_dim0_pattern(monkeypatch) -> None:
     monkeypatch.setenv("INTENTIR_CUDA_CODEGEN", "py")
     intent = IntentFunction.from_json_dict(

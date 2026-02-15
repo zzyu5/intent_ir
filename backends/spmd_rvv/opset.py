@@ -90,6 +90,7 @@ SPMD_RVV_SUPPORTED_OPS: set[str] = {
     "scaled_dot_product_attention",
     "upsample_nearest1d",
     "upsample_nearest2d",
+    "upsample_bicubic2d_aa",
     "polar",
     "nll_loss_forward",
     "nll_loss2d_forward",
