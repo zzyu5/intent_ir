@@ -1,11 +1,11 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-15T19:25:15+00:00",
+  "updated_at": "2026-02-15T20:14:03+00:00",
   "branch": "flaggems",
-  "head_commit": "f51f41b8565504db3ec6102237167f91ff69ce93",
-  "mode": "maintenance",
+  "head_commit": "f45689f4ff72c321fa2b13085c0d836aa60495a0",
+  "mode": "mixed_development",
   "coverage_integrity_phase": "recomputed_ok",
-  "full196_last_run": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk3_v3_notiming/run_summary.json",
+  "full196_last_run": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave8_manifest_chunk5_v1/run_summary.json",
   "full196_last_ok": true,
   "coverage": {
     "semantic_ops": 196,
@@ -72,8 +72,8 @@
     "catalog_validated": true
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk3_v3_notiming/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk3_v3_notiming/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave8_manifest_chunk5_v1/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave8_manifest_chunk5_v1/status_converged.json"
   },
   "lanes": {
     "coverage": {
@@ -89,9 +89,9 @@
       "active_batch_path": "workflow/flaggems/state/active_batch_ir_arch.json"
     },
     "backend_compiler": {
-      "pending": 0,
-      "done": 11,
-      "total": 11,
+      "pending": 1,
+      "done": 13,
+      "total": 14,
       "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json"
     }
   }

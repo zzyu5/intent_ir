@@ -29,6 +29,22 @@
     "trace2d",
     "triu2d",
     "where2d",
-    "count_nonzero2d"
+    "count_nonzero2d",
+    "ge2d",
+    "gt2d",
+    "le2d",
+    "lt2d",
+    "ne2d",
+    "minimum2d",
+    "maximum2d",
+    "sqrt2d",
+    "neg2d",
+    "reciprocal2d",
+    "rsqrt2d",
+    "sigmoid2d",
+    "silu2d",
+    "softplus2d",
+    "sub2d",
+    "mul2d"
   ]
 }
