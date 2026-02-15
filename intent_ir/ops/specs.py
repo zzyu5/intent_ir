@@ -63,6 +63,7 @@ _OP_SPECS: tuple[OpSpec, ...] = (
     OpSpec("or", "core", "elementwise", (2,)),
     OpSpec("not", "core", "elementwise", (1,)),
     OpSpec("exp", "core", "elementwise", (1,)),
+    OpSpec("sigmoid", "experimental", "elementwise", (1,)),
     OpSpec("relu", "core", "elementwise", (1,)),
     OpSpec("rsqrt", "core", "elementwise", (1,)),
     OpSpec("abs", "core", "elementwise", (1,)),

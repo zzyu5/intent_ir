@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_active_batch_v2",
-  "generated_at": "2026-02-15T13:05:26+00:00",
+  "generated_at": "2026-02-15T13:15:09+00:00",
   "branch": "flaggems",
   "lane": "backend_compiler",
   "batch_size": 8,
@@ -53,32 +53,6 @@
       "depends_on": [],
       "evidence_paths": [],
       "description": "Split RVV codegen path into compiler-style stage modules."
-    },
-    {
-      "id": "backend_compiler::stage_timing_unification",
-      "semantic_op": "",
-      "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "pending",
-      "next_action": "timing_unification",
-      "e2e_spec": null,
-      "intent_ops": [],
-      "track": "backend_compiler",
-      "task_type": "observability",
-      "priority": 30,
-      "acceptance": [
-        "cuda_smoke_emits_stage_timing",
-        "rvv_smoke_emits_stage_timing",
-        "reason_code_non_empty"
-      ],
-      "gate_profile": "backend_compiler",
-      "depends_on": [
-        "backend_compiler::cuda_pipeline_modularization",
-        "backend_compiler::rvv_pipeline_modularization"
-      ],
-      "evidence_paths": [],
-      "description": "Unify stage timing and failure reason reporting across RVV/CUDA backends."
     }
   ],
   "context": {

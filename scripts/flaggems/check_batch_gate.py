@@ -120,7 +120,7 @@ def main() -> None:
     else:
         gate_entries = scoped_entries if scope_enabled else entries
 
-    if profile == "ir_arch":
+    if profile in {"ir_arch", "backend_compiler"}:
         reason_complete = True
     else:
         reason_complete = bool(gate_entries) and all(

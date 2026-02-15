@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from time import perf_counter
 from pathlib import Path
 from typing import Any
 
@@ -223,6 +224,10 @@ def run_one(
     tune_request: TuningRequest | None = None,
     tune_profile: str | None = None,
 ) -> dict:
+    t_total = perf_counter()
+    lower_ms = 0.0
+    compile_ms = 0.0
+    launch_ms = 0.0
     artifact_rel = _artifact_dir_for_frontend(frontend, triton_provider=str(triton_provider))
     artifact_root = (Path(artifact_dir) if artifact_dir else (ROOT / "artifacts" / artifact_rel)).resolve()
     report_path = artifact_root / f"{kernel}.json"
@@ -330,7 +335,9 @@ def run_one(
                 raise RuntimeError(f"baseline missing output {name} for {kernel}")
             _write_bin(td / f"{name}_ref.bin", np.asarray(baseline[name]), intent.tensors[name].dtype)
 
+        t_lower = perf_counter()
         c_src = lower_intent_to_c_with_files(intent_codegen, shape_bindings=bindings, atol=float(atol), rtol=float(rtol))
+        lower_ms = (perf_counter() - t_lower) * 1000.0
         (td / "main.c").write_text(c_src, encoding="utf-8")
 
         runtime_dir = ROOT / "backends" / "spmd_rvv" / "runtime"
@@ -362,18 +369,39 @@ def run_one(
             "-lm",
             "-lrt",
         ]
+        t_compile = perf_counter()
         cp = subprocess.run(compile_cmd, cwd=td, capture_output=True, text=True)
+        compile_ms = (perf_counter() - t_compile) * 1000.0
         if cp.returncode != 0:
-            raise RuntimeError(f"compile failed:\n{cp.stderr or cp.stdout}")
+            return {
+                "kernel": kernel,
+                "ok": False,
+                "rc": int(cp.returncode),
+                "reason_code": "compile_fail",
+                "stdout": (cp.stdout or "").strip(),
+                "stderr": (cp.stderr or "").strip(),
+                "tmpdir": str(td) if keep_tmp else None,
+                "lower_ms": float(lower_ms),
+                "compile_ms": float(compile_ms),
+                "launch_ms": float(launch_ms),
+                "total_ms": float((perf_counter() - t_total) * 1000.0),
+            }
 
+        t_launch = perf_counter()
         rp = subprocess.run([str(td / "run")], cwd=td, capture_output=True, text=True)
+        launch_ms = (perf_counter() - t_launch) * 1000.0
         return {
             "kernel": kernel,
             "ok": rp.returncode == 0,
             "rc": rp.returncode,
+            "reason_code": ("ok" if rp.returncode == 0 else "runtime_fail"),
             "stdout": (rp.stdout or "").strip(),
             "stderr": (rp.stderr or "").strip(),
             "tmpdir": str(td) if keep_tmp else None,
+            "lower_ms": float(lower_ms),
+            "compile_ms": float(compile_ms),
+            "launch_ms": float(launch_ms),
+            "total_ms": float((perf_counter() - t_total) * 1000.0),
         }
     finally:
         if keep_tmp:
@@ -449,9 +477,14 @@ def main() -> None:
                 "kernel": str(k),
                 "ok": False,
                 "rc": 1,
+                "reason_code": "runtime_fail",
                 "stdout": "",
                 "stderr": f"{type(e).__name__}: {e}",
                 "error": {"type": type(e).__name__, "message": str(e)},
+                "lower_ms": 0.0,
+                "compile_ms": 0.0,
+                "launch_ms": 0.0,
+                "total_ms": 0.0,
             }
         results.append(r)
         ok_all = ok_all and bool(r["ok"])

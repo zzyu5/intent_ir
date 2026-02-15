@@ -6,18 +6,22 @@
       "id": "ir_arch::primitive_catalog_guard",
       "track": "ir_arch",
       "task_type": "quality_guard",
-      "status": "pending",
-      "passes": false,
+      "status": "done",
+      "passes": true,
       "priority": 10,
       "gate_profile": "ir_arch",
-      "reason_code": "pending",
+      "reason_code": "ok",
       "next_action": "primitive_reuse_guard",
       "acceptance": [
         "check_primitive_reuse_passes",
         "no_provider_specific_primitive_leak"
       ],
       "depends_on": [],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/intentir/primitive_reuse_report.json",
+        "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v2/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v2/batch_gate_ir_arch.json"
+      ],
       "description": "Enforce primitive catalog reuse and prevent semantic-to-primitive regressions."
     },
     {

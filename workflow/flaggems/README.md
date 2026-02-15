@@ -51,6 +51,12 @@ python scripts/flaggems/check_batch_gate.py \
   --status-converged artifacts/flaggems_matrix/<run>/status_converged.json
 ```
 
+Lane runner shortcuts:
+```bash
+python scripts/flaggems/run_ir_arch_batch.py --out-dir artifacts/flaggems_matrix/daily/<YYYYMMDD>/ir_arch_<run>
+python scripts/flaggems/run_backend_compiler_batch.py --out-dir artifacts/flaggems_matrix/daily/<YYYYMMDD>/backend_compiler_<run>
+```
+
 ## Matrix + CI Gate (Coverage Lane)
 
 ```bash

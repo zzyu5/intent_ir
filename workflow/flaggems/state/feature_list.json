@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_feature_list_v2",
-  "generated_at": "2026-02-15T13:02:49+00:00",
+  "generated_at": "2026-02-15T13:15:08+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
@@ -5284,9 +5284,9 @@
       "id": "ir_arch::primitive_catalog_guard",
       "semantic_op": "",
       "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "pending",
+      "status": "done",
+      "passes": true,
+      "reason_code": "ok",
       "next_action": "primitive_reuse_guard",
       "e2e_spec": null,
       "intent_ops": [],
@@ -5299,7 +5299,11 @@
       ],
       "gate_profile": "ir_arch",
       "depends_on": [],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/intentir/primitive_reuse_report.json",
+        "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v2/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260215/ir_arch_lane_v2/batch_gate_ir_arch.json"
+      ],
       "description": "Enforce primitive catalog reuse and prevent semantic-to-primitive regressions."
     },
     {

@@ -1,8 +1,8 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-15T13:06:26+00:00",
+  "updated_at": "2026-02-15T13:15:09+00:00",
   "branch": "flaggems",
-  "head_commit": "512cdbc0d68d7058809f3ad86996e2514b08cb80",
+  "head_commit": "38368a9350302fb89ce41532a008b3b9d7d4f446",
   "mode": "mixed_development",
   "coverage": {
     "semantic_ops": 196,
@@ -11,8 +11,8 @@
     "blocked_backend": 0
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260215/batch_active3_finaltrio_v1_full/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260215/batch_active3_finaltrio_v1_full/status_converged_registry_write.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v2/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_lane_v2/status_converged.json"
   },
   "lanes": {
     "coverage": {
@@ -22,8 +22,8 @@
       "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json"
     },
     "ir_arch": {
-      "pending": 2,
-      "done": 0,
+      "pending": 1,
+      "done": 1,
       "total": 2,
       "active_batch_path": "workflow/flaggems/state/active_batch_ir_arch.json"
     },

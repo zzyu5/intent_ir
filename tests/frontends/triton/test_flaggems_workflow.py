@@ -192,3 +192,42 @@ def test_current_status_and_session_context_builders() -> None:
     )
     assert ctx["schema_version"] == "flaggems_session_context_v1"
     assert ctx["next_focus"] == "run primitive guard"
+
+
+def test_select_next_batch_respects_dependencies_for_non_coverage() -> None:
+    feature_payload = {
+        "features": [
+            {
+                "id": "backend_compiler::cuda_pipeline_modularization",
+                "track": "backend_compiler",
+                "status": "pending",
+                "passes": False,
+                "priority": 10,
+                "depends_on": [],
+            },
+            {
+                "id": "backend_compiler::rvv_pipeline_modularization",
+                "track": "backend_compiler",
+                "status": "pending",
+                "passes": False,
+                "priority": 20,
+                "depends_on": [],
+            },
+            {
+                "id": "backend_compiler::stage_timing_unification",
+                "track": "backend_compiler",
+                "status": "pending",
+                "passes": False,
+                "priority": 30,
+                "depends_on": [
+                    "backend_compiler::cuda_pipeline_modularization",
+                    "backend_compiler::rvv_pipeline_modularization",
+                ],
+            },
+        ]
+    }
+    batch = select_next_batch(feature_payload=feature_payload, batch_size=10, lane="backend_compiler")
+    assert [str(x["id"]) for x in batch] == [
+        "backend_compiler::cuda_pipeline_modularization",
+        "backend_compiler::rvv_pipeline_modularization",
+    ]

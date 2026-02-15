@@ -228,6 +228,13 @@ def _is_task_pending(f: Mapping[str, Any]) -> bool:
     return status not in {"dual_pass", "done"}
 
 
+def _is_task_done(f: Mapping[str, Any]) -> bool:
+    if bool(f.get("passes")):
+        return True
+    status = str(f.get("status") or "").strip()
+    return status in {"dual_pass", "done"}
+
+
 def select_next_batch(*, feature_payload: dict[str, Any], batch_size: int, lane: str = "coverage") -> list[dict[str, Any]]:
     feats = list(feature_payload.get("features") or [])
     n = max(1, int(batch_size))
@@ -259,11 +266,31 @@ def select_next_batch(*, feature_payload: dict[str, Any], batch_size: int, lane:
         name = str(f.get("id") or f.get("semantic_op") or "")
         return (rank, prio, name)
 
-    pending = [
+    lane_rows = [
         f
         for f in feats
-        if str(f.get("track") or "coverage") == lane_norm and _is_task_pending(f)
+        if str(f.get("track") or "coverage") == lane_norm
     ]
+    by_id = {
+        str(f.get("id") or ""): f
+        for f in lane_rows
+        if str(f.get("id") or "").strip()
+    }
+    pending = [f for f in lane_rows if _is_task_pending(f)]
+
+    def _deps_ready(f: Mapping[str, Any]) -> bool:
+        deps = [str(x).strip() for x in list(f.get("depends_on") or []) if str(x).strip()]
+        for dep in deps:
+            dep_row = by_id.get(dep)
+            if dep_row is None:
+                return False
+            if not _is_task_done(dep_row):
+                return False
+        return True
+
+    eligible = [f for f in pending if _deps_ready(f)]
+    if eligible:
+        pending = eligible
     pending.sort(key=_task_priority)
     return pending[:n]
 
