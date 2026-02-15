@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_feature_list_v2",
-  "generated_at": "2026-02-15T16:05:45+00:00",
+  "generated_at": "2026-02-15T16:11:16+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
@@ -5635,10 +5635,10 @@
       "id": "backend_compiler::nightly_perf_budget_wave5",
       "semantic_op": "",
       "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "",
-      "next_action": "nightly_perf_regression_gate",
+      "status": "done",
+      "passes": true,
+      "reason_code": "ok",
+      "next_action": "none",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "backend_compiler",
@@ -5652,7 +5652,15 @@
       "depends_on": [
         "backend_compiler::compiler_purity_gate_wave5"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_perf_budget_v2/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_perf_budget_v2/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_perf_budget_v2/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_perf_budget_v2/timing_delta.json",
+        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_perf_budget_v2/batch_gate_backend_compiler_wave5_perf_budget_pass.json",
+        "scripts/flaggems/check_batch_gate.py",
+        "tests/frontends/triton/test_flaggems_batch_gate.py"
+      ],
       "description": "Add nightly backend performance budget gate with timing_delta regression thresholds."
     }
   ]
