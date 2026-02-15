@@ -122,7 +122,7 @@ def main() -> None:
         "--suite",
         str(args.suite),
         "--lane",
-        "coverage",
+        "backend_compiler",
         "--flaggems-path",
         "intentir",
         "--intentir-mode",
