@@ -856,3 +856,59 @@ def test_cuda_lowering_supports_weight_norm_dim0_pattern(monkeypatch) -> None:
     assert lowered.kernel_name == "weight_norm2d_cuda_lowering"
     assert "const float norm = sqrtf((float)sum_sq);" in lowered.cuda_src
     assert "row_ptr[(size_t)col] * scale" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_topk2d_pattern(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "topk2d_cuda_lowering",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "sorted_vals": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "row_idx": {"dtype": "i32", "shape": ["M", "K"], "layout": "row_major"},
+                "col_idx": {"dtype": "i32", "shape": ["M", "K"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "K"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "sort", "inputs": ["inp"], "output": "sorted_vals", "attrs": {"axis": 1, "descending": True, "stable": False}},
+                {"op": "iota", "inputs": [], "output": "row_idx", "attrs": {"axis": 0, "shape": ["M", "K"], "dtype": "i32"}},
+                {"op": "iota", "inputs": [], "output": "col_idx", "attrs": {"axis": 1, "shape": ["M", "K"], "dtype": "i32"}},
+                {"op": "gather", "inputs": ["sorted_vals", "row_idx", "col_idx"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 16, "K": 4})
+    assert lowered.kernel_name == "topk2d_cuda_lowering"
+    assert "float top_vals[256];" in lowered.cuda_src
+    assert "for (int n = 0; n < N; ++n)" in lowered.cuda_src
+
+
+def test_cuda_lowering_supports_trace2d_pattern(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "trace2d_cuda_lowering",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "row_idx": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "col_idx": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "diag_mask": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                "zero_const": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "diag_vals": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": [], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "iota", "inputs": [], "output": "row_idx", "attrs": {"axis": 0, "shape": ["M", "N"], "dtype": "i32"}},
+                {"op": "iota", "inputs": [], "output": "col_idx", "attrs": {"axis": 1, "shape": ["M", "N"], "dtype": "i32"}},
+                {"op": "eq", "inputs": ["row_idx", "col_idx"], "output": "diag_mask"},
+                {"op": "const", "inputs": [], "output": "zero_const", "attrs": {"value": 0, "dtype": "f32"}},
+                {"op": "where", "inputs": ["diag_mask", "input", "zero_const"], "output": "diag_vals"},
+                {"op": "reduce_sum", "inputs": ["diag_vals"], "output": "out", "attrs": {"dims": [0, 1]}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 16, "N": 12})
+    assert lowered.kernel_name == "trace2d_cuda_lowering"
+    assert "const int L = (M < N) ? M : N;" in lowered.cuda_src
+    assert "acc += input[(size_t)i * (size_t)N + (size_t)i];" in lowered.cuda_src

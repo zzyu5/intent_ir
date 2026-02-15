@@ -4389,6 +4389,268 @@ json emit_gather2d_f32(const Intent& intent, const json& bindings) {
   return out;
 }
 
+json emit_topk2d_rowwise_f32(const Intent& intent, const json& bindings) {
+  // Expected canonical pattern:
+  //   sort(inp) -> sorted_vals
+  //   iota(...) -> row_idx
+  //   iota(...) -> col_idx
+  //   gather(sorted_vals, row_idx, col_idx) -> out
+  if (intent.ops.size() != 4) fail("topk lowering expects 4 ops (sort, iota, iota, gather)");
+  const Op& sort_op = intent.ops[0];
+  const Op& iota_row = intent.ops[1];
+  const Op& iota_col = intent.ops[2];
+  const Op& gather_op = intent.ops[3];
+  if (sort_op.op != "sort" || iota_row.op != "iota" || iota_col.op != "iota" || gather_op.op != "gather") {
+    fail("topk lowering expects sort->iota->iota->gather");
+  }
+  if (sort_op.inputs.size() != 1) fail("topk sort expects 1 input");
+  if (gather_op.inputs.size() != 3) fail("topk gather expects 3 inputs");
+  if (!intent.outputs.size()) fail("topk lowering expects one output");
+
+  const std::string inp_name = sort_op.inputs[0];
+  const std::string sorted_name = sort_op.output;
+  const std::string out_name = intent.outputs[0];
+  if (gather_op.inputs[0] != sorted_name) fail("topk gather first input must be sort output");
+  if (gather_op.output != out_name) fail("topk gather output must match intent output");
+
+  // This MVP supports row-wise topk (axis=1, descending=true).
+  int axis = 1;
+  if (sort_op.attrs.is_object() && sort_op.attrs.contains("axis")) {
+    if (sort_op.attrs["axis"].is_number_integer())
+      axis = static_cast<int>(sort_op.attrs["axis"].get<int64_t>());
+    else if (sort_op.attrs["axis"].is_number())
+      axis = static_cast<int>(sort_op.attrs["axis"].get<double>());
+  }
+  if (axis != 1) fail("topk MVP supports axis=1 only");
+  bool descending = true;
+  if (sort_op.attrs.is_object() && sort_op.attrs.contains("descending")) {
+    const json& dv = sort_op.attrs["descending"];
+    if (dv.is_boolean())
+      descending = dv.get<bool>();
+    else if (dv.is_number_integer())
+      descending = (dv.get<int64_t>() != 0);
+    else if (dv.is_number())
+      descending = (dv.get<double>() != 0.0);
+  }
+  if (!descending) fail("topk MVP supports descending=true only");
+
+  auto resolve_dim = [&](const json& d) -> int64_t {
+    if (d.is_number_integer()) return d.get<int64_t>();
+    if (d.is_number()) return static_cast<int64_t>(d.get<double>());
+    if (d.is_string()) {
+      auto b = binding_int(bindings, d.get<std::string>());
+      if (!b.has_value()) fail("topk missing binding for dim: " + d.get<std::string>());
+      return *b;
+    }
+    fail("topk invalid dim token");
+    return -1;
+  };
+
+  int64_t M = binding_int(bindings, "M").value_or(-1);
+  int64_t N = binding_int(bindings, "N").value_or(-1);
+  int64_t K = binding_int(bindings, "K").value_or(-1);
+  auto inp_it = intent.tensors.find(inp_name);
+  auto out_it = intent.tensors.find(out_name);
+  if (inp_it == intent.tensors.end() || out_it == intent.tensors.end()) fail("topk tensors missing in intent");
+  if (M <= 0 || N <= 0) {
+    const auto& in_shape = inp_it->second.shape;
+    if (in_shape.size() != 2) fail("topk MVP expects input rank=2");
+    if (M <= 0) M = resolve_dim(in_shape[0]);
+    if (N <= 0) N = resolve_dim(in_shape[1]);
+  }
+  if (K <= 0) {
+    const auto& out_shape = out_it->second.shape;
+    if (out_shape.size() != 2) fail("topk MVP expects output rank=2");
+    K = resolve_dim(out_shape[1]);
+  }
+  if (M <= 0 || N <= 0 || K <= 0) fail("topk missing/invalid bindings: M/N/K");
+  if (K > N) fail("topk invalid shape: K must be <= N");
+  if (K > 256) fail("topk MVP supports K<=256");
+
+  const bool m_is_tensor = is_scalar_tensor(intent, "M", "i32");
+  const bool n_is_tensor = is_scalar_tensor(intent, "N", "i32");
+  const bool k_is_tensor = is_scalar_tensor(intent, "K", "i32");
+  const std::string m_param = m_is_tensor ? "const int* M_ptr" : "int M";
+  const std::string n_param = n_is_tensor ? "const int* N_ptr" : "int N";
+  const std::string k_param = k_is_tensor ? "const int* K_ptr" : "int K";
+  const std::string m_load = m_is_tensor ? "const int M = M_ptr ? M_ptr[0] : 0;" : "";
+  const std::string n_load = n_is_tensor ? "const int N = N_ptr ? N_ptr[0] : 0;" : "";
+  const std::string k_load = k_is_tensor ? "const int K = K_ptr ? K_ptr[0] : 0;" : "";
+
+  std::ostringstream cuda_ss;
+  CodeWriter w(cuda_ss);
+  w.line("#include <math.h>");
+  w.line("#include <stddef.h>");
+  w.line("#include <stdint.h>");
+  w.line("extern \"C\" __global__ void " + intent.name + "(");
+  w.indent();
+  w.line("const float* __restrict__ " + inp_name + ",");
+  w.line("float* __restrict__ " + out_name + ",");
+  w.line(m_param + ", " + n_param + ", " + k_param + ") {");
+  w.dedent();
+  w.indent();
+  if (!m_load.empty()) w.line(m_load);
+  if (!n_load.empty()) w.line(n_load);
+  if (!k_load.empty()) w.line(k_load);
+  w.line("const int row = (int)blockIdx.x;");
+  w.line("if (row >= M || K <= 0) return;");
+  w.line("if ((int)threadIdx.x != 0) return;");
+  w.line("float top_vals[256];");
+  w.line("for (int j = 0; j < K; ++j) top_vals[j] = -INFINITY;");
+  w.line("const float* in_row = " + inp_name + " + (size_t)row * (size_t)N;");
+  w.line("for (int n = 0; n < N; ++n) {");
+  w.indent();
+  w.line("float v = in_row[(size_t)n];");
+  w.line("for (int j = 0; j < K; ++j) {");
+  w.indent();
+  w.line("if (v > top_vals[j]) {");
+  w.indent();
+  w.line("const float tmp = top_vals[j];");
+  w.line("top_vals[j] = v;");
+  w.line("v = tmp;");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+  w.dedent();
+  w.line("}");
+  w.line("float* out_row = " + out_name + " + (size_t)row * (size_t)K;");
+  w.line("for (int j = 0; j < K; ++j) out_row[(size_t)j] = top_vals[j];");
+  w.dedent();
+  w.line("}");
+
+  std::vector<std::string> tensor_args = {inp_name, out_name};
+  std::unordered_map<std::string, std::string> scalar_args;
+  std::vector<std::string> arg_names = {inp_name, out_name};
+  for (const auto& dim_name : {"M", "N", "K"}) {
+    if (is_scalar_tensor(intent, dim_name, "i32")) {
+      tensor_args.push_back(dim_name);
+      arg_names.push_back(dim_name);
+    } else {
+      scalar_args.emplace(dim_name, "i32");
+      arg_names.push_back(dim_name);
+    }
+  }
+
+  json out;
+  out["kernel_name"] = intent.name;
+  out["cuda_src"] = cuda_ss.str();
+  out["io_spec"] = io_spec_from_args(intent, tensor_args, scalar_args, arg_names);
+  out["launch"] = {{"grid", {M, 1, 1}}, {"block", {32, 1, 1}}, {"shared_mem", 0}};
+  out["output_names"] = {out_name};
+  json out_bindings = bindings;
+  out_bindings["M"] = M;
+  out_bindings["N"] = N;
+  out_bindings["K"] = K;
+  out["bindings"] = out_bindings;
+  return out;
+}
+
+json emit_trace2d_sum_f32(const Intent& intent, const json& bindings) {
+  // Expected canonical pattern:
+  // iota(row), iota(col), eq, const(0), where(mask,input,0), reduce_sum(all)
+  if (intent.ops.size() != 6) fail("trace lowering expects 6 ops");
+  const Op& o0 = intent.ops[0];
+  const Op& o1 = intent.ops[1];
+  const Op& o2 = intent.ops[2];
+  const Op& o3 = intent.ops[3];
+  const Op& o4 = intent.ops[4];
+  const Op& o5 = intent.ops[5];
+  if (o0.op != "iota" || o1.op != "iota" || o2.op != "eq" || o3.op != "const" || o4.op != "where" || o5.op != "reduce_sum") {
+    fail("trace lowering expects iota->iota->eq->const->where->reduce_sum");
+  }
+  if (o4.inputs.size() != 3) fail("trace where expects 3 inputs");
+  if (o5.inputs.size() != 1) fail("trace reduce_sum expects 1 input");
+  if (o5.inputs[0] != o4.output) fail("trace reduce_sum input must be where output");
+  if (intent.outputs.empty()) fail("trace lowering expects one output");
+  const std::string out_name = intent.outputs[0];
+  if (o5.output != out_name) fail("trace reduce_sum output must match intent output");
+
+  const std::string inp_name = o4.inputs[1];
+  auto inp_it = intent.tensors.find(inp_name);
+  auto out_it = intent.tensors.find(out_name);
+  if (inp_it == intent.tensors.end() || out_it == intent.tensors.end()) fail("trace tensors missing in intent");
+
+  auto resolve_dim = [&](const json& d) -> int64_t {
+    if (d.is_number_integer()) return d.get<int64_t>();
+    if (d.is_number()) return static_cast<int64_t>(d.get<double>());
+    if (d.is_string()) {
+      auto b = binding_int(bindings, d.get<std::string>());
+      if (!b.has_value()) fail("trace missing binding for dim: " + d.get<std::string>());
+      return *b;
+    }
+    fail("trace invalid dim token");
+    return -1;
+  };
+
+  int64_t M = binding_int(bindings, "M").value_or(-1);
+  int64_t N = binding_int(bindings, "N").value_or(-1);
+  if (M <= 0 || N <= 0) {
+    const auto& in_shape = inp_it->second.shape;
+    if (in_shape.size() != 2) fail("trace MVP expects input rank=2");
+    if (M <= 0) M = resolve_dim(in_shape[0]);
+    if (N <= 0) N = resolve_dim(in_shape[1]);
+  }
+  if (M <= 0 || N <= 0) fail("trace missing/invalid bindings: M/N");
+
+  const bool m_is_tensor = is_scalar_tensor(intent, "M", "i32");
+  const bool n_is_tensor = is_scalar_tensor(intent, "N", "i32");
+  const std::string m_param = m_is_tensor ? "const int* M_ptr" : "int M";
+  const std::string n_param = n_is_tensor ? "const int* N_ptr" : "int N";
+  const std::string m_load = m_is_tensor ? "const int M = M_ptr ? M_ptr[0] : 0;" : "";
+  const std::string n_load = n_is_tensor ? "const int N = N_ptr ? N_ptr[0] : 0;" : "";
+
+  std::ostringstream cuda_ss;
+  CodeWriter w(cuda_ss);
+  w.line("#include <stddef.h>");
+  w.line("#include <stdint.h>");
+  w.line("extern \"C\" __global__ void " + intent.name + "(");
+  w.indent();
+  w.line("const float* __restrict__ " + inp_name + ",");
+  w.line("float* __restrict__ " + out_name + ",");
+  w.line(m_param + ", " + n_param + ") {");
+  w.dedent();
+  w.indent();
+  if (!m_load.empty()) w.line(m_load);
+  if (!n_load.empty()) w.line(n_load);
+  w.line("if ((int)blockIdx.x != 0 || (int)threadIdx.x != 0) return;");
+  w.line("const int L = (M < N) ? M : N;");
+  w.line("float acc = 0.0f;");
+  w.line("for (int i = 0; i < L; ++i) {");
+  w.indent();
+  w.line("acc += " + inp_name + "[(size_t)i * (size_t)N + (size_t)i];");
+  w.dedent();
+  w.line("}");
+  w.line(out_name + "[0] = acc;");
+  w.dedent();
+  w.line("}");
+
+  std::vector<std::string> tensor_args = {inp_name, out_name};
+  std::unordered_map<std::string, std::string> scalar_args;
+  std::vector<std::string> arg_names = {inp_name, out_name};
+  for (const auto& dim_name : {"M", "N"}) {
+    if (is_scalar_tensor(intent, dim_name, "i32")) {
+      tensor_args.push_back(dim_name);
+      arg_names.push_back(dim_name);
+    } else {
+      scalar_args.emplace(dim_name, "i32");
+      arg_names.push_back(dim_name);
+    }
+  }
+
+  json out;
+  out["kernel_name"] = intent.name;
+  out["cuda_src"] = cuda_ss.str();
+  out["io_spec"] = io_spec_from_args(intent, tensor_args, scalar_args, arg_names);
+  out["launch"] = {{"grid", {1, 1, 1}}, {"block", {1, 1, 1}}, {"shared_mem", 0}};
+  out["output_names"] = {out_name};
+  json out_bindings = bindings;
+  out_bindings["M"] = M;
+  out_bindings["N"] = N;
+  out["bindings"] = out_bindings;
+  return out;
+}
+
 std::string emit_broadcast_index_expr(int out_rank, const std::vector<json>& in_shape, const std::vector<std::string>& out_idxs,
                                       const std::unordered_map<std::string, std::string>& dim_expr) {
   const int in_rank = static_cast<int>(in_shape.size());
@@ -5906,6 +6168,22 @@ json lower_intent_to_cuda(const Intent& intent, const json& bindings_json) {
     if (hasY && hasMean && hasRstd) return emit_layernorm_2d_f32(intent, bindings_json);
   }
   {
+    bool topk_like = false;
+    if (intent.ops.size() == 4) {
+      topk_like = (intent.ops[0].op == "sort" && intent.ops[1].op == "iota" && intent.ops[2].op == "iota" &&
+                   intent.ops[3].op == "gather");
+    }
+    if (topk_like) return emit_topk2d_rowwise_f32(intent, bindings_json);
+  }
+  {
+    bool trace_like = false;
+    if (intent.ops.size() == 6) {
+      trace_like = (intent.ops[0].op == "iota" && intent.ops[1].op == "iota" && intent.ops[2].op == "eq" &&
+                    intent.ops[3].op == "const" && intent.ops[4].op == "where" && intent.ops[5].op == "reduce_sum");
+    }
+    if (trace_like) return emit_trace2d_sum_f32(intent, bindings_json);
+  }
+  {
     const std::string nm = ascii_lower(intent.name);
     bool is_softmax = (nm.find("softmax") != std::string::npos);
     if (!is_softmax) {
@@ -5944,7 +6222,7 @@ json lower_intent_to_cuda(const Intent& intent, const json& bindings_json) {
 
   fail(
       "unsupported intent for cuda cpp codegen (supported: matmul, dropout, softmax, layernorm, correlation, resize, rope, warp, transpose, "
-      "reduce_sum, reduce_max, any_dim, gather, fused_elementwise)");
+      "reduce_sum, reduce_max, any_dim, gather, topk, trace, fused_elementwise)");
 }
 
 }  // namespace
