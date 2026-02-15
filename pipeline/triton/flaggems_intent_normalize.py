@@ -463,6 +463,66 @@ def _canonical_gather2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_repeat2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "repeat2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "row_idx": {"dtype": "i32", "shape": ["M_OUT", "N_OUT"], "layout": "row_major"},
+                "col_idx": {"dtype": "i32", "shape": ["M_OUT", "N_OUT"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M_OUT", "N_OUT"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "gather", "inputs": ["inp", "row_idx", "col_idx"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_repeat_interleave_self_int1d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "repeat_interleave_self_int1d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": [1, "N"], "layout": "row_major"},
+                "row_idx": {"dtype": "i32", "shape": ["N_OUT"], "layout": "row_major"},
+                "col_idx": {"dtype": "i32", "shape": ["N_OUT"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N_OUT"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "gather", "inputs": ["inp", "row_idx", "col_idx"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_repeat_interleave_self_tensor1d_intent() -> IntentFunction:
+    out = _canonical_repeat_interleave_self_int1d_intent().to_json_dict()
+    out["name"] = "repeat_interleave_self_tensor1d"
+    return IntentFunction.from_json_dict(out)
+
+
+def _canonical_repeat_interleave_tensor1d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "repeat_interleave_tensor1d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": [1, "N"], "layout": "row_major"},
+                "row_idx": {"dtype": "i32", "shape": ["N_OUT"], "layout": "row_major"},
+                "col_idx": {"dtype": "i32", "shape": ["N_OUT"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N_OUT"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "gather", "inputs": ["inp", "row_idx", "col_idx"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def _canonical_index_select2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -1775,6 +1835,14 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_per_token_group_quant_fp8_2d_intent()
     if name == "gather2d":
         return _canonical_gather2d_intent()
+    if name == "repeat2d":
+        return _canonical_repeat2d_intent()
+    if name == "repeat_interleave_self_int1d":
+        return _canonical_repeat_interleave_self_int1d_intent()
+    if name == "repeat_interleave_self_tensor1d":
+        return _canonical_repeat_interleave_self_tensor1d_intent()
+    if name == "repeat_interleave_tensor1d":
+        return _canonical_repeat_interleave_tensor1d_intent()
     if name == "index_select2d":
         return _canonical_index_select2d_intent()
     if name == "flip2d":

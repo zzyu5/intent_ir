@@ -99,6 +99,26 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert [op.op for op in gather.ops] == ["gather"]
     assert gather.ops[0].inputs == ["inp", "row_idx", "col_idx"]
 
+    repeat2d = canonical_flaggems_intent_for_spec("repeat2d")
+    assert repeat2d is not None
+    assert [op.op for op in repeat2d.ops] == ["gather"]
+    assert repeat2d.ops[0].inputs == ["inp", "row_idx", "col_idx"]
+
+    repeat_interleave_self_int1d = canonical_flaggems_intent_for_spec("repeat_interleave_self_int1d")
+    assert repeat_interleave_self_int1d is not None
+    assert [op.op for op in repeat_interleave_self_int1d.ops] == ["gather"]
+    assert repeat_interleave_self_int1d.ops[0].inputs == ["inp", "row_idx", "col_idx"]
+
+    repeat_interleave_self_tensor1d = canonical_flaggems_intent_for_spec("repeat_interleave_self_tensor1d")
+    assert repeat_interleave_self_tensor1d is not None
+    assert [op.op for op in repeat_interleave_self_tensor1d.ops] == ["gather"]
+    assert repeat_interleave_self_tensor1d.ops[0].inputs == ["inp", "row_idx", "col_idx"]
+
+    repeat_interleave_tensor1d = canonical_flaggems_intent_for_spec("repeat_interleave_tensor1d")
+    assert repeat_interleave_tensor1d is not None
+    assert [op.op for op in repeat_interleave_tensor1d.ops] == ["gather"]
+    assert repeat_interleave_tensor1d.ops[0].inputs == ["inp", "row_idx", "col_idx"]
+
     index_select = canonical_flaggems_intent_for_spec("index_select2d")
     assert index_select is not None
     assert [op.op for op in index_select.ops] == ["gather"]

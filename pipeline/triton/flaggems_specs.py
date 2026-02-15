@@ -4073,12 +4073,23 @@ def _run_flaggems_repeat2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
 
     inp_np = _to_np(inp)
     out_np = _to_np(out)
+    m_out, n_out = int(out_np.shape[0]), int(out_np.shape[1])
+    row_base = (np.arange(m_out, dtype=np.int32) % int(m)).reshape(m_out, 1)
+    col_base = (np.arange(n_out, dtype=np.int32) % int(n)).reshape(1, n_out)
+    row_idx = np.broadcast_to(row_base, (m_out, n_out)).astype(np.int32, copy=False)
+    col_idx = np.broadcast_to(col_base, (m_out, n_out)).astype(np.int32, copy=False)
     return {
         "inp": inp_np,
         "input": inp_np,
+        "row_idx": row_idx,
+        "col_idx": col_idx,
         "out": out_np,
         "output": out_np,
         "repeats": np.array([r0, r1], dtype=np.int32),
+        "R0": np.array(r0, dtype=np.int32),
+        "R1": np.array(r1, dtype=np.int32),
+        "M_OUT": np.array(m_out, dtype=np.int32),
+        "N_OUT": np.array(n_out, dtype=np.int32),
         "axis": np.array(0, dtype=np.int32),
     }
 
@@ -4100,9 +4111,10 @@ def _run_flaggems_tile2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         out = flag_gems_ops.tile(inp, (r0, r1))
 
     inp_np = _to_np(inp)
+    inp_2d = inp_np.reshape(1, int(n))
     out_np = _to_np(out)
     return {
-        "inp": inp_np,
+        "inp": inp_2d,
         "input": inp_np,
         "out": out_np,
         "output": out_np,
@@ -4159,19 +4171,27 @@ def _run_flaggems_repeat_interleave_self_int1d_reference(case: TestCase) -> Dict
         out = flag_gems_ops.repeat_interleave_self_int(inp, repeats, dim=0)
 
     inp_np = _to_np(inp)
+    inp_2d = inp_np.reshape(1, int(n))
     out_np = _to_np(out)
+    col_idx = np.repeat(np.arange(n, dtype=np.int32), repeats).astype(np.int32, copy=False)
+    row_idx = np.zeros_like(col_idx, dtype=np.int32)
     return {
-        "inp": inp_np,
+        "inp": inp_2d,
         "input": inp_np,
+        "row_idx": row_idx,
+        "col_idx": col_idx,
         "out": out_np,
         "output": out_np,
         "repeats": np.array(repeats, dtype=np.int32),
+        "R": np.array(repeats, dtype=np.int32),
+        "N_OUT": np.array(int(out_np.shape[0]), dtype=np.int32),
         "dim": np.array(0, dtype=np.int32),
     }
 
 
 def _run_flaggems_repeat_interleave_self_tensor1d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     n = int(case.shapes.get("N", 32))
+    r = max(1, int(case.shapes.get("R", 2)))
     device = str(flag_gems.device)
     rg = _rng(int(case.seed))
 
@@ -4182,44 +4202,62 @@ def _run_flaggems_repeat_interleave_self_tensor1d_reference(case: TestCase) -> D
     if case.inputs and "repeats" in case.inputs:
         repeats = torch.as_tensor(np.asarray(case.inputs["repeats"]), device=device, dtype=torch.int64).reshape(-1)
     else:
-        repeats = torch.from_numpy(rg.integers(1, 4, size=(n,), dtype=np.int64)).to(device)
+        repeats = torch.full((n,), int(r), device=device, dtype=torch.int64)
 
     with flag_gems.use_gems(include=["repeat_interleave_self_tensor"]):
         out = flag_gems_ops.repeat_interleave_self_tensor(inp, repeats, dim=0)
 
     inp_np = _to_np(inp)
+    inp_2d = inp_np.reshape(1, int(n))
     repeats_np = _to_np(repeats).astype(np.int32, copy=False)
     out_np = _to_np(out)
+    col_idx = np.repeat(np.arange(n, dtype=np.int32), repeats_np).astype(np.int32, copy=False)
+    row_idx = np.zeros_like(col_idx, dtype=np.int32)
     return {
-        "inp": inp_np,
+        "inp": inp_2d,
         "input": inp_np,
         "repeats": repeats_np,
+        "row_idx": row_idx,
+        "col_idx": col_idx,
         "out": out_np,
         "output": out_np,
+        "R": np.array(r, dtype=np.int32),
+        "N_OUT": np.array(int(out_np.shape[0]), dtype=np.int32),
         "dim": np.array(0, dtype=np.int32),
     }
 
 
 def _run_flaggems_repeat_interleave_tensor1d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     n = int(case.shapes.get("N", 32))
+    r = max(1, int(case.shapes.get("R", 2)))
     device = str(flag_gems.device)
     rg = _rng(int(case.seed))
 
     if case.inputs and "repeats" in case.inputs:
         repeats = torch.as_tensor(np.asarray(case.inputs["repeats"]), device=device, dtype=torch.int64).reshape(-1)
     else:
-        repeats = torch.from_numpy(rg.integers(1, 4, size=(n,), dtype=np.int64)).to(device)
+        repeats = torch.full((n,), int(r), device=device, dtype=torch.int64)
 
     with flag_gems.use_gems(include=["repeat_interleave_tensor"]):
         out = flag_gems_ops.repeat_interleave_tensor(repeats)
 
     repeats_np = _to_np(repeats).astype(np.int32, copy=False)
-    out_np = _to_np(out).astype(np.int32, copy=False)
+    out_np = _to_np(out).astype(np.float32, copy=False)
+    src_vec = np.arange(n, dtype=np.float32)
+    src_np = src_vec.reshape(1, int(n))
+    col_idx = np.repeat(np.arange(n, dtype=np.int32), repeats_np).astype(np.int32, copy=False)
+    row_idx = np.zeros_like(col_idx, dtype=np.int32)
     return {
         "repeats": repeats_np,
-        "input": repeats_np,
+        "inp": src_np,
+        "src": src_vec,
+        "input": src_vec,
+        "row_idx": row_idx,
+        "col_idx": col_idx,
         "out": out_np,
         "output": out_np,
+        "R": np.array(r, dtype=np.int32),
+        "N_OUT": np.array(int(out_np.shape[0]), dtype=np.int32),
     }
 
 
@@ -5296,6 +5334,32 @@ def _norm_quantile2d(shapes: Dict[str, int]) -> Dict[str, int]:
     out["N"] = max(2, int(out.get("N", 32)))
     q = float(out.get("Q", 0.5))
     out["Q"] = min(1.0, max(0.0, q))
+    return out
+
+
+def _norm_repeat2d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    m = max(1, int(out.get("M", 4)))
+    n = max(1, int(out.get("N", 16)))
+    r0 = max(1, int(out.get("R0", 2)))
+    r1 = max(1, int(out.get("R1", 1)))
+    out["M"] = m
+    out["N"] = n
+    out["R0"] = r0
+    out["R1"] = r1
+    out["M_OUT"] = int(m * r0)
+    out["N_OUT"] = int(n * r1)
+    return out
+
+
+def _norm_repeat_interleave1d(shapes: Dict[str, int]) -> Dict[str, int]:
+    out = dict(shapes)
+    n = max(1, int(out.get("N", 32)))
+    r = max(1, int(out.get("R", 2)))
+    out["M"] = 1
+    out["N"] = n
+    out["R"] = r
+    out["N_OUT"] = int(n * r)
     return out
 
 
@@ -6863,6 +6927,7 @@ _FLAGGEMS_SPEC_BUILDERS = {
         runner=_run_flaggems_repeat2d_reference,
         canonical_shapes={"M": 4, "N": 16, "R0": 2, "R1": 1},
         vary_axes=["M", "N"],
+        normalize_shapes=_norm_repeat2d,
         stage_c_max_cases=6,
         mutation_bounded_max_cases=3,
     ),
@@ -6873,6 +6938,7 @@ _FLAGGEMS_SPEC_BUILDERS = {
         runner=_run_flaggems_repeat_interleave_self_int1d_reference,
         canonical_shapes={"N": 32, "R": 2},
         vary_axes=["N"],
+        normalize_shapes=_norm_repeat_interleave1d,
         stage_c_max_cases=6,
         mutation_bounded_max_cases=3,
     ),
@@ -6881,8 +6947,9 @@ _FLAGGEMS_SPEC_BUILDERS = {
         module="pipeline.triton.flaggems_specs",
         attr="FLAGGEMS_REPEAT_INTERLEAVE_SRC",
         runner=_run_flaggems_repeat_interleave_self_tensor1d_reference,
-        canonical_shapes={"N": 32},
+        canonical_shapes={"N": 32, "R": 2},
         vary_axes=["N"],
+        normalize_shapes=_norm_repeat_interleave1d,
         stage_c_max_cases=6,
         mutation_bounded_max_cases=3,
     ),
@@ -6891,8 +6958,9 @@ _FLAGGEMS_SPEC_BUILDERS = {
         module="pipeline.triton.flaggems_specs",
         attr="FLAGGEMS_REPEAT_INTERLEAVE_SRC",
         runner=_run_flaggems_repeat_interleave_tensor1d_reference,
-        canonical_shapes={"N": 32},
+        canonical_shapes={"N": 32, "R": 2},
         vary_axes=["N"],
+        normalize_shapes=_norm_repeat_interleave1d,
         stage_c_max_cases=6,
         mutation_bounded_max_cases=3,
     ),
