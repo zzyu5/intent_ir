@@ -514,7 +514,8 @@ def main() -> None:
     _record("converge", rc, out, err, extra={"cmd": cmd, "json_path": str(converged)})
 
     coverage_integrity = out_dir / "coverage_integrity.json"
-    if converged.is_file():
+    full_coverage_run = (str(effective_suite) == "coverage") and (len(kernel_filter) == 0)
+    if converged.is_file() and full_coverage_run:
         cmd = [
             sys.executable,
             "scripts/flaggems/recompute_coverage_integrity.py",
@@ -536,6 +537,18 @@ def main() -> None:
         (out_dir / "run_summary.json").write_text(json.dumps(tmp_summary, indent=2, ensure_ascii=False), encoding="utf-8")
         rc, out, err = _run(cmd, cwd=ROOT)
         _record("coverage_integrity", rc, out, err, extra={"cmd": cmd, "json_path": str(coverage_integrity)})
+    else:
+        _record(
+            "coverage_integrity",
+            0,
+            "coverage integrity skipped for partial scope run",
+            "",
+            extra={
+                "reason_code": "skipped_partial_scope",
+                "full_coverage_run": bool(full_coverage_run),
+                "json_path": str(coverage_integrity),
+            },
+        )
 
     ok = all(bool(r.get("ok")) for r in stage_results)
     summary = {
