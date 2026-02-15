@@ -24,11 +24,11 @@
     "isfinite2d",
     "linspace1d",
     "log2d",
-    "matmul2d",
+    "nonzero2d",
     "topk2d",
     "trace2d",
     "triu2d",
     "where2d",
-    "zeros2d"
+    "count_nonzero2d"
   ]
 }

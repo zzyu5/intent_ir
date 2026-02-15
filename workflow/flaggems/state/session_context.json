@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-15T18:07:15+00:00",
+  "updated_at": "2026-02-15T19:25:15+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -11,76 +11,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "e1deb5d workflow: refresh snapshots after wave6 subbatch closure\n53c044e workflow: record wave6 subbatch dual-pass closure evidence\nd00c2b2 cuda cpp_codegen: add topk2d and trace2d lowering patterns\n78f8753 workflow: refresh snapshots after backend lane alignment\n67cb08a workflow: record backend_compiler lane routing alignment\n1297af3 flaggems: run backend compiler batches on backend_compiler lane\nc4a088e workflow: record wave6 trio backend-compiler status\nce38fbb cuda cpp_codegen: support log op in fused elementwise lowering\ne62e13c workflow: record tensor materialization fix session artifacts\n3ff3046 intentir: materialize missing intermediate tensors before backend lowering\na5869c5 matrix: gate coverage integrity only on full coverage runs\n526d0ec workflow: refresh status snapshots after schedule_only cutover\nea809d9 backend: replace compatibility skips with schedule_only mode\na0fcd23 workflow: refresh flaggems current status snapshots\n17578fa flaggems: add script catalog governance and coverage integrity recheck\nf8a8a53 backend: cut legacy python codegen entrypoints and start cpp semantic port\n9ff6e20 workflow: close backend wave5 perf budget and return lanes to maintenance\nbaa73ad gate: make backend perf budget robust with ratio and delta thresholds\n3c86160 workflow: activate backend wave5 lanes and record purity run artifacts\nb139cd7 gate: enforce backend compiler purity and timing budget checks",
+  "git_log_short": "f51f41b workflow: refresh snapshots after wave6 subbatch evidence commit\ne1deb5d workflow: refresh snapshots after wave6 subbatch closure\n53c044e workflow: record wave6 subbatch dual-pass closure evidence\nd00c2b2 cuda cpp_codegen: add topk2d and trace2d lowering patterns\n78f8753 workflow: refresh snapshots after backend lane alignment\n67cb08a workflow: record backend_compiler lane routing alignment\n1297af3 flaggems: run backend compiler batches on backend_compiler lane\nc4a088e workflow: record wave6 trio backend-compiler status\nce38fbb cuda cpp_codegen: support log op in fused elementwise lowering\ne62e13c workflow: record tensor materialization fix session artifacts\n3ff3046 intentir: materialize missing intermediate tensors before backend lowering\na5869c5 matrix: gate coverage integrity only on full coverage runs\n526d0ec workflow: refresh status snapshots after schedule_only cutover\nea809d9 backend: replace compatibility skips with schedule_only mode\na0fcd23 workflow: refresh flaggems current status snapshots\n17578fa flaggems: add script catalog governance and coverage integrity recheck\nf8a8a53 backend: cut legacy python codegen entrypoints and start cpp semantic port\n9ff6e20 workflow: close backend wave5 perf budget and return lanes to maintenance\nbaa73ad gate: make backend perf budget robust with ratio and delta thresholds\n3c86160 workflow: activate backend wave5 lanes and record purity run artifacts",
   "progress_tail": [
-    {
-      "ts": "2026-02-15T16:10:56+00:00",
-      "commit": "3c861600d660a1297b481a8144e0127c7196c4eb",
-      "lane": "backend_compiler",
-      "summary": "Executed wave5 perf budget rerun with same-profile baseline; evaluated regression ratio-based nightly gate",
-      "batch_ops": [
-        ""
-      ],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_perf_budget_v2/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_perf_budget_v2/status_converged.json",
-      "next_focus": "Close backend_compiler::nightly_perf_budget_wave5 and switch workflow to maintenance",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_perf_budget_v2/backend_compiler_batch_summary.json",
-        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_perf_budget_v2/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_perf_budget_v2/status_converged.json",
-        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_perf_budget_v2/timing_delta.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_perf_budget_v2",
-      "counts_by_status": {
-        "blocked_backend": 194,
-        "dual_pass": 2
-      }
-    },
-    {
-      "ts": "2026-02-15T16:11:41+00:00",
-      "commit": "3c861600d660a1297b481a8144e0127c7196c4eb",
-      "lane": "backend_compiler",
-      "summary": "Closed backend_compiler wave5 perf budget; workflow back to maintenance (all lanes pending=0)",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_perf_budget_v2/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_perf_budget_v2/status_converged.json",
-      "next_focus": "Start next backend wave (wave6) on expanded kernel families with nightly perf gate enabled",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_perf_budget_v2/batch_gate_backend_compiler_wave5_perf_budget_pass.json",
-        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_perf_budget_v2/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_perf_budget_v2/status_converged.json",
-        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_perf_budget_v2/timing_delta.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave5_perf_budget_v2",
-      "counts_by_status": {
-        "blocked_backend": 194,
-        "dual_pass": 2
-      }
-    },
-    {
-      "ts": "2026-02-15T16:32:19+00:00",
-      "commit": "9ff6e209ee0d4cf9451a17b924732a3e15ad0f7b",
-      "lane": "backend_compiler",
-      "summary": "Cut legacy intentir_to_* execution path; cpp_driver is now the only backend compiler entry.",
-      "batch_ops": [
-        ""
-      ],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_pure_entry_refactor_v1/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_pure_entry_refactor_v1/status_converged.json",
-      "next_focus": "Run backend_compiler wave6 matrix (RVV local+remote + CUDA) on expanded kernels and close active batch gate.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_pure_entry_refactor_v1/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_pure_entry_refactor_v1/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
     {
       "ts": "2026-02-15T16:44:48+00:00",
       "commit": "9ff6e209ee0d4cf9451a17b924732a3e15ad0f7b",
@@ -199,14 +131,92 @@
         "blocked_backend": 183,
         "dual_pass": 13
       }
+    },
+    {
+      "ts": "2026-02-15T19:20:45+00:00",
+      "commit": "f51f41b8565504db3ec6102237167f91ff69ce93",
+      "lane": "backend_compiler",
+      "summary": "Completed backend_compiler wave6 manifest chunked runs (chunks0-3), with CUDA C++ lowering added for acos/bitwise/diag/diag_embed/nonzero/count_nonzero and all 28 kernels dual-pass in chunk evidence.",
+      "batch_ops": [
+        ""
+      ],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk3_v2/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk3_v2/status_converged.json",
+      "next_focus": "Close backend_compiler::expanded_family_wave6 gate using aggregated chunk evidence, then start next backend compiler wave with broader manifest.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk0_v2/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk1_v2/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk2_v2/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk3_v2/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk3_v2/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk3_v2/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk3_v2",
+      "counts_by_status": {
+        "blocked_backend": 190,
+        "dual_pass": 6
+      }
+    },
+    {
+      "ts": "2026-02-15T19:23:55+00:00",
+      "commit": "f51f41b8565504db3ec6102237167f91ff69ce93",
+      "lane": "backend_compiler",
+      "summary": "Validated final wave6 manifest chunk (trace/triu/where/count_nonzero) with full RVV local+remote+CUDA pass and no timing-delta gate pollution from cross-batch baseline.",
+      "batch_ops": [
+        ""
+      ],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk3_v3_notiming/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk3_v3_notiming/status_converged.json",
+      "next_focus": "Aggregate chunk0-3 evidence into expanded_family_wave6 closure and then move to next backend_compiler manifest wave.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk0_v2/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk1_v2/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk2_v2/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk3_v3_notiming/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk3_v3_notiming/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk3_v3_notiming/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk3_v3_notiming",
+      "counts_by_status": {
+        "blocked_backend": 190,
+        "dual_pass": 6
+      }
+    },
+    {
+      "ts": "2026-02-15T19:25:09+00:00",
+      "commit": "f51f41b8565504db3ec6102237167f91ff69ce93",
+      "lane": "backend_compiler",
+      "summary": "Closed backend_compiler::expanded_family_wave6 with chunked manifest evidence (28 kernels total) and passing backend_compiler gate.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk3_v3_notiming/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk3_v3_notiming/status_converged.json",
+      "next_focus": "Define next backend_compiler wave tasks in feature_list (compiler-structure/perf passes) and start lane with fresh active batch.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk0_v2/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk1_v2/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk2_v2/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk3_v3_notiming/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk3_v3_notiming/batch_gate.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk3_v3_notiming/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk3_v3_notiming/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_manifest_chunk3_v3_notiming",
+      "counts_by_status": {
+        "blocked_backend": 190,
+        "dual_pass": 6
+      }
     }
   ],
-  "next_focus": "Run expanded wave6 manifest and close backend_compiler::expanded_family_wave6 gate with fresh evidence.",
-  "active_lanes": [
-    "backend_compiler"
-  ],
+  "next_focus": "Define next backend_compiler wave tasks in feature_list (compiler-structure/perf passes) and start lane with fresh active batch.",
+  "active_lanes": [],
   "next_focus_by_lane": {
-    "backend_compiler": "Run expanded wave6 manifest and close backend_compiler::expanded_family_wave6 gate with fresh evidence."
+    "backend_compiler": "Define next backend_compiler wave tasks in feature_list (compiler-structure/perf passes) and start lane with fresh active batch."
   },
   "known_risks": [
     "CUDA cpp_codegen fused-elementwise now supports log; log2d is dual-pass while topk2d/trace2d remain CUDA lowering gaps.",
