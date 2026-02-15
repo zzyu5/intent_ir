@@ -11,6 +11,7 @@ For each kernel artifact under `artifacts/<frontend>_full_pipeline/`, this scrip
 
 from __future__ import annotations
 
+import atexit
 import argparse
 import json
 import math
@@ -44,6 +45,10 @@ DEFAULT_KERNELS = [
     "layer_norm_persistent",
     "upsample_bicubic2d_aa",
 ]
+
+
+_PERSISTENT_WORKERS: dict[str, dict[str, Any]] = {}
+_PERSISTENT_TASK_SEQ = 0
 
 
 def _default_kernels_for(
@@ -542,6 +547,158 @@ def _cuda_launch_worker(
         )
 
 
+def _resolve_start_method_for_stage(stage: str) -> str:
+    stage_key = str(stage).strip().lower()
+    explicit_global = os.getenv("INTENTIR_CUDA_SMOKE_MP_START_METHOD")
+    explicit_stage = os.getenv(f"INTENTIR_CUDA_SMOKE_{stage_key.upper()}_MP_START_METHOD")
+    if explicit_stage is not None:
+        preferred = str(explicit_stage).strip().lower()
+    elif explicit_global is not None:
+        preferred = str(explicit_global).strip().lower()
+    else:
+        preferred = "spawn"
+    available = list(mp.get_all_start_methods())
+    if preferred in available:
+        return preferred
+    if "spawn" in available:
+        return "spawn"
+    if available:
+        return str(available[0])
+    return "spawn"
+
+
+def _persistent_workers_enabled() -> bool:
+    raw = str(os.getenv("INTENTIR_CUDA_SMOKE_PERSISTENT_WORKER", "1")).strip().lower()
+    return raw in {"1", "true", "yes", "y"}
+
+
+def _shutdown_persistent_workers() -> None:
+    for stage, handle in list(_PERSISTENT_WORKERS.items()):
+        proc = handle.get("proc")
+        in_q = handle.get("in_q")
+        try:
+            if in_q is not None:
+                in_q.put_nowait(None)
+        except Exception:
+            pass
+        try:
+            if proc is not None and proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=2.0)
+        except Exception:
+            pass
+        _PERSISTENT_WORKERS.pop(stage, None)
+
+
+atexit.register(_shutdown_persistent_workers)
+
+
+def _cuda_stage_worker_loop(
+    in_q: Any,
+    out_q: Any,
+    *,
+    stage: str,
+    frontend: str,
+    triton_provider: str,
+    artifact_dir: str | None,
+    runtime_backend: str,
+) -> None:
+    while True:
+        item = in_q.get()
+        if item is None:
+            break
+        if not isinstance(item, dict):
+            continue
+        task_id = item.get("task_id")
+        kernel = str(item.get("kernel") or "")
+        if not kernel:
+            out_q.put(
+                {
+                    "task_id": task_id,
+                    "ok": False,
+                    "error": {
+                        "type": "ValueError",
+                        "message": "missing kernel in stage worker request",
+                        "reason_code": "runtime_fail",
+                    },
+                }
+            )
+            continue
+        try:
+            _set_codegen_mode_env()
+            _set_runtime_backend_env(runtime_backend)
+            if stage == "compile":
+                res = _run_compile_stage(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
+            elif stage == "launch":
+                res = _run_launch_stage(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
+            else:
+                raise ValueError(f"unsupported worker stage: {stage}")
+            out_q.put({"task_id": task_id, "ok": True, "result": res})
+        except Exception as ex:  # noqa: BLE001
+            out_q.put(
+                {
+                    "task_id": task_id,
+                    "ok": False,
+                    "error": {
+                        "type": type(ex).__name__,
+                        "message": str(ex),
+                        "reason_code": _reason_code_for_exception(ex),
+                    },
+                }
+            )
+
+
+def _get_or_start_persistent_worker(
+    *,
+    stage: str,
+    start_method: str,
+    frontend: str,
+    triton_provider: str,
+    artifact_dir: str | None,
+    runtime_backend: str,
+) -> dict[str, Any]:
+    cfg = {
+        "start_method": str(start_method),
+        "frontend": str(frontend),
+        "triton_provider": str(triton_provider),
+        "artifact_dir": (str(artifact_dir) if artifact_dir else ""),
+        "runtime_backend": str(runtime_backend),
+    }
+    existing = _PERSISTENT_WORKERS.get(stage)
+    if existing is not None:
+        same_cfg = existing.get("cfg") == cfg
+        proc = existing.get("proc")
+        if same_cfg and proc is not None and proc.is_alive():
+            return existing
+        try:
+            if proc is not None and proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=2.0)
+        except Exception:
+            pass
+        _PERSISTENT_WORKERS.pop(stage, None)
+
+    ctx = mp.get_context(start_method)
+    in_q = ctx.Queue()
+    out_q = ctx.Queue()
+    proc = ctx.Process(
+        target=_cuda_stage_worker_loop,
+        kwargs={
+            "in_q": in_q,
+            "out_q": out_q,
+            "stage": str(stage),
+            "frontend": str(frontend),
+            "triton_provider": str(triton_provider),
+            "artifact_dir": (str(artifact_dir) if artifact_dir else None),
+            "runtime_backend": str(runtime_backend),
+        },
+    )
+    proc.start()
+    handle = {"cfg": cfg, "ctx": ctx, "in_q": in_q, "out_q": out_q, "proc": proc}
+    _PERSISTENT_WORKERS[stage] = handle
+    return handle
+
+
 def _run_worker_with_timeout(
     worker: Any,
     *,
@@ -551,17 +708,58 @@ def _run_worker_with_timeout(
     artifact_dir: str | None,
     runtime_backend: str,
     timeout_sec: int,
+    stage: str,
 ) -> dict[str, Any]:
-    preferred = str(os.getenv("INTENTIR_CUDA_SMOKE_MP_START_METHOD", "spawn")).strip().lower()
-    available = list(mp.get_all_start_methods())
-    if preferred in available:
-        start_method = preferred
-    elif "spawn" in available:
-        start_method = "spawn"
-    elif available:
-        start_method = str(available[0])
-    else:
-        start_method = "spawn"
+    stage_key = str(stage).strip().lower()
+    start_method = _resolve_start_method_for_stage(stage_key)
+    if _persistent_workers_enabled() and stage_key in {"compile", "launch"}:
+        global _PERSISTENT_TASK_SEQ
+        handle = _get_or_start_persistent_worker(
+            stage=stage_key,
+            start_method=start_method,
+            frontend=frontend,
+            triton_provider=triton_provider,
+            artifact_dir=artifact_dir,
+            runtime_backend=runtime_backend,
+        )
+        _PERSISTENT_TASK_SEQ += 1
+        task_id = int(_PERSISTENT_TASK_SEQ)
+        in_q = handle["in_q"]
+        out_q = handle["out_q"]
+        proc = handle["proc"]
+        in_q.put({"task_id": task_id, "kernel": str(kernel)})
+        timeout = None if int(timeout_sec) <= 0 else float(timeout_sec)
+        deadline = None if timeout is None else (time.time() + timeout)
+        while True:
+            remaining = None if deadline is None else max(0.0, deadline - time.time())
+            if deadline is not None and remaining <= 0.0:
+                try:
+                    if proc.is_alive():
+                        proc.terminate()
+                        proc.join(timeout=2.0)
+                except Exception:
+                    pass
+                _PERSISTENT_WORKERS.pop(stage_key, None)
+                return {"ok": False, "timed_out": True}
+            try:
+                payload = out_q.get(timeout=remaining)
+            except Empty:
+                try:
+                    if proc.is_alive():
+                        proc.terminate()
+                        proc.join(timeout=2.0)
+                except Exception:
+                    pass
+                _PERSISTENT_WORKERS.pop(stage_key, None)
+                return {"ok": False, "timed_out": True}
+            if not isinstance(payload, dict):
+                continue
+            if int(payload.get("task_id", -1)) != task_id:
+                continue
+            payload["timed_out"] = False
+            return payload
+
+    # one-shot worker fallback
     ctx = mp.get_context(start_method)
     q: mp.Queue = ctx.Queue()
     proc = ctx.Process(
@@ -618,6 +816,7 @@ def _run_one_with_stage_timeouts(
         artifact_dir=artifact_dir,
         runtime_backend=runtime_backend,
         timeout_sec=int(compile_timeout_sec),
+        stage="compile",
     )
     if bool(compile_res.get("timed_out")):
         return {
@@ -644,6 +843,7 @@ def _run_one_with_stage_timeouts(
         artifact_dir=artifact_dir,
         runtime_backend=runtime_backend,
         timeout_sec=int(launch_timeout_sec),
+        stage="launch",
     )
     if bool(launch_res.get("timed_out")):
         return {
@@ -817,7 +1017,9 @@ def main() -> None:
         if args.json:
             print(json.dumps(summary, ensure_ascii=False))
         if args.allow_skip:
+            _shutdown_persistent_workers()
             raise SystemExit(0)
+        _shutdown_persistent_workers()
         raise SystemExit(1)
 
     results: list[dict[str, Any]] = []
@@ -905,6 +1107,7 @@ def main() -> None:
         out_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     if args.json:
         print(json.dumps(summary, ensure_ascii=False))
+    _shutdown_persistent_workers()
     raise SystemExit(0 if ok_all else 1)
 
 
