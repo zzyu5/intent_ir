@@ -224,6 +224,30 @@ def _resolve_tensor_shape(tensor: Any, bindings: dict) -> tuple[int, ...] | None
     return tuple(shape)
 
 
+def _augment_bindings_from_arrays(*, intent: IntentFunction, bindings: dict[str, Any], arrays: dict[str, np.ndarray]) -> dict[str, Any]:
+    out = dict(bindings)
+    for name, arr in arrays.items():
+        tensor = intent.tensors.get(str(name))
+        if tensor is None:
+            continue
+        spec_shape = list(getattr(tensor, "shape", []) or [])
+        arr_shape = tuple(int(v) for v in np.asarray(arr).shape)
+        if len(spec_shape) != len(arr_shape):
+            continue
+        for dim_spec, dim_val in zip(spec_shape, arr_shape):
+            key: str | None = None
+            if hasattr(dim_spec, "kind") and getattr(dim_spec, "kind") == "sym":
+                key = str(getattr(dim_spec, "value"))
+            elif isinstance(dim_spec, str):
+                try:
+                    int(dim_spec)
+                except Exception:
+                    key = str(dim_spec)
+            if key and key not in out:
+                out[key] = int(dim_val)
+    return out
+
+
 def _derive_optional_tensor_input_array(name: str, *, tensor: Any, bindings: dict) -> "np.ndarray" | None:
     # Attention kernels may omit mask from baseline exports when no mask is supplied.
     if str(name) != "attn_mask":
@@ -474,6 +498,10 @@ def run_remote(
     # Use the macro intent here to avoid iterating over a huge expanded tensor set.
     if baseline is not None:
         baseline = _with_io_aliases(intent_macro, baseline)
+        # Recover symbolic extents that appear only on outputs (e.g. nonzero count)
+        # so backend lowering can resolve all output dimensions.
+        baseline = dict(baseline)
+        bindings = _augment_bindings_from_arrays(intent=intent, bindings=bindings, arrays=baseline)
 
     # Derive a few common implicit symbols.
     if "group" in bindings and "num_groups" not in bindings:

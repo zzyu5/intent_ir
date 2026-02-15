@@ -26,6 +26,7 @@ CUDA_SUPPORTED_OPS: set[str] = {
     # Tensor transforms / indexing.
     "transpose",
     "gather",
+    "nonzero",
     "index_add",
     "index_put",
     "masked_select",
@@ -41,6 +42,7 @@ CUDA_SUPPORTED_OPS: set[str] = {
     "broadcast_in_dim",
     "cast",
     "reduce_sum",
+    "reduce_prod",
     "reduce_max",
     "reduce_min",
     "reduce_any",
@@ -48,6 +50,7 @@ CUDA_SUPPORTED_OPS: set[str] = {
     "sub",
     "mul",
     "div",
+    "pow",
     "max",
     "min",
     "relu",
@@ -83,6 +86,9 @@ CUDA_SUPPORTED_OPS: set[str] = {
     "cummin",
     "avg_pool2d",
     "scaled_dot_product_attention",
+    "polar",
+    "nll_loss_forward",
+    "nll_loss2d_forward",
 }
 
 __all__ = ["CUDA_SUPPORTED_OPS"]

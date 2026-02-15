@@ -200,6 +200,30 @@ def _resolve_tensor_shape(tensor: Any, bindings: dict) -> tuple[int, ...] | None
     return tuple(shape)
 
 
+def _augment_bindings_from_arrays(*, intent: IntentFunction, bindings: dict[str, Any], arrays: dict[str, np.ndarray]) -> dict[str, Any]:
+    out = dict(bindings)
+    for name, arr in arrays.items():
+        tensor = intent.tensors.get(str(name))
+        if tensor is None:
+            continue
+        spec_shape = list(getattr(tensor, "shape", []) or [])
+        arr_shape = tuple(int(v) for v in np.asarray(arr).shape)
+        if len(spec_shape) != len(arr_shape):
+            continue
+        for dim_spec, dim_val in zip(spec_shape, arr_shape):
+            key: str | None = None
+            if hasattr(dim_spec, "kind") and getattr(dim_spec, "kind") == "sym":
+                key = str(getattr(dim_spec, "value"))
+            elif isinstance(dim_spec, str):
+                try:
+                    int(dim_spec)
+                except Exception:
+                    key = str(dim_spec)
+            if key and key not in out:
+                out[key] = int(dim_val)
+    return out
+
+
 def _derive_optional_tensor_input(name: str, *, tensor: Any, bindings: dict) -> np.ndarray | None:
     if str(name) != "attn_mask":
         return None
@@ -251,6 +275,7 @@ def _prepare_kernel_context(
         outputs = list(intent.outputs)
     raw_bindings = ((report.get("baseline") or {}).get("shapes") or {}) if isinstance(report.get("baseline"), dict) else {}
     bindings = _coerce_bindings(raw_bindings)
+    bindings = _augment_bindings_from_arrays(intent=intent, bindings=bindings, arrays=baseline)
     tol = (report.get("tolerances") or {}) if isinstance(report.get("tolerances"), dict) else {}
     return {
         "kernel": str(kernel),

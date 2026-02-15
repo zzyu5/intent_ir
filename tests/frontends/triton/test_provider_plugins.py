@@ -60,6 +60,22 @@ def test_flaggems_plugin_opt_in_normalization(monkeypatch) -> None:
     assert out1_exp is not None
 
 
+def test_flaggems_plugin_forces_pad2d_canonical(monkeypatch) -> None:
+    plugin = get_provider_plugin("flaggems")
+    cand = _dummy_candidate("old")
+    monkeypatch.delenv("INTENTIR_TRITON_FLAGGEMS_CANONICAL_NORMALIZE", raising=False)
+
+    out, out_exp, info = plugin.maybe_normalize_candidate(
+        spec_name="pad2d",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info is not None
+    assert info.get("enabled_by") == "provider_required_deterministic_override"
+    assert out.intent.name == "pad2d"
+    assert out_exp is not None
+
+
 def test_flaggems_plugin_forces_deterministic_overrides_for_known_unstable_specs(monkeypatch) -> None:
     plugin = get_provider_plugin("flaggems")
     cand = _dummy_candidate("old")

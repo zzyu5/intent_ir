@@ -465,7 +465,8 @@ void emit_elemwise_bin(CodeWriter& w, const Intent& intent, const std::unordered
   const std::string out_ct = ctype_for_dtype(out_dtype);
   const std::string a_ct = ctype_for_dtype(a_dtype);
   const std::string b_ct = ctype_for_dtype(b_dtype);
-  const bool can_runtime = (out_ct == "float") && (a_ct == "float") && (b_ct == "float") && (r >= 1);
+  const bool runtime_supported_op = (op == "add" || op == "sub" || op == "mul" || op == "div" || op == "max" || op == "min");
+  const bool can_runtime = (out_ct == "float") && (a_ct == "float") && (b_ct == "float") && (r >= 1) && runtime_supported_op;
 
   if (can_runtime) {
     std::string op_code;
@@ -475,7 +476,7 @@ void emit_elemwise_bin(CodeWriter& w, const Intent& intent, const std::unordered
     else if (op == "div") op_code = "INTENTIR_F32_BIN_DIV";
     else if (op == "max") op_code = "INTENTIR_F32_BIN_MAX";
     else if (op == "min") op_code = "INTENTIR_F32_BIN_MIN";
-    else fail("unsupported elemwise op: " + op);
+    else fail("unsupported runtime elemwise op: " + op);
 
     auto arr = [&](const std::vector<int64_t>& v) -> std::string {
       std::string s = "(int64_t[]){";
@@ -520,13 +521,18 @@ void emit_elemwise_bin(CodeWriter& w, const Intent& intent, const std::unordered
         expr = "(" + a_var + "[" + a_idx + "] " + (op == "max" ? ">" : "<") + " " + b_var + "[" + b_idx + "]) ? " + a_var + "[" + a_idx + "] : " + b_var + "[" + b_idx + "]";
       }
     } else {
-      const std::string c_op = (op == "add"   ? "+"
-                                : op == "sub" ? "-"
-                                : op == "mul" ? "*"
-                                : op == "div" ? "/"
-                                              : "");
-      if (c_op.empty()) fail("unsupported elemwise op: " + op);
-      expr = "(" + a_var + "[" + a_idx + "] " + c_op + " " + b_var + "[" + b_idx + "])";
+      if (op == "pow") {
+        if (out_ct == "float") expr = "powf(" + a_var + "[" + a_idx + "], " + b_var + "[" + b_idx + "])";
+        else expr = "pow(" + a_var + "[" + a_idx + "], " + b_var + "[" + b_idx + "])";
+      } else {
+        const std::string c_op = (op == "add"   ? "+"
+                                  : op == "sub" ? "-"
+                                  : op == "mul" ? "*"
+                                  : op == "div" ? "/"
+                                                : "");
+        if (c_op.empty()) fail("unsupported elemwise op: " + op);
+        expr = "(" + a_var + "[" + a_idx + "] " + c_op + " " + b_var + "[" + b_idx + "])";
+      }
     }
     w.line(out + "[" + out_idx + "] = (" + out_ct + ")" + expr + ";");
     for (int i = 0; i < r; ++i) {
@@ -1390,6 +1396,54 @@ void emit_reduce_sum(CodeWriter& w, const std::string& out, const std::string& a
     w.line("}");
   }
   if (scale.has_value()) w.line("acc *= (double)" + c_float(scale.value()) + ";");
+  w.line(out + "[" + out_idx + "] = (float)acc;");
+  for (int i = 0; i < out_rank; ++i) {
+    w.dedent();
+    w.line("}");
+  }
+}
+
+void emit_reduce_prod(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape,
+                      const std::vector<int>& dims, bool keepdims) {
+  const int r = static_cast<int>(in_shape.size());
+  if (r > 4) fail("reduce_prod supports rank<=4");
+  std::vector<int> dims_set = dims;
+  std::vector<int64_t> D = in_shape;
+  std::vector<int64_t> OD = out_shape;
+  const int out_rank = static_cast<int>(out_shape.size());
+  if (keepdims) {
+    if (out_rank != r) fail("reduce_prod keepdims expects out rank == in rank");
+  } else {
+    if (out_rank != r - (int)dims_set.size()) fail("reduce_prod out rank mismatch");
+  }
+
+  std::vector<std::string> out_vars;
+  for (int i = 0; i < out_rank; ++i) out_vars.push_back("o" + std::to_string(i));
+  for (int i = 0; i < out_rank; ++i) {
+    w.line("for (int " + out_vars[i] + " = 0; " + out_vars[i] + " < " + std::to_string(OD[i]) + "; ++" + out_vars[i] + ") {");
+    w.indent();
+  }
+  std::string out_idx = flat_idx_expr(out_vars, out_shape);
+  w.line("double acc = 1.0;");
+
+  std::vector<std::string> in_vars(r);
+  int out_it = 0;
+  for (int di = 0; di < r; ++di) {
+    bool reduced = false;
+    for (int d : dims_set) if (d == di) reduced = true;
+    if (reduced) in_vars[di] = "r" + std::to_string(di);
+    else in_vars[di] = out_vars[out_it++];
+  }
+  for (int d : dims_set) {
+    w.line("for (int r" + std::to_string(d) + " = 0; r" + std::to_string(d) + " < " + std::to_string(D[d]) + "; ++r" + std::to_string(d) + ") {");
+    w.indent();
+  }
+  std::string in_idx = flat_idx_expr(in_vars, in_shape);
+  w.line("acc *= (double)" + a + "[" + in_idx + "];");
+  for (size_t i = 0; i < dims_set.size(); ++i) {
+    w.dedent();
+    w.line("}");
+  }
   w.line(out + "[" + out_idx + "] = (float)acc;");
   for (int i = 0; i < out_rank; ++i) {
     w.dedent();
@@ -2645,7 +2699,7 @@ struct CProgramEmitter {
 	        w.line("}");
 	        w.dedent();
 	        w.line("}");
-	      } else if (op.op == "add" || op.op == "sub" || op.op == "mul" || op.op == "div" || op.op == "max" || op.op == "min") {
+	      } else if (op.op == "add" || op.op == "sub" || op.op == "mul" || op.op == "div" || op.op == "max" || op.op == "min" || op.op == "pow") {
 		        if (op.inputs.size() == 2) {
 		          emit_elemwise_bin(w, intent, bindings, op.op, out_var, v(op.inputs[0]), v(op.inputs[1]), op.inputs[0], op.inputs[1],
 		                            shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), out_shape,
@@ -2711,6 +2765,33 @@ struct CProgramEmitter {
 	      } else if (op.op == "where") {
 	        emit_where(w, out_var, v(op.inputs[0]), v(op.inputs[1]), v(op.inputs[2]), shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), shape_env.at(op.inputs[2]), out_shape,
 	                   dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(op.inputs[2]), dtype_env.at(out));
+	      } else if (op.op == "polar") {
+	        if (op.inputs.size() != 2) fail("polar expects 2 inputs [abs, angle]");
+	        const auto& abs_shape = shape_env.at(op.inputs[0]);
+	        const auto& angle_shape = shape_env.at(op.inputs[1]);
+	        if (abs_shape != angle_shape) fail("polar expects abs/angle shape match");
+	        if (abs_shape.size() != 2 || out_shape.size() != 3) fail("polar currently supports [M,N] -> [M,N,2]");
+	        if (out_shape[0] != abs_shape[0] || out_shape[1] != abs_shape[1] || out_shape[2] != 2) {
+	          fail("polar output shape mismatch");
+	        }
+	        if (dtype_env.at(op.inputs[0]) != "f32" || dtype_env.at(op.inputs[1]) != "f32" || dtype_env.at(out) != "f32") {
+	          fail("polar currently supports only f32");
+	        }
+	        const int64_t M = abs_shape[0];
+	        const int64_t N = abs_shape[1];
+	        w.line("for (int64_t i = 0; i < " + std::to_string(M) + "; ++i) {");
+	        w.indent();
+	        w.line("for (int64_t j = 0; j < " + std::to_string(N) + "; ++j) {");
+	        w.indent();
+	        w.line("const size_t idx = (size_t)i * " + std::to_string(N) + " + (size_t)j;");
+	        w.line("const float r = " + v(op.inputs[0]) + "[idx];");
+	        w.line("const float a0 = " + v(op.inputs[1]) + "[idx];");
+	        w.line(out_var + "[idx * 2 + 0] = r * cosf(a0);");
+	        w.line(out_var + "[idx * 2 + 1] = r * sinf(a0);");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
 	      } else if (op.op == "cumsum") {
 	        int axis = op.attrs.value("axis", 0);
 	        emit_cumsum(w, out_var, v(op.inputs[0]), out_shape, axis, dtype_env.at(out));
@@ -2720,6 +2801,135 @@ struct CProgramEmitter {
 	      } else if (op.op == "cummin") {
 	        int axis = op.attrs.value("axis", 0);
 	        emit_cumext_1d(w, out_var, v(op.inputs[0]), out_shape, axis, dtype_env.at(out), /*is_max=*/false);
+	      } else if (op.op == "nonzero") {
+	        if (op.inputs.size() != 1) fail("nonzero expects 1 input");
+	        const auto& in_shape = shape_env.at(op.inputs[0]);
+	        if (in_shape.size() != 2 || out_shape.size() != 2) fail("nonzero currently supports in[2] -> out[2]");
+	        if (out_shape[1] != 2) fail("nonzero expects output shape [K, 2]");
+	        if (dtype_env.at(out) != "i64") fail("nonzero currently supports i64 output");
+	        const std::string in_dt = dtype_env.at(op.inputs[0]);
+	        const std::string in_ct = ctype_for_dtype(in_dt);
+	        const int64_t M = in_shape[0];
+	        const int64_t N = in_shape[1];
+	        const int64_t K = out_shape[0];
+	        w.line("int64_t write_pos = 0;");
+	        w.line("for (int64_t i = 0; i < " + std::to_string(M) + "; ++i) {");
+	        w.indent();
+	        w.line("for (int64_t j = 0; j < " + std::to_string(N) + "; ++j) {");
+	        w.indent();
+	        if (in_dt == "bool" || in_dt == "i1" || in_dt == "u8") {
+	          w.line("const int nz = (" + v(op.inputs[0]) + "[(size_t)(i * " + std::to_string(N) + " + j)] != (uint8_t)0);");
+	        } else {
+	          w.line("const int nz = (" + v(op.inputs[0]) + "[(size_t)(i * " + std::to_string(N) + " + j)] != (" + in_ct + ")0);");
+	        }
+	        w.line("if (nz) {");
+	        w.indent();
+	        w.line("if (write_pos < " + std::to_string(K) + ") {");
+	        w.indent();
+	        w.line(out_var + "[(size_t)write_pos * 2 + 0] = (int64_t)i;");
+	        w.line(out_var + "[(size_t)write_pos * 2 + 1] = (int64_t)j;");
+	        w.dedent();
+	        w.line("}");
+	        w.line("write_pos += 1;");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.line("for (int64_t t = write_pos; t < " + std::to_string(K) + "; ++t) {");
+	        w.indent();
+	        w.line(out_var + "[(size_t)t * 2 + 0] = 0;");
+	        w.line(out_var + "[(size_t)t * 2 + 1] = 0;");
+	        w.dedent();
+	        w.line("}");
+	      } else if (op.op == "nll_loss_forward") {
+	        if (op.inputs.size() != 3) fail("nll_loss_forward expects inputs [self, target, weight]");
+	        const auto& logits_shape = shape_env.at(op.inputs[0]);
+	        const auto& target_shape = shape_env.at(op.inputs[1]);
+	        const auto& weight_shape = shape_env.at(op.inputs[2]);
+	        if (logits_shape.size() != 2 || target_shape.size() != 1 || weight_shape.size() != 1) {
+	          fail("nll_loss_forward expects self[N,C], target[N], weight[C]");
+	        }
+	        const int64_t N = logits_shape[0];
+	        const int64_t C = logits_shape[1];
+	        if (target_shape[0] != N) fail("nll_loss_forward target length mismatch");
+	        if (weight_shape[0] != C) fail("nll_loss_forward weight length mismatch");
+	        const std::string target_dt = dtype_env.at(op.inputs[1]);
+	        if (!(target_dt == "i64" || target_dt == "i32")) fail("nll_loss_forward target dtype must be i64/i32");
+	        if (dtype_env.at(op.inputs[0]) != "f32" || dtype_env.at(op.inputs[2]) != "f32" || dtype_env.at(out) != "f32") {
+	          fail("nll_loss_forward currently supports f32 logits/weight/output");
+	        }
+	        const int reduction = op.attrs.contains("reduction") ? (int)resolve_const_value(op.attrs["reduction"], bindings) : 1;
+	        const int ignore_index = op.attrs.contains("ignore_index") ? (int)resolve_const_value(op.attrs["ignore_index"], bindings) : -100;
+	        if (reduction == 0) fail("nll_loss_forward reduction=none is not supported in RVV lowering yet");
+	        w.line("double loss_sum = 0.0;");
+	        w.line("double weight_sum = 0.0;");
+	        w.line("for (int64_t n = 0; n < " + std::to_string(N) + "; ++n) {");
+	        w.indent();
+	        w.line("const int64_t t = (int64_t)" + v(op.inputs[1]) + "[(size_t)n];");
+	        w.line("if (t == (int64_t)" + std::to_string(ignore_index) + ") continue;");
+	        w.line("if (t < 0 || t >= " + std::to_string(C) + ") continue;");
+	        w.line("const float wv = " + v(op.inputs[2]) + "[(size_t)t];");
+	        w.line("const float lv = -" + v(op.inputs[0]) + "[(size_t)n * " + std::to_string(C) + " + (size_t)t] * wv;");
+	        w.line("loss_sum += (double)lv;");
+	        w.line("weight_sum += (double)wv;");
+	        w.dedent();
+	        w.line("}");
+	        if (reduction == 1) {
+	          w.line(out_var + "[0] = (weight_sum > 0.0) ? (float)(loss_sum / weight_sum) : 0.0f;");
+	        } else {
+	          w.line(out_var + "[0] = (float)loss_sum;");
+	        }
+	      } else if (op.op == "nll_loss2d_forward") {
+	        if (op.inputs.size() != 3) fail("nll_loss2d_forward expects inputs [self, target, weight]");
+	        const auto& logits_shape = shape_env.at(op.inputs[0]);
+	        const auto& target_shape = shape_env.at(op.inputs[1]);
+	        const auto& weight_shape = shape_env.at(op.inputs[2]);
+	        if (logits_shape.size() != 4 || target_shape.size() != 3 || weight_shape.size() != 1) {
+	          fail("nll_loss2d_forward expects self[N,C,H,W], target[N,H,W], weight[C]");
+	        }
+	        const int64_t N = logits_shape[0];
+	        const int64_t C = logits_shape[1];
+	        const int64_t H = logits_shape[2];
+	        const int64_t W = logits_shape[3];
+	        if (target_shape[0] != N || target_shape[1] != H || target_shape[2] != W) fail("nll_loss2d_forward target shape mismatch");
+	        if (weight_shape[0] != C) fail("nll_loss2d_forward weight length mismatch");
+	        const std::string target_dt = dtype_env.at(op.inputs[1]);
+	        if (!(target_dt == "i64" || target_dt == "i32")) fail("nll_loss2d_forward target dtype must be i64/i32");
+	        if (dtype_env.at(op.inputs[0]) != "f32" || dtype_env.at(op.inputs[2]) != "f32" || dtype_env.at(out) != "f32") {
+	          fail("nll_loss2d_forward currently supports f32 logits/weight/output");
+	        }
+	        const int reduction = op.attrs.contains("reduction") ? (int)resolve_const_value(op.attrs["reduction"], bindings) : 1;
+	        const int ignore_index = op.attrs.contains("ignore_index") ? (int)resolve_const_value(op.attrs["ignore_index"], bindings) : -100;
+	        if (reduction == 0) fail("nll_loss2d_forward reduction=none is not supported in RVV lowering yet");
+	        w.line("double loss_sum = 0.0;");
+	        w.line("double weight_sum = 0.0;");
+	        w.line("for (int64_t n = 0; n < " + std::to_string(N) + "; ++n) {");
+	        w.indent();
+	        w.line("for (int64_t h = 0; h < " + std::to_string(H) + "; ++h) {");
+	        w.indent();
+	        w.line("for (int64_t ww = 0; ww < " + std::to_string(W) + "; ++ww) {");
+	        w.indent();
+	        w.line("const int64_t t = (int64_t)" + v(op.inputs[1]) + "[((size_t)n * " + std::to_string(H) + " + (size_t)h) * " + std::to_string(W) + " + (size_t)ww];");
+	        w.line("if (t == (int64_t)" + std::to_string(ignore_index) + ") continue;");
+	        w.line("if (t < 0 || t >= " + std::to_string(C) + ") continue;");
+	        w.line("const float wv = " + v(op.inputs[2]) + "[(size_t)t];");
+	        w.line("const size_t idx = (((size_t)n * " + std::to_string(C) + " + (size_t)t) * " + std::to_string(H) + " + (size_t)h) * " + std::to_string(W) + " + (size_t)ww;");
+	        w.line("const float lv = -" + v(op.inputs[0]) + "[idx] * wv;");
+	        w.line("loss_sum += (double)lv;");
+	        w.line("weight_sum += (double)wv;");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        w.dedent();
+	        w.line("}");
+	        if (reduction == 1) {
+	          w.line(out_var + "[0] = (weight_sum > 0.0) ? (float)(loss_sum / weight_sum) : 0.0f;");
+	        } else {
+	          w.line(out_var + "[0] = (float)loss_sum;");
+	        }
 	      } else if (op.op == "conv1d") {
 	        if (op.inputs.size() != 3) fail("conv1d expects inputs [input, weight, bias]");
 	        const auto& x_shape = shape_env.at(op.inputs[0]);
@@ -3214,6 +3424,23 @@ struct CProgramEmitter {
 	        std::optional<double> scale;
 	        if (op.attrs.contains("scale")) scale = resolve_const_value(op.attrs["scale"], bindings);
 	        emit_reduce_sum(w, out_var, v(op.inputs[0]), shape_env.at(op.inputs[0]), out_shape, dims, keepdims, scale);
+	      } else if (op.op == "reduce_prod") {
+        std::vector<int> dims;
+        if (op.attrs.contains("axes")) {
+          for (const auto& d : op.attrs["axes"]) dims.push_back(d.get<int>());
+        } else if (op.attrs.contains("dims")) {
+          for (const auto& d : op.attrs["dims"]) dims.push_back(d.get<int>());
+        } else if (op.attrs.contains("axis")) {
+          if (op.attrs["axis"].is_array()) {
+            for (const auto& d : op.attrs["axis"]) dims.push_back(d.get<int>());
+          } else {
+            dims.push_back(op.attrs["axis"].get<int>());
+          }
+        } else {
+          fail("reduce_prod missing dims/axes");
+        }
+	        bool keepdims = op.attrs.value("keepdims", false);
+	        emit_reduce_prod(w, out_var, v(op.inputs[0]), shape_env.at(op.inputs[0]), out_shape, dims, keepdims);
 	      } else if (op.op == "reduce_max") {
         std::vector<int> dims;
         if (op.attrs.contains("axes")) {
@@ -3636,7 +3863,7 @@ int main(int argc, char** argv) {
         dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
       }
-      if (kind == "add" || kind == "sub" || kind == "mul" || kind == "div" || kind == "max" || kind == "min") {
+      if (kind == "add" || kind == "sub" || kind == "mul" || kind == "div" || kind == "max" || kind == "min" || kind == "pow") {
         if (op.inputs.size() == 2) {
           const auto& sa = get_shape(op.inputs[0]);
           const auto& sb = get_shape(op.inputs[1]);
@@ -4014,6 +4241,70 @@ int main(int argc, char** argv) {
         dtype_env[out] = get_dtype(op.inputs[0]);
         continue;
       }
+      if (kind == "nonzero") {
+        if (op.inputs.size() != 1) fail("nonzero expects 1 input");
+        const auto& in_shape = get_shape(op.inputs[0]);
+        if (in_shape.size() != 2) fail("nonzero infer currently supports rank-2 input");
+        if (!intent.tensors.count(out)) fail("nonzero output tensor must exist in intent.tensors");
+        const auto& out_t = intent.tensors.at(out);
+        std::vector<int64_t> oshape;
+        for (const auto& d : out_t.shape) {
+          if (d.is_number_integer()) {
+            oshape.push_back(d.get<int64_t>());
+          } else if (d.is_string()) {
+            const std::string sym = d.get<std::string>();
+            auto it = bindings.find(sym);
+            if (it == bindings.end()) fail("unbound symbol in nonzero output shape: " + sym);
+            oshape.push_back(it->second);
+          } else {
+            fail("invalid nonzero output dim");
+          }
+        }
+        if (oshape.size() != 2 || oshape[1] != 2) fail("nonzero infer expects output shape [K,2]");
+        shape_env[out] = oshape;
+        dtype_env[out] = out_t.dtype;
+        continue;
+      }
+      if (kind == "nll_loss_forward") {
+        if (op.inputs.size() != 3) fail("nll_loss_forward expects inputs [self,target,weight]");
+        const auto& logits_shape = get_shape(op.inputs[0]);
+        const auto& target_shape = get_shape(op.inputs[1]);
+        const auto& weight_shape = get_shape(op.inputs[2]);
+        if (logits_shape.size() != 2 || target_shape.size() != 1 || weight_shape.size() != 1) {
+          fail("nll_loss_forward infer expects self[N,C], target[N], weight[C]");
+        }
+        const int64_t N = logits_shape[0];
+        const int64_t C = logits_shape[1];
+        if (target_shape[0] != N) fail("nll_loss_forward infer target length mismatch");
+        if (weight_shape[0] != C) fail("nll_loss_forward infer weight length mismatch");
+        const int reduction = op.attrs.contains("reduction") ? (int)resolve_const_value(op.attrs["reduction"], bindings) : 1;
+        if (reduction == 0) shape_env[out] = {N};
+        else shape_env[out] = {};
+        dtype_env[out] = "f32";
+        continue;
+      }
+      if (kind == "nll_loss2d_forward") {
+        if (op.inputs.size() != 3) fail("nll_loss2d_forward expects inputs [self,target,weight]");
+        const auto& logits_shape = get_shape(op.inputs[0]);
+        const auto& target_shape = get_shape(op.inputs[1]);
+        const auto& weight_shape = get_shape(op.inputs[2]);
+        if (logits_shape.size() != 4 || target_shape.size() != 3 || weight_shape.size() != 1) {
+          fail("nll_loss2d_forward infer expects self[N,C,H,W], target[N,H,W], weight[C]");
+        }
+        const int64_t N = logits_shape[0];
+        const int64_t C = logits_shape[1];
+        const int64_t H = logits_shape[2];
+        const int64_t W = logits_shape[3];
+        if (target_shape[0] != N || target_shape[1] != H || target_shape[2] != W) {
+          fail("nll_loss2d_forward infer target shape mismatch");
+        }
+        if (weight_shape[0] != C) fail("nll_loss2d_forward infer weight length mismatch");
+        const int reduction = op.attrs.contains("reduction") ? (int)resolve_const_value(op.attrs["reduction"], bindings) : 1;
+        if (reduction == 0) shape_env[out] = {N, H, W};
+        else shape_env[out] = {};
+        dtype_env[out] = "f32";
+        continue;
+      }
       if (kind == "glu") {
         const auto& in_shape = get_shape(op.inputs[0]);
         if (in_shape.empty()) fail("glu expects rank >= 1 input");
@@ -4033,7 +4324,17 @@ int main(int argc, char** argv) {
         dtype_env[out] = "f32";
         continue;
       }
-      if (kind == "reduce_sum" || kind == "reduce_max" || kind == "reduce_min" || kind == "reduce_any") {
+      if (kind == "polar") {
+        if (op.inputs.size() != 2) fail("polar infer expects inputs [abs, angle]");
+        const auto& abs_shape = get_shape(op.inputs[0]);
+        const auto& angle_shape = get_shape(op.inputs[1]);
+        if (abs_shape != angle_shape) fail("polar infer expects abs/angle shape match");
+        if (abs_shape.size() != 2) fail("polar infer currently supports rank-2 inputs");
+        shape_env[out] = {abs_shape[0], abs_shape[1], 2};
+        dtype_env[out] = "f32";
+        continue;
+      }
+      if (kind == "reduce_sum" || kind == "reduce_prod" || kind == "reduce_max" || kind == "reduce_min" || kind == "reduce_any") {
         const auto& in_shape = get_shape(op.inputs[0]);
         std::unordered_map<int,int> dims_set;
         if (op.attrs.contains("dims") && op.attrs["dims"].is_array()) {

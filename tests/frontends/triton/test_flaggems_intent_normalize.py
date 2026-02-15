@@ -89,6 +89,11 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert [op.op for op in const_pad.ops] == ["pad"]
     assert (const_pad.ops[0].attrs or {}).get("pad_width") == {"pairs": [[1, 0], [1, 2]]}
 
+    pad2d = canonical_flaggems_intent_for_spec("pad2d")
+    assert pad2d is not None
+    assert [op.op for op in pad2d.ops] == ["pad"]
+    assert (pad2d.ops[0].attrs or {}).get("pad_width") == {"pairs": [[1, 0], [1, 2]]}
+
     gather = canonical_flaggems_intent_for_spec("gather2d")
     assert gather is not None
     assert [op.op for op in gather.ops] == ["gather"]
@@ -229,6 +234,16 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     polar = canonical_flaggems_intent_for_spec("polar2d")
     assert polar is not None
     assert [op.op for op in polar.ops] == ["polar"]
+
+    prod2d = canonical_flaggems_intent_for_spec("prod2d")
+    assert prod2d is not None
+    assert [op.op for op in prod2d.ops] == ["reduce_prod"]
+    assert (prod2d.ops[0].attrs or {}).get("dims") == [0, 1]
+
+    prod_dim2d = canonical_flaggems_intent_for_spec("prod_dim2d")
+    assert prod_dim2d is not None
+    assert [op.op for op in prod_dim2d.ops] == ["reduce_prod"]
+    assert (prod_dim2d.ops[0].attrs or {}).get("dims") == [1]
 
     unique2 = canonical_flaggems_intent_for_spec("unique2d")
     assert unique2 is not None

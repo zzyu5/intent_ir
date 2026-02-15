@@ -323,6 +323,67 @@ def _canonical_constant_pad_nd2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_pad2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "pad2d",
+            "tensors": {
+                "in0": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {
+                    "dtype": "f32",
+                    "shape": ["M + 1", "N + 3"],
+                    "layout": "row_major",
+                },
+            },
+            "ops": [
+                {
+                    "op": "pad",
+                    "inputs": ["in0"],
+                    "output": "out",
+                    "attrs": {
+                        "pad_width": {"pairs": [[1, 0], [1, 2]]},
+                        "mode": "constant",
+                        "value": 0.0,
+                    },
+                }
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_prod2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "prod2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": [], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "reduce_prod", "inputs": ["inp"], "output": "out", "attrs": {"dims": [0, 1]}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_prod_dim2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "prod_dim2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "reduce_prod", "inputs": ["inp"], "output": "out", "attrs": {"dims": [1]}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def _canonical_gather2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -1641,6 +1702,12 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_clamp2d_intent()
     if name == "constant_pad_nd2d":
         return _canonical_constant_pad_nd2d_intent()
+    if name == "pad2d":
+        return _canonical_pad2d_intent()
+    if name == "prod2d":
+        return _canonical_prod2d_intent()
+    if name == "prod_dim2d":
+        return _canonical_prod_dim2d_intent()
     if name == "gather2d":
         return _canonical_gather2d_intent()
     if name == "index_select2d":
