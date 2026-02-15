@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-15T17:38:16+00:00",
+  "updated_at": "2026-02-15T17:50:15+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -11,35 +11,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "3ff3046 intentir: materialize missing intermediate tensors before backend lowering\na5869c5 matrix: gate coverage integrity only on full coverage runs\n526d0ec workflow: refresh status snapshots after schedule_only cutover\nea809d9 backend: replace compatibility skips with schedule_only mode\na0fcd23 workflow: refresh flaggems current status snapshots\n17578fa flaggems: add script catalog governance and coverage integrity recheck\nf8a8a53 backend: cut legacy python codegen entrypoints and start cpp semantic port\n9ff6e20 workflow: close backend wave5 perf budget and return lanes to maintenance\nbaa73ad gate: make backend perf budget robust with ratio and delta thresholds\n3c86160 workflow: activate backend wave5 lanes and record purity run artifacts\nb139cd7 gate: enforce backend compiler purity and timing budget checks\n849a5f5 workflow: close backend compiler wave4 and refresh mixed-lane state\n98f757f backend: add wave4 schedule specialization knobs across matrix and pipelines\ne1f1796 workflow: align session state with backend stabilization commits\n497f307 workflow: record backend compiler v2 closure and next wave focus\n9bdc028 backend: fix rvv staged io binding and stabilize cuda compiler stages\n4602293 workflow: record pure-compiler cutover session and backend gate blockers\nff2d9a5 backend: hard-cut cuda codegen fallback and stage pipeline execution\n7e6e617 workflow: refresh status snapshots after cpp strict defaults\nd081b20 backend: default compiler lane to cpp+pybind strict",
+  "git_log_short": "ce38fbb cuda cpp_codegen: support log op in fused elementwise lowering\ne62e13c workflow: record tensor materialization fix session artifacts\n3ff3046 intentir: materialize missing intermediate tensors before backend lowering\na5869c5 matrix: gate coverage integrity only on full coverage runs\n526d0ec workflow: refresh status snapshots after schedule_only cutover\nea809d9 backend: replace compatibility skips with schedule_only mode\na0fcd23 workflow: refresh flaggems current status snapshots\n17578fa flaggems: add script catalog governance and coverage integrity recheck\nf8a8a53 backend: cut legacy python codegen entrypoints and start cpp semantic port\n9ff6e20 workflow: close backend wave5 perf budget and return lanes to maintenance\nbaa73ad gate: make backend perf budget robust with ratio and delta thresholds\n3c86160 workflow: activate backend wave5 lanes and record purity run artifacts\nb139cd7 gate: enforce backend compiler purity and timing budget checks\n849a5f5 workflow: close backend compiler wave4 and refresh mixed-lane state\n98f757f backend: add wave4 schedule specialization knobs across matrix and pipelines\ne1f1796 workflow: align session state with backend stabilization commits\n497f307 workflow: record backend compiler v2 closure and next wave focus\n9bdc028 backend: fix rvv staged io binding and stabilize cuda compiler stages\n4602293 workflow: record pure-compiler cutover session and backend gate blockers\nff2d9a5 backend: hard-cut cuda codegen fallback and stage pipeline execution",
   "progress_tail": [
-    {
-      "ts": "2026-02-15T15:54:42+00:00",
-      "commit": "e1f179687ee9992e242fd2b614e50e491ecdb4b5",
-      "lane": "backend_compiler",
-      "summary": "Completed backend_compiler wave4 profile specialization with override knobs, rvv local+remote and cuda local all passing",
-      "batch_ops": [
-        ""
-      ],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/status_converged.json",
-      "next_focus": "Replan backend_compiler lane for next optimization wave with expanded kernel families and nightly perf thresholds",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/backend_compiler_batch_summary.json",
-        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/rvv_remote.json",
-        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/schedule_profiles.json",
-        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/status_converged.json",
-        "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1/timing_delta.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260215/backend_compiler_wave4_v1",
-      "counts_by_status": {
-        "blocked_backend": 194,
-        "dual_pass": 2
-      }
-    },
     {
       "ts": "2026-02-15T16:05:19+00:00",
       "commit": "849a5f58a1619339a1a09a4a94b153619987f6a4",
@@ -203,14 +176,41 @@
         "blocked_backend": 195,
         "dual_pass": 1
       }
+    },
+    {
+      "ts": "2026-02-15T17:50:09+00:00",
+      "commit": "ce38fbbf39ff18610ad13c4934fdd255edef52b7",
+      "lane": "backend_compiler",
+      "summary": "CUDA cpp_codegen fused-elementwise now supports log; log2d is dual-pass while topk2d/trace2d remain CUDA lowering gaps.",
+      "batch_ops": [
+        ""
+      ],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_trio_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_trio_v1/status_converged.json",
+      "next_focus": "Implement CUDA cpp lowering for topk2d and trace2d patterns (or canonical macro decomposition) to close remaining wave6 blockers.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_trio_v1/cuda_local.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_trio_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_trio_v1/status_converged.json"
+      ],
+      "run_ok": false,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave6_trio_v1",
+      "counts_by_status": {
+        "blocked_backend": 193,
+        "dual_pass": 1,
+        "rvv_only": 2
+      }
     }
   ],
-  "next_focus": "Apply the same backend-compiler batch loop to remaining kernels with sparse intermediate tensor declarations and rerun scoped gate.",
+  "next_focus": "Implement CUDA cpp lowering for topk2d and trace2d patterns (or canonical macro decomposition) to close remaining wave6 blockers.",
   "active_lanes": [
     "backend_compiler"
   ],
   "next_focus_by_lane": {
-    "backend_compiler": "Apply the same backend-compiler batch loop to remaining kernels with sparse intermediate tensor declarations and rerun scoped gate."
+    "backend_compiler": "Implement CUDA cpp lowering for topk2d and trace2d patterns (or canonical macro decomposition) to close remaining wave6 blockers."
   },
-  "known_risks": []
+  "known_risks": [
+    "CUDA cpp_codegen fused-elementwise now supports log; log2d is dual-pass while topk2d/trace2d remain CUDA lowering gaps."
+  ]
 }
