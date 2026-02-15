@@ -5741,12 +5741,13 @@ json emit_concat2d_f32(const Intent& intent, const json& bindings) {
   const int64_t total = M_OUT * N_OUT;
   const int64_t block_x = 256;
   const int64_t grid_x = (total + block_x - 1) / block_x;
+  const std::string kernel_sym = std::string("intentir_concat2d_f32_axis") + std::to_string(axis);
 
   std::ostringstream cuda_ss;
   CodeWriter w(cuda_ss);
   w.line("#include <stddef.h>");
   w.line("#include <stdint.h>");
-  w.line("extern \"C\" __global__ void " + intent.name + "(");
+  w.line("extern \"C\" __global__ void " + kernel_sym + "(");
   w.indent();
   w.line("const float* __restrict__ " + a_name + ",");
   w.line("const float* __restrict__ " + b_name + ",");
@@ -5788,7 +5789,7 @@ json emit_concat2d_f32(const Intent& intent, const json& bindings) {
   w.line("}");
 
   json out;
-  out["kernel_name"] = intent.name;
+  out["kernel_name"] = kernel_sym;
   out["cuda_src"] = cuda_ss.str();
   out["io_spec"] = io_spec_from_args(
       intent,
@@ -5885,12 +5886,13 @@ json emit_pad2d_const_f32(const Intent& intent, const json& bindings) {
   const int64_t total = M_OUT * N_OUT;
   const int64_t block_x = 256;
   const int64_t grid_x = (total + block_x - 1) / block_x;
+  const std::string kernel_sym = "intentir_pad2d_const_f32";
 
   std::ostringstream cuda_ss;
   CodeWriter w(cuda_ss);
   w.line("#include <stddef.h>");
   w.line("#include <stdint.h>");
-  w.line("extern \"C\" __global__ void " + intent.name + "(");
+  w.line("extern \"C\" __global__ void " + kernel_sym + "(");
   w.indent();
   w.line("const float* __restrict__ " + inp_name + ",");
   w.line("float* __restrict__ " + out_name + ",");
@@ -5915,7 +5917,7 @@ json emit_pad2d_const_f32(const Intent& intent, const json& bindings) {
   w.line("}");
 
   json out;
-  out["kernel_name"] = intent.name;
+  out["kernel_name"] = kernel_sym;
   out["cuda_src"] = cuda_ss.str();
   out["io_spec"] = io_spec_from_args(
       intent,
@@ -5993,11 +5995,13 @@ json emit_mse_loss2d_f32(const Intent& intent, const json& bindings) {
   if (M <= 0 || N <= 0 || M_t <= 0 || N_t <= 0) fail("mse_loss invalid shape bindings");
   if (M != M_t || N != N_t) fail("mse_loss input/target shape mismatch");
 
+  const std::string kernel_sym = "intentir_mse_loss2d_f32";
+
   std::ostringstream cuda_ss;
   CodeWriter w(cuda_ss);
   w.line("#include <stddef.h>");
   w.line("#include <stdint.h>");
-  w.line("extern \"C\" __global__ void " + intent.name + "(");
+  w.line("extern \"C\" __global__ void " + kernel_sym + "(");
   w.indent();
   w.line("const float* __restrict__ " + inp_name + ",");
   w.line("const float* __restrict__ " + tgt_name + ",");
@@ -6023,7 +6027,7 @@ json emit_mse_loss2d_f32(const Intent& intent, const json& bindings) {
   w.line("}");
 
   json out;
-  out["kernel_name"] = intent.name;
+  out["kernel_name"] = kernel_sym;
   out["cuda_src"] = cuda_ss.str();
   out["io_spec"] = io_spec_from_args(
       intent,
