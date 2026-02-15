@@ -85,6 +85,14 @@
     "bitwise_right_shift2d",
     "celu2d",
     "elu2d",
-    "eye_m2d"
+    "eye_m2d",
+    "cat2d",
+    "constant_pad_nd2d",
+    "hstack2d",
+    "isclose2d",
+    "lerp2d",
+    "mse_loss2d",
+    "nan_to_num2d",
+    "remainder2d"
   ]
 }

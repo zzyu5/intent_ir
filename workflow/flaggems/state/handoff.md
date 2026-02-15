@@ -1,11 +1,11 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-15T22:33:34+00:00
-- Commit: `3f063ae57898638b7aa21592d068a0332455419a`
+- Timestamp: 2026-02-15T23:13:36+00:00
+- Commit: `26d8d16da92a007cd21353cbe0b0926cb485cc83`
 - Lane: `backend_compiler`
-- Summary: backend_compiler wave13 chunk9+chunk10 passed after addmv/atan/bitwise shift cuda lowering
-- Batch Ops (1): 
-- Run Summary: `artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave13_manifest_chunk10_v1/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave13_manifest_chunk10_v1/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave13_manifest_chunk10_v1/backend_compiler_batch_summary.json, artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave13_manifest_chunk10_v1/cuda_local.json, artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave13_manifest_chunk10_v1/run_summary.json, artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave13_manifest_chunk10_v1/status_converged.json, artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave13_manifest_chunk9_v4/backend_compiler_batch_summary.json, artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave13_manifest_chunk9_v4/cuda_local.json, artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave13_manifest_chunk9_v4/run_summary.json, artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave13_manifest_chunk9_v4/status_converged.json
-- Next Focus: mark wave13 complete, sync feature list, and plan wave14 expanded batch
+- Summary: wave14 perf pass: canonical kernel names enable compile-cache reuse; warm compile_ms drops to ~40ms across selected8
+- Batch Ops (0): (none)
+- Run Summary: `artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v4_perf/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v4_perf/status_converged.json`
+- Evidence Paths: artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v4_perf/backend_compiler_batch_summary.json, artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v4_perf/run_summary.json, artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v4_perf/status_converged.json, artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v5_warm/cuda_local.json
+- Next Focus: performance-only: reduce lower_ms and keep nightly perf delta stable

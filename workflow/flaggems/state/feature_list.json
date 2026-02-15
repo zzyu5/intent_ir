@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_feature_list_v2",
-  "generated_at": "2026-02-15T22:34:09+00:00",
+  "generated_at": "2026-02-15T23:04:21+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
@@ -5914,10 +5914,10 @@
       "id": "backend_compiler::expanded_family_wave14",
       "semantic_op": "",
       "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "",
-      "next_action": "run_expanded_family_backend_batch_wave14",
+      "status": "done",
+      "passes": true,
+      "reason_code": "ok",
+      "next_action": "none",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "backend_compiler",
@@ -5932,7 +5932,12 @@
       "depends_on": [
         "backend_compiler::expanded_family_wave13"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v3/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v3/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v3/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v3/batch_gate.json"
+      ],
       "description": "Execute backend compiler wave14 on the next expanded kernel family set and keep backend gate green."
     }
   ]
