@@ -133,6 +133,33 @@ def _validate_codegen_purity(stage_map: dict[str, dict[str, Any]]) -> tuple[bool
     return True, "no deprecated codegen fallback flags/env in stage commands"
 
 
+def _validate_stage_timing_breakdown(stage_path: Path) -> tuple[bool, str]:
+    if not stage_path.is_file():
+        return False, f"stage timing breakdown json missing: {stage_path}"
+    payload = _load_json(stage_path)
+    schema = str(payload.get("schema_version") or "")
+    if schema != "flaggems_stage_timing_breakdown_v1":
+        return False, f"unexpected stage timing schema: {schema}"
+    backends = payload.get("backends")
+    if not isinstance(backends, dict):
+        return False, "stage timing breakdown missing backends object"
+    failures: list[str] = []
+    for backend in ("rvv", "cuda"):
+        section = backends.get(backend)
+        if not isinstance(section, dict):
+            failures.append(f"{backend}:missing_section")
+            continue
+        if not bool(section.get("available")):
+            failures.append(f"{backend}:not_available")
+            continue
+        for field in ("kernel_count", "totals_ms", "avg_ms", "stage_share_pct"):
+            if field not in section:
+                failures.append(f"{backend}:missing_{field}")
+    if failures:
+        return False, "; ".join(failures)
+    return True, "stage timing breakdown complete for rvv/cuda"
+
+
 def _validate_timing_delta_budget(
     timing_delta_path: Path,
     *,
@@ -316,7 +343,10 @@ def main() -> None:
             )
     elif profile == "ir_arch":
         stage_map = _stage_map(run_summary)
-        required = list(args.require_stage or ["primitive_reuse", "macro_composition", "mapping_tests", "intentir_semantics"])
+        required = list(
+            args.require_stage
+            or ["primitive_reuse", "macro_composition", "mapping_complexity", "mapping_tests", "intentir_semantics"]
+        )
         missing_or_fail = [s for s in required if not bool((stage_map.get(s) or {}).get("ok"))]
         checks.append(
             _check(
@@ -360,6 +390,25 @@ def main() -> None:
                 "backend timing fields complete" if not timing_failures else "; ".join(timing_failures),
             )
         )
+        stage_timing_row = stage_map.get("stage_timing_breakdown") or {}
+        stage_timing_json = str(stage_timing_row.get("json_path") or "").strip()
+        if not stage_timing_json:
+            checks.append(
+                _check(
+                    "backend_compiler.stage_timing_breakdown_complete",
+                    False,
+                    "missing stage_timing_breakdown stage/json_path",
+                )
+            )
+        else:
+            breakdown_ok, breakdown_detail = _validate_stage_timing_breakdown(Path(stage_timing_json))
+            checks.append(
+                _check(
+                    "backend_compiler.stage_timing_breakdown_complete",
+                    breakdown_ok,
+                    breakdown_detail,
+                )
+            )
         realized_failures: list[str] = []
         for stage_name in required:
             if stage_name not in timing_required_stages:

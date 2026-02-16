@@ -460,6 +460,7 @@ def build_current_status_payload(
     feature_payload: Mapping[str, Any],
     latest_run_summary_path: str = "",
     latest_status_converged_path: str = "",
+    full196_run_summary_path: str = "",
     lane_batch_paths: Mapping[str, str] | None = None,
     coverage_integrity_phase: str = "recompute_pending",
     full196_last_ok: bool | None = None,
@@ -492,7 +493,7 @@ def build_current_status_payload(
         "head_commit": str(head_commit),
         "mode": mode,
         "coverage_integrity_phase": str(coverage_integrity_phase),
-        "full196_last_run": str(latest_run_summary_path),
+        "full196_last_run": str(full196_run_summary_path),
         "full196_last_ok": (None if full196_last_ok is None else bool(full196_last_ok)),
         "coverage": {
             "semantic_ops": semantic_ops,

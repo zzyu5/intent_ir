@@ -48,3 +48,41 @@ def test_mapping_complexity_report_counts_family_ratios(tmp_path: Path) -> None:
     assert payload["multi_intent_ops"] == 1
     assert payload["zero_intent_ops"] == 1
     assert payload["by_family"]["index_scatter_gather"]["total"] == 2
+    assert "gate" in payload
+
+
+def test_mapping_complexity_report_can_fail_on_threshold_breach(tmp_path: Path) -> None:
+    registry = tmp_path / "registry.json"
+    out = tmp_path / "mapping_complexity.json"
+    registry.write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {"semantic_op": "a", "family": "index_scatter_gather", "intent_ops": ["gather"]},
+                    {"semantic_op": "b", "family": "index_scatter_gather", "intent_ops": ["scatter"]},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/intentir/report_mapping_complexity.py",
+            "--registry",
+            str(registry),
+            "--out",
+            str(out),
+            "--complex-families",
+            "index_scatter_gather",
+            "--max-complex-single-intent-ratio",
+            "0.2",
+            "--fail-on-threshold-breach",
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode != 0
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["gate"]["ok"] is False

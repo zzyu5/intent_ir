@@ -14,6 +14,10 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from intent_ir.ops.composition_policy import single_intent_ratio_target
 
 
 def _run(cmd: list[str], *, dry_run: bool) -> tuple[int, str, str]:
@@ -65,6 +69,18 @@ def main() -> None:
         "--macro-composition-cmd",
         default=f"{sys.executable} scripts/intentir/check_macro_composition.py",
     )
+    ap.add_argument(
+        "--mapping-complexity-threshold",
+        type=float,
+        default=float(single_intent_ratio_target("m1")),
+        help="Max allowed complex-family single-intent ratio for ir_arch gate.",
+    )
+    ap.add_argument(
+        "--mapping-policy-stage",
+        choices=["m1", "m2"],
+        default="m1",
+        help="Composition policy stage label for complexity report (default: m1).",
+    )
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -74,6 +90,7 @@ def main() -> None:
     status_converged_path = out_dir / "status_converged.json"
     primitive_report = out_dir / "primitive_reuse_report.json"
     macro_report = out_dir / "macro_composition_report.json"
+    mapping_complexity_report = out_dir / "mapping_complexity_report.json"
 
     primitive_cmd = [
         sys.executable,
@@ -88,6 +105,22 @@ def main() -> None:
     stage_defs = [
         ("primitive_reuse", primitive_cmd),
         ("macro_composition", _parse_cmd(str(args.macro_composition_cmd)) + ["--registry", str(args.registry), "--out", str(macro_report)]),
+        (
+            "mapping_complexity",
+            [
+                sys.executable,
+                "scripts/intentir/report_mapping_complexity.py",
+                "--registry",
+                str(args.registry),
+                "--out",
+                str(mapping_complexity_report),
+                "--policy-stage",
+                str(args.mapping_policy_stage),
+                "--max-complex-single-intent-ratio",
+                str(float(args.mapping_complexity_threshold)),
+                "--fail-on-threshold-breach",
+            ],
+        ),
         ("mapping_tests", _parse_cmd(str(args.mapping_tests_cmd))),
         ("intentir_semantics", _parse_cmd(str(args.intentir_semantics_cmd))),
     ]
@@ -107,6 +140,8 @@ def main() -> None:
             row["json_path"] = str(primitive_report)
         if stage_name == "macro_composition":
             row["json_path"] = str(macro_report)
+        if stage_name == "mapping_complexity":
+            row["json_path"] = str(mapping_complexity_report)
         stage_rows.append(row)
         overall_ok = overall_ok and bool(row["ok"])
 

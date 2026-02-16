@@ -38,6 +38,7 @@ python scripts/validate_catalog.py
 - `scripts/rvv_remote_suite.py`: remote RVV suite execution.
 - `scripts/rvv_remote_run.py`: single-kernel remote RVV run.
 - `scripts/flaggems/run_backend_compiler_batch.py`: backend compiler lane batch runner.
+- `scripts/flaggems/compute_stage_timing_breakdown.py`: stage timing breakdown artifact.
 - `scripts/flaggems/compute_stage_timing_delta.py`: timing delta report.
 - `scripts/flaggems/export_schedule_profiles.py`: schedule profile export.
 

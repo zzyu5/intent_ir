@@ -163,6 +163,16 @@
       "tests": ["tests/frontends/triton/test_flaggems_timing_delta.py"]
     },
     {
+      "path": "scripts/flaggems/compute_stage_timing_breakdown.py",
+      "owner_lane": "backend_compiler_rewrite",
+      "purpose": "aggregate per-stage timing into backend breakdown artifact",
+      "inputs": ["artifacts/flaggems_matrix/**/rvv_local.json", "artifacts/flaggems_matrix/**/cuda_local.json"],
+      "outputs": ["artifacts/flaggems_matrix/**/stage_timing_breakdown.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_stage_timing_breakdown.py"]
+    },
+    {
       "path": "scripts/flaggems/export_schedule_profiles.py",
       "owner_lane": "backend_compiler_rewrite",
       "purpose": "export active schedule profile knobs used by backend runs",

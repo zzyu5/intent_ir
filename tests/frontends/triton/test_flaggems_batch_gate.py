@@ -309,6 +309,7 @@ def test_check_batch_gate_backend_profile_allows_non_timing_required_stages(tmp_
     rvv_json = tmp_path / "rvv_local.json"
     cuda_json = tmp_path / "cuda_local.json"
     schedule_profiles = tmp_path / "schedule_profiles.json"
+    stage_timing_json = tmp_path / "stage_timing_breakdown.json"
 
     active.write_text(json.dumps({"schema_version": "flaggems_active_batch_v2", "lane": "backend_compiler", "items": [{}]}), encoding="utf-8")
     rvv_json.write_text(
@@ -346,6 +347,30 @@ def test_check_batch_gate_backend_profile_allows_non_timing_required_stages(tmp_
         encoding="utf-8",
     )
     schedule_profiles.write_text(json.dumps({"ok": True}), encoding="utf-8")
+    stage_timing_json.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_stage_timing_breakdown_v1",
+                "backends": {
+                    "rvv": {
+                        "available": True,
+                        "kernel_count": 1,
+                        "totals_ms": {"lower_ms": 1.0, "compile_ms": 2.0, "launch_ms": 3.0, "total_ms": 6.0},
+                        "avg_ms": {"lower_ms": 1.0, "compile_ms": 2.0, "launch_ms": 3.0, "total_ms": 6.0},
+                        "stage_share_pct": {"lower_ms": 16.0, "compile_ms": 33.0, "launch_ms": 50.0},
+                    },
+                    "cuda": {
+                        "available": True,
+                        "kernel_count": 1,
+                        "totals_ms": {"lower_ms": 1.5, "compile_ms": 2.5, "launch_ms": 3.5, "total_ms": 7.5},
+                        "avg_ms": {"lower_ms": 1.5, "compile_ms": 2.5, "launch_ms": 3.5, "total_ms": 7.5},
+                        "stage_share_pct": {"lower_ms": 20.0, "compile_ms": 33.0, "launch_ms": 47.0},
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     run_summary.write_text(
         json.dumps(
             {
@@ -353,6 +378,7 @@ def test_check_batch_gate_backend_profile_allows_non_timing_required_stages(tmp_
                 "stages": [
                     {"stage": "rvv_local", "ok": True, "json_path": str(rvv_json)},
                     {"stage": "cuda_local", "ok": True, "json_path": str(cuda_json)},
+                    {"stage": "stage_timing_breakdown", "ok": True, "json_path": str(stage_timing_json)},
                     {"stage": "schedule_profiles", "ok": True, "json_path": str(schedule_profiles)},
                 ],
             }
@@ -477,6 +503,7 @@ def test_check_batch_gate_backend_profile_fails_on_timing_regression_budget(tmp_
     rvv_json = tmp_path / "rvv_local.json"
     cuda_json = tmp_path / "cuda_local.json"
     timing_delta_json = tmp_path / "timing_delta.json"
+    stage_timing_json = tmp_path / "stage_timing_breakdown.json"
 
     active.write_text(json.dumps({"schema_version": "flaggems_active_batch_v2", "lane": "backend_compiler", "items": [{}]}), encoding="utf-8")
     rvv_json.write_text(
@@ -506,6 +533,30 @@ def test_check_batch_gate_backend_profile_fails_on_timing_regression_budget(tmp_
         ),
         encoding="utf-8",
     )
+    stage_timing_json.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_stage_timing_breakdown_v1",
+                "backends": {
+                    "rvv": {
+                        "available": True,
+                        "kernel_count": 1,
+                        "totals_ms": {"lower_ms": 1.0, "compile_ms": 2.0, "launch_ms": 3.0, "total_ms": 6.0},
+                        "avg_ms": {"lower_ms": 1.0, "compile_ms": 2.0, "launch_ms": 3.0, "total_ms": 6.0},
+                        "stage_share_pct": {"lower_ms": 16.0, "compile_ms": 33.0, "launch_ms": 50.0},
+                    },
+                    "cuda": {
+                        "available": True,
+                        "kernel_count": 1,
+                        "totals_ms": {"lower_ms": 1.5, "compile_ms": 2.5, "launch_ms": 3.5, "total_ms": 7.5},
+                        "avg_ms": {"lower_ms": 1.5, "compile_ms": 2.5, "launch_ms": 3.5, "total_ms": 7.5},
+                        "stage_share_pct": {"lower_ms": 20.0, "compile_ms": 33.0, "launch_ms": 47.0},
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     run_summary.write_text(
         json.dumps(
             {
@@ -513,6 +564,7 @@ def test_check_batch_gate_backend_profile_fails_on_timing_regression_budget(tmp_
                 "stages": [
                     {"stage": "rvv_local", "ok": True, "json_path": str(rvv_json)},
                     {"stage": "cuda_local", "ok": True, "json_path": str(cuda_json)},
+                    {"stage": "stage_timing_breakdown", "ok": True, "json_path": str(stage_timing_json)},
                     {"stage": "timing_delta", "ok": True, "json_path": str(timing_delta_json)},
                 ],
             }
@@ -568,6 +620,7 @@ def test_check_batch_gate_backend_profile_allows_single_outlier_by_default_ratio
     rvv_json = tmp_path / "rvv_local.json"
     cuda_json = tmp_path / "cuda_local.json"
     timing_delta_json = tmp_path / "timing_delta.json"
+    stage_timing_json = tmp_path / "stage_timing_breakdown.json"
 
     active.write_text(json.dumps({"schema_version": "flaggems_active_batch_v2", "lane": "backend_compiler", "items": [{}]}), encoding="utf-8")
     rvv_json.write_text(
@@ -599,6 +652,30 @@ def test_check_batch_gate_backend_profile_allows_single_outlier_by_default_ratio
         ),
         encoding="utf-8",
     )
+    stage_timing_json.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_stage_timing_breakdown_v1",
+                "backends": {
+                    "rvv": {
+                        "available": True,
+                        "kernel_count": 1,
+                        "totals_ms": {"lower_ms": 1.0, "compile_ms": 2.0, "launch_ms": 3.0, "total_ms": 6.0},
+                        "avg_ms": {"lower_ms": 1.0, "compile_ms": 2.0, "launch_ms": 3.0, "total_ms": 6.0},
+                        "stage_share_pct": {"lower_ms": 16.0, "compile_ms": 33.0, "launch_ms": 50.0},
+                    },
+                    "cuda": {
+                        "available": True,
+                        "kernel_count": 1,
+                        "totals_ms": {"lower_ms": 1.5, "compile_ms": 2.5, "launch_ms": 3.5, "total_ms": 7.5},
+                        "avg_ms": {"lower_ms": 1.5, "compile_ms": 2.5, "launch_ms": 3.5, "total_ms": 7.5},
+                        "stage_share_pct": {"lower_ms": 20.0, "compile_ms": 33.0, "launch_ms": 47.0},
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     run_summary.write_text(
         json.dumps(
             {
@@ -606,6 +683,7 @@ def test_check_batch_gate_backend_profile_allows_single_outlier_by_default_ratio
                 "stages": [
                     {"stage": "rvv_local", "ok": True, "json_path": str(rvv_json)},
                     {"stage": "cuda_local", "ok": True, "json_path": str(cuda_json)},
+                    {"stage": "stage_timing_breakdown", "ok": True, "json_path": str(stage_timing_json)},
                     {"stage": "timing_delta", "ok": True, "json_path": str(timing_delta_json)},
                 ],
             }

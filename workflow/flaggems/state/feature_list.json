@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_feature_list_v2",
-  "generated_at": "2026-02-15T23:04:21+00:00",
+  "generated_at": "2026-02-16T01:06:47+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
@@ -16,11 +16,11 @@
       "conv_pool_interp": 9,
       "attention_sequence": 5
     },
-    "tasks_total": 218,
+    "tasks_total": 224,
     "by_track": {
       "coverage": 196,
-      "ir_arch": 3,
-      "backend_compiler": 19
+      "ir_arch": 5,
+      "backend_compiler": 23
     }
   },
   "features": [
@@ -5939,6 +5939,149 @@
         "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v3/batch_gate.json"
       ],
       "description": "Execute backend compiler wave14 on the next expanded kernel family set and keep backend gate green."
+    },
+    {
+      "id": "backend_compiler::full196_evidence_chain_cleanup",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending",
+      "next_action": "run_full196_matrix_and_recompute_integrity",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "backend_compiler",
+      "task_type": "coverage_integrity",
+      "priority": 5,
+      "acceptance": [
+        "full196_last_run_points_to_real_coverage_run",
+        "status_converged_v3_evidence_complete",
+        "full196_last_ok_reflects_coverage_integrity"
+      ],
+      "gate_profile": "backend_compiler",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": "Keep full196 evidence chain clean and ensure workflow status points to a real full-coverage run instead of selected subsets."
+    },
+    {
+      "id": "ir_arch::composition_policy_m1_gate",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending",
+      "next_action": "reduce_complex_family_single_intent_ratio_to_m1_target",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "ir_arch",
+      "task_type": "quality_guard",
+      "priority": 35,
+      "acceptance": [
+        "mapping_complexity_gate_pass_m1",
+        "complex_family_single_intent_ratio_le_0_40"
+      ],
+      "gate_profile": "ir_arch",
+      "depends_on": [
+        "ir_arch::macro_composition_guard"
+      ],
+      "evidence_paths": [],
+      "description": "Drive composition quality to M1 target by reducing complex-family single-intent ratio to <=40%."
+    },
+    {
+      "id": "ir_arch::composition_policy_m2_gate",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending",
+      "next_action": "reduce_complex_family_single_intent_ratio_to_m2_target",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "ir_arch",
+      "task_type": "quality_guard",
+      "priority": 36,
+      "acceptance": [
+        "mapping_complexity_gate_pass_m2",
+        "complex_family_single_intent_ratio_le_0_20"
+      ],
+      "gate_profile": "ir_arch",
+      "depends_on": [
+        "ir_arch::composition_policy_m1_gate"
+      ],
+      "evidence_paths": [],
+      "description": "Advance composition quality to M2 target by reducing complex-family single-intent ratio to <=20%."
+    },
+    {
+      "id": "backend_compiler::cpp_codegen_modular_split_cuda",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending",
+      "next_action": "split_intentir_cuda_codegen_cpp_into_modules",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "backend_compiler",
+      "task_type": "compilerization",
+      "priority": 200,
+      "acceptance": [
+        "cuda_cpp_codegen_split_into_ir_model_shape_eval_emit_modules",
+        "backend_compiler_gate_pass_after_split"
+      ],
+      "gate_profile": "backend_compiler",
+      "depends_on": [
+        "backend_compiler::expanded_family_wave14"
+      ],
+      "evidence_paths": [],
+      "description": "Modularize monolithic CUDA C++ codegen into compiler-stage modules without fallback paths."
+    },
+    {
+      "id": "backend_compiler::cpp_codegen_modular_split_rvv",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending",
+      "next_action": "split_intentir_codegen_cpp_into_modules",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "backend_compiler",
+      "task_type": "compilerization",
+      "priority": 210,
+      "acceptance": [
+        "rvv_cpp_codegen_split_into_ir_model_shape_eval_emit_modules",
+        "backend_compiler_gate_pass_after_split"
+      ],
+      "gate_profile": "backend_compiler",
+      "depends_on": [
+        "backend_compiler::cpp_codegen_modular_split_cuda"
+      ],
+      "evidence_paths": [],
+      "description": "Modularize monolithic RVV C++ codegen into compiler-stage modules aligned with CUDA pipeline contracts."
+    },
+    {
+      "id": "backend_compiler::stage_timing_breakdown_artifact",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending",
+      "next_action": "enable_stage_timing_breakdown_in_backend_batches",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "backend_compiler",
+      "task_type": "observability",
+      "priority": 220,
+      "acceptance": [
+        "stage_timing_breakdown_json_generated_each_batch",
+        "backend_gate_requires_stage_timing_breakdown_complete"
+      ],
+      "gate_profile": "backend_compiler",
+      "depends_on": [
+        "backend_compiler::stage_timing_unification"
+      ],
+      "evidence_paths": [],
+      "description": "Require stage_timing_breakdown artifact for every backend compiler batch to make performance regressions auditable."
     }
   ]
 }

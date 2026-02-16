@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_active_batch_v2",
-  "generated_at": "2026-02-15T23:04:22+00:00",
+  "generated_at": "2026-02-16T01:06:48+00:00",
   "branch": "flaggems",
   "lane": "backend_compiler",
   "batch_size": 10,
@@ -9,7 +9,79 @@
     "priority",
     "dependency"
   ],
-  "items": [],
+  "items": [
+    {
+      "id": "backend_compiler::full196_evidence_chain_cleanup",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending",
+      "next_action": "run_full196_matrix_and_recompute_integrity",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "backend_compiler",
+      "task_type": "coverage_integrity",
+      "priority": 5,
+      "acceptance": [
+        "full196_last_run_points_to_real_coverage_run",
+        "status_converged_v3_evidence_complete",
+        "full196_last_ok_reflects_coverage_integrity"
+      ],
+      "gate_profile": "backend_compiler",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": "Keep full196 evidence chain clean and ensure workflow status points to a real full-coverage run instead of selected subsets."
+    },
+    {
+      "id": "backend_compiler::cpp_codegen_modular_split_cuda",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending",
+      "next_action": "split_intentir_cuda_codegen_cpp_into_modules",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "backend_compiler",
+      "task_type": "compilerization",
+      "priority": 200,
+      "acceptance": [
+        "cuda_cpp_codegen_split_into_ir_model_shape_eval_emit_modules",
+        "backend_compiler_gate_pass_after_split"
+      ],
+      "gate_profile": "backend_compiler",
+      "depends_on": [
+        "backend_compiler::expanded_family_wave14"
+      ],
+      "evidence_paths": [],
+      "description": "Modularize monolithic CUDA C++ codegen into compiler-stage modules without fallback paths."
+    },
+    {
+      "id": "backend_compiler::stage_timing_breakdown_artifact",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending",
+      "next_action": "enable_stage_timing_breakdown_in_backend_batches",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "backend_compiler",
+      "task_type": "observability",
+      "priority": 220,
+      "acceptance": [
+        "stage_timing_breakdown_json_generated_each_batch",
+        "backend_gate_requires_stage_timing_breakdown_complete"
+      ],
+      "gate_profile": "backend_compiler",
+      "depends_on": [
+        "backend_compiler::stage_timing_unification"
+      ],
+      "evidence_paths": [],
+      "description": "Require stage_timing_breakdown artifact for every backend compiler batch to make performance regressions auditable."
+    }
+  ],
   "context": {
     "feature_list_path": "workflow/flaggems/state/feature_list.json",
     "progress_log_path": "",

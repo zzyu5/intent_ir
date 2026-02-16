@@ -20,7 +20,6 @@ from pipeline.triton.providers.flaggems.workflow import (
     build_session_context_payload,
     dump_json,
     load_json,
-    load_progress_tail,
     read_git_log,
 )
 
@@ -92,6 +91,74 @@ def _active_lanes(feature_payload: dict[str, Any]) -> list[str]:
     return sorted([lane for lane, cnt in lane_pending.items() if cnt > 0])
 
 
+def _load_progress_rows(progress_log_path: Path) -> list[dict[str, Any]]:
+    if not progress_log_path.is_file():
+        return []
+    out: list[dict[str, Any]] = []
+    for line in progress_log_path.read_text(encoding="utf-8").splitlines():
+        line_s = str(line).strip()
+        if not line_s:
+            continue
+        try:
+            row = json.loads(line_s)
+        except Exception:
+            continue
+        if isinstance(row, dict):
+            out.append(row)
+    return out
+
+
+def _resolve_artifact(path_raw: str) -> Path | None:
+    path_s = str(path_raw or "").strip()
+    if not path_s:
+        return None
+    p = Path(path_s)
+    if not p.is_absolute():
+        p = ROOT / p
+    return p
+
+
+def _load_json_if_exists(path: Path | None) -> dict[str, Any]:
+    if path is None or (not path.is_file()):
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _classify_full196_run(run_summary_path: Path | None) -> tuple[bool, bool | None]:
+    run_summary = _load_json_if_exists(run_summary_path)
+    if not run_summary:
+        return False, None
+    suite = str(run_summary.get("suite") or "").strip()
+    kernel_filter = list(run_summary.get("kernel_filter") or [])
+    scope_kernels = list(run_summary.get("scope_kernels") or [])
+    if suite != "coverage" or bool(kernel_filter) or (len(scope_kernels) == 0):
+        return False, None
+    stages = [s for s in list(run_summary.get("stages") or []) if isinstance(s, dict)]
+    coverage_stage = next((s for s in stages if str(s.get("stage") or "") == "coverage_integrity"), None)
+    if coverage_stage is None:
+        return False, None
+    coverage_json = _resolve_artifact(str(coverage_stage.get("json_path") or ""))
+    coverage_payload = _load_json_if_exists(coverage_json)
+    coverage_ok = bool(coverage_payload.get("coverage_integrity_ok"))
+    run_ok = bool(run_summary.get("ok"))
+    return True, bool(run_ok and coverage_ok)
+
+
+def _latest_full196_from_progress(rows: list[dict[str, Any]]) -> tuple[str, bool | None]:
+    for row in reversed(rows):
+        if not isinstance(row, dict):
+            continue
+        run_summary_path = _resolve_artifact(str(row.get("run_summary_path") or ""))
+        is_full, is_ok = _classify_full196_run(run_summary_path)
+        if not is_full or run_summary_path is None:
+            continue
+        return _to_repo_rel(run_summary_path), is_ok
+    return "", None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--feature-list", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "feature_list.json"))
@@ -111,21 +178,20 @@ def main() -> None:
     args = ap.parse_args()
 
     feature_payload = load_json(args.feature_list)
-    progress_tail = load_progress_tail(progress_log_path=args.progress_log, lines=8)
+    progress_rows = _load_progress_rows(args.progress_log)
+    progress_tail = list(progress_rows[-8:])
     latest = progress_tail[-1] if progress_tail else {}
     latest_run_summary = str(latest.get("run_summary_path") or "")
     latest_status_converged = str(latest.get("status_converged_path") or "")
+    full196_run_summary, full196_last_ok = _latest_full196_from_progress(progress_rows)
     branch = _git(["git", "branch", "--show-current"]) or "unknown"
     head_commit = _git(["git", "rev-parse", "HEAD"]) or "unknown"
     git_log_short = read_git_log(cwd=ROOT, lines=int(args.git_log_lines))
     next_focus = _parse_next_focus(args.handoff) or str(latest.get("next_focus") or "")
     catalog_exists = bool(args.scripts_catalog.is_file())
-    latest_has_run = bool(latest_run_summary)
-    if not latest_has_run:
+    if not full196_run_summary:
         coverage_integrity_phase = "recompute_pending"
-        full196_last_ok: bool | None = None
     else:
-        full196_last_ok = bool(latest.get("run_ok"))
         coverage_integrity_phase = "recomputed_ok" if bool(full196_last_ok) else "recomputed_failed"
 
     current_status = build_current_status_payload(
@@ -134,6 +200,7 @@ def main() -> None:
         feature_payload=feature_payload,
         latest_run_summary_path=latest_run_summary,
         latest_status_converged_path=latest_status_converged,
+        full196_run_summary_path=full196_run_summary,
         coverage_integrity_phase=coverage_integrity_phase,
         full196_last_ok=full196_last_ok,
         catalog_path=_to_repo_rel(args.scripts_catalog),

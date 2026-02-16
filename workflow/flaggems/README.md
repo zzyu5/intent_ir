@@ -14,7 +14,10 @@ python scripts/validate_catalog.py
 
 - Registry truth source: `pipeline/triton/flaggems_registry.json`
 - Coverage baseline: `196` semantic ops (`deterministic_forward`)
-- Coverage state: `dual_pass=196`, `blocked_ir=0`, `blocked_backend=0`
+- Registry snapshot may show `dual_pass=196`, but trusted full196 status is tracked by:
+  - `state/current_status.json::full196_last_run`
+  - `state/current_status.json::full196_last_ok`
+  - `state/current_status.json::coverage_integrity_phase`
 - Workflow mode: mixed tracks (`coverage`, `ir_arch`, `backend_compiler`)
 
 ## Quick Start
@@ -66,6 +69,10 @@ python scripts/flaggems/run_backend_compiler_batch.py --out-dir artifacts/flagge
 
 Backend compiler runner defaults to `workflow/flaggems/state/backend_kernel_manifest.json`
 when `--kernel` is not explicitly provided.
+Each successful backend compiler batch now emits:
+- `stage_timing_breakdown.json`
+- `timing_delta.json`
+- `schedule_profiles.json`
 
 ## Matrix + CI Gate (Coverage Lane)
 

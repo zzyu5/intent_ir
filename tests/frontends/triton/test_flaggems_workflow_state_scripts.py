@@ -146,3 +146,105 @@ def test_build_workflow_state_writes_current_and_context(tmp_path: Path) -> None
     assert context_payload["next_focus"] == "focus-y"
     assert context_payload["must_read_scripts_catalog"].endswith("scripts/CATALOG.json")
     assert "ir_arch" in list(context_payload.get("active_lanes") or [])
+
+
+def test_build_workflow_state_prefers_latest_full196_run_over_latest_partial(tmp_path: Path) -> None:
+    feature = tmp_path / "feature_list.json"
+    progress = tmp_path / "progress_log.jsonl"
+    handoff = tmp_path / "handoff.md"
+    current = tmp_path / "current_status.json"
+    context = tmp_path / "session_context.json"
+    full_run = tmp_path / "full196_run_summary.json"
+    partial_run = tmp_path / "partial_run_summary.json"
+    full_cov = tmp_path / "coverage_integrity_full196.json"
+    partial_status = tmp_path / "status_partial.json"
+
+    feature.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_feature_list_v2",
+                "summary": {
+                    "semantic_ops": 1,
+                    "by_status": {"dual_pass": 1},
+                    "by_family": {"elementwise_broadcast": 1},
+                    "tasks_total": 1,
+                    "by_track": {"coverage": 1},
+                },
+                "features": [
+                    {"id": "flaggems::add", "track": "coverage", "status": "dual_pass", "passes": True},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    full_cov.write_text(
+        json.dumps({"coverage_integrity_ok": True}),
+        encoding="utf-8",
+    )
+    full_run.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "suite": "coverage",
+                "kernel_filter": [],
+                "scope_kernels": ["add2d"],
+                "stages": [
+                    {
+                        "stage": "coverage_integrity",
+                        "ok": True,
+                        "json_path": str(full_cov),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    partial_run.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "suite": "coverage",
+                "kernel_filter": ["add2d"],
+                "scope_kernels": ["add2d"],
+                "stages": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    partial_status.write_text(json.dumps({"entries": []}), encoding="utf-8")
+    progress.write_text(
+        (
+            json.dumps({"summary": "full196", "run_ok": True, "run_summary_path": str(full_run), "status_converged_path": str(partial_status)})
+            + "\n"
+            + json.dumps({"summary": "selected8", "run_ok": True, "run_summary_path": str(partial_run), "status_converged_path": str(partial_status)})
+            + "\n"
+        ),
+        encoding="utf-8",
+    )
+    handoff.write_text("# FlagGems Session Handoff\n- Next Focus: full196 verify\n", encoding="utf-8")
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/build_workflow_state.py",
+            "--feature-list",
+            str(feature),
+            "--progress-log",
+            str(progress),
+            "--handoff",
+            str(handoff),
+            "--current-status-out",
+            str(current),
+            "--session-context-out",
+            str(context),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    status_payload = json.loads(current.read_text(encoding="utf-8"))
+    assert status_payload["full196_last_run"].endswith("full196_run_summary.json")
+    assert status_payload["latest_artifacts"]["run_summary"].endswith("partial_run_summary.json")
+    assert status_payload["coverage_integrity_phase"] == "recomputed_ok"
+    assert status_payload["full196_last_ok"] is True

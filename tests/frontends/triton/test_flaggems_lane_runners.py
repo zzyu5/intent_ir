@@ -27,7 +27,7 @@ def test_run_ir_arch_batch_dry_run(tmp_path: Path) -> None:
     run_summary = json.loads((out_dir / "run_summary.json").read_text(encoding="utf-8"))
     status = json.loads((out_dir / "status_converged.json").read_text(encoding="utf-8"))
     stage_names = [row["stage"] for row in run_summary["stages"]]
-    assert stage_names == ["primitive_reuse", "macro_composition", "mapping_tests", "intentir_semantics"]
+    assert stage_names == ["primitive_reuse", "macro_composition", "mapping_complexity", "mapping_tests", "intentir_semantics"]
     assert status["lane"] == "ir_arch"
 
 
