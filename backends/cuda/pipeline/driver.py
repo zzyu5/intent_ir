@@ -7,14 +7,12 @@ legalize -> shape_infer -> schedule -> emit -> compile -> launch.
 
 from __future__ import annotations
 
-import os
 import numpy as np
 from typing import Any, Mapping
 
 from backends.cuda.runtime import CudaLaunch, compile_cuda_extension, run_cuda_kernel
 from backends.common.pipeline_utils import (
     collect_intent_info,
-    env_int,
     has_symbolic_dims,
     legalize_rewrite_counts,
     normalize_bindings,
@@ -22,6 +20,7 @@ from backends.common.pipeline_utils import (
     op_family,
     resolve_dim_int,
     run_stage,
+    schedule_overrides_from_env,
 )
 
 from .stages import CUDA_PIPELINE_STAGES, CudaPipelineResult, CudaPipelineStage
@@ -29,10 +28,6 @@ from .stages import CUDA_PIPELINE_STAGES, CudaPipelineResult, CudaPipelineStage
 
 def _stage(name: str, fn) -> CudaPipelineStage:
     return run_stage(name, fn, stage_factory=CudaPipelineStage)
-
-
-def _collect_intent_info(intent_payload: Any) -> tuple[str, list[str], dict[str, list[Any]], dict[str, Any]]:
-    return collect_intent_info(intent_payload)
 
 
 def _classify_failure(detail: str) -> str:
@@ -44,53 +39,6 @@ def _classify_failure(detail: str) -> str:
     if "compile_timeout" in msg or "launch_timeout" in msg:
         return msg
     return "runtime_fail"
-
-
-def _legalize_rewrite_counts(op_names: list[str]) -> dict[str, int]:
-    return legalize_rewrite_counts(op_names)
-
-
-def _op_family(op_names: list[str]) -> str:
-    return op_family(op_names)
-
-
-def _env_int(*keys: str) -> int | None:
-    return env_int(*keys)
-
-
-def _schedule_overrides_from_env() -> tuple[dict[str, int], str]:
-    overrides: dict[str, int] = {}
-    tile_m = _env_int("INTENTIR_CUDA_TILE_M", "INTENTIR_TILE_M")
-    tile_n = _env_int("INTENTIR_CUDA_TILE_N", "INTENTIR_TILE_N")
-    tile_k = _env_int("INTENTIR_CUDA_TILE_K", "INTENTIR_TILE_K")
-    if tile_m is not None:
-        overrides["tile_m"] = int(tile_m)
-    if tile_n is not None:
-        overrides["tile_n"] = int(tile_n)
-    if tile_k is not None:
-        overrides["tile_k"] = int(tile_k)
-    tag = str(
-        os.getenv("INTENTIR_CUDA_SCHEDULE_PROFILE_TAG")
-        or os.getenv("INTENTIR_SCHEDULE_PROFILE_TAG")
-        or ""
-    ).strip()
-    return overrides, tag
-
-
-def _normalize_bindings(shape_bindings: Mapping[str, Any] | None) -> dict[str, Any]:
-    return normalize_bindings(shape_bindings)
-
-
-def _has_symbolic_dims(tensor_shapes: Mapping[str, list[Any]]) -> bool:
-    return has_symbolic_dims(tensor_shapes)
-
-
-def _np_dtype(dt: str) -> Any:
-    return np_dtype(dt)
-
-
-def _resolve_dim_int(dim: Any, bindings: Mapping[str, Any]) -> int:
-    return resolve_dim_int(dim, bindings)
 
 
 def _parse_launch(launch_j: Mapping[str, Any]) -> CudaLaunch:
@@ -116,9 +64,9 @@ def _build_dummy_inputs(*, io_spec: Mapping[str, Any], output_names: list[str], 
             continue
         if not isinstance(spec, Mapping):
             continue
-        dtype = _np_dtype(str(spec.get("dtype") or "f32"))
+        dtype = np_dtype(str(spec.get("dtype") or "f32"))
         shape_spec = list(spec.get("shape") or [])
-        shape = tuple(max(1, _resolve_dim_int(d, bindings)) for d in shape_spec)
+        shape = tuple(max(1, resolve_dim_int(d, bindings)) for d in shape_spec)
         if len(shape) == 0:
             inputs[n] = np.array(1, dtype=dtype)
         else:
@@ -135,13 +83,13 @@ def run_cuda_pipeline(
     mode = str(pipeline_mode or "full").strip().lower()
     if mode not in {"full", "schedule_only"}:
         raise ValueError(f"unsupported cuda pipeline_mode: {pipeline_mode}")
-    name, op_names, tensor_shapes, schedule_info = _collect_intent_info(intent_payload)
+    name, op_names, tensor_shapes, schedule_info = collect_intent_info(intent_payload)
     stages: list[CudaPipelineStage] = []
-    rewrite_counts = _legalize_rewrite_counts(op_names)
-    family = _op_family(op_names)
-    bindings = _normalize_bindings(shape_bindings)
-    has_symbolic_dims = _has_symbolic_dims(tensor_shapes)
-    can_execute = bool(bindings) or (not has_symbolic_dims)
+    rewrite_counts = legalize_rewrite_counts(op_names)
+    family = op_family(op_names)
+    bindings = normalize_bindings(shape_bindings)
+    symbolic_dims_present = has_symbolic_dims(tensor_shapes)
+    can_execute = bool(bindings) or (not symbolic_dims_present)
     state: dict[str, Any] = {"bindings": dict(bindings)}
 
     def _legalize() -> tuple[str, dict[str, Any]]:
@@ -186,7 +134,7 @@ def run_cuda_pipeline(
         profile = "cuda_matmul_conv_v1" if family == "matmul_conv" else "cuda_elementwise_reduction_v1"
         merged = dict(defaults)
         merged.update({k: v for k, v in schedule_info.items() if v is not None})
-        env_overrides, profile_tag = _schedule_overrides_from_env()
+        env_overrides, profile_tag = schedule_overrides_from_env(backend_prefix="CUDA")
         if env_overrides:
             merged.update(env_overrides)
         if profile_tag:

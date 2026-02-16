@@ -139,6 +139,34 @@ def env_int(*keys: str) -> int | None:
     return None
 
 
+def schedule_overrides_from_env(
+    *,
+    backend_prefix: str,
+    generic_prefix: str = "INTENTIR",
+) -> tuple[dict[str, int], str]:
+    prefix = str(backend_prefix).strip().upper()
+    gprefix = str(generic_prefix).strip().upper()
+    overrides: dict[str, int] = {}
+    tile_m = env_int(f"{gprefix}_{prefix}_TILE_M", f"{gprefix}_TILE_M")
+    tile_n = env_int(f"{gprefix}_{prefix}_TILE_N", f"{gprefix}_TILE_N")
+    tile_k = env_int(f"{gprefix}_{prefix}_TILE_K", f"{gprefix}_TILE_K")
+    if tile_m is not None:
+        overrides["tile_m"] = int(tile_m)
+    if tile_n is not None:
+        overrides["tile_n"] = int(tile_n)
+    if tile_k is not None:
+        overrides["tile_k"] = int(tile_k)
+
+    import os
+
+    tag = str(
+        os.getenv(f"{gprefix}_{prefix}_SCHEDULE_PROFILE_TAG")
+        or os.getenv(f"{gprefix}_SCHEDULE_PROFILE_TAG")
+        or ""
+    ).strip()
+    return overrides, tag
+
+
 def normalize_bindings(shape_bindings: Mapping[str, Any] | None) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for k, v in dict(shape_bindings or {}).items():

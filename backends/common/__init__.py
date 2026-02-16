@@ -15,6 +15,7 @@ from .pipeline_utils import (
     op_family,
     resolve_dim_int,
     run_stage,
+    schedule_overrides_from_env,
 )
 
 __all__ = [
@@ -32,4 +33,5 @@ __all__ = [
     "op_family",
     "resolve_dim_int",
     "run_stage",
+    "schedule_overrides_from_env",
 ]

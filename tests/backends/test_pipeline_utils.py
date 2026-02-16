@@ -12,6 +12,7 @@ from backends.common.pipeline_utils import (
     op_family,
     resolve_dim_int,
     run_stage,
+    schedule_overrides_from_env,
 )
 
 
@@ -73,3 +74,13 @@ class _Sym:
 
 def test_resolve_dim_int_supports_value_attr_symbol() -> None:
     assert resolve_dim_int(_Sym("M"), {"M": 16}) == 16
+
+
+def test_schedule_overrides_from_env_backend_precedence(monkeypatch) -> None:
+    monkeypatch.setenv("INTENTIR_TILE_M", "8")
+    monkeypatch.setenv("INTENTIR_CUDA_TILE_M", "16")
+    monkeypatch.setenv("INTENTIR_CUDA_TILE_N", "32")
+    monkeypatch.setenv("INTENTIR_CUDA_SCHEDULE_PROFILE_TAG", "fast")
+    overrides, tag = schedule_overrides_from_env(backend_prefix="cuda")
+    assert overrides == {"tile_m": 16, "tile_n": 32}
+    assert tag == "fast"
