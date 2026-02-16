@@ -176,7 +176,7 @@ def ensure_cpp_codegen_built(*, build_type: str = "Release") -> Path:
                 continue
             if not p.is_file():
                 continue
-            if p.name == "CMakeLists.txt" or p.suffix in {".cpp", ".cc", ".c", ".h", ".hpp", ".cmake"}:
+            if p.name == "CMakeLists.txt" or p.suffix in {".cpp", ".cc", ".c", ".h", ".hpp", ".cmake", ".inc", ".inl"}:
                 try:
                     if p.stat().st_mtime > bin_mtime:
                         return True
