@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-16T01:32:50+00:00",
+  "updated_at": "2026-02-16T01:48:27+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -11,32 +11,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "b033704 ir_arch: pass m1 composition gate and roll workflow to m2\ncba8df8 backend: start cpp_codegen modular split and sync workflow todo state\na97b6b5 workflow: fix full196 truth, add timing breakdown gate, enforce ir composition policy\n0cc7d90 workflow: record v16 warm-stable perf run and refresh snapshots\n024bf04 cuda runtime: cache runner/runtime hash payload computation\nfa12cfc workflow: record v14 backend perf batch and refresh snapshots\n4d249cc cuda runtime: reuse compiled module in launch path\na68ce0e workflow: refresh status snapshot after perf commits\na045c83 workflow: record v11 backend performance evidence\n4016a6a cuda smoke: prewarm compile worker to remove first-kernel cold start\ne6c5fd3 workflow: refresh current status after perf optimization commits\n315d013 workflow: record backend compiler performance batch evidence\n258dd07 cuda smoke: reuse persistent stage workers to reduce per-kernel overhead\n29b7231 workflow: close backend compiler wave14 and log perf warm run\n26d8d16 cuda cpp: canonicalize kernel names for compile-cache reuse\n2b17c08 cuda cpp: add concat/pad/mse_loss lowering and fix remainder semantics\n7c35b9a workflow: close wave13, expand manifest to 84, plan wave14\n7c34852 cuda cpp: add addmv/atan/bitwise-shift lowering and fix addmv arg order\n3f063ae workflow: close wave12, promote wave13, refresh backend lane state\nbf49f6b cuda+intentir: fix matmul f16 path and repair missing matmul shapes",
+  "git_log_short": "5732526 ir_arch: complete m2 composition gate and refresh workflow lanes\nb033704 ir_arch: pass m1 composition gate and roll workflow to m2\ncba8df8 backend: start cpp_codegen modular split and sync workflow todo state\na97b6b5 workflow: fix full196 truth, add timing breakdown gate, enforce ir composition policy\n0cc7d90 workflow: record v16 warm-stable perf run and refresh snapshots\n024bf04 cuda runtime: cache runner/runtime hash payload computation\nfa12cfc workflow: record v14 backend perf batch and refresh snapshots\n4d249cc cuda runtime: reuse compiled module in launch path\na68ce0e workflow: refresh status snapshot after perf commits\na045c83 workflow: record v11 backend performance evidence\n4016a6a cuda smoke: prewarm compile worker to remove first-kernel cold start\ne6c5fd3 workflow: refresh current status after perf optimization commits\n315d013 workflow: record backend compiler performance batch evidence\n258dd07 cuda smoke: reuse persistent stage workers to reduce per-kernel overhead\n29b7231 workflow: close backend compiler wave14 and log perf warm run\n26d8d16 cuda cpp: canonicalize kernel names for compile-cache reuse\n2b17c08 cuda cpp: add concat/pad/mse_loss lowering and fix remainder semantics\n7c35b9a workflow: close wave13, expand manifest to 84, plan wave14\n7c34852 cuda cpp: add addmv/atan/bitwise-shift lowering and fix addmv arg order\n3f063ae workflow: close wave12, promote wave13, refresh backend lane state",
   "progress_tail": [
-    {
-      "ts": "2026-02-15T23:55:53+00:00",
-      "commit": "4d249cc",
-      "lane": "backend_compiler",
-      "summary": "backend compiler perf: avoid launch-path duplicate compile by reusing compiled module",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v14_perfbatch_warm/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v14_perfbatch_warm/status_converged.json",
-      "next_focus": "performance-only: reduce compile-stage latency without changing coverage scope",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v13_perfbatch/cuda_local.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v14_perfbatch_warm/cuda_local.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v14_perfbatch_warm/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v14_perfbatch_warm/status_converged.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v14_perfbatch_warm/timing_delta.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v14_perfbatch_warm",
-      "counts_by_status": {
-        "blocked_backend": 187,
-        "dual_pass": 9
-      }
-    },
     {
       "ts": "2026-02-16T00:11:24+00:00",
       "commit": "024bf04",
@@ -204,19 +180,57 @@
       "run_ok": true,
       "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m2_v2",
       "counts_by_status": {}
+    },
+    {
+      "ts": "2026-02-16T01:48:19+00:00",
+      "commit": "5732526cea797fbb018f08b92527457ac02b8140",
+      "lane": "coverage",
+      "summary": "coverage active10 batch executed: RVV local passed; CUDA stage mostly compile_timeout under 15s compile budget.",
+      "batch_ops": [
+        "angle",
+        "count_nonzero",
+        "diag",
+        "diag_embed",
+        "log_sigmoid",
+        "nan_to_num",
+        "repeat",
+        "repeat_interleave_self_int",
+        "repeat_interleave_self_tensor",
+        "repeat_interleave_tensor"
+      ],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/coverage_active10_v3/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/coverage_active10_v3/status_converged.json",
+      "next_focus": "Re-run coverage active10 with relaxed CUDA compile timeout and remote RVV to convert rvv_only -> dual_pass.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260216/coverage_active10_v3/batch_gate_coverage.json",
+        "artifacts/flaggems_matrix/daily/20260216/coverage_active10_v3/cuda_local.json",
+        "artifacts/flaggems_matrix/daily/20260216/coverage_active10_v3/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/coverage_active10_v3/rvv_local.json",
+        "artifacts/flaggems_matrix/daily/20260216/coverage_active10_v3/status_converged.json"
+      ],
+      "run_ok": false,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/coverage_active10_v3",
+      "counts_by_status": {
+        "blocked_backend": 186,
+        "dual_pass": 1,
+        "rvv_only": 9
+      }
     }
   ],
-  "next_focus": "Shift ir_arch lane to maintenance and focus backend_compiler::cpp_codegen_modular_split_{cuda,rvv} + full196 evidence cleanup.",
+  "next_focus": "Re-run coverage active10 with relaxed CUDA compile timeout and remote RVV to convert rvv_only -> dual_pass.",
   "active_lanes": [
     "backend_compiler",
     "coverage"
   ],
   "next_focus_by_lane": {
     "backend_compiler": "Continue modular split: extract CUDA ir_model/shape_eval/emit modules, then rerun backend_compiler gate",
-    "ir_arch": "Shift ir_arch lane to maintenance and focus backend_compiler::cpp_codegen_modular_split_{cuda,rvv} + full196 evidence cleanup."
+    "ir_arch": "Shift ir_arch lane to maintenance and focus backend_compiler::cpp_codegen_modular_split_{cuda,rvv} + full196 evidence cleanup.",
+    "coverage": "Re-run coverage active10 with relaxed CUDA compile timeout and remote RVV to convert rvv_only -> dual_pass."
   },
   "known_risks": [
     "ir_arch lane now enforces mapping_complexity threshold; M1 gate currently failing at ~0.66 ratio",
-    "ir_arch M2 baseline confirms remaining gap: composition_required_single_intent_ratio=0.40 > 0.20."
+    "ir_arch M2 baseline confirms remaining gap: composition_required_single_intent_ratio=0.40 > 0.20.",
+    "coverage active10 batch executed: RVV local passed; CUDA stage mostly compile_timeout under 15s compile budget."
   ]
 }

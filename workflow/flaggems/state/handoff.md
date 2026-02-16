@@ -1,11 +1,11 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-16T01:32:11+00:00
-- Commit: `b033704283c2cbd4aa5a380681c682f7823c2564`
-- Lane: `ir_arch`
-- Summary: ir_arch M2 mapping complexity gate passed (composition_required_single_intent_ratio=0.1556).
-- Batch Ops (1): 
-- Run Summary: `artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m2_v2/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m2_v2/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m2_v2/mapping_complexity_report.json, artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m2_v2/run_summary.json, artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m2_v2/status_converged.json, tests/frontends/triton/test_flaggems_semantic_rules.py
-- Next Focus: Shift ir_arch lane to maintenance and focus backend_compiler::cpp_codegen_modular_split_{cuda,rvv} + full196 evidence cleanup.
+- Timestamp: 2026-02-16T01:48:19+00:00
+- Commit: `5732526cea797fbb018f08b92527457ac02b8140`
+- Lane: `coverage`
+- Summary: coverage active10 batch executed: RVV local passed; CUDA stage mostly compile_timeout under 15s compile budget.
+- Batch Ops (10): angle, count_nonzero, diag, diag_embed, log_sigmoid, nan_to_num, repeat, repeat_interleave_self_int, repeat_interleave_self_tensor, repeat_interleave_tensor
+- Run Summary: `artifacts/flaggems_matrix/daily/20260216/coverage_active10_v3/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260216/coverage_active10_v3/status_converged.json`
+- Evidence Paths: artifacts/flaggems_matrix/daily/20260216/coverage_active10_v3/batch_gate_coverage.json, artifacts/flaggems_matrix/daily/20260216/coverage_active10_v3/cuda_local.json, artifacts/flaggems_matrix/daily/20260216/coverage_active10_v3/run_summary.json, artifacts/flaggems_matrix/daily/20260216/coverage_active10_v3/rvv_local.json, artifacts/flaggems_matrix/daily/20260216/coverage_active10_v3/status_converged.json
+- Next Focus: Re-run coverage active10 with relaxed CUDA compile timeout and remote RVV to convert rvv_only -> dual_pass.
