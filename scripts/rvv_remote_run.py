@@ -164,9 +164,10 @@ def _np_dtype(dt: str) -> "np.dtype":
 
 def _to_raw_bytes(arr: "np.ndarray", dt: str) -> bytes:
     arr_np = np.asarray(arr)
-    # Prefer runtime array dtype for bool tensors to avoid mismatches when
-    # declared dtypes are widened in upstream intent metadata.
-    if arr_np.dtype.kind == "b" or dt in {"bool", "i1"}:
+    dt = str(dt)
+    # Match backend smoke path: declared tensor dtype is the source of truth.
+    # Baseline arrays may be bool views even when intent tensors declare f32/i32.
+    if dt in {"bool", "i1"}:
         return np.asarray(arr_np, dtype=np.uint8).tobytes(order="C")
     if dt == "i8":
         return np.asarray(arr_np, dtype=np.int8).tobytes(order="C")
@@ -178,6 +179,10 @@ def _to_raw_bytes(arr: "np.ndarray", dt: str) -> bytes:
         return np.asarray(arr_np, dtype=np.int32).tobytes(order="C")
     if dt == "i64":
         return np.asarray(arr_np, dtype=np.int64).tobytes(order="C")
+    if dt == "f16":
+        return np.asarray(arr_np, dtype=np.float16).tobytes(order="C")
+    if dt == "f64":
+        return np.asarray(arr_np, dtype=np.float64).tobytes(order="C")
     return np.asarray(arr_np, dtype=np.float32).tobytes(order="C")
 
 

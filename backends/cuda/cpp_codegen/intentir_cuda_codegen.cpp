@@ -4699,6 +4699,106 @@ json emit_any_dim_f32_to_i1(const Intent& intent, const json& bindings) {
   return out;
 }
 
+json emit_all_dim_f32_to_i1(const Intent& intent, const json& bindings) {
+  if (intent.ops.size() != 4) fail("all-dim lowering expects 4 ops (const, eq, reduce_any, not)");
+  const Op& c0 = intent.ops[0];
+  const Op& eq0 = intent.ops[1];
+  const Op& r0 = intent.ops[2];
+  const Op& n0 = intent.ops[3];
+  if (c0.op != "const" || eq0.op != "eq" || r0.op != "reduce_any" || n0.op != "not") {
+    fail("all-dim lowering expects ops const->eq->reduce_any->not");
+  }
+  if (eq0.inputs.size() != 2 || r0.inputs.size() != 1 || n0.inputs.size() != 1) fail("all-dim lowering invalid op arity");
+  if (r0.inputs[0] != eq0.output) fail("all-dim lowering expects reduce_any(eq_out)");
+  if (n0.inputs[0] != r0.output) fail("all-dim lowering expects not(reduce_any_out)");
+  const std::string const_out = c0.output;
+  const std::string a0 = eq0.inputs[0];
+  const std::string b0 = eq0.inputs[1];
+  std::string inp_name;
+  if (a0 == const_out && b0 != const_out)
+    inp_name = b0;
+  else if (b0 == const_out && a0 != const_out)
+    inp_name = a0;
+  else
+    fail("all-dim lowering expects eq(inp, const)");
+  const std::string out_name = n0.output;
+
+  double z = 0.0;
+  if (c0.attrs.is_object()) {
+    auto it = c0.attrs.find("value");
+    if (it != c0.attrs.end() && it->is_number()) z = it->get<double>();
+    else if (it != c0.attrs.end() && it->is_string()) {
+      try {
+        z = std::stod(it->get<std::string>());
+      } catch (...) {
+        z = 0.0;
+      }
+    }
+  }
+  if (!_reduce_axis_is_1(r0.attrs)) fail("all-dim MVP supports only axis=1 for 2D tensors");
+
+  const int64_t M = binding_int(bindings, "M").value_or(-1);
+  const int64_t N = binding_int(bindings, "N").value_or(-1);
+  if (M <= 0 || N <= 0) fail("all-dim missing/invalid bindings: M/N");
+
+  int64_t block_x = resolve_schedule_int(intent, bindings, "tile_n", 256);
+  block_x = _pow2_block(block_x);
+
+  const bool m_is_tensor = is_scalar_tensor(intent, "M", "i32");
+  const bool n_is_tensor = is_scalar_tensor(intent, "N", "i32");
+  const std::string m_param = m_is_tensor ? "const int* M_ptr" : "int M";
+  const std::string n_param = n_is_tensor ? "const int* N_ptr" : "int N";
+  const std::string m_load = m_is_tensor ? "const int M = M_ptr ? M_ptr[0] : 0;" : "";
+  const std::string n_load = n_is_tensor ? "const int N = N_ptr ? N_ptr[0] : 0;" : "";
+
+  const std::string z_lit = c_float(z);
+
+  std::ostringstream cuda_ss;
+  CodeWriter w(cuda_ss);
+  w.line("#include <stddef.h>");
+  w.line("#include <stdint.h>");
+  w.line("#include \"intentir_cuda_ops.cuh\"");
+  w.line("#include \"kernels/reduce.cuh\"");
+  w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_x) + ") void " + intent.name +
+         "(const float* __restrict__ " + inp_name + ", bool* __restrict__ " + out_name + ", " + m_param + ", " + n_param + ") {");
+  w.indent();
+  if (!m_load.empty()) w.line(m_load);
+  if (!n_load.empty()) w.line(n_load);
+  w.line("const int m = (int)blockIdx.x;");
+  w.line("if (m >= M) return;");
+  w.line("constexpr int BLOCK_THREADS = " + std::to_string(block_x) + ";");
+  w.line("int any_zero = 0;");
+  w.line("const float* row = " + inp_name + " + (size_t)m * (size_t)N;");
+  w.line("for (int n = (int)threadIdx.x; n < N; n += (int)blockDim.x) any_zero |= (intentir_ldg_f32(row + (size_t)n) == " + z_lit + ");");
+  w.line("__shared__ intentir_cuda::BlockAllreduceI32<BLOCK_THREADS> red;");
+  w.line("const int any = intentir_cuda::block_allreduce_max<BLOCK_THREADS>(any_zero, &red);");
+  w.line("if ((int)threadIdx.x == 0) " + out_name + "[(size_t)m] = ((any != 0) ? false : true);");
+  w.dedent();
+  w.line("}");
+
+  std::vector<std::string> tensor_args = {inp_name, out_name};
+  std::unordered_map<std::string, std::string> scalar_args;
+  std::vector<std::string> arg_names = {inp_name, out_name};
+  for (const auto& dim_name : {"M", "N"}) {
+    if (is_scalar_tensor(intent, dim_name, "i32")) {
+      tensor_args.push_back(dim_name);
+      arg_names.push_back(dim_name);
+    } else {
+      scalar_args.emplace(dim_name, "i32");
+      arg_names.push_back(dim_name);
+    }
+  }
+
+  json out;
+  out["kernel_name"] = intent.name;
+  out["cuda_src"] = cuda_ss.str();
+  out["io_spec"] = io_spec_from_args(intent, tensor_args, scalar_args, arg_names);
+  out["launch"] = {{"grid", {M, 1, 1}}, {"block", {block_x, 1, 1}}, {"shared_mem", 0}};
+  out["output_names"] = {out_name};
+  out["bindings"] = bindings;
+  return out;
+}
+
 json emit_gather2d_f32(const Intent& intent, const json& bindings) {
   // gather2d lowering expects exactly one gather op (single-op fast path).
   if (!(intent.ops.size() == 1 && intent.ops[0].op == "gather")) fail("gather2d lowering expects a single gather op");
@@ -7464,6 +7564,10 @@ json lower_intent_to_cuda(const Intent& intent, const json& bindings_json) {
   if (intent.ops.size() == 3 && intent.ops[0].op == "const" && intent.ops[1].op == "ne" && intent.ops[2].op == "reduce_any") {
     return emit_any_dim_f32_to_i1(intent, bindings_json);
   }
+  if (intent.ops.size() == 4 && intent.ops[0].op == "const" && intent.ops[1].op == "eq" && intent.ops[2].op == "reduce_any" &&
+      intent.ops[3].op == "not") {
+    return emit_all_dim_f32_to_i1(intent, bindings_json);
+  }
   {
     bool hasY = false, hasMean = false, hasRstd = false;
     for (const auto& o : intent.outputs) {
@@ -7572,7 +7676,7 @@ json lower_intent_to_cuda(const Intent& intent, const json& bindings_json) {
 
   fail(
       "unsupported intent for cuda cpp codegen (supported: addmv, matmul, dropout, softmax, layernorm, correlation, resize, rope, warp, transpose, "
-      "reduce_sum, reduce_max, reduce_min, reduce_mean_pattern, argmax, argmin, any_dim, gather, diag, diag_embed, nonzero, count_nonzero, topk, trace, "
+      "reduce_sum, reduce_max, reduce_min, reduce_mean_pattern, argmax, argmin, any_dim, all_dim, gather, diag, diag_embed, nonzero, count_nonzero, topk, trace, "
       "concat, pad, mse_loss, fused_elementwise)");
 }
 
