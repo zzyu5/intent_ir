@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_feature_list_v2",
-  "generated_at": "2026-02-16T09:15:43+00:00",
+  "generated_at": "2026-02-16T20:39:25+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
@@ -36,6 +36,8 @@
       "intent_ops": [
         "abs"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.abs",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -62,6 +64,8 @@
       "intent_ops": [
         "acos"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.acos",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -88,6 +92,8 @@
       "intent_ops": [
         "add"
       ],
+      "mapping_kind": "binary_template",
+      "intent_pattern_id": "binary.add",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -117,6 +123,8 @@
         "div",
         "add"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.addcdiv",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -146,6 +154,8 @@
         "mul",
         "add"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.addcmul",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -173,6 +183,8 @@
         "matmul",
         "add"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.addmv",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -204,6 +216,8 @@
         "mul",
         "add"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.addr",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -230,6 +244,8 @@
       "intent_ops": [
         "angle"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.angle",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -256,6 +272,8 @@
       "intent_ops": [
         "iota"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.arange_via_iota",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -282,6 +300,8 @@
       "intent_ops": [
         "atan"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.atan",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -308,6 +328,8 @@
       "intent_ops": [
         "bitwise_and"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.bitwise_and_scalar->bitwise_and",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -334,6 +356,8 @@
       "intent_ops": [
         "bitwise_and"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.bitwise_and_scalar_tensor->bitwise_and",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -360,6 +384,8 @@
       "intent_ops": [
         "bitwise_and"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.bitwise_and_tensor->bitwise_and",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -386,6 +412,8 @@
       "intent_ops": [
         "bitwise_left_shift"
       ],
+      "mapping_kind": "binary_template",
+      "intent_pattern_id": "binary.bitwise_left_shift",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -412,6 +440,8 @@
       "intent_ops": [
         "bitwise_not"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.bitwise_not",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -438,6 +468,8 @@
       "intent_ops": [
         "bitwise_or"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.bitwise_or_scalar->bitwise_or",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -464,6 +496,8 @@
       "intent_ops": [
         "bitwise_or"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.bitwise_or_scalar_tensor->bitwise_or",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -490,6 +524,8 @@
       "intent_ops": [
         "bitwise_or"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.bitwise_or_tensor->bitwise_or",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -516,6 +552,8 @@
       "intent_ops": [
         "bitwise_right_shift"
       ],
+      "mapping_kind": "binary_template",
+      "intent_pattern_id": "binary.bitwise_right_shift",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -542,6 +580,8 @@
       "intent_ops": [
         "concat"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.cat->concat",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -571,6 +611,8 @@
         "floor",
         "mul"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.ceil_via_floor",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -602,6 +644,8 @@
         "sub",
         "where"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.celu",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -629,6 +673,8 @@
         "max",
         "min"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.clamp",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -655,6 +701,8 @@
       "intent_ops": [
         "max"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.clamp_min->maximum",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -682,6 +730,8 @@
         "max",
         "min"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.clamp_tensor->clamp",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -708,6 +758,8 @@
       "intent_ops": [
         "pad"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.constant_pad_nd->pad",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -734,6 +786,8 @@
       "intent_ops": [
         "identity"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.contiguous->identity",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -760,6 +814,8 @@
       "intent_ops": [
         "identity"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.copy->identity",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -786,6 +842,8 @@
       "intent_ops": [
         "cos"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.cos",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -812,6 +870,8 @@
       "intent_ops": [
         "diag"
       ],
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.diag",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -838,6 +898,8 @@
       "intent_ops": [
         "diag_embed"
       ],
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.diag_embed",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -864,6 +926,8 @@
       "intent_ops": [
         "div"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.div_mode->div",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -895,6 +959,8 @@
         "sub",
         "where"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.elu",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -922,6 +988,8 @@
         "ne",
         "not"
       ],
+      "mapping_kind": "cmp_template",
+      "intent_pattern_id": "cmp.eq_via_not_ne",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -949,6 +1017,8 @@
         "ne",
         "not"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.eq_scalar->eq",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -976,6 +1046,8 @@
         "ne",
         "not"
       ],
+      "mapping_kind": "cmp_template",
+      "intent_pattern_id": "cmp.equal_via_not_ne",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1002,6 +1074,8 @@
       "intent_ops": [
         "erf"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.erf",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1028,6 +1102,8 @@
       "intent_ops": [
         "exp"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.exp",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1056,6 +1132,8 @@
         "mul",
         "exp"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.exp2_via_exp",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1086,6 +1164,8 @@
         "not",
         "cast"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.eye",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1116,6 +1196,8 @@
         "not",
         "cast"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.eye_m",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1143,6 +1225,8 @@
         "const",
         "broadcast_in_dim"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.fill_scalar->full",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1170,6 +1254,8 @@
         "const",
         "broadcast_in_dim"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.fill_tensor->full",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1196,6 +1282,8 @@
       "intent_ops": [
         "div"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.floor_divide->div",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1223,6 +1311,8 @@
         "const",
         "broadcast_in_dim"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.full",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1250,6 +1340,8 @@
         "const",
         "broadcast_in_dim"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.full_like->full",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1276,6 +1368,8 @@
       "intent_ops": [
         "ge"
       ],
+      "mapping_kind": "cmp_template",
+      "intent_pattern_id": "cmp.ge",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1302,6 +1396,8 @@
       "intent_ops": [
         "ge"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.ge_scalar->ge",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1328,6 +1424,8 @@
       "intent_ops": [
         "glu"
       ],
+      "mapping_kind": "direct_supported_op",
+      "intent_pattern_id": "direct.glu",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1354,6 +1452,8 @@
       "intent_ops": [
         "gt"
       ],
+      "mapping_kind": "cmp_template",
+      "intent_pattern_id": "cmp.gt",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1380,6 +1480,8 @@
       "intent_ops": [
         "gt"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.gt_scalar->gt",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1406,6 +1508,8 @@
       "intent_ops": [
         "concat"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.hstack->concat",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1437,6 +1541,8 @@
         "add",
         "le"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.isclose",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1465,6 +1571,8 @@
         "const",
         "le"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.isfinite_via_abs_le_finite_max",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1495,6 +1603,8 @@
         "not",
         "reduce_any"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.isin_via_broadcast_eq_any",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1523,6 +1633,8 @@
         "const",
         "gt"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.isinf_via_abs_gt_finite_max",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1549,6 +1661,8 @@
       "intent_ops": [
         "ne"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.isnan_via_ne_self",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1575,6 +1689,8 @@
       "intent_ops": [
         "kron"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.kron",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1601,6 +1717,8 @@
       "intent_ops": [
         "le"
       ],
+      "mapping_kind": "cmp_template",
+      "intent_pattern_id": "cmp.le",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1627,6 +1745,8 @@
       "intent_ops": [
         "le"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.le_scalar->le",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1655,6 +1775,8 @@
         "mul",
         "add"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.lerp_scalar->lerp",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1683,6 +1805,8 @@
         "mul",
         "add"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.lerp_tensor->lerp",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1714,6 +1838,8 @@
         "mul",
         "add"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.linspace_via_iota",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1740,6 +1866,8 @@
       "intent_ops": [
         "log"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.log",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1766,6 +1894,8 @@
       "intent_ops": [
         "and"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.logical_and->and",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1792,6 +1922,8 @@
       "intent_ops": [
         "not"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.logical_not->not",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1818,6 +1950,8 @@
       "intent_ops": [
         "or"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.logical_or->or",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1847,6 +1981,8 @@
         "not",
         "and"
       ],
+      "mapping_kind": "cmp_template",
+      "intent_pattern_id": "cmp.logical_xor_via_or_and_not",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1880,6 +2016,8 @@
         "mul",
         "exp"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.logspace_via_exp_linspace",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1906,6 +2044,8 @@
       "intent_ops": [
         "lt"
       ],
+      "mapping_kind": "cmp_template",
+      "intent_pattern_id": "cmp.lt",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1932,6 +2072,8 @@
       "intent_ops": [
         "lt"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.lt_scalar->lt",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1958,6 +2100,8 @@
       "intent_ops": [
         "where"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.masked_fill",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -1984,6 +2128,8 @@
       "intent_ops": [
         "reduce_max"
       ],
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.max",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2010,6 +2156,8 @@
       "intent_ops": [
         "reduce_max"
       ],
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.max_dim",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2036,6 +2184,8 @@
       "intent_ops": [
         "max"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.maximum",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2062,6 +2212,8 @@
       "intent_ops": [
         "reduce_min"
       ],
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.min",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2088,6 +2240,8 @@
       "intent_ops": [
         "reduce_min"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.min_dim->reduce_min",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2114,6 +2268,8 @@
       "intent_ops": [
         "min"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.minimum",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2140,6 +2296,8 @@
       "intent_ops": [
         "mse_loss"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.mse_loss",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2166,6 +2324,8 @@
       "intent_ops": [
         "mul"
       ],
+      "mapping_kind": "binary_template",
+      "intent_pattern_id": "binary.mul",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2192,6 +2352,8 @@
       "intent_ops": [
         "matmul"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.mv",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2218,6 +2380,8 @@
       "intent_ops": [
         "nan_to_num"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.nan_to_num",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2244,6 +2408,8 @@
       "intent_ops": [
         "ne"
       ],
+      "mapping_kind": "cmp_template",
+      "intent_pattern_id": "cmp.ne",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2270,6 +2436,8 @@
       "intent_ops": [
         "ne"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.ne_scalar->ne",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2297,6 +2465,8 @@
         "const",
         "mul"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.neg_via_mul",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2323,6 +2493,8 @@
       "intent_ops": [
         "nll_loss2d_forward"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.nll_loss2d_forward",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2349,6 +2521,8 @@
       "intent_ops": [
         "nll_loss_forward"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.nll_loss_forward",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2375,6 +2549,8 @@
       "intent_ops": [
         "nonzero"
       ],
+      "mapping_kind": "direct_supported_op",
+      "intent_pattern_id": "direct.nonzero",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2405,6 +2581,8 @@
         "not",
         "cast"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.one_hot_via_iota_eq",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2432,6 +2610,8 @@
         "const",
         "broadcast_in_dim"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.ones",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2459,6 +2639,8 @@
         "const",
         "broadcast_in_dim"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.ones_like->ones",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2485,6 +2667,8 @@
       "intent_ops": [
         "pad"
       ],
+      "mapping_kind": "direct_supported_op",
+      "intent_pattern_id": "direct.pad",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2511,6 +2695,8 @@
       "intent_ops": [
         "per_token_group_quant_fp8"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.per_token_group_quant_fp8",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2537,6 +2723,8 @@
       "intent_ops": [
         "polar"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.polar",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2563,6 +2751,8 @@
       "intent_ops": [
         "pow"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.pow_scalar->pow",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2589,6 +2779,8 @@
       "intent_ops": [
         "pow"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.pow_tensor_scalar->pow",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2615,6 +2807,8 @@
       "intent_ops": [
         "pow"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.pow_tensor_tensor->pow",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2641,6 +2835,8 @@
       "intent_ops": [
         "quantile"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.quantile",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2668,6 +2864,8 @@
         "const",
         "div"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.reciprocal_via_div",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2694,6 +2892,8 @@
       "intent_ops": [
         "remainder"
       ],
+      "mapping_kind": "direct_supported_op",
+      "intent_pattern_id": "direct.remainder",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2720,6 +2920,8 @@
       "intent_ops": [
         "repeat"
       ],
+      "mapping_kind": "direct_supported_op",
+      "intent_pattern_id": "direct.repeat",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2746,6 +2948,8 @@
       "intent_ops": [
         "repeat_interleave"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.repeat_interleave_self_int->repeat_interleave",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2772,6 +2976,8 @@
       "intent_ops": [
         "repeat_interleave"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.repeat_interleave_self_tensor->repeat_interleave",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2798,6 +3004,8 @@
       "intent_ops": [
         "repeat_interleave"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.repeat_interleave_tensor->repeat_interleave",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2824,6 +3032,8 @@
       "intent_ops": [
         "identity"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.resolve_conj->identity",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2850,6 +3060,8 @@
       "intent_ops": [
         "identity"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.resolve_neg->identity",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2876,6 +3088,8 @@
       "intent_ops": [
         "rsqrt"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.rsqrt",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2902,6 +3116,8 @@
       "intent_ops": [
         "sin"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.sin",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2928,6 +3144,8 @@
       "intent_ops": [
         "sort"
       ],
+      "mapping_kind": "direct_supported_op",
+      "intent_pattern_id": "direct.sort",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2954,6 +3172,8 @@
       "intent_ops": [
         "sort"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.sort_stable->sort",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -2981,6 +3201,8 @@
         "rsqrt",
         "mul"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.sqrt_via_rsqrt",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3007,6 +3229,8 @@
       "intent_ops": [
         "stack"
       ],
+      "mapping_kind": "direct_supported_op",
+      "intent_pattern_id": "direct.stack",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3033,6 +3257,8 @@
       "intent_ops": [
         "sub"
       ],
+      "mapping_kind": "binary_template",
+      "intent_pattern_id": "binary.sub",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3059,6 +3285,8 @@
       "intent_ops": [
         "tan"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.tan",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3087,6 +3315,8 @@
         "gt",
         "where"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.threshold",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3113,6 +3343,8 @@
       "intent_ops": [
         "tile"
       ],
+      "mapping_kind": "direct_supported_op",
+      "intent_pattern_id": "direct.tile",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3139,6 +3371,8 @@
       "intent_ops": [
         "cast"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.to_copy->cast",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3165,6 +3399,8 @@
       "intent_ops": [
         "topk"
       ],
+      "mapping_kind": "direct_supported_op",
+      "intent_pattern_id": "direct.topk",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3191,6 +3427,8 @@
       "intent_ops": [
         "trace"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.trace",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3217,6 +3455,8 @@
       "intent_ops": [
         "triu"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.triu",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3243,6 +3483,8 @@
       "intent_ops": [
         "div"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.true_divide->div",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3269,6 +3511,8 @@
       "intent_ops": [
         "unique"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.unique2->unique",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3295,6 +3539,8 @@
       "intent_ops": [
         "concat"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.vstack->concat",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3322,6 +3568,8 @@
         "const",
         "broadcast_in_dim"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.zeros",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3349,6 +3597,8 @@
         "const",
         "broadcast_in_dim"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.zeros_like->zeros",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3377,6 +3627,8 @@
         "reduce_any",
         "not"
       ],
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.all_via_not_any",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3411,6 +3663,8 @@
         "reduce_any",
         "not"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.allclose",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3438,6 +3692,8 @@
         "cast",
         "reduce_max"
       ],
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.amax_via_cast",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3465,6 +3721,8 @@
         "cast",
         "reduce_any"
       ],
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.any_via_cast",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3492,6 +3750,8 @@
         "cast",
         "argmax"
       ],
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.argmax_via_cast",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3519,6 +3779,8 @@
         "cast",
         "argmin"
       ],
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.argmin_via_cast",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3548,6 +3810,8 @@
         "cast",
         "reduce_sum"
       ],
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.count_nonzero_via_ne_cast_sum",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3575,6 +3839,8 @@
         "cast",
         "cumsum"
       ],
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.cumsum_via_cast",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3603,6 +3869,8 @@
         "softmax",
         "matmul"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.flash_attn_varlen",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3630,6 +3898,8 @@
         "softmax",
         "log"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.log_softmax",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3657,6 +3927,8 @@
         "reduce_sum",
         "div"
       ],
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.mean_via_sum",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3684,6 +3956,8 @@
         "reduce_sum",
         "div"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.mean_dim->mean",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3711,6 +3985,8 @@
         "cast",
         "reduce_prod"
       ],
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.prod_via_cast",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3738,6 +4014,8 @@
         "cast",
         "reduce_prod"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.prod_dim->prod",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3768,6 +4046,8 @@
         "reduce_sum",
         "div"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.scaled_softmax_forward->softmax",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3798,6 +4078,8 @@
         "reduce_sum",
         "div"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.softmax_via_reduce_exp",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3825,6 +4107,8 @@
         "var",
         "sqrt"
       ],
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.std_via_var_sqrt",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3852,6 +4136,8 @@
         "cast",
         "reduce_sum"
       ],
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.sum_via_cast",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3879,6 +4165,8 @@
         "cast",
         "reduce_sum"
       ],
+      "mapping_kind": "reduce_template",
+      "intent_pattern_id": "reduce.sum_dim_via_cast",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3906,6 +4194,8 @@
         "std",
         "mul"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.var_mean_via_std",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3938,6 +4228,8 @@
         "broadcast_in_dim",
         "div"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.batch_norm",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -3969,6 +4261,8 @@
         "mul",
         "mul"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.gelu",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4001,6 +4295,8 @@
         "broadcast_in_dim",
         "div"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.group_norm",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4033,6 +4329,8 @@
         "broadcast_in_dim",
         "div"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.layer_norm",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4060,6 +4358,8 @@
         "sigmoid",
         "log"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.log_sigmoid",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4087,6 +4387,8 @@
         "cumsum",
         "div"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.normed_cumsum",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4114,6 +4416,8 @@
         "const",
         "max"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.relu_via_const_max",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4144,6 +4448,8 @@
         "rsqrt",
         "mul"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.rms_norm",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4174,6 +4480,8 @@
         "rsqrt",
         "mul"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.rms_norm_forward",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4204,6 +4512,8 @@
         "add",
         "div"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.sigmoid_via_exp",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4235,6 +4545,8 @@
         "div",
         "mul"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.silu_via_sigmoid",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4263,6 +4575,8 @@
         "add",
         "log"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.softplus",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4294,6 +4608,8 @@
         "add",
         "div"
       ],
+      "mapping_kind": "unary_template",
+      "intent_pattern_id": "unary.tanh_via_exp",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4322,6 +4638,8 @@
         "reduce_sum",
         "sqrt"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.vector_norm",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4353,6 +4671,8 @@
         "broadcast_in_dim",
         "mul"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.weight_norm_interface_via_reduce",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4380,6 +4700,8 @@
         "cast",
         "gather"
       ],
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.flip_via_cast_gather",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4407,6 +4729,8 @@
         "cast",
         "gather"
       ],
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.gather_via_cast",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4434,6 +4758,8 @@
         "cast",
         "gather"
       ],
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.index_via_cast_gather",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4458,8 +4784,11 @@
       "next_action": "none",
       "e2e_spec": "index_add2d",
       "intent_ops": [
+        "cast",
         "index_add"
       ],
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.index_add_via_cast_index_add",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4487,6 +4816,8 @@
         "where",
         "scatter"
       ],
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.index_put_via_where_scatter",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4514,6 +4845,8 @@
         "cast",
         "gather"
       ],
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.index_select_via_cast_gather",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4541,6 +4874,8 @@
         "where",
         "scatter"
       ],
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.masked_scatter_via_where_scatter",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4569,6 +4904,8 @@
         "nonzero",
         "gather"
       ],
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.masked_select_via_where_nonzero_gather",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4593,8 +4930,11 @@
       "next_action": "none",
       "e2e_spec": "scatter2d",
       "intent_ops": [
+        "cast",
         "scatter"
       ],
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.scatter_via_cast_scatter",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4622,6 +4962,8 @@
         "where",
         "scatter"
       ],
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.select_scatter_via_where_scatter",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4649,6 +4991,8 @@
         "where",
         "scatter"
       ],
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.slice_scatter_via_where_scatter",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4676,6 +5020,8 @@
         "const",
         "where"
       ],
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.where_scalar_other_via_const_where",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4703,6 +5049,8 @@
         "const",
         "where"
       ],
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.where_scalar_self_via_const_where",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4730,6 +5078,8 @@
         "gt",
         "where"
       ],
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.where_self",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4757,6 +5107,8 @@
         "matmul",
         "add"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.addmm",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4784,6 +5136,8 @@
         "matmul",
         "add"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.baddbmm",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4812,6 +5166,8 @@
         "cast",
         "matmul"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.bmm_via_cast_matmul",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4836,8 +5192,11 @@
       "next_action": "none",
       "e2e_spec": "cummax1d",
       "intent_ops": [
+        "cast",
         "cummax"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.cummax_via_cast",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4862,8 +5221,11 @@
       "next_action": "none",
       "e2e_spec": "cummin1d",
       "intent_ops": [
+        "cast",
         "cummin"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.cummin_via_cast",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4893,6 +5255,8 @@
         "mul",
         "reduce_sum"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.dot_via_mul_reduce_sum",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4921,6 +5285,8 @@
         "cast",
         "matmul"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.mm_via_cast_matmul",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4950,6 +5316,8 @@
         "mul",
         "reduce_sum"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.vdot",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -4974,8 +5342,12 @@
       "next_action": "none",
       "e2e_spec": "avg_pool2d_nchw",
       "intent_ops": [
-        "avg_pool2d"
+        "cast",
+        "avg_pool2d",
+        "cast"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.avg_pool2d_pre_post_cast",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -5000,8 +5372,12 @@
       "next_action": "none",
       "e2e_spec": "conv1d_ncl",
       "intent_ops": [
-        "conv1d"
+        "cast",
+        "conv1d",
+        "cast"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.conv1d_pre_post_cast",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -5026,8 +5402,12 @@
       "next_action": "none",
       "e2e_spec": "conv2d_nchw",
       "intent_ops": [
-        "conv2d"
+        "cast",
+        "conv2d",
+        "cast"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.conv2d_pre_post_cast",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -5052,8 +5432,12 @@
       "next_action": "none",
       "e2e_spec": "conv3d_ncdhw",
       "intent_ops": [
-        "conv3d"
+        "cast",
+        "conv3d",
+        "cast"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.conv3d_pre_post_cast",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -5078,8 +5462,12 @@
       "next_action": "none",
       "e2e_spec": "conv_depthwise2d_nchw",
       "intent_ops": [
-        "conv_depthwise2d"
+        "cast",
+        "conv_depthwise2d",
+        "cast"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.conv_depthwise2d_pre_post_cast",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -5107,6 +5495,8 @@
         "max_pool2d_with_indices",
         "max_pool2d_with_indices"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.max_pool2d_with_indices",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -5131,8 +5521,12 @@
       "next_action": "none",
       "e2e_spec": "upsample_bicubic2d_aa",
       "intent_ops": [
-        "upsample_bicubic2d_aa"
+        "cast",
+        "upsample_bicubic2d_aa",
+        "cast"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.upsample_bicubic2d_aa_pre_post_cast",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -5157,8 +5551,12 @@
       "next_action": "none",
       "e2e_spec": "upsample_nearest1d_ncl",
       "intent_ops": [
-        "upsample_nearest1d"
+        "cast",
+        "upsample_nearest1d",
+        "cast"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.upsample_nearest1d_pre_post_cast",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -5183,8 +5581,12 @@
       "next_action": "none",
       "e2e_spec": "upsample_nearest2d_nchw",
       "intent_ops": [
-        "upsample_nearest2d"
+        "cast",
+        "upsample_nearest2d",
+        "cast"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.upsample_nearest2d_pre_post_cast",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -5213,6 +5615,8 @@
         "softmax",
         "matmul"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.ScaleDotProductAttention->scaled_dot_product_attention",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -5240,6 +5644,8 @@
         "cast",
         "gather"
       ],
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.embedding_via_cast_gather",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -5268,6 +5674,8 @@
         "softmax",
         "matmul"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.flash_attention_forward->scaled_dot_product_attention",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -5296,6 +5704,8 @@
         "softmax",
         "matmul"
       ],
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.scaled_dot_product_attention_via_matmul_softmax",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -5324,6 +5734,8 @@
         "softmax",
         "matmul"
       ],
+      "mapping_kind": "alias",
+      "intent_pattern_id": "alias.scaled_dot_product_attention_forward->scaled_dot_product_attention",
       "track": "coverage",
       "task_type": "semantic_op",
       "priority": 0,
@@ -6270,9 +6682,9 @@
       "semantic_op": "",
       "family": "workflow",
       "status": "pending",
-      "passes": true,
+      "passes": false,
       "reason_code": "pending_modular_split",
-      "next_action": "none",
+      "next_action": "split_cuda_codegen_modules_wave3",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "backend_compiler",
@@ -6287,12 +6699,7 @@
       "depends_on": [
         "backend_compiler::cpp_codegen_modular_split_wave2_cuda"
       ],
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave3_modsplit_v2/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave3_modsplit_v2/status_converged.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave3_modsplit_v2/backend_compiler_batch_summary.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave3_modsplit_v2/batch_gate_backend_compiler_wave3.json"
-      ],
+      "evidence_paths": [],
       "description": "Continue CUDA cpp_codegen modular split by extracting remaining dispatch and emit blocks into dedicated modules."
     },
     {
@@ -6300,9 +6707,9 @@
       "semantic_op": "",
       "family": "workflow",
       "status": "pending",
-      "passes": true,
+      "passes": false,
       "reason_code": "pending_modular_split",
-      "next_action": "none",
+      "next_action": "split_rvv_codegen_modules_wave3",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "backend_compiler",
@@ -6317,12 +6724,7 @@
       "depends_on": [
         "backend_compiler::cpp_codegen_modular_split_wave2_rvv"
       ],
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave3_modsplit_v2/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave3_modsplit_v2/status_converged.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave3_modsplit_v2/backend_compiler_batch_summary.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave3_modsplit_v2/batch_gate_backend_compiler_wave3.json"
-      ],
+      "evidence_paths": [],
       "description": "Continue RVV cpp_codegen modular split by extracting remaining dispatch and emit blocks into dedicated modules."
     }
   ]

@@ -1,14 +1,14 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-16T20:25:40+00:00",
+  "updated_at": "2026-02-16T20:40:33+00:00",
   "branch": "flaggems",
-  "head_commit": "431b267bb6392bb5d717c6e5b58ef7aa0c5c7ed6",
-  "mode": "maintenance",
+  "head_commit": "12a949d6b50100b17ceb41f18041141fd187bbe9",
+  "mode": "mixed_development",
   "coverage_integrity_phase": "recompute_stale",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/run_summary.json",
   "full196_last_ok": true,
   "full196_validated_commit": "95c2fea682a984e1666c9d4ab9eafb6c6512c046",
-  "full196_commits_since_validated": 33,
+  "full196_commits_since_validated": 36,
   "full196_validated_mode": "auto",
   "full196_validated_scope": "coverage_158_kernels_to_196_semantics",
   "full196_validated_with_rvv_remote": false,
@@ -20,17 +20,17 @@
   },
   "mapping_quality": {
     "coverage_semantic_ops": 196,
-    "single_intent_ops": 100,
-    "multi_intent_ops": 96,
+    "single_intent_ops": 88,
+    "multi_intent_ops": 108,
     "zero_intent_ops": 0,
-    "raw_single_semantic_ratio": 0.5102040816326531,
-    "single_intent_ratio": 0.5102040816326531,
-    "global_unique_single_primitive_count": 74,
-    "global_unique_single_primitive_ratio": 0.37755102040816324,
-    "complex_family_single_semantic_ratio": 0.16901408450704225,
-    "complex_family_single_intent_ratio": 0.16901408450704225,
+    "raw_single_semantic_ratio": 0.4489795918367347,
+    "single_intent_ratio": 0.4489795918367347,
+    "global_unique_single_primitive_count": 62,
+    "global_unique_single_primitive_ratio": 0.3163265306122449,
+    "complex_family_single_semantic_ratio": 0.0,
+    "complex_family_single_intent_ratio": 0.0,
     "complex_family_total": 71,
-    "complex_family_single_intent_ops": 12,
+    "complex_family_single_intent_ops": 0,
     "by_family": {
       "attention_sequence": {
         "total": 5,
@@ -40,8 +40,8 @@
       },
       "conv_pool_interp": {
         "total": 9,
-        "single_intent_ops": 8,
-        "multi_intent_ops": 1,
+        "single_intent_ops": 0,
+        "multi_intent_ops": 9,
         "zero_intent_ops": 0
       },
       "elementwise_broadcast": {
@@ -52,14 +52,14 @@
       },
       "index_scatter_gather": {
         "total": 14,
-        "single_intent_ops": 2,
-        "multi_intent_ops": 12,
+        "single_intent_ops": 0,
+        "multi_intent_ops": 14,
         "zero_intent_ops": 0
       },
       "matmul_linear": {
         "total": 8,
-        "single_intent_ops": 2,
-        "multi_intent_ops": 6,
+        "single_intent_ops": 0,
+        "multi_intent_ops": 8,
         "zero_intent_ops": 0
       },
       "norm_activation": {
@@ -81,15 +81,17 @@
     "catalog_validated": true
   },
   "active_lanes": [
+    "backend_compiler",
     "coverage"
   ],
   "next_focus_by_lane": {
     "backend_compiler": "Continue CUDA/RVV cpp_codegen modular splits and then execute scoped backend waves once full196 force-compile run finishes.",
+    "ir_arch": "Refresh full196 force_compile evidence on HEAD, then continue backend_compiler cpp module split wave.",
     "coverage": "Run full196 force_compile matrix to refresh coverage evidence on HEAD."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260217/backend_cuda_dropout_split_v1/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260217/backend_cuda_dropout_split_v1/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260217/ir_arch_strict_m2_v1/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260217/ir_arch_strict_m2_v1/status_converged.json"
   },
   "lanes": {
     "coverage": {
@@ -105,8 +107,8 @@
       "active_batch_path": "workflow/flaggems/state/active_batch_ir_arch.json"
     },
     "backend_compiler": {
-      "pending": 0,
-      "done": 28,
+      "pending": 2,
+      "done": 26,
       "total": 28,
       "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json"
     }

@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-16T20:25:40+00:00",
+  "updated_at": "2026-02-16T20:40:33+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -11,54 +11,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "431b267 backend: split cuda dropout emitter out of codegen main\nca43599 workflow: record rvv infer split batch and refresh state\n26ceba1 backend: split rvv shape inference dispatch from codegen main\naf0ba04 workflow: record backend schedule-env dedup matrix validation\n6a9dadd workflow: record schedule-env dedup session and refresh state\ne5ef6b4 backend: unify cuda/rvv schedule env parsing in common pipeline utils\n8b5813e workflow: record pipeline-utils refactor session and refresh state\n6850811 backend: deduplicate cuda/rvv pipeline driver helpers via common utils\n4b1004b workflow: record shared cpp build refactor session and refresh state\n3f6f80a backend: refactor cpp codegen build orchestration into shared module\n371cd5a workflow: record kernel-progress logging session and refresh state\n0d4b646 matrix+smoke: emit per-kernel progress and drop ci_gate active-batch alias\n7556ff1 workflow: record legacy-alias cleanup session and refresh status snapshots\n209810f workflow+provider: remove active_batch legacy alias fallback and drop provider_hooks shim\n38c0ea3 workflow: record cli fallback cleanup and refresh session state\nb53ebaf flaggems: remove legacy fallback-policy aliases and harden live progress output\nee27f92 workflow: refresh status/context after ir-arch complexity wave\nba0cc47 ir_arch: reduce complex-family single mappings and tighten m2 ratio to 10%\na436503 workflow: record freshness gate rollout and refresh session state\nfb55f50 workflow: add full196 freshness fields/gates and complexity metrics",
+  "git_log_short": "12a949d ir_arch: enforce strict complexity gates and lane activation\nf604442 ir_arch: refresh mapping complexity from semantic rules in workflow and checks\n2da8b53 workflow: record cuda dropout split batch and refresh state\n431b267 backend: split cuda dropout emitter out of codegen main\nca43599 workflow: record rvv infer split batch and refresh state\n26ceba1 backend: split rvv shape inference dispatch from codegen main\naf0ba04 workflow: record backend schedule-env dedup matrix validation\n6a9dadd workflow: record schedule-env dedup session and refresh state\ne5ef6b4 backend: unify cuda/rvv schedule env parsing in common pipeline utils\n8b5813e workflow: record pipeline-utils refactor session and refresh state\n6850811 backend: deduplicate cuda/rvv pipeline driver helpers via common utils\n4b1004b workflow: record shared cpp build refactor session and refresh state\n3f6f80a backend: refactor cpp codegen build orchestration into shared module\n371cd5a workflow: record kernel-progress logging session and refresh state\n0d4b646 matrix+smoke: emit per-kernel progress and drop ci_gate active-batch alias\n7556ff1 workflow: record legacy-alias cleanup session and refresh status snapshots\n209810f workflow+provider: remove active_batch legacy alias fallback and drop provider_hooks shim\n38c0ea3 workflow: record cli fallback cleanup and refresh session state\nb53ebaf flaggems: remove legacy fallback-policy aliases and harden live progress output\nee27f92 workflow: refresh status/context after ir-arch complexity wave",
   "progress_tail": [
-    {
-      "ts": "2026-02-16T19:55:32+00:00",
-      "commit": "209810fb3f17b9406beebb2777eb5e59804ec08e",
-      "lane": "backend_compiler",
-      "summary": "Removed active_batch legacy alias fallback and deleted provider_hooks compatibility shim; tests now call provider plugins directly.",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/workflow_freshness_ir_complexity_v1/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/workflow_freshness_ir_complexity_v1/status_converged.json",
-      "next_focus": "Wait full196_force_compile_head_v3 completion, then run scoped backend batches for failed kernels and keep legacy-free workflow paths.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260216/workflow_freshness_ir_complexity_v1/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260216/workflow_freshness_ir_complexity_v1/status_converged.json",
-        "tests/frontends/triton/test_flaggems_batch_gate.py",
-        "tests/frontends/triton/test_flaggems_ci_gate.py",
-        "tests/frontends/triton/test_flaggems_matrix_suite_resolution.py",
-        "tests/frontends/triton/test_provider_hooks.py"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/workflow_freshness_ir_complexity_v1",
-      "counts_by_status": {
-        "dual_pass": 196
-      }
-    },
-    {
-      "ts": "2026-02-16T20:00:52+00:00",
-      "commit": "0d4b64640013803bd0c406397480897849a8c760",
-      "lane": "backend_compiler",
-      "summary": "Added per-kernel progress output for RVV/CUDA smoke under matrix stream mode and removed ci_gate --active-batch alias.",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/backend_progress_logging_v1/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/backend_progress_logging_v1/status_converged.json",
-      "next_focus": "Wait full196_force_compile_head_v3 completion, then run scoped backend fixes using new per-kernel progress logs for faster diagnosis.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260216/backend_progress_logging_v1/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_progress_logging_v1/status_converged.json",
-        "tests/backends/cuda/test_cuda_backend_smoke_script.py",
-        "tests/frontends/triton/test_flaggems_ci_gate.py",
-        "tests/frontends/triton/test_flaggems_matrix_suite_resolution.py",
-        "tests/test_backend_codegen_smoke_timings.py"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/backend_progress_logging_v1",
-      "counts_by_status": {}
-    },
     {
       "ts": "2026-02-16T20:05:30+00:00",
       "commit": "3f6f80adaaf816ea5993041392516bd542e70d10",
@@ -199,14 +153,58 @@
         "blocked_backend": 194,
         "dual_pass": 2
       }
+    },
+    {
+      "ts": "2026-02-16T20:32:23+00:00",
+      "commit": "f604442",
+      "lane": "ir_arch",
+      "summary": "Refreshed IR complexity accounting to resolve semantic mappings from rules, eliminating stale registry-intent drift in workflow and ir_arch gate.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_ir_arch.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260217/ir_arch_mapping_refresh_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260217/ir_arch_mapping_refresh_v1/status_converged.json",
+      "next_focus": "Continue IR simplification by reducing raw single-semantic ratio while keeping complex-family ratio at 0; then proceed backend modular splits.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260217/ir_arch_mapping_refresh_v1/macro_composition_report.json",
+        "artifacts/flaggems_matrix/daily/20260217/ir_arch_mapping_refresh_v1/mapping_complexity_report.json",
+        "artifacts/flaggems_matrix/daily/20260217/ir_arch_mapping_refresh_v1/primitive_reuse_report.json",
+        "artifacts/flaggems_matrix/daily/20260217/ir_arch_mapping_refresh_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260217/ir_arch_mapping_refresh_v1/status_converged.json",
+        "tests/frontends/triton/test_flaggems_workflow.py",
+        "tests/intentir/test_mapping_complexity_report.py"
+      ],
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260217/ir_arch_mapping_refresh_v1",
+      "counts_by_status": {}
+    },
+    {
+      "ts": "2026-02-16T20:40:12+00:00",
+      "commit": "12a949d",
+      "lane": "ir_arch",
+      "summary": "Enabled strict ir_arch complexity gates (complex<=10%, global_unique<=40%) and validated m2 run.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_ir_arch.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260217/ir_arch_strict_m2_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260217/ir_arch_strict_m2_v1/status_converged.json",
+      "next_focus": "Refresh full196 force_compile evidence on HEAD, then continue backend_compiler cpp module split wave.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260217/ir_arch_strict_m2_v1/mapping_complexity_report.json",
+        "artifacts/flaggems_matrix/daily/20260217/ir_arch_strict_m2_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260217/ir_arch_strict_m2_v1/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260217/ir_arch_strict_m2_v1",
+      "counts_by_status": {}
     }
   ],
-  "next_focus": "Continue CUDA/RVV cpp_codegen modular splits and then execute scoped backend waves once full196 force-compile run finishes.",
+  "next_focus": "Refresh full196 force_compile evidence on HEAD, then continue backend_compiler cpp module split wave.",
   "active_lanes": [
+    "backend_compiler",
     "coverage"
   ],
   "next_focus_by_lane": {
     "backend_compiler": "Continue CUDA/RVV cpp_codegen modular splits and then execute scoped backend waves once full196 force-compile run finishes.",
+    "ir_arch": "Refresh full196 force_compile evidence on HEAD, then continue backend_compiler cpp module split wave.",
     "coverage": "Run full196 force_compile matrix to refresh coverage evidence on HEAD."
   },
   "known_risks": []
