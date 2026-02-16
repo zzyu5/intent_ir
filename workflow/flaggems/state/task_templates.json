@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_task_templates_v1",
-  "updated_at": "2026-02-15T00:00:00+00:00",
+  "updated_at": "2026-02-16T00:00:00+00:00",
   "tasks": [
     {
       "id": "ir_arch::primitive_catalog_guard",
@@ -724,6 +724,69 @@
         "artifacts/flaggems_matrix/daily/20260216/backend_compiler_stage_breakdown_v1/batch_gate_backend_compiler.json"
       ],
       "description": "Require stage_timing_breakdown artifact for every backend compiler batch to make performance regressions auditable."
+    },
+    {
+      "id": "backend_compiler::cpp_codegen_modular_split_wave2_cuda",
+      "track": "backend_compiler",
+      "task_type": "compilerization",
+      "status": "pending",
+      "passes": false,
+      "priority": 230,
+      "gate_profile": "backend_compiler",
+      "reason_code": "pending_modular_split",
+      "next_action": "split_cuda_codegen_modules",
+      "acceptance": [
+        "cuda_codegen_monolith_further_split_for_attention_index_scatter",
+        "backend_compiler_batch_pass_after_split",
+        "no_codegen_fallback_path"
+      ],
+      "depends_on": [
+        "backend_compiler::cpp_codegen_modular_split_cuda"
+      ],
+      "evidence_paths": [],
+      "description": "Continue CUDA cpp_codegen modularization by extracting attention/index/scatter emission and dispatch helpers into dedicated modules."
+    },
+    {
+      "id": "backend_compiler::cpp_codegen_modular_split_wave2_rvv",
+      "track": "backend_compiler",
+      "task_type": "compilerization",
+      "status": "pending",
+      "passes": false,
+      "priority": 240,
+      "gate_profile": "backend_compiler",
+      "reason_code": "pending_modular_split",
+      "next_action": "split_rvv_codegen_modules",
+      "acceptance": [
+        "rvv_codegen_monolith_further_split_for_attention_index_scatter",
+        "backend_compiler_batch_pass_after_split",
+        "pipeline_stage_contract_preserved"
+      ],
+      "depends_on": [
+        "backend_compiler::cpp_codegen_modular_split_rvv"
+      ],
+      "evidence_paths": [],
+      "description": "Continue RVV cpp_codegen modularization to match CUDA module boundaries and keep stage contracts stable."
+    },
+    {
+      "id": "backend_compiler::stage_timing_breakdown_full196_nightly",
+      "track": "backend_compiler",
+      "task_type": "observability",
+      "status": "pending",
+      "passes": false,
+      "priority": 250,
+      "gate_profile": "backend_compiler",
+      "reason_code": "pending_nightly_stabilization",
+      "next_action": "stabilize_stage_breakdown_full196",
+      "acceptance": [
+        "full196_run_contains_stage_timing_breakdown_with_nonzero_totals",
+        "nightly_gate_consumes_stage_timing_breakdown",
+        "timing_delta_and_stage_breakdown_consistent"
+      ],
+      "depends_on": [
+        "backend_compiler::stage_timing_breakdown_artifact"
+      ],
+      "evidence_paths": [],
+      "description": "Stabilize stage_timing_breakdown production and gate consumption for nightly/full196 coverage runs."
     }
   ]
 }

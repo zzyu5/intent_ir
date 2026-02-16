@@ -1,9 +1,9 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-16T08:48:48+00:00",
+  "updated_at": "2026-02-16T08:51:42+00:00",
   "branch": "flaggems",
-  "head_commit": "95c2fea682a984e1666c9d4ab9eafb6c6512c046",
-  "mode": "maintenance",
+  "head_commit": "61819b6dc6a4a8bef372eccf9770266922ac3eaa",
+  "mode": "mixed_development",
   "coverage_integrity_phase": "recomputed_ok",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/run_summary.json",
   "full196_last_ok": true,
@@ -89,9 +89,9 @@
       "active_batch_path": "workflow/flaggems/state/active_batch_ir_arch.json"
     },
     "backend_compiler": {
-      "pending": 0,
+      "pending": 3,
       "done": 23,
-      "total": 23,
+      "total": 26,
       "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json"
     }
   }
