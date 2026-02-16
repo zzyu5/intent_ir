@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-16T20:40:33+00:00",
+  "updated_at": "2026-02-16T20:47:38+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -11,29 +11,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "12a949d ir_arch: enforce strict complexity gates and lane activation\nf604442 ir_arch: refresh mapping complexity from semantic rules in workflow and checks\n2da8b53 workflow: record cuda dropout split batch and refresh state\n431b267 backend: split cuda dropout emitter out of codegen main\nca43599 workflow: record rvv infer split batch and refresh state\n26ceba1 backend: split rvv shape inference dispatch from codegen main\naf0ba04 workflow: record backend schedule-env dedup matrix validation\n6a9dadd workflow: record schedule-env dedup session and refresh state\ne5ef6b4 backend: unify cuda/rvv schedule env parsing in common pipeline utils\n8b5813e workflow: record pipeline-utils refactor session and refresh state\n6850811 backend: deduplicate cuda/rvv pipeline driver helpers via common utils\n4b1004b workflow: record shared cpp build refactor session and refresh state\n3f6f80a backend: refactor cpp codegen build orchestration into shared module\n371cd5a workflow: record kernel-progress logging session and refresh state\n0d4b646 matrix+smoke: emit per-kernel progress and drop ci_gate active-batch alias\n7556ff1 workflow: record legacy-alias cleanup session and refresh status snapshots\n209810f workflow+provider: remove active_batch legacy alias fallback and drop provider_hooks shim\n38c0ea3 workflow: record cli fallback cleanup and refresh session state\nb53ebaf flaggems: remove legacy fallback-policy aliases and harden live progress output\nee27f92 workflow: refresh status/context after ir-arch complexity wave",
+  "git_log_short": "183b029 backend_compiler: split cuda/rvv cpp_codegen wave3 modules\n008466d workflow: record ir_arch strict gate run and next backend wave\n12a949d ir_arch: enforce strict complexity gates and lane activation\nf604442 ir_arch: refresh mapping complexity from semantic rules in workflow and checks\n2da8b53 workflow: record cuda dropout split batch and refresh state\n431b267 backend: split cuda dropout emitter out of codegen main\nca43599 workflow: record rvv infer split batch and refresh state\n26ceba1 backend: split rvv shape inference dispatch from codegen main\naf0ba04 workflow: record backend schedule-env dedup matrix validation\n6a9dadd workflow: record schedule-env dedup session and refresh state\ne5ef6b4 backend: unify cuda/rvv schedule env parsing in common pipeline utils\n8b5813e workflow: record pipeline-utils refactor session and refresh state\n6850811 backend: deduplicate cuda/rvv pipeline driver helpers via common utils\n4b1004b workflow: record shared cpp build refactor session and refresh state\n3f6f80a backend: refactor cpp codegen build orchestration into shared module\n371cd5a workflow: record kernel-progress logging session and refresh state\n0d4b646 matrix+smoke: emit per-kernel progress and drop ci_gate active-batch alias\n7556ff1 workflow: record legacy-alias cleanup session and refresh status snapshots\n209810f workflow+provider: remove active_batch legacy alias fallback and drop provider_hooks shim\n38c0ea3 workflow: record cli fallback cleanup and refresh session state",
   "progress_tail": [
-    {
-      "ts": "2026-02-16T20:05:30+00:00",
-      "commit": "3f6f80adaaf816ea5993041392516bd542e70d10",
-      "lane": "backend_compiler",
-      "summary": "Refactored CUDA/RVV cpp_driver build orchestration into shared backends.common.cpp_build to remove duplicated CMake/mtime logic.",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/backend_cpp_build_refactor_v1/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/backend_cpp_build_refactor_v1/status_converged.json",
-      "next_focus": "Continue backend compiler modularization while waiting full196_force_compile_head_v3 completion; then run scoped fixes from failed kernels.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260216/backend_cpp_build_refactor_v1/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_cpp_build_refactor_v1/status_converged.json",
-        "tests/backends/cuda/test_cuda_codegen_shim.py",
-        "tests/backends/spmd_rvv/test_rvv_codegen_shim.py",
-        "tests/backends/test_cpp_build.py"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/backend_cpp_build_refactor_v1",
-      "counts_by_status": {}
-    },
     {
       "ts": "2026-02-16T20:09:07+00:00",
       "commit": "68508111b18ac50a22b750f6623601291ce7b2d1",
@@ -195,17 +174,41 @@
       "run_ok": true,
       "run_out_dir": "artifacts/flaggems_matrix/daily/20260217/ir_arch_strict_m2_v1",
       "counts_by_status": {}
+    },
+    {
+      "ts": "2026-02-16T20:47:32+00:00",
+      "commit": "183b029",
+      "lane": "backend_compiler",
+      "summary": "Completed wave3 cpp module split for CUDA/RVV codegen and validated backend smoke on add2d (RVV+CUDA pass).",
+      "batch_ops": [
+        "",
+        ""
+      ],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260217/backend_wave3_cppsplit_smoke_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260217/backend_wave3_cppsplit_smoke_v1/status_converged.json",
+      "next_focus": "Continue backend wave3 by splitting remaining dispatch/emit blocks and then run a wider backend kernel batch before full196 refresh.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260217/backend_wave3_cppsplit_smoke_v1/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260217/backend_wave3_cppsplit_smoke_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260217/backend_wave3_cppsplit_smoke_v1/stage_timing_breakdown.json",
+        "artifacts/flaggems_matrix/daily/20260217/backend_wave3_cppsplit_smoke_v1/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260217/backend_wave3_cppsplit_smoke_v1",
+      "counts_by_status": {
+        "blocked_backend": 195,
+        "dual_pass": 1
+      }
     }
   ],
-  "next_focus": "Refresh full196 force_compile evidence on HEAD, then continue backend_compiler cpp module split wave.",
+  "next_focus": "Continue backend wave3 by splitting remaining dispatch/emit blocks and then run a wider backend kernel batch before full196 refresh.",
   "active_lanes": [
-    "backend_compiler",
-    "coverage"
+    "backend_compiler"
   ],
   "next_focus_by_lane": {
-    "backend_compiler": "Continue CUDA/RVV cpp_codegen modular splits and then execute scoped backend waves once full196 force-compile run finishes.",
-    "ir_arch": "Refresh full196 force_compile evidence on HEAD, then continue backend_compiler cpp module split wave.",
-    "coverage": "Run full196 force_compile matrix to refresh coverage evidence on HEAD."
+    "backend_compiler": "Continue backend wave3 by splitting remaining dispatch/emit blocks and then run a wider backend kernel batch before full196 refresh.",
+    "ir_arch": "Refresh full196 force_compile evidence on HEAD, then continue backend_compiler cpp module split wave."
   },
   "known_risks": []
 }

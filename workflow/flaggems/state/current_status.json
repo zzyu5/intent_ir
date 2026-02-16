@@ -1,15 +1,15 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-16T20:40:33+00:00",
+  "updated_at": "2026-02-16T20:47:38+00:00",
   "branch": "flaggems",
-  "head_commit": "12a949d6b50100b17ceb41f18041141fd187bbe9",
+  "head_commit": "183b0296e03e51d0dc314f3077628584d32df276",
   "mode": "mixed_development",
-  "coverage_integrity_phase": "recompute_stale",
-  "full196_last_run": "artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/run_summary.json",
-  "full196_last_ok": true,
-  "full196_validated_commit": "95c2fea682a984e1666c9d4ab9eafb6c6512c046",
-  "full196_commits_since_validated": 36,
-  "full196_validated_mode": "auto",
+  "coverage_integrity_phase": "recomputed_failed",
+  "full196_last_run": "artifacts/flaggems_matrix/daily/20260216/full196_force_compile_head_v3/run_summary.json",
+  "full196_last_ok": false,
+  "full196_validated_commit": "b53ebafed0875fcc69f456f17bc9d7997de67370",
+  "full196_commits_since_validated": null,
+  "full196_validated_mode": "force_compile",
   "full196_validated_scope": "coverage_158_kernels_to_196_semantics",
   "full196_validated_with_rvv_remote": false,
   "coverage": {
@@ -81,17 +81,15 @@
     "catalog_validated": true
   },
   "active_lanes": [
-    "backend_compiler",
-    "coverage"
+    "backend_compiler"
   ],
   "next_focus_by_lane": {
-    "backend_compiler": "Continue CUDA/RVV cpp_codegen modular splits and then execute scoped backend waves once full196 force-compile run finishes.",
-    "ir_arch": "Refresh full196 force_compile evidence on HEAD, then continue backend_compiler cpp module split wave.",
-    "coverage": "Run full196 force_compile matrix to refresh coverage evidence on HEAD."
+    "backend_compiler": "Continue backend wave3 by splitting remaining dispatch/emit blocks and then run a wider backend kernel batch before full196 refresh.",
+    "ir_arch": "Refresh full196 force_compile evidence on HEAD, then continue backend_compiler cpp module split wave."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260217/ir_arch_strict_m2_v1/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260217/ir_arch_strict_m2_v1/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260217/backend_wave3_cppsplit_smoke_v1/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260217/backend_wave3_cppsplit_smoke_v1/status_converged.json"
   },
   "lanes": {
     "coverage": {
