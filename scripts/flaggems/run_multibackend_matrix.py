@@ -264,9 +264,10 @@ def main() -> None:
     seed_cache_dir.mkdir(parents=True, exist_ok=True)
 
     stage_results: list[dict[str, Any]] = []
+    explicit_kernel_filter = [str(k).strip() for k in (args.kernel or []) if str(k).strip()]
     effective_suite, kernel_filter = _resolve_suite_and_kernel_filter(
         requested_suite=str(args.suite),
-        requested_kernels=[str(k) for k in (args.kernel or [])],
+        requested_kernels=list(explicit_kernel_filter),
         flaggems_opset=str(args.flaggems_opset),
         backend_target=str(args.backend_target),
     )
@@ -514,7 +515,7 @@ def main() -> None:
     _record("converge", rc, out, err, extra={"cmd": cmd, "json_path": str(converged)})
 
     coverage_integrity = out_dir / "coverage_integrity.json"
-    full_coverage_run = (str(effective_suite) == "coverage") and (len(kernel_filter) == 0)
+    full_coverage_run = (str(effective_suite) == "coverage") and (len(explicit_kernel_filter) == 0)
     if converged.is_file() and full_coverage_run:
         cmd = [
             sys.executable,

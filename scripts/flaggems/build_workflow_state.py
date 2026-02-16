@@ -132,13 +132,16 @@ def _classify_full196_run(run_summary_path: Path | None) -> tuple[bool, bool | N
     if not run_summary:
         return False, None
     suite = str(run_summary.get("suite") or "").strip()
-    kernel_filter = list(run_summary.get("kernel_filter") or [])
     scope_kernels = list(run_summary.get("scope_kernels") or [])
-    if suite != "coverage" or bool(kernel_filter) or (len(scope_kernels) == 0):
+    if suite != "coverage" or (len(scope_kernels) == 0):
         return False, None
     stages = [s for s in list(run_summary.get("stages") or []) if isinstance(s, dict)]
     coverage_stage = next((s for s in stages if str(s.get("stage") or "") == "coverage_integrity"), None)
     if coverage_stage is None:
+        return False, None
+    if str(coverage_stage.get("reason_code") or "").strip() == "skipped_partial_scope":
+        return False, None
+    if "full_coverage_run" in coverage_stage and not bool(coverage_stage.get("full_coverage_run")):
         return False, None
     coverage_json = _resolve_artifact(str(coverage_stage.get("json_path") or ""))
     coverage_payload = _load_json_if_exists(coverage_json)

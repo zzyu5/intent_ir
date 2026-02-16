@@ -77,3 +77,148 @@ def test_write_bin_respects_declared_dtype_over_bool_array(tmp_path: Path) -> No
     # 4 elements -> 16 bytes for f32 / i32 payloads.
     assert out_f32.stat().st_size == 16
     assert out_i32.stat().st_size == 16
+
+
+def test_extract_buffer_declared_dtypes_parses_generated_c() -> None:
+    mod = _load_module()
+    c_src = """
+IntentirBufferDesc inputs[] = {
+  {"A", (void**)&t_A, (size_t)(sizeof(float) * (size_t)8), INTENTIR_DTYPE_F32},
+};
+IntentirBufferDesc outputs[] = {
+  {"out", (void**)&t_out, (size_t)(sizeof(uint8_t) * (size_t)8), INTENTIR_DTYPE_U8},
+};
+""".strip()
+    got = mod._extract_buffer_declared_dtypes(c_src)
+    assert got["A"] == "f32"
+    assert got["out"] == "u8"
+
+
+def test_extract_buffer_declared_dtypes_parses_integer_tokens() -> None:
+    mod = _load_module()
+    c_src = """
+IntentirBufferDesc inputs[] = {
+  {"row_idx", (void**)&t_row_idx, (size_t)(sizeof(int32_t) * (size_t)16), INTENTIR_DTYPE_I32},
+};
+IntentirBufferDesc outputs[] = {
+  {"count", (void**)&t_count, (size_t)(sizeof(int64_t) * (size_t)1), INTENTIR_DTYPE_I64},
+};
+""".strip()
+    got = mod._extract_buffer_declared_dtypes(c_src)
+    assert got["row_idx"] == "i32"
+    assert got["count"] == "i64"
+
+
+def test_run_one_keep_tmp_keeps_directory(monkeypatch, tmp_path: Path) -> None:
+    mod = _load_module()
+
+    artifact = tmp_path / "artifacts"
+    artifact.mkdir(parents=True, exist_ok=True)
+    (artifact / "k.json").write_text(
+        """
+        {
+          "intent": {
+            "name": "f",
+            "tensors": {
+              "x": {"dtype": "f32", "shape": [2]},
+              "y": {"dtype": "f32", "shape": [2]}
+            },
+            "ops": [{"op":"identity","inputs":["x"],"attrs":{},"output":"y"}],
+            "outputs": ["y"]
+          },
+          "baseline": {"shapes": {"M": 2}}
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+    np.savez(artifact / "k.baseline.npz", x=np.ones((2,), dtype=np.float32), y=np.ones((2,), dtype=np.float32))
+
+    def _fake_lower(*args, **kwargs):
+        _ = args, kwargs
+        return "int main(){return 0;}"
+
+    class _P:
+        def __init__(self, rc: int, out: str = "", err: str = ""):
+            self.returncode = rc
+            self.stdout = out
+            self.stderr = err
+
+    def _fake_run(*args, **kwargs):
+        _ = args, kwargs
+        return _P(1, "", "compile error")
+
+    monkeypatch.setattr(mod, "lower_intent_to_c_with_files", _fake_lower)
+    monkeypatch.setattr(mod.subprocess, "run", _fake_run)
+
+    result = mod.run_one("k", frontend="triton", triton_provider="native", artifact_dir=str(artifact), keep_tmp=True)
+    tmpdir = Path(str(result.get("tmpdir")))
+    assert tmpdir.exists()
+    assert (tmpdir / "main.c").exists()
+
+
+def test_run_one_prefers_declared_buffer_dtype_when_writing_bins(monkeypatch, tmp_path: Path) -> None:
+    mod = _load_module()
+
+    artifact = tmp_path / "artifacts"
+    artifact.mkdir(parents=True, exist_ok=True)
+    (artifact / "k.json").write_text(
+        """
+        {
+          "intent": {
+            "name": "f",
+            "tensors": {
+              "x": {"dtype": "f32", "shape": [4]},
+              "y": {"dtype": "i32", "shape": [4]}
+            },
+            "ops": [{"op":"identity","inputs":["x"],"attrs":{},"output":"y"}],
+            "outputs": ["y"]
+          },
+          "baseline": {"shapes": {"N": 4}}
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+    np.savez(
+        artifact / "k.baseline.npz",
+        x=np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32),
+        y=np.array([True, False, True, False], dtype=np.bool_),
+    )
+
+    c_src = """
+IntentirBufferDesc inputs[] = {
+  {"x", (void**)&t_x, (size_t)(sizeof(float) * (size_t)4), INTENTIR_DTYPE_F32},
+};
+IntentirBufferDesc outputs[] = {
+  {"y", (void**)&t_y, (size_t)(sizeof(uint8_t) * (size_t)4), INTENTIR_DTYPE_U8},
+};
+int main(){return 0;}
+""".strip()
+
+    def _fake_lower(*args, **kwargs):
+        _ = args, kwargs
+        return c_src
+
+    class _P:
+        def __init__(self, rc: int, out: str = "", err: str = ""):
+            self.returncode = rc
+            self.stdout = out
+            self.stderr = err
+
+    def _fake_run(*args, **kwargs):
+        _ = args, kwargs
+        return _P(1, "", "compile error")
+
+    seen: dict[str, str] = {}
+    real_write = mod._write_bin
+
+    def _spy_write(path, arr, dtype):
+        seen[Path(path).name] = str(dtype)
+        return real_write(path, arr, dtype)
+
+    monkeypatch.setattr(mod, "lower_intent_to_c_with_files", _fake_lower)
+    monkeypatch.setattr(mod.subprocess, "run", _fake_run)
+    monkeypatch.setattr(mod, "_write_bin", _spy_write)
+
+    _ = mod.run_one("k", frontend="triton", triton_provider="native", artifact_dir=str(artifact), keep_tmp=False)
+    assert seen.get("x.bin") == "f32"
+    assert seen.get("y_ref.bin") == "u8"

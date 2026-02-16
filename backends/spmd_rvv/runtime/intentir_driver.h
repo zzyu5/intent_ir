@@ -10,6 +10,10 @@ extern "C" {
 typedef enum IntentirDType {
   INTENTIR_DTYPE_F32 = 0,
   INTENTIR_DTYPE_U8 = 1,
+  INTENTIR_DTYPE_I8 = 2,
+  INTENTIR_DTYPE_I16 = 3,
+  INTENTIR_DTYPE_I32 = 4,
+  INTENTIR_DTYPE_I64 = 5,
 } IntentirDType;
 
 typedef struct IntentirBufferDesc {
@@ -31,4 +35,3 @@ void intentir_maybe_bench(IntentirComputeFn compute, double matmul_flops_total);
 #endif
 
 #endif  // INTENTIR_DRIVER_H
-

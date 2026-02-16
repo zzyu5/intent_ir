@@ -1392,9 +1392,10 @@ void emit_kron_2d(CodeWriter& w, const std::string& out, const std::string& a, c
 }
 
 void emit_reduce_sum(CodeWriter& w, const std::string& out, const std::string& a, const std::vector<int64_t>& in_shape, const std::vector<int64_t>& out_shape,
-                     const std::vector<int>& dims, bool keepdims, std::optional<double> scale) {
+                     const std::vector<int>& dims, bool keepdims, std::optional<double> scale, const std::string& out_dtype) {
   const int r = static_cast<int>(in_shape.size());
   if (r > 4) fail("reduce_sum supports rank<=4");
+  const std::string out_ct = ctype_for_dtype(out_dtype);
   std::vector<int> dims_set = dims;
   std::vector<int64_t> D = in_shape;
   std::vector<int64_t> OD = out_shape;
@@ -1406,7 +1407,7 @@ void emit_reduce_sum(CodeWriter& w, const std::string& out, const std::string& a
   }
 
   // Fast path: 2D row-reduction over the last axis.
-  if (r == 2 && dims_set.size() == 1 && dims_set[0] == 1) {
+  if (out_ct == "float" && r == 2 && dims_set.size() == 1 && dims_set[0] == 1) {
     int64_t M = D[0], K = D[1];
     std::string scale_val = scale.has_value() ? c_float(scale.value()) : c_float(1.0);
     w.line("intentir_reduce_sum_2d_axis1_f32(" + a + ", " + out + ", " + std::to_string(M) + ", " + std::to_string(K) + ", " + scale_val +
@@ -1415,7 +1416,7 @@ void emit_reduce_sum(CodeWriter& w, const std::string& out, const std::string& a
   }
 
   // Fast path: 4D reduce over the innermost 2 dims (e.g., [N,G,group_size,HW] -> [N,G,1,1]).
-  if (r == 4 && keepdims && dims_set.size() == 2) {
+  if (out_ct == "float" && r == 4 && keepdims && dims_set.size() == 2) {
     std::vector<int> ds = dims_set;
     std::sort(ds.begin(), ds.end());
     if (ds[0] == 2 && ds[1] == 3 && OD.size() == 4 && OD[0] == D[0] && OD[1] == D[1] && OD[2] == 1 && OD[3] == 1) {
@@ -1456,7 +1457,7 @@ void emit_reduce_sum(CodeWriter& w, const std::string& out, const std::string& a
     w.line("}");
   }
   if (scale.has_value()) w.line("acc *= (double)" + c_float(scale.value()) + ";");
-  w.line(out + "[" + out_idx + "] = (float)acc;");
+  w.line(out + "[" + out_idx + "] = (" + out_ct + ")acc;");
   for (int i = 0; i < out_rank; ++i) {
     w.dedent();
     w.line("}");
@@ -2300,12 +2301,11 @@ struct CProgramEmitter {
 		        int64_t n = numel(shp);
 		        std::string ct = ctype_for_dtype(dtype_env.at(name));
 		        std::string dt = dtype_env.at(name);
-		        const bool byte_buf = (dt == "bool" || dt == "i1" || dt == "u8" || dt == "i8" || dt == "i16" || dt == "i32" || dt == "i64");
 		        const std::string& var = v(name);
 		        std::string bytes_expr = "sizeof(" + ct + ") * (size_t)" + std::to_string(n);
 		        if (dt == "bool" || dt == "i1") bytes_expr = "sizeof(uint8_t) * (size_t)" + std::to_string(n);
 		        w.line("{\"" + name + "\", (void**)&" + var + ", (size_t)(" + bytes_expr + "), " +
-		               (byte_buf ? "INTENTIR_DTYPE_U8" : "INTENTIR_DTYPE_F32") + "},");
+		               buffer_desc_dtype_for_dtype(dt) + "},");
 		      }
 	      w.dedent();
 	      w.line("};");
@@ -2410,12 +2410,11 @@ struct CProgramEmitter {
 		          int64_t n = numel(shp);
 		          std::string ct = ctype_for_dtype(dtype_env.at(name));
 		          std::string dt = dtype_env.at(name);
-		          const bool byte_buf = (dt == "bool" || dt == "i1" || dt == "u8" || dt == "i8" || dt == "i16" || dt == "i32" || dt == "i64");
 		          const std::string& var = v(name);
 		          std::string bytes_expr = "sizeof(" + ct + ") * (size_t)" + std::to_string(n);
 		          if (dt == "bool" || dt == "i1") bytes_expr = "sizeof(uint8_t) * (size_t)" + std::to_string(n);
 		          w.line("{\"" + name + "\", (void**)&" + var + ", (size_t)(" + bytes_expr + "), " +
-		                 (byte_buf ? "INTENTIR_DTYPE_U8" : "INTENTIR_DTYPE_F32") + "},");
+		                 buffer_desc_dtype_for_dtype(dt) + "},");
 		        }
 	        w.dedent();
 	        w.line("};");
@@ -3666,7 +3665,7 @@ struct CProgramEmitter {
 	        bool keepdims = op.attrs.value("keepdims", false);
 	        std::optional<double> scale;
 	        if (op.attrs.contains("scale")) scale = resolve_const_value(op.attrs["scale"], bindings);
-	        emit_reduce_sum(w, out_var, v(op.inputs[0]), shape_env.at(op.inputs[0]), out_shape, dims, keepdims, scale);
+	        emit_reduce_sum(w, out_var, v(op.inputs[0]), shape_env.at(op.inputs[0]), out_shape, dims, keepdims, scale, dtype_env.at(out));
 	      } else if (op.op == "reduce_prod") {
         std::vector<int> dims;
         if (op.attrs.contains("axes")) {

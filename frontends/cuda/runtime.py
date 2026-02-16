@@ -419,21 +419,42 @@ def _nvrtc_compile_ptx(
         opts.append(f"--include-path={inc}".encode("utf-8"))
 
     # NVRTC runs in device compilation mode: strip host-only helpers that may be
-    # present in nvcc-built modules (e.g., variant introspection globals).
+    # present in nvcc-built modules (e.g., variant/dispatch introspection globals).
     drop_exact = {
         "#include <cstdlib>",
         "#include <cstdio>",
+        "#include <cuda.h>",
+        "#include <cuda_runtime.h>",
     }
+    drop_substrings = (
+        "intentir_cuda_selected_variant",
+        "intentir_cuda_selected_tag",
+        "intentir_cuda_selected_variant_idx",
+        "intentir_cuda_selected_variant_tag",
+        "intentir_cuda_variant_count",
+        "intentir_cuda_dispatch_total_ms",
+        "intentir_cuda_dispatch_evals",
+        "intentir_cuda_get_dispatch_total_ms",
+        "intentir_cuda_get_dispatch_evals",
+        "intentir_cuda_has_evidence",
+        "intentir_cuda_contract_level",
+        "intentir_cuda_specialize_dims",
+        "intentir_cuda_fastpath_enabled",
+        "intentir_cuda_get_fastpath_enabled",
+    )
     out_lines: list[str] = []
-    for line in str(cuda_src).splitlines():
+    src_text = str(cuda_src)
+    for line in src_text.splitlines():
         s = line.strip()
         if s in drop_exact:
             continue
-        if "intentir_cuda_selected_variant" in line or "intentir_cuda_selected_tag" in line:
-            continue
-        if "intentir_cuda_selected_variant_idx" in line or "intentir_cuda_selected_variant_tag" in line:
+        if any(token in line for token in drop_substrings):
             continue
         out_lines.append(line)
+    # Some generated kernels rely on int64_t but don't include stdint themselves.
+    # NVCC wrapper path injects this include automatically; keep NVRTC behavior aligned.
+    if not any("#include <stdint.h>" in line or "#include <cstdint>" in line for line in out_lines):
+        out_lines.insert(0, "#include <stdint.h>")
     src_bytes = ("\n".join(out_lines) + "\n").encode("utf-8")
     name_bytes = str(prog_name).encode("utf-8")
     err, prog = nvrtc.nvrtcCreateProgram(src_bytes, name_bytes, 0, None, None)

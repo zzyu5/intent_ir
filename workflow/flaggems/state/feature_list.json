@@ -1,13 +1,11 @@
 {
   "schema_version": "flaggems_feature_list_v2",
-  "generated_at": "2026-02-16T01:32:37+00:00",
+  "generated_at": "2026-02-16T05:35:14+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
-      "dual_pass": 180,
-      "blocked_backend": 15,
-      "cuda_only": 1
+      "dual_pass": 196
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -224,10 +222,10 @@
       "id": "flaggems::angle",
       "semantic_op": "angle",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "backend_missing_ops",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "angle2d",
       "intent_ops": [
         "angle"
@@ -806,10 +804,10 @@
       "id": "flaggems::diag",
       "semantic_op": "diag",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "backend_missing_ops",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "diag2d",
       "intent_ops": [
         "diag"
@@ -832,10 +830,10 @@
       "id": "flaggems::diag_embed",
       "semantic_op": "diag_embed",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "backend_missing_ops",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "diag_embed2d",
       "intent_ops": [
         "diag_embed"
@@ -2212,10 +2210,10 @@
       "id": "flaggems::nan_to_num",
       "semantic_op": "nan_to_num",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "backend_missing_ops",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "nan_to_num2d",
       "intent_ops": [
         "nan_to_num"
@@ -2505,9 +2503,9 @@
       "id": "flaggems::per_token_group_quant_fp8",
       "semantic_op": "per_token_group_quant_fp8",
       "family": "elementwise_broadcast",
-      "status": "cuda_only",
-      "passes": false,
-      "reason_code": "rvv_target_missing_ops",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "per_token_group_quant_fp8_2d",
       "intent_ops": [
@@ -2714,10 +2712,10 @@
       "id": "flaggems::repeat",
       "semantic_op": "repeat",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "backend_missing_ops",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "repeat2d",
       "intent_ops": [
         "repeat"
@@ -2740,10 +2738,10 @@
       "id": "flaggems::repeat_interleave_self_int",
       "semantic_op": "repeat_interleave_self_int",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "backend_missing_ops",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "repeat_interleave_self_int1d",
       "intent_ops": [
         "repeat_interleave"
@@ -2766,10 +2764,10 @@
       "id": "flaggems::repeat_interleave_self_tensor",
       "semantic_op": "repeat_interleave_self_tensor",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "backend_missing_ops",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "repeat_interleave_self_tensor1d",
       "intent_ops": [
         "repeat_interleave"
@@ -2792,10 +2790,10 @@
       "id": "flaggems::repeat_interleave_tensor",
       "semantic_op": "repeat_interleave_tensor",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "backend_missing_ops",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "repeat_interleave_tensor1d",
       "intent_ops": [
         "repeat_interleave"
@@ -3107,10 +3105,10 @@
       "id": "flaggems::tile",
       "semantic_op": "tile",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "backend_missing_ops",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "tile2d",
       "intent_ops": [
         "tile"
@@ -3159,10 +3157,10 @@
       "id": "flaggems::topk",
       "semantic_op": "topk",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "backend_missing_ops",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "topk2d",
       "intent_ops": [
         "topk"
@@ -3185,10 +3183,10 @@
       "id": "flaggems::trace",
       "semantic_op": "trace",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "backend_missing_ops",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "trace2d",
       "intent_ops": [
         "trace"
@@ -3211,10 +3209,10 @@
       "id": "flaggems::triu",
       "semantic_op": "triu",
       "family": "elementwise_broadcast",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "backend_missing_ops",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "triu2d",
       "intent_ops": [
         "triu"
@@ -3535,10 +3533,10 @@
       "id": "flaggems::count_nonzero",
       "semantic_op": "count_nonzero",
       "family": "reduction",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "backend_missing_ops",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "count_nonzero2d",
       "intent_ops": [
         "count_nonzero"
@@ -3808,10 +3806,10 @@
       "id": "flaggems::std",
       "semantic_op": "std",
       "family": "reduction",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "backend_missing_ops",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "std2d",
       "intent_ops": [
         "var",
@@ -4041,10 +4039,10 @@
       "id": "flaggems::log_sigmoid",
       "semantic_op": "log_sigmoid",
       "family": "norm_activation",
-      "status": "blocked_backend",
-      "passes": false,
-      "reason_code": "backend_missing_ops",
-      "next_action": "backend_lowering",
+      "status": "dual_pass",
+      "passes": true,
+      "reason_code": "runtime_dual_backend_pass",
+      "next_action": "none",
       "e2e_spec": "log_sigmoid2d",
       "intent_ops": [
         "sigmoid",

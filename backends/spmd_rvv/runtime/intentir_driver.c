@@ -1,5 +1,51 @@
 #include "intentir_driver.h"
 
+static int intentir_compare_i32(const char* name, const int32_t* got, const int32_t* ref, size_t n) {
+  size_t worst_i = 0;
+  int mismatch = 0;
+  for (size_t i = 0; i < n; ++i) {
+    if (got[i] != ref[i]) {
+      mismatch = 1;
+      worst_i = i;
+      break;
+    }
+  }
+  if (!mismatch) {
+    printf("%s: ok=1 max_abs=0 max_rel=0 worst_i=0 got=0 ref=0\n", name ? name : "out");
+    return 1;
+  }
+  printf(
+      "%s: ok=0 max_abs=1 max_rel=1 worst_i=%zu got=%d ref=%d\n",
+      name ? name : "out",
+      worst_i,
+      got[worst_i],
+      ref[worst_i]);
+  return 0;
+}
+
+static int intentir_compare_i64(const char* name, const int64_t* got, const int64_t* ref, size_t n) {
+  size_t worst_i = 0;
+  int mismatch = 0;
+  for (size_t i = 0; i < n; ++i) {
+    if (got[i] != ref[i]) {
+      mismatch = 1;
+      worst_i = i;
+      break;
+    }
+  }
+  if (!mismatch) {
+    printf("%s: ok=1 max_abs=0 max_rel=0 worst_i=0 got=0 ref=0\n", name ? name : "out");
+    return 1;
+  }
+  printf(
+      "%s: ok=0 max_abs=1 max_rel=1 worst_i=%zu got=%lld ref=%lld\n",
+      name ? name : "out",
+      worst_i,
+      (long long)got[worst_i],
+      (long long)ref[worst_i]);
+  return 0;
+}
+
 int intentir_alloc(IntentirBufferDesc* bufs, size_t n) {
   for (size_t i = 0; i < n; ++i) {
     IntentirBufferDesc* b = &bufs[i];
@@ -45,10 +91,22 @@ int intentir_compare_outputs_with_refs(const IntentirBufferDesc* outputs, size_t
       return 0;
     }
     int ok = 0;
-    if (b->dtype == INTENTIR_DTYPE_U8) {
-      ok = intentir_compare_u8(b->name, (const uint8_t*)(*b->ptr), (const uint8_t*)ref, b->bytes);
-    } else {
-      ok = intentir_compare_f32(b->name, (const float*)(*b->ptr), (const float*)ref, b->bytes / sizeof(float), atol, rtol);
+    switch (b->dtype) {
+      case INTENTIR_DTYPE_U8:
+      case INTENTIR_DTYPE_I8:
+      case INTENTIR_DTYPE_I16:
+        ok = intentir_compare_u8(b->name, (const uint8_t*)(*b->ptr), (const uint8_t*)ref, b->bytes);
+        break;
+      case INTENTIR_DTYPE_I32:
+        ok = intentir_compare_i32(b->name, (const int32_t*)(*b->ptr), (const int32_t*)ref, b->bytes / sizeof(int32_t));
+        break;
+      case INTENTIR_DTYPE_I64:
+        ok = intentir_compare_i64(b->name, (const int64_t*)(*b->ptr), (const int64_t*)ref, b->bytes / sizeof(int64_t));
+        break;
+      case INTENTIR_DTYPE_F32:
+      default:
+        ok = intentir_compare_f32(b->name, (const float*)(*b->ptr), (const float*)ref, b->bytes / sizeof(float), atol, rtol);
+        break;
     }
     if (!ok) ok_all = 0;
     free(ref);

@@ -209,3 +209,65 @@ def test_matrix_skips_backend_stages_when_provider_report_missing(
     assert converge_cmd[converge_cmd.index("--scope-semantic-ops") + 1] == "tile"
     summary = json.loads((out_dir / "run_summary.json").read_text(encoding="utf-8"))
     assert summary["missing_provider_reports"] == ["tile2d"]
+
+
+def test_matrix_marks_full_coverage_run_when_suite_coverage_without_explicit_kernels(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    mod = _load_matrix_module()
+    recorded_cmds: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], *, cwd: Path):
+        _ = cwd
+        recorded_cmds.append(list(cmd))
+        if "--out" in cmd:
+            out = Path(cmd[cmd.index("--out") + 1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            payload: dict[str, object] = {"results": []}
+            if "scripts/flaggems/converge_status.py" in cmd:
+                payload = {
+                    "entries": [],
+                    "scoped_entries": [],
+                    "scoped_entries_active": [],
+                    "counts_global": {"dual_pass": 2},
+                }
+            if "scripts/flaggems/recompute_coverage_integrity.py" in cmd:
+                payload = {"coverage_integrity_ok": True}
+            out.write_text(json.dumps(payload), encoding="utf-8")
+        return 0, "", ""
+
+    monkeypatch.setattr(mod, "_run", _fake_run)
+    monkeypatch.setattr(mod, "_suite_kernel_names", lambda **kwargs: ["a2d", "b2d"])
+    monkeypatch.setattr(mod, "_load_active_semantic_ops", lambda _: [])
+    pipeline_dir = tmp_path / "pipeline"
+    pipeline_dir.mkdir(parents=True, exist_ok=True)
+    (pipeline_dir / "a2d.json").write_text(json.dumps({"diff": {"ok": True}}), encoding="utf-8")
+    (pipeline_dir / "b2d.json").write_text(json.dumps({"diff": {"ok": True}}), encoding="utf-8")
+    out_dir = tmp_path / "matrix_out"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_multibackend_matrix.py",
+            "--suite",
+            "coverage",
+            "--skip-pipeline",
+            "--active-batch",
+            str(tmp_path / "active.json"),
+            "--pipeline-out-dir",
+            str(pipeline_dir),
+            "--seed-cache-dir",
+            str(tmp_path / "seed"),
+            "--out-dir",
+            str(out_dir),
+        ],
+    )
+    with pytest.raises(SystemExit) as exc:
+        mod.main()
+    assert int(exc.value.code) == 0
+    assert any("scripts/flaggems/recompute_coverage_integrity.py" in c for c in recorded_cmds)
+    summary = json.loads((out_dir / "run_summary.json").read_text(encoding="utf-8"))
+    stage = next((s for s in summary["stages"] if s["stage"] == "coverage_integrity"), None)
+    assert stage is not None
+    assert stage.get("reason_code") != "skipped_partial_scope"

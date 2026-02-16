@@ -49,6 +49,15 @@ inline std::string typecode_for_dtype(const std::string& dt) {
   return "INTENTIR_TYPE_F32";
 }
 
+inline std::string buffer_desc_dtype_for_dtype(const std::string& dt) {
+  if (dt == "bool" || dt == "i1" || dt == "u8") return "INTENTIR_DTYPE_U8";
+  if (dt == "i8") return "INTENTIR_DTYPE_I8";
+  if (dt == "i16") return "INTENTIR_DTYPE_I16";
+  if (dt == "i32") return "INTENTIR_DTYPE_I32";
+  if (dt == "i64") return "INTENTIR_DTYPE_I64";
+  return "INTENTIR_DTYPE_F32";
+}
+
 inline std::string flat_idx_expr(const std::vector<std::string>& vars, const std::vector<int64_t>& shape) {
   const int r = static_cast<int>(shape.size());
   if (r == 0) return "0";

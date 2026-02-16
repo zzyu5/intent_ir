@@ -14,6 +14,7 @@ requiring an RVV host.
 from __future__ import annotations
 
 import argparse
+import re
 import json
 import shutil
 import subprocess
@@ -223,6 +224,42 @@ def _write_bin(path: Path, arr: np.ndarray, dtype: str) -> None:
     path.write_bytes(raw)
 
 
+_BUF_DESC_RE = re.compile(r'\{\s*"(?P<name>[^"]+)"\s*,.*?(?P<dtype>INTENTIR_DTYPE_[A-Z0-9_]+)')
+
+
+def _dtype_from_buffer_token(tok: str) -> str | None:
+    m = {
+        "INTENTIR_DTYPE_F16": "f16",
+        "INTENTIR_DTYPE_BF16": "bf16",
+        "INTENTIR_DTYPE_F32": "f32",
+        "INTENTIR_DTYPE_F64": "f64",
+        "INTENTIR_DTYPE_I8": "i8",
+        "INTENTIR_DTYPE_U8": "u8",
+        "INTENTIR_DTYPE_I16": "i16",
+        "INTENTIR_DTYPE_I32": "i32",
+        "INTENTIR_DTYPE_I64": "i64",
+        "INTENTIR_DTYPE_BOOL": "bool",
+        "INTENTIR_DTYPE_I1": "i1",
+    }
+    return m.get(str(tok))
+
+
+def _extract_buffer_declared_dtypes(c_src: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for line in str(c_src).splitlines():
+        s = line.strip()
+        if not s.startswith('{"') or "INTENTIR_DTYPE_" not in s:
+            continue
+        m = _BUF_DESC_RE.search(s)
+        if not m:
+            continue
+        name = str(m.group("name"))
+        dt = _dtype_from_buffer_token(str(m.group("dtype")))
+        if dt:
+            out[name] = dt
+    return out
+
+
 def run_one(
     kernel: str,
     *,
@@ -328,7 +365,13 @@ def run_one(
     tmp_ctx = tempfile.TemporaryDirectory(prefix=f"intentir_codegen_smoke_{kernel}_")
     td = Path(tmp_ctx.name)
     try:
-        # Write inputs / reference outputs.
+        t_lower = perf_counter()
+        c_src = lower_intent_to_c_with_files(intent_codegen, shape_bindings=bindings, atol=float(atol), rtol=float(rtol))
+        lower_ms = (perf_counter() - t_lower) * 1000.0
+        declared_dtypes = _extract_buffer_declared_dtypes(c_src)
+
+        # Write inputs / reference outputs after lowering, so file dtypes follow
+        # emitted buffer descriptors instead of potentially stale intent tensor dtypes.
         for name in external_inputs:
             if name not in baseline:
                 tt = intent.tensors.get(name)
@@ -338,15 +381,14 @@ def run_one(
                         baseline[name] = derived
             if name not in baseline:
                 raise RuntimeError(f"baseline missing input {name} for {kernel}")
-            _write_bin(td / f"{name}.bin", np.asarray(baseline[name]), intent.tensors[name].dtype)
+            dtype = declared_dtypes.get(name, str(intent.tensors[name].dtype))
+            _write_bin(td / f"{name}.bin", np.asarray(baseline[name]), dtype)
         for name in outputs:
             if name not in baseline:
                 raise RuntimeError(f"baseline missing output {name} for {kernel}")
-            _write_bin(td / f"{name}_ref.bin", np.asarray(baseline[name]), intent.tensors[name].dtype)
+            dtype = declared_dtypes.get(name, str(intent.tensors[name].dtype))
+            _write_bin(td / f"{name}_ref.bin", np.asarray(baseline[name]), dtype)
 
-        t_lower = perf_counter()
-        c_src = lower_intent_to_c_with_files(intent_codegen, shape_bindings=bindings, atol=float(atol), rtol=float(rtol))
-        lower_ms = (perf_counter() - t_lower) * 1000.0
         (td / "main.c").write_text(c_src, encoding="utf-8")
 
         runtime_dir = ROOT / "backends" / "spmd_rvv" / "runtime"
@@ -414,7 +456,13 @@ def run_one(
         }
     finally:
         if keep_tmp:
-            tmp_ctx.cleanup = lambda: None  # type: ignore[attr-defined]
+            # Keep temporary artifacts for postmortem debugging.
+            # TemporaryDirectory schedules deletion via an internal finalizer,
+            # so overriding cleanup() is not sufficient.
+            try:
+                tmp_ctx._finalizer.detach()  # type: ignore[attr-defined]
+            except Exception:
+                tmp_ctx.cleanup = lambda: None  # type: ignore[attr-defined]
         else:
             tmp_ctx.cleanup()
 
