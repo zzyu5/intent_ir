@@ -1,11 +1,11 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-16T08:30:16+00:00
-- Commit: `b689c07aef45c2adee4b3248add4c5b71f9b7883`
+- Timestamp: 2026-02-16T08:44:29+00:00
+- Commit: `e5b154e561af938f219a3c4bfbb518be2f606ff8`
 - Lane: `backend_compiler`
-- Summary: Conv/Pool/Upsample split专项回归通过：RVV+CUDA+stage_timing_breakdown 全通过。
+- Summary: Split CUDA/RVV cpp_codegen monolith blocks and validated 16 reduction/index kernels on RVV local+remote and CUDA.
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/flaggems_matrix/daily/20260216/convpool_upsample_split_validation_v1/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260216/convpool_upsample_split_validation_v1/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260216/convpool_upsample_split_validation_v1/run_summary.json, artifacts/flaggems_matrix/daily/20260216/convpool_upsample_split_validation_v1/stage_timing_breakdown.json, artifacts/flaggems_matrix/daily/20260216/convpool_upsample_split_validation_v1/status_converged.json
-- Next Focus: 继续拆分cpp_codegen（下一簇: attention/index family）并进入P1性能调优。
+- Run Summary: `artifacts/flaggems_matrix/daily/20260216/reduction_index_split_validation_v2/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260216/reduction_index_split_validation_v2/status_converged.json`
+- Evidence Paths: artifacts/flaggems_matrix/daily/20260216/reduction_index_split_validation_v2/cuda_local.json, artifacts/flaggems_matrix/daily/20260216/reduction_index_split_validation_v2/run_summary.json, artifacts/flaggems_matrix/daily/20260216/reduction_index_split_validation_v2/rvv_remote.json, artifacts/flaggems_matrix/daily/20260216/reduction_index_split_validation_v2/stage_timing_breakdown.json, artifacts/flaggems_matrix/daily/20260216/reduction_index_split_validation_v2/status_converged.json
+- Next Focus: Continue cpp_codegen modular split (attention/index/scatter blocks) and finish one fresh full196 recompute after compiler changes.
