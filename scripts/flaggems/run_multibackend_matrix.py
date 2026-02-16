@@ -489,6 +489,32 @@ def main() -> None:
             extra={"cmd": cmd_run, "json_path": str(cuda_json), "env_overrides": dict(cuda_env)},
         )
 
+    stage_timing_breakdown = out_dir / "stage_timing_breakdown.json"
+    if rvv_json.is_file() and cuda_json.is_file():
+        cmd = [
+            sys.executable,
+            "scripts/flaggems/compute_stage_timing_breakdown.py",
+            "--rvv-json",
+            str(rvv_json),
+            "--cuda-json",
+            str(cuda_json),
+            "--out",
+            str(stage_timing_breakdown),
+        ]
+        rc, out, err = _run(cmd, cwd=ROOT)
+        _record("stage_timing_breakdown", rc, out, err, extra={"cmd": cmd, "json_path": str(stage_timing_breakdown)})
+    else:
+        _record(
+            "stage_timing_breakdown",
+            0,
+            "stage timing breakdown skipped (rvv/cuda json not both present)",
+            "",
+            extra={
+                "reason_code": "skipped_missing_backend_json",
+                "json_path": str(stage_timing_breakdown),
+            },
+        )
+
     converged = out_dir / "status_converged.json"
     cmd = [
         sys.executable,

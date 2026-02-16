@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-16T01:31:40.279482+00:00",
+  "generated_at": "2026-02-16T08:19:41.922733+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -12711,26 +12711,30 @@
       ],
       "family": "reduction",
       "intent_ops": [
+        "cast",
         "reduce_max"
       ],
       "mapping_kind": "reduce_template",
-      "intent_pattern_id": "reduce.amax",
+      "intent_pattern_id": "reduce.amax_via_cast",
       "e2e_spec": "row_max",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
-      "status_reason_detail": "mapped to reduce_max",
+      "status_reason_detail": "mapped as cast(x) then reduce_max",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "reduce_max"
           ],
           "known_ops": [
+            "cast",
             "reduce_max"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "reduce_max"
           ],
           "missing_ops": []
@@ -12739,13 +12743,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "reduce_max"
           ],
           "known_ops": [
+            "cast",
             "reduce_max"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "reduce_max"
           ],
           "missing_ops": []
@@ -12754,13 +12761,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "reduce_max"
           ],
           "known_ops": [
+            "cast",
             "reduce_max"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "reduce_max"
           ],
           "missing_ops": []
@@ -12806,26 +12816,30 @@
       ],
       "family": "reduction",
       "intent_ops": [
+        "cast",
         "reduce_any"
       ],
       "mapping_kind": "reduce_template",
-      "intent_pattern_id": "reduce.any",
+      "intent_pattern_id": "reduce.any_via_cast",
       "e2e_spec": "any_kernel_dim",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
-      "status_reason_detail": "mapped to reduce_any",
+      "status_reason_detail": "mapped as cast(x) then reduce_any",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "reduce_any"
           ],
           "known_ops": [
+            "cast",
             "reduce_any"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "reduce_any"
           ],
           "missing_ops": []
@@ -12834,13 +12848,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "reduce_any"
           ],
           "known_ops": [
+            "cast",
             "reduce_any"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "reduce_any"
           ],
           "missing_ops": []
@@ -12849,13 +12866,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "reduce_any"
           ],
           "known_ops": [
+            "cast",
             "reduce_any"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "reduce_any"
           ],
           "missing_ops": []
@@ -12899,27 +12919,31 @@
       ],
       "family": "reduction",
       "intent_ops": [
+        "cast",
         "argmax"
       ],
       "mapping_kind": "reduce_template",
-      "intent_pattern_id": "reduce.argmax",
+      "intent_pattern_id": "reduce.argmax_via_cast",
       "e2e_spec": "argmax2d",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
-      "status_reason_detail": "mapped to argmax primitive",
+      "status_reason_detail": "mapped as cast(x) then argmax",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
-            "argmax"
+            "argmax",
+            "cast"
           ],
           "known_ops": [
-            "argmax"
+            "argmax",
+            "cast"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "argmax"
+            "argmax",
+            "cast"
           ],
           "missing_ops": []
         },
@@ -12927,14 +12951,17 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
-            "argmax"
+            "argmax",
+            "cast"
           ],
           "known_ops": [
-            "argmax"
+            "argmax",
+            "cast"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "argmax"
+            "argmax",
+            "cast"
           ],
           "missing_ops": []
         },
@@ -12942,14 +12969,17 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
-            "argmax"
+            "argmax",
+            "cast"
           ],
           "known_ops": [
-            "argmax"
+            "argmax",
+            "cast"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "argmax"
+            "argmax",
+            "cast"
           ],
           "missing_ops": []
         }
@@ -12992,27 +13022,31 @@
       ],
       "family": "reduction",
       "intent_ops": [
+        "cast",
         "argmin"
       ],
       "mapping_kind": "reduce_template",
-      "intent_pattern_id": "reduce.argmin",
+      "intent_pattern_id": "reduce.argmin_via_cast",
       "e2e_spec": "argmin2d",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
-      "status_reason_detail": "mapped to argmin primitive",
+      "status_reason_detail": "mapped as cast(x) then argmin",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
-            "argmin"
+            "argmin",
+            "cast"
           ],
           "known_ops": [
-            "argmin"
+            "argmin",
+            "cast"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "argmin"
+            "argmin",
+            "cast"
           ],
           "missing_ops": []
         },
@@ -13020,14 +13054,17 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
-            "argmin"
+            "argmin",
+            "cast"
           ],
           "known_ops": [
-            "argmin"
+            "argmin",
+            "cast"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "argmin"
+            "argmin",
+            "cast"
           ],
           "missing_ops": []
         },
@@ -13035,14 +13072,17 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
-            "argmin"
+            "argmin",
+            "cast"
           ],
           "known_ops": [
-            "argmin"
+            "argmin",
+            "cast"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "argmin"
+            "argmin",
+            "cast"
           ],
           "missing_ops": []
         }
@@ -13085,59 +13125,89 @@
       ],
       "family": "reduction",
       "intent_ops": [
-        "count_nonzero"
+        "const",
+        "ne",
+        "cast",
+        "reduce_sum"
       ],
       "mapping_kind": "reduce_template",
-      "intent_pattern_id": "reduce.count_nonzero",
+      "intent_pattern_id": "reduce.count_nonzero_via_ne_cast_sum",
       "e2e_spec": "count_nonzero2d",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
-      "status_reason_detail": "mapped to count_nonzero primitive; rvv_missing=['count_nonzero']; cuda_h100_missing=['count_nonzero']; cuda_5090d_missing=['count_nonzero']",
+      "status_reason_detail": "mapped as reduce_sum(cast(ne(x, 0)))",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
-            "count_nonzero"
+            "cast",
+            "const",
+            "ne",
+            "reduce_sum"
           ],
           "known_ops": [
-            "count_nonzero"
+            "cast",
+            "const",
+            "ne",
+            "reduce_sum"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
-            "count_nonzero"
-          ]
+          "supported_ops": [
+            "cast",
+            "const",
+            "ne",
+            "reduce_sum"
+          ],
+          "missing_ops": []
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
-            "count_nonzero"
+            "cast",
+            "const",
+            "ne",
+            "reduce_sum"
           ],
           "known_ops": [
-            "count_nonzero"
+            "cast",
+            "const",
+            "ne",
+            "reduce_sum"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
-            "count_nonzero"
-          ]
+          "supported_ops": [
+            "cast",
+            "const",
+            "ne",
+            "reduce_sum"
+          ],
+          "missing_ops": []
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": false,
+          "ok": true,
           "requested_ops": [
-            "count_nonzero"
+            "cast",
+            "const",
+            "ne",
+            "reduce_sum"
           ],
           "known_ops": [
-            "count_nonzero"
+            "cast",
+            "const",
+            "ne",
+            "reduce_sum"
           ],
           "unknown_ops": [],
-          "supported_ops": [],
-          "missing_ops": [
-            "count_nonzero"
-          ]
+          "supported_ops": [
+            "cast",
+            "const",
+            "ne",
+            "reduce_sum"
+          ],
+          "missing_ops": []
         }
       },
       "reason_code": "runtime_dual_backend_pass",
@@ -13179,26 +13249,30 @@
       ],
       "family": "reduction",
       "intent_ops": [
+        "cast",
         "cumsum"
       ],
       "mapping_kind": "reduce_template",
-      "intent_pattern_id": "reduce.cumsum",
+      "intent_pattern_id": "reduce.cumsum_via_cast",
       "e2e_spec": "cumsum2d",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
-      "status_reason_detail": "mapped to cumsum primitive",
+      "status_reason_detail": "mapped as cast(x) then cumsum",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "cumsum"
           ],
           "known_ops": [
+            "cast",
             "cumsum"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "cumsum"
           ],
           "missing_ops": []
@@ -13207,13 +13281,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "cumsum"
           ],
           "known_ops": [
+            "cast",
             "cumsum"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "cumsum"
           ],
           "missing_ops": []
@@ -13222,13 +13299,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "cumsum"
           ],
           "known_ops": [
+            "cast",
             "cumsum"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "cumsum"
           ],
           "missing_ops": []
@@ -13685,26 +13765,30 @@
       ],
       "family": "reduction",
       "intent_ops": [
+        "cast",
         "reduce_prod"
       ],
       "mapping_kind": "reduce_template",
-      "intent_pattern_id": "reduce.prod",
+      "intent_pattern_id": "reduce.prod_via_cast",
       "e2e_spec": "prod2d",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
-      "status_reason_detail": "mapped to reduce_prod",
+      "status_reason_detail": "mapped as cast(x) then reduce_prod",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "reduce_prod"
           ],
           "known_ops": [
+            "cast",
             "reduce_prod"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "reduce_prod"
           ],
           "missing_ops": []
@@ -13713,13 +13797,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "reduce_prod"
           ],
           "known_ops": [
+            "cast",
             "reduce_prod"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "reduce_prod"
           ],
           "missing_ops": []
@@ -13728,13 +13815,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "reduce_prod"
           ],
           "known_ops": [
+            "cast",
             "reduce_prod"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "reduce_prod"
           ],
           "missing_ops": []
@@ -13778,6 +13868,7 @@
       ],
       "family": "reduction",
       "intent_ops": [
+        "cast",
         "reduce_prod"
       ],
       "mapping_kind": "alias",
@@ -13785,19 +13876,22 @@
       "e2e_spec": "prod_dim2d",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
-      "status_reason_detail": "alias to prod; mapped to reduce_prod",
+      "status_reason_detail": "alias to prod; mapped as cast(x) then reduce_prod",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "reduce_prod"
           ],
           "known_ops": [
+            "cast",
             "reduce_prod"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "reduce_prod"
           ],
           "missing_ops": []
@@ -13806,13 +13900,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "reduce_prod"
           ],
           "known_ops": [
+            "cast",
             "reduce_prod"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "reduce_prod"
           ],
           "missing_ops": []
@@ -13821,13 +13918,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "reduce_prod"
           ],
           "known_ops": [
+            "cast",
             "reduce_prod"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "reduce_prod"
           ],
           "missing_ops": []
@@ -14244,26 +14344,30 @@
       ],
       "family": "reduction",
       "intent_ops": [
+        "cast",
         "reduce_sum"
       ],
       "mapping_kind": "reduce_template",
-      "intent_pattern_id": "reduce.sum",
+      "intent_pattern_id": "reduce.sum_via_cast",
       "e2e_spec": "row_sum",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
-      "status_reason_detail": "mapped to reduce_sum",
+      "status_reason_detail": "mapped as cast(x) then reduce_sum",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "reduce_sum"
           ],
           "known_ops": [
+            "cast",
             "reduce_sum"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "reduce_sum"
           ],
           "missing_ops": []
@@ -14272,13 +14376,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "reduce_sum"
           ],
           "known_ops": [
+            "cast",
             "reduce_sum"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "reduce_sum"
           ],
           "missing_ops": []
@@ -14287,13 +14394,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "reduce_sum"
           ],
           "known_ops": [
+            "cast",
             "reduce_sum"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "reduce_sum"
           ],
           "missing_ops": []
@@ -14338,26 +14448,30 @@
       ],
       "family": "reduction",
       "intent_ops": [
+        "cast",
         "reduce_sum"
       ],
       "mapping_kind": "reduce_template",
-      "intent_pattern_id": "reduce.sum_dim",
+      "intent_pattern_id": "reduce.sum_dim_via_cast",
       "e2e_spec": "row_sum",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
-      "status_reason_detail": "mapped to reduce_sum with dims",
+      "status_reason_detail": "mapped as cast(x) then reduce_sum with dims",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "reduce_sum"
           ],
           "known_ops": [
+            "cast",
             "reduce_sum"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "reduce_sum"
           ],
           "missing_ops": []
@@ -14366,13 +14480,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "reduce_sum"
           ],
           "known_ops": [
+            "cast",
             "reduce_sum"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "reduce_sum"
           ],
           "missing_ops": []
@@ -14381,13 +14498,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "reduce_sum"
           ],
           "known_ops": [
+            "cast",
             "reduce_sum"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "reduce_sum"
           ],
           "missing_ops": []
@@ -15327,27 +15447,31 @@
       ],
       "family": "norm_activation",
       "intent_ops": [
-        "relu"
+        "const",
+        "max"
       ],
       "mapping_kind": "unary_template",
-      "intent_pattern_id": "unary.relu",
+      "intent_pattern_id": "unary.relu_via_const_max",
       "e2e_spec": "relu2d",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
-      "status_reason_detail": "mapped by unary template",
+      "status_reason_detail": "mapped as max(x, 0)",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
-            "relu"
+            "const",
+            "max"
           ],
           "known_ops": [
-            "relu"
+            "const",
+            "max"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "relu"
+            "const",
+            "max"
           ],
           "missing_ops": []
         },
@@ -15355,14 +15479,17 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
-            "relu"
+            "const",
+            "max"
           ],
           "known_ops": [
-            "relu"
+            "const",
+            "max"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "relu"
+            "const",
+            "max"
           ],
           "missing_ops": []
         },
@@ -15370,14 +15497,17 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
-            "relu"
+            "const",
+            "max"
           ],
           "known_ops": [
-            "relu"
+            "const",
+            "max"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "relu"
+            "const",
+            "max"
           ],
           "missing_ops": []
         }
@@ -16438,26 +16568,30 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [
+        "cast",
         "gather"
       ],
       "mapping_kind": "index_template",
-      "intent_pattern_id": "index.flip_via_gather",
+      "intent_pattern_id": "index.flip_via_cast_gather",
       "e2e_spec": "flip2d",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
-      "status_reason_detail": "mapped to gather primitive with reversed column indices",
+      "status_reason_detail": "mapped as cast(reversed index) then gather",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "gather"
           ],
           "known_ops": [
+            "cast",
             "gather"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "gather"
           ],
           "missing_ops": []
@@ -16466,13 +16600,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "gather"
           ],
           "known_ops": [
+            "cast",
             "gather"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "gather"
           ],
           "missing_ops": []
@@ -16481,13 +16618,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "gather"
           ],
           "known_ops": [
+            "cast",
             "gather"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "gather"
           ],
           "missing_ops": []
@@ -16531,26 +16671,30 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [
+        "cast",
         "gather"
       ],
       "mapping_kind": "index_template",
-      "intent_pattern_id": "index.gather",
+      "intent_pattern_id": "index.gather_via_cast",
       "e2e_spec": "gather2d",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
-      "status_reason_detail": "mapped by index template",
+      "status_reason_detail": "mapped as cast(index) then gather",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "gather"
           ],
           "known_ops": [
+            "cast",
             "gather"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "gather"
           ],
           "missing_ops": []
@@ -16559,13 +16703,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "gather"
           ],
           "known_ops": [
+            "cast",
             "gather"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "gather"
           ],
           "missing_ops": []
@@ -16574,13 +16721,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "gather"
           ],
           "known_ops": [
+            "cast",
             "gather"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "gather"
           ],
           "missing_ops": []
@@ -16624,26 +16774,30 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [
+        "cast",
         "gather"
       ],
       "mapping_kind": "index_template",
-      "intent_pattern_id": "index.index_via_gather",
+      "intent_pattern_id": "index.index_via_cast_gather",
       "e2e_spec": "index_select2d",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
-      "status_reason_detail": "mapped to gather primitive",
+      "status_reason_detail": "mapped as cast(index) then gather",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "gather"
           ],
           "known_ops": [
+            "cast",
             "gather"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "gather"
           ],
           "missing_ops": []
@@ -16652,13 +16806,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "gather"
           ],
           "known_ops": [
+            "cast",
             "gather"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "gather"
           ],
           "missing_ops": []
@@ -16667,13 +16824,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "gather"
           ],
           "known_ops": [
+            "cast",
             "gather"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "gather"
           ],
           "missing_ops": []
@@ -16913,26 +17073,30 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [
+        "cast",
         "gather"
       ],
       "mapping_kind": "index_template",
-      "intent_pattern_id": "index.index_select_via_gather",
+      "intent_pattern_id": "index.index_select_via_cast_gather",
       "e2e_spec": "index_select2d",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
-      "status_reason_detail": "mapped to gather primitive",
+      "status_reason_detail": "mapped as cast(index) then gather",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "gather"
           ],
           "known_ops": [
+            "cast",
             "gather"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "gather"
           ],
           "missing_ops": []
@@ -16941,13 +17105,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "gather"
           ],
           "known_ops": [
+            "cast",
             "gather"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "gather"
           ],
           "missing_ops": []
@@ -16956,13 +17123,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "gather"
           ],
           "known_ops": [
+            "cast",
             "gather"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "gather"
           ],
           "missing_ops": []
@@ -19604,26 +19774,30 @@
       ],
       "family": "attention_sequence",
       "intent_ops": [
+        "cast",
         "gather"
       ],
       "mapping_kind": "index_template",
-      "intent_pattern_id": "index.embedding_via_gather",
+      "intent_pattern_id": "index.embedding_via_cast_gather",
       "e2e_spec": "embedding2d",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
-      "status_reason_detail": "mapped to gather primitive with row/col index expansion",
+      "status_reason_detail": "mapped as cast(index) then gather with row/col expansion",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "gather"
           ],
           "known_ops": [
+            "cast",
             "gather"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "gather"
           ],
           "missing_ops": []
@@ -19632,13 +19806,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "gather"
           ],
           "known_ops": [
+            "cast",
             "gather"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "gather"
           ],
           "missing_ops": []
@@ -19647,13 +19824,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "gather"
           ],
           "known_ops": [
+            "cast",
             "gather"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "gather"
           ],
           "missing_ops": []

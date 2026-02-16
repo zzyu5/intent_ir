@@ -116,7 +116,13 @@ _ALIAS_TO_BASE: dict[str, str] = {
 _UNARY_TEMPLATE: dict[str, SemanticMapping] = {
     "abs": _mk("abs", ("abs",), mapping_kind="unary_template", pattern_id="unary.abs", detail="mapped by unary template"),
     "exp": _mk("exp", ("exp",), mapping_kind="unary_template", pattern_id="unary.exp", detail="mapped by unary template"),
-    "relu": _mk("relu", ("relu",), mapping_kind="unary_template", pattern_id="unary.relu", detail="mapped by unary template"),
+    "relu": _mk(
+        "relu",
+        ("const", "max"),
+        mapping_kind="unary_template",
+        pattern_id="unary.relu_via_const_max",
+        detail="mapped as max(x, 0)",
+    ),
     "rsqrt": _mk("rsqrt", ("rsqrt",), mapping_kind="unary_template", pattern_id="unary.rsqrt", detail="mapped by unary template"),
     "floor": _mk("floor", ("floor",), mapping_kind="unary_template", pattern_id="unary.floor", detail="mapped by unary template"),
     "sqrt": _mk(
@@ -260,17 +266,65 @@ _CMP_TEMPLATE: dict[str, SemanticMapping] = {
 }
 
 _REDUCE_TEMPLATE: dict[str, SemanticMapping] = {
-    "any": _mk("any", ("reduce_any",), mapping_kind="reduce_template", pattern_id="reduce.any", detail="mapped to reduce_any"),
-    "sum": _mk("sum", ("reduce_sum",), mapping_kind="reduce_template", pattern_id="reduce.sum", detail="mapped to reduce_sum"),
-    "sum_dim": _mk("sum_dim", ("reduce_sum",), mapping_kind="reduce_template", pattern_id="reduce.sum_dim", detail="mapped to reduce_sum with dims"),
-    "amax": _mk("amax", ("reduce_max",), mapping_kind="reduce_template", pattern_id="reduce.amax", detail="mapped to reduce_max"),
+    "any": _mk(
+        "any",
+        ("cast", "reduce_any"),
+        mapping_kind="reduce_template",
+        pattern_id="reduce.any_via_cast",
+        detail="mapped as cast(x) then reduce_any",
+    ),
+    "sum": _mk(
+        "sum",
+        ("cast", "reduce_sum"),
+        mapping_kind="reduce_template",
+        pattern_id="reduce.sum_via_cast",
+        detail="mapped as cast(x) then reduce_sum",
+    ),
+    "sum_dim": _mk(
+        "sum_dim",
+        ("cast", "reduce_sum"),
+        mapping_kind="reduce_template",
+        pattern_id="reduce.sum_dim_via_cast",
+        detail="mapped as cast(x) then reduce_sum with dims",
+    ),
+    "amax": _mk(
+        "amax",
+        ("cast", "reduce_max"),
+        mapping_kind="reduce_template",
+        pattern_id="reduce.amax_via_cast",
+        detail="mapped as cast(x) then reduce_max",
+    ),
     "max": _mk("max", ("reduce_max",), mapping_kind="reduce_template", pattern_id="reduce.max", detail="mapped to reduce_max"),
     "max_dim": _mk("max_dim", ("reduce_max",), mapping_kind="reduce_template", pattern_id="reduce.max_dim", detail="mapped to reduce_max with dims"),
     "mean": _mk("mean", ("reduce_sum", "div"), mapping_kind="reduce_template", pattern_id="reduce.mean_via_sum", detail="mapped as reduce_sum / num_elements"),
-    "prod": _mk("prod", ("reduce_prod",), mapping_kind="reduce_template", pattern_id="reduce.prod", detail="mapped to reduce_prod"),
-    "argmax": _mk("argmax", ("argmax",), mapping_kind="reduce_template", pattern_id="reduce.argmax", detail="mapped to argmax primitive"),
-    "argmin": _mk("argmin", ("argmin",), mapping_kind="reduce_template", pattern_id="reduce.argmin", detail="mapped to argmin primitive"),
-    "cumsum": _mk("cumsum", ("cumsum",), mapping_kind="reduce_template", pattern_id="reduce.cumsum", detail="mapped to cumsum primitive"),
+    "prod": _mk(
+        "prod",
+        ("cast", "reduce_prod"),
+        mapping_kind="reduce_template",
+        pattern_id="reduce.prod_via_cast",
+        detail="mapped as cast(x) then reduce_prod",
+    ),
+    "argmax": _mk(
+        "argmax",
+        ("cast", "argmax"),
+        mapping_kind="reduce_template",
+        pattern_id="reduce.argmax_via_cast",
+        detail="mapped as cast(x) then argmax",
+    ),
+    "argmin": _mk(
+        "argmin",
+        ("cast", "argmin"),
+        mapping_kind="reduce_template",
+        pattern_id="reduce.argmin_via_cast",
+        detail="mapped as cast(x) then argmin",
+    ),
+    "cumsum": _mk(
+        "cumsum",
+        ("cast", "cumsum"),
+        mapping_kind="reduce_template",
+        pattern_id="reduce.cumsum_via_cast",
+        detail="mapped as cast(x) then cumsum",
+    ),
     "var": _mk("var", ("var",), mapping_kind="reduce_template", pattern_id="reduce.var", detail="mapped to var primitive"),
     "std": _mk(
         "std",
@@ -281,10 +335,10 @@ _REDUCE_TEMPLATE: dict[str, SemanticMapping] = {
     ),
     "count_nonzero": _mk(
         "count_nonzero",
-        ("count_nonzero",),
+        ("const", "ne", "cast", "reduce_sum"),
         mapping_kind="reduce_template",
-        pattern_id="reduce.count_nonzero",
-        detail="mapped to count_nonzero primitive",
+        pattern_id="reduce.count_nonzero_via_ne_cast_sum",
+        detail="mapped as reduce_sum(cast(ne(x, 0)))",
     ),
     # all(x) == not(any(not(x)))
     "all": _mk(
@@ -297,9 +351,27 @@ _REDUCE_TEMPLATE: dict[str, SemanticMapping] = {
 }
 
 _INDEX_TEMPLATE: dict[str, SemanticMapping] = {
-    "gather": _mk("gather", ("gather",), mapping_kind="index_template", pattern_id="index.gather", detail="mapped by index template"),
-    "index": _mk("index", ("gather",), mapping_kind="index_template", pattern_id="index.index_via_gather", detail="mapped to gather primitive"),
-    "index_select": _mk("index_select", ("gather",), mapping_kind="index_template", pattern_id="index.index_select_via_gather", detail="mapped to gather primitive"),
+    "gather": _mk(
+        "gather",
+        ("cast", "gather"),
+        mapping_kind="index_template",
+        pattern_id="index.gather_via_cast",
+        detail="mapped as cast(index) then gather",
+    ),
+    "index": _mk(
+        "index",
+        ("cast", "gather"),
+        mapping_kind="index_template",
+        pattern_id="index.index_via_cast_gather",
+        detail="mapped as cast(index) then gather",
+    ),
+    "index_select": _mk(
+        "index_select",
+        ("cast", "gather"),
+        mapping_kind="index_template",
+        pattern_id="index.index_select_via_cast_gather",
+        detail="mapped as cast(index) then gather",
+    ),
     "index_put": _mk(
         "index_put",
         ("where", "scatter"),
@@ -309,17 +381,17 @@ _INDEX_TEMPLATE: dict[str, SemanticMapping] = {
     ),
     "embedding": _mk(
         "embedding",
-        ("gather",),
+        ("cast", "gather"),
         mapping_kind="index_template",
-        pattern_id="index.embedding_via_gather",
-        detail="mapped to gather primitive with row/col index expansion",
+        pattern_id="index.embedding_via_cast_gather",
+        detail="mapped as cast(index) then gather with row/col expansion",
     ),
     "flip": _mk(
         "flip",
-        ("gather",),
+        ("cast", "gather"),
         mapping_kind="index_template",
-        pattern_id="index.flip_via_gather",
-        detail="mapped to gather primitive with reversed column indices",
+        pattern_id="index.flip_via_cast_gather",
+        detail="mapped as cast(reversed index) then gather",
     ),
     "diag": _mk("diag", ("diag",), mapping_kind="index_template", pattern_id="index.diag", detail="mapped to diag primitive"),
     "diag_embed": _mk(
