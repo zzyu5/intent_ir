@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-16T01:48:57+00:00",
+  "updated_at": "2026-02-16T03:49:25+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -11,54 +11,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "febb5a8 workflow: log coverage active10 run and cuda timeout blockers\n5732526 ir_arch: complete m2 composition gate and refresh workflow lanes\nb033704 ir_arch: pass m1 composition gate and roll workflow to m2\ncba8df8 backend: start cpp_codegen modular split and sync workflow todo state\na97b6b5 workflow: fix full196 truth, add timing breakdown gate, enforce ir composition policy\n0cc7d90 workflow: record v16 warm-stable perf run and refresh snapshots\n024bf04 cuda runtime: cache runner/runtime hash payload computation\nfa12cfc workflow: record v14 backend perf batch and refresh snapshots\n4d249cc cuda runtime: reuse compiled module in launch path\na68ce0e workflow: refresh status snapshot after perf commits\na045c83 workflow: record v11 backend performance evidence\n4016a6a cuda smoke: prewarm compile worker to remove first-kernel cold start\ne6c5fd3 workflow: refresh current status after perf optimization commits\n315d013 workflow: record backend compiler performance batch evidence\n258dd07 cuda smoke: reuse persistent stage workers to reduce per-kernel overhead\n29b7231 workflow: close backend compiler wave14 and log perf warm run\n26d8d16 cuda cpp: canonicalize kernel names for compile-cache reuse\n2b17c08 cuda cpp: add concat/pad/mse_loss lowering and fix remainder semantics\n7c35b9a workflow: close wave13, expand manifest to 84, plan wave14\n7c34852 cuda cpp: add addmv/atan/bitwise-shift lowering and fix addmv arg order",
+  "git_log_short": "b5442af fix(rvv): correct bool bin serialization and conv shape repair inference\n73cfb6e workflow: track full196 integrity run and pending todo lanes\n4d8d0ce workflow: refresh status snapshots after latest lane updates\nfebb5a8 workflow: log coverage active10 run and cuda timeout blockers\n5732526 ir_arch: complete m2 composition gate and refresh workflow lanes\nb033704 ir_arch: pass m1 composition gate and roll workflow to m2\ncba8df8 backend: start cpp_codegen modular split and sync workflow todo state\na97b6b5 workflow: fix full196 truth, add timing breakdown gate, enforce ir composition policy\n0cc7d90 workflow: record v16 warm-stable perf run and refresh snapshots\n024bf04 cuda runtime: cache runner/runtime hash payload computation\nfa12cfc workflow: record v14 backend perf batch and refresh snapshots\n4d249cc cuda runtime: reuse compiled module in launch path\na68ce0e workflow: refresh status snapshot after perf commits\na045c83 workflow: record v11 backend performance evidence\n4016a6a cuda smoke: prewarm compile worker to remove first-kernel cold start\ne6c5fd3 workflow: refresh current status after perf optimization commits\n315d013 workflow: record backend compiler performance batch evidence\n258dd07 cuda smoke: reuse persistent stage workers to reduce per-kernel overhead\n29b7231 workflow: close backend compiler wave14 and log perf warm run\n26d8d16 cuda cpp: canonicalize kernel names for compile-cache reuse",
   "progress_tail": [
-    {
-      "ts": "2026-02-16T00:11:24+00:00",
-      "commit": "024bf04",
-      "lane": "backend_compiler",
-      "summary": "backend compiler perf: cache runtime hash payload to cut cuda compile stage overhead",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v16_perfbatch_warmstable/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v16_perfbatch_warmstable/status_converged.json",
-      "next_focus": "performance-only: continue compile-stage latency reduction without changing coverage scope",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v14_perfbatch_warm/cuda_local.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v16_perfbatch_warmstable/cuda_local.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v16_perfbatch_warmstable/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v16_perfbatch_warmstable/status_converged.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v16_perfbatch_warmstable/timing_delta.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v16_perfbatch_warmstable",
-      "counts_by_status": {
-        "blocked_backend": 187,
-        "dual_pass": 9
-      }
-    },
-    {
-      "ts": "2026-02-16T01:10:26+00:00",
-      "commit": "0cc7d90f49c111a1f8c160f41470712e72cd5965",
-      "lane": "ir_arch",
-      "summary": "ir_arch lane now enforces mapping_complexity threshold; M1 gate currently failing at ~0.66 ratio",
-      "batch_ops": [
-        ""
-      ],
-      "active_batch_path": "workflow/flaggems/state/active_batch_ir_arch.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m1_v1/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m1_v1/status_converged.json",
-      "next_focus": "Reduce complex-family single-intent ratio from ~0.66 to <=0.40 (M1) via semantic rule composition refactors",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m1_v1/batch_gate_ir_arch.json",
-        "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m1_v1/mapping_complexity_report.json",
-        "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m1_v1/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m1_v1/status_converged.json"
-      ],
-      "run_ok": false,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m1_v1",
-      "counts_by_status": {}
-    },
     {
       "ts": "2026-02-16T01:10:26+00:00",
       "commit": "0cc7d90f49c111a1f8c160f41470712e72cd5965",
@@ -216,9 +170,63 @@
         "dual_pass": 1,
         "rvv_only": 9
       }
+    },
+    {
+      "ts": "2026-02-16T03:26:52Z",
+      "commit": "4d8d0cedb44e",
+      "lane": "coverage",
+      "summary": "started full196_integrity_v1 recompute (pipeline+rvv_local done, cuda_local running)",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/full196_integrity_v1/run_summary.pending.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/full196_integrity_v1/status_converged.pending.json",
+      "next_focus": "finish full196_integrity_v1, cluster failures, then execute active10 coverage fixes",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260216/full196_integrity_v1/rvv_local.json"
+      ],
+      "run_ok": null,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/full196_integrity_v1",
+      "counts_by_status": {}
+    },
+    {
+      "ts": "2026-02-16T03:49:20+00:00",
+      "commit": "b5442af",
+      "lane": "coverage",
+      "summary": "Fixed RVV gt2d/row_all bin-io mismatch and conv2d missing-tensor shape repair; rvv_local now passes all three kernels.",
+      "batch_ops": [
+        "angle",
+        "count_nonzero",
+        "diag",
+        "diag_embed",
+        "log_sigmoid",
+        "nan_to_num",
+        "repeat",
+        "repeat_interleave_self_int",
+        "repeat_interleave_self_tensor",
+        "repeat_interleave_tensor"
+      ],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/coverage_hotfix_three_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/coverage_hotfix_three_v1/status_converged.json",
+      "next_focus": "Finish full196_integrity_v1, then port CUDA lowering for row_all (reduce_any/not) and conv2d to move these from lowering_missing_op to dual_pass.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260216/coverage_hotfix_three_v1/cuda_local.json",
+        "artifacts/flaggems_matrix/daily/20260216/coverage_hotfix_three_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/coverage_hotfix_three_v1/rvv_local.json",
+        "artifacts/flaggems_matrix/daily/20260216/coverage_hotfix_three_v1/rvv_remote.json",
+        "artifacts/flaggems_matrix/daily/20260216/coverage_hotfix_three_v1/status_converged.json",
+        "artifacts/flaggems_triton_full_pipeline/conv2d_nchw.json"
+      ],
+      "run_ok": false,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/coverage_hotfix_three_v1",
+      "counts_by_status": {
+        "blocked_backend": 193,
+        "cuda_only": 2,
+        "rvv_only": 1
+      }
     }
   ],
-  "next_focus": "Re-run coverage active10 with relaxed CUDA compile timeout and remote RVV to convert rvv_only -> dual_pass.",
+  "next_focus": "Finish full196_integrity_v1, then port CUDA lowering for row_all (reduce_any/not) and conv2d to move these from lowering_missing_op to dual_pass.",
   "active_lanes": [
     "backend_compiler",
     "coverage"
@@ -226,11 +234,12 @@
   "next_focus_by_lane": {
     "backend_compiler": "Continue modular split: extract CUDA ir_model/shape_eval/emit modules, then rerun backend_compiler gate",
     "ir_arch": "Shift ir_arch lane to maintenance and focus backend_compiler::cpp_codegen_modular_split_{cuda,rvv} + full196 evidence cleanup.",
-    "coverage": "Re-run coverage active10 with relaxed CUDA compile timeout and remote RVV to convert rvv_only -> dual_pass."
+    "coverage": "Finish full196_integrity_v1, then port CUDA lowering for row_all (reduce_any/not) and conv2d to move these from lowering_missing_op to dual_pass."
   },
   "known_risks": [
-    "ir_arch lane now enforces mapping_complexity threshold; M1 gate currently failing at ~0.66 ratio",
     "ir_arch M2 baseline confirms remaining gap: composition_required_single_intent_ratio=0.40 > 0.20.",
-    "coverage active10 batch executed: RVV local passed; CUDA stage mostly compile_timeout under 15s compile budget."
+    "coverage active10 batch executed: RVV local passed; CUDA stage mostly compile_timeout under 15s compile budget.",
+    "started full196_integrity_v1 recompute (pipeline+rvv_local done, cuda_local running)",
+    "Fixed RVV gt2d/row_all bin-io mismatch and conv2d missing-tensor shape repair; rvv_local now passes all three kernels."
   ]
 }
