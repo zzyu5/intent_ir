@@ -1,14 +1,14 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-16T19:47:02+00:00",
+  "updated_at": "2026-02-16T19:55:38+00:00",
   "branch": "flaggems",
-  "head_commit": "b53ebafa36f8440e0bcfdb899c339ed5ed87e238",
+  "head_commit": "209810fb3f17b9406beebb2777eb5e59804ec08e",
   "mode": "maintenance",
   "coverage_integrity_phase": "recompute_stale",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/run_summary.json",
   "full196_last_ok": true,
   "full196_validated_commit": "95c2fea682a984e1666c9d4ab9eafb6c6512c046",
-  "full196_commits_since_validated": 18,
+  "full196_commits_since_validated": 20,
   "full196_validated_mode": "auto",
   "full196_validated_scope": "coverage_158_kernels_to_196_semantics",
   "full196_validated_with_rvv_remote": false,
@@ -84,13 +84,13 @@
     "coverage"
   ],
   "next_focus_by_lane": {
-    "backend_compiler": "Wait for full196 run to finish, then run scoped batches to eliminate pipeline_exception and diff_fail groups with backend/compiler-oriented fixes.",
+    "backend_compiler": "Wait full196_force_compile_head_v3 completion, then run scoped backend batches for failed kernels and keep legacy-free workflow paths.",
     "ir_arch": "Run full196 force_compile on HEAD, then reduce complex-family single-intent ratio toward <=10%.",
     "coverage": "Run full196 force_compile matrix to refresh coverage evidence on HEAD."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260216/full196_force_compile_head_v3/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260216/full196_force_compile_head_v3/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260216/workflow_freshness_ir_complexity_v1/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260216/workflow_freshness_ir_complexity_v1/status_converged.json"
   },
   "lanes": {
     "coverage": {
