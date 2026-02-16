@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-16T08:10:29+00:00",
+  "updated_at": "2026-02-16T08:30:20+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -11,76 +11,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "4bbe567 workflow: record full196 post-modsplit pass and close backend compiler lane\n3894812 backend: split cuda/rvv cpp codegen into ir_model and shape_eval modules\ndf93f24 flaggems: close remaining cuda coverage ops and stabilize full196 integrity\nd35536e Realign coverage registry/workflow to full196 integrity truth\nd54bbf4 Fix RVV dtype handling and CUDA std/quant lowering; sync workflow state\n8a189e8 workflow: record conv/pool/upsample scoped dual-pass evidence\ne24d059 cuda codegen: add conv/pool/upsample lowering patterns\n4fa8741 chore(workflow): track full196_integrity_v2 run kickoff\nfce4297 chore(workflow): log coverage hotfix v2 matrix and updated blockers\n1433822 feat(cuda,rvv): add row_all lowering and align remote raw-bytes dtype handling\n4526874 chore(workflow): record rvv hotfix batch evidence and next focus\nb5442af fix(rvv): correct bool bin serialization and conv shape repair inference\n73cfb6e workflow: track full196 integrity run and pending todo lanes\n4d8d0ce workflow: refresh status snapshots after latest lane updates\nfebb5a8 workflow: log coverage active10 run and cuda timeout blockers\n5732526 ir_arch: complete m2 composition gate and refresh workflow lanes\nb033704 ir_arch: pass m1 composition gate and roll workflow to m2\ncba8df8 backend: start cpp_codegen modular split and sync workflow todo state\na97b6b5 workflow: fix full196 truth, add timing breakdown gate, enforce ir composition policy\n0cc7d90 workflow: record v16 warm-stable perf run and refresh snapshots",
+  "git_log_short": "b689c07 workflow: refresh state snapshots after backend modular split commits\n4bbe567 workflow: record full196 post-modsplit pass and close backend compiler lane\n3894812 backend: split cuda/rvv cpp codegen into ir_model and shape_eval modules\ndf93f24 flaggems: close remaining cuda coverage ops and stabilize full196 integrity\nd35536e Realign coverage registry/workflow to full196 integrity truth\nd54bbf4 Fix RVV dtype handling and CUDA std/quant lowering; sync workflow state\n8a189e8 workflow: record conv/pool/upsample scoped dual-pass evidence\ne24d059 cuda codegen: add conv/pool/upsample lowering patterns\n4fa8741 chore(workflow): track full196_integrity_v2 run kickoff\nfce4297 chore(workflow): log coverage hotfix v2 matrix and updated blockers\n1433822 feat(cuda,rvv): add row_all lowering and align remote raw-bytes dtype handling\n4526874 chore(workflow): record rvv hotfix batch evidence and next focus\nb5442af fix(rvv): correct bool bin serialization and conv shape repair inference\n73cfb6e workflow: track full196 integrity run and pending todo lanes\n4d8d0ce workflow: refresh status snapshots after latest lane updates\nfebb5a8 workflow: log coverage active10 run and cuda timeout blockers\n5732526 ir_arch: complete m2 composition gate and refresh workflow lanes\nb033704 ir_arch: pass m1 composition gate and roll workflow to m2\ncba8df8 backend: start cpp_codegen modular split and sync workflow todo state\na97b6b5 workflow: fix full196 truth, add timing breakdown gate, enforce ir composition policy",
   "progress_tail": [
-    {
-      "ts": "2026-02-16T06:45:09+00:00",
-      "commit": "d35536e54b879334202adade108bbea33724955f",
-      "lane": "coverage",
-      "summary": "coverage active10 batch3 fixed: CUDA/RVV dual_pass for nll_loss_forward/normed_cumsum/polar/pow*/prod*/quantile/rms_norm",
-      "batch_ops": [
-        "nll_loss_forward",
-        "normed_cumsum",
-        "polar",
-        "pow_scalar",
-        "pow_tensor_scalar",
-        "pow_tensor_tensor",
-        "prod",
-        "prod_dim",
-        "quantile",
-        "rms_norm"
-      ],
-      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/coverage_active10_batch3_scoped_v1/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/coverage_active10_batch3_scoped_v1/status_converged.json",
-      "next_focus": "run converge --write-registry, sync feature list, and plan next coverage batch",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260216/coverage_active10_batch3_scoped_v1/cuda_local.json",
-        "artifacts/flaggems_matrix/daily/20260216/coverage_active10_batch3_scoped_v1/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260216/coverage_active10_batch3_scoped_v1/rvv_remote.json",
-        "artifacts/flaggems_matrix/daily/20260216/coverage_active10_batch3_scoped_v1/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/coverage_active10_batch3_scoped_v1",
-      "counts_by_status": {
-        "blocked_backend": 185,
-        "dual_pass": 11
-      }
-    },
-    {
-      "ts": "2026-02-16T06:46:37+00:00",
-      "commit": "d35536e54b879334202adade108bbea33724955f",
-      "lane": "coverage",
-      "summary": "coverage batch3 closed + registry synced; replanned next coverage batch (rms_norm_forward/sdpa/scatter/stack/upsample/var_mean/vdot)",
-      "batch_ops": [
-        "rms_norm_forward",
-        "scaled_dot_product_attention",
-        "scaled_dot_product_attention_forward",
-        "scatter",
-        "select_scatter",
-        "slice_scatter",
-        "stack",
-        "upsample_bicubic2d_aa",
-        "var_mean",
-        "vdot"
-      ],
-      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/coverage_active10_batch3_scoped_v1/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/coverage_active10_batch3_scoped_v1/status_converged_registry_write.json",
-      "next_focus": "implement next coverage active10 and then rerun full196 matrix",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260216/coverage_active10_batch3_scoped_v1/batch_gate.json",
-        "artifacts/flaggems_matrix/daily/20260216/coverage_active10_batch3_scoped_v1/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260216/coverage_active10_batch3_scoped_v1/status_converged_registry_write.json",
-        "workflow/flaggems/state/active_batch_coverage.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/coverage_active10_batch3_scoped_v1",
-      "counts_by_status": {
-        "blocked_backend": 185,
-        "dual_pass": 11
-      }
-    },
     {
       "ts": "2026-02-16T06:50:11+00:00",
       "commit": "d35536e54b879334202adade108bbea33724955f",
@@ -230,13 +162,59 @@
       "counts_by_status": {
         "dual_pass": 196
       }
+    },
+    {
+      "ts": "2026-02-16T08:21:48+00:00",
+      "commit": "b689c07aef45c2adee4b3248add4c5b71f9b7883",
+      "lane": "backend_compiler",
+      "summary": "Phase3/4推进：复杂家族映射组合化降到<=20%，并在主matrix链路补齐stage_timing_breakdown产物；CUDA/RVV cpp_codegen继续拆分。",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/matrix_stage_breakdown_smoke_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/matrix_stage_breakdown_smoke_v1/status_converged.json",
+      "next_focus": "继续Phase4/5：按family拆分cpp_codegen单文件并做P1热点算子schedule性能优化。",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260216/full196_after_cpp_modsplit_v1/coverage_integrity.json",
+        "artifacts/flaggems_matrix/daily/20260216/matrix_stage_breakdown_smoke_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/matrix_stage_breakdown_smoke_v1/stage_timing_breakdown.json",
+        "artifacts/flaggems_matrix/daily/20260216/matrix_stage_breakdown_smoke_v1/status_converged.json",
+        "artifacts/intentir/mapping_complexity_m2_after_semantic_v2.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/matrix_stage_breakdown_smoke_v1",
+      "counts_by_status": {
+        "blocked_backend": 195,
+        "dual_pass": 1
+      }
+    },
+    {
+      "ts": "2026-02-16T08:30:16+00:00",
+      "commit": "b689c07aef45c2adee4b3248add4c5b71f9b7883",
+      "lane": "backend_compiler",
+      "summary": "Conv/Pool/Upsample split专项回归通过：RVV+CUDA+stage_timing_breakdown 全通过。",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/convpool_upsample_split_validation_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/convpool_upsample_split_validation_v1/status_converged.json",
+      "next_focus": "继续拆分cpp_codegen（下一簇: attention/index family）并进入P1性能调优。",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260216/convpool_upsample_split_validation_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/convpool_upsample_split_validation_v1/stage_timing_breakdown.json",
+        "artifacts/flaggems_matrix/daily/20260216/convpool_upsample_split_validation_v1/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/convpool_upsample_split_validation_v1",
+      "counts_by_status": {
+        "blocked_backend": 187,
+        "dual_pass": 9
+      }
     }
   ],
-  "next_focus": "Shift to backend performance pass (P1 hotspots): schedule/profile tuning without changing coverage truth.",
+  "next_focus": "继续拆分cpp_codegen（下一簇: attention/index family）并进入P1性能调优。",
   "active_lanes": [],
   "next_focus_by_lane": {
-    "coverage": "Move to backend_compiler lane: cpp_codegen modular split + full196 evidence chain cleanup.",
-    "backend_compiler": "Shift to backend performance pass (P1 hotspots): schedule/profile tuning without changing coverage truth."
+    "backend_compiler": "继续拆分cpp_codegen（下一簇: attention/index family）并进入P1性能调优。",
+    "coverage": "Move to backend_compiler lane: cpp_codegen modular split + full196 evidence chain cleanup."
   },
   "known_risks": [
     "full196 backend sweep after batch3: dual_pass=188, rvv_only=8 (cuda lowering gaps)",
