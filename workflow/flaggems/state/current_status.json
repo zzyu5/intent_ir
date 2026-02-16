@@ -1,14 +1,14 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-16T20:23:17+00:00",
+  "updated_at": "2026-02-16T20:25:40+00:00",
   "branch": "flaggems",
-  "head_commit": "26ceba1641e33cdf30a567f67932ba157e7c4879",
+  "head_commit": "431b267bb6392bb5d717c6e5b58ef7aa0c5c7ed6",
   "mode": "maintenance",
   "coverage_integrity_phase": "recompute_stale",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/run_summary.json",
   "full196_last_ok": true,
   "full196_validated_commit": "95c2fea682a984e1666c9d4ab9eafb6c6512c046",
-  "full196_commits_since_validated": 31,
+  "full196_commits_since_validated": 33,
   "full196_validated_mode": "auto",
   "full196_validated_scope": "coverage_158_kernels_to_196_semantics",
   "full196_validated_with_rvv_remote": false,
@@ -84,12 +84,12 @@
     "coverage"
   ],
   "next_focus_by_lane": {
-    "backend_compiler": "Continue backend modularization on CUDA cpp_codegen while full196 force_compile run progresses; use scoped batches for regression guard.",
+    "backend_compiler": "Continue CUDA/RVV cpp_codegen modular splits and then execute scoped backend waves once full196 force-compile run finishes.",
     "coverage": "Run full196 force_compile matrix to refresh coverage evidence on HEAD."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260217/backend_rvv_infer_split_v1/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260217/backend_rvv_infer_split_v1/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260217/backend_cuda_dropout_split_v1/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260217/backend_cuda_dropout_split_v1/status_converged.json"
   },
   "lanes": {
     "coverage": {
