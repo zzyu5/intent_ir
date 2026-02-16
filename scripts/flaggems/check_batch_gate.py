@@ -223,6 +223,40 @@ def _validate_stage_timing_breakdown(stage_path: Path) -> tuple[bool, str]:
     return True, "stage timing breakdown complete for rvv/cuda"
 
 
+def _validate_ir_arch_mapping_quality(
+    mapping_report_path: Path,
+    *,
+    max_complex_single_intent_ratio: float,
+    max_global_unique_single_primitive_ratio: float,
+) -> tuple[bool, str]:
+    if not mapping_report_path.is_file():
+        return False, f"mapping complexity report missing: {mapping_report_path}"
+    payload = _load_json(mapping_report_path)
+    try:
+        complex_ratio = float(
+            payload.get("composition_required_single_intent_ratio", payload.get("complex_family_single_semantic_ratio", 0.0))
+        )
+        global_unique_ratio = float(payload.get("global_unique_single_primitive_ratio", 0.0))
+    except Exception:
+        return False, "invalid mapping complexity ratios in report"
+    if complex_ratio > float(max_complex_single_intent_ratio):
+        return (
+            False,
+            f"complex ratio {complex_ratio:.4f} > {float(max_complex_single_intent_ratio):.4f}",
+        )
+    if global_unique_ratio > float(max_global_unique_single_primitive_ratio):
+        return (
+            False,
+            f"global unique single-primitive ratio {global_unique_ratio:.4f} > "
+            f"{float(max_global_unique_single_primitive_ratio):.4f}",
+        )
+    return (
+        True,
+        "mapping quality within thresholds "
+        f"(complex={complex_ratio:.4f}, global_unique={global_unique_ratio:.4f})",
+    )
+
+
 def _validate_timing_delta_budget(
     timing_delta_path: Path,
     *,
@@ -314,6 +348,18 @@ def main() -> None:
         action="append",
         default=[],
         help="Required stage name(s) in run_summary.stages for ir_arch/backend_compiler profiles.",
+    )
+    ap.add_argument(
+        "--ir-max-complex-single-intent-ratio",
+        type=float,
+        default=0.10,
+        help="ir_arch gate threshold for complex-family single-intent ratio (default: 0.10).",
+    )
+    ap.add_argument(
+        "--ir-max-global-unique-single-primitive-ratio",
+        type=float,
+        default=0.40,
+        help="ir_arch gate threshold for global unique single-primitive ratio (default: 0.40).",
     )
     ap.add_argument(
         "--require-active-dual-pass",
@@ -440,6 +486,23 @@ def main() -> None:
                 else f"missing or failed ir_arch stage(s): {missing_or_fail}",
             )
         )
+        mapping_stage = stage_map.get("mapping_complexity") or {}
+        mapping_json_path = str(mapping_stage.get("json_path") or "").strip()
+        if not mapping_json_path:
+            checks.append(
+                _check(
+                    "ir_arch.mapping_quality_thresholds",
+                    False,
+                    "mapping_complexity stage missing json_path",
+                )
+            )
+        else:
+            ok_map, detail_map = _validate_ir_arch_mapping_quality(
+                Path(mapping_json_path),
+                max_complex_single_intent_ratio=float(args.ir_max_complex_single_intent_ratio),
+                max_global_unique_single_primitive_ratio=float(args.ir_max_global_unique_single_primitive_ratio),
+            )
+            checks.append(_check("ir_arch.mapping_quality_thresholds", ok_map, detail_map))
     elif profile == "backend_compiler":
         stage_map = _stage_map(run_summary)
         required = list(args.require_stage or ["rvv_local", "cuda_local"])

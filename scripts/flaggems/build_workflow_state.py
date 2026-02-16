@@ -25,6 +25,8 @@ from pipeline.triton.providers.flaggems.workflow import (
 
 
 FULL196_VALIDATED_SCOPE = "coverage_158_kernels_to_196_semantics"
+IR_ARCH_COMPLEX_SINGLE_RATIO_THRESHOLD = 0.10
+IR_ARCH_GLOBAL_UNIQUE_SINGLE_RATIO_THRESHOLD = 0.40
 
 
 def _to_repo_rel(path: Path) -> str:
@@ -92,6 +94,46 @@ def _active_lanes(feature_payload: dict[str, Any]) -> list[str]:
         if pending:
             lane_pending[lane] = int(lane_pending.get(lane, 0)) + 1
     return sorted([lane for lane, cnt in lane_pending.items() if cnt > 0])
+
+
+def _mapping_quality_needs_ir_arch(feature_payload: dict[str, Any]) -> tuple[bool, str]:
+    features = [f for f in list(feature_payload.get("features") or []) if isinstance(f, dict)]
+    coverage_rows = [f for f in features if str(f.get("track") or "coverage") == "coverage"]
+    total = 0
+    complex_total = 0
+    complex_single = 0
+    unique_single_primitives: set[str] = set()
+    complex_families = {
+        "index_scatter_gather",
+        "conv_pool_interp",
+        "matmul_linear",
+        "attention_sequence",
+        "reduction",
+        "norm_activation",
+    }
+    for row in coverage_rows:
+        total += 1
+        fam = str(row.get("family") or "unknown")
+        ops = [str(x) for x in list(row.get("intent_ops") or []) if str(x).strip()]
+        if len(ops) == 1:
+            unique_single_primitives.add(str(ops[0]))
+        if fam in complex_families:
+            complex_total += 1
+            if len(ops) == 1:
+                complex_single += 1
+    complex_ratio = (float(complex_single) / float(complex_total)) if complex_total > 0 else 0.0
+    global_unique_ratio = (float(len(unique_single_primitives)) / float(total)) if total > 0 else 0.0
+    if complex_ratio > float(IR_ARCH_COMPLEX_SINGLE_RATIO_THRESHOLD):
+        return True, (
+            f"mapping quality breach: complex_family_single_semantic_ratio={complex_ratio:.4f} "
+            f"> {IR_ARCH_COMPLEX_SINGLE_RATIO_THRESHOLD:.4f}"
+        )
+    if global_unique_ratio > float(IR_ARCH_GLOBAL_UNIQUE_SINGLE_RATIO_THRESHOLD):
+        return True, (
+            f"mapping quality breach: global_unique_single_primitive_ratio={global_unique_ratio:.4f} "
+            f"> {IR_ARCH_GLOBAL_UNIQUE_SINGLE_RATIO_THRESHOLD:.4f}"
+        )
+    return False, ""
 
 
 def _load_progress_rows(progress_log_path: Path) -> list[dict[str, Any]]:
@@ -243,6 +285,7 @@ def main() -> None:
     next_focus = _parse_next_focus(args.handoff) or str(latest.get("next_focus") or "")
     active_lanes = _active_lanes(feature_payload)
     next_focus_by_lane = _next_focus_by_lane(progress_tail)
+    need_ir_arch_lane, ir_arch_reason = _mapping_quality_needs_ir_arch(feature_payload)
     catalog_exists = bool(args.scripts_catalog.is_file())
     if not full196_run_summary:
         coverage_integrity_phase = "recompute_pending"
@@ -253,6 +296,14 @@ def main() -> None:
     if (full196_commits_since_validated is not None) and int(full196_commits_since_validated) > 0:
         active_lanes = sorted(set(list(active_lanes) + ["coverage"]))
         next_focus_by_lane.setdefault("coverage", "Run full196 force_compile matrix to refresh coverage evidence on HEAD.")
+    if need_ir_arch_lane:
+        active_lanes = sorted(set(list(active_lanes) + ["ir_arch"]))
+        next_focus_by_lane.setdefault(
+            "ir_arch",
+            "Reduce IR single-op mapping complexity to satisfy complex<=10% and global_unique<=40% thresholds.",
+        )
+        if not next_focus:
+            next_focus = ir_arch_reason
 
     current_status = build_current_status_payload(
         branch=branch,

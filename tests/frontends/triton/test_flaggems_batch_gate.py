@@ -427,6 +427,140 @@ def test_check_batch_gate_passes_when_coverage_fresh_on_head(tmp_path: Path) -> 
     assert p.returncode == 0, p.stderr
 
 
+def test_check_batch_gate_ir_arch_passes_when_mapping_quality_within_thresholds(tmp_path: Path) -> None:
+    active = tmp_path / "active_batch_ir_arch.json"
+    run_summary = tmp_path / "run_summary_ir_arch.json"
+    status_converged = tmp_path / "status_converged_ir_arch.json"
+    progress = tmp_path / "progress_ir_arch.jsonl"
+    handoff = tmp_path / "handoff_ir_arch.md"
+    out = tmp_path / "batch_gate_ir_arch.json"
+    mapping = tmp_path / "mapping_complexity_report.json"
+
+    active.write_text(json.dumps({"schema_version": "flaggems_active_batch_v2", "lane": "ir_arch", "items": [{}]}), encoding="utf-8")
+    mapping.write_text(
+        json.dumps(
+            {
+                "composition_required_single_intent_ratio": 0.05,
+                "global_unique_single_primitive_ratio": 0.30,
+            }
+        ),
+        encoding="utf-8",
+    )
+    run_summary.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "stages": [
+                    {"stage": "primitive_reuse", "ok": True},
+                    {"stage": "macro_composition", "ok": True},
+                    {"stage": "mapping_complexity", "ok": True, "json_path": str(mapping)},
+                    {"stage": "mapping_tests", "ok": True},
+                    {"stage": "intentir_semantics", "ok": True},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    status_converged.write_text(json.dumps({"entries": []}), encoding="utf-8")
+    progress.write_text(
+        json.dumps({"run_summary_path": str(run_summary), "status_converged_path": str(status_converged)}) + "\n",
+        encoding="utf-8",
+    )
+    handoff.write_text("# FlagGems Session Handoff\n- Next Focus: ir cleanup\n", encoding="utf-8")
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/check_batch_gate.py",
+            "--profile",
+            "ir_arch",
+            "--active-batch",
+            str(active),
+            "--run-summary",
+            str(run_summary),
+            "--status-converged",
+            str(status_converged),
+            "--progress-log",
+            str(progress),
+            "--handoff",
+            str(handoff),
+            "--out",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+
+
+def test_check_batch_gate_ir_arch_fails_when_mapping_quality_exceeds_thresholds(tmp_path: Path) -> None:
+    active = tmp_path / "active_batch_ir_arch.json"
+    run_summary = tmp_path / "run_summary_ir_arch.json"
+    status_converged = tmp_path / "status_converged_ir_arch.json"
+    progress = tmp_path / "progress_ir_arch.jsonl"
+    handoff = tmp_path / "handoff_ir_arch.md"
+    out = tmp_path / "batch_gate_ir_arch.json"
+    mapping = tmp_path / "mapping_complexity_report.json"
+
+    active.write_text(json.dumps({"schema_version": "flaggems_active_batch_v2", "lane": "ir_arch", "items": [{}]}), encoding="utf-8")
+    mapping.write_text(
+        json.dumps(
+            {
+                "composition_required_single_intent_ratio": 0.25,
+                "global_unique_single_primitive_ratio": 0.65,
+            }
+        ),
+        encoding="utf-8",
+    )
+    run_summary.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "stages": [
+                    {"stage": "primitive_reuse", "ok": True},
+                    {"stage": "macro_composition", "ok": True},
+                    {"stage": "mapping_complexity", "ok": True, "json_path": str(mapping)},
+                    {"stage": "mapping_tests", "ok": True},
+                    {"stage": "intentir_semantics", "ok": True},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    status_converged.write_text(json.dumps({"entries": []}), encoding="utf-8")
+    progress.write_text(
+        json.dumps({"run_summary_path": str(run_summary), "status_converged_path": str(status_converged)}) + "\n",
+        encoding="utf-8",
+    )
+    handoff.write_text("# FlagGems Session Handoff\n- Next Focus: ir cleanup\n", encoding="utf-8")
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/check_batch_gate.py",
+            "--profile",
+            "ir_arch",
+            "--active-batch",
+            str(active),
+            "--run-summary",
+            str(run_summary),
+            "--status-converged",
+            str(status_converged),
+            "--progress-log",
+            str(progress),
+            "--handoff",
+            str(handoff),
+            "--out",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode != 0
+
+
 def test_check_batch_gate_backend_profile_allows_non_timing_required_stages(tmp_path: Path) -> None:
     active = tmp_path / "active_batch_backend.json"
     run_summary = tmp_path / "run_summary_backend.json"

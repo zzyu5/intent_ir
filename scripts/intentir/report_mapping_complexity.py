@@ -66,10 +66,22 @@ def main() -> None:
         help="Optional explicit max complex-family single-intent ratio threshold.",
     )
     ap.add_argument(
+        "--max-global-unique-single-primitive-ratio",
+        type=float,
+        default=0.40,
+        help="Max allowed global unique single-primitive ratio (default: 0.40).",
+    )
+    ap.add_argument(
         "--fail-on-threshold-breach",
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Exit non-zero when complex-family ratio exceeds threshold.",
+    )
+    ap.add_argument(
+        "--fail-on-global-threshold-breach",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Exit non-zero when global unique single-primitive ratio exceeds threshold.",
     )
     ap.add_argument(
         "--refresh-mappings-from-rules",
@@ -166,6 +178,18 @@ def main() -> None:
         if bool(gate["ok"])
         else f"complex_family_single_intent_ratio {float(gate['ratio']):.4f} > {float(threshold):.4f}"
     )
+    global_unique_ratio = _ratio(len(unique_single_primitives), total)
+    global_gate_threshold = float(args.max_global_unique_single_primitive_ratio)
+    gate_global = {
+        "ok": bool(global_unique_ratio <= global_gate_threshold),
+        "ratio": float(global_unique_ratio),
+        "threshold": float(global_gate_threshold),
+        "detail": (
+            f"global_unique_single_primitive_ratio {float(global_unique_ratio):.4f} <= {float(global_gate_threshold):.4f}"
+            if bool(global_unique_ratio <= global_gate_threshold)
+            else f"global_unique_single_primitive_ratio {float(global_unique_ratio):.4f} > {float(global_gate_threshold):.4f}"
+        ),
+    }
     out = {
         "schema_version": "intentir_mapping_complexity_v1",
         "registry": str(args.registry),
@@ -178,7 +202,7 @@ def main() -> None:
         "raw_single_semantic_ratio": _ratio(single, total),
         "single_intent_ratio": _ratio(single, total),
         "global_unique_single_primitive_count": int(len(unique_single_primitives)),
-        "global_unique_single_primitive_ratio": _ratio(len(unique_single_primitives), total),
+        "global_unique_single_primitive_ratio": float(global_unique_ratio),
         "complex_families": sorted(list(complex_families)),
         "complex_total": int(complex_total),
         "complex_single_intent_ops": int(complex_single),
@@ -188,12 +212,15 @@ def main() -> None:
         "composition_required_single_intent_ops": int(required_single),
         "composition_required_single_intent_ratio": _ratio(required_single, required_total),
         "gate": gate,
+        "gate_global_unique_single_primitive_ratio": gate_global,
         "by_family": {k: v for k, v in sorted(by_family.items(), key=lambda kv: kv[0])},
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"Mapping complexity report written: {args.out}")
     if bool(args.fail_on_threshold_breach) and (not bool(gate["ok"])):
+        raise SystemExit(1)
+    if bool(args.fail_on_global_threshold_breach) and (not bool(gate_global["ok"])):
         raise SystemExit(1)
 
 

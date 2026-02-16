@@ -102,6 +102,43 @@ def test_mapping_complexity_report_can_fail_on_threshold_breach(tmp_path: Path) 
     assert payload["gate"]["ok"] is False
 
 
+def test_mapping_complexity_report_can_fail_on_global_unique_threshold_breach(tmp_path: Path) -> None:
+    registry = tmp_path / "registry.json"
+    out = tmp_path / "mapping_complexity.json"
+    registry.write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {"semantic_op": "a", "family": "elementwise_broadcast", "intent_ops": ["add"]},
+                    {"semantic_op": "b", "family": "elementwise_broadcast", "intent_ops": ["sub"]},
+                    {"semantic_op": "c", "family": "elementwise_broadcast", "intent_ops": ["mul"]},
+                    {"semantic_op": "d", "family": "elementwise_broadcast", "intent_ops": ["div"]},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/intentir/report_mapping_complexity.py",
+            "--registry",
+            str(registry),
+            "--out",
+            str(out),
+            "--max-global-unique-single-primitive-ratio",
+            "0.2",
+            "--fail-on-global-threshold-breach",
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode != 0
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["gate_global_unique_single_primitive_ratio"]["ok"] is False
+
+
 def test_mapping_complexity_report_refreshes_from_semantic_rules(tmp_path: Path) -> None:
     registry = tmp_path / "registry.json"
     out = tmp_path / "mapping_complexity.json"

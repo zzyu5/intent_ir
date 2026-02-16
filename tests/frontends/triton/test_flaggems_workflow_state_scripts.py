@@ -164,6 +164,63 @@ def test_build_workflow_state_writes_current_and_context(tmp_path: Path) -> None
     assert "ir_arch" in list(context_payload.get("active_lanes") or [])
 
 
+def test_build_workflow_state_activates_ir_arch_lane_when_mapping_quality_breaches(tmp_path: Path) -> None:
+    feature = tmp_path / "feature_list.json"
+    progress = tmp_path / "progress_log.jsonl"
+    handoff = tmp_path / "handoff.md"
+    current = tmp_path / "current_status.json"
+    context = tmp_path / "session_context.json"
+    # Coverage-only list with no pending tasks, but mapping complexity intentionally high.
+    feature.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_feature_list_v2",
+                "summary": {
+                    "semantic_ops": 4,
+                    "by_status": {"dual_pass": 4},
+                    "by_family": {"elementwise_broadcast": 4},
+                    "tasks_total": 4,
+                    "by_track": {"coverage": 4},
+                },
+                "features": [
+                    {"id": "flaggems::a", "track": "coverage", "family": "elementwise_broadcast", "status": "dual_pass", "passes": True, "intent_ops": ["add"]},
+                    {"id": "flaggems::b", "track": "coverage", "family": "elementwise_broadcast", "status": "dual_pass", "passes": True, "intent_ops": ["sub"]},
+                    {"id": "flaggems::c", "track": "coverage", "family": "elementwise_broadcast", "status": "dual_pass", "passes": True, "intent_ops": ["mul"]},
+                    {"id": "flaggems::d", "track": "coverage", "family": "elementwise_broadcast", "status": "dual_pass", "passes": True, "intent_ops": ["div"]},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    progress.write_text("", encoding="utf-8")
+    handoff.write_text("# FlagGems Session Handoff\n- Next Focus: none\n", encoding="utf-8")
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/build_workflow_state.py",
+            "--feature-list",
+            str(feature),
+            "--progress-log",
+            str(progress),
+            "--handoff",
+            str(handoff),
+            "--current-status-out",
+            str(current),
+            "--session-context-out",
+            str(context),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    status_payload = json.loads(current.read_text(encoding="utf-8"))
+    context_payload = json.loads(context.read_text(encoding="utf-8"))
+    assert "ir_arch" in list(status_payload.get("active_lanes") or [])
+    assert "ir_arch" in list(context_payload.get("active_lanes") or [])
+    assert "ir_arch" in dict(status_payload.get("next_focus_by_lane") or {})
+
+
 def test_build_workflow_state_prefers_latest_full196_run_over_latest_partial(tmp_path: Path) -> None:
     feature = tmp_path / "feature_list.json"
     progress = tmp_path / "progress_log.jsonl"

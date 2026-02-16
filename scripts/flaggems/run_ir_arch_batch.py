@@ -72,14 +72,20 @@ def main() -> None:
     ap.add_argument(
         "--mapping-complexity-threshold",
         type=float,
-        default=float(single_intent_ratio_target("m1")),
+        default=float(single_intent_ratio_target("m2")),
         help="Max allowed complex-family single-intent ratio for ir_arch gate.",
+    )
+    ap.add_argument(
+        "--mapping-global-unique-threshold",
+        type=float,
+        default=0.40,
+        help="Max allowed global unique single-primitive ratio for ir_arch gate.",
     )
     ap.add_argument(
         "--mapping-policy-stage",
         choices=["m1", "m2"],
-        default="m1",
-        help="Composition policy stage label for complexity report (default: m1).",
+        default="m2",
+        help="Composition policy stage label for complexity report (default: m2).",
     )
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
@@ -120,6 +126,9 @@ def main() -> None:
                 "--max-complex-single-intent-ratio",
                 str(float(args.mapping_complexity_threshold)),
                 "--fail-on-threshold-breach",
+                "--max-global-unique-single-primitive-ratio",
+                str(float(args.mapping_global_unique_threshold)),
+                "--fail-on-global-threshold-breach",
             ],
         ),
         ("mapping_tests", _parse_cmd(str(args.mapping_tests_cmd))),
