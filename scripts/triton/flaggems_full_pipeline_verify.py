@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -28,10 +29,24 @@ from pipeline.triton.providers.flaggems.execution import (
     sync_seed_into_run_dir,
     resolve_flaggems_execution,
 )
-from pipeline.triton.providers.flaggems.specs import (
-    coverage_flaggems_kernel_specs,
-    default_flaggems_kernel_specs,
-)
+
+
+def _append_progress_row(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def default_flaggems_kernel_specs(*, flaggems_opset: str, backend_target: str):
+    from pipeline.triton.providers.flaggems.specs import default_flaggems_kernel_specs as _impl  # noqa: PLC0415
+
+    return _impl(flaggems_opset=str(flaggems_opset), backend_target=str(backend_target))
+
+
+def coverage_flaggems_kernel_specs(*, flaggems_opset: str, backend_target: str):
+    from pipeline.triton.providers.flaggems.specs import coverage_flaggems_kernel_specs as _impl  # noqa: PLC0415
+
+    return _impl(flaggems_opset=str(flaggems_opset), backend_target=str(backend_target))
 
 
 def main() -> None:
@@ -65,12 +80,6 @@ def main() -> None:
         help="IntentIR miss policy when cache/LLM paths fail (default: deterministic).",
     )
     ap.add_argument(
-        "--fallback-policy",
-        choices=["deterministic", "strict"],
-        default=None,
-        help="Deprecated alias for --intentir-miss-policy.",
-    )
-    ap.add_argument(
         "--flaggems-opset",
         choices=["deterministic_forward"],
         default="deterministic_forward",
@@ -88,11 +97,15 @@ def main() -> None:
         default=False,
         help="Exit non-zero when any kernel raises pipeline exception after writing failure report.",
     )
+    ap.add_argument(
+        "--progress-log",
+        type=Path,
+        default=None,
+        help="Optional per-kernel JSONL progress log path (default: <out-dir>/kernel_progress.jsonl).",
+    )
     ap.add_argument("--out-dir", type=str, default=None)
     args = ap.parse_args()
     miss_policy = str(args.intentir_miss_policy)
-    if args.fallback_policy is not None:
-        miss_policy = str(args.fallback_policy)
 
     seed_cache_dir = Path(args.seed_cache_dir)
     seed_cache_dir.mkdir(parents=True, exist_ok=True)
@@ -105,6 +118,12 @@ def main() -> None:
 
     out_dir = Path(args.out_dir) if args.out_dir else (ROOT / "artifacts" / "flaggems_triton_full_pipeline")
     out_dir.mkdir(parents=True, exist_ok=True)
+    progress_log = Path(args.progress_log) if args.progress_log is not None else (out_dir / "kernel_progress.jsonl")
+    if progress_log.is_file():
+        try:
+            progress_log.unlink()
+        except OSError:
+            pass
 
     suites = {
         "smoke": lambda: default_flaggems_kernel_specs(
@@ -128,11 +147,33 @@ def main() -> None:
         return
 
     wanted = set(args.kernel or [])
+    selected_specs = [spec for spec in specs if (not wanted or spec.name in wanted)]
     kernel_failures: list[str] = []
-    for spec in specs:
-        if wanted and spec.name not in wanted:
-            continue
-        print(f"\n=== flaggems:{spec.name} ===")
+    total = len(selected_specs)
+    _append_progress_row(
+        progress_log,
+        {
+            "event": "session_start",
+            "suite": str(args.suite),
+            "total_kernels": int(total),
+            "flaggems_path": str(args.flaggems_path),
+            "intentir_mode": str(args.intentir_mode),
+            "intentir_miss_policy": miss_policy,
+            "out_dir": str(out_dir),
+        },
+    )
+    for idx, spec in enumerate(selected_specs, start=1):
+        start_ts = time.time()
+        print(f"\n[{idx}/{total}] START flaggems:{spec.name}", flush=True)
+        _append_progress_row(
+            progress_log,
+            {
+                "event": "kernel_start",
+                "index": int(idx),
+                "total": int(total),
+                "kernel": str(spec.name),
+            },
+        )
         if config.use_intent_ir:
             cache_event = sync_seed_into_run_dir(
                 spec_name=str(spec.name),
@@ -141,11 +182,11 @@ def main() -> None:
                 intentir_mode=config.intentir_mode,
             )
             if cache_event == "hit":
-                print(f"[{spec.name}] intent seed cache hit: {seed_cache_dir / f'{spec.name}.intent_seed.json'}")
+                print(f"[{spec.name}] intent seed cache hit: {seed_cache_dir / f'{spec.name}.intent_seed.json'}", flush=True)
             elif cache_event == "miss":
-                print(f"[{spec.name}] intent seed cache miss: {seed_cache_dir / f'{spec.name}.intent_seed.json'}")
+                print(f"[{spec.name}] intent seed cache miss: {seed_cache_dir / f'{spec.name}.intent_seed.json'}", flush=True)
             elif cache_event == "synthesized":
-                print(f"[{spec.name}] intent seed synthesized from provider canonical template: {seed_cache_dir / f'{spec.name}.intent_seed.json'}")
+                print(f"[{spec.name}] intent seed synthesized from provider canonical template: {seed_cache_dir / f'{spec.name}.intent_seed.json'}", flush=True)
         else:
             # Ensure original path does not accidentally consume stale per-run seed.
             run_seed = out_dir / f"{spec.name}.intent_seed.json"
@@ -166,7 +207,8 @@ def main() -> None:
                 backend_target=str(args.backend_target),
             )
         except Exception as e:
-            print("Pipeline failed:", e)
+            elapsed = time.time() - start_ts
+            print("Pipeline failed:", e, flush=True)
             kernel_failures.append(str(spec.name))
             report = {
                 "kernel": str(spec.name),
@@ -176,7 +218,6 @@ def main() -> None:
                     "flaggems_path": str(args.flaggems_path),
                     "intentir_mode": str(args.intentir_mode),
                     "intentir_miss_policy": miss_policy,
-                    "fallback_policy": miss_policy,
                 },
                 "diff": {
                     "ok": False,
@@ -194,7 +235,25 @@ def main() -> None:
                 },
             }
             out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-            print("Report:", out_path)
+            _append_progress_row(
+                progress_log,
+                {
+                    "event": "kernel_end",
+                    "index": int(idx),
+                    "total": int(total),
+                    "kernel": str(spec.name),
+                    "ok": False,
+                    "status": "pipeline_exception",
+                    "reason_code": "pipeline_exception",
+                    "elapsed_sec": float(round(elapsed, 6)),
+                    "report_path": str(out_path),
+                },
+            )
+            print(
+                f"[{idx}/{total}] DONE flaggems:{spec.name} status=PIPELINE_EXCEPTION "
+                f"elapsed={elapsed:.2f}s report={out_path}",
+                flush=True,
+            )
             continue
 
         if config.use_intent_ir:
@@ -205,20 +264,54 @@ def main() -> None:
                 intentir_mode=config.intentir_mode,
             )
             if wrote:
-                print(f"[{spec.name}] intent seed cached: {seed_cache_dir / f'{spec.name}.intent_seed.json'}")
+                print(f"[{spec.name}] intent seed cached: {seed_cache_dir / f'{spec.name}.intent_seed.json'}", flush=True)
 
         contract_level = (report.get("contract") or {}).get("level")
         diff = report.get("diff") or {}
-        print(f"TTIR: {report.get('ttir_path', 'N/A')} | contract={contract_level}")
-        print(f"Diff: {'OK' if diff.get('ok') else 'FAIL'}")
+        kernel_ok = bool(diff.get("ok"))
+        elapsed = time.time() - start_ts
+        reason_code = str(diff.get("reason_code") or report.get("reason_code") or "")
+        if not kernel_ok:
+            kernel_failures.append(str(spec.name))
+        print(f"TTIR: {report.get('ttir_path', 'N/A')} | contract={contract_level}", flush=True)
+        print(f"Diff: {'OK' if kernel_ok else 'FAIL'}", flush=True)
 
         out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-        print("Report:", out_path)
-    print(f"Generated pipeline artifacts: {out_dir}")
+        _append_progress_row(
+            progress_log,
+            {
+                "event": "kernel_end",
+                "index": int(idx),
+                "total": int(total),
+                "kernel": str(spec.name),
+                "ok": bool(kernel_ok),
+                "status": ("ok" if kernel_ok else "diff_fail"),
+                "reason_code": reason_code,
+                "elapsed_sec": float(round(elapsed, 6)),
+                "report_path": str(out_path),
+            },
+        )
+        print(
+            f"[{idx}/{total}] DONE flaggems:{spec.name} status={'OK' if kernel_ok else 'DIFF_FAIL'} "
+            f"elapsed={elapsed:.2f}s report={out_path}",
+            flush=True,
+        )
+    _append_progress_row(
+        progress_log,
+        {
+            "event": "session_end",
+            "total_kernels": int(total),
+            "failed_kernels": list(kernel_failures),
+            "failed_count": int(len(kernel_failures)),
+            "ok": bool(len(kernel_failures) == 0),
+        },
+    )
+    print(f"Generated pipeline artifacts: {out_dir}", flush=True)
+    print(f"Kernel progress log: {progress_log}", flush=True)
     if config.use_intent_ir:
-        print(f"Intent seed cache dir: {seed_cache_dir}")
+        print(f"Intent seed cache dir: {seed_cache_dir}", flush=True)
     if kernel_failures:
-        print(f"Kernel pipeline failures: {', '.join(kernel_failures)}")
+        print(f"Kernel pipeline failures: {', '.join(kernel_failures)}", flush=True)
         if bool(args.strict_kernel_failure):
             raise SystemExit(1)
 

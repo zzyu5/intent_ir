@@ -24,7 +24,7 @@ def test_flaggems_pipeline_cli_uses_new_path_mode_flags() -> None:
     assert "--flaggems-path" in text
     assert "--intentir-mode" in text
     assert "--intentir-miss-policy" in text
-    assert "--fallback-policy" in text
+    assert "--fallback-policy" not in text
     assert "--seed-cache-dir" in text
     assert "--use-llm" not in text
     assert "--no-use-llm" not in text
@@ -35,7 +35,7 @@ def test_flaggems_pipeline_cli_uses_new_path_mode_flags() -> None:
 def test_flaggems_matrix_cli_exposes_cuda_stage_timeout_flags() -> None:
     text = _help_text("scripts/flaggems/run_multibackend_matrix.py")
     assert "--intentir-miss-policy" in text
-    assert "--fallback-policy" in text
+    assert "--fallback-policy" not in text
     assert "--cuda-timeout-sec" in text
     assert "--cuda-compile-timeout-sec" in text
     assert "--cuda-launch-timeout-sec" in text

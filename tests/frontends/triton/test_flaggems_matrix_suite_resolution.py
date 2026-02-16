@@ -81,8 +81,9 @@ def test_matrix_forwards_cuda_stage_timeout_flags(monkeypatch: pytest.MonkeyPatc
     mod = _load_matrix_module()
     recorded_cmds: list[list[str]] = []
 
-    def _fake_run(cmd: list[str], *, cwd: Path):
+    def _fake_run(cmd: list[str], *, cwd: Path, stream_output: bool = False):
         _ = cwd
+        _ = stream_output
         recorded_cmds.append(list(cmd))
         if "--out" in cmd:
             out = Path(cmd[cmd.index("--out") + 1])
@@ -158,8 +159,9 @@ def test_matrix_skips_backend_stages_when_provider_report_missing(
     mod = _load_matrix_module()
     recorded_cmds: list[list[str]] = []
 
-    def _fake_run(cmd: list[str], *, cwd: Path):
+    def _fake_run(cmd: list[str], *, cwd: Path, stream_output: bool = False):
         _ = cwd
+        _ = stream_output
         recorded_cmds.append(list(cmd))
         if "--out" in cmd:
             out = Path(cmd[cmd.index("--out") + 1])
@@ -218,8 +220,9 @@ def test_matrix_marks_full_coverage_run_when_suite_coverage_without_explicit_ker
     mod = _load_matrix_module()
     recorded_cmds: list[list[str]] = []
 
-    def _fake_run(cmd: list[str], *, cwd: Path):
+    def _fake_run(cmd: list[str], *, cwd: Path, stream_output: bool = False):
         _ = cwd
+        _ = stream_output
         recorded_cmds.append(list(cmd))
         if "--out" in cmd:
             out = Path(cmd[cmd.index("--out") + 1])

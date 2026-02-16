@@ -66,6 +66,11 @@ def test_full_pipeline_writes_failure_report_on_kernel_exception(
     assert report["reason_code"] == "pipeline_exception"
     assert report["diff"]["ok"] is False
     assert "boom" in str(report["error"]["message"])
+    progress_log = tmp_path / "out" / "kernel_progress.jsonl"
+    assert progress_log.is_file()
+    events = [json.loads(line) for line in progress_log.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert any(e.get("event") == "kernel_start" and e.get("kernel") == "tile2d" for e in events)
+    assert any(e.get("event") == "kernel_end" and e.get("status") == "pipeline_exception" for e in events)
 
 
 def test_full_pipeline_strict_kernel_failure_returns_nonzero(
@@ -113,3 +118,5 @@ def test_full_pipeline_strict_kernel_failure_returns_nonzero(
     assert int(exc.value.code) == 1
     report = json.loads((tmp_path / "out" / "tile2d.json").read_text(encoding="utf-8"))
     assert report["reason_code"] == "pipeline_exception"
+    progress_log = tmp_path / "out" / "kernel_progress.jsonl"
+    assert progress_log.is_file()

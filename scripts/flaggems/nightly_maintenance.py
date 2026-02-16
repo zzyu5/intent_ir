@@ -41,12 +41,6 @@ def main() -> None:
     ap.add_argument("--flaggems-path", choices=["original", "intentir"], default="intentir")
     ap.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="auto")
     ap.add_argument("--intentir-miss-policy", choices=["deterministic", "strict"], default="deterministic")
-    ap.add_argument(
-        "--fallback-policy",
-        choices=["deterministic", "strict"],
-        default=None,
-        help="Deprecated alias for --intentir-miss-policy.",
-    )
     ap.add_argument("--flaggems-opset", choices=["deterministic_forward"], default="deterministic_forward")
     ap.add_argument("--backend-target", choices=["rvv", "cuda_h100", "cuda_5090d"], default="rvv")
     ap.add_argument(
@@ -128,8 +122,6 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
     miss_policy = str(args.intentir_miss_policy)
-    if args.fallback_policy is not None:
-        miss_policy = str(args.fallback_policy)
 
     if str(args.flaggems_path) == "original" and str(args.intentir_mode) != "auto":
         raise SystemExit("--intentir-mode is only valid when --flaggems-path=intentir")

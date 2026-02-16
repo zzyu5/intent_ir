@@ -24,9 +24,26 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-def _run(cmd: list[str], *, cwd: Path) -> tuple[int, str, str]:
-    p = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True)
-    return int(p.returncode), str(p.stdout or ""), str(p.stderr or "")
+def _run(cmd: list[str], *, cwd: Path, stream_output: bool = False) -> tuple[int, str, str]:
+    if not bool(stream_output):
+        p = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True)
+        return int(p.returncode), str(p.stdout or ""), str(p.stderr or "")
+
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(cwd),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    merged: list[str] = []
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        merged.append(line)
+        print(line, end="", flush=True)
+    rc = int(proc.wait())
+    return rc, "".join(merged), ""
 
 
 def _with_env_prefix(cmd: list[str], env_map: dict[str, str] | None) -> list[str]:
@@ -170,12 +187,6 @@ def main() -> None:
         default="deterministic",
         help="IntentIR miss policy passed to FlagGems full pipeline script.",
     )
-    ap.add_argument(
-        "--fallback-policy",
-        choices=["deterministic", "strict"],
-        default=None,
-        help="Deprecated alias for --intentir-miss-policy.",
-    )
     ap.add_argument("--seed-cache-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_seed_cache"))
     ap.add_argument("--pipeline-out-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_triton_full_pipeline"))
     ap.add_argument("--active-batch", type=Path, default=None)
@@ -186,6 +197,12 @@ def main() -> None:
         choices=["coverage", "ir_arch", "backend_compiler"],
         default="coverage",
         help="Workflow lane used to resolve active semantic scope (default: coverage).",
+    )
+    ap.add_argument(
+        "--stream-subprocess-output",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Stream subprocess logs (pipeline/backend/converge) to console in real time.",
     )
     ap.add_argument("--skip-pipeline", action="store_true")
     ap.add_argument("--skip-rvv", action="store_true")
@@ -251,8 +268,6 @@ def main() -> None:
     ap.add_argument("--write-registry", action="store_true")
     args = ap.parse_args()
     miss_policy = str(args.intentir_miss_policy)
-    if args.fallback_policy is not None:
-        miss_policy = str(args.fallback_policy)
     if str(args.flaggems_path) == "original" and str(args.intentir_mode) != "auto":
         raise SystemExit("--intentir-mode is only valid when --flaggems-path=intentir")
 
@@ -342,7 +357,8 @@ def main() -> None:
         ]
         for k in kernel_filter:
             cmd += ["--kernel", str(k)]
-        rc, out, err = _run(cmd, cwd=ROOT)
+        print(f"[matrix] stage=pipeline kernels={len(kernel_filter) if kernel_filter else len(scoped_kernels)}", flush=True)
+        rc, out, err = _run(cmd, cwd=ROOT, stream_output=bool(args.stream_subprocess_output))
         _record("pipeline", rc, out, err, extra={"cmd": cmd})
 
     missing_provider_reports = _collect_missing_provider_reports(pipeline_out_dir, scoped_kernels)
@@ -389,7 +405,8 @@ def main() -> None:
         for k in kernel_filter:
             cmd += ["--kernel", str(k)]
         cmd_run = _with_env_prefix(cmd, rvv_env)
-        rc, out, err = _run(cmd_run, cwd=ROOT)
+        print("[matrix] stage=rvv_local", flush=True)
+        rc, out, err = _run(cmd_run, cwd=ROOT, stream_output=bool(args.stream_subprocess_output))
         _record(
             "rvv_local",
             rc,
@@ -429,7 +446,8 @@ def main() -> None:
         for k in kernel_filter:
             cmd += ["--kernel", str(k)]
         cmd_run = _with_env_prefix(cmd, rvv_env)
-        rc, out, err = _run(cmd_run, cwd=ROOT)
+        print("[matrix] stage=rvv_remote", flush=True)
+        rc, out, err = _run(cmd_run, cwd=ROOT, stream_output=bool(args.stream_subprocess_output))
         _record(
             "rvv_remote",
             rc,
@@ -480,7 +498,8 @@ def main() -> None:
         for k in kernel_filter:
             cmd += ["--kernel", str(k)]
         cmd_run = _with_env_prefix(cmd, cuda_env)
-        rc, out, err = _run(cmd_run, cwd=ROOT)
+        print("[matrix] stage=cuda_local", flush=True)
+        rc, out, err = _run(cmd_run, cwd=ROOT, stream_output=bool(args.stream_subprocess_output))
         _record(
             "cuda_local",
             rc,
@@ -501,7 +520,8 @@ def main() -> None:
             "--out",
             str(stage_timing_breakdown),
         ]
-        rc, out, err = _run(cmd, cwd=ROOT)
+        print("[matrix] stage=stage_timing_breakdown", flush=True)
+        rc, out, err = _run(cmd, cwd=ROOT, stream_output=bool(args.stream_subprocess_output))
         _record("stage_timing_breakdown", rc, out, err, extra={"cmd": cmd, "json_path": str(stage_timing_breakdown)})
     else:
         _record(
@@ -537,7 +557,8 @@ def main() -> None:
     cmd += ["--scope-mode", "active_only"]
     if bool(args.write_registry):
         cmd.append("--write-registry")
-    rc, out, err = _run(cmd, cwd=ROOT)
+    print("[matrix] stage=converge", flush=True)
+    rc, out, err = _run(cmd, cwd=ROOT, stream_output=bool(args.stream_subprocess_output))
     _record("converge", rc, out, err, extra={"cmd": cmd, "json_path": str(converged)})
 
     coverage_integrity = out_dir / "coverage_integrity.json"
@@ -562,7 +583,8 @@ def main() -> None:
             "stages": stage_results,
         }
         (out_dir / "run_summary.json").write_text(json.dumps(tmp_summary, indent=2, ensure_ascii=False), encoding="utf-8")
-        rc, out, err = _run(cmd, cwd=ROOT)
+        print("[matrix] stage=coverage_integrity", flush=True)
+        rc, out, err = _run(cmd, cwd=ROOT, stream_output=bool(args.stream_subprocess_output))
         _record("coverage_integrity", rc, out, err, extra={"cmd": cmd, "json_path": str(coverage_integrity)})
     else:
         _record(
@@ -603,7 +625,6 @@ def main() -> None:
         ),
         "cuda_runtime_backend": str(args.cuda_runtime_backend),
         "intentir_miss_policy": miss_policy,
-        "fallback_policy": miss_policy,
         "schedule_profile_tag": profile_tag,
         "rvv_schedule_overrides": dict(rvv_env),
         "cuda_schedule_overrides": dict(cuda_env),
