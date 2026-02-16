@@ -1,21 +1,27 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-16T03:58:23+00:00
-- Commit: `1433822`
+- Timestamp: 2026-02-16T04:38:37Z
+- Commit: `e24d059`
 - Lane: `coverage`
-- Summary: Enabled CUDA row_all lowering and fixed RVV remote dtype-serialization; gt2d/row_all are now dual-pass across rvv local+remote+cuda.
-- Batch Ops (10): angle, count_nonzero, diag, diag_embed, log_sigmoid, nan_to_num, repeat, repeat_interleave_self_int, repeat_interleave_self_tensor, repeat_interleave_tensor
-- Run Summary: `artifacts/flaggems_matrix/daily/20260216/coverage_hotfix_three_v2/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260216/coverage_hotfix_three_v2/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260216/coverage_hotfix_three_v2/cuda_local.json, artifacts/flaggems_matrix/daily/20260216/coverage_hotfix_three_v2/run_summary.json, artifacts/flaggems_matrix/daily/20260216/coverage_hotfix_three_v2/rvv_local.json, artifacts/flaggems_matrix/daily/20260216/coverage_hotfix_three_v2/rvv_remote.json, artifacts/flaggems_matrix/daily/20260216/coverage_hotfix_three_v2/status_converged.json, artifacts/flaggems_triton_full_pipeline/row_all.json
-- Next Focus: Implement CUDA conv2d lowering (or canonical decomposition) and rerun scoped then full196 matrix to restore full dual_pass confidence.
+- Summary: Added CUDA C++ lowering for `conv1d/conv2d/conv3d/conv_depthwise2d/avg_pool2d/max_pool2d_with_indices/upsample_nearest1d/upsample_nearest2d`, then validated a scoped batch end-to-end.
+- Batch Ops (11 semantic): gt, gt_scalar, all, avg_pool2d, conv1d, conv2d, conv3d, conv_depthwise2d, max_pool2d_with_indices, upsample_nearest1d, upsample_nearest2d
+- Run Summary: `artifacts/flaggems_matrix/daily/20260216/coverage_conv_family_v2/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260216/coverage_conv_family_v2/status_converged.json`
+- Evidence Paths:
+  - `artifacts/flaggems_triton_full_pipeline_conv_family_v2`
+  - `artifacts/flaggems_matrix/daily/20260216/coverage_conv_family_v2/rvv_local.json`
+  - `artifacts/flaggems_matrix/daily/20260216/coverage_conv_family_v2/rvv_remote.json`
+  - `artifacts/flaggems_matrix/daily/20260216/coverage_conv_family_v2/cuda_local.json`
+  - `artifacts/flaggems_matrix/daily/20260216/coverage_conv_family_v2/status_converged.json`
+- Next Focus: run a fresh full196 integrity recompute after this CUDA lowering wave, then continue the next CUDA `lowering_missing_op` families (sort/unique/kron/isin/norm/index).
 
 ## In-Progress
 
-- `full196_integrity_v2` is running with updated fixes:
-  - `artifacts/flaggems_matrix/daily/20260216/full196_integrity_v2/`
-  - stages expected: pipeline -> rvv_local -> cuda_local -> converge
-- After completion:
-  1. compare `full196_integrity_v2` vs `full196_integrity_v1`,
-  2. confirm `gt2d/row_all` promoted to dual-pass in full scope,
-  3. focus remaining CUDA blocker: `conv2d_nchw` lowering.
+- `full196_integrity_v2` pending markers should be considered stale (the run was interrupted earlier).
+- Next clean integrity run should start from current head with explicit artifacts path and complete all stages:
+  1. `pipeline` (full 196)
+  2. `rvv_local`
+  3. `rvv_remote` (`ubuntu@192.168.8.72`)
+  4. `cuda_local`
+  5. `converge_status`
+  6. `check_batch_gate`

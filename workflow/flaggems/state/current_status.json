@@ -1,10 +1,10 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-16T04:00:04+00:00",
+  "updated_at": "2026-02-16T04:38:37Z",
   "branch": "flaggems",
-  "head_commit": "fce42976a69e7baeaaf484896f4e56cc3cc7ef01",
+  "head_commit": "e24d059",
   "mode": "mixed_development",
-  "coverage_integrity_phase": "recompute_pending",
+  "coverage_integrity_phase": "scoped_batch_validated",
   "full196_last_run": "",
   "full196_last_ok": null,
   "coverage": {
@@ -72,8 +72,8 @@
     "catalog_validated": true
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260216/full196_integrity_v2/run_summary.pending.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260216/full196_integrity_v2/status_converged.pending.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260216/coverage_conv_family_v2/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260216/coverage_conv_family_v2/status_converged.json"
   },
   "lanes": {
     "coverage": {
