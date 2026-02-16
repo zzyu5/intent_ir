@@ -84,6 +84,7 @@ def main() -> None:
     single = 0
     multi = 0
     zero = 0
+    unique_single_primitives: set[str] = set()
     complex_total = 0
     complex_single = 0
     required_total = 0
@@ -111,6 +112,7 @@ def main() -> None:
         elif n_ops == 1:
             bucket["single_intent_ops"] += 1
             single += 1
+            unique_single_primitives.add(str(ops[0]))
         else:
             bucket["multi_intent_ops"] += 1
             multi += 1
@@ -151,10 +153,15 @@ def main() -> None:
         "single_intent_ops": int(single),
         "multi_intent_ops": int(multi),
         "zero_intent_ops": int(zero),
+        # Raw semantic-level single-op ratio (kept explicit for lane gate clarity).
+        "raw_single_semantic_ratio": _ratio(single, total),
         "single_intent_ratio": _ratio(single, total),
+        "global_unique_single_primitive_count": int(len(unique_single_primitives)),
+        "global_unique_single_primitive_ratio": _ratio(len(unique_single_primitives), total),
         "complex_families": sorted(list(complex_families)),
         "complex_total": int(complex_total),
         "complex_single_intent_ops": int(complex_single),
+        "complex_family_single_semantic_ratio": _ratio(complex_single, complex_total),
         "complex_single_intent_ratio": _ratio(complex_single, complex_total),
         "composition_required_total": int(required_total),
         "composition_required_single_intent_ops": int(required_single),

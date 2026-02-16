@@ -9,6 +9,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def _head_commit() -> str:
+    p = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    return str(p.stdout or "").strip()
+
+
 def _run_gate(
     tmp_path: Path,
     *,
@@ -289,6 +300,123 @@ def test_check_batch_gate_allows_empty_coverage_batch_without_status_entries(tmp
             str(progress),
             "--handoff",
             str(handoff),
+            "--out",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+
+
+def test_check_batch_gate_fails_when_coverage_not_fresh_on_head(tmp_path: Path) -> None:
+    active = tmp_path / "active_batch.json"
+    run_summary = tmp_path / "run_summary.json"
+    status_converged = tmp_path / "status_converged.json"
+    progress = tmp_path / "progress_log.jsonl"
+    handoff = tmp_path / "handoff.md"
+    current_status = tmp_path / "current_status.json"
+    out = tmp_path / "batch_gate.json"
+
+    active.write_text(
+        json.dumps({"schema_version": "flaggems_active_batch_v2", "lane": "coverage", "items": []}),
+        encoding="utf-8",
+    )
+    run_summary.write_text(json.dumps({"ok": True}), encoding="utf-8")
+    status_converged.write_text(json.dumps({"entries": []}), encoding="utf-8")
+    progress.write_text(
+        json.dumps({"run_summary_path": str(run_summary), "status_converged_path": str(status_converged)}) + "\n",
+        encoding="utf-8",
+    )
+    handoff.write_text("# FlagGems Session Handoff\n- Next Focus: rerun full196\n", encoding="utf-8")
+    current_status.write_text(
+        json.dumps(
+            {
+                "full196_validated_commit": "deadbeef",
+                "full196_last_ok": True,
+                "full196_commits_since_validated": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/check_batch_gate.py",
+            "--active-batch",
+            str(active),
+            "--run-summary",
+            str(run_summary),
+            "--status-converged",
+            str(status_converged),
+            "--progress-log",
+            str(progress),
+            "--handoff",
+            str(handoff),
+            "--current-status",
+            str(current_status),
+            "--require-coverage-fresh-on-head",
+            "--out",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode != 0
+
+
+def test_check_batch_gate_passes_when_coverage_fresh_on_head(tmp_path: Path) -> None:
+    active = tmp_path / "active_batch.json"
+    run_summary = tmp_path / "run_summary.json"
+    status_converged = tmp_path / "status_converged.json"
+    progress = tmp_path / "progress_log.jsonl"
+    handoff = tmp_path / "handoff.md"
+    current_status = tmp_path / "current_status.json"
+    out = tmp_path / "batch_gate.json"
+    head = _head_commit()
+
+    active.write_text(
+        json.dumps({"schema_version": "flaggems_active_batch_v2", "lane": "coverage", "items": []}),
+        encoding="utf-8",
+    )
+    run_summary.write_text(json.dumps({"ok": True}), encoding="utf-8")
+    status_converged.write_text(json.dumps({"entries": []}), encoding="utf-8")
+    progress.write_text(
+        json.dumps({"run_summary_path": str(run_summary), "status_converged_path": str(status_converged)}) + "\n",
+        encoding="utf-8",
+    )
+    handoff.write_text("# FlagGems Session Handoff\n- Next Focus: run lane\n", encoding="utf-8")
+    current_status.write_text(
+        json.dumps(
+            {
+                "full196_validated_commit": head,
+                "full196_last_ok": True,
+                "full196_commits_since_validated": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/check_batch_gate.py",
+            "--active-batch",
+            str(active),
+            "--run-summary",
+            str(run_summary),
+            "--status-converged",
+            str(status_converged),
+            "--progress-log",
+            str(progress),
+            "--handoff",
+            str(handoff),
+            "--current-status",
+            str(current_status),
+            "--require-coverage-fresh-on-head",
             "--out",
             str(out),
         ],

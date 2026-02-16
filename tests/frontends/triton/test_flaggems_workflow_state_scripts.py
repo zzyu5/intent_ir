@@ -9,6 +9,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def _head_commit() -> str:
+    p = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    return str(p.stdout or "").strip()
+
+
 def test_sync_feature_list_mixed_merges_manual_tracks(tmp_path: Path) -> None:
     registry = tmp_path / "registry.json"
     feature_out = tmp_path / "feature_list.json"
@@ -141,6 +152,11 @@ def test_build_workflow_state_writes_current_and_context(tmp_path: Path) -> None
     assert status_payload["mode"] == "mixed_development"
     assert "coverage_integrity_phase" in status_payload
     assert "mapping_quality" in status_payload
+    assert "full196_validated_commit" in status_payload
+    assert "full196_commits_since_validated" in status_payload
+    assert "full196_validated_mode" in status_payload
+    assert "full196_validated_scope" in status_payload
+    assert "full196_validated_with_rvv_remote" in status_payload
     assert status_payload["script_governance"]["catalog_path"].endswith("scripts/CATALOG.json")
     assert context_payload["schema_version"] == "flaggems_session_context_v1"
     assert context_payload["next_focus"] == "focus-y"
@@ -158,6 +174,7 @@ def test_build_workflow_state_prefers_latest_full196_run_over_latest_partial(tmp
     partial_run = tmp_path / "partial_run_summary.json"
     full_cov = tmp_path / "coverage_integrity_full196.json"
     partial_status = tmp_path / "status_partial.json"
+    head_commit = _head_commit()
 
     feature.write_text(
         json.dumps(
@@ -214,7 +231,15 @@ def test_build_workflow_state_prefers_latest_full196_run_over_latest_partial(tmp
     partial_status.write_text(json.dumps({"entries": []}), encoding="utf-8")
     progress.write_text(
         (
-            json.dumps({"summary": "full196", "run_ok": True, "run_summary_path": str(full_run), "status_converged_path": str(partial_status)})
+            json.dumps(
+                {
+                    "summary": "full196",
+                    "run_ok": True,
+                    "commit": head_commit,
+                    "run_summary_path": str(full_run),
+                    "status_converged_path": str(partial_status),
+                }
+            )
             + "\n"
             + json.dumps({"summary": "selected8", "run_ok": True, "run_summary_path": str(partial_run), "status_converged_path": str(partial_status)})
             + "\n"
@@ -248,6 +273,11 @@ def test_build_workflow_state_prefers_latest_full196_run_over_latest_partial(tmp
     assert status_payload["latest_artifacts"]["run_summary"].endswith("partial_run_summary.json")
     assert status_payload["coverage_integrity_phase"] == "recomputed_ok"
     assert status_payload["full196_last_ok"] is True
+    assert status_payload["full196_validated_commit"] == head_commit
+    assert status_payload["full196_commits_since_validated"] == 0
+    assert status_payload["full196_validated_scope"] == "coverage_158_kernels_to_196_semantics"
+    assert status_payload["full196_validated_mode"] == ""
+    assert status_payload["full196_validated_with_rvv_remote"] is False
 
 
 def test_build_workflow_state_accepts_full196_with_resolved_kernel_filter(tmp_path: Path) -> None:
@@ -259,6 +289,7 @@ def test_build_workflow_state_accepts_full196_with_resolved_kernel_filter(tmp_pa
     full_run = tmp_path / "full196_run_summary.json"
     full_cov = tmp_path / "coverage_integrity_full196.json"
     status_json = tmp_path / "status_full196.json"
+    head_commit = _head_commit()
 
     feature.write_text(
         json.dumps(
@@ -299,7 +330,16 @@ def test_build_workflow_state_accepts_full196_with_resolved_kernel_filter(tmp_pa
     )
     status_json.write_text(json.dumps({"entries": []}), encoding="utf-8")
     progress.write_text(
-        json.dumps({"summary": "full196", "run_ok": False, "run_summary_path": str(full_run), "status_converged_path": str(status_json)}) + "\n",
+        json.dumps(
+            {
+                "summary": "full196",
+                "run_ok": False,
+                "commit": head_commit,
+                "run_summary_path": str(full_run),
+                "status_converged_path": str(status_json),
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
     handoff.write_text("# FlagGems Session Handoff\n- Next Focus: full196 retry\n", encoding="utf-8")
@@ -328,6 +368,8 @@ def test_build_workflow_state_accepts_full196_with_resolved_kernel_filter(tmp_pa
     assert status_payload["full196_last_run"].endswith("full196_run_summary.json")
     assert status_payload["coverage_integrity_phase"] == "recomputed_failed"
     assert status_payload["full196_last_ok"] is False
+    assert status_payload["full196_validated_commit"] == head_commit
+    assert status_payload["full196_commits_since_validated"] == 0
 
 
 def test_build_workflow_state_prefers_coverage_integrity_over_run_ok(tmp_path: Path) -> None:
@@ -339,6 +381,7 @@ def test_build_workflow_state_prefers_coverage_integrity_over_run_ok(tmp_path: P
     full_run = tmp_path / "full196_run_summary.json"
     full_cov = tmp_path / "coverage_integrity_full196.json"
     status_json = tmp_path / "status_full196.json"
+    head_commit = _head_commit()
 
     feature.write_text(
         json.dumps(
@@ -379,7 +422,16 @@ def test_build_workflow_state_prefers_coverage_integrity_over_run_ok(tmp_path: P
     )
     status_json.write_text(json.dumps({"entries": []}), encoding="utf-8")
     progress.write_text(
-        json.dumps({"summary": "full196", "run_ok": False, "run_summary_path": str(full_run), "status_converged_path": str(status_json)}) + "\n",
+        json.dumps(
+            {
+                "summary": "full196",
+                "run_ok": False,
+                "commit": head_commit,
+                "run_summary_path": str(full_run),
+                "status_converged_path": str(status_json),
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
     handoff.write_text("# FlagGems Session Handoff\n- Next Focus: full196 follow-up\n", encoding="utf-8")
@@ -407,3 +459,5 @@ def test_build_workflow_state_prefers_coverage_integrity_over_run_ok(tmp_path: P
     status_payload = json.loads(current.read_text(encoding="utf-8"))
     assert status_payload["coverage_integrity_phase"] == "recomputed_ok"
     assert status_payload["full196_last_ok"] is True
+    assert status_payload["full196_validated_commit"] == head_commit
+    assert status_payload["full196_commits_since_validated"] == 0

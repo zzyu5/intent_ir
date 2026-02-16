@@ -24,6 +24,9 @@ from pipeline.triton.providers.flaggems.workflow import (
 )
 
 
+FULL196_VALIDATED_SCOPE = "coverage_158_kernels_to_196_semantics"
+
+
 def _to_repo_rel(path: Path) -> str:
     try:
         return str(path.resolve().relative_to(ROOT))
@@ -127,40 +130,79 @@ def _load_json_if_exists(path: Path | None) -> dict[str, Any]:
         return {}
 
 
-def _classify_full196_run(run_summary_path: Path | None) -> tuple[bool, bool | None]:
+def _classify_full196_run(run_summary_path: Path | None) -> tuple[bool, bool | None, dict[str, Any]]:
     run_summary = _load_json_if_exists(run_summary_path)
     if not run_summary:
-        return False, None
+        return False, None, {}
     suite = str(run_summary.get("suite") or "").strip()
     scope_kernels = list(run_summary.get("scope_kernels") or [])
     if suite != "coverage" or (len(scope_kernels) == 0):
-        return False, None
+        return False, None, {}
     stages = [s for s in list(run_summary.get("stages") or []) if isinstance(s, dict)]
     coverage_stage = next((s for s in stages if str(s.get("stage") or "") == "coverage_integrity"), None)
     if coverage_stage is None:
-        return False, None
+        return False, None, {}
     if str(coverage_stage.get("reason_code") or "").strip() == "skipped_partial_scope":
-        return False, None
+        return False, None, {}
     if "full_coverage_run" in coverage_stage and not bool(coverage_stage.get("full_coverage_run")):
-        return False, None
+        return False, None, {}
     coverage_json = _resolve_artifact(str(coverage_stage.get("json_path") or ""))
     coverage_payload = _load_json_if_exists(coverage_json)
     coverage_ok = bool(coverage_payload.get("coverage_integrity_ok"))
+    stage_map = {str(s.get("stage") or ""): s for s in stages}
     # Use coverage_integrity as the source of truth for full196 health.
     # run_summary.ok can be false for non-functional governance mismatches.
-    return True, bool(coverage_ok)
+    metadata = {
+        "validated_mode": str(run_summary.get("intentir_mode") or ""),
+        "validated_scope": FULL196_VALIDATED_SCOPE,
+        "validated_with_rvv_remote": bool((stage_map.get("rvv_remote") or {}).get("ok")),
+    }
+    return True, bool(coverage_ok), metadata
 
 
-def _latest_full196_from_progress(rows: list[dict[str, Any]]) -> tuple[str, bool | None]:
+def _latest_full196_from_progress(rows: list[dict[str, Any]]) -> dict[str, Any]:
     for row in reversed(rows):
         if not isinstance(row, dict):
             continue
         run_summary_path = _resolve_artifact(str(row.get("run_summary_path") or ""))
-        is_full, is_ok = _classify_full196_run(run_summary_path)
+        is_full, is_ok, metadata = _classify_full196_run(run_summary_path)
         if not is_full or run_summary_path is None:
             continue
-        return _to_repo_rel(run_summary_path), is_ok
-    return "", None
+        return {
+            "run_summary_path": _to_repo_rel(run_summary_path),
+            "last_ok": is_ok,
+            "validated_commit": str(row.get("commit") or ""),
+            "validated_mode": str(metadata.get("validated_mode") or ""),
+            "validated_scope": str(metadata.get("validated_scope") or ""),
+            "validated_with_rvv_remote": bool(metadata.get("validated_with_rvv_remote")),
+        }
+    return {
+        "run_summary_path": "",
+        "last_ok": None,
+        "validated_commit": "",
+        "validated_mode": "",
+        "validated_scope": "",
+        "validated_with_rvv_remote": None,
+    }
+
+
+def _commits_since_validated(validated_commit: str, head_commit: str) -> int | None:
+    validated = str(validated_commit or "").strip()
+    head = str(head_commit or "").strip()
+    if not validated or not head:
+        return None
+    p = subprocess.run(
+        ["git", "rev-list", "--count", f"{validated}..{head}"],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    if p.returncode != 0:
+        return None
+    try:
+        return int(str(p.stdout or "").strip())
+    except Exception:
+        return None
 
 
 def main() -> None:
@@ -187,9 +229,16 @@ def main() -> None:
     latest = progress_tail[-1] if progress_tail else {}
     latest_run_summary = str(latest.get("run_summary_path") or "")
     latest_status_converged = str(latest.get("status_converged_path") or "")
-    full196_run_summary, full196_last_ok = _latest_full196_from_progress(progress_rows)
+    full196_info = _latest_full196_from_progress(progress_rows)
+    full196_run_summary = str(full196_info.get("run_summary_path") or "")
+    full196_last_ok = full196_info.get("last_ok")
+    full196_validated_commit = str(full196_info.get("validated_commit") or "")
+    full196_validated_mode = str(full196_info.get("validated_mode") or "")
+    full196_validated_scope = str(full196_info.get("validated_scope") or "")
+    full196_validated_with_rvv_remote = full196_info.get("validated_with_rvv_remote")
     branch = _git(["git", "branch", "--show-current"]) or "unknown"
     head_commit = _git(["git", "rev-parse", "HEAD"]) or "unknown"
+    full196_commits_since_validated = _commits_since_validated(full196_validated_commit, head_commit)
     git_log_short = read_git_log(cwd=ROOT, lines=int(args.git_log_lines))
     next_focus = _parse_next_focus(args.handoff) or str(latest.get("next_focus") or "")
     active_lanes = _active_lanes(feature_payload)
@@ -197,8 +246,13 @@ def main() -> None:
     catalog_exists = bool(args.scripts_catalog.is_file())
     if not full196_run_summary:
         coverage_integrity_phase = "recompute_pending"
+    elif full196_commits_since_validated and int(full196_commits_since_validated) > 0:
+        coverage_integrity_phase = "recompute_stale"
     else:
         coverage_integrity_phase = "recomputed_ok" if bool(full196_last_ok) else "recomputed_failed"
+    if (full196_commits_since_validated is not None) and int(full196_commits_since_validated) > 0:
+        active_lanes = sorted(set(list(active_lanes) + ["coverage"]))
+        next_focus_by_lane.setdefault("coverage", "Run full196 force_compile matrix to refresh coverage evidence on HEAD.")
 
     current_status = build_current_status_payload(
         branch=branch,
@@ -209,6 +263,11 @@ def main() -> None:
         full196_run_summary_path=full196_run_summary,
         coverage_integrity_phase=coverage_integrity_phase,
         full196_last_ok=full196_last_ok,
+        full196_validated_commit=full196_validated_commit,
+        full196_commits_since_validated=full196_commits_since_validated,
+        full196_validated_mode=full196_validated_mode,
+        full196_validated_scope=full196_validated_scope,
+        full196_validated_with_rvv_remote=full196_validated_with_rvv_remote,
         catalog_path=_to_repo_rel(args.scripts_catalog),
         catalog_validated=catalog_exists,
         active_lanes=active_lanes,

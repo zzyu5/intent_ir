@@ -11,6 +11,17 @@ from pipeline.triton.providers.flaggems.workflow import build_feature_list_paylo
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def _head_commit() -> str:
+    p = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    return str(p.stdout or "").strip()
+
+
 def _run_ci_gate(tmp_path: Path, *, reason_code: str) -> subprocess.CompletedProcess[str]:
     registry = tmp_path / "registry.json"
     feature = tmp_path / "feature_list.json"
@@ -19,7 +30,9 @@ def _run_ci_gate(tmp_path: Path, *, reason_code: str) -> subprocess.CompletedPro
     status_converged = tmp_path / "status_converged.json"
     progress = tmp_path / "progress_log.jsonl"
     handoff = tmp_path / "handoff.md"
+    current_status = tmp_path / "current_status.json"
     out = tmp_path / "ci_gate.json"
+    head = _head_commit()
 
     registry_payload = {
         "entries": [
@@ -76,6 +89,16 @@ def _run_ci_gate(tmp_path: Path, *, reason_code: str) -> subprocess.CompletedPro
         encoding="utf-8",
     )
     handoff.write_text("# FlagGems Session Handoff\n- Next Focus: nightly gate\n", encoding="utf-8")
+    current_status.write_text(
+        json.dumps(
+            {
+                "full196_validated_commit": head,
+                "full196_last_ok": True,
+                "full196_commits_since_validated": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
 
     return subprocess.run(
         [
@@ -91,6 +114,8 @@ def _run_ci_gate(tmp_path: Path, *, reason_code: str) -> subprocess.CompletedPro
             str(run_summary),
             "--status-converged",
             str(status_converged),
+            "--current-status",
+            str(current_status),
             "--progress-log",
             str(progress),
             "--handoff",
@@ -129,11 +154,13 @@ def _run_ci_gate_backend_budget(
     status_converged = tmp_path / "status_converged.json"
     progress = tmp_path / "progress_log.jsonl"
     handoff = tmp_path / "handoff.md"
+    current_status = tmp_path / "current_status.json"
     out = tmp_path / "ci_gate_backend.json"
     rvv_json = tmp_path / "rvv_local.json"
     cuda_json = tmp_path / "cuda_local.json"
     timing_delta_json = tmp_path / "timing_delta.json"
     stage_timing_json = tmp_path / "stage_timing_breakdown.json"
+    head = _head_commit()
 
     registry_payload = {
         "entries": [
@@ -239,6 +266,16 @@ def _run_ci_gate_backend_budget(
         encoding="utf-8",
     )
     handoff.write_text("# FlagGems Session Handoff\n- Next Focus: backend nightly\n", encoding="utf-8")
+    current_status.write_text(
+        json.dumps(
+            {
+                "full196_validated_commit": head,
+                "full196_last_ok": True,
+                "full196_commits_since_validated": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
 
     return subprocess.run(
         [
@@ -258,6 +295,8 @@ def _run_ci_gate_backend_budget(
             str(run_summary),
             "--status-converged",
             str(status_converged),
+            "--current-status",
+            str(current_status),
             "--progress-log",
             str(progress),
             "--handoff",
@@ -295,3 +334,84 @@ def test_ci_gate_backend_budget_passes_with_lenient_ratio(tmp_path: Path) -> Non
         max_regression_ratio=1.0,
     )
     assert p.returncode == 0, p.stderr
+
+
+def test_ci_gate_fails_when_full196_freshness_is_stale(tmp_path: Path) -> None:
+    registry = tmp_path / "registry.json"
+    feature = tmp_path / "feature_list.json"
+    active = tmp_path / "active_batch.json"
+    run_summary = tmp_path / "run_summary.json"
+    status_converged = tmp_path / "status_converged.json"
+    progress = tmp_path / "progress_log.jsonl"
+    handoff = tmp_path / "handoff.md"
+    current_status = tmp_path / "current_status.json"
+    out = tmp_path / "ci_gate_stale.json"
+
+    registry_payload = {
+        "entries": [
+            {
+                "semantic_op": "add",
+                "family": "elementwise_broadcast",
+                "status": "dual_pass",
+                "status_reason": "runtime_dual_backend_pass",
+                "e2e_spec": "add2d",
+                "intent_ops": ["add"],
+            }
+        ]
+    }
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    feature_payload = build_feature_list_payload(
+        registry_payload=registry_payload,
+        source_registry_path=str(registry),
+    )
+    feature.write_text(json.dumps(feature_payload), encoding="utf-8")
+    active.write_text(json.dumps({"schema_version": "flaggems_active_batch_v2", "lane": "coverage", "items": []}), encoding="utf-8")
+    run_summary.write_text(json.dumps({"ok": True}), encoding="utf-8")
+    status_converged.write_text(
+        json.dumps({"entries": [{"semantic_op": "add", "status": "dual_pass", "reason_code": "runtime_dual_backend_pass"}]}),
+        encoding="utf-8",
+    )
+    progress.write_text(
+        json.dumps({"run_summary_path": str(run_summary), "status_converged_path": str(status_converged)}) + "\n",
+        encoding="utf-8",
+    )
+    handoff.write_text("# FlagGems Session Handoff\n- Next Focus: refresh full196\n", encoding="utf-8")
+    current_status.write_text(
+        json.dumps(
+            {
+                "full196_validated_commit": "deadbeef",
+                "full196_last_ok": True,
+                "full196_commits_since_validated": 3,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/ci_gate.py",
+            "--registry",
+            str(registry),
+            "--feature-list",
+            str(feature),
+            "--active-batch",
+            str(active),
+            "--run-summary",
+            str(run_summary),
+            "--status-converged",
+            str(status_converged),
+            "--current-status",
+            str(current_status),
+            "--progress-log",
+            str(progress),
+            "--handoff",
+            str(handoff),
+            "--out",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode != 0

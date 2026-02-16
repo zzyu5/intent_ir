@@ -186,6 +186,11 @@ def test_current_status_and_session_context_builders() -> None:
     assert "mapping_quality" in current
     assert "coverage_integrity_phase" in current
     assert current["script_governance"]["catalog_path"] == "scripts/CATALOG.json"
+    assert "full196_validated_commit" in current
+    assert "full196_commits_since_validated" in current
+    assert "full196_validated_mode" in current
+    assert "full196_validated_scope" in current
+    assert "full196_validated_with_rvv_remote" in current
 
     ctx = build_session_context_payload(
         git_log_short="a\nb",

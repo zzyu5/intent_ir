@@ -47,6 +47,10 @@ def test_mapping_complexity_report_counts_family_ratios(tmp_path: Path) -> None:
     assert payload["single_intent_ops"] == 2
     assert payload["multi_intent_ops"] == 1
     assert payload["zero_intent_ops"] == 1
+    assert payload["raw_single_semantic_ratio"] == payload["single_intent_ratio"]
+    assert payload["global_unique_single_primitive_count"] == 2
+    assert payload["global_unique_single_primitive_ratio"] == 0.5
+    assert payload["complex_family_single_semantic_ratio"] == payload["complex_single_intent_ratio"]
     assert payload["by_family"]["index_scatter_gather"]["total"] == 2
     assert "gate" in payload
 

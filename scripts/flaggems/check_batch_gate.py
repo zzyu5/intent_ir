@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,46 @@ def _to_repo_rel(path: Path) -> str:
 
 def _check(name: str, ok: bool, detail: str) -> dict[str, Any]:
     return {"name": str(name), "ok": bool(ok), "detail": str(detail)}
+
+
+def _git_head_commit() -> str:
+    p = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    if p.returncode != 0:
+        return ""
+    return str(p.stdout or "").strip()
+
+
+def _validate_coverage_fresh_on_head(current_status_path: Path) -> tuple[bool, str]:
+    if not current_status_path.is_file():
+        return False, f"missing current_status: {current_status_path}"
+    status = _load_json(current_status_path)
+    validated_commit = str(status.get("full196_validated_commit") or "").strip()
+    full196_last_ok = bool(status.get("full196_last_ok"))
+    commits_since = status.get("full196_commits_since_validated")
+    if not validated_commit:
+        return False, "current_status.full196_validated_commit is empty"
+    if not full196_last_ok:
+        return False, "current_status.full196_last_ok is not true"
+    head = _git_head_commit()
+    if not head:
+        return False, "failed to resolve git HEAD for freshness check"
+    if validated_commit != head:
+        return False, (
+            f"full196 evidence stale: validated_commit={validated_commit} head={head}"
+            + (f" commits_since={commits_since}" if commits_since is not None else "")
+        )
+    if commits_since is not None:
+        try:
+            if int(commits_since) != 0:
+                return False, f"full196_commits_since_validated={commits_since} (expected 0)"
+        except Exception:
+            return False, f"invalid full196_commits_since_validated={commits_since}"
+    return True, "full196 evidence is fresh on HEAD"
 
 
 def _default_active_batch(profile: str) -> Path:
@@ -260,6 +301,18 @@ def main() -> None:
     ap.add_argument("--progress-log", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "progress_log.jsonl"))
     ap.add_argument("--handoff", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "handoff.md"))
     ap.add_argument(
+        "--current-status",
+        type=Path,
+        default=(ROOT / "workflow" / "flaggems" / "state" / "current_status.json"),
+        help="Workflow current_status snapshot used for coverage freshness checks.",
+    )
+    ap.add_argument(
+        "--require-coverage-fresh-on-head",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Require full196 evidence to be validated on current HEAD.",
+    )
+    ap.add_argument(
         "--require-stage",
         action="append",
         default=[],
@@ -297,6 +350,14 @@ def main() -> None:
     checks: list[dict[str, Any]] = []
     for p in (active_batch, args.run_summary, args.status_converged, args.progress_log, args.handoff):
         checks.append(_check(f"exists::{_to_repo_rel(p)}", p.is_file(), "file exists" if p.is_file() else "missing file"))
+    if bool(args.require_coverage_fresh_on_head):
+        checks.append(
+            _check(
+                f"exists::{_to_repo_rel(args.current_status)}",
+                args.current_status.is_file(),
+                "file exists" if args.current_status.is_file() else "missing file",
+            )
+        )
 
     active = _load_json(active_batch) if active_batch.is_file() else {}
     run_summary = _load_json(args.run_summary) if args.run_summary.is_file() else {}
@@ -505,6 +566,10 @@ def main() -> None:
                 progress_ok = False
                 progress_detail = "progress log tail is not valid JSON"
     checks.append(_check("progress_log.tail_matches_artifacts", progress_ok, progress_detail))
+
+    if bool(args.require_coverage_fresh_on_head):
+        fresh_ok, fresh_detail = _validate_coverage_fresh_on_head(args.current_status)
+        checks.append(_check("coverage_fresh_on_head", fresh_ok, fresh_detail))
 
     ok = all(bool(c.get("ok")) for c in checks)
     payload = {

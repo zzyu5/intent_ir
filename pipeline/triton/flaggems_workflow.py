@@ -252,6 +252,7 @@ def _mapping_quality_summary(features: list[dict[str, Any]]) -> dict[str, Any]:
     }
     complex_total = 0
     complex_single = 0
+    unique_single_primitives: set[str] = set()
     for row in coverage_rows:
         fam = str(row.get("family") or "unknown")
         ops = [str(x) for x in list(row.get("intent_ops") or []) if str(x).strip()]
@@ -273,6 +274,7 @@ def _mapping_quality_summary(features: list[dict[str, Any]]) -> dict[str, Any]:
         elif n == 1:
             fam_bucket["single_intent_ops"] += 1
             single += 1
+            unique_single_primitives.add(str(ops[0]))
         else:
             fam_bucket["multi_intent_ops"] += 1
             multi += 1
@@ -282,12 +284,18 @@ def _mapping_quality_summary(features: list[dict[str, Any]]) -> dict[str, Any]:
                 complex_single += 1
     single_ratio = (float(single) / float(total)) if total > 0 else 0.0
     complex_single_ratio = (float(complex_single) / float(complex_total)) if complex_total > 0 else 0.0
+    global_unique_single_primitive_ratio = (float(len(unique_single_primitives)) / float(total)) if total > 0 else 0.0
     return {
         "coverage_semantic_ops": int(total),
         "single_intent_ops": int(single),
         "multi_intent_ops": int(multi),
         "zero_intent_ops": int(zero),
+        # Raw semantic-level ratio (alias kept explicit for gating/reporting clarity).
+        "raw_single_semantic_ratio": float(single_ratio),
         "single_intent_ratio": float(single_ratio),
+        "global_unique_single_primitive_count": int(len(unique_single_primitives)),
+        "global_unique_single_primitive_ratio": float(global_unique_single_primitive_ratio),
+        "complex_family_single_semantic_ratio": float(complex_single_ratio),
         "complex_family_single_intent_ratio": float(complex_single_ratio),
         "complex_family_total": int(complex_total),
         "complex_family_single_intent_ops": int(complex_single),
@@ -464,6 +472,11 @@ def build_current_status_payload(
     lane_batch_paths: Mapping[str, str] | None = None,
     coverage_integrity_phase: str = "recompute_pending",
     full196_last_ok: bool | None = None,
+    full196_validated_commit: str = "",
+    full196_commits_since_validated: int | None = None,
+    full196_validated_mode: str = "",
+    full196_validated_scope: str = "",
+    full196_validated_with_rvv_remote: bool | None = None,
     catalog_path: str = "scripts/CATALOG.json",
     catalog_validated: bool = False,
     active_lanes: list[str] | None = None,
@@ -497,6 +510,17 @@ def build_current_status_payload(
         "coverage_integrity_phase": str(coverage_integrity_phase),
         "full196_last_run": str(full196_run_summary_path),
         "full196_last_ok": (None if full196_last_ok is None else bool(full196_last_ok)),
+        "full196_validated_commit": str(full196_validated_commit or ""),
+        "full196_commits_since_validated": (
+            None if full196_commits_since_validated is None else int(full196_commits_since_validated)
+        ),
+        "full196_validated_mode": str(full196_validated_mode or ""),
+        "full196_validated_scope": str(full196_validated_scope or ""),
+        "full196_validated_with_rvv_remote": (
+            None
+            if full196_validated_with_rvv_remote is None
+            else bool(full196_validated_with_rvv_remote)
+        ),
         "coverage": {
             "semantic_ops": semantic_ops,
             "dual_pass": dual_pass,

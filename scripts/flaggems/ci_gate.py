@@ -29,6 +29,46 @@ def _check(name: str, ok: bool, detail: str) -> dict[str, Any]:
     return {"name": str(name), "ok": bool(ok), "detail": str(detail)}
 
 
+def _git_head_commit() -> str:
+    p = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    if p.returncode != 0:
+        return ""
+    return str(p.stdout or "").strip()
+
+
+def _validate_coverage_fresh_on_head(current_status_path: Path) -> tuple[bool, str]:
+    if not current_status_path.is_file():
+        return False, f"missing current_status: {current_status_path}"
+    payload = load_json(current_status_path)
+    validated_commit = str(payload.get("full196_validated_commit") or "").strip()
+    full196_last_ok = bool(payload.get("full196_last_ok"))
+    commits_since = payload.get("full196_commits_since_validated")
+    if not validated_commit:
+        return False, "current_status.full196_validated_commit is empty"
+    if not full196_last_ok:
+        return False, "current_status.full196_last_ok is not true"
+    head = _git_head_commit()
+    if not head:
+        return False, "failed to resolve git HEAD for freshness check"
+    if validated_commit != head:
+        return False, (
+            f"full196 evidence stale: validated_commit={validated_commit} head={head}"
+            + (f" commits_since={commits_since}" if commits_since is not None else "")
+        )
+    if commits_since is not None:
+        try:
+            if int(commits_since) != 0:
+                return False, f"full196_commits_since_validated={commits_since} (expected 0)"
+        except Exception:
+            return False, f"invalid full196_commits_since_validated={commits_since}"
+    return True, "full196 evidence is fresh on HEAD"
+
+
 def _stage_map(run_summary: dict[str, Any]) -> dict[str, dict[str, Any]]:
     rows = [r for r in list(run_summary.get("stages") or []) if isinstance(r, dict)]
     out: dict[str, dict[str, Any]] = {}
@@ -91,6 +131,12 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--registry", type=Path, default=(ROOT / "pipeline" / "triton" / "flaggems_registry.json"))
     ap.add_argument("--scripts-catalog", type=Path, default=(ROOT / "scripts" / "CATALOG.json"))
+    ap.add_argument(
+        "--current-status",
+        type=Path,
+        default=(ROOT / "workflow" / "flaggems" / "state" / "current_status.json"),
+        help="Workflow current_status snapshot used for full196 freshness checks.",
+    )
     ap.add_argument("--feature-list", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "feature_list.json"))
     ap.add_argument(
         "--active-batch-coverage",
@@ -123,6 +169,12 @@ def main() -> None:
     ap.add_argument("--status-converged", type=Path, required=True)
     ap.add_argument("--progress-log", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "progress_log.jsonl"))
     ap.add_argument("--handoff", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "handoff.md"))
+    ap.add_argument(
+        "--require-coverage-fresh-on-head",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require full196 evidence validated on current HEAD commit.",
+    )
     ap.add_argument(
         "--max-total-regression-pct",
         type=float,
@@ -168,6 +220,14 @@ def main() -> None:
         checks.append(_check(f"exists::{_to_repo_rel(p)}", p.is_file(), "file exists" if p.is_file() else "missing file"))
     for p in (args.registry, args.feature_list, args.run_summary, args.status_converged):
         checks.append(_check(f"exists::{_to_repo_rel(p)}", p.is_file(), "file exists" if p.is_file() else "missing file"))
+    if bool(args.require_coverage_fresh_on_head):
+        checks.append(
+            _check(
+                f"exists::{_to_repo_rel(args.current_status)}",
+                args.current_status.is_file(),
+                "file exists" if args.current_status.is_file() else "missing file",
+            )
+        )
     for profile in profiles:
         p = active_by_profile.get(profile)
         if p is None:
@@ -199,6 +259,10 @@ def main() -> None:
                 "feature list is synced with registry" if sync_ok else "; ".join(sync_errors),
             )
         )
+
+    if bool(args.require_coverage_fresh_on_head):
+        freshness_ok, freshness_detail = _validate_coverage_fresh_on_head(args.current_status)
+        checks.append(_check("coverage_fresh_on_head", freshness_ok, freshness_detail))
 
     run_summary_payload: dict[str, Any] = {}
     if args.run_summary.is_file():
@@ -287,11 +351,17 @@ def main() -> None:
             str(args.progress_log),
             "--handoff",
             str(args.handoff),
+            "--current-status",
+            str(args.current_status),
             "--out",
             str(batch_gate_path),
         ]
         if profile != "coverage":
             cmd.append("--no-require-active-dual-pass")
+        if bool(args.require_coverage_fresh_on_head):
+            cmd.append("--require-coverage-fresh-on-head")
+        else:
+            cmd.append("--no-require-coverage-fresh-on-head")
         if profile == "backend_compiler":
             cmd += [
                 "--max-total-regression-pct",
