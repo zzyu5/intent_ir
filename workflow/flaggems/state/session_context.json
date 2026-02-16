@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-16T10:03:42+00:00",
+  "updated_at": "2026-02-16T10:13:17+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -11,54 +11,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "18b3adb backend_compiler wave3: split cuda dispatch + rvv compute emitter and refresh workflow state\n613d940 workflow: advance backend_compiler next focus to wave3 modular split\n3c05cf3 workflow: close wave2 tasks, add wave3 backend compiler tasks, refresh state\n9c2e9ae backend+gate: split wave2 cuda/rvv modules and enforce stage timing integrity checks\nfb739ab workflow: expose active lane focus directly in current_status\nc1d8497 workflow: restore pending backend_compiler lane tasks and refresh mixed feature state\n61819b6 workflow: record fresh full196 recompute evidence and refresh state\n95c2fea workflow: record backend compiler split validation session and refresh state\ne5b154e backend: split cuda/rvv cpp_codegen monolith blocks for compiler modularization\nb4cb589 workflow: refresh snapshots to latest backend/ir progress commit\n6d7ce8c workflow: refresh mapping-quality and stage-breakdown evidence after split validation\n02c2f26 backend+ir: split conv/pool blocks and enforce compositional semantic mappings\nb689c07 workflow: refresh state snapshots after backend modular split commits\n4bbe567 workflow: record full196 post-modsplit pass and close backend compiler lane\n3894812 backend: split cuda/rvv cpp codegen into ir_model and shape_eval modules\ndf93f24 flaggems: close remaining cuda coverage ops and stabilize full196 integrity\nd35536e Realign coverage registry/workflow to full196 integrity truth\nd54bbf4 Fix RVV dtype handling and CUDA std/quant lowering; sync workflow state\n8a189e8 workflow: record conv/pool/upsample scoped dual-pass evidence\ne24d059 cuda codegen: add conv/pool/upsample lowering patterns",
+  "git_log_short": "6bd5a96 backend_compiler wave3: split cuda/rvv dispatch clusters and track .inc rebuilds\ne2a33ca workflow: sync wave3 session state to commit 18b3adb\n18b3adb backend_compiler wave3: split cuda dispatch + rvv compute emitter and refresh workflow state\n613d940 workflow: advance backend_compiler next focus to wave3 modular split\n3c05cf3 workflow: close wave2 tasks, add wave3 backend compiler tasks, refresh state\n9c2e9ae backend+gate: split wave2 cuda/rvv modules and enforce stage timing integrity checks\nfb739ab workflow: expose active lane focus directly in current_status\nc1d8497 workflow: restore pending backend_compiler lane tasks and refresh mixed feature state\n61819b6 workflow: record fresh full196 recompute evidence and refresh state\n95c2fea workflow: record backend compiler split validation session and refresh state\ne5b154e backend: split cuda/rvv cpp_codegen monolith blocks for compiler modularization\nb4cb589 workflow: refresh snapshots to latest backend/ir progress commit\n6d7ce8c workflow: refresh mapping-quality and stage-breakdown evidence after split validation\n02c2f26 backend+ir: split conv/pool blocks and enforce compositional semantic mappings\nb689c07 workflow: refresh state snapshots after backend modular split commits\n4bbe567 workflow: record full196 post-modsplit pass and close backend compiler lane\n3894812 backend: split cuda/rvv cpp codegen into ir_model and shape_eval modules\ndf93f24 flaggems: close remaining cuda coverage ops and stabilize full196 integrity\nd35536e Realign coverage registry/workflow to full196 integrity truth\nd54bbf4 Fix RVV dtype handling and CUDA std/quant lowering; sync workflow state",
   "progress_tail": [
-    {
-      "ts": "2026-02-16T08:21:48+00:00",
-      "commit": "b689c07aef45c2adee4b3248add4c5b71f9b7883",
-      "lane": "backend_compiler",
-      "summary": "Phase3/4推进：复杂家族映射组合化降到<=20%，并在主matrix链路补齐stage_timing_breakdown产物；CUDA/RVV cpp_codegen继续拆分。",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/matrix_stage_breakdown_smoke_v1/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/matrix_stage_breakdown_smoke_v1/status_converged.json",
-      "next_focus": "继续Phase4/5：按family拆分cpp_codegen单文件并做P1热点算子schedule性能优化。",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260216/full196_after_cpp_modsplit_v1/coverage_integrity.json",
-        "artifacts/flaggems_matrix/daily/20260216/matrix_stage_breakdown_smoke_v1/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260216/matrix_stage_breakdown_smoke_v1/stage_timing_breakdown.json",
-        "artifacts/flaggems_matrix/daily/20260216/matrix_stage_breakdown_smoke_v1/status_converged.json",
-        "artifacts/intentir/mapping_complexity_m2_after_semantic_v2.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/matrix_stage_breakdown_smoke_v1",
-      "counts_by_status": {
-        "blocked_backend": 195,
-        "dual_pass": 1
-      }
-    },
-    {
-      "ts": "2026-02-16T08:30:16+00:00",
-      "commit": "b689c07aef45c2adee4b3248add4c5b71f9b7883",
-      "lane": "backend_compiler",
-      "summary": "Conv/Pool/Upsample split专项回归通过：RVV+CUDA+stage_timing_breakdown 全通过。",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/convpool_upsample_split_validation_v1/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/convpool_upsample_split_validation_v1/status_converged.json",
-      "next_focus": "继续拆分cpp_codegen（下一簇: attention/index family）并进入P1性能调优。",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260216/convpool_upsample_split_validation_v1/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260216/convpool_upsample_split_validation_v1/stage_timing_breakdown.json",
-        "artifacts/flaggems_matrix/daily/20260216/convpool_upsample_split_validation_v1/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/convpool_upsample_split_validation_v1",
-      "counts_by_status": {
-        "blocked_backend": 187,
-        "dual_pass": 9
-      }
-    },
     {
       "ts": "2026-02-16T08:44:29+00:00",
       "commit": "e5b154e561af938f219a3c4bfbb518be2f606ff8",
@@ -206,14 +160,67 @@
         "blocked_backend": 192,
         "dual_pass": 4
       }
+    },
+    {
+      "ts": "2026-02-16T10:12:37+00:00",
+      "commit": "e2a33cae0b75ea65db5feddf4b93856ddcb20d3c",
+      "lane": "backend_compiler",
+      "summary": "Wave3 modular split advanced: CUDA dispatch lowered into direct/pattern includes, RVV op dispatch extracted; v6 matrix (diag2d/where2d) passes RVV local+remote+CUDA.",
+      "batch_ops": [
+        "",
+        ""
+      ],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave3_validation_v6/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave3_validation_v6/status_converged.json",
+      "next_focus": "Continue wave3 modular split by extracting remaining helper clusters and investigate rvv_remote mm2d run_rc=2 instability observed in v5.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave3_validation_v5/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave3_validation_v5/rvv_remote.json",
+        "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave3_validation_v6/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave3_validation_v6/stage_timing_breakdown.json",
+        "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave3_validation_v6/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave3_validation_v6",
+      "counts_by_status": {
+        "blocked_backend": 192,
+        "dual_pass": 4
+      }
+    },
+    {
+      "ts": "2026-02-16T10:13:17+00:00",
+      "commit": "6bd5a96b64a91f642a00f076c4c9ef34cbe16490",
+      "lane": "backend_compiler",
+      "summary": "Post-commit sync: wave3 dispatch-cluster split committed at 6bd5a96 with v6 matrix pass evidence.",
+      "batch_ops": [
+        "",
+        ""
+      ],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave3_validation_v6/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave3_validation_v6/status_converged.json",
+      "next_focus": "Continue wave3 modular split and investigate rvv_remote mm2d run_rc=2 instability from v5 before broader batch/full196.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave3_validation_v5/rvv_remote.json",
+        "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave3_validation_v6/batch_gate_backend_compiler_wave3.json",
+        "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave3_validation_v6/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave3_validation_v6/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave3_validation_v6",
+      "counts_by_status": {
+        "blocked_backend": 192,
+        "dual_pass": 4
+      }
     }
   ],
-  "next_focus": "Continue wave3 modular split by extracting remaining helper/dispatch clusters and then run broader backend compiler batch before full196 nightly.",
+  "next_focus": "Continue wave3 modular split and investigate rvv_remote mm2d run_rc=2 instability from v5 before broader batch/full196.",
   "active_lanes": [
     "backend_compiler"
   ],
   "next_focus_by_lane": {
-    "backend_compiler": "Continue wave3 modular split by extracting remaining helper/dispatch clusters and then run broader backend compiler batch before full196 nightly.",
+    "backend_compiler": "Continue wave3 modular split and investigate rvv_remote mm2d run_rc=2 instability from v5 before broader batch/full196.",
     "coverage": "Continue backend compiler modular split and optimization pass refinement while preserving full196 stability."
   },
   "known_risks": []
