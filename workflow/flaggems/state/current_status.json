@@ -1,11 +1,11 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-16T08:44:30+00:00",
+  "updated_at": "2026-02-16T08:48:48+00:00",
   "branch": "flaggems",
-  "head_commit": "e5b154e561af938f219a3c4bfbb518be2f606ff8",
+  "head_commit": "95c2fea682a984e1666c9d4ab9eafb6c6512c046",
   "mode": "maintenance",
   "coverage_integrity_phase": "recomputed_ok",
-  "full196_last_run": "artifacts/flaggems_matrix/daily/20260216/full196_after_cpp_modsplit_v1/run_summary.json",
+  "full196_last_run": "artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/run_summary.json",
   "full196_last_ok": true,
   "coverage": {
     "semantic_ops": 196,
@@ -72,8 +72,8 @@
     "catalog_validated": true
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260216/reduction_index_split_validation_v2/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260216/reduction_index_split_validation_v2/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/status_converged.json"
   },
   "lanes": {
     "coverage": {

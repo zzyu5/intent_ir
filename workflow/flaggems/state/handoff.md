@@ -1,11 +1,11 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-16T08:44:29+00:00
-- Commit: `e5b154e561af938f219a3c4bfbb518be2f606ff8`
-- Lane: `backend_compiler`
-- Summary: Split CUDA/RVV cpp_codegen monolith blocks and validated 16 reduction/index kernels on RVV local+remote and CUDA.
+- Timestamp: 2026-02-16T08:48:48+00:00
+- Commit: `95c2fea682a984e1666c9d4ab9eafb6c6512c046`
+- Lane: `coverage`
+- Summary: Completed fresh full196 matrix after cpp_codegen split; dual_pass=196 with complete determinability/artifact evidence.
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/flaggems_matrix/daily/20260216/reduction_index_split_validation_v2/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260216/reduction_index_split_validation_v2/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260216/reduction_index_split_validation_v2/cuda_local.json, artifacts/flaggems_matrix/daily/20260216/reduction_index_split_validation_v2/run_summary.json, artifacts/flaggems_matrix/daily/20260216/reduction_index_split_validation_v2/rvv_remote.json, artifacts/flaggems_matrix/daily/20260216/reduction_index_split_validation_v2/stage_timing_breakdown.json, artifacts/flaggems_matrix/daily/20260216/reduction_index_split_validation_v2/status_converged.json
-- Next Focus: Continue cpp_codegen modular split (attention/index/scatter blocks) and finish one fresh full196 recompute after compiler changes.
+- Run Summary: `artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/status_converged.json`
+- Evidence Paths: artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/coverage_integrity.json, artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/run_summary.json, artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/stage_timing_breakdown.json, artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/status_converged.json
+- Next Focus: Continue backend compiler modular split and optimization pass refinement while preserving full196 stability.
