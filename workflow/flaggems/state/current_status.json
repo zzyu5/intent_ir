@@ -1,14 +1,14 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-16T20:09:13+00:00",
+  "updated_at": "2026-02-16T20:15:12+00:00",
   "branch": "flaggems",
-  "head_commit": "68508111b18ac50a22b750f6623601291ce7b2d1",
+  "head_commit": "e5ef6b4b646b628c88cf9b564c4eb8349007da22",
   "mode": "maintenance",
   "coverage_integrity_phase": "recompute_stale",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/run_summary.json",
   "full196_last_ok": true,
   "full196_validated_commit": "95c2fea682a984e1666c9d4ab9eafb6c6512c046",
-  "full196_commits_since_validated": 26,
+  "full196_commits_since_validated": 28,
   "full196_validated_mode": "auto",
   "full196_validated_scope": "coverage_158_kernels_to_196_semantics",
   "full196_validated_with_rvv_remote": false,
@@ -84,7 +84,7 @@
     "coverage"
   ],
   "next_focus_by_lane": {
-    "backend_compiler": "Continue backend compiler modularization and keep waiting for full196_force_compile_head_v3 completion before scoped failure-fix waves.",
+    "backend_compiler": "Continue backend compiler modularization and keep monitoring full196_force_compile_head_v3; once done, run scoped fix waves from failed kernels.",
     "ir_arch": "Run full196 force_compile on HEAD, then reduce complex-family single-intent ratio toward <=10%.",
     "coverage": "Run full196 force_compile matrix to refresh coverage evidence on HEAD."
   },
