@@ -2063,6 +2063,101 @@ def _canonical_scaled_dot_product_attention_bhsd_intent() -> IntentFunction:
     )
 
 
+def _canonical_flash_attn_varlen_func_bhsd_intent() -> IntentFunction:
+    out = _canonical_scaled_dot_product_attention_bhsd_intent().to_json_dict()
+    out["name"] = "flash_attn_varlen_func_bhsd"
+    return IntentFunction.from_json_dict(out)
+
+
+def _canonical_exp22d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "exp22d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "ln2": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "scaled": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "const", "inputs": [], "output": "ln2", "attrs": {"value": 0.6931471805599453}},
+                {"op": "mul", "inputs": ["A", "ln2"], "output": "scaled"},
+                {"op": "exp", "inputs": ["scaled"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_pow_scalar2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "pow_scalar2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "exponent": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["exponent"],
+                    "output": "exp_bcast",
+                    "attrs": {"out_shape": ["M", "N"], "broadcast_dims": []},
+                },
+                {"op": "pow", "inputs": ["inp", "exp_bcast"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_min_dim2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "min_dim2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out_value": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "indices": {"dtype": "i32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "reduce_min", "inputs": ["inp"], "output": "out_value", "attrs": {"dims": [1], "keepdims": False}},
+                {"op": "argmin", "inputs": ["inp"], "output": "indices", "attrs": {"axis": 1}},
+            ],
+            "outputs": ["out_value", "indices"],
+        }
+    )
+
+
+def _canonical_conv2d_nchw_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "conv2d_nchw",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["N", "C_IN", "H", "W"], "layout": "row_major"},
+                "weight": {"dtype": "f32", "shape": ["C_OUT", "C_IN", "KH", "KW"], "layout": "row_major"},
+                "bias": {"dtype": "f32", "shape": ["C_OUT"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["N", "C_OUT", "OH", "OW"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "conv2d",
+                    "inputs": ["input", "weight", "bias"],
+                    "output": "out",
+                    "attrs": {
+                        "stride": ["SH", "SW"],
+                        "padding": ["PH", "PW"],
+                        "dilation": ["DH", "DW"],
+                        "groups": 1,
+                    },
+                },
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
     name = str(spec_name)
     if name == "sigmoid2d":
@@ -2073,6 +2168,8 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_argmax2d_intent()
     if name == "argmin2d":
         return _canonical_argmin2d_intent()
+    if name == "min_dim2d":
+        return _canonical_min_dim2d_intent()
     if name == "avg_pool2d_nchw":
         return _canonical_avg_pool2d_nchw_intent()
     if name == "bitwise_and2d":
@@ -2089,6 +2186,10 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_row_max_intent()
     if name == "min2d":
         return _canonical_min2d_intent()
+    if name == "pow_scalar2d":
+        return _canonical_pow_scalar2d_intent()
+    if name == "exp22d":
+        return _canonical_exp22d_intent()
     if name == "any_kernel_dim":
         return _canonical_any_kernel_dim_intent()
     if name == "batch_norm2d":
@@ -2267,6 +2368,10 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_weight_norm2d_intent()
     if name == "scaled_dot_product_attention_bhsd":
         return _canonical_scaled_dot_product_attention_bhsd_intent()
+    if name == "flash_attn_varlen_func_bhsd":
+        return _canonical_flash_attn_varlen_func_bhsd_intent()
+    if name == "conv2d_nchw":
+        return _canonical_conv2d_nchw_intent()
     return None
 
 

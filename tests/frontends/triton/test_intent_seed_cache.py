@@ -4,7 +4,12 @@ from pathlib import Path
 
 from intent_ir.ir import IntentFunction
 from intent_ir.parser import CandidateIntent
-from pipeline.triton.core import _intent_seed_path, _load_intent_seed, _save_intent_seed
+from pipeline.triton.core import (
+    _intent_seed_path,
+    _load_intent_seed,
+    _provider_deterministic_intent_for,
+    _save_intent_seed,
+)
 
 
 def _simple_intent() -> IntentFunction:
@@ -55,3 +60,20 @@ def test_save_and_load_intent_seed_roundtrip(tmp_path: Path) -> None:
     assert loaded.llm_trace == {"provider": "mock"}
     assert loaded_expanded is not None
     assert loaded_expanded.intent.outputs == ["C"]
+
+
+def test_provider_deterministic_intent_for_flaggems_known_kernel() -> None:
+    intent = _provider_deterministic_intent_for(
+        kernel_name="bitwise_right_shift2d",
+        triton_provider="flaggems",
+    )
+    assert intent is not None
+    assert intent.name == "bitwise_right_shift2d"
+
+
+def test_provider_deterministic_intent_for_non_flaggems_provider_returns_none() -> None:
+    intent = _provider_deterministic_intent_for(
+        kernel_name="bitwise_right_shift2d",
+        triton_provider="native",
+    )
+    assert intent is None

@@ -1295,6 +1295,31 @@ def test_cuda_lowering_supports_reduce_min_axis1_with_indices(monkeypatch) -> No
     assert "out_index[(size_t)m]" in lowered.cuda_src
 
 
+def test_cuda_lowering_supports_min_dim_split_reduce_min_argmin(monkeypatch) -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "min_dim2d_split_cuda_lowering",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out_value": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "out_index": {"dtype": "i32", "shape": ["M"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "reduce_min", "inputs": ["inp"], "output": "out_value", "attrs": {"dims": [1], "keepdims": False}},
+                {"op": "argmin", "inputs": ["inp"], "output": "out_index", "attrs": {"axis": 1}},
+            ],
+            "outputs": ["out_value", "out_index"],
+            "parallel_axes": ["M"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["M"]},
+        }
+    )
+    lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
+    assert lowered.kernel_name == "min_dim2d_split_cuda_lowering"
+    assert "int* __restrict__ out_index" in lowered.cuda_src
+    assert "out_value[(size_t)m]" in lowered.cuda_src
+    assert "out_index[(size_t)m]" in lowered.cuda_src
+
+
 def test_cuda_lowering_supports_argmax_argmin_axis1(monkeypatch) -> None:
     argmax = IntentFunction.from_json_dict(
         {

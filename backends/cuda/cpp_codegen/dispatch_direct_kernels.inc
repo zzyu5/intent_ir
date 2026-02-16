@@ -52,6 +52,23 @@
       return emit_reduce_min_2d_all_f32(intent, bindings_json);
     }
   }
+  if (intent.ops.size() == 2 && intent.ops[0].op == "reduce_min" && intent.ops[1].op == "argmin") {
+    const Op& red = intent.ops[0];
+    const Op& arg = intent.ops[1];
+    const bool same_input = (red.inputs.size() == 1 && arg.inputs.size() == 1 && red.inputs[0] == arg.inputs[0]);
+    bool arg_axis_is_1 = false;
+    const auto axis_it = arg.attrs.find("axis");
+    if (axis_it != arg.attrs.end() && axis_it->is_number_integer()) {
+      arg_axis_is_1 = (axis_it->get<int64_t>() == 1);
+    }
+    if (same_input && _reduce_axis_is_1(red.attrs) && arg_axis_is_1) {
+      Intent tmp = intent;
+      tmp.ops = {red};
+      tmp.ops[0].attrs["return_indices"] = true;
+      tmp.ops[0].attrs["index_output"] = arg.output;
+      return emit_reduce_min_2d_axis1_with_indices_f32_i64(tmp, bindings_json);
+    }
+  }
   if (!intent.ops.empty() && intent.ops.back().op == "reduce_min" && _reduce_axis_is_1(intent.ops.back().attrs) &&
       _attrs_return_indices(intent.ops.back().attrs)) {
     return emit_reduce_min_2d_axis1_with_indices_f32_i64(intent, bindings_json);

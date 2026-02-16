@@ -1956,6 +1956,24 @@ def _tilelang_deterministic_intent_for(kernel_name: str):
     return None
 
 
+def _provider_deterministic_intent_for(*, kernel_name: str, triton_provider: str):
+    """
+    Provider-aware deterministic fallback intents.
+
+    For FlagGems coverage kernels, prefer provider-maintained canonical intents
+    before falling back to generic TileLang intents.
+    """
+    provider = str(triton_provider).strip().lower()
+    if provider != "flaggems":
+        return None
+    try:
+        from pipeline.triton.flaggems_intent_normalize import canonical_flaggems_intent_for_spec  # noqa: PLC0415
+
+        return canonical_flaggems_intent_for_spec(str(kernel_name))
+    except Exception:
+        return None
+
+
 def default_kernel_specs() -> List[KernelSpec]:
     def _norm_groupnorm(shapes: Dict[str, int]) -> Dict[str, int]:
         out = dict(shapes)
@@ -2789,13 +2807,27 @@ def run_pipeline_for_spec(
             (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
             (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
         else:
-            fb_intent = (_attn_fwd_fallback_intent() if spec.name == "_attn_fwd" else _tilelang_deterministic_intent_for(spec.name))
+            fallback_kind = "tilelang_deterministic"
+            if spec.name == "_attn_fwd":
+                fb_intent = _attn_fwd_fallback_intent()
+                fallback_kind = "deterministic_attn"
+            else:
+                provider_fb_intent = _provider_deterministic_intent_for(
+                    kernel_name=spec.name,
+                    triton_provider=triton_provider,
+                )
+                if provider_fb_intent is not None:
+                    fb_intent = provider_fb_intent
+                    fallback_kind = "provider_canonical_deterministic"
+                else:
+                    fb_intent = _tilelang_deterministic_intent_for(spec.name)
+                    fallback_kind = "tilelang_deterministic"
             if fb_intent is None:
                 raise RuntimeError(f"LLM/Intent parse failed after retries for {spec.name}: {'; '.join(feedback)}")
             cand = CandidateIntent(intent=fb_intent, problem_params={}, schedule_params={}, raw_json={"fallback": True}, llm_trace={})
             report["llm_fallback"] = {
                 "used": True,
-                "kind": ("deterministic_attn" if spec.name == "_attn_fwd" else "tilelang_deterministic"),
+                "kind": str(fallback_kind),
                 "reason": "; ".join(feedback) if feedback else "LLM failed",
             }
             enrich_intent_macros(cand.intent)
@@ -3137,6 +3169,144 @@ def run_pipeline_for_spec(
                     ]
             except Exception:
                 pass
+
+    # Provider-level deterministic repair pass (only after LLM-based attempts fail).
+    if provider_name == "flaggems" and diffs_in and not all(d.ok for d in diffs_in):
+        try:
+            det_intent = _provider_deterministic_intent_for(
+                kernel_name=spec.name,
+                triton_provider=triton_provider,
+            )
+            if det_intent is not None:
+                det_candidate = CandidateIntent(
+                    intent=det_intent,
+                    problem_params={},
+                    schedule_params={},
+                    raw_json={"fallback": True, "source": "provider_canonical_repair"},
+                    llm_trace={},
+                )
+                enrich_intent_macros(det_candidate.intent)
+                det_expanded_intent = expand_macros(det_candidate.intent)
+                det_candidate_expanded = CandidateIntent(
+                    intent=det_expanded_intent,
+                    problem_params={},
+                    schedule_params={},
+                    raw_json={"fallback": True, "source": "provider_canonical_repair"},
+                    llm_trace={},
+                )
+                det_candidate, det_candidate_expanded, det_norm_info = provider_plugin.maybe_normalize_candidate(
+                    spec_name=str(spec.name),
+                    candidate=det_candidate,
+                    candidate_expanded=det_candidate_expanded,
+                )
+                if det_norm_info is not None:
+                    report["provider_intent_normalization"] = dict(det_norm_info)
+                    report["flaggems_intent_normalization"] = dict(det_norm_info)
+
+                _ensure_schedule(det_candidate.intent, kernel_name=spec.name, triton_src=src)
+                _attach_access_witness_meta(det_candidate.intent, cert_v2=cert_v2, canonical_shapes=dict(spec.canonical_shapes))
+                provider_plugin.annotate_intent_meta(
+                    det_candidate.intent,
+                    source_op=(str(provider_source_op) if provider_source_op is not None else None),
+                    capability_state=(str(provider_capability_state) if provider_capability_state is not None else None),
+                    backend_target=backend_target,
+                )
+
+                if det_candidate_expanded is not None:
+                    _ensure_schedule(det_candidate_expanded.intent, kernel_name=spec.name, triton_src=src)
+                    _attach_access_witness_meta(
+                        det_candidate_expanded.intent,
+                        cert_v2=cert_v2,
+                        canonical_shapes=dict(spec.canonical_shapes),
+                    )
+                    provider_plugin.annotate_intent_meta(
+                        det_candidate_expanded.intent,
+                        source_op=(str(provider_source_op) if provider_source_op is not None else None),
+                        capability_state=(str(provider_capability_state) if provider_capability_state is not None else None),
+                        backend_target=backend_target,
+                    )
+
+                det_for_run = det_candidate_expanded or det_candidate
+                det_cases_pack = make_cases(
+                    spec,
+                    det_for_run,
+                    constraints,
+                    limit=cases_limit,
+                    extra_tile_hints=cert.tile_hints if cert else None,
+                    cert=cert,
+                    cert_v2=cert_v2,
+                    assumptions=assumptions,
+                )
+                det_cases_in = list(det_cases_pack.in_contract)
+                det_cases_out = list(det_cases_pack.out_of_contract)
+                det_tol = infer_tolerances(det_for_run.intent).to_dict()
+                det_diffs_in, det_cex_in = run_diff(det_for_run.intent, spec.runner, det_cases_in, tolerances=det_tol)
+
+                det_ok = bool(det_diffs_in and all(d.ok for d in det_diffs_in))
+                report["provider_deterministic_repair"] = {
+                    "used": True,
+                    "kind": "provider_canonical_deterministic",
+                    "ok": bool(det_ok),
+                }
+                if det_ok:
+                    cand = det_candidate
+                    cand_expanded = det_candidate_expanded
+                    cand_for_run = det_for_run
+                    cases_in = det_cases_in
+                    cases_out = det_cases_out
+                    tol = dict(det_tol)
+                    diffs_in = det_diffs_in
+                    cex_in = det_cex_in
+
+                    report["cases"] = {
+                        "in_contract": [dict(c.shapes) for c in cases_in],
+                        "out_of_contract": [dict(c.shapes) for c in cases_out],
+                    }
+                    report["tolerances"] = dict(tol)
+
+                    worst = max(diffs_in, key=lambda d: (not d.ok, d.max_abs_err))
+                    report["diff"] = {
+                        "ok": True,
+                        "worst": {"summary": worst.summary, "max_abs": float(worst.max_abs_err), "max_rel": float(worst.max_rel_err)},
+                        "results": [
+                            {
+                                "case_shapes": dict(cases_in[i].shapes),
+                                "ok": bool(diffs_in[i].ok),
+                                "summary": diffs_in[i].summary,
+                                "max_abs": float(diffs_in[i].max_abs_err),
+                                "max_rel": float(diffs_in[i].max_rel_err),
+                            }
+                            for i in range(min(len(cases_in), len(diffs_in)))
+                        ],
+                    }
+                    if cex_in:
+                        report["counterexamples"] = [
+                            {"shapes": dict(cx.case.shapes), "summary": cx.diff.summary, "hints": list(cx.hints)}
+                            for cx in cex_in[:3]
+                        ]
+                    report["provider_meta_validation"] = provider_plugin.validate_intent_meta(cand.intent)
+                    _materialize_missing_tensors_for_report(cand.intent, report, phase="provider_det_repair")
+                    if cand_expanded is not None:
+                        _materialize_missing_tensors_for_report(
+                            cand_expanded.intent,
+                            report,
+                            phase="provider_det_repair_expanded",
+                        )
+                    report["intent"] = cand.intent.to_json_dict()
+                    report["intent_expanded"] = (cand_expanded.intent.to_json_dict() if cand_expanded is not None else None)
+                    (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
+                    if cand_expanded is not None:
+                        (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(
+                            print_mlir_like(cand_expanded.intent),
+                            encoding="utf-8",
+                        )
+        except Exception as e:
+            report["provider_deterministic_repair"] = {
+                "used": True,
+                "kind": "provider_canonical_deterministic",
+                "ok": False,
+                "error": f"{type(e).__name__}: {e}",
+            }
 
     # If diff still fails, attach a compact debug report (P0 gap fix).
     if diffs_in and not all(d.ok for d in diffs_in):

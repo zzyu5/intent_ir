@@ -270,6 +270,10 @@ def test_matrix_marks_full_coverage_run_when_suite_coverage_without_explicit_ker
     with pytest.raises(SystemExit) as exc:
         mod.main()
     assert int(exc.value.code) == 0
+    converge_cmds = [c for c in recorded_cmds if "scripts/flaggems/converge_status.py" in c]
+    assert len(converge_cmds) == 1
+    converge_cmd = converge_cmds[0]
+    assert converge_cmd[converge_cmd.index("--scope-mode") + 1] == "kernel_alias"
     assert any("scripts/flaggems/recompute_coverage_integrity.py" in c for c in recorded_cmds)
     summary = json.loads((out_dir / "run_summary.json").read_text(encoding="utf-8"))
     stage = next((s for s in summary["stages"] if s["stage"] == "coverage_integrity"), None)

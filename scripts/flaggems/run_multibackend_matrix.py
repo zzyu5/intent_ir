@@ -556,7 +556,8 @@ def main() -> None:
         cmd += ["--scope-kernels", str(k)]
     for sop in scoped_semantic_ops:
         cmd += ["--scope-semantic-ops", str(sop)]
-    cmd += ["--scope-mode", "active_only"]
+    scope_mode = "active_only" if scoped_semantic_ops else "kernel_alias"
+    cmd += ["--scope-mode", str(scope_mode)]
     if bool(args.write_registry):
         cmd.append("--write-registry")
     print("[matrix] stage=converge", flush=True)
