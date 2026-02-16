@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-16T01:24:33.619055+00:00",
+  "generated_at": "2026-02-16T01:31:40.279482+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -18,9 +18,9 @@
     "source_filtered_ops": 212,
     "semantic_ops": 196,
     "by_status": {
-      "blocked_backend": 14,
+      "blocked_backend": 15,
       "cuda_only": 1,
-      "dual_pass": 181
+      "dual_pass": 180
     },
     "by_family": {
       "attention_sequence": 5,
@@ -9909,59 +9909,72 @@
       ],
       "family": "reduction",
       "intent_ops": [
-        "std"
+        "var",
+        "sqrt"
       ],
       "mapping_kind": "reduce_template",
-      "intent_pattern_id": "reduce.std",
+      "intent_pattern_id": "reduce.std_via_var_sqrt",
       "e2e_spec": "std2d",
-      "status": "dual_pass",
-      "status_reason": "all_targets_supported_with_e2e_spec",
-      "status_reason_detail": "mapped to std primitive",
+      "status": "blocked_backend",
+      "status_reason": "backend_missing_ops",
+      "status_reason_detail": "mapped as sqrt(var(x)); rvv_missing=['var']; cuda_h100_missing=['var']; cuda_5090d_missing=['var']",
       "backend_support": {
         "rvv": {
           "target": "rvv",
-          "ok": true,
+          "ok": false,
           "requested_ops": [
-            "std"
+            "sqrt",
+            "var"
           ],
           "known_ops": [
-            "std"
+            "sqrt",
+            "var"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "std"
+            "sqrt"
           ],
-          "missing_ops": []
+          "missing_ops": [
+            "var"
+          ]
         },
         "cuda_h100": {
           "target": "cuda_h100",
-          "ok": true,
+          "ok": false,
           "requested_ops": [
-            "std"
+            "sqrt",
+            "var"
           ],
           "known_ops": [
-            "std"
+            "sqrt",
+            "var"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "std"
+            "sqrt"
           ],
-          "missing_ops": []
+          "missing_ops": [
+            "var"
+          ]
         },
         "cuda_5090d": {
           "target": "cuda_5090d",
-          "ok": true,
+          "ok": false,
           "requested_ops": [
-            "std"
+            "sqrt",
+            "var"
           ],
           "known_ops": [
-            "std"
+            "sqrt",
+            "var"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "std"
+            "sqrt"
           ],
-          "missing_ops": []
+          "missing_ops": [
+            "var"
+          ]
         }
       }
     },
@@ -11879,27 +11892,31 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [
-        "index_put"
+        "where",
+        "scatter"
       ],
-      "mapping_kind": "direct_supported_op",
-      "intent_pattern_id": "direct.index_put",
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.index_put_via_where_scatter",
       "e2e_spec": "index_put2d",
       "status": "dual_pass",
       "status_reason": "all_targets_supported_with_e2e_spec",
-      "status_reason_detail": "semantic op equals IntentIR op name",
+      "status_reason_detail": "mapped as masked scatter update into base tensor",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
-            "index_put"
+            "scatter",
+            "where"
           ],
           "known_ops": [
-            "index_put"
+            "scatter",
+            "where"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "index_put"
+            "scatter",
+            "where"
           ],
           "missing_ops": []
         },
@@ -11907,14 +11924,17 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
-            "index_put"
+            "scatter",
+            "where"
           ],
           "known_ops": [
-            "index_put"
+            "scatter",
+            "where"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "index_put"
+            "scatter",
+            "where"
           ],
           "missing_ops": []
         },
@@ -11922,14 +11942,17 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
-            "index_put"
+            "scatter",
+            "where"
           ],
           "known_ops": [
-            "index_put"
+            "scatter",
+            "where"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "index_put"
+            "scatter",
+            "where"
           ],
           "missing_ops": []
         }
@@ -12005,27 +12028,31 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [
-        "masked_scatter"
+        "where",
+        "scatter"
       ],
       "mapping_kind": "index_template",
-      "intent_pattern_id": "index.masked_scatter",
+      "intent_pattern_id": "index.masked_scatter_via_where_scatter",
       "e2e_spec": "masked_scatter2d",
       "status": "dual_pass",
       "status_reason": "all_targets_supported_with_e2e_spec",
-      "status_reason_detail": "mapped to masked_scatter primitive",
+      "status_reason_detail": "mapped as where(mask, source, input) + scatter update",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
-            "masked_scatter"
+            "scatter",
+            "where"
           ],
           "known_ops": [
-            "masked_scatter"
+            "scatter",
+            "where"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "masked_scatter"
+            "scatter",
+            "where"
           ],
           "missing_ops": []
         },
@@ -12033,14 +12060,17 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
-            "masked_scatter"
+            "scatter",
+            "where"
           ],
           "known_ops": [
-            "masked_scatter"
+            "scatter",
+            "where"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "masked_scatter"
+            "scatter",
+            "where"
           ],
           "missing_ops": []
         },
@@ -12048,14 +12078,17 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
-            "masked_scatter"
+            "scatter",
+            "where"
           ],
           "known_ops": [
-            "masked_scatter"
+            "scatter",
+            "where"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "masked_scatter"
+            "scatter",
+            "where"
           ],
           "missing_ops": []
         }
@@ -12068,27 +12101,35 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [
-        "masked_select"
+        "where",
+        "nonzero",
+        "gather"
       ],
       "mapping_kind": "index_template",
-      "intent_pattern_id": "index.masked_select",
+      "intent_pattern_id": "index.masked_select_via_where_nonzero_gather",
       "e2e_spec": "masked_select2d",
       "status": "dual_pass",
       "status_reason": "all_targets_supported_with_e2e_spec",
-      "status_reason_detail": "mapped to masked_select primitive",
+      "status_reason_detail": "mapped as where(mask, input, 0) then gather(nonzero(mask))",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
-            "masked_select"
+            "gather",
+            "nonzero",
+            "where"
           ],
           "known_ops": [
-            "masked_select"
+            "gather",
+            "nonzero",
+            "where"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "masked_select"
+            "gather",
+            "nonzero",
+            "where"
           ],
           "missing_ops": []
         },
@@ -12096,14 +12137,20 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
-            "masked_select"
+            "gather",
+            "nonzero",
+            "where"
           ],
           "known_ops": [
-            "masked_select"
+            "gather",
+            "nonzero",
+            "where"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "masked_select"
+            "gather",
+            "nonzero",
+            "where"
           ],
           "missing_ops": []
         },
@@ -12111,14 +12158,20 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
-            "masked_select"
+            "gather",
+            "nonzero",
+            "where"
           ],
           "known_ops": [
-            "masked_select"
+            "gather",
+            "nonzero",
+            "where"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "masked_select"
+            "gather",
+            "nonzero",
+            "where"
           ],
           "missing_ops": []
         }
@@ -12194,27 +12247,31 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [
-        "select_scatter"
+        "where",
+        "scatter"
       ],
       "mapping_kind": "index_template",
-      "intent_pattern_id": "index.select_scatter",
+      "intent_pattern_id": "index.select_scatter_via_where_scatter",
       "e2e_spec": "select_scatter2d",
       "status": "dual_pass",
       "status_reason": "all_targets_supported_with_e2e_spec",
-      "status_reason_detail": "mapped to select_scatter primitive",
+      "status_reason_detail": "mapped as axis-select mask + scatter update",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
-            "select_scatter"
+            "scatter",
+            "where"
           ],
           "known_ops": [
-            "select_scatter"
+            "scatter",
+            "where"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "select_scatter"
+            "scatter",
+            "where"
           ],
           "missing_ops": []
         },
@@ -12222,14 +12279,17 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
-            "select_scatter"
+            "scatter",
+            "where"
           ],
           "known_ops": [
-            "select_scatter"
+            "scatter",
+            "where"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "select_scatter"
+            "scatter",
+            "where"
           ],
           "missing_ops": []
         },
@@ -12237,14 +12297,17 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
-            "select_scatter"
+            "scatter",
+            "where"
           ],
           "known_ops": [
-            "select_scatter"
+            "scatter",
+            "where"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "select_scatter"
+            "scatter",
+            "where"
           ],
           "missing_ops": []
         }
@@ -12257,27 +12320,31 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [
-        "slice_scatter"
+        "where",
+        "scatter"
       ],
       "mapping_kind": "index_template",
-      "intent_pattern_id": "index.slice_scatter",
+      "intent_pattern_id": "index.slice_scatter_via_where_scatter",
       "e2e_spec": "slice_scatter2d",
       "status": "dual_pass",
       "status_reason": "all_targets_supported_with_e2e_spec",
-      "status_reason_detail": "mapped to slice_scatter primitive",
+      "status_reason_detail": "mapped as slice mask + scatter update",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
-            "slice_scatter"
+            "scatter",
+            "where"
           ],
           "known_ops": [
-            "slice_scatter"
+            "scatter",
+            "where"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "slice_scatter"
+            "scatter",
+            "where"
           ],
           "missing_ops": []
         },
@@ -12285,14 +12352,17 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
-            "slice_scatter"
+            "scatter",
+            "where"
           ],
           "known_ops": [
-            "slice_scatter"
+            "scatter",
+            "where"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "slice_scatter"
+            "scatter",
+            "where"
           ],
           "missing_ops": []
         },
@@ -12300,14 +12370,17 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
-            "slice_scatter"
+            "scatter",
+            "where"
           ],
           "known_ops": [
-            "slice_scatter"
+            "scatter",
+            "where"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "slice_scatter"
+            "scatter",
+            "where"
           ],
           "missing_ops": []
         }
@@ -12320,26 +12393,30 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [
+        "const",
         "where"
       ],
       "mapping_kind": "index_template",
-      "intent_pattern_id": "index.where_scalar_other",
+      "intent_pattern_id": "index.where_scalar_other_via_const_where",
       "e2e_spec": "where2d",
       "status": "dual_pass",
       "status_reason": "all_targets_supported_with_e2e_spec",
-      "status_reason_detail": "mapped to where with scalar broadcast",
+      "status_reason_detail": "mapped as const(other) + where broadcast",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "const",
             "where"
           ],
           "known_ops": [
+            "const",
             "where"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "const",
             "where"
           ],
           "missing_ops": []
@@ -12348,13 +12425,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "const",
             "where"
           ],
           "known_ops": [
+            "const",
             "where"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "const",
             "where"
           ],
           "missing_ops": []
@@ -12363,13 +12443,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "const",
             "where"
           ],
           "known_ops": [
+            "const",
             "where"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "const",
             "where"
           ],
           "missing_ops": []
@@ -12383,26 +12466,30 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [
+        "const",
         "where"
       ],
       "mapping_kind": "index_template",
-      "intent_pattern_id": "index.where_scalar_self",
+      "intent_pattern_id": "index.where_scalar_self_via_const_where",
       "e2e_spec": "where2d",
       "status": "dual_pass",
       "status_reason": "all_targets_supported_with_e2e_spec",
-      "status_reason_detail": "mapped to where with scalar broadcast",
+      "status_reason_detail": "mapped as const(self) + where broadcast",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "const",
             "where"
           ],
           "known_ops": [
+            "const",
             "where"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "const",
             "where"
           ],
           "missing_ops": []
@@ -12411,13 +12498,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "const",
             "where"
           ],
           "known_ops": [
+            "const",
             "where"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "const",
             "where"
           ],
           "missing_ops": []
@@ -12426,13 +12516,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "const",
             "where"
           ],
           "known_ops": [
+            "const",
             "where"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "const",
             "where"
           ],
           "missing_ops": []
@@ -12668,26 +12761,31 @@
       ],
       "family": "matmul_linear",
       "intent_ops": [
+        "cast",
+        "cast",
         "matmul"
       ],
       "mapping_kind": "macro_template",
-      "intent_pattern_id": "macro.bmm",
+      "intent_pattern_id": "macro.bmm_via_cast_matmul",
       "e2e_spec": "bmm3d",
       "status": "dual_pass",
       "status_reason": "all_targets_supported_with_e2e_spec",
-      "status_reason_detail": "mapped to batched matmul primitive",
+      "status_reason_detail": "mapped as cast(lhs/rhs) + batched matmul",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "matmul"
           ],
           "known_ops": [
+            "cast",
             "matmul"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "matmul"
           ],
           "missing_ops": []
@@ -12696,13 +12794,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "matmul"
           ],
           "known_ops": [
+            "cast",
             "matmul"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "matmul"
           ],
           "missing_ops": []
@@ -12711,13 +12812,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "matmul"
           ],
           "known_ops": [
+            "cast",
             "matmul"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "matmul"
           ],
           "missing_ops": []
@@ -12857,27 +12961,36 @@
       ],
       "family": "matmul_linear",
       "intent_ops": [
-        "matmul"
+        "cast",
+        "cast",
+        "mul",
+        "reduce_sum"
       ],
       "mapping_kind": "macro_template",
-      "intent_pattern_id": "macro.dot",
+      "intent_pattern_id": "macro.dot_via_mul_reduce_sum",
       "e2e_spec": "dot1d",
       "status": "dual_pass",
       "status_reason": "all_targets_supported_with_e2e_spec",
-      "status_reason_detail": "mapped to vector matmul primitive",
+      "status_reason_detail": "mapped as cast(lhs/rhs) -> elementwise mul -> reduce_sum",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
-            "matmul"
+            "cast",
+            "mul",
+            "reduce_sum"
           ],
           "known_ops": [
-            "matmul"
+            "cast",
+            "mul",
+            "reduce_sum"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "matmul"
+            "cast",
+            "mul",
+            "reduce_sum"
           ],
           "missing_ops": []
         },
@@ -12885,14 +12998,20 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
-            "matmul"
+            "cast",
+            "mul",
+            "reduce_sum"
           ],
           "known_ops": [
-            "matmul"
+            "cast",
+            "mul",
+            "reduce_sum"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "matmul"
+            "cast",
+            "mul",
+            "reduce_sum"
           ],
           "missing_ops": []
         },
@@ -12900,14 +13019,20 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
-            "matmul"
+            "cast",
+            "mul",
+            "reduce_sum"
           ],
           "known_ops": [
-            "matmul"
+            "cast",
+            "mul",
+            "reduce_sum"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "matmul"
+            "cast",
+            "mul",
+            "reduce_sum"
           ],
           "missing_ops": []
         }
@@ -12921,26 +13046,31 @@
       ],
       "family": "matmul_linear",
       "intent_ops": [
+        "cast",
+        "cast",
         "matmul"
       ],
       "mapping_kind": "macro_template",
-      "intent_pattern_id": "macro.mm",
+      "intent_pattern_id": "macro.mm_via_cast_matmul",
       "e2e_spec": "mm2d",
       "status": "dual_pass",
       "status_reason": "all_targets_supported_with_e2e_spec",
-      "status_reason_detail": "mapped to matmul primitive",
+      "status_reason_detail": "mapped as cast(lhs/rhs) + matmul",
       "backend_support": {
         "rvv": {
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "matmul"
           ],
           "known_ops": [
+            "cast",
             "matmul"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "matmul"
           ],
           "missing_ops": []
@@ -12949,13 +13079,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "matmul"
           ],
           "known_ops": [
+            "cast",
             "matmul"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "matmul"
           ],
           "missing_ops": []
@@ -12964,13 +13097,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "matmul"
           ],
           "known_ops": [
+            "cast",
             "matmul"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "matmul"
           ],
           "missing_ops": []

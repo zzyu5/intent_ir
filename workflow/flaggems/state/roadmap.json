@@ -5,7 +5,7 @@
     {
       "id": "P3",
       "target": "IR composition quality gate: complex-family single-intent ratio <=40% (M1) then <=20% (M2)",
-      "status": "in_progress"
+      "status": "completed"
     },
     {
       "id": "P4",

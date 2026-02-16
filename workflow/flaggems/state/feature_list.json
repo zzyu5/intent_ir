@@ -1,12 +1,12 @@
 {
   "schema_version": "flaggems_feature_list_v2",
-  "generated_at": "2026-02-16T01:27:34+00:00",
+  "generated_at": "2026-02-16T01:32:37+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
-      "dual_pass": 181,
-      "blocked_backend": 14,
+      "dual_pass": 180,
+      "blocked_backend": 15,
       "cuda_only": 1
     },
     "by_family": {
@@ -3808,13 +3808,14 @@
       "id": "flaggems::std",
       "semantic_op": "std",
       "family": "reduction",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
-      "next_action": "none",
+      "status": "blocked_backend",
+      "passes": false,
+      "reason_code": "backend_missing_ops",
+      "next_action": "backend_lowering",
       "e2e_spec": "std2d",
       "intent_ops": [
-        "std"
+        "var",
+        "sqrt"
       ],
       "track": "coverage",
       "task_type": "semantic_op",
@@ -4469,7 +4470,8 @@
       "next_action": "none",
       "e2e_spec": "index_put2d",
       "intent_ops": [
-        "index_put"
+        "where",
+        "scatter"
       ],
       "track": "coverage",
       "task_type": "semantic_op",
@@ -4521,7 +4523,8 @@
       "next_action": "none",
       "e2e_spec": "masked_scatter2d",
       "intent_ops": [
-        "masked_scatter"
+        "where",
+        "scatter"
       ],
       "track": "coverage",
       "task_type": "semantic_op",
@@ -4547,7 +4550,9 @@
       "next_action": "none",
       "e2e_spec": "masked_select2d",
       "intent_ops": [
-        "masked_select"
+        "where",
+        "nonzero",
+        "gather"
       ],
       "track": "coverage",
       "task_type": "semantic_op",
@@ -4599,7 +4604,8 @@
       "next_action": "none",
       "e2e_spec": "select_scatter2d",
       "intent_ops": [
-        "select_scatter"
+        "where",
+        "scatter"
       ],
       "track": "coverage",
       "task_type": "semantic_op",
@@ -4625,7 +4631,8 @@
       "next_action": "none",
       "e2e_spec": "slice_scatter2d",
       "intent_ops": [
-        "slice_scatter"
+        "where",
+        "scatter"
       ],
       "track": "coverage",
       "task_type": "semantic_op",
@@ -4651,6 +4658,7 @@
       "next_action": "none",
       "e2e_spec": "where2d",
       "intent_ops": [
+        "const",
         "where"
       ],
       "track": "coverage",
@@ -4677,6 +4685,7 @@
       "next_action": "none",
       "e2e_spec": "where2d",
       "intent_ops": [
+        "const",
         "where"
       ],
       "track": "coverage",
@@ -4784,6 +4793,8 @@
       "next_action": "none",
       "e2e_spec": "bmm3d",
       "intent_ops": [
+        "cast",
+        "cast",
         "matmul"
       ],
       "track": "coverage",
@@ -4862,7 +4873,10 @@
       "next_action": "none",
       "e2e_spec": "dot1d",
       "intent_ops": [
-        "matmul"
+        "cast",
+        "cast",
+        "mul",
+        "reduce_sum"
       ],
       "track": "coverage",
       "task_type": "semantic_op",
@@ -4888,6 +4902,8 @@
       "next_action": "none",
       "e2e_spec": "mm2d",
       "intent_ops": [
+        "cast",
+        "cast",
         "matmul"
       ],
       "track": "coverage",
@@ -6022,10 +6038,10 @@
       "id": "ir_arch::composition_policy_m2_gate",
       "semantic_op": "",
       "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "pending",
-      "next_action": "reduce_complex_family_single_intent_ratio_to_m2_target",
+      "status": "done",
+      "passes": true,
+      "reason_code": "ok",
+      "next_action": "none",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "ir_arch",
@@ -6039,7 +6055,12 @@
       "depends_on": [
         "ir_arch::composition_policy_m1_gate"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m2_v2/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m2_v2/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m2_v2/mapping_complexity_report.json",
+        "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m2_v2/batch_gate_ir_arch_pass.json"
+      ],
       "description": "Advance composition quality to M2 target by reducing complex-family single-intent ratio to <=20%."
     },
     {

@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_active_batch_v2",
-  "generated_at": "2026-02-16T01:27:42+00:00",
+  "generated_at": "2026-02-16T01:32:45+00:00",
   "branch": "flaggems",
   "lane": "ir_arch",
   "batch_size": 10,
@@ -9,32 +9,7 @@
     "priority",
     "dependency"
   ],
-  "items": [
-    {
-      "id": "ir_arch::composition_policy_m2_gate",
-      "semantic_op": "",
-      "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "pending",
-      "next_action": "reduce_complex_family_single_intent_ratio_to_m2_target",
-      "e2e_spec": null,
-      "intent_ops": [],
-      "track": "ir_arch",
-      "task_type": "quality_guard",
-      "priority": 36,
-      "acceptance": [
-        "mapping_complexity_gate_pass_m2",
-        "complex_family_single_intent_ratio_le_0_20"
-      ],
-      "gate_profile": "ir_arch",
-      "depends_on": [
-        "ir_arch::composition_policy_m1_gate"
-      ],
-      "evidence_paths": [],
-      "description": "Advance composition quality to M2 target by reducing complex-family single-intent ratio to <=20%."
-    }
-  ],
+  "items": [],
   "context": {
     "feature_list_path": "workflow/flaggems/state/feature_list.json",
     "progress_log_path": "",
