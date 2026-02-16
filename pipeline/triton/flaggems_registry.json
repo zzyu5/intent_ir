@@ -18,8 +18,7 @@
     "source_filtered_ops": 212,
     "semantic_ops": 196,
     "by_status": {
-      "dual_pass": 154,
-      "rvv_only": 42
+      "dual_pass": 196
     },
     "by_family": {
       "attention_sequence": 5,
@@ -4880,8 +4879,8 @@
       "mapping_kind": "direct_supported_op",
       "intent_pattern_id": "direct.glu",
       "e2e_spec": "glu2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "semantic op equals IntentIR op name",
       "backend_support": {
         "rvv": {
@@ -4930,15 +4929,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -4947,7 +4946,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -4956,7 +4955,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "2f99078fb264879389f5c926c7bed43dcd2de264",
+      "evidence_hash": "1d51459d7e17bce313ae02265d7c074d11e20175",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -8615,8 +8614,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.nll_loss2d_forward",
       "e2e_spec": "nll_loss2d_forward",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped to nll_loss2d_forward primitive",
       "backend_support": {
         "rvv": {
@@ -8665,15 +8664,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -8682,7 +8681,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -8691,7 +8690,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "40f19afbd107bc7a197334b9bb4ebcb5f32b7a6e",
+      "evidence_hash": "50426452fde21ac98462a423725cbee11779c449",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -8708,8 +8707,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.nll_loss_forward",
       "e2e_spec": "nll_loss_forward",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped to nll_loss_forward primitive",
       "backend_support": {
         "rvv": {
@@ -8758,15 +8757,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -8775,7 +8774,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -8784,7 +8783,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "55c31d9e036f187d023e9128a441d8a7fe7675fb",
+      "evidence_hash": "4622e37ea1aef435ef432c3d5dbdbb69df0f7886",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -9419,8 +9418,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.polar",
       "e2e_spec": "polar2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped to polar primitive",
       "backend_support": {
         "rvv": {
@@ -9469,15 +9468,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -9486,7 +9485,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -9495,7 +9494,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "a75aac2ae59df52d4f3378ed3ecb2d6f905193dc",
+      "evidence_hash": "d59de1751368cc5c2f94b27a00369abc03d90176",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -9512,8 +9511,8 @@
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.pow_scalar->pow",
       "e2e_spec": "pow_scalar2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "alias to pow; semantic op equals IntentIR op name",
       "backend_support": {
         "rvv": {
@@ -9562,15 +9561,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -9579,7 +9578,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -9588,7 +9587,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "1b3cef03e4f7f11bc836c2eea54d1dab7ef9e0a3",
+      "evidence_hash": "fb217882a1aea789f8d32269e749d2e3cc574e24",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -9605,8 +9604,8 @@
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.pow_tensor_scalar->pow",
       "e2e_spec": "pow_tensor_scalar2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "alias to pow; semantic op equals IntentIR op name",
       "backend_support": {
         "rvv": {
@@ -9655,15 +9654,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -9672,7 +9671,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -9681,7 +9680,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "36e5073d656172ebd629f00083c37a46589d0c97",
+      "evidence_hash": "44d3809b60308c2a9cfb763e15be52f8f13a9d4e",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -9698,8 +9697,8 @@
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.pow_tensor_tensor->pow",
       "e2e_spec": "pow_tensor_tensor2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "alias to pow; semantic op equals IntentIR op name",
       "backend_support": {
         "rvv": {
@@ -9748,15 +9747,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -9765,7 +9764,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -9774,7 +9773,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "d19c7a4d898b5c6eb3ee348e33b5eedbbef2058d",
+      "evidence_hash": "55fc16e1d68b72c452fd567dd6b40fb5ab6e48cb",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -9791,8 +9790,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.quantile",
       "e2e_spec": "quantile2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped to quantile primitive",
       "backend_support": {
         "rvv": {
@@ -9841,15 +9840,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -9858,7 +9857,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -9867,7 +9866,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "a905b91e9b7aed6fd2ad78a39934ef68253d1d89",
+      "evidence_hash": "2f289a2a3e436ff46be465cc2b9366fb8b5de44f",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -11113,8 +11112,8 @@
       "mapping_kind": "direct_supported_op",
       "intent_pattern_id": "direct.stack",
       "e2e_spec": "stack2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "semantic op equals IntentIR op name",
       "backend_support": {
         "rvv": {
@@ -11163,15 +11162,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -11180,7 +11179,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -11189,7 +11188,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "0a89deed31d049bfb2c6c5e41d179315a853ad81",
+      "evidence_hash": "f43d6e5bc13d5cbf48ae61c684284952a8d40e2a",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -12570,8 +12569,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.allclose",
       "e2e_spec": "allclose2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as not(reduce_any(not(isclose(a,b))))",
       "backend_support": {
         "rvv": {
@@ -12674,15 +12673,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -12691,7 +12690,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -12700,7 +12699,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "f3442529285c2aa63e315c3bc85b83d2b1cf7bb1",
+      "evidence_hash": "76bfc0ff98c1dff575cc974138a76a26540bfbe9",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -13185,8 +13184,8 @@
       "mapping_kind": "reduce_template",
       "intent_pattern_id": "reduce.cumsum",
       "e2e_spec": "cumsum2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped to cumsum primitive",
       "backend_support": {
         "rvv": {
@@ -13235,15 +13234,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -13252,7 +13251,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -13261,7 +13260,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "1fbebbab3267d54f22b1069ff85bbc039436d045",
+      "evidence_hash": "2e194dacad1221b48e9bf59686161ded3bc918a4",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -13280,8 +13279,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.flash_attn_varlen",
       "e2e_spec": "flash_attn_varlen_func_bhsd",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as attention core decomposition",
       "backend_support": {
         "rvv": {
@@ -13339,15 +13338,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -13356,7 +13355,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -13365,7 +13364,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "3595af76104fb03cadfdac66616d7d43b5357b88",
+      "evidence_hash": "2db2e7190b75a9ca2dd19615d14d158f5681d7d2",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -13691,8 +13690,8 @@
       "mapping_kind": "reduce_template",
       "intent_pattern_id": "reduce.prod",
       "e2e_spec": "prod2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped to reduce_prod",
       "backend_support": {
         "rvv": {
@@ -13741,15 +13740,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -13758,7 +13757,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -13767,7 +13766,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "e53c299667b2887da3eecd5c3ce61e27da6bb208",
+      "evidence_hash": "f901e9b2b8fadcfe2a600a8f3ad6675d25c9072f",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -13784,8 +13783,8 @@
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.prod_dim->prod",
       "e2e_spec": "prod_dim2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "alias to prod; mapped to reduce_prod",
       "backend_support": {
         "rvv": {
@@ -13834,15 +13833,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -13851,7 +13850,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -13860,7 +13859,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "b0bf2fc1e80ad6ae5aad81f33f87c29131ce3754",
+      "evidence_hash": "9552710bdb6384343f2f729a145536a0c33092bb",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -14438,8 +14437,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.var_mean_via_std",
       "e2e_spec": "var_mean2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as variance via std(x)^2",
       "backend_support": {
         "rvv": {
@@ -14497,15 +14496,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -14514,7 +14513,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -14523,7 +14522,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "5061340690555cc3abd6e5638f5e2024e6639f4b",
+      "evidence_hash": "59a51e6d50203529d6d858df91409702a49422af",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -14546,8 +14545,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.batch_norm",
       "e2e_spec": "batch_norm2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as batch normalized arithmetic decomposition",
       "backend_support": {
         "rvv": {
@@ -14650,15 +14649,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -14667,7 +14666,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -14676,7 +14675,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "d2a74ef18d9f81919eb7f7e7040ac78e9fc31ccc",
+      "evidence_hash": "7f1b47f43220c5886fd18b01b65a800b1541aef9",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -14824,8 +14823,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.group_norm",
       "e2e_spec": "group_norm_kernel",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as grouped normalized arithmetic decomposition",
       "backend_support": {
         "rvv": {
@@ -14928,15 +14927,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -14945,7 +14944,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -14954,7 +14953,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "d2741f843484c7307bbde4248feaeffb8adab594",
+      "evidence_hash": "6c820000ab001072bd4881879d59a4b7bfb6ab3d",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -14977,8 +14976,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.layer_norm",
       "e2e_spec": "layer_norm_persistent",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as normalized arithmetic decomposition",
       "backend_support": {
         "rvv": {
@@ -15081,15 +15080,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -15098,7 +15097,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -15107,7 +15106,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "29bb25a97ac56220b2b499ee78d199e534713dcc",
+      "evidence_hash": "5fee7c916b8256d5db1b163c8ce81eac6ad3368d",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -15231,8 +15230,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.normed_cumsum",
       "e2e_spec": "normed_cumsum2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as cumsum normalized by scalar divisor",
       "backend_support": {
         "rvv": {
@@ -15290,15 +15289,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -15307,7 +15306,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -15316,7 +15315,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "2149f15e9df0bbec1506ac6bcc0d191e0b51e61e",
+      "evidence_hash": "e178d4eef04c900602943207ab10114a4fe1cb44",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -15430,8 +15429,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.rms_norm",
       "e2e_spec": "rms_norm2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as x * rsqrt(mean(x*x)+eps)",
       "backend_support": {
         "rvv": {
@@ -15507,15 +15506,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -15524,7 +15523,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -15533,7 +15532,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "1b558b67ca6e8a8e4c9aba1787dd160fdb8c3fff",
+      "evidence_hash": "9e206e2fc11de7e24b2e2b2dd5ac15a0b24f48a9",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -15554,8 +15553,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.rms_norm_forward",
       "e2e_spec": "rms_norm2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as x * rsqrt(mean(x*x)+eps)",
       "backend_support": {
         "rvv": {
@@ -15631,15 +15630,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -15648,7 +15647,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -15657,7 +15656,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "1b558b67ca6e8a8e4c9aba1787dd160fdb8c3fff",
+      "evidence_hash": "9e206e2fc11de7e24b2e2b2dd5ac15a0b24f48a9",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -16199,8 +16198,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.vector_norm",
       "e2e_spec": "vector_norm2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as sqrt(reduce_sum(x*x))",
       "backend_support": {
         "rvv": {
@@ -16267,15 +16266,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -16284,7 +16283,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -16293,7 +16292,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "b8ce7f94b90882767b05cf7797c81572bbfb5056",
+      "evidence_hash": "8686c1837dbd358762ba8741c24595e6a5fcf984",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -16315,8 +16314,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.weight_norm_interface_via_reduce",
       "e2e_spec": "weight_norm2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as v * broadcast(g / sqrt(reduce_sum(v*v)))",
       "backend_support": {
         "rvv": {
@@ -16401,15 +16400,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -16418,7 +16417,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -16427,7 +16426,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "3722c0387ef34d53a5811caf026ffc0e4574a62d",
+      "evidence_hash": "6737df4c0ac1f1ec64b07760e2441ec9776847f1",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -16723,8 +16722,8 @@
       "mapping_kind": "direct_supported_op",
       "intent_pattern_id": "direct.index_add",
       "e2e_spec": "index_add2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "semantic op equals IntentIR op name",
       "backend_support": {
         "rvv": {
@@ -16773,15 +16772,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -16790,7 +16789,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -16799,7 +16798,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "3c6620af957f3d3776d46a06dae403e15926d621",
+      "evidence_hash": "c6bcd01b6cd984fbbeae0b18aac10b25bc8deb9f",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -16817,8 +16816,8 @@
       "mapping_kind": "index_template",
       "intent_pattern_id": "index.index_put_via_where_scatter",
       "e2e_spec": "index_put2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as masked scatter update into base tensor",
       "backend_support": {
         "rvv": {
@@ -16876,15 +16875,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -16893,7 +16892,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -16902,7 +16901,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "90af4c21fcd5f68b280e1a329e4946120605a1ab",
+      "evidence_hash": "4e335b24d3e1b26e915ed94b4544be28d28572cb",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -17013,8 +17012,8 @@
       "mapping_kind": "index_template",
       "intent_pattern_id": "index.masked_scatter_via_where_scatter",
       "e2e_spec": "masked_scatter2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as where(mask, source, input) + scatter update",
       "backend_support": {
         "rvv": {
@@ -17072,15 +17071,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -17089,7 +17088,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -17098,7 +17097,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "eabd3ee7f989dc6d024f3d93207b1ff3ffeaee3c",
+      "evidence_hash": "331f67f504b3fa09c9de2312636ea2e6174aeefd",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -17117,8 +17116,8 @@
       "mapping_kind": "index_template",
       "intent_pattern_id": "index.masked_select_via_where_nonzero_gather",
       "e2e_spec": "masked_select2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as where(mask, input, 0) then gather(nonzero(mask))",
       "backend_support": {
         "rvv": {
@@ -17185,15 +17184,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -17202,7 +17201,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -17211,7 +17210,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "37d7e74d9b703c7a6fa37622955e415caa42961b",
+      "evidence_hash": "7d1f9060792fdbd55e61648819b92289af6570a1",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -17228,8 +17227,8 @@
       "mapping_kind": "index_template",
       "intent_pattern_id": "index.scatter",
       "e2e_spec": "scatter2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped to scatter primitive",
       "backend_support": {
         "rvv": {
@@ -17278,15 +17277,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -17295,7 +17294,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -17304,7 +17303,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "a46bb131bf9205f1f4a39e0ed7bc5f770fd1c6ba",
+      "evidence_hash": "f64d27c7420e99d025de015e35193e06fb661aa5",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -17322,8 +17321,8 @@
       "mapping_kind": "index_template",
       "intent_pattern_id": "index.select_scatter_via_where_scatter",
       "e2e_spec": "select_scatter2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as axis-select mask + scatter update",
       "backend_support": {
         "rvv": {
@@ -17381,15 +17380,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -17398,7 +17397,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -17407,7 +17406,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "0e99f43c41c783e7a0a46f7f838b0197e46a86f4",
+      "evidence_hash": "650553dc4baa2d10e23bc0f43a163270a328ba0d",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -17425,8 +17424,8 @@
       "mapping_kind": "index_template",
       "intent_pattern_id": "index.slice_scatter_via_where_scatter",
       "e2e_spec": "slice_scatter2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as slice mask + scatter update",
       "backend_support": {
         "rvv": {
@@ -17484,15 +17483,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -17501,7 +17500,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -17510,7 +17509,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "f488d86457b69b790b5d2c13af0bae4a2a73bab2",
+      "evidence_hash": "49cb4dddb6edbcfb57fe0b8f97dd4080b36d63af",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -17839,8 +17838,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.addmm",
       "e2e_spec": "addmm2d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as add(input, matmul(mat1, mat2))",
       "backend_support": {
         "rvv": {
@@ -17898,15 +17897,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -17915,7 +17914,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -17924,7 +17923,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "7a591f992ffff97299af542821b59af61de18478",
+      "evidence_hash": "f9d2020fcb3ad7d1b5c6a8256c18350fd5da4eb5",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -17942,8 +17941,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.baddbmm",
       "e2e_spec": "baddbmm3d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as add(input, matmul(batch1, batch2))",
       "backend_support": {
         "rvv": {
@@ -18001,15 +18000,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -18018,7 +18017,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -18027,7 +18026,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "41830c05bbb8bcedfa8fed0c56e64a729ae20bed",
+      "evidence_hash": "94420bf67aabbbc1e64142a698b440388837cdc9",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -18047,8 +18046,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.bmm_via_cast_matmul",
       "e2e_spec": "bmm3d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as cast(lhs/rhs) + batched matmul",
       "backend_support": {
         "rvv": {
@@ -18106,15 +18105,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -18123,7 +18122,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -18132,7 +18131,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "d41c0e8abec2706fcbcbce1c4525d456596a3293",
+      "evidence_hash": "fba8bd9c8ea8af06d60c4f10ef9e9cb8f497c644",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -18149,8 +18148,8 @@
       "mapping_kind": "direct_supported_op",
       "intent_pattern_id": "direct.cummax",
       "e2e_spec": "cummax1d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "semantic op equals IntentIR op name",
       "backend_support": {
         "rvv": {
@@ -18199,15 +18198,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -18216,7 +18215,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -18225,7 +18224,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "9dcaa2a0b14b569196a06c3263a7f33e06d532e7",
+      "evidence_hash": "bbdfed97264af7c627ad4be8bb25b0c382e8dc51",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -18242,8 +18241,8 @@
       "mapping_kind": "direct_supported_op",
       "intent_pattern_id": "direct.cummin",
       "e2e_spec": "cummin1d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "semantic op equals IntentIR op name",
       "backend_support": {
         "rvv": {
@@ -18292,15 +18291,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -18309,7 +18308,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -18318,7 +18317,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "1b9cece5161332260cb90d0ddd5181cc980bc695",
+      "evidence_hash": "08e2af0f5904616414fc2dc1325b6623e70ceabd",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -18338,8 +18337,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.dot_via_mul_reduce_sum",
       "e2e_spec": "dot1d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as cast(lhs/rhs) -> elementwise mul -> reduce_sum",
       "backend_support": {
         "rvv": {
@@ -18406,15 +18405,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -18423,7 +18422,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -18432,7 +18431,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "e00390cc8d3a720d7f78980d9a15203731ad3935",
+      "evidence_hash": "f656475cc76889036e235188e908df95ebfe17bc",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -18557,8 +18556,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.vdot",
       "e2e_spec": "vdot1d",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as cast+mul+reduce_sum dot pattern",
       "backend_support": {
         "rvv": {
@@ -18625,15 +18624,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -18642,7 +18641,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -18651,7 +18650,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "3b4f9062fe9b3ff4043b1adde6274d8309025831",
+      "evidence_hash": "40c799e520c96ce52962a0707f597561503544e0",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -19227,8 +19226,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.upsample_bicubic2d_aa",
       "e2e_spec": "upsample_bicubic2d_aa",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped to macro op (expanded before backend lowering)",
       "backend_support": {
         "rvv": {
@@ -19277,15 +19276,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -19294,7 +19293,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -19303,7 +19302,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "1e5016add2c562c6290bdc0b67fa70c9408a6267",
+      "evidence_hash": "7929cfdeef63265d6db3d860985597b1213141da",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -19508,8 +19507,8 @@
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.ScaleDotProductAttention->scaled_dot_product_attention",
       "e2e_spec": "scaled_dot_product_attention_bhsd",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "alias to scaled_dot_product_attention; mapped as matmul(q, k^T) -> softmax -> matmul(attn, v)",
       "backend_support": {
         "rvv": {
@@ -19567,15 +19566,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -19584,7 +19583,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -19593,7 +19592,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "33dd4534a8f4f77e0d0283638d5769cc8ade0d47",
+      "evidence_hash": "93b9c44d8a09452f3553acc57890e52075c6995c",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -19705,8 +19704,8 @@
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.flash_attention_forward->scaled_dot_product_attention",
       "e2e_spec": "scaled_dot_product_attention_bhsd",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "alias to scaled_dot_product_attention; mapped as matmul(q, k^T) -> softmax -> matmul(attn, v)",
       "backend_support": {
         "rvv": {
@@ -19764,15 +19763,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -19781,7 +19780,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -19790,7 +19789,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "33dd4534a8f4f77e0d0283638d5769cc8ade0d47",
+      "evidence_hash": "93b9c44d8a09452f3553acc57890e52075c6995c",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -19809,8 +19808,8 @@
       "mapping_kind": "macro_template",
       "intent_pattern_id": "macro.scaled_dot_product_attention_via_matmul_softmax",
       "e2e_spec": "scaled_dot_product_attention_bhsd",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "mapped as matmul(q, k^T) -> softmax -> matmul(attn, v)",
       "backend_support": {
         "rvv": {
@@ -19868,15 +19867,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -19885,7 +19884,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -19894,7 +19893,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "33dd4534a8f4f77e0d0283638d5769cc8ade0d47",
+      "evidence_hash": "93b9c44d8a09452f3553acc57890e52075c6995c",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true
@@ -19913,8 +19912,8 @@
       "mapping_kind": "alias",
       "intent_pattern_id": "alias.scaled_dot_product_attention_forward->scaled_dot_product_attention",
       "e2e_spec": "scaled_dot_product_attention_bhsd",
-      "status": "rvv_only",
-      "status_reason": "runtime_cuda_fail",
+      "status": "dual_pass",
+      "status_reason": "runtime_dual_backend_pass",
       "status_reason_detail": "alias to scaled_dot_product_attention; mapped as matmul(q, k^T) -> softmax -> matmul(attn, v)",
       "backend_support": {
         "rvv": {
@@ -19972,15 +19971,15 @@
           "missing_ops": []
         }
       },
-      "reason_code": "lowering_missing_op",
+      "reason_code": "runtime_dual_backend_pass",
       "runtime_detail": {
         "rvv": {
           "reason_code": "ok",
           "reason_detail": "backend runtime passed"
         },
         "cuda": {
-          "reason_code": "lowering_missing_op",
-          "reason_detail": "backend lowering does not support one or more ops"
+          "reason_code": "ok",
+          "reason_detail": "backend runtime passed"
         }
       },
       "runtime": {
@@ -19989,7 +19988,7 @@
           "diff_ok": true
         },
         "rvv": "pass",
-        "cuda": "fail"
+        "cuda": "pass"
       },
       "compiler_stage": {
         "provider_report": "present",
@@ -19998,7 +19997,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "33dd4534a8f4f77e0d0283638d5769cc8ade0d47",
+      "evidence_hash": "93b9c44d8a09452f3553acc57890e52075c6995c",
       "in_scope": true,
       "in_scope_active": true,
       "in_scope_kernel_alias": true

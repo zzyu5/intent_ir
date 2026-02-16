@@ -1,11 +1,11 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-16T05:44:21+00:00
-- Commit: `8a189e8c0cc980af22cd9709da30fcc9e041474b`
+- Timestamp: 2026-02-16T07:35:12+00:00
+- Commit: `d35536e54b879334202adade108bbea33724955f`
 - Lane: `coverage`
-- Summary: full196 run with corrected integrity gate: dual_pass=154, rvv_only=42 (all due cuda lowering_missing_op)
+- Summary: Full196 backend rerun after CUDA C++ fixes: status_converged shows dual_pass=196 and coverage_integrity recomputed ok.
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/flaggems_matrix/daily/20260216/full196_integrity_v7_recomputed/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260216/full196_integrity_v7_recomputed/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260216/full196_integrity_v7_recomputed/coverage_integrity.json, artifacts/flaggems_matrix/daily/20260216/full196_integrity_v7_recomputed/cuda_local.json, artifacts/flaggems_matrix/daily/20260216/full196_integrity_v7_recomputed/run_summary.json, artifacts/flaggems_matrix/daily/20260216/full196_integrity_v7_recomputed/status_converged.json
-- Next Focus: backend_compiler lane wave-cuda-missing-ops: close 42 cuda gaps then rerun full196
+- Run Summary: `artifacts/flaggems_matrix/daily/20260216/full196_after_active8_fix_v2/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260216/full196_after_active8_fix_v2/status_converged.json`
+- Evidence Paths: artifacts/flaggems_matrix/daily/20260216/full196_after_active8_fix_v2/coverage_integrity.json, artifacts/flaggems_matrix/daily/20260216/full196_after_active8_fix_v2/run_summary.json, artifacts/flaggems_matrix/daily/20260216/full196_after_active8_fix_v2/status_converged.json
+- Next Focus: Move to backend_compiler lane: cpp_codegen modular split + full196 evidence chain cleanup.

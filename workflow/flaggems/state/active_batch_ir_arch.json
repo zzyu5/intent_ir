@@ -1,9 +1,9 @@
 {
   "schema_version": "flaggems_active_batch_v2",
-  "generated_at": "2026-02-16T05:35:20+00:00",
+  "generated_at": "2026-02-16T07:29:37+00:00",
   "branch": "flaggems",
   "lane": "ir_arch",
-  "batch_size": 5,
+  "batch_size": 10,
   "selection_policy": [
     "status:blocking",
     "priority",

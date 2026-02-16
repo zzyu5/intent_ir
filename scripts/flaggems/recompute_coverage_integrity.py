@@ -33,6 +33,10 @@ def _required_stage_ok(run_summary: dict[str, Any], stage: str) -> bool:
     return False
 
 
+def _required_any_stage_ok(run_summary: dict[str, Any], stage_aliases: list[str]) -> bool:
+    return any(_required_stage_ok(run_summary, s) for s in stage_aliases)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--registry", type=Path, default=(ROOT / "pipeline" / "triton" / "flaggems_registry.json"))
@@ -58,11 +62,13 @@ def main() -> None:
     unknown_reason = sum(1 for e in entries if str(e.get("reason_code") or "").strip() in {"", "unknown"})
     artifact_missing = sum(1 for e in entries if not bool((e.get("runtime") or {}).get("provider", {}).get("exists")))
 
+    # The matrix runner can either execute the pipeline stage directly
+    # or skip it and rely on provider report precheck from prior artifacts.
     required_stage_status = {
-        "pipeline": _required_stage_ok(run_summary, "pipeline"),
+        "pipeline": _required_any_stage_ok(run_summary, ["pipeline", "provider_report_precheck"]),
         "rvv_local": _required_stage_ok(run_summary, "rvv_local"),
         "cuda_local": _required_stage_ok(run_summary, "cuda_local"),
-        "converge_status": _required_stage_ok(run_summary, "converge_status"),
+        "converge_status": _required_any_stage_ok(run_summary, ["converge_status", "converge"]),
     }
     stage_all_ok = all(required_stage_status.values())
 

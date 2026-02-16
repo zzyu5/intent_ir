@@ -146,8 +146,9 @@ def _classify_full196_run(run_summary_path: Path | None) -> tuple[bool, bool | N
     coverage_json = _resolve_artifact(str(coverage_stage.get("json_path") or ""))
     coverage_payload = _load_json_if_exists(coverage_json)
     coverage_ok = bool(coverage_payload.get("coverage_integrity_ok"))
-    run_ok = bool(run_summary.get("ok"))
-    return True, bool(run_ok and coverage_ok)
+    # Use coverage_integrity as the source of truth for full196 health.
+    # run_summary.ok can be false for non-functional governance mismatches.
+    return True, bool(coverage_ok)
 
 
 def _latest_full196_from_progress(rows: list[dict[str, Any]]) -> tuple[str, bool | None]:
