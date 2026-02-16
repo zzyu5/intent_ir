@@ -294,8 +294,6 @@ def main() -> None:
             backend_target=str(args.backend_target),
         )
     default_active = ROOT / "workflow" / "flaggems" / "state" / f"active_batch_{args.lane}.json"
-    if str(args.lane) == "coverage" and not default_active.is_file():
-        default_active = ROOT / "workflow" / "flaggems" / "state" / "active_batch.json"
     active_batch_path = Path(args.active_batch) if args.active_batch is not None else default_active
     scoped_semantic_ops = _load_active_semantic_ops(active_batch_path)
     profile_tag = str(args.schedule_profile_tag or "").strip()

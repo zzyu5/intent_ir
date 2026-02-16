@@ -195,7 +195,6 @@ def main() -> None:
     )
     ap.add_argument("--out", type=Path, default=(ROOT / "artifacts" / "flaggems_matrix" / "ci_gate.json"))
     args = ap.parse_args()
-    active_legacy = ROOT / "workflow" / "flaggems" / "state" / "active_batch.json"
 
     def _parse_profiles(raw: list[str]) -> list[str]:
         out: list[str] = []
@@ -210,7 +209,7 @@ def main() -> None:
     profiles = _parse_profiles(list(args.profiles))
     coverage_active = Path(args.active_batch) if args.active_batch is not None else args.active_batch_coverage
     active_by_profile: dict[str, Path] = {
-        "coverage": coverage_active if coverage_active.is_file() else active_legacy,
+        "coverage": coverage_active,
         "ir_arch": args.active_batch_ir_arch,
         "backend_compiler": args.active_batch_backend_compiler,
     }

@@ -71,8 +71,6 @@ def main() -> None:
     args = ap.parse_args()
     lane = normalize_lane(str(args.lane))
     default_active = ROOT / "workflow" / "flaggems" / "state" / f"active_batch_{lane}.json"
-    if lane == "coverage" and not default_active.is_file():
-        default_active = ROOT / "workflow" / "flaggems" / "state" / "active_batch.json"
     active_batch = Path(args.active_batch) if args.active_batch is not None else default_active
 
     if not args.run_summary.is_file():

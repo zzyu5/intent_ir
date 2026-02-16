@@ -96,10 +96,6 @@ def main() -> None:
         session_context_path=_to_repo_rel(args.session_context),
     )
     out = dump_json(active_batch_path, active)
-    if lane == "coverage" and active_batch_path.resolve() == default_active.resolve():
-        # Backward-compat alias used by existing tooling.
-        legacy = ROOT / "workflow" / "flaggems" / "state" / "active_batch.json"
-        dump_json(legacy, active)
     print(f"Active batch planned: {out}")
     print(f"Selected {len(batch)} items on branch {branch} for lane={lane}")
     if batch:

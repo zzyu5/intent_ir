@@ -152,7 +152,6 @@ python scripts/flaggems/install_systemd_nightly.py --dry-run
 - `state/active_batch_coverage.json`: active coverage lane batch.
 - `state/active_batch_ir_arch.json`: active IR architecture lane batch.
 - `state/active_batch_backend_compiler.json`: active backend compiler lane batch.
-- `state/active_batch.json`: legacy alias for coverage lane.
 - `state/progress_log.jsonl`: append-only session history.
 - `state/handoff.md`: latest human-readable handoff.
 - `state/baselines/*.json`: frozen baseline snapshots.

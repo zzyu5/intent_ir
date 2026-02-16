@@ -73,10 +73,7 @@ def _validate_coverage_fresh_on_head(current_status_path: Path) -> tuple[bool, s
 
 def _default_active_batch(profile: str) -> Path:
     if profile == "coverage":
-        cov = ROOT / "workflow" / "flaggems" / "state" / "active_batch_coverage.json"
-        if cov.is_file():
-            return cov
-        return ROOT / "workflow" / "flaggems" / "state" / "active_batch.json"
+        return ROOT / "workflow" / "flaggems" / "state" / "active_batch_coverage.json"
     return ROOT / "workflow" / "flaggems" / "state" / f"active_batch_{profile}.json"
 
 
