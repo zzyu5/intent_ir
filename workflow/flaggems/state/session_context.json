@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-16T05:45:35+00:00",
+  "updated_at": "2026-02-16T05:47:12+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -11,7 +11,7 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "8a189e8 workflow: record conv/pool/upsample scoped dual-pass evidence\ne24d059 cuda codegen: add conv/pool/upsample lowering patterns\n4fa8741 chore(workflow): track full196_integrity_v2 run kickoff\nfce4297 chore(workflow): log coverage hotfix v2 matrix and updated blockers\n1433822 feat(cuda,rvv): add row_all lowering and align remote raw-bytes dtype handling\n4526874 chore(workflow): record rvv hotfix batch evidence and next focus\nb5442af fix(rvv): correct bool bin serialization and conv shape repair inference\n73cfb6e workflow: track full196 integrity run and pending todo lanes\n4d8d0ce workflow: refresh status snapshots after latest lane updates\nfebb5a8 workflow: log coverage active10 run and cuda timeout blockers\n5732526 ir_arch: complete m2 composition gate and refresh workflow lanes\nb033704 ir_arch: pass m1 composition gate and roll workflow to m2\ncba8df8 backend: start cpp_codegen modular split and sync workflow todo state\na97b6b5 workflow: fix full196 truth, add timing breakdown gate, enforce ir composition policy\n0cc7d90 workflow: record v16 warm-stable perf run and refresh snapshots\n024bf04 cuda runtime: cache runner/runtime hash payload computation\nfa12cfc workflow: record v14 backend perf batch and refresh snapshots\n4d249cc cuda runtime: reuse compiled module in launch path\na68ce0e workflow: refresh status snapshot after perf commits\na045c83 workflow: record v11 backend performance evidence",
+  "git_log_short": "d54bbf4 Fix RVV dtype handling and CUDA std/quant lowering; sync workflow state\n8a189e8 workflow: record conv/pool/upsample scoped dual-pass evidence\ne24d059 cuda codegen: add conv/pool/upsample lowering patterns\n4fa8741 chore(workflow): track full196_integrity_v2 run kickoff\nfce4297 chore(workflow): log coverage hotfix v2 matrix and updated blockers\n1433822 feat(cuda,rvv): add row_all lowering and align remote raw-bytes dtype handling\n4526874 chore(workflow): record rvv hotfix batch evidence and next focus\nb5442af fix(rvv): correct bool bin serialization and conv shape repair inference\n73cfb6e workflow: track full196 integrity run and pending todo lanes\n4d8d0ce workflow: refresh status snapshots after latest lane updates\nfebb5a8 workflow: log coverage active10 run and cuda timeout blockers\n5732526 ir_arch: complete m2 composition gate and refresh workflow lanes\nb033704 ir_arch: pass m1 composition gate and roll workflow to m2\ncba8df8 backend: start cpp_codegen modular split and sync workflow todo state\na97b6b5 workflow: fix full196 truth, add timing breakdown gate, enforce ir composition policy\n0cc7d90 workflow: record v16 warm-stable perf run and refresh snapshots\n024bf04 cuda runtime: cache runner/runtime hash payload computation\nfa12cfc workflow: record v14 backend perf batch and refresh snapshots\n4d249cc cuda runtime: reuse compiled module in launch path\na68ce0e workflow: refresh status snapshot after perf commits",
   "progress_tail": [
     {
       "ts": "2026-02-16T03:49:20+00:00",
@@ -251,7 +251,8 @@
   ],
   "next_focus": "backend_compiler lane wave-cuda-missing-ops: close 42 cuda gaps then rerun full196",
   "active_lanes": [
-    "backend_compiler"
+    "backend_compiler",
+    "coverage"
   ],
   "next_focus_by_lane": {
     "coverage": "backend_compiler lane wave-cuda-missing-ops: close 42 cuda gaps then rerun full196"

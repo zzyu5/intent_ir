@@ -1,11 +1,12 @@
 {
   "schema_version": "flaggems_feature_list_v2",
-  "generated_at": "2026-02-16T05:35:14+00:00",
+  "generated_at": "2026-02-16T05:47:11+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
     "by_status": {
-      "dual_pass": 196
+      "dual_pass": 154,
+      "rvv_only": 42
     },
     "by_family": {
       "elementwise_broadcast": 125,
@@ -30,7 +31,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "abs2d",
       "intent_ops": [
@@ -56,7 +57,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "acos2d",
       "intent_ops": [
@@ -82,7 +83,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "add2d",
       "intent_ops": [
@@ -108,7 +109,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "addcdiv2d",
       "intent_ops": [
@@ -137,7 +138,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "addcmul2d",
       "intent_ops": [
@@ -166,7 +167,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "addmv2d",
       "intent_ops": [
@@ -193,7 +194,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "addr2d",
       "intent_ops": [
@@ -250,7 +251,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "arange1d",
       "intent_ops": [
@@ -276,7 +277,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "atan2d",
       "intent_ops": [
@@ -302,7 +303,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "bitwise_and2d",
       "intent_ops": [
@@ -328,7 +329,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "bitwise_and2d",
       "intent_ops": [
@@ -354,7 +355,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "bitwise_and2d",
       "intent_ops": [
@@ -380,7 +381,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "bitwise_left_shift2d",
       "intent_ops": [
@@ -406,7 +407,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "bitwise_not2d",
       "intent_ops": [
@@ -432,7 +433,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "bitwise_or2d",
       "intent_ops": [
@@ -458,7 +459,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "bitwise_or2d",
       "intent_ops": [
@@ -484,7 +485,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "bitwise_or2d",
       "intent_ops": [
@@ -510,7 +511,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "bitwise_right_shift2d",
       "intent_ops": [
@@ -536,7 +537,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "cat2d",
       "intent_ops": [
@@ -562,7 +563,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "ceil2d",
       "intent_ops": [
@@ -591,7 +592,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "celu2d",
       "intent_ops": [
@@ -622,7 +623,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "clamp2d",
       "intent_ops": [
@@ -649,7 +650,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "maximum2d",
       "intent_ops": [
@@ -675,7 +676,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "clamp2d",
       "intent_ops": [
@@ -702,7 +703,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "constant_pad_nd2d",
       "intent_ops": [
@@ -728,7 +729,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "identity2d",
       "intent_ops": [
@@ -754,7 +755,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "identity2d",
       "intent_ops": [
@@ -780,7 +781,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "cos2d",
       "intent_ops": [
@@ -858,7 +859,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "div2d",
       "intent_ops": [
@@ -884,7 +885,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "elu2d",
       "intent_ops": [
@@ -915,7 +916,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "eq2d",
       "intent_ops": [
@@ -942,7 +943,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "eq2d",
       "intent_ops": [
@@ -969,7 +970,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "eq2d",
       "intent_ops": [
@@ -996,7 +997,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "erf2d",
       "intent_ops": [
@@ -1022,7 +1023,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "exp2d",
       "intent_ops": [
@@ -1048,7 +1049,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "exp22d",
       "intent_ops": [
@@ -1076,7 +1077,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "eye2d",
       "intent_ops": [
@@ -1106,7 +1107,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "eye_m2d",
       "intent_ops": [
@@ -1136,7 +1137,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "full2d",
       "intent_ops": [
@@ -1163,7 +1164,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "full2d",
       "intent_ops": [
@@ -1190,7 +1191,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "div2d",
       "intent_ops": [
@@ -1216,7 +1217,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "full2d",
       "intent_ops": [
@@ -1243,7 +1244,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "full2d",
       "intent_ops": [
@@ -1270,7 +1271,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "ge2d",
       "intent_ops": [
@@ -1296,7 +1297,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "ge2d",
       "intent_ops": [
@@ -1320,9 +1321,9 @@
       "id": "flaggems::glu",
       "semantic_op": "glu",
       "family": "elementwise_broadcast",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "glu2d",
       "intent_ops": [
@@ -1348,7 +1349,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "gt2d",
       "intent_ops": [
@@ -1374,7 +1375,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "gt2d",
       "intent_ops": [
@@ -1400,7 +1401,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "hstack2d",
       "intent_ops": [
@@ -1426,7 +1427,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "isclose2d",
       "intent_ops": [
@@ -1457,7 +1458,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "isfinite2d",
       "intent_ops": [
@@ -1485,7 +1486,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "isin1d",
       "intent_ops": [
@@ -1515,7 +1516,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "isinf2d",
       "intent_ops": [
@@ -1543,7 +1544,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "isnan2d",
       "intent_ops": [
@@ -1569,7 +1570,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "kron2d",
       "intent_ops": [
@@ -1595,7 +1596,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "le2d",
       "intent_ops": [
@@ -1621,7 +1622,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "le2d",
       "intent_ops": [
@@ -1647,7 +1648,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "lerp2d",
       "intent_ops": [
@@ -1675,7 +1676,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "lerp2d",
       "intent_ops": [
@@ -1703,7 +1704,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "linspace1d",
       "intent_ops": [
@@ -1734,7 +1735,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "log2d",
       "intent_ops": [
@@ -1760,7 +1761,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "logical_and2d",
       "intent_ops": [
@@ -1786,7 +1787,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "logical_not2d",
       "intent_ops": [
@@ -1812,7 +1813,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "logical_or2d",
       "intent_ops": [
@@ -1838,7 +1839,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "logical_xor2d",
       "intent_ops": [
@@ -1867,7 +1868,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "logspace1d",
       "intent_ops": [
@@ -1900,7 +1901,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "lt2d",
       "intent_ops": [
@@ -1926,7 +1927,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "lt2d",
       "intent_ops": [
@@ -1952,7 +1953,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "masked_fill2d",
       "intent_ops": [
@@ -1978,7 +1979,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "row_max",
       "intent_ops": [
@@ -2004,7 +2005,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "row_max",
       "intent_ops": [
@@ -2030,7 +2031,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "maximum2d",
       "intent_ops": [
@@ -2056,7 +2057,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "min2d",
       "intent_ops": [
@@ -2082,7 +2083,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "min_dim2d",
       "intent_ops": [
@@ -2108,7 +2109,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "minimum2d",
       "intent_ops": [
@@ -2134,7 +2135,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "mse_loss2d",
       "intent_ops": [
@@ -2160,7 +2161,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "mul2d",
       "intent_ops": [
@@ -2186,7 +2187,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "mv2d",
       "intent_ops": [
@@ -2238,7 +2239,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "ne2d",
       "intent_ops": [
@@ -2264,7 +2265,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "ne2d",
       "intent_ops": [
@@ -2290,7 +2291,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "neg2d",
       "intent_ops": [
@@ -2315,9 +2316,9 @@
       "id": "flaggems::nll_loss2d_forward",
       "semantic_op": "nll_loss2d_forward",
       "family": "elementwise_broadcast",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "nll_loss2d_forward",
       "intent_ops": [
@@ -2341,9 +2342,9 @@
       "id": "flaggems::nll_loss_forward",
       "semantic_op": "nll_loss_forward",
       "family": "elementwise_broadcast",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "nll_loss_forward",
       "intent_ops": [
@@ -2369,7 +2370,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "nonzero2d",
       "intent_ops": [
@@ -2395,7 +2396,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "one_hot2d",
       "intent_ops": [
@@ -2425,7 +2426,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "full2d",
       "intent_ops": [
@@ -2452,7 +2453,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "full2d",
       "intent_ops": [
@@ -2479,7 +2480,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "pad2d",
       "intent_ops": [
@@ -2529,9 +2530,9 @@
       "id": "flaggems::polar",
       "semantic_op": "polar",
       "family": "elementwise_broadcast",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "polar2d",
       "intent_ops": [
@@ -2555,9 +2556,9 @@
       "id": "flaggems::pow_scalar",
       "semantic_op": "pow_scalar",
       "family": "elementwise_broadcast",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "pow_scalar2d",
       "intent_ops": [
@@ -2581,9 +2582,9 @@
       "id": "flaggems::pow_tensor_scalar",
       "semantic_op": "pow_tensor_scalar",
       "family": "elementwise_broadcast",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "pow_tensor_scalar2d",
       "intent_ops": [
@@ -2607,9 +2608,9 @@
       "id": "flaggems::pow_tensor_tensor",
       "semantic_op": "pow_tensor_tensor",
       "family": "elementwise_broadcast",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "pow_tensor_tensor2d",
       "intent_ops": [
@@ -2633,9 +2634,9 @@
       "id": "flaggems::quantile",
       "semantic_op": "quantile",
       "family": "elementwise_broadcast",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "quantile2d",
       "intent_ops": [
@@ -2661,7 +2662,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "reciprocal2d",
       "intent_ops": [
@@ -2688,7 +2689,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "remainder2d",
       "intent_ops": [
@@ -2818,7 +2819,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "identity2d",
       "intent_ops": [
@@ -2844,7 +2845,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "identity2d",
       "intent_ops": [
@@ -2870,7 +2871,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "rsqrt2d",
       "intent_ops": [
@@ -2896,7 +2897,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "sin2d",
       "intent_ops": [
@@ -2922,7 +2923,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "sort2d",
       "intent_ops": [
@@ -2948,7 +2949,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "sort_stable2d",
       "intent_ops": [
@@ -2974,7 +2975,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "sqrt2d",
       "intent_ops": [
@@ -2999,9 +3000,9 @@
       "id": "flaggems::stack",
       "semantic_op": "stack",
       "family": "elementwise_broadcast",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "stack2d",
       "intent_ops": [
@@ -3027,7 +3028,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "sub2d",
       "intent_ops": [
@@ -3053,7 +3054,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "tan2d",
       "intent_ops": [
@@ -3079,7 +3080,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "threshold2d",
       "intent_ops": [
@@ -3133,7 +3134,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "cast2d",
       "intent_ops": [
@@ -3237,7 +3238,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "div2d",
       "intent_ops": [
@@ -3263,7 +3264,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "unique2d",
       "intent_ops": [
@@ -3289,7 +3290,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "vstack2d",
       "intent_ops": [
@@ -3315,7 +3316,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "full2d",
       "intent_ops": [
@@ -3342,7 +3343,7 @@
       "family": "elementwise_broadcast",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "full2d",
       "intent_ops": [
@@ -3369,7 +3370,7 @@
       "family": "reduction",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "row_all",
       "intent_ops": [
@@ -3395,9 +3396,9 @@
       "id": "flaggems::allclose",
       "semantic_op": "allclose",
       "family": "reduction",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "allclose2d",
       "intent_ops": [
@@ -3431,7 +3432,7 @@
       "family": "reduction",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "row_max",
       "intent_ops": [
@@ -3457,7 +3458,7 @@
       "family": "reduction",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "any_kernel_dim",
       "intent_ops": [
@@ -3483,7 +3484,7 @@
       "family": "reduction",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "argmax2d",
       "intent_ops": [
@@ -3509,7 +3510,7 @@
       "family": "reduction",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "argmin2d",
       "intent_ops": [
@@ -3559,9 +3560,9 @@
       "id": "flaggems::cumsum",
       "semantic_op": "cumsum",
       "family": "reduction",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "cumsum2d",
       "intent_ops": [
@@ -3585,9 +3586,9 @@
       "id": "flaggems::flash_attn_varlen_func",
       "semantic_op": "flash_attn_varlen_func",
       "family": "reduction",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "flash_attn_varlen_func_bhsd",
       "intent_ops": [
@@ -3615,7 +3616,7 @@
       "family": "reduction",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "log_softmax2d",
       "intent_ops": [
@@ -3642,7 +3643,7 @@
       "family": "reduction",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "row_mean",
       "intent_ops": [
@@ -3669,7 +3670,7 @@
       "family": "reduction",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "row_mean",
       "intent_ops": [
@@ -3694,9 +3695,9 @@
       "id": "flaggems::prod",
       "semantic_op": "prod",
       "family": "reduction",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "prod2d",
       "intent_ops": [
@@ -3720,9 +3721,9 @@
       "id": "flaggems::prod_dim",
       "semantic_op": "prod_dim",
       "family": "reduction",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "prod_dim2d",
       "intent_ops": [
@@ -3748,7 +3749,7 @@
       "family": "reduction",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "softmax_inner",
       "intent_ops": [
@@ -3778,7 +3779,7 @@
       "family": "reduction",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "softmax_inner",
       "intent_ops": [
@@ -3835,7 +3836,7 @@
       "family": "reduction",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "row_sum",
       "intent_ops": [
@@ -3861,7 +3862,7 @@
       "family": "reduction",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "row_sum",
       "intent_ops": [
@@ -3885,9 +3886,9 @@
       "id": "flaggems::var_mean",
       "semantic_op": "var_mean",
       "family": "reduction",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "var_mean2d",
       "intent_ops": [
@@ -3912,9 +3913,9 @@
       "id": "flaggems::batch_norm",
       "semantic_op": "batch_norm",
       "family": "norm_activation",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "batch_norm2d",
       "intent_ops": [
@@ -3946,7 +3947,7 @@
       "family": "norm_activation",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "gelu2d",
       "intent_ops": [
@@ -3975,9 +3976,9 @@
       "id": "flaggems::group_norm",
       "semantic_op": "group_norm",
       "family": "norm_activation",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "group_norm_kernel",
       "intent_ops": [
@@ -4007,9 +4008,9 @@
       "id": "flaggems::layer_norm",
       "semantic_op": "layer_norm",
       "family": "norm_activation",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "layer_norm_persistent",
       "intent_ops": [
@@ -4066,9 +4067,9 @@
       "id": "flaggems::normed_cumsum",
       "semantic_op": "normed_cumsum",
       "family": "norm_activation",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "normed_cumsum2d",
       "intent_ops": [
@@ -4095,7 +4096,7 @@
       "family": "norm_activation",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "relu2d",
       "intent_ops": [
@@ -4119,9 +4120,9 @@
       "id": "flaggems::rms_norm",
       "semantic_op": "rms_norm",
       "family": "norm_activation",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "rms_norm2d",
       "intent_ops": [
@@ -4149,9 +4150,9 @@
       "id": "flaggems::rms_norm_forward",
       "semantic_op": "rms_norm_forward",
       "family": "norm_activation",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "rms_norm2d",
       "intent_ops": [
@@ -4181,7 +4182,7 @@
       "family": "norm_activation",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "sigmoid2d",
       "intent_ops": [
@@ -4211,7 +4212,7 @@
       "family": "norm_activation",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "silu2d",
       "intent_ops": [
@@ -4242,7 +4243,7 @@
       "family": "norm_activation",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "softplus2d",
       "intent_ops": [
@@ -4270,7 +4271,7 @@
       "family": "norm_activation",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "tanh2d",
       "intent_ops": [
@@ -4299,9 +4300,9 @@
       "id": "flaggems::vector_norm",
       "semantic_op": "vector_norm",
       "family": "norm_activation",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "vector_norm2d",
       "intent_ops": [
@@ -4327,9 +4328,9 @@
       "id": "flaggems::weight_norm_interface",
       "semantic_op": "weight_norm_interface",
       "family": "norm_activation",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "weight_norm2d",
       "intent_ops": [
@@ -4360,7 +4361,7 @@
       "family": "index_scatter_gather",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "flip2d",
       "intent_ops": [
@@ -4386,7 +4387,7 @@
       "family": "index_scatter_gather",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "gather2d",
       "intent_ops": [
@@ -4412,7 +4413,7 @@
       "family": "index_scatter_gather",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "index_select2d",
       "intent_ops": [
@@ -4436,9 +4437,9 @@
       "id": "flaggems::index_add",
       "semantic_op": "index_add",
       "family": "index_scatter_gather",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "index_add2d",
       "intent_ops": [
@@ -4462,9 +4463,9 @@
       "id": "flaggems::index_put",
       "semantic_op": "index_put",
       "family": "index_scatter_gather",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "index_put2d",
       "intent_ops": [
@@ -4491,7 +4492,7 @@
       "family": "index_scatter_gather",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "index_select2d",
       "intent_ops": [
@@ -4515,9 +4516,9 @@
       "id": "flaggems::masked_scatter",
       "semantic_op": "masked_scatter",
       "family": "index_scatter_gather",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "masked_scatter2d",
       "intent_ops": [
@@ -4542,9 +4543,9 @@
       "id": "flaggems::masked_select",
       "semantic_op": "masked_select",
       "family": "index_scatter_gather",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "masked_select2d",
       "intent_ops": [
@@ -4570,9 +4571,9 @@
       "id": "flaggems::scatter",
       "semantic_op": "scatter",
       "family": "index_scatter_gather",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "scatter2d",
       "intent_ops": [
@@ -4596,9 +4597,9 @@
       "id": "flaggems::select_scatter",
       "semantic_op": "select_scatter",
       "family": "index_scatter_gather",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "select_scatter2d",
       "intent_ops": [
@@ -4623,9 +4624,9 @@
       "id": "flaggems::slice_scatter",
       "semantic_op": "slice_scatter",
       "family": "index_scatter_gather",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "slice_scatter2d",
       "intent_ops": [
@@ -4652,7 +4653,7 @@
       "family": "index_scatter_gather",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "where2d",
       "intent_ops": [
@@ -4679,7 +4680,7 @@
       "family": "index_scatter_gather",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "where2d",
       "intent_ops": [
@@ -4706,7 +4707,7 @@
       "family": "index_scatter_gather",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "where2d",
       "intent_ops": [
@@ -4731,9 +4732,9 @@
       "id": "flaggems::addmm",
       "semantic_op": "addmm",
       "family": "matmul_linear",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "addmm2d",
       "intent_ops": [
@@ -4758,9 +4759,9 @@
       "id": "flaggems::baddbmm",
       "semantic_op": "baddbmm",
       "family": "matmul_linear",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "baddbmm3d",
       "intent_ops": [
@@ -4785,9 +4786,9 @@
       "id": "flaggems::bmm",
       "semantic_op": "bmm",
       "family": "matmul_linear",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "bmm3d",
       "intent_ops": [
@@ -4813,9 +4814,9 @@
       "id": "flaggems::cummax",
       "semantic_op": "cummax",
       "family": "matmul_linear",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "cummax1d",
       "intent_ops": [
@@ -4839,9 +4840,9 @@
       "id": "flaggems::cummin",
       "semantic_op": "cummin",
       "family": "matmul_linear",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "cummin1d",
       "intent_ops": [
@@ -4865,9 +4866,9 @@
       "id": "flaggems::dot",
       "semantic_op": "dot",
       "family": "matmul_linear",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "dot1d",
       "intent_ops": [
@@ -4896,7 +4897,7 @@
       "family": "matmul_linear",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "mm2d",
       "intent_ops": [
@@ -4922,9 +4923,9 @@
       "id": "flaggems::vdot",
       "semantic_op": "vdot",
       "family": "matmul_linear",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "vdot1d",
       "intent_ops": [
@@ -4953,7 +4954,7 @@
       "family": "conv_pool_interp",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "avg_pool2d_nchw",
       "intent_ops": [
@@ -4979,7 +4980,7 @@
       "family": "conv_pool_interp",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "conv1d_ncl",
       "intent_ops": [
@@ -5005,7 +5006,7 @@
       "family": "conv_pool_interp",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "conv2d_nchw",
       "intent_ops": [
@@ -5031,7 +5032,7 @@
       "family": "conv_pool_interp",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "conv3d_ncdhw",
       "intent_ops": [
@@ -5057,7 +5058,7 @@
       "family": "conv_pool_interp",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "conv_depthwise2d_nchw",
       "intent_ops": [
@@ -5083,7 +5084,7 @@
       "family": "conv_pool_interp",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "max_pool2d_with_indices_nchw",
       "intent_ops": [
@@ -5108,9 +5109,9 @@
       "id": "flaggems::upsample_bicubic2d_aa",
       "semantic_op": "upsample_bicubic2d_aa",
       "family": "conv_pool_interp",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "upsample_bicubic2d_aa",
       "intent_ops": [
@@ -5136,7 +5137,7 @@
       "family": "conv_pool_interp",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "upsample_nearest1d_ncl",
       "intent_ops": [
@@ -5162,7 +5163,7 @@
       "family": "conv_pool_interp",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "upsample_nearest2d_nchw",
       "intent_ops": [
@@ -5186,9 +5187,9 @@
       "id": "flaggems::ScaleDotProductAttention",
       "semantic_op": "ScaleDotProductAttention",
       "family": "attention_sequence",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "scaled_dot_product_attention_bhsd",
       "intent_ops": [
@@ -5216,7 +5217,7 @@
       "family": "attention_sequence",
       "status": "dual_pass",
       "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "reason_code": "runtime_dual_backend_pass",
       "next_action": "none",
       "e2e_spec": "embedding2d",
       "intent_ops": [
@@ -5240,9 +5241,9 @@
       "id": "flaggems::flash_attention_forward",
       "semantic_op": "flash_attention_forward",
       "family": "attention_sequence",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "scaled_dot_product_attention_bhsd",
       "intent_ops": [
@@ -5268,9 +5269,9 @@
       "id": "flaggems::scaled_dot_product_attention",
       "semantic_op": "scaled_dot_product_attention",
       "family": "attention_sequence",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "scaled_dot_product_attention_bhsd",
       "intent_ops": [
@@ -5296,9 +5297,9 @@
       "id": "flaggems::scaled_dot_product_attention_forward",
       "semantic_op": "scaled_dot_product_attention_forward",
       "family": "attention_sequence",
-      "status": "dual_pass",
-      "passes": true,
-      "reason_code": "all_targets_supported_with_e2e_spec",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
       "next_action": "none",
       "e2e_spec": "scaled_dot_product_attention_bhsd",
       "intent_ops": [

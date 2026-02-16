@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_active_batch_v2",
-  "generated_at": "2026-02-16T05:35:20+00:00",
+  "generated_at": "2026-02-16T05:47:12+00:00",
   "branch": "flaggems",
   "lane": "coverage",
   "batch_size": 10,
@@ -9,7 +9,291 @@
     "missing_e2e_spec",
     "backend_missing_ops"
   ],
-  "items": [],
+  "items": [
+    {
+      "id": "flaggems::ScaleDotProductAttention",
+      "semantic_op": "ScaleDotProductAttention",
+      "family": "attention_sequence",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
+      "next_action": "none",
+      "e2e_spec": "scaled_dot_product_attention_bhsd",
+      "intent_ops": [
+        "matmul",
+        "softmax",
+        "matmul"
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
+    },
+    {
+      "id": "flaggems::addmm",
+      "semantic_op": "addmm",
+      "family": "matmul_linear",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
+      "next_action": "none",
+      "e2e_spec": "addmm2d",
+      "intent_ops": [
+        "matmul",
+        "add"
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
+    },
+    {
+      "id": "flaggems::allclose",
+      "semantic_op": "allclose",
+      "family": "reduction",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
+      "next_action": "none",
+      "e2e_spec": "allclose2d",
+      "intent_ops": [
+        "sub",
+        "abs",
+        "abs",
+        "mul",
+        "add",
+        "le",
+        "not",
+        "reduce_any",
+        "not"
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
+    },
+    {
+      "id": "flaggems::baddbmm",
+      "semantic_op": "baddbmm",
+      "family": "matmul_linear",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
+      "next_action": "none",
+      "e2e_spec": "baddbmm3d",
+      "intent_ops": [
+        "matmul",
+        "add"
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
+    },
+    {
+      "id": "flaggems::batch_norm",
+      "semantic_op": "batch_norm",
+      "family": "norm_activation",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
+      "next_action": "none",
+      "e2e_spec": "batch_norm2d",
+      "intent_ops": [
+        "reduce_sum",
+        "sub",
+        "mul",
+        "add",
+        "rsqrt",
+        "broadcast_in_dim",
+        "div"
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
+    },
+    {
+      "id": "flaggems::bmm",
+      "semantic_op": "bmm",
+      "family": "matmul_linear",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
+      "next_action": "none",
+      "e2e_spec": "bmm3d",
+      "intent_ops": [
+        "cast",
+        "cast",
+        "matmul"
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
+    },
+    {
+      "id": "flaggems::cummax",
+      "semantic_op": "cummax",
+      "family": "matmul_linear",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
+      "next_action": "none",
+      "e2e_spec": "cummax1d",
+      "intent_ops": [
+        "cummax"
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
+    },
+    {
+      "id": "flaggems::cummin",
+      "semantic_op": "cummin",
+      "family": "matmul_linear",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
+      "next_action": "none",
+      "e2e_spec": "cummin1d",
+      "intent_ops": [
+        "cummin"
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
+    },
+    {
+      "id": "flaggems::cumsum",
+      "semantic_op": "cumsum",
+      "family": "reduction",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
+      "next_action": "none",
+      "e2e_spec": "cumsum2d",
+      "intent_ops": [
+        "cumsum"
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
+    },
+    {
+      "id": "flaggems::dot",
+      "semantic_op": "dot",
+      "family": "matmul_linear",
+      "status": "rvv_only",
+      "passes": false,
+      "reason_code": "runtime_cuda_fail",
+      "next_action": "none",
+      "e2e_spec": "dot1d",
+      "intent_ops": [
+        "cast",
+        "cast",
+        "mul",
+        "reduce_sum"
+      ],
+      "track": "coverage",
+      "task_type": "semantic_op",
+      "priority": 0,
+      "acceptance": [
+        "intentir_mapping_present",
+        "pipeline_diff_ok",
+        "rvv_local_or_remote_pass",
+        "cuda_pass"
+      ],
+      "gate_profile": "coverage",
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": ""
+    }
+  ],
   "context": {
     "feature_list_path": "workflow/flaggems/state/feature_list.json",
     "progress_log_path": "",
