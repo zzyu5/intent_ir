@@ -230,3 +230,47 @@ def test_main_respects_runtime_backend_nvrtc(monkeypatch: pytest.MonkeyPatch, tm
     assert payload["runtime_backend"] == "nvrtc"
     assert "codegen_mode" not in payload
     assert "effective_codegen_mode" not in payload
+
+
+def test_main_progress_prints_per_kernel_in_json_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    mod = _load_module()
+    out = tmp_path / "cuda.json"
+
+    monkeypatch.setattr(mod, "_cuda_env_ready", lambda: (True, "ok"))
+
+    def _fake_run_one_with_stage_timeouts(kernel: str, **kwargs):
+        _ = kwargs
+        return {
+            "kernel": str(kernel),
+            "ok": True,
+            "reason_code": "ok",
+            "lower_ms": 1.0,
+            "compile_ms": 2.0,
+            "launch_ms": 3.0,
+            "total_ms": 6.0,
+        }
+
+    monkeypatch.setattr(mod, "_run_one_with_stage_timeouts", _fake_run_one_with_stage_timeouts)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "cuda_backend_smoke.py",
+            "--kernel",
+            "diag2d",
+            "--json",
+            "--progress",
+            "--out",
+            str(out),
+        ],
+    )
+    with pytest.raises(SystemExit) as exc:
+        mod.main()
+    assert int(exc.value.code) == 0
+    stdout = capsys.readouterr().out
+    assert "[cuda][1/1] START kernel=diag2d" in stdout
+    assert "[cuda][1/1] DONE kernel=diag2d ok=True reason=ok" in stdout

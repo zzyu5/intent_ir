@@ -137,6 +137,7 @@ def test_matrix_forwards_cuda_stage_timeout_flags(monkeypatch: pytest.MonkeyPatc
     assert cuda_cmd[cuda_cmd.index("--compile-timeout-sec") + 1] == "222"
     assert cuda_cmd[cuda_cmd.index("--launch-timeout-sec") + 1] == "333"
     assert cuda_cmd[cuda_cmd.index("--runtime-backend") + 1] == "nvrtc"
+    assert "--progress" in cuda_cmd
     assert "--codegen-mode" not in cuda_cmd
     assert "--codegen-strict" not in cuda_cmd
     assert "--cpp-engine" not in cuda_cmd

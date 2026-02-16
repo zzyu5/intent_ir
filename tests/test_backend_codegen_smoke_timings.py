@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
+import sys
 
 import numpy as np
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -222,3 +225,44 @@ int main(){return 0;}
     _ = mod.run_one("k", frontend="triton", triton_provider="native", artifact_dir=str(artifact), keep_tmp=False)
     assert seen.get("x.bin") == "f32"
     assert seen.get("y_ref.bin") == "u8"
+
+
+def test_main_progress_prints_per_kernel_in_json_mode(monkeypatch, tmp_path: Path, capsys) -> None:
+    mod = _load_module()
+    out = tmp_path / "rvv.json"
+
+    def _fake_run_one(kernel: str, **kwargs):
+        _ = kwargs
+        return {
+            "kernel": str(kernel),
+            "ok": True,
+            "rc": 0,
+            "reason_code": "ok",
+            "lower_ms": 1.0,
+            "compile_ms": 2.0,
+            "launch_ms": 3.0,
+            "total_ms": 6.0,
+        }
+
+    monkeypatch.setattr(mod, "run_one", _fake_run_one)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "backend_codegen_smoke.py",
+            "--kernel",
+            "diag2d",
+            "--json",
+            "--progress",
+            "--out",
+            str(out),
+        ],
+    )
+    with pytest.raises(SystemExit) as exc:
+        mod.main()
+    assert int(exc.value.code) == 0
+    stdout = capsys.readouterr().out
+    assert "[rvv][1/1] START kernel=diag2d" in stdout
+    assert "[rvv][1/1] DONE kernel=diag2d ok=True reason=ok" in stdout
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["ok"] is True

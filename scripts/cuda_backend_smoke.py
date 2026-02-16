@@ -990,6 +990,12 @@ def main() -> None:
     )
     ap.add_argument("--artifact-dir", default=None, help="Override artifact report directory.")
     ap.add_argument("--allow-skip", action="store_true", help="exit 0 with ok=false when CUDA environment is unavailable")
+    ap.add_argument(
+        "--progress",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Print per-kernel START/DONE progress lines even in --json mode.",
+    )
     ap.add_argument("--json", action="store_true", help="print machine-readable summary JSON")
     ap.add_argument("--out", default=None, help="write summary JSON to this path")
     args = ap.parse_args()
@@ -1039,7 +1045,10 @@ def main() -> None:
 
     results: list[dict[str, Any]] = []
     ok_all = True
-    for k in kernels:
+    total_kernels = len(kernels)
+    for idx, k in enumerate(kernels, start=1):
+        if bool(args.progress):
+            print(f"[cuda][{idx}/{total_kernels}] START kernel={k}", flush=True)
         try:
             r = _run_one_with_stage_timeouts(
                 str(k),
@@ -1096,6 +1105,16 @@ def main() -> None:
             r["total_ms"] = float(r["lower_ms"]) + float(r["compile_ms"]) + float(r["launch_ms"])
         results.append(r)
         ok_all = ok_all and bool(r.get("ok"))
+        if bool(args.progress):
+            print(
+                f"[cuda][{idx}/{total_kernels}] DONE kernel={k} ok={bool(r.get('ok'))} "
+                f"reason={str(r.get('reason_code') or '')} "
+                f"lower_ms={float(r.get('lower_ms', 0.0)):.3f} "
+                f"compile_ms={float(r.get('compile_ms', 0.0)):.3f} "
+                f"launch_ms={float(r.get('launch_ms', 0.0)):.3f} "
+                f"total_ms={float(r.get('total_ms', 0.0)):.3f}",
+                flush=True,
+            )
         if not args.json:
             print(f"[{k}] {'OK' if r.get('ok') else 'FAIL'}")
             if r.get("error"):

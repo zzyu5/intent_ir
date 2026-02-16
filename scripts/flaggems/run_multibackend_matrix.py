@@ -400,6 +400,8 @@ def main() -> None:
             "--out",
             str(rvv_json),
         ]
+        if bool(args.stream_subprocess_output):
+            cmd.append("--progress")
         for k in kernel_filter:
             cmd += ["--kernel", str(k)]
         cmd_run = _with_env_prefix(cmd, rvv_env)
@@ -491,6 +493,8 @@ def main() -> None:
             "--out",
             str(cuda_json),
         ]
+        if bool(args.stream_subprocess_output):
+            cmd.append("--progress")
         if bool(args.allow_cuda_skip):
             cmd.append("--allow-skip")
         for k in kernel_filter:

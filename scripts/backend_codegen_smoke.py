@@ -495,6 +495,12 @@ def main() -> None:
     ap.add_argument("--lock", action="append", default=[], help="repeatable; e.g. --lock tile_n=128")
     ap.add_argument("--constraint", action="append", default=[], help="repeatable; e.g. --constraint 'tile_n in (64,128)'")
     ap.add_argument("--profile", default=None, help="RVV profile name or JSON path (default: generic_rvv_256 when tuning)")
+    ap.add_argument(
+        "--progress",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Print per-kernel START/DONE progress lines even in --json mode.",
+    )
     ap.add_argument("--json", action="store_true", help="print machine-readable summary JSON")
     ap.add_argument("--out", default=None, help="write summary JSON to this path")
     args = ap.parse_args()
@@ -518,7 +524,10 @@ def main() -> None:
         )
     results: list[dict[str, Any]] = []
     ok_all = True
-    for k in kernels:
+    total_kernels = len(kernels)
+    for idx, k in enumerate(kernels, start=1):
+        if bool(args.progress):
+            print(f"[rvv][{idx}/{total_kernels}] START kernel={k}", flush=True)
         try:
             r = run_one(
                 k,
@@ -545,6 +554,16 @@ def main() -> None:
             }
         results.append(r)
         ok_all = ok_all and bool(r["ok"])
+        if bool(args.progress):
+            print(
+                f"[rvv][{idx}/{total_kernels}] DONE kernel={k} ok={bool(r.get('ok'))} "
+                f"reason={str(r.get('reason_code') or '')} "
+                f"lower_ms={float(r.get('lower_ms', 0.0)):.3f} "
+                f"compile_ms={float(r.get('compile_ms', 0.0)):.3f} "
+                f"launch_ms={float(r.get('launch_ms', 0.0)):.3f} "
+                f"total_ms={float(r.get('total_ms', 0.0)):.3f}",
+                flush=True,
+            )
         if not bool(args.json):
             status = "OK" if r["ok"] else "FAIL"
             print(f"[{k}] {status} rc={r.get('rc', 1)}")

@@ -144,12 +144,6 @@ def main() -> None:
         default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch_coverage.json"),
     )
     ap.add_argument(
-        "--active-batch",
-        type=Path,
-        default=None,
-        help="Compatibility alias for --active-batch-coverage.",
-    )
-    ap.add_argument(
         "--active-batch-ir-arch",
         type=Path,
         default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch_ir_arch.json"),
@@ -207,7 +201,7 @@ def main() -> None:
         return out
 
     profiles = _parse_profiles(list(args.profiles))
-    coverage_active = Path(args.active_batch) if args.active_batch is not None else args.active_batch_coverage
+    coverage_active = args.active_batch_coverage
     active_by_profile: dict[str, Path] = {
         "coverage": coverage_active,
         "ir_arch": args.active_batch_ir_arch,
