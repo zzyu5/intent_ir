@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_roadmap_v1",
-  "generated_at": "2026-02-16T00:00:00+00:00",
+  "generated_at": "2026-02-16T11:24:00+00:00",
   "milestones": [
     {
       "id": "P3",
@@ -10,23 +10,43 @@
     {
       "id": "P4",
       "target": "Backend pure compilerization: remove fallback semantics and split CUDA/RVV cpp_codegen monoliths",
-      "status": "in_progress"
+      "status": "in_progress",
+      "todo": [
+        "finish CUDA cpp_codegen modular split (ir_model, shape_eval, op_registry, emit modules)",
+        "finish RVV cpp_codegen modular split with the same stage boundaries",
+        "keep python side orchestration-only; no semantic lowering logic in python path"
+      ]
     },
     {
       "id": "P5",
       "target": "Backend optimization artifacts complete: schedule_profiles + timing_delta + stage_timing_breakdown",
-      "status": "in_progress"
+      "status": "in_progress",
+      "todo": [
+        "keep schedule_profiles.json and timing_delta.json refreshed per backend batch",
+        "stabilize stage_timing_breakdown.json in nightly/full196 jobs",
+        "gate regressions on stage-level timing drift"
+      ]
     },
     {
       "id": "P6",
       "target": "Dual-layer gates stable: scoped batch gate + nightly full196 gate with clean evidence chain",
-      "status": "in_progress"
+      "status": "in_progress",
+      "todo": [
+        "complete one fresh full196 recompute run after compiler changes",
+        "write full196 status to current_status.full196_last_run/full196_last_ok",
+        "ensure converge output uses complete reason_code and evidence fields"
+      ]
     },
     {
       "id": "M196",
       "target": "196 semantic ops remain full dual_pass under recomputed integrity (not stale registry-only status)",
-      "status": "completed"
+      "status": "in_progress",
+      "todo": [
+        "finish current full196_integrity_v1 run",
+        "derive failure clusters (RVV runtime_fail / CUDA lowering_missing_op / CUDA timeout)",
+        "execute coverage active batch fixes, then rerun full196 once"
+      ]
     }
   ],
-  "notes": "Coverage baseline reached 196/196 dual_pass historically, but workflow is now focused on evidence integrity, IR composition quality, and backend compiler modularization/performance maturity."
+  "notes": "Historical 196/196 remains reference only. Current truth is determined by recomputed full196 evidence after compiler refactors."
 }
