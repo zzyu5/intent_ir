@@ -135,7 +135,11 @@ def ensure_cpp_codegen_ext_loaded(*, verbose: bool = False) -> Any:
 
     mod = load(
         name=name,
-        sources=[str(src_dir / "intentir_cuda_codegen.cpp")],
+        sources=[
+            str(src_dir / "intentir_cuda_codegen.cpp"),
+            str(src_dir / "ir_model.cpp"),
+            str(src_dir / "shape_eval.cpp"),
+        ],
         extra_cflags=extra_cflags,
         extra_include_paths=extra_includes,
         build_directory=str(build_dir),

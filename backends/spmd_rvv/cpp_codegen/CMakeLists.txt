@@ -5,6 +5,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-add_executable(intentir_codegen intentir_codegen.cpp)
+add_executable(
+  intentir_codegen
+  intentir_codegen.cpp
+  ir_model.cpp
+  shape_eval.cpp
+)
 target_include_directories(intentir_codegen PRIVATE third_party)
 target_compile_options(intentir_codegen PRIVATE -Wall -Wextra -Wno-unused-parameter)
