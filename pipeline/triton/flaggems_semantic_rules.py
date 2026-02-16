@@ -390,7 +390,13 @@ _MACRO_TEMPLATE: dict[str, SemanticMapping] = {
         pattern_id="macro.batch_norm",
         detail="mapped as batch normalized arithmetic decomposition",
     ),
-    "softmax": _mk("softmax", ("softmax",), mapping_kind="macro_template", pattern_id="macro.softmax", detail="mapped to softmax primitive"),
+    "softmax": _mk(
+        "softmax",
+        ("reduce_max", "sub", "exp", "reduce_sum", "div"),
+        mapping_kind="macro_template",
+        pattern_id="macro.softmax_via_reduce_exp",
+        detail="mapped as exp(x - reduce_max(x)) / reduce_sum(exp(x - reduce_max(x)))",
+    ),
     "log_softmax": _mk(
         "log_softmax",
         ("softmax", "log"),
@@ -800,10 +806,10 @@ _MACRO_TEMPLATE: dict[str, SemanticMapping] = {
     ),
     "scaled_dot_product_attention": _mk(
         "scaled_dot_product_attention",
-        ("scaled_dot_product_attention",),
+        ("matmul", "softmax", "matmul"),
         mapping_kind="macro_template",
-        pattern_id="macro.scaled_dot_product_attention",
-        detail="mapped to scaled_dot_product_attention primitive",
+        pattern_id="macro.scaled_dot_product_attention_via_matmul_softmax",
+        detail="mapped as matmul(q, k^T) -> softmax -> matmul(attn, v)",
     ),
     "weight_norm_interface": _mk(
         "weight_norm_interface",

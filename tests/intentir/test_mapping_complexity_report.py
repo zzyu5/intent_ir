@@ -58,8 +58,18 @@ def test_mapping_complexity_report_can_fail_on_threshold_breach(tmp_path: Path) 
         json.dumps(
             {
                 "entries": [
-                    {"semantic_op": "a", "family": "index_scatter_gather", "intent_ops": ["gather"]},
-                    {"semantic_op": "b", "family": "index_scatter_gather", "intent_ops": ["scatter"]},
+                    {
+                        "semantic_op": "scaled_dot_product_attention",
+                        "family": "attention_sequence",
+                        "mapping_kind": "macro_template",
+                        "intent_ops": ["scaled_dot_product_attention"],
+                    },
+                    {
+                        "semantic_op": "where_scalar_self",
+                        "family": "index_scatter_gather",
+                        "mapping_kind": "index_template",
+                        "intent_ops": ["where"],
+                    },
                 ]
             }
         ),
@@ -74,7 +84,7 @@ def test_mapping_complexity_report_can_fail_on_threshold_breach(tmp_path: Path) 
             "--out",
             str(out),
             "--complex-families",
-            "index_scatter_gather",
+            "attention_sequence,index_scatter_gather",
             "--max-complex-single-intent-ratio",
             "0.2",
             "--fail-on-threshold-breach",

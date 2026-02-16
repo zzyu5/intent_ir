@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-16T01:18:43+00:00",
+  "updated_at": "2026-02-16T01:29:38+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -11,55 +11,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "a97b6b5 workflow: fix full196 truth, add timing breakdown gate, enforce ir composition policy\n0cc7d90 workflow: record v16 warm-stable perf run and refresh snapshots\n024bf04 cuda runtime: cache runner/runtime hash payload computation\nfa12cfc workflow: record v14 backend perf batch and refresh snapshots\n4d249cc cuda runtime: reuse compiled module in launch path\na68ce0e workflow: refresh status snapshot after perf commits\na045c83 workflow: record v11 backend performance evidence\n4016a6a cuda smoke: prewarm compile worker to remove first-kernel cold start\ne6c5fd3 workflow: refresh current status after perf optimization commits\n315d013 workflow: record backend compiler performance batch evidence\n258dd07 cuda smoke: reuse persistent stage workers to reduce per-kernel overhead\n29b7231 workflow: close backend compiler wave14 and log perf warm run\n26d8d16 cuda cpp: canonicalize kernel names for compile-cache reuse\n2b17c08 cuda cpp: add concat/pad/mse_loss lowering and fix remainder semantics\n7c35b9a workflow: close wave13, expand manifest to 84, plan wave14\n7c34852 cuda cpp: add addmv/atan/bitwise-shift lowering and fix addmv arg order\n3f063ae workflow: close wave12, promote wave13, refresh backend lane state\nbf49f6b cuda+intentir: fix matmul f16 path and repair missing matmul shapes\ne821b67 workflow: close backend compiler wave10 and queue wave11\n46a855b backend: add cuda lowerings for exp2 reduce_min and arg extrema",
+  "git_log_short": "cba8df8 backend: start cpp_codegen modular split and sync workflow todo state\na97b6b5 workflow: fix full196 truth, add timing breakdown gate, enforce ir composition policy\n0cc7d90 workflow: record v16 warm-stable perf run and refresh snapshots\n024bf04 cuda runtime: cache runner/runtime hash payload computation\nfa12cfc workflow: record v14 backend perf batch and refresh snapshots\n4d249cc cuda runtime: reuse compiled module in launch path\na68ce0e workflow: refresh status snapshot after perf commits\na045c83 workflow: record v11 backend performance evidence\n4016a6a cuda smoke: prewarm compile worker to remove first-kernel cold start\ne6c5fd3 workflow: refresh current status after perf optimization commits\n315d013 workflow: record backend compiler performance batch evidence\n258dd07 cuda smoke: reuse persistent stage workers to reduce per-kernel overhead\n29b7231 workflow: close backend compiler wave14 and log perf warm run\n26d8d16 cuda cpp: canonicalize kernel names for compile-cache reuse\n2b17c08 cuda cpp: add concat/pad/mse_loss lowering and fix remainder semantics\n7c35b9a workflow: close wave13, expand manifest to 84, plan wave14\n7c34852 cuda cpp: add addmv/atan/bitwise-shift lowering and fix addmv arg order\n3f063ae workflow: close wave12, promote wave13, refresh backend lane state\nbf49f6b cuda+intentir: fix matmul f16 path and repair missing matmul shapes\ne821b67 workflow: close backend compiler wave10 and queue wave11",
   "progress_tail": [
-    {
-      "ts": "2026-02-15T23:13:36+00:00",
-      "commit": "26d8d16da92a007cd21353cbe0b0926cb485cc83",
-      "lane": "backend_compiler",
-      "summary": "wave14 perf pass: canonical kernel names enable compile-cache reuse; warm compile_ms drops to ~40ms across selected8",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v4_perf/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v4_perf/status_converged.json",
-      "next_focus": "performance-only: reduce lower_ms and keep nightly perf delta stable",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v4_perf/backend_compiler_batch_summary.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v4_perf/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v4_perf/status_converged.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v5_warm/cuda_local.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v4_perf",
-      "counts_by_status": {
-        "blocked_backend": 187,
-        "dual_pass": 9
-      }
-    },
-    {
-      "ts": "2026-02-15T23:25:44+00:00",
-      "commit": "29b723182351c7a56e02eb125ab289a3879d6487",
-      "lane": "backend_compiler",
-      "summary": "backend compiler perf: persistent stage workers cut cuda lower/compile overhead while keeping gate green",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v9_perfbatch/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v9_perfbatch/status_converged.json",
-      "next_focus": "performance-only: reduce first-kernel cold-start overhead and track nightly timing delta",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v8_smoke_perf/cuda_local.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v9_perfbatch/backend_compiler_batch_summary.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v9_perfbatch/cuda_local.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v9_perfbatch/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v9_perfbatch/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave14_selected8_v9_perfbatch",
-      "counts_by_status": {
-        "blocked_backend": 187,
-        "dual_pass": 9
-      }
-    },
     {
       "ts": "2026-02-15T23:32:05+00:00",
       "commit": "e6c5fd36737819d279debf58a99a8c40e2953bfe",
@@ -209,18 +162,64 @@
         "blocked_backend": 195,
         "dual_pass": 1
       }
+    },
+    {
+      "ts": "2026-02-16T01:27:15+00:00",
+      "commit": "cba8df8d96bcc9f3eea90bbeaff6a45b99b1216e",
+      "lane": "ir_arch",
+      "summary": "ir_arch M1 mapping complexity gate reached threshold (composition_required_single_intent_ratio=0.40).",
+      "batch_ops": [
+        ""
+      ],
+      "active_batch_path": "workflow/flaggems/state/active_batch_ir_arch.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m1_v3/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m1_v3/status_converged.json",
+      "next_focus": "Promote ir_arch::composition_policy_m2_gate by converting remaining complex-family single-intent mappings to composed patterns.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m1_v3/mapping_complexity_report.json",
+        "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m1_v3/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m1_v3/status_converged.json",
+        "tests/frontends/triton/test_flaggems_semantic_rules.py",
+        "tests/intentir/test_mapping_complexity_report.py"
+      ],
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m1_v3",
+      "counts_by_status": {}
+    },
+    {
+      "ts": "2026-02-16T01:29:33+00:00",
+      "commit": "cba8df8d96bcc9f3eea90bbeaff6a45b99b1216e",
+      "lane": "ir_arch",
+      "summary": "ir_arch M2 baseline confirms remaining gap: composition_required_single_intent_ratio=0.40 > 0.20.",
+      "batch_ops": [
+        ""
+      ],
+      "active_batch_path": "workflow/flaggems/state/active_batch_ir_arch.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m2_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m2_v1/status_converged.json",
+      "next_focus": "Reduce 9 additional composition-required single-intent mappings (index+matmul+conv families) to pass M2 gate.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m2_v1/mapping_complexity_report.json",
+        "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m2_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m2_v1/status_converged.json"
+      ],
+      "run_ok": false,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m2_v1",
+      "counts_by_status": {}
     }
   ],
-  "next_focus": "Continue modular split: extract CUDA ir_model/shape_eval/emit modules, then rerun backend_compiler gate",
+  "next_focus": "Reduce 9 additional composition-required single-intent mappings (index+matmul+conv families) to pass M2 gate.",
   "active_lanes": [
     "backend_compiler",
+    "coverage",
     "ir_arch"
   ],
   "next_focus_by_lane": {
     "backend_compiler": "Continue modular split: extract CUDA ir_model/shape_eval/emit modules, then rerun backend_compiler gate",
-    "ir_arch": "Reduce complex-family single-intent ratio from ~0.66 to <=0.40 (M1) via semantic rule composition refactors"
+    "ir_arch": "Reduce 9 additional composition-required single-intent mappings (index+matmul+conv families) to pass M2 gate."
   },
   "known_risks": [
-    "ir_arch lane now enforces mapping_complexity threshold; M1 gate currently failing at ~0.66 ratio"
+    "ir_arch lane now enforces mapping_complexity threshold; M1 gate currently failing at ~0.66 ratio",
+    "ir_arch M2 baseline confirms remaining gap: composition_required_single_intent_ratio=0.40 > 0.20."
   ]
 }

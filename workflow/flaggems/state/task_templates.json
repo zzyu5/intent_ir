@@ -597,12 +597,12 @@
       "id": "ir_arch::composition_policy_m1_gate",
       "track": "ir_arch",
       "task_type": "quality_guard",
-      "status": "pending",
-      "passes": false,
+      "status": "done",
+      "passes": true,
       "priority": 35,
       "gate_profile": "ir_arch",
-      "reason_code": "pending",
-      "next_action": "reduce_complex_family_single_intent_ratio_to_m1_target",
+      "reason_code": "ok",
+      "next_action": "none",
       "acceptance": [
         "mapping_complexity_gate_pass_m1",
         "complex_family_single_intent_ratio_le_0_40"
@@ -610,7 +610,12 @@
       "depends_on": [
         "ir_arch::macro_composition_guard"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m1_v3/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m1_v3/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m1_v3/mapping_complexity_report.json",
+        "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m1_v3/batch_gate_ir_arch_pass.json"
+      ],
       "description": "Drive composition quality to M1 target by reducing complex-family single-intent ratio to <=40%."
     },
     {

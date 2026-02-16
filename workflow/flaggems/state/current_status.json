@@ -1,32 +1,32 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-16T01:18:43+00:00",
+  "updated_at": "2026-02-16T01:29:38+00:00",
   "branch": "flaggems",
-  "head_commit": "a97b6b5ab41b24b983e23a99f1a0c8d96f216d81",
+  "head_commit": "cba8df8d96bcc9f3eea90bbeaff6a45b99b1216e",
   "mode": "mixed_development",
   "coverage_integrity_phase": "recompute_pending",
   "full196_last_run": "",
   "full196_last_ok": null,
   "coverage": {
     "semantic_ops": 196,
-    "dual_pass": 196,
+    "dual_pass": 181,
     "blocked_ir": 0,
-    "blocked_backend": 0
+    "blocked_backend": 14
   },
   "mapping_quality": {
     "coverage_semantic_ops": 196,
-    "single_intent_ops": 135,
-    "multi_intent_ops": 61,
+    "single_intent_ops": 127,
+    "multi_intent_ops": 69,
     "zero_intent_ops": 0,
-    "single_intent_ratio": 0.6887755102040817,
-    "complex_family_single_intent_ratio": 0.6619718309859155,
+    "single_intent_ratio": 0.6479591836734694,
+    "complex_family_single_intent_ratio": 0.5492957746478874,
     "complex_family_total": 71,
-    "complex_family_single_intent_ops": 47,
+    "complex_family_single_intent_ops": 39,
     "by_family": {
       "attention_sequence": {
         "total": 5,
-        "single_intent_ops": 5,
-        "multi_intent_ops": 0,
+        "single_intent_ops": 1,
+        "multi_intent_ops": 4,
         "zero_intent_ops": 0
       },
       "conv_pool_interp": {
@@ -49,20 +49,20 @@
       },
       "matmul_linear": {
         "total": 8,
-        "single_intent_ops": 6,
-        "multi_intent_ops": 2,
+        "single_intent_ops": 5,
+        "multi_intent_ops": 3,
         "zero_intent_ops": 0
       },
       "norm_activation": {
         "total": 15,
-        "single_intent_ops": 2,
-        "multi_intent_ops": 13,
+        "single_intent_ops": 1,
+        "multi_intent_ops": 14,
         "zero_intent_ops": 0
       },
       "reduction": {
         "total": 20,
-        "single_intent_ops": 13,
-        "multi_intent_ops": 7,
+        "single_intent_ops": 11,
+        "multi_intent_ops": 9,
         "zero_intent_ops": 0
       }
     }
@@ -72,19 +72,19 @@
     "catalog_validated": true
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_stage_breakdown_v1/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_stage_breakdown_v1/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m2_v1/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260216/ir_arch_quality_m2_v1/status_converged.json"
   },
   "lanes": {
     "coverage": {
-      "pending": 0,
-      "done": 196,
+      "pending": 15,
+      "done": 181,
       "total": 196,
       "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json"
     },
     "ir_arch": {
-      "pending": 2,
-      "done": 3,
+      "pending": 1,
+      "done": 4,
       "total": 5,
       "active_batch_path": "workflow/flaggems/state/active_batch_ir_arch.json"
     },

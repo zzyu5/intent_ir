@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 
 from intent_ir.ops.composition_policy import (
     COMPLEX_FAMILIES,
+    composition_required,
     evaluate_complex_family_ratio,
     single_intent_ratio_target,
 )
@@ -85,8 +86,12 @@ def main() -> None:
     zero = 0
     complex_total = 0
     complex_single = 0
+    required_total = 0
+    required_single = 0
     for row in entries:
         fam = str(row.get("family") or "unknown")
+        semantic_op = str(row.get("semantic_op") or "")
+        mapping_kind = str(row.get("mapping_kind") or "")
         ops = [str(x) for x in list(row.get("intent_ops") or []) if str(x).strip()]
         n_ops = len(ops)
         bucket = by_family.setdefault(
@@ -113,6 +118,14 @@ def main() -> None:
             complex_total += 1
             if n_ops == 1:
                 complex_single += 1
+            if composition_required(
+                semantic_op=semantic_op,
+                family=fam,
+                mapping_kind=mapping_kind,
+            ):
+                required_total += 1
+                if n_ops == 1:
+                    required_single += 1
 
     threshold = (
         float(args.max_complex_single_intent_ratio)
@@ -120,7 +133,7 @@ def main() -> None:
         else float(single_intent_ratio_target(str(args.policy_stage)))
     )
     gate = evaluate_complex_family_ratio(
-        ratio=_ratio(complex_single, complex_total),
+        ratio=_ratio(required_single, required_total),
         stage=str(args.policy_stage),
     )
     gate["threshold"] = float(threshold)
@@ -143,6 +156,9 @@ def main() -> None:
         "complex_total": int(complex_total),
         "complex_single_intent_ops": int(complex_single),
         "complex_single_intent_ratio": _ratio(complex_single, complex_total),
+        "composition_required_total": int(required_total),
+        "composition_required_single_intent_ops": int(required_single),
+        "composition_required_single_intent_ratio": _ratio(required_single, required_total),
         "gate": gate,
         "by_family": {k: v for k, v in sorted(by_family.items(), key=lambda kv: kv[0])},
     }

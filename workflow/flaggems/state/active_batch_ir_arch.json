@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_active_batch_v2",
-  "generated_at": "2026-02-16T01:06:48+00:00",
+  "generated_at": "2026-02-16T01:27:42+00:00",
   "branch": "flaggems",
   "lane": "ir_arch",
   "batch_size": 10,
@@ -11,28 +11,28 @@
   ],
   "items": [
     {
-      "id": "ir_arch::composition_policy_m1_gate",
+      "id": "ir_arch::composition_policy_m2_gate",
       "semantic_op": "",
       "family": "workflow",
       "status": "pending",
       "passes": false,
       "reason_code": "pending",
-      "next_action": "reduce_complex_family_single_intent_ratio_to_m1_target",
+      "next_action": "reduce_complex_family_single_intent_ratio_to_m2_target",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "ir_arch",
       "task_type": "quality_guard",
-      "priority": 35,
+      "priority": 36,
       "acceptance": [
-        "mapping_complexity_gate_pass_m1",
-        "complex_family_single_intent_ratio_le_0_40"
+        "mapping_complexity_gate_pass_m2",
+        "complex_family_single_intent_ratio_le_0_20"
       ],
       "gate_profile": "ir_arch",
       "depends_on": [
-        "ir_arch::macro_composition_guard"
+        "ir_arch::composition_policy_m1_gate"
       ],
       "evidence_paths": [],
-      "description": "Drive composition quality to M1 target by reducing complex-family single-intent ratio to <=40%."
+      "description": "Advance composition quality to M2 target by reducing complex-family single-intent ratio to <=20%."
     }
   ],
   "context": {
