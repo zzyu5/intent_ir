@@ -155,6 +155,31 @@ def _validate_stage_timing_breakdown(stage_path: Path) -> tuple[bool, str]:
         for field in ("kernel_count", "totals_ms", "avg_ms", "stage_share_pct"):
             if field not in section:
                 failures.append(f"{backend}:missing_{field}")
+        totals = section.get("totals_ms")
+        if isinstance(totals, dict):
+            for key in ("lower_ms", "compile_ms", "launch_ms", "total_ms"):
+                if key not in totals:
+                    failures.append(f"{backend}:totals_missing_{key}")
+            try:
+                total_ms = float(totals.get("total_ms", 0.0))
+            except Exception:
+                failures.append(f"{backend}:totals_invalid_total_ms")
+                total_ms = 0.0
+            if total_ms <= 0.0:
+                failures.append(f"{backend}:totals_nonpositive_total_ms")
+        else:
+            failures.append(f"{backend}:totals_not_object")
+    combined = payload.get("combined")
+    if isinstance(combined, dict):
+        totals = combined.get("totals_ms")
+        if isinstance(totals, dict):
+            try:
+                combined_total_ms = float(totals.get("total_ms", 0.0))
+            except Exception:
+                combined_total_ms = 0.0
+                failures.append("combined:invalid_total_ms")
+            if combined_total_ms <= 0.0:
+                failures.append("combined:total_ms_nonpositive")
     if failures:
         return False, "; ".join(failures)
     return True, "stage timing breakdown complete for rvv/cuda"

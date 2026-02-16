@@ -29,6 +29,64 @@ def _check(name: str, ok: bool, detail: str) -> dict[str, Any]:
     return {"name": str(name), "ok": bool(ok), "detail": str(detail)}
 
 
+def _stage_map(run_summary: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    rows = [r for r in list(run_summary.get("stages") or []) if isinstance(r, dict)]
+    out: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        name = str(row.get("stage") or "").strip()
+        if name:
+            out[name] = row
+    return out
+
+
+def _is_full_coverage_run(run_summary: dict[str, Any]) -> bool:
+    suite = str(run_summary.get("suite") or "").strip()
+    if suite != "coverage":
+        return False
+    coverage_stage = _stage_map(run_summary).get("coverage_integrity") or {}
+    if not coverage_stage:
+        return False
+    if str(coverage_stage.get("reason_code") or "").strip() == "skipped_partial_scope":
+        return False
+    if "full_coverage_run" in coverage_stage and not bool(coverage_stage.get("full_coverage_run")):
+        return False
+    return True
+
+
+def _validate_stage_timing_breakdown(path: Path) -> tuple[bool, str]:
+    if not path.is_file():
+        return False, f"missing stage_timing_breakdown json: {path}"
+    payload = load_json(path)
+    if str(payload.get("schema_version") or "") != "flaggems_stage_timing_breakdown_v1":
+        return False, "unexpected stage_timing_breakdown schema_version"
+    backends = payload.get("backends")
+    if not isinstance(backends, dict):
+        return False, "stage_timing_breakdown missing backends section"
+    failures: list[str] = []
+    for backend in ("rvv", "cuda"):
+        section = backends.get(backend)
+        if not isinstance(section, dict):
+            failures.append(f"{backend}:missing_section")
+            continue
+        if not bool(section.get("available")):
+            failures.append(f"{backend}:not_available")
+            continue
+        totals = section.get("totals_ms")
+        if not isinstance(totals, dict):
+            failures.append(f"{backend}:totals_not_object")
+            continue
+        try:
+            total_ms = float(totals.get("total_ms", 0.0))
+        except Exception:
+            total_ms = 0.0
+            failures.append(f"{backend}:total_ms_invalid")
+        if total_ms <= 0.0:
+            failures.append(f"{backend}:total_ms_nonpositive")
+    if failures:
+        return False, "; ".join(failures)
+    return True, "stage_timing_breakdown present with positive totals for rvv/cuda"
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--registry", type=Path, default=(ROOT / "pipeline" / "triton" / "flaggems_registry.json"))
@@ -141,6 +199,41 @@ def main() -> None:
                 "feature list is synced with registry" if sync_ok else "; ".join(sync_errors),
             )
         )
+
+    run_summary_payload: dict[str, Any] = {}
+    if args.run_summary.is_file():
+        run_summary_payload = load_json(args.run_summary)
+        if _is_full_coverage_run(run_summary_payload):
+            stage_row = _stage_map(run_summary_payload).get("stage_timing_breakdown") or {}
+            stage_path_raw = str(stage_row.get("json_path") or "").strip()
+            if not stage_path_raw:
+                checks.append(
+                    _check(
+                        "run_summary.stage_timing_breakdown_full196",
+                        False,
+                        "full coverage run missing stage_timing_breakdown json_path",
+                    )
+                )
+            else:
+                stage_path = Path(stage_path_raw)
+                if not stage_path.is_absolute():
+                    stage_path = ROOT / stage_path
+                stage_ok, stage_detail = _validate_stage_timing_breakdown(stage_path)
+                checks.append(
+                    _check(
+                        "run_summary.stage_timing_breakdown_full196",
+                        stage_ok,
+                        stage_detail,
+                    )
+                )
+        else:
+            checks.append(
+                _check(
+                    "run_summary.stage_timing_breakdown_full196",
+                    True,
+                    "skipped: run_summary is not a full coverage run",
+                )
+            )
 
     if args.scripts_catalog.is_file():
         catalog_report = args.out.with_name("catalog_validation_ci.json")
