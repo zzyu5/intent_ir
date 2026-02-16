@@ -1,8 +1,8 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-16T08:51:42+00:00",
+  "updated_at": "2026-02-16T08:54:10+00:00",
   "branch": "flaggems",
-  "head_commit": "61819b6dc6a4a8bef372eccf9770266922ac3eaa",
+  "head_commit": "c1d84974727f333c8e218b393d7884653e3c8b89",
   "mode": "mixed_development",
   "coverage_integrity_phase": "recomputed_ok",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/run_summary.json",
@@ -70,6 +70,13 @@
   "script_governance": {
     "catalog_path": "scripts/CATALOG.json",
     "catalog_validated": true
+  },
+  "active_lanes": [
+    "backend_compiler"
+  ],
+  "next_focus_by_lane": {
+    "coverage": "Continue backend compiler modular split and optimization pass refinement while preserving full196 stability.",
+    "backend_compiler": "Continue cpp_codegen modular split (attention/index/scatter blocks) and finish one fresh full196 recompute after compiler changes."
   },
   "latest_artifacts": {
     "run_summary": "artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/run_summary.json",

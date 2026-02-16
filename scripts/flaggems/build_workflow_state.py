@@ -192,6 +192,8 @@ def main() -> None:
     head_commit = _git(["git", "rev-parse", "HEAD"]) or "unknown"
     git_log_short = read_git_log(cwd=ROOT, lines=int(args.git_log_lines))
     next_focus = _parse_next_focus(args.handoff) or str(latest.get("next_focus") or "")
+    active_lanes = _active_lanes(feature_payload)
+    next_focus_by_lane = _next_focus_by_lane(progress_tail)
     catalog_exists = bool(args.scripts_catalog.is_file())
     if not full196_run_summary:
         coverage_integrity_phase = "recompute_pending"
@@ -209,6 +211,8 @@ def main() -> None:
         full196_last_ok=full196_last_ok,
         catalog_path=_to_repo_rel(args.scripts_catalog),
         catalog_validated=catalog_exists,
+        active_lanes=active_lanes,
+        next_focus_by_lane=next_focus_by_lane,
         lane_batch_paths={
             "coverage": _to_repo_rel(args.active_batch_coverage),
             "ir_arch": _to_repo_rel(args.active_batch_ir_arch),
@@ -221,8 +225,8 @@ def main() -> None:
         next_focus=next_focus,
         known_risks=_known_risks(progress_tail),
         must_read_scripts_catalog=_to_repo_rel(args.scripts_catalog),
-        active_lanes=_active_lanes(feature_payload),
-        next_focus_by_lane=_next_focus_by_lane(progress_tail),
+        active_lanes=active_lanes,
+        next_focus_by_lane=next_focus_by_lane,
     )
 
     out_status = dump_json(args.current_status_out, current_status)

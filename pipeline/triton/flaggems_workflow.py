@@ -466,6 +466,8 @@ def build_current_status_payload(
     full196_last_ok: bool | None = None,
     catalog_path: str = "scripts/CATALOG.json",
     catalog_validated: bool = False,
+    active_lanes: list[str] | None = None,
+    next_focus_by_lane: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     summary = dict(feature_payload.get("summary") or {})
     by_status = dict(summary.get("by_status") or {})
@@ -506,6 +508,8 @@ def build_current_status_payload(
             "catalog_path": str(catalog_path),
             "catalog_validated": bool(catalog_validated),
         },
+        "active_lanes": [str(x) for x in list(active_lanes or [])],
+        "next_focus_by_lane": {str(k): str(v) for k, v in dict(next_focus_by_lane or {}).items()},
         "latest_artifacts": {
             "run_summary": str(latest_run_summary_path),
             "status_converged": str(latest_status_converged_path),
