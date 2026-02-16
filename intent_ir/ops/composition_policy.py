@@ -18,7 +18,7 @@ COMPLEX_FAMILIES: tuple[str, ...] = (
 
 COMPLEX_FAMILY_SINGLE_INTENT_RATIO_TARGETS: Mapping[str, float] = {
     "m1": 0.40,
-    "m2": 0.20,
+    "m2": 0.10,
 }
 
 # Complex families where composition is expected for higher-level semantics.

@@ -32,9 +32,8 @@ def test_composition_required_flags_macro_and_selected_complex_semantics() -> No
 
 def test_ratio_targets_and_evaluation() -> None:
     assert single_intent_ratio_target("m1") == 0.40
-    assert single_intent_ratio_target("m2") == 0.20
-    ok = evaluate_complex_family_ratio(ratio=0.15, stage="m2")
+    assert single_intent_ratio_target("m2") == 0.10
+    ok = evaluate_complex_family_ratio(ratio=0.08, stage="m2")
     bad = evaluate_complex_family_ratio(ratio=0.35, stage="m2")
     assert ok["ok"] is True
     assert bad["ok"] is False
-
