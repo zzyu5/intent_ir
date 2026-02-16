@@ -593,6 +593,7 @@ class _NvrtcCudaModule:
             raise CudaRuntimeError(f"cuLaunchKernel failed: {err}")
 
 
+@lru_cache(maxsize=1)
 def _intentir_cuda_runtime_hash_payload() -> str:
     """
     Content hash payload for runtime headers included by generated kernels.
@@ -622,6 +623,7 @@ def _intentir_cuda_runtime_hash_payload() -> str:
     return ""
 
 
+@lru_cache(maxsize=1)
 def _intentir_cuda_runner_hash_payload() -> str:
     """
     Content hash payload for this Python-side CUDA extension runner.
