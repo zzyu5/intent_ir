@@ -114,6 +114,7 @@ def main() -> None:
                 str(args.registry),
                 "--out",
                 str(mapping_complexity_report),
+                "--refresh-mappings-from-rules",
                 "--policy-stage",
                 str(args.mapping_policy_stage),
                 "--max-complex-single-intent-ratio",

@@ -9,6 +9,12 @@ from pipeline.triton.flaggems_semantic_rules import (
     SemanticMapping,
     explain_mapping,
     mapping_for_semantic_op,
+    resolve_semantic_mapping,
 )
 
-__all__ = ["SemanticMapping", "explain_mapping", "mapping_for_semantic_op"]
+__all__ = [
+    "SemanticMapping",
+    "explain_mapping",
+    "mapping_for_semantic_op",
+    "resolve_semantic_mapping",
+]

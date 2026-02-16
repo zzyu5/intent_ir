@@ -71,6 +71,15 @@ def main() -> None:
         default=False,
         help="Exit non-zero when complex-family ratio exceeds threshold.",
     )
+    ap.add_argument(
+        "--refresh-mappings-from-rules",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Recompute intent_ops/mapping_kind from semantic_rules by semantic_op "
+            "instead of trusting registry intent_ops fields."
+        ),
+    )
     args = ap.parse_args()
 
     if not args.registry.is_file():
@@ -79,6 +88,13 @@ def main() -> None:
     entries = [e for e in list(payload.get("entries") or []) if isinstance(e, dict)]
 
     complex_families = set(_split_complex_families(list(args.complex_families or [])))
+    resolver = None
+    if bool(args.refresh_mappings_from_rules):
+        from pipeline.triton.providers.flaggems.semantic_rules import (  # noqa: PLC0415
+            resolve_semantic_mapping,
+        )
+
+        resolver = resolve_semantic_mapping
     by_family: dict[str, dict[str, int]] = {}
     total = 0
     single = 0
@@ -92,8 +108,13 @@ def main() -> None:
     for row in entries:
         fam = str(row.get("family") or "unknown")
         semantic_op = str(row.get("semantic_op") or "")
-        mapping_kind = str(row.get("mapping_kind") or "")
-        ops = [str(x) for x in list(row.get("intent_ops") or []) if str(x).strip()]
+        if resolver is not None and semantic_op:
+            mapping = resolver(semantic_op)
+            mapping_kind = str(mapping.mapping_kind)
+            ops = [str(x) for x in list(mapping.intent_ops) if str(x).strip()]
+        else:
+            mapping_kind = str(row.get("mapping_kind") or "")
+            ops = [str(x) for x in list(row.get("intent_ops") or []) if str(x).strip()]
         n_ops = len(ops)
         bucket = by_family.setdefault(
             fam,

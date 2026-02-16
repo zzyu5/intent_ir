@@ -92,9 +92,28 @@ def build_feature_list_payload(
     source_registry_path: str,
     manual_tasks: Iterable[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    from pipeline.triton.providers.flaggems.semantic_rules import resolve_semantic_mapping
+
     entries = list(registry_payload.get("entries") or [])
     features: list[dict[str, Any]] = []
     for e in entries:
+        semantic_op = str(e.get("semantic_op") or "")
+        mapping = resolve_semantic_mapping(semantic_op) if semantic_op else None
+        intent_ops = (
+            list(mapping.intent_ops)
+            if mapping is not None
+            else [str(x) for x in list(e.get("intent_ops") or []) if str(x).strip()]
+        )
+        mapping_kind = (
+            str(mapping.mapping_kind)
+            if mapping is not None
+            else str(e.get("mapping_kind") or "")
+        )
+        intent_pattern_id = (
+            str(mapping.intent_pattern_id)
+            if mapping is not None
+            else str(e.get("intent_pattern_id") or "")
+        )
         status = str(e.get("status") or "unknown")
         reason = str(e.get("status_reason") or "")
         if status == "blocked_ir":
@@ -107,15 +126,17 @@ def build_feature_list_payload(
             next_action = "none"
         features.append(
             {
-                "id": f"flaggems::{str(e.get('semantic_op') or 'unknown')}",
-                "semantic_op": str(e.get("semantic_op") or ""),
+                "id": f"flaggems::{semantic_op or 'unknown'}",
+                "semantic_op": semantic_op,
                 "family": str(e.get("family") or ""),
                 "status": status,
                 "passes": bool(status == "dual_pass"),
                 "reason_code": reason,
                 "next_action": next_action,
                 "e2e_spec": e.get("e2e_spec"),
-                "intent_ops": list(e.get("intent_ops") or []),
+                "intent_ops": list(intent_ops),
+                "mapping_kind": mapping_kind,
+                "intent_pattern_id": intent_pattern_id,
                 "track": "coverage",
                 "task_type": "semantic_op",
                 "priority": 0,

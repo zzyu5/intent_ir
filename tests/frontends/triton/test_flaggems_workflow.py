@@ -75,7 +75,10 @@ def test_feature_list_payload_and_batch_priority() -> None:
     by_op = {str(f["semantic_op"]): f for f in features}
     assert by_op["add"]["passes"] is True
     assert by_op["acos"]["next_action"] == "semantic_mapping"
+    # Coverage features refresh mapping fields from semantic rules.
+    assert by_op["acos"]["intent_ops"] == ["acos"]
     assert by_op["argmax"]["next_action"] == "add_e2e_spec"
+    assert by_op["argmax"]["intent_ops"] == ["cast", "argmax"]
     assert by_op["cumsum"]["next_action"] == "backend_lowering"
     assert by_op["acos"]["track"] == "coverage"
     assert payload["summary"]["tasks_total"] == 4

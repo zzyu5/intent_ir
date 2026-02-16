@@ -100,3 +100,51 @@ def test_mapping_complexity_report_can_fail_on_threshold_breach(tmp_path: Path) 
     assert p.returncode != 0
     payload = json.loads(out.read_text(encoding="utf-8"))
     assert payload["gate"]["ok"] is False
+
+
+def test_mapping_complexity_report_refreshes_from_semantic_rules(tmp_path: Path) -> None:
+    registry = tmp_path / "registry.json"
+    out = tmp_path / "mapping_complexity.json"
+    # Intentionally stale intent_ops for complex families.
+    registry.write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "semantic_op": "conv2d",
+                        "family": "conv_pool_interp",
+                        "mapping_kind": "direct_supported_op",
+                        "intent_ops": ["conv2d"],
+                    },
+                    {
+                        "semantic_op": "index_add",
+                        "family": "index_scatter_gather",
+                        "mapping_kind": "direct_supported_op",
+                        "intent_ops": ["index_add"],
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/intentir/report_mapping_complexity.py",
+            "--registry",
+            str(registry),
+            "--out",
+            str(out),
+            "--complex-families",
+            "conv_pool_interp,index_scatter_gather",
+            "--refresh-mappings-from-rules",
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    # semantic_rules currently map both to multi-intent compositions.
+    assert payload["single_intent_ops"] == 0
+    assert payload["complex_family_single_semantic_ratio"] == 0.0
