@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-import hashlib
 import json
-import os
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any, Mapping
 
 from intent_ir.ir import IntentFunction
+from backends.common.cpp_build import (
+    ensure_cmake_binary_built,
+    resolve_binary_path,
+    resolve_build_root,
+)
 
 
 def _cpp_codegen_dir() -> Path:
@@ -17,19 +20,19 @@ def _cpp_codegen_dir() -> Path:
 
 
 def _cpp_codegen_build_dir() -> Path:
-    override = os.getenv("INTENTIR_CPP_CODEGEN_BUILD_DIR")
-    if override:
-        return Path(override).expanduser().resolve()
-
-    # Keep build artifacts out of the repo tree by default.
-    cache_root = Path(os.getenv("XDG_CACHE_HOME", str(Path.home() / ".cache"))).expanduser()
-    src_dir = _cpp_codegen_dir()
-    src_tag = hashlib.sha1(str(src_dir).encode("utf-8")).hexdigest()[:10]
-    return (cache_root / "intentir" / "cpp_codegen" / src_tag).resolve()
+    return resolve_build_root(
+        _cpp_codegen_dir(),
+        env_var="INTENTIR_CPP_CODEGEN_BUILD_DIR",
+        namespace="cpp_codegen",
+    )
 
 
 def _cpp_codegen_bin(*, build_type: str) -> Path:
-    return _cpp_codegen_build_dir() / str(build_type).lower() / "intentir_codegen"
+    return resolve_binary_path(
+        _cpp_codegen_build_dir(),
+        build_type=str(build_type),
+        binary_name="intentir_codegen",
+    )
 
 
 def ensure_cpp_codegen_built(*, build_type: str = "Release") -> Path:
@@ -39,55 +42,16 @@ def ensure_cpp_codegen_built(*, build_type: str = "Release") -> Path:
     The backend tool lives in `backends/spmd_rvv/cpp_codegen/` and parses IntentIR
     JSON directly (no extra backend IR). Python remains orchestration only.
     """
-    bin_path = _cpp_codegen_bin(build_type=build_type)
     src_dir = _cpp_codegen_dir()
-    build_dir = _cpp_codegen_build_dir()
-    build_dir = build_dir / str(build_type).lower()
-    build_dir.mkdir(parents=True, exist_ok=True)
-
-    def sources_newer_than_bin() -> bool:
-        if not bin_path.exists():
-            return True
-        try:
-            bin_mtime = bin_path.stat().st_mtime
-        except FileNotFoundError:
-            return True
-        for p in src_dir.rglob("*"):
-            if build_dir in p.parents:
-                continue
-            if not p.is_file():
-                continue
-            if p.name == "CMakeLists.txt" or p.suffix in {".cpp", ".cc", ".c", ".h", ".hpp", ".cmake", ".inc", ".inl"}:
-                try:
-                    if p.stat().st_mtime > bin_mtime:
-                        return True
-                except FileNotFoundError:
-                    continue
-        return False
-
-    if not sources_newer_than_bin():
-        return bin_path
-
-    cfg = [
-        "cmake",
-        "-S",
-        str(src_dir),
-        "-B",
-        str(build_dir),
-        f"-DCMAKE_BUILD_TYPE={build_type}",
-    ]
-    res = subprocess.run(cfg, capture_output=True, text=True)
-    if res.returncode != 0:
-        raise RuntimeError(f"cpp codegen: cmake configure failed:\n{res.stderr or res.stdout}")
-
-    build = ["cmake", "--build", str(build_dir), "-j"]
-    res = subprocess.run(build, capture_output=True, text=True)
-    if res.returncode != 0:
-        raise RuntimeError(f"cpp codegen: cmake build failed:\n{res.stderr or res.stdout}")
-
-    if not bin_path.exists():
-        raise RuntimeError(f"cpp codegen: build succeeded but binary not found at {bin_path}")
-    return bin_path
+    build_dir = _cpp_codegen_build_dir() / str(build_type).lower()
+    bin_path = _cpp_codegen_bin(build_type=build_type)
+    return ensure_cmake_binary_built(
+        source_dir=src_dir,
+        build_dir=build_dir,
+        binary_path=bin_path,
+        build_type=str(build_type),
+        label="cpp codegen",
+    )
 
 
 def lower_intent_to_c_with_files_cpp(

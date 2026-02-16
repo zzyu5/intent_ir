@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 import json
 import os
-import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
 from intent_ir.ir import IntentFunction
 from backends.cuda.runtime import CudaLaunch
+from backends.common.cpp_build import (
+    ensure_cmake_binary_built,
+    resolve_binary_path,
+    resolve_build_root,
+    stable_source_tag,
+)
 
 
 def _cpp_codegen_dir() -> Path:
@@ -21,19 +24,19 @@ def _cpp_codegen_dir() -> Path:
 
 
 def _cpp_codegen_build_dir() -> Path:
-    override = os.getenv("INTENTIR_CUDA_CPP_CODEGEN_BUILD_DIR")
-    if override:
-        return Path(override).expanduser().resolve()
-
-    # Keep build artifacts out of the repo tree by default.
-    cache_root = Path(os.getenv("XDG_CACHE_HOME", str(Path.home() / ".cache"))).expanduser()
-    src_dir = _cpp_codegen_dir()
-    src_tag = hashlib.sha1(str(src_dir).encode("utf-8")).hexdigest()[:10]
-    return (cache_root / "intentir" / "cuda_cpp_codegen" / src_tag).resolve()
+    return resolve_build_root(
+        _cpp_codegen_dir(),
+        env_var="INTENTIR_CUDA_CPP_CODEGEN_BUILD_DIR",
+        namespace="cuda_cpp_codegen",
+    )
 
 
 def _cpp_codegen_bin(*, build_type: str) -> Path:
-    return _cpp_codegen_build_dir() / str(build_type).lower() / "intentir_cuda_codegen"
+    return resolve_binary_path(
+        _cpp_codegen_build_dir(),
+        build_type=str(build_type),
+        binary_name="intentir_cuda_codegen",
+    )
 
 
 def _cpp_codegen_ext_build_dir() -> Path:
@@ -42,14 +45,11 @@ def _cpp_codegen_ext_build_dir() -> Path:
 
     This is intentionally separate from the CMake build dir used by the CLI tool.
     """
-    override = os.getenv("INTENTIR_CUDA_CPP_CODEGEN_EXT_BUILD_DIR")
-    if override:
-        return Path(override).expanduser().resolve()
-
-    cache_root = Path(os.getenv("XDG_CACHE_HOME", str(Path.home() / ".cache"))).expanduser()
-    src_dir = _cpp_codegen_dir()
-    src_tag = hashlib.sha1(str(src_dir).encode("utf-8")).hexdigest()[:10]
-    return (cache_root / "intentir" / "cuda_cpp_codegen_ext" / src_tag).resolve()
+    return resolve_build_root(
+        _cpp_codegen_dir(),
+        env_var="INTENTIR_CUDA_CPP_CODEGEN_EXT_BUILD_DIR",
+        namespace="cuda_cpp_codegen_ext",
+    )
 
 
 def _maybe_add_python_ninja_to_path() -> None:
@@ -114,7 +114,7 @@ def ensure_cpp_codegen_ext_loaded(*, verbose: bool = False) -> Any:
         raise RuntimeError(f"cuda cpp codegen ext: torch extension build unavailable: {type(e).__name__}: {e}") from e
 
     src_dir = _cpp_codegen_dir()
-    src_tag = hashlib.sha1(str(src_dir).encode("utf-8")).hexdigest()[:10]
+    src_tag = stable_source_tag(src_dir)
     py_tag = f"py{sys.version_info.major}{sys.version_info.minor}"
     # Bump this suffix if the module init symbol changes (pybind module name must match).
     name = f"intentir_cuda_codegen_ext_{src_tag}_{py_tag}_v1"
@@ -159,54 +159,16 @@ def ensure_cpp_codegen_built(*, build_type: str = "Release") -> Path:
     The backend tool lives in `backends/cuda/cpp_codegen/` and parses IntentIR
     JSON directly. Python remains orchestration only.
     """
-    bin_path = _cpp_codegen_bin(build_type=build_type)
     src_dir = _cpp_codegen_dir()
     build_dir = _cpp_codegen_build_dir() / str(build_type).lower()
-    build_dir.mkdir(parents=True, exist_ok=True)
-
-    def sources_newer_than_bin() -> bool:
-        if not bin_path.exists():
-            return True
-        try:
-            bin_mtime = bin_path.stat().st_mtime
-        except FileNotFoundError:
-            return True
-        for p in src_dir.rglob("*"):
-            if build_dir in p.parents:
-                continue
-            if not p.is_file():
-                continue
-            if p.name == "CMakeLists.txt" or p.suffix in {".cpp", ".cc", ".c", ".h", ".hpp", ".cmake", ".inc", ".inl"}:
-                try:
-                    if p.stat().st_mtime > bin_mtime:
-                        return True
-                except FileNotFoundError:
-                    continue
-        return False
-
-    if not sources_newer_than_bin():
-        return bin_path
-
-    cfg = [
-        "cmake",
-        "-S",
-        str(src_dir),
-        "-B",
-        str(build_dir),
-        f"-DCMAKE_BUILD_TYPE={build_type}",
-    ]
-    res = subprocess.run(cfg, capture_output=True, text=True)
-    if res.returncode != 0:
-        raise RuntimeError(f"cuda cpp codegen: cmake configure failed:\n{res.stderr or res.stdout}")
-
-    build = ["cmake", "--build", str(build_dir), "-j"]
-    res = subprocess.run(build, capture_output=True, text=True)
-    if res.returncode != 0:
-        raise RuntimeError(f"cuda cpp codegen: cmake build failed:\n{res.stderr or res.stdout}")
-
-    if not bin_path.exists():
-        raise RuntimeError(f"cuda cpp codegen: build succeeded but binary not found at {bin_path}")
-    return bin_path
+    bin_path = _cpp_codegen_bin(build_type=build_type)
+    return ensure_cmake_binary_built(
+        source_dir=src_dir,
+        build_dir=build_dir,
+        binary_path=bin_path,
+        build_type=str(build_type),
+        label="cuda cpp codegen",
+    )
 
 
 def lower_intent_to_cuda_kernel_cpp(
