@@ -578,19 +578,24 @@
       "id": "backend_compiler::full196_evidence_chain_cleanup",
       "track": "backend_compiler",
       "task_type": "coverage_integrity",
-      "status": "pending",
-      "passes": false,
+      "status": "done",
+      "passes": true,
       "priority": 5,
       "gate_profile": "backend_compiler",
-      "reason_code": "pending",
-      "next_action": "run_full196_matrix_and_recompute_integrity",
+      "reason_code": "ok",
+      "next_action": "none",
       "acceptance": [
         "full196_last_run_points_to_real_coverage_run",
         "status_converged_v3_evidence_complete",
         "full196_last_ok_reflects_coverage_integrity"
       ],
       "depends_on": [],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260216/full196_after_active8_fix_v2/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/full196_after_active8_fix_v2/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260216/full196_after_active8_fix_v2/coverage_integrity.json",
+        "workflow/flaggems/state/current_status.json"
+      ],
       "description": "Keep full196 evidence chain clean and ensure workflow status points to a real full-coverage run instead of selected subsets."
     },
     {
@@ -647,12 +652,12 @@
       "id": "backend_compiler::cpp_codegen_modular_split_cuda",
       "track": "backend_compiler",
       "task_type": "compilerization",
-      "status": "in_progress",
-      "passes": false,
+      "status": "done",
+      "passes": true,
       "priority": 200,
       "gate_profile": "backend_compiler",
-      "reason_code": "partial_progress",
-      "next_action": "extract_ir_model_shape_eval_pass_modules_from_monolith",
+      "reason_code": "ok",
+      "next_action": "none",
       "acceptance": [
         "cuda_cpp_codegen_split_into_ir_model_shape_eval_emit_modules",
         "backend_compiler_gate_pass_after_split"
@@ -661,8 +666,11 @@
         "backend_compiler::expanded_family_wave14"
       ],
       "evidence_paths": [
-        "backends/cuda/cpp_codegen/common_utils.h",
-        "backends/cuda/cpp_codegen/intentir_cuda_codegen.cpp"
+        "backends/cuda/cpp_codegen/intentir_cuda_codegen.cpp",
+        "backends/cuda/cpp_codegen/ir_model.cpp",
+        "backends/cuda/cpp_codegen/shape_eval.cpp",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_modsplit_cuda_v1/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_modsplit_cuda_v1/batch_gate.json"
       ],
       "description": "Modularize monolithic CUDA C++ codegen into compiler-stage modules without fallback paths."
     },
@@ -670,12 +678,12 @@
       "id": "backend_compiler::cpp_codegen_modular_split_rvv",
       "track": "backend_compiler",
       "task_type": "compilerization",
-      "status": "in_progress",
-      "passes": false,
+      "status": "done",
+      "passes": true,
       "priority": 210,
       "gate_profile": "backend_compiler",
-      "reason_code": "partial_progress",
-      "next_action": "extract_ir_model_shape_eval_pass_modules_from_rvv_monolith",
+      "reason_code": "ok",
+      "next_action": "none",
       "acceptance": [
         "rvv_cpp_codegen_split_into_ir_model_shape_eval_emit_modules",
         "backend_compiler_gate_pass_after_split"
@@ -684,8 +692,11 @@
         "backend_compiler::cpp_codegen_modular_split_cuda"
       ],
       "evidence_paths": [
-        "backends/spmd_rvv/cpp_codegen/common_utils.h",
-        "backends/spmd_rvv/cpp_codegen/intentir_codegen.cpp"
+        "backends/spmd_rvv/cpp_codegen/intentir_codegen.cpp",
+        "backends/spmd_rvv/cpp_codegen/ir_model.cpp",
+        "backends/spmd_rvv/cpp_codegen/shape_eval.cpp",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_modsplit_rvv_v1/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_modsplit_rvv_v1/batch_gate.json"
       ],
       "description": "Modularize monolithic RVV C++ codegen into compiler-stage modules aligned with CUDA pipeline contracts."
     },
