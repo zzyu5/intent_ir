@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-16T17:21:57+00:00",
+  "updated_at": "2026-02-16T19:47:02+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -11,35 +11,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "ba0cc47 ir_arch: reduce complex-family single mappings and tighten m2 ratio to 10%\na436503 workflow: record freshness gate rollout and refresh session state\nfb55f50 workflow: add full196 freshness fields/gates and complexity metrics\n301e2bc workflow: sync snapshots to latest head after status refresh\n77e4ae7 workflow: refresh status/context after wave3 modular split commit\nfc939b4 backend_compiler wave3: split emit blocks and fix addmv canonical dispatch\n98530de workflow: record wave3 v6 validation and next focus\n6bd5a96 backend_compiler wave3: split cuda/rvv dispatch clusters and track .inc rebuilds\ne2a33ca workflow: sync wave3 session state to commit 18b3adb\n18b3adb backend_compiler wave3: split cuda dispatch + rvv compute emitter and refresh workflow state\n613d940 workflow: advance backend_compiler next focus to wave3 modular split\n3c05cf3 workflow: close wave2 tasks, add wave3 backend compiler tasks, refresh state\n9c2e9ae backend+gate: split wave2 cuda/rvv modules and enforce stage timing integrity checks\nfb739ab workflow: expose active lane focus directly in current_status\nc1d8497 workflow: restore pending backend_compiler lane tasks and refresh mixed feature state\n61819b6 workflow: record fresh full196 recompute evidence and refresh state\n95c2fea workflow: record backend compiler split validation session and refresh state\ne5b154e backend: split cuda/rvv cpp_codegen monolith blocks for compiler modularization\nb4cb589 workflow: refresh snapshots to latest backend/ir progress commit\n6d7ce8c workflow: refresh mapping-quality and stage-breakdown evidence after split validation",
+  "git_log_short": "b53ebaf flaggems: remove legacy fallback-policy aliases and harden live progress output\nee27f92 workflow: refresh status/context after ir-arch complexity wave\nba0cc47 ir_arch: reduce complex-family single mappings and tighten m2 ratio to 10%\na436503 workflow: record freshness gate rollout and refresh session state\nfb55f50 workflow: add full196 freshness fields/gates and complexity metrics\n301e2bc workflow: sync snapshots to latest head after status refresh\n77e4ae7 workflow: refresh status/context after wave3 modular split commit\nfc939b4 backend_compiler wave3: split emit blocks and fix addmv canonical dispatch\n98530de workflow: record wave3 v6 validation and next focus\n6bd5a96 backend_compiler wave3: split cuda/rvv dispatch clusters and track .inc rebuilds\ne2a33ca workflow: sync wave3 session state to commit 18b3adb\n18b3adb backend_compiler wave3: split cuda dispatch + rvv compute emitter and refresh workflow state\n613d940 workflow: advance backend_compiler next focus to wave3 modular split\n3c05cf3 workflow: close wave2 tasks, add wave3 backend compiler tasks, refresh state\n9c2e9ae backend+gate: split wave2 cuda/rvv modules and enforce stage timing integrity checks\nfb739ab workflow: expose active lane focus directly in current_status\nc1d8497 workflow: restore pending backend_compiler lane tasks and refresh mixed feature state\n61819b6 workflow: record fresh full196 recompute evidence and refresh state\n95c2fea workflow: record backend compiler split validation session and refresh state\ne5b154e backend: split cuda/rvv cpp_codegen monolith blocks for compiler modularization",
   "progress_tail": [
-    {
-      "ts": "2026-02-16T09:14:55+00:00",
-      "commit": "fb739abccf02f8440277fd9c054b66494ddc6459",
-      "lane": "backend_compiler",
-      "summary": "Wave2 modular split validation passed on 17 attention/index/norm kernels across RVV local+remote and CUDA.",
-      "batch_ops": [
-        "",
-        "",
-        ""
-      ],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave2_validation_v2/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave2_validation_v2/status_converged.json",
-      "next_focus": "Mark wave2 compiler modular split tasks done and continue next cpp_codegen module extraction wave.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave2_validation_v2/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave2_validation_v2/stage_timing_breakdown.json",
-        "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave2_validation_v2/status_converged.json",
-        "artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/ci_gate_recheck_v3.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave2_validation_v2",
-      "counts_by_status": {
-        "blocked_backend": 176,
-        "dual_pass": 20
-      }
-    },
     {
       "ts": "2026-02-16T09:16:55+00:00",
       "commit": "3c05cf35a8b342d47fb9dc63a0aacf1db34ff3f6",
@@ -213,16 +186,37 @@
       "counts_by_status": {
         "dual_pass": 196
       }
+    },
+    {
+      "ts": "2026-02-16T19:46:50+00:00",
+      "commit": "b53ebafed0875fcc69f456f17bc9d7997de67370",
+      "lane": "backend_compiler",
+      "summary": "Deleted deprecated fallback-policy CLI aliases in matrix/full-pipeline/nightly scripts; kept intentir-miss-policy as single interface and validated related frontend tests.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/full196_force_compile_head_v3/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/full196_force_compile_head_v3/status_converged.json",
+      "next_focus": "Wait for full196 run to finish, then run scoped batches to eliminate pipeline_exception and diff_fail groups with backend/compiler-oriented fixes.",
+      "evidence_paths": [
+        "tests/frontends/triton/test_flaggems_cli_params.py",
+        "tests/frontends/triton/test_flaggems_matrix_suite_resolution.py",
+        "tests/frontends/triton/test_flaggems_full_pipeline_script.py"
+      ],
+      "run_ok": false,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/full196_force_compile_head_v3",
+      "counts_by_status": {}
     }
   ],
-  "next_focus": "Run full196 force_compile on HEAD, then reduce complex-family single-intent ratio toward <=10%.",
+  "next_focus": "Wait for full196 run completion, then fix failed kernels in scoped batches (pipeline_exception first, then diff_fail), while继续删除未使用 fallback/legacy 分支。",
   "active_lanes": [
     "coverage"
   ],
   "next_focus_by_lane": {
-    "backend_compiler": "Mark wave3 cuda/rvv split tasks done, refresh workflow snapshots, then resume full coverage force-compile run and compiler modular split wave4.",
+    "backend_compiler": "Wait for full196 run to finish, then run scoped batches to eliminate pipeline_exception and diff_fail groups with backend/compiler-oriented fixes.",
     "ir_arch": "Run full196 force_compile on HEAD, then reduce complex-family single-intent ratio toward <=10%.",
     "coverage": "Run full196 force_compile matrix to refresh coverage evidence on HEAD."
   },
-  "known_risks": []
+  "known_risks": [
+    "Deleted deprecated fallback-policy CLI aliases in matrix/full-pipeline/nightly scripts; kept intentir-miss-policy as single interface and validated related frontend tests."
+  ]
 }
