@@ -6270,9 +6270,9 @@
       "semantic_op": "",
       "family": "workflow",
       "status": "pending",
-      "passes": false,
+      "passes": true,
       "reason_code": "pending_modular_split",
-      "next_action": "split_cuda_codegen_modules_wave3",
+      "next_action": "none",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "backend_compiler",
@@ -6287,7 +6287,12 @@
       "depends_on": [
         "backend_compiler::cpp_codegen_modular_split_wave2_cuda"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave3_modsplit_v2/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave3_modsplit_v2/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave3_modsplit_v2/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave3_modsplit_v2/batch_gate_backend_compiler_wave3.json"
+      ],
       "description": "Continue CUDA cpp_codegen modular split by extracting remaining dispatch and emit blocks into dedicated modules."
     },
     {
@@ -6295,9 +6300,9 @@
       "semantic_op": "",
       "family": "workflow",
       "status": "pending",
-      "passes": false,
+      "passes": true,
       "reason_code": "pending_modular_split",
-      "next_action": "split_rvv_codegen_modules_wave3",
+      "next_action": "none",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "backend_compiler",
@@ -6312,7 +6317,12 @@
       "depends_on": [
         "backend_compiler::cpp_codegen_modular_split_wave2_rvv"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave3_modsplit_v2/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave3_modsplit_v2/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave3_modsplit_v2/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave3_modsplit_v2/batch_gate_backend_compiler_wave3.json"
+      ],
       "description": "Continue RVV cpp_codegen modular split by extracting remaining dispatch and emit blocks into dedicated modules."
     }
   ]

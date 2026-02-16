@@ -3,6 +3,11 @@
     if (b_it != intent.tensors.end() && b_it->second.shape.size() == 1) return emit_addmv_f32(intent, bindings_json);
     return emit_baddbmm3d_f32(intent, bindings_json);
   }
+  if (intent.ops.size() == 10 && intent.ops[0].op == "cast" && intent.ops[1].op == "cast" && intent.ops[2].op == "broadcast_in_dim" &&
+      intent.ops[3].op == "mul" && intent.ops[4].op == "reduce_sum" && intent.ops[5].op == "mul" && intent.ops[6].op == "cast" &&
+      intent.ops[7].op == "mul" && intent.ops[8].op == "add" && intent.ops[9].op == "cast") {
+    return emit_addmv_f32(intent, bindings_json);
+  }
   if (intent.ops.size() == 5 && intent.ops[0].op == "matmul" && intent.ops[1].op == "mul" && intent.ops[2].op == "mul" &&
       intent.ops[3].op == "add" && intent.ops[4].op == "cast") {
     return emit_addmm2d_f32(intent, bindings_json);

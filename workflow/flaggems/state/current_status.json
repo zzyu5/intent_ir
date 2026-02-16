@@ -1,9 +1,9 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-16T10:13:17+00:00",
+  "updated_at": "2026-02-16T13:06:40+00:00",
   "branch": "flaggems",
-  "head_commit": "6bd5a96b64a91f642a00f076c4c9ef34cbe16490",
-  "mode": "mixed_development",
+  "head_commit": "98530de28710815b590132913d4dee6ff3000879",
+  "mode": "maintenance",
   "coverage_integrity_phase": "recomputed_ok",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/run_summary.json",
   "full196_last_ok": true,
@@ -71,16 +71,14 @@
     "catalog_path": "scripts/CATALOG.json",
     "catalog_validated": true
   },
-  "active_lanes": [
-    "backend_compiler"
-  ],
+  "active_lanes": [],
   "next_focus_by_lane": {
-    "backend_compiler": "Continue wave3 modular split and investigate rvv_remote mm2d run_rc=2 instability from v5 before broader batch/full196.",
-    "coverage": "Continue backend compiler modular split and optimization pass refinement while preserving full196 stability."
+    "coverage": "Continue backend compiler modular split and optimization pass refinement while preserving full196 stability.",
+    "backend_compiler": "Mark wave3 cuda/rvv split tasks done, refresh workflow snapshots, then resume full coverage force-compile run and compiler modular split wave4."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave3_validation_v6/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave3_validation_v6/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave3_modsplit_v2/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave3_modsplit_v2/status_converged.json"
   },
   "lanes": {
     "coverage": {
@@ -96,8 +94,8 @@
       "active_batch_path": "workflow/flaggems/state/active_batch_ir_arch.json"
     },
     "backend_compiler": {
-      "pending": 2,
-      "done": 26,
+      "pending": 0,
+      "done": 28,
       "total": 28,
       "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json"
     }
