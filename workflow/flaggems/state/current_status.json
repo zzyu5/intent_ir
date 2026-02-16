@@ -1,8 +1,8 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-16T08:54:10+00:00",
+  "updated_at": "2026-02-16T09:15:50+00:00",
   "branch": "flaggems",
-  "head_commit": "c1d84974727f333c8e218b393d7884653e3c8b89",
+  "head_commit": "fb739abccf02f8440277fd9c054b66494ddc6459",
   "mode": "mixed_development",
   "coverage_integrity_phase": "recomputed_ok",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/run_summary.json",
@@ -75,12 +75,12 @@
     "backend_compiler"
   ],
   "next_focus_by_lane": {
-    "coverage": "Continue backend compiler modular split and optimization pass refinement while preserving full196 stability.",
-    "backend_compiler": "Continue cpp_codegen modular split (attention/index/scatter blocks) and finish one fresh full196 recompute after compiler changes."
+    "backend_compiler": "Mark wave2 compiler modular split tasks done and continue next cpp_codegen module extraction wave.",
+    "coverage": "Continue backend compiler modular split and optimization pass refinement while preserving full196 stability."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave2_validation_v2/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260216/cpp_modsplit_wave2_validation_v2/status_converged.json"
   },
   "lanes": {
     "coverage": {
@@ -96,9 +96,9 @@
       "active_batch_path": "workflow/flaggems/state/active_batch_ir_arch.json"
     },
     "backend_compiler": {
-      "pending": 3,
-      "done": 23,
-      "total": 26,
+      "pending": 2,
+      "done": 26,
+      "total": 28,
       "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json"
     }
   }
