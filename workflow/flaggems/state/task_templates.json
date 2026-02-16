@@ -637,12 +637,12 @@
       "id": "backend_compiler::cpp_codegen_modular_split_cuda",
       "track": "backend_compiler",
       "task_type": "compilerization",
-      "status": "pending",
+      "status": "in_progress",
       "passes": false,
       "priority": 200,
       "gate_profile": "backend_compiler",
-      "reason_code": "pending",
-      "next_action": "split_intentir_cuda_codegen_cpp_into_modules",
+      "reason_code": "partial_progress",
+      "next_action": "extract_ir_model_shape_eval_pass_modules_from_monolith",
       "acceptance": [
         "cuda_cpp_codegen_split_into_ir_model_shape_eval_emit_modules",
         "backend_compiler_gate_pass_after_split"
@@ -650,19 +650,22 @@
       "depends_on": [
         "backend_compiler::expanded_family_wave14"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "backends/cuda/cpp_codegen/common_utils.h",
+        "backends/cuda/cpp_codegen/intentir_cuda_codegen.cpp"
+      ],
       "description": "Modularize monolithic CUDA C++ codegen into compiler-stage modules without fallback paths."
     },
     {
       "id": "backend_compiler::cpp_codegen_modular_split_rvv",
       "track": "backend_compiler",
       "task_type": "compilerization",
-      "status": "pending",
+      "status": "in_progress",
       "passes": false,
       "priority": 210,
       "gate_profile": "backend_compiler",
-      "reason_code": "pending",
-      "next_action": "split_intentir_codegen_cpp_into_modules",
+      "reason_code": "partial_progress",
+      "next_action": "extract_ir_model_shape_eval_pass_modules_from_rvv_monolith",
       "acceptance": [
         "rvv_cpp_codegen_split_into_ir_model_shape_eval_emit_modules",
         "backend_compiler_gate_pass_after_split"
@@ -670,19 +673,22 @@
       "depends_on": [
         "backend_compiler::cpp_codegen_modular_split_cuda"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "backends/spmd_rvv/cpp_codegen/common_utils.h",
+        "backends/spmd_rvv/cpp_codegen/intentir_codegen.cpp"
+      ],
       "description": "Modularize monolithic RVV C++ codegen into compiler-stage modules aligned with CUDA pipeline contracts."
     },
     {
       "id": "backend_compiler::stage_timing_breakdown_artifact",
       "track": "backend_compiler",
       "task_type": "observability",
-      "status": "pending",
-      "passes": false,
+      "status": "done",
+      "passes": true,
       "priority": 220,
       "gate_profile": "backend_compiler",
-      "reason_code": "pending",
-      "next_action": "enable_stage_timing_breakdown_in_backend_batches",
+      "reason_code": "ok",
+      "next_action": "none",
       "acceptance": [
         "stage_timing_breakdown_json_generated_each_batch",
         "backend_gate_requires_stage_timing_breakdown_complete"
@@ -690,7 +696,12 @@
       "depends_on": [
         "backend_compiler::stage_timing_unification"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_stage_breakdown_v1/backend_compiler_batch_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_stage_breakdown_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_stage_breakdown_v1/stage_timing_breakdown.json",
+        "artifacts/flaggems_matrix/daily/20260216/backend_compiler_stage_breakdown_v1/batch_gate_backend_compiler.json"
+      ],
       "description": "Require stage_timing_breakdown artifact for every backend compiler batch to make performance regressions auditable."
     }
   ]

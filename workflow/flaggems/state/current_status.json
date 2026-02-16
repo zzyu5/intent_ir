@@ -1,8 +1,8 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-16T01:10:30+00:00",
+  "updated_at": "2026-02-16T01:18:43+00:00",
   "branch": "flaggems",
-  "head_commit": "0cc7d90f49c111a1f8c160f41470712e72cd5965",
+  "head_commit": "a97b6b5ab41b24b983e23a99f1a0c8d96f216d81",
   "mode": "mixed_development",
   "coverage_integrity_phase": "recompute_pending",
   "full196_last_run": "",
@@ -89,8 +89,8 @@
       "active_batch_path": "workflow/flaggems/state/active_batch_ir_arch.json"
     },
     "backend_compiler": {
-      "pending": 4,
-      "done": 19,
+      "pending": 3,
+      "done": 20,
       "total": 23,
       "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json"
     }
