@@ -1,12 +1,17 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-16T13:07:59+00:00",
+  "updated_at": "2026-02-16T14:59:38+00:00",
   "branch": "flaggems",
-  "head_commit": "77e4ae72b280304e8aef387c5302b887a9ae700d",
+  "head_commit": "fb55f50d6e349b26546435a31612f25f67911555",
   "mode": "maintenance",
-  "coverage_integrity_phase": "recomputed_ok",
+  "coverage_integrity_phase": "recompute_stale",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260216/full196_after_phase345_push_v1/run_summary.json",
   "full196_last_ok": true,
+  "full196_validated_commit": "95c2fea682a984e1666c9d4ab9eafb6c6512c046",
+  "full196_commits_since_validated": 14,
+  "full196_validated_mode": "auto",
+  "full196_validated_scope": "coverage_158_kernels_to_196_semantics",
+  "full196_validated_with_rvv_remote": false,
   "coverage": {
     "semantic_ops": 196,
     "dual_pass": 196,
@@ -18,7 +23,11 @@
     "single_intent_ops": 100,
     "multi_intent_ops": 96,
     "zero_intent_ops": 0,
+    "raw_single_semantic_ratio": 0.5102040816326531,
     "single_intent_ratio": 0.5102040816326531,
+    "global_unique_single_primitive_count": 74,
+    "global_unique_single_primitive_ratio": 0.37755102040816324,
+    "complex_family_single_semantic_ratio": 0.16901408450704225,
     "complex_family_single_intent_ratio": 0.16901408450704225,
     "complex_family_total": 71,
     "complex_family_single_intent_ops": 12,
@@ -71,14 +80,17 @@
     "catalog_path": "scripts/CATALOG.json",
     "catalog_validated": true
   },
-  "active_lanes": [],
+  "active_lanes": [
+    "coverage"
+  ],
   "next_focus_by_lane": {
-    "coverage": "Continue backend compiler modular split and optimization pass refinement while preserving full196 stability.",
-    "backend_compiler": "Mark wave3 cuda/rvv split tasks done, refresh workflow snapshots, then resume full coverage force-compile run and compiler modular split wave4."
+    "backend_compiler": "Mark wave3 cuda/rvv split tasks done, refresh workflow snapshots, then resume full coverage force-compile run and compiler modular split wave4.",
+    "ir_arch": "Run full196 force_compile on HEAD, then reduce complex-family single-intent ratio toward <=10%.",
+    "coverage": "Run full196 force_compile matrix to refresh coverage evidence on HEAD."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave3_modsplit_v2/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260216/backend_compiler_wave3_modsplit_v2/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260216/workflow_freshness_ir_complexity_v1/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260216/workflow_freshness_ir_complexity_v1/status_converged.json"
   },
   "lanes": {
     "coverage": {
