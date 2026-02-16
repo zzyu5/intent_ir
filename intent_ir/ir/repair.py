@@ -270,6 +270,32 @@ def _normalize_axes(attrs: Dict[str, Any], rank: int) -> List[int]:
     return norm
 
 
+def _dim_to_const_int(d: Dim) -> int | None:
+    if d.kind == "const" and isinstance(d.value, int):
+        return int(d.value)
+    return None
+
+
+def _pair_attr(attrs: Dict[str, Any], key: str, default: int) -> tuple[int, int]:
+    raw = attrs.get(key, default)
+    if isinstance(raw, int):
+        return int(raw), int(raw)
+    if isinstance(raw, list) and len(raw) == 2 and all(isinstance(x, int) for x in raw):
+        return int(raw[0]), int(raw[1])
+    return int(default), int(default)
+
+
+def _triple_attr(attrs: Dict[str, Any], key: str, default: int) -> tuple[int, int, int]:
+    raw = attrs.get(key, default)
+    if isinstance(raw, int):
+        v = int(raw)
+        return v, v, v
+    if isinstance(raw, list) and len(raw) == 3 and all(isinstance(x, int) for x in raw):
+        return int(raw[0]), int(raw[1]), int(raw[2])
+    v = int(default)
+    return v, v, v
+
+
 def _infer_dtype(op: Op, tensors: Dict[str, TensorType]) -> str:
     opname = str(op.op)
     bool_ops = {
@@ -386,6 +412,115 @@ def _infer_shape(op: Op, tensors: Dict[str, TensorType]) -> List[Dim]:
         m = _clone_dim(a[-2])
         n = _clone_dim(b[-1])
         return list(batch) + [m, n]
+    if opname == "conv1d" and len(input_tensors) >= 2:
+        in_shape = list(input_tensors[0].shape)
+        w_shape = list(input_tensors[1].shape)
+        if len(in_shape) == 3 and len(w_shape) == 3:
+            n_dim = _clone_dim(in_shape[0])
+            c_out_dim = _clone_dim(w_shape[0])
+            l = _dim_to_const_int(in_shape[2])
+            k = _dim_to_const_int(w_shape[2])
+            stride = int(op.attrs.get("stride", 1)) if isinstance(op.attrs.get("stride", 1), int) else 1
+            padding = int(op.attrs.get("padding", 0)) if isinstance(op.attrs.get("padding", 0), int) else 0
+            dilation = int(op.attrs.get("dilation", 1)) if isinstance(op.attrs.get("dilation", 1), int) else 1
+            if l is not None and k is not None and stride > 0 and dilation > 0:
+                ol = ((l + 2 * padding - dilation * (k - 1) - 1) // stride) + 1
+                return [n_dim, c_out_dim, _dim_const(max(int(ol), 1))]
+            return [n_dim, c_out_dim, _dim_from_raw("OL")]
+    if opname == "conv2d" and len(input_tensors) >= 2:
+        in_shape = list(input_tensors[0].shape)
+        w_shape = list(input_tensors[1].shape)
+        if len(in_shape) == 4 and len(w_shape) == 4:
+            n_dim = _clone_dim(in_shape[0])
+            c_out_dim = _clone_dim(w_shape[0])
+            h = _dim_to_const_int(in_shape[2])
+            w = _dim_to_const_int(in_shape[3])
+            kh = _dim_to_const_int(w_shape[2])
+            kw = _dim_to_const_int(w_shape[3])
+            sh, sw = _pair_attr(op.attrs, "stride", 1)
+            ph, pw = _pair_attr(op.attrs, "padding", 0)
+            dh, dw = _pair_attr(op.attrs, "dilation", 1)
+            if (
+                h is not None
+                and w is not None
+                and kh is not None
+                and kw is not None
+                and sh > 0
+                and sw > 0
+                and dh > 0
+                and dw > 0
+            ):
+                oh = ((h + 2 * ph - dh * (kh - 1) - 1) // sh) + 1
+                ow = ((w + 2 * pw - dw * (kw - 1) - 1) // sw) + 1
+                return [n_dim, c_out_dim, _dim_const(max(int(oh), 1)), _dim_const(max(int(ow), 1))]
+            return [n_dim, c_out_dim, _dim_from_raw("OH"), _dim_from_raw("OW")]
+    if opname == "conv3d" and len(input_tensors) >= 2:
+        in_shape = list(input_tensors[0].shape)
+        w_shape = list(input_tensors[1].shape)
+        if len(in_shape) == 5 and len(w_shape) == 5:
+            n_dim = _clone_dim(in_shape[0])
+            c_out_dim = _clone_dim(w_shape[0])
+            d = _dim_to_const_int(in_shape[2])
+            h = _dim_to_const_int(in_shape[3])
+            w = _dim_to_const_int(in_shape[4])
+            kd = _dim_to_const_int(w_shape[2])
+            kh = _dim_to_const_int(w_shape[3])
+            kw = _dim_to_const_int(w_shape[4])
+            sd, sh, sw = _triple_attr(op.attrs, "stride", 1)
+            pd, ph, pw = _triple_attr(op.attrs, "padding", 0)
+            dd, dh, dw = _triple_attr(op.attrs, "dilation", 1)
+            if (
+                d is not None
+                and h is not None
+                and w is not None
+                and kd is not None
+                and kh is not None
+                and kw is not None
+                and sd > 0
+                and sh > 0
+                and sw > 0
+                and dd > 0
+                and dh > 0
+                and dw > 0
+            ):
+                od = ((d + 2 * pd - dd * (kd - 1) - 1) // sd) + 1
+                oh = ((h + 2 * ph - dh * (kh - 1) - 1) // sh) + 1
+                ow = ((w + 2 * pw - dw * (kw - 1) - 1) // sw) + 1
+                return [
+                    n_dim,
+                    c_out_dim,
+                    _dim_const(max(int(od), 1)),
+                    _dim_const(max(int(oh), 1)),
+                    _dim_const(max(int(ow), 1)),
+                ]
+            return [n_dim, c_out_dim, _dim_from_raw("OD"), _dim_from_raw("OH"), _dim_from_raw("OW")]
+    if opname == "conv_depthwise2d" and len(input_tensors) >= 2:
+        in_shape = list(input_tensors[0].shape)
+        w_shape = list(input_tensors[1].shape)
+        if len(in_shape) == 4 and len(w_shape) == 4:
+            n_dim = _clone_dim(in_shape[0])
+            c_out_dim = _clone_dim(w_shape[0])
+            h = _dim_to_const_int(in_shape[2])
+            w = _dim_to_const_int(in_shape[3])
+            kh = _dim_to_const_int(w_shape[2])
+            kw = _dim_to_const_int(w_shape[3])
+            sh, sw = _pair_attr(op.attrs, "stride", 1)
+            ph, pw = _pair_attr(op.attrs, "padding", 0)
+            dh, dw = _pair_attr(op.attrs, "dilation", 1)
+            if (
+                h is not None
+                and w is not None
+                and kh is not None
+                and kw is not None
+                and sh > 0
+                and sw > 0
+                and dh > 0
+                and dw > 0
+            ):
+                oh = ((h + 2 * ph - dh * (kh - 1) - 1) // sh) + 1
+                ow = ((w + 2 * pw - dw * (kw - 1) - 1) // sw) + 1
+                return [n_dim, c_out_dim, _dim_const(max(int(oh), 1)), _dim_const(max(int(ow), 1))]
+            return [n_dim, c_out_dim, _dim_from_raw("OH"), _dim_from_raw("OW")]
     if opname in {"reduce_sum", "reduce_prod", "reduce_max", "reduce_min", "reduce_any", "reduce_all", "mean", "var", "std", "argmax", "argmin"}:
         if input_tensors:
             base = list(input_tensors[0].shape)

@@ -100,3 +100,39 @@ def test_materialize_missing_tensor_for_matmul_shape_and_dtype() -> None:
     assert "acc_main" in intent.tensors
     assert intent.tensors["acc_main"].dtype == "f32"
     assert _shape_vals(intent, "acc_main") == ["M", "N"]
+
+
+def test_materialize_missing_tensor_for_conv2d_shape_uses_c_out() -> None:
+    intent = IntentFunction.from_json_dict(
+        {
+            "name": "conv2d_nchw",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["N", "C_IN_TOTAL", "H", "W"], "layout": "row_major"},
+                "weight": {"dtype": "f32", "shape": ["C_OUT", "C_IN", "KH", "KW"], "layout": "row_major"},
+                "bias": {"dtype": "f32", "shape": ["C_OUT"], "layout": "row_major"},
+                "output": {"dtype": "f32", "shape": ["N", "C_OUT", "OH", "OW"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "conv2d",
+                    "inputs": ["input", "weight"],
+                    "output": "conv_out",
+                    "attrs": {"stride": ["SH", "SW"], "padding": ["PH", "PW"], "dilation": ["DH", "DW"], "groups": "GROUPS"},
+                },
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["bias"],
+                    "output": "bias_bcast",
+                    "attrs": {"out_shape": ["N", "C_OUT", "OH", "OW"], "broadcast_dims": [1]},
+                },
+                {"op": "add", "inputs": ["conv_out", "bias_bcast"], "output": "output"},
+            ],
+            "outputs": ["output"],
+        }
+    )
+    actions = materialize_missing_op_output_tensors(intent)
+    assert actions
+    assert "conv_out" in intent.tensors
+    assert "bias_bcast" in intent.tensors
+    assert _shape_vals(intent, "conv_out") == ["N", "C_OUT", "OH", "OW"]
+    assert _shape_vals(intent, "bias_bcast") == ["N", "C_OUT", "OH", "OW"]

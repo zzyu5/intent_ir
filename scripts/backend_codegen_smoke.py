@@ -199,16 +199,25 @@ def _derive_optional_input_array(name: str, *, tensor: Any, bindings: dict) -> n
 
 def _write_bin(path: Path, arr: np.ndarray, dtype: str) -> None:
     arr_np = np.asarray(arr)
-    if arr_np.dtype.kind == "b" or dtype in {"bool", "i1"}:
+    dtype = str(dtype)
+    # Respect declared tensor dtype first. Baseline arrays may carry bool views
+    # for tensors that are declared as f32/i32 in intent tensors.
+    if dtype in {"bool", "i1"}:
         raw = np.asarray(arr_np, dtype=np.uint8).tobytes(order="C")
     elif dtype == "i8":
         raw = np.asarray(arr_np, dtype=np.int8).tobytes(order="C")
     elif dtype == "u8":
         raw = np.asarray(arr_np, dtype=np.uint8).tobytes(order="C")
+    elif dtype == "i16":
+        raw = np.asarray(arr_np, dtype=np.int16).tobytes(order="C")
     elif dtype == "i32":
         raw = np.asarray(arr_np, dtype=np.int32).tobytes(order="C")
     elif dtype == "i64":
         raw = np.asarray(arr_np, dtype=np.int64).tobytes(order="C")
+    elif dtype == "f16":
+        raw = np.asarray(arr_np, dtype=np.float16).tobytes(order="C")
+    elif dtype == "f64":
+        raw = np.asarray(arr_np, dtype=np.float64).tobytes(order="C")
     else:
         raw = np.asarray(arr_np, dtype=np.float32).tobytes(order="C")
     path.write_bytes(raw)

@@ -63,3 +63,17 @@ def test_run_one_compile_failure_contains_timing_fields(monkeypatch, tmp_path: P
     result = mod.run_one("k", frontend="triton", triton_provider="native", artifact_dir=str(artifact), keep_tmp=False)
     for key in ("lower_ms", "compile_ms", "launch_ms", "total_ms"):
         assert key in result
+
+
+def test_write_bin_respects_declared_dtype_over_bool_array(tmp_path: Path) -> None:
+    mod = _load_module()
+    out_f32 = tmp_path / "f32.bin"
+    out_i32 = tmp_path / "i32.bin"
+    arr_bool = np.array([[True, False], [False, True]], dtype=np.bool_)
+
+    mod._write_bin(out_f32, arr_bool, "f32")
+    mod._write_bin(out_i32, arr_bool, "i32")
+
+    # 4 elements -> 16 bytes for f32 / i32 payloads.
+    assert out_f32.stat().st_size == 16
+    assert out_i32.stat().st_size == 16
