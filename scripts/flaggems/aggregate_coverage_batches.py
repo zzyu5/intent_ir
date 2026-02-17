@@ -78,7 +78,9 @@ def _resolve_json_path(path_raw: str, *, anchor: Path) -> Path:
     p = Path(str(path_raw or "").strip())
     if p.is_absolute():
         return p
-    if p.is_file():
+    # Many artifacts are recorded as repo-relative paths (often directories like chunk out_dir).
+    # Treat any existing path (file or directory) as already-resolved before falling back.
+    if p.exists():
         return p
     return anchor.parent / p
 

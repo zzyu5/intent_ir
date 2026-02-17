@@ -209,6 +209,39 @@ def _infer_category_batch_rvv_remote_ok(run_summary: dict[str, Any]) -> bool:
     return True
 
 
+def _infer_rvv_from_stage_timing_breakdown(run_summary: dict[str, Any]) -> bool | None:
+    """Infer rvv execution from stage_timing_breakdown artifact if present.
+
+    Category-batch aggregate run summaries don't carry per-backend stage rows
+    (rvv_remote/cuda_local). However they do carry a stage_timing_breakdown
+    artifact that is built from (rvv_remote.json, cuda_local.json) pairs.
+
+    Returns:
+      - True/False if a valid artifact is present.
+      - None if missing/invalid and caller should fall back to other inference.
+    """
+    stages = [s for s in list(run_summary.get("stages") or []) if isinstance(s, dict)]
+    stage_map = {str(s.get("stage") or ""): s for s in stages}
+    stage_row = stage_map.get("stage_timing_breakdown") or {}
+    json_path = _resolve_artifact(str(stage_row.get("json_path") or ""))
+    payload = _load_json_if_exists(json_path)
+    if not payload or str(payload.get("schema_version") or "") != "flaggems_stage_timing_breakdown_v1":
+        return None
+    backends = dict(payload.get("backends") or {})
+    rvv = backends.get("rvv")
+    if not isinstance(rvv, dict):
+        return None
+    if not bool(rvv.get("available")):
+        return False
+    totals = dict(rvv.get("totals_ms") or {})
+    total_ms = 0.0
+    try:
+        total_ms = float(totals.get("total_ms") or 0.0)
+    except Exception:
+        total_ms = 0.0
+    return bool(total_ms > 0.0)
+
+
 def _classify_full196_run(run_summary_path: Path | None) -> tuple[bool, bool | None, dict[str, Any]]:
     run_summary = _load_json_if_exists(run_summary_path)
     if not run_summary:
@@ -231,7 +264,11 @@ def _classify_full196_run(run_summary_path: Path | None) -> tuple[bool, bool | N
     stage_map = {str(s.get("stage") or ""): s for s in stages}
     rvv_remote_ok = bool((stage_map.get("rvv_remote") or {}).get("ok"))
     if not rvv_remote_ok and str(run_summary.get("coverage_mode") or "") == "category_batches":
-        rvv_remote_ok = _infer_category_batch_rvv_remote_ok(run_summary)
+        inferred = _infer_rvv_from_stage_timing_breakdown(run_summary)
+        if inferred is None:
+            rvv_remote_ok = _infer_category_batch_rvv_remote_ok(run_summary)
+        else:
+            rvv_remote_ok = bool(inferred)
     # Use coverage_integrity as the source of truth for full196 health.
     # run_summary.ok can be false for non-functional governance mismatches.
     metadata = {
