@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pipeline.triton.flaggems_specs import coverage_flaggems_kernel_specs, default_flaggems_kernel_specs
+from pipeline.triton.providers.flaggems.specs import coverage_flaggems_kernel_specs, default_flaggems_kernel_specs
 
 
 def test_flaggems_specs_include_registry_metadata() -> None:

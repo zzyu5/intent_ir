@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pipeline.triton.flaggems_workflow import (
+from pipeline.triton.providers.flaggems.workflow import (
     append_progress_log,
     append_metrics_history,
     build_active_batch_payload,

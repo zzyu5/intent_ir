@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pipeline.triton.flaggems_registry import (
+from pipeline.triton.providers.flaggems.registry import (
     STATUS_VALUES,
     build_registry,
     list_supported_e2e_specs,

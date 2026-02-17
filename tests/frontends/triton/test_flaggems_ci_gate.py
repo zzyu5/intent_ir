@@ -95,6 +95,11 @@ def _run_ci_gate(tmp_path: Path, *, reason_code: str) -> subprocess.CompletedPro
                 "full196_validated_commit": head,
                 "full196_last_ok": True,
                 "full196_commits_since_validated": 0,
+                "coverage_mode": "category_batches",
+                "full196_evidence_kind": "batch_aggregate",
+                "coverage_batches_expected": 7,
+                "coverage_batches_completed": 7,
+                "coverage_batches_failed": [],
             }
         ),
         encoding="utf-8",
@@ -272,6 +277,11 @@ def _run_ci_gate_backend_budget(
                 "full196_validated_commit": head,
                 "full196_last_ok": True,
                 "full196_commits_since_validated": 0,
+                "coverage_mode": "category_batches",
+                "full196_evidence_kind": "batch_aggregate",
+                "coverage_batches_expected": 7,
+                "coverage_batches_completed": 7,
+                "coverage_batches_failed": [],
             }
         ),
         encoding="utf-8",

@@ -37,6 +37,12 @@ def _run(cmd: list[str], *, cwd: Path, dry_run: bool) -> tuple[int, str, str]:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--suite", choices=["smoke", "coverage", "all"], default="coverage")
+    ap.add_argument(
+        "--coverage-mode",
+        choices=["single_run", "category_batches"],
+        default="category_batches",
+        help="Coverage orchestrator mode when --suite=coverage (default: category_batches).",
+    )
     ap.add_argument("--cases-limit", type=int, default=8)
     ap.add_argument("--flaggems-path", choices=["original", "intentir"], default="intentir")
     ap.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="auto")
@@ -140,52 +146,115 @@ def main() -> None:
     ]
     catalog_rc, catalog_out, catalog_err = _run(catalog_cmd, cwd=ROOT, dry_run=bool(args.dry_run))
 
-    matrix_cmd: list[str] = [
-        sys.executable,
-        "scripts/flaggems/run_multibackend_matrix.py",
-        "--suite",
-        str(args.suite),
-        "--cases-limit",
-        str(int(args.cases_limit)),
-        "--flaggems-path",
-        str(args.flaggems_path),
-        "--intentir-mode",
-        str(args.intentir_mode),
-        "--intentir-miss-policy",
-        miss_policy,
-        "--flaggems-opset",
-        str(args.flaggems_opset),
-        "--backend-target",
-        str(args.backend_target),
-        "--lane",
-        str(args.lane),
-        "--rvv-host",
-        str(args.rvv_host),
-        "--rvv-user",
-        str(args.rvv_user),
-        "--rvv-port",
-        str(int(args.rvv_port)),
-        "--cuda-timeout-sec",
-        str(int(args.cuda_timeout_sec)),
-        "--cuda-compile-timeout-sec",
-        str(int(args.cuda_compile_timeout_sec)),
-        "--cuda-launch-timeout-sec",
-        str(int(args.cuda_launch_timeout_sec)),
-        "--cuda-runtime-backend",
-        str(args.cuda_runtime_backend),
-        "--out-dir",
-        str(out_dir),
-    ]
-    matrix_cmd.append("--run-rvv-remote" if bool(args.run_rvv_remote) else "--no-run-rvv-remote")
-    matrix_cmd.append("--rvv-use-key" if bool(args.rvv_use_key) else "--no-rvv-use-key")
-    matrix_cmd.append("--allow-cuda-skip" if bool(args.allow_cuda_skip) else "--no-allow-cuda-skip")
-    if bool(args.write_registry):
-        matrix_cmd.append("--write-registry")
+    use_category_batches = bool(
+        str(args.suite) == "coverage"
+        and str(args.lane) == "coverage"
+        and str(args.coverage_mode) == "category_batches"
+    )
 
-    if catalog_rc == 0:
+    if use_category_batches:
+        build_batches_cmd: list[str] = [
+            sys.executable,
+            "scripts/flaggems/build_coverage_batches.py",
+        ]
+        if catalog_rc == 0:
+            build_batches_rc, build_batches_out, build_batches_err = _run(
+                build_batches_cmd, cwd=ROOT, dry_run=bool(args.dry_run)
+            )
+        else:
+            build_batches_rc, build_batches_out, build_batches_err = (1, "", "catalog validation failed")
+
+        matrix_cmd: list[str] = [
+            sys.executable,
+            "scripts/flaggems/run_coverage_batches.py",
+            "--out-root",
+            str(out_dir),
+            "--cases-limit",
+            str(int(args.cases_limit)),
+            "--flaggems-path",
+            str(args.flaggems_path),
+            "--intentir-mode",
+            str(args.intentir_mode),
+            "--intentir-miss-policy",
+            miss_policy,
+            "--flaggems-opset",
+            str(args.flaggems_opset),
+            "--backend-target",
+            str(args.backend_target),
+            "--rvv-host",
+            str(args.rvv_host),
+            "--rvv-user",
+            str(args.rvv_user),
+            "--rvv-port",
+            str(int(args.rvv_port)),
+            "--cuda-timeout-sec",
+            str(int(args.cuda_timeout_sec)),
+            "--cuda-compile-timeout-sec",
+            str(int(args.cuda_compile_timeout_sec)),
+            "--cuda-launch-timeout-sec",
+            str(int(args.cuda_launch_timeout_sec)),
+            "--cuda-runtime-backend",
+            str(args.cuda_runtime_backend),
+        ]
+        matrix_cmd.append("--run-rvv-remote" if bool(args.run_rvv_remote) else "--no-run-rvv-remote")
+        matrix_cmd.append("--rvv-use-key" if bool(args.rvv_use_key) else "--no-rvv-use-key")
+        matrix_cmd.append("--allow-cuda-skip" if bool(args.allow_cuda_skip) else "--no-allow-cuda-skip")
+        if bool(args.write_registry):
+            matrix_cmd.append("--write-registry")
+        matrix_cmd.append("--aggregate")
+        matrix_cmd.append("--stream-subprocess-output")
+    else:
+        build_batches_cmd = []
+        build_batches_rc, build_batches_out, build_batches_err = (0, "", "")
+        matrix_cmd = [
+            sys.executable,
+            "scripts/flaggems/run_multibackend_matrix.py",
+            "--suite",
+            str(args.suite),
+            "--cases-limit",
+            str(int(args.cases_limit)),
+            "--flaggems-path",
+            str(args.flaggems_path),
+            "--intentir-mode",
+            str(args.intentir_mode),
+            "--intentir-miss-policy",
+            miss_policy,
+            "--flaggems-opset",
+            str(args.flaggems_opset),
+            "--backend-target",
+            str(args.backend_target),
+            "--lane",
+            str(args.lane),
+            "--rvv-host",
+            str(args.rvv_host),
+            "--rvv-user",
+            str(args.rvv_user),
+            "--rvv-port",
+            str(int(args.rvv_port)),
+            "--cuda-timeout-sec",
+            str(int(args.cuda_timeout_sec)),
+            "--cuda-compile-timeout-sec",
+            str(int(args.cuda_compile_timeout_sec)),
+            "--cuda-launch-timeout-sec",
+            str(int(args.cuda_launch_timeout_sec)),
+            "--cuda-runtime-backend",
+            str(args.cuda_runtime_backend),
+            "--out-dir",
+            str(out_dir),
+        ]
+        matrix_cmd.append("--run-rvv-remote" if bool(args.run_rvv_remote) else "--no-run-rvv-remote")
+        matrix_cmd.append("--rvv-use-key" if bool(args.rvv_use_key) else "--no-rvv-use-key")
+        matrix_cmd.append("--allow-cuda-skip" if bool(args.allow_cuda_skip) else "--no-allow-cuda-skip")
+        if bool(args.write_registry):
+            matrix_cmd.append("--write-registry")
+
+    if catalog_rc == 0 and build_batches_rc == 0:
         matrix_rc, matrix_out, matrix_err = _run(matrix_cmd, cwd=ROOT, dry_run=bool(args.dry_run))
     else:
-        matrix_rc, matrix_out, matrix_err = (1, "", "catalog validation failed")
+        fail_reason = "catalog validation failed"
+        if build_batches_rc != 0:
+            fail_reason = "coverage batch build failed"
+        matrix_rc, matrix_out, matrix_err = (1, "", fail_reason)
     run_summary_path = out_dir / "run_summary.json"
     status_converged_path = out_dir / "status_converged.json"
     ci_gate_path = out_dir / "ci_gate.json"
@@ -260,6 +329,7 @@ def main() -> None:
             "matrix": matrix_cmd,
             "ci_gate": ci_cmd,
             "coverage_integrity": payload_cmds_recompute,
+            "build_coverage_batches": build_batches_cmd,
         },
         "results": {
             "catalog_validate": {
@@ -267,10 +337,16 @@ def main() -> None:
                 "stdout": str(catalog_out).strip(),
                 "stderr": str(catalog_err).strip(),
             },
+            "build_coverage_batches": {
+                "rc": int(build_batches_rc),
+                "stdout": str(build_batches_out).strip(),
+                "stderr": str(build_batches_err).strip(),
+            },
             "matrix": {
                 "rc": int(matrix_rc),
                 "stdout": str(matrix_out).strip(),
                 "stderr": str(matrix_err).strip(),
+                "mode": ("category_batches" if use_category_batches else "single_run"),
             },
             "ci_gate": {
                 "skipped": bool(ci_skipped),

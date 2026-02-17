@@ -73,6 +73,36 @@
       "tests": ["tests/frontends/triton/test_flaggems_matrix_suite_resolution.py"]
     },
     {
+      "path": "scripts/flaggems/build_coverage_batches.py",
+      "owner_lane": "coverage_integrity",
+      "purpose": "build fixed 7-family coverage batches from registry",
+      "inputs": ["pipeline/triton/flaggems_registry.json"],
+      "outputs": ["workflow/flaggems/state/coverage_batches.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_coverage_batches.py"]
+    },
+    {
+      "path": "scripts/flaggems/run_coverage_batches.py",
+      "owner_lane": "coverage_integrity",
+      "purpose": "run coverage categories with resume and aggregate handoff",
+      "inputs": ["workflow/flaggems/state/coverage_batches.json", "scripts/flaggems/run_multibackend_matrix.py"],
+      "outputs": ["artifacts/flaggems_matrix/**/family_*/run_summary.json", "artifacts/flaggems_matrix/**/run_summary.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_coverage_batches.py"]
+    },
+    {
+      "path": "scripts/flaggems/aggregate_coverage_batches.py",
+      "owner_lane": "coverage_integrity",
+      "purpose": "aggregate category runs into full196 run_summary/status evidence",
+      "inputs": ["workflow/flaggems/state/coverage_batches.json", "artifacts/flaggems_matrix/**/family_*/status_converged.json"],
+      "outputs": ["artifacts/flaggems_matrix/**/run_summary.json", "artifacts/flaggems_matrix/**/status_converged.json", "artifacts/flaggems_matrix/**/coverage_integrity.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_coverage_batches.py"]
+    },
+    {
       "path": "scripts/flaggems/converge_status.py",
       "owner_lane": "coverage_integrity",
       "purpose": "converge provider + rvv + cuda reports into registry status",

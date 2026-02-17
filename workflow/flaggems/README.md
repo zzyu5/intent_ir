@@ -77,18 +77,17 @@ Each successful backend compiler batch now emits:
 ## Matrix + CI Gate (Coverage Lane)
 
 ```bash
-python scripts/flaggems/run_multibackend_matrix.py \
-  --suite coverage \
-  --lane coverage \
+python scripts/flaggems/build_coverage_batches.py
+python scripts/flaggems/run_coverage_batches.py \
+  --out-root artifacts/flaggems_matrix/daily/<YYYYMMDD>/<run_name> \
   --flaggems-path intentir \
-  --intentir-mode auto \
-  --intentir-miss-policy deterministic \
+  --intentir-mode force_compile \
+  --intentir-miss-policy strict \
   --run-rvv-remote \
   --rvv-host 192.168.8.72 \
   --rvv-user ubuntu \
   --rvv-use-key \
-  --cuda-runtime-backend nvrtc \
-  --out-dir artifacts/flaggems_matrix/daily/<YYYYMMDD>/<run_name>
+  --cuda-runtime-backend nvrtc
 ```
 
 ```bash
@@ -103,6 +102,7 @@ python scripts/flaggems/ci_gate.py \
 ```bash
 python scripts/flaggems/nightly_maintenance.py \
   --suite coverage \
+  --coverage-mode category_batches \
   --lane coverage \
   --ci-profiles coverage \
   --run-rvv-remote \
@@ -123,6 +123,7 @@ bash workflow/flaggems/nightly.sh
 Environment overrides:
 - `FLAGGEMS_NIGHTLY_SUITE`
 - `FLAGGEMS_NIGHTLY_CASES_LIMIT`
+- `FLAGGEMS_NIGHTLY_COVERAGE_MODE` (`category_batches|single_run`)
 - `FLAGGEMS_NIGHTLY_RVV_HOST`
 - `FLAGGEMS_NIGHTLY_RVV_USER`
 - `FLAGGEMS_NIGHTLY_INTENTIR_MISS_POLICY`
@@ -152,6 +153,7 @@ python scripts/flaggems/install_systemd_nightly.py --dry-run
 - `state/active_batch_coverage.json`: active coverage lane batch.
 - `state/active_batch_ir_arch.json`: active IR architecture lane batch.
 - `state/active_batch_backend_compiler.json`: active backend compiler lane batch.
+- `state/coverage_batches.json`: fixed 7-family coverage batch plan.
 - `state/progress_log.jsonl`: append-only session history.
 - `state/handoff.md`: latest human-readable handoff.
 - `state/baselines/*.json`: frozen baseline snapshots.

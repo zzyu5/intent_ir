@@ -18,6 +18,9 @@ python scripts/validate_catalog.py
 
 ## Active Coverage Integrity Entrypoints
 
+- `scripts/flaggems/build_coverage_batches.py`: derive fixed 7-family coverage batches from registry.
+- `scripts/flaggems/run_coverage_batches.py`: run all category batches (resume-capable) and aggregate to full196 evidence.
+- `scripts/flaggems/aggregate_coverage_batches.py`: aggregate family artifacts into one full196 run/status/integrity chain.
 - `scripts/triton/flaggems_full_pipeline_verify.py`: provider pipeline verification.
 - `scripts/flaggems/run_multibackend_matrix.py`: pipeline + RVV local + CUDA local + converge in one run.
 - `scripts/flaggems/converge_status.py`: converge provider/RVV/CUDA into status report.

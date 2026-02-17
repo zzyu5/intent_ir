@@ -18,6 +18,33 @@ class TritonProviderPlugin:
     name: str
     require_source_and_state: bool = False
 
+    def deterministic_intent_for_spec(self, *, spec_name: str):
+        """
+        Optional provider-level deterministic intent for a kernel/spec.
+
+        Return value is provider-defined (typically an IntentFunction) and is
+        interpreted by the Triton core pipeline.
+        """
+        return None
+
+    def repair_candidate_after_diff(
+        self,
+        *,
+        spec_name: str,
+        current_candidate: CandidateIntent,
+        current_candidate_expanded: CandidateIntent | None,
+    ) -> tuple[CandidateIntent, CandidateIntent | None, dict[str, Any] | None] | None:
+        """
+        Optional provider-level repair hook invoked after dynamic diff failure.
+        """
+        return None
+
+    def seed_payload_for_spec(self, *, spec_name: str) -> dict[str, Any] | None:
+        """
+        Optional provider-level deterministic seed payload generator.
+        """
+        return None
+
     def maybe_normalize_candidate(
         self,
         *,

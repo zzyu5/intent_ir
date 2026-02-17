@@ -69,6 +69,33 @@ def _validate_coverage_fresh_on_head(current_status_path: Path) -> tuple[bool, s
     return True, "full196 evidence is fresh on HEAD"
 
 
+def _validate_coverage_categories_complete(current_status_path: Path) -> tuple[bool, str]:
+    if not current_status_path.is_file():
+        return False, f"missing current_status: {current_status_path}"
+    payload = load_json(current_status_path)
+    mode = str(payload.get("coverage_mode") or "").strip()
+    evidence = str(payload.get("full196_evidence_kind") or "").strip()
+    expected = payload.get("coverage_batches_expected")
+    completed = payload.get("coverage_batches_completed")
+    failed = list(payload.get("coverage_batches_failed") or [])
+    try:
+        expected_i = int(expected)
+        completed_i = int(completed)
+    except Exception:
+        return False, "coverage batch counters missing/invalid in current_status"
+    if mode != "category_batches":
+        return False, f"coverage_mode is {mode!r} (expected 'category_batches')"
+    if evidence != "batch_aggregate":
+        return False, f"full196_evidence_kind is {evidence!r} (expected 'batch_aggregate')"
+    if expected_i <= 0:
+        return False, f"coverage_batches_expected={expected_i} (expected >0)"
+    if completed_i != expected_i:
+        return False, f"coverage batches incomplete: {completed_i}/{expected_i}"
+    if failed:
+        return False, f"coverage batches failed: {failed}"
+    return True, f"coverage categories complete: {completed_i}/{expected_i}"
+
+
 def _stage_map(run_summary: dict[str, Any]) -> dict[str, dict[str, Any]]:
     rows = [r for r in list(run_summary.get("stages") or []) if isinstance(r, dict)]
     out: dict[str, dict[str, Any]] = {}
@@ -170,6 +197,12 @@ def main() -> None:
         help="Require full196 evidence validated on current HEAD commit.",
     )
     ap.add_argument(
+        "--require-coverage-categories-complete",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require full196 evidence to come from completed category aggregate coverage.",
+    )
+    ap.add_argument(
         "--max-total-regression-pct",
         type=float,
         default=8.0,
@@ -213,7 +246,7 @@ def main() -> None:
         checks.append(_check(f"exists::{_to_repo_rel(p)}", p.is_file(), "file exists" if p.is_file() else "missing file"))
     for p in (args.registry, args.feature_list, args.run_summary, args.status_converged):
         checks.append(_check(f"exists::{_to_repo_rel(p)}", p.is_file(), "file exists" if p.is_file() else "missing file"))
-    if bool(args.require_coverage_fresh_on_head):
+    if bool(args.require_coverage_fresh_on_head) or bool(args.require_coverage_categories_complete):
         checks.append(
             _check(
                 f"exists::{_to_repo_rel(args.current_status)}",
@@ -256,6 +289,9 @@ def main() -> None:
     if bool(args.require_coverage_fresh_on_head):
         freshness_ok, freshness_detail = _validate_coverage_fresh_on_head(args.current_status)
         checks.append(_check("coverage_fresh_on_head", freshness_ok, freshness_detail))
+    if bool(args.require_coverage_categories_complete):
+        categories_ok, categories_detail = _validate_coverage_categories_complete(args.current_status)
+        checks.append(_check("coverage_categories_complete", categories_ok, categories_detail))
 
     run_summary_payload: dict[str, Any] = {}
     if args.run_summary.is_file():
@@ -355,6 +391,14 @@ def main() -> None:
             cmd.append("--require-coverage-fresh-on-head")
         else:
             cmd.append("--no-require-coverage-fresh-on-head")
+        if profile == "coverage" and bool(args.require_coverage_categories_complete):
+            is_batch_aggregate = str(run_summary_payload.get("full196_evidence_kind") or "") == "batch_aggregate"
+            if is_batch_aggregate and _is_full_coverage_run(run_summary_payload):
+                cmd.append("--require-all-categories-complete")
+            else:
+                cmd.append("--no-require-all-categories-complete")
+        else:
+            cmd.append("--no-require-all-categories-complete")
         if profile == "backend_compiler":
             cmd += [
                 "--max-total-regression-pct",

@@ -4,7 +4,7 @@ import math
 
 from intent_ir.ir import IntentFunction
 from intent_ir.parser import CandidateIntent
-from pipeline.triton.flaggems_intent_normalize import (
+from pipeline.triton.providers.flaggems.intent_normalize import (
     canonical_flaggems_intent_for_spec,
     maybe_normalize_flaggems_candidate,
 )

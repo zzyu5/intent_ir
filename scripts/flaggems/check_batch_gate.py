@@ -368,6 +368,12 @@ def main() -> None:
         help="Require every active semantic op to be dual_pass (default: true).",
     )
     ap.add_argument(
+        "--require-all-categories-complete",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="For coverage profile, require category aggregate completion metadata in run_summary.",
+    )
+    ap.add_argument(
         "--max-total-regression-pct",
         type=float,
         default=8.0,
@@ -442,6 +448,40 @@ def main() -> None:
     )
 
     if profile == "coverage":
+        if bool(args.require_all_categories_complete):
+            expected = run_summary.get("coverage_batches_expected")
+            completed = run_summary.get("coverage_batches_completed")
+            failed = list(run_summary.get("coverage_batches_failed") or [])
+            evidence_kind = str(run_summary.get("full196_evidence_kind") or "")
+            coverage_mode = str(run_summary.get("coverage_mode") or "")
+            try:
+                expected_i = int(expected)
+                completed_i = int(completed)
+            except Exception:
+                expected_i = -1
+                completed_i = -1
+            all_complete = (
+                evidence_kind == "batch_aggregate"
+                and coverage_mode == "category_batches"
+                and expected_i > 0
+                and completed_i == expected_i
+                and len(failed) == 0
+            )
+            checks.append(
+                _check(
+                    "coverage_categories_complete",
+                    all_complete,
+                    (
+                        f"categories complete: {completed_i}/{expected_i} (batch aggregate)"
+                        if all_complete
+                        else (
+                            "coverage category aggregate incomplete "
+                            f"(mode={coverage_mode}, evidence={evidence_kind}, completed={completed_i}, "
+                            f"expected={expected_i}, failed={failed})"
+                        )
+                    ),
+                )
+            )
         status_map = {str(e.get("semantic_op")): e for e in gate_entries if isinstance(e.get("semantic_op"), str)}
         covered = all(op in status_map for op in active_ops)
         checks.append(

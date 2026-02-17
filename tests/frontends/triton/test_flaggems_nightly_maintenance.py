@@ -37,13 +37,12 @@ def test_nightly_maintenance_dry_run_writes_summary(tmp_path: Path) -> None:
     assert p.returncode == 0, p.stderr
     assert summary["mode"] == "dry-run"
     matrix_cmd = list(summary["commands"]["matrix"])
-    assert "scripts/flaggems/run_multibackend_matrix.py" in matrix_cmd
+    assert "scripts/flaggems/run_coverage_batches.py" in matrix_cmd
     assert "--intentir-miss-policy" in matrix_cmd
     assert "--run-rvv-remote" in matrix_cmd
     assert "--rvv-use-key" in matrix_cmd
     assert "--allow-cuda-skip" in matrix_cmd
-    assert "--suite" in matrix_cmd
-    assert "coverage" in matrix_cmd
+    assert "--cases-limit" in matrix_cmd
 
 
 def test_nightly_maintenance_toggle_flags(tmp_path: Path) -> None:
@@ -60,6 +59,15 @@ def test_nightly_maintenance_toggle_flags(tmp_path: Path) -> None:
     assert "--no-rvv-use-key" in matrix_cmd
     assert "--no-allow-cuda-skip" in matrix_cmd
     assert "--write-registry" in matrix_cmd
+
+
+def test_nightly_maintenance_single_run_mode_uses_matrix_script(tmp_path: Path) -> None:
+    p, summary = _run_nightly(tmp_path, "--coverage-mode", "single_run")
+    assert p.returncode == 0, p.stderr
+    matrix_cmd = list(summary["commands"]["matrix"])
+    assert "scripts/flaggems/run_multibackend_matrix.py" in matrix_cmd
+    assert "--suite" in matrix_cmd
+    assert "coverage" in matrix_cmd
 
 
 def test_nightly_maintenance_rejects_intentir_mode_for_original_path(tmp_path: Path) -> None:

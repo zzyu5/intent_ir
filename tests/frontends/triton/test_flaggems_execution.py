@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from pipeline.triton.flaggems_execution import (
+from pipeline.triton.providers.flaggems.execution import (
     resolve_flaggems_execution,
     sync_seed_back_to_cache,
     sync_seed_into_run_dir,

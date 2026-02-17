@@ -368,6 +368,120 @@ def test_check_batch_gate_fails_when_coverage_not_fresh_on_head(tmp_path: Path) 
     assert p.returncode != 0
 
 
+def test_check_batch_gate_requires_all_categories_complete_when_enabled(tmp_path: Path) -> None:
+    active = tmp_path / "active_batch.json"
+    run_summary = tmp_path / "run_summary.json"
+    status_converged = tmp_path / "status_converged.json"
+    progress = tmp_path / "progress_log.jsonl"
+    handoff = tmp_path / "handoff.md"
+    out = tmp_path / "batch_gate.json"
+
+    active.write_text(
+        json.dumps({"schema_version": "flaggems_active_batch_v2", "lane": "coverage", "items": []}),
+        encoding="utf-8",
+    )
+    run_summary.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "coverage_mode": "category_batches",
+                "full196_evidence_kind": "batch_aggregate",
+                "coverage_batches_expected": 7,
+                "coverage_batches_completed": 6,
+                "coverage_batches_failed": ["attention_sequence"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    status_converged.write_text(json.dumps({"entries": []}), encoding="utf-8")
+    progress.write_text(
+        json.dumps({"run_summary_path": str(run_summary), "status_converged_path": str(status_converged)}) + "\n",
+        encoding="utf-8",
+    )
+    handoff.write_text("# FlagGems Session Handoff\n- Next Focus: rerun categories\n", encoding="utf-8")
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/check_batch_gate.py",
+            "--active-batch",
+            str(active),
+            "--run-summary",
+            str(run_summary),
+            "--status-converged",
+            str(status_converged),
+            "--progress-log",
+            str(progress),
+            "--handoff",
+            str(handoff),
+            "--require-all-categories-complete",
+            "--out",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode != 0
+
+
+def test_check_batch_gate_category_completion_passes_when_full_aggregate_done(tmp_path: Path) -> None:
+    active = tmp_path / "active_batch.json"
+    run_summary = tmp_path / "run_summary.json"
+    status_converged = tmp_path / "status_converged.json"
+    progress = tmp_path / "progress_log.jsonl"
+    handoff = tmp_path / "handoff.md"
+    out = tmp_path / "batch_gate.json"
+
+    active.write_text(
+        json.dumps({"schema_version": "flaggems_active_batch_v2", "lane": "coverage", "items": []}),
+        encoding="utf-8",
+    )
+    run_summary.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "coverage_mode": "category_batches",
+                "full196_evidence_kind": "batch_aggregate",
+                "coverage_batches_expected": 7,
+                "coverage_batches_completed": 7,
+                "coverage_batches_failed": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    status_converged.write_text(json.dumps({"entries": []}), encoding="utf-8")
+    progress.write_text(
+        json.dumps({"run_summary_path": str(run_summary), "status_converged_path": str(status_converged)}) + "\n",
+        encoding="utf-8",
+    )
+    handoff.write_text("# FlagGems Session Handoff\n- Next Focus: none\n", encoding="utf-8")
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/check_batch_gate.py",
+            "--active-batch",
+            str(active),
+            "--run-summary",
+            str(run_summary),
+            "--status-converged",
+            str(status_converged),
+            "--progress-log",
+            str(progress),
+            "--handoff",
+            str(handoff),
+            "--require-all-categories-complete",
+            "--out",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+
+
 def test_check_batch_gate_passes_when_coverage_fresh_on_head(tmp_path: Path) -> None:
     active = tmp_path / "active_batch.json"
     run_summary = tmp_path / "run_summary.json"

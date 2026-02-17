@@ -27,6 +27,9 @@ from pipeline.triton.providers.flaggems.workflow import (
 FULL196_VALIDATED_SCOPE = "coverage_158_kernels_to_196_semantics"
 IR_ARCH_COMPLEX_SINGLE_RATIO_THRESHOLD = 0.10
 IR_ARCH_GLOBAL_UNIQUE_SINGLE_RATIO_THRESHOLD = 0.40
+FULL196_COVERAGE_RULE = (
+    "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD"
+)
 
 
 def _to_repo_rel(path: Path) -> str:
@@ -198,6 +201,11 @@ def _classify_full196_run(run_summary_path: Path | None) -> tuple[bool, bool | N
         "validated_mode": str(run_summary.get("intentir_mode") or ""),
         "validated_scope": FULL196_VALIDATED_SCOPE,
         "validated_with_rvv_remote": bool((stage_map.get("rvv_remote") or {}).get("ok")),
+        "coverage_mode": str(run_summary.get("coverage_mode") or "single_run"),
+        "full196_evidence_kind": str(run_summary.get("full196_evidence_kind") or "single_run"),
+        "coverage_batches_expected": run_summary.get("coverage_batches_expected"),
+        "coverage_batches_completed": run_summary.get("coverage_batches_completed"),
+        "coverage_batches_failed": list(run_summary.get("coverage_batches_failed") or []),
     }
     return True, bool(coverage_ok), metadata
 
@@ -217,6 +225,11 @@ def _latest_full196_from_progress(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "validated_mode": str(metadata.get("validated_mode") or ""),
             "validated_scope": str(metadata.get("validated_scope") or ""),
             "validated_with_rvv_remote": bool(metadata.get("validated_with_rvv_remote")),
+            "coverage_mode": str(metadata.get("coverage_mode") or "single_run"),
+            "full196_evidence_kind": str(metadata.get("full196_evidence_kind") or "single_run"),
+            "coverage_batches_expected": metadata.get("coverage_batches_expected"),
+            "coverage_batches_completed": metadata.get("coverage_batches_completed"),
+            "coverage_batches_failed": list(metadata.get("coverage_batches_failed") or []),
         }
     return {
         "run_summary_path": "",
@@ -225,7 +238,48 @@ def _latest_full196_from_progress(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "validated_mode": "",
         "validated_scope": "",
         "validated_with_rvv_remote": None,
+        "coverage_mode": "single_run",
+        "full196_evidence_kind": "single_run",
+        "coverage_batches_expected": None,
+        "coverage_batches_completed": None,
+        "coverage_batches_failed": [],
     }
+
+
+def _commit_exists(commit: str) -> bool:
+    c = str(commit or "").strip()
+    if not c:
+        return False
+    p = subprocess.run(
+        ["git", "cat-file", "-e", f"{c}^{{commit}}"],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    return p.returncode == 0
+
+
+def _is_ancestor(base_commit: str, head_commit: str) -> bool:
+    b = str(base_commit or "").strip()
+    h = str(head_commit or "").strip()
+    if not b or not h:
+        return False
+    p = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", b, h],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    return p.returncode == 0
+
+
+def _as_int_or_none(v: Any) -> int | None:
+    if v is None:
+        return None
+    try:
+        return int(v)
+    except Exception:
+        return None
 
 
 def _commits_since_validated(validated_commit: str, head_commit: str) -> int | None:
@@ -252,6 +306,11 @@ def main() -> None:
     ap.add_argument("--feature-list", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "feature_list.json"))
     ap.add_argument("--progress-log", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "progress_log.jsonl"))
     ap.add_argument("--handoff", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "handoff.md"))
+    ap.add_argument(
+        "--coverage-batches",
+        type=Path,
+        default=(ROOT / "workflow" / "flaggems" / "state" / "coverage_batches.json"),
+    )
     ap.add_argument("--active-batch-coverage", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch_coverage.json"))
     ap.add_argument("--active-batch-ir-arch", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch_ir_arch.json"))
     ap.add_argument(
@@ -278,9 +337,37 @@ def main() -> None:
     full196_validated_mode = str(full196_info.get("validated_mode") or "")
     full196_validated_scope = str(full196_info.get("validated_scope") or "")
     full196_validated_with_rvv_remote = full196_info.get("validated_with_rvv_remote")
+    coverage_mode = str(full196_info.get("coverage_mode") or "single_run")
+    full196_evidence_kind = str(full196_info.get("full196_evidence_kind") or "single_run")
+    coverage_batches_expected = _as_int_or_none(full196_info.get("coverage_batches_expected"))
+    coverage_batches_completed = _as_int_or_none(full196_info.get("coverage_batches_completed"))
+    coverage_batches_failed = [str(x) for x in list(full196_info.get("coverage_batches_failed") or []) if str(x).strip()]
     branch = _git(["git", "branch", "--show-current"]) or "unknown"
     head_commit = _git(["git", "rev-parse", "HEAD"]) or "unknown"
-    full196_commits_since_validated = _commits_since_validated(full196_validated_commit, head_commit)
+    coverage_batches_payload = load_json(args.coverage_batches) if args.coverage_batches.is_file() else {}
+    if coverage_batches_expected is None:
+        try:
+            coverage_batches_expected = int(len(list(coverage_batches_payload.get("family_order") or [])))
+        except Exception:
+            coverage_batches_expected = None
+
+    validated_commit_state = "missing"
+    if full196_validated_commit:
+        if not _commit_exists(full196_validated_commit):
+            validated_commit_state = "invalid"
+        elif not _is_ancestor(full196_validated_commit, head_commit):
+            validated_commit_state = "invalid"
+        else:
+            validated_commit_state = "reachable"
+    full196_commits_since_validated = (
+        _commits_since_validated(full196_validated_commit, head_commit)
+        if validated_commit_state == "reachable"
+        else None
+    )
+    if validated_commit_state == "reachable" and full196_commits_since_validated is not None and int(full196_commits_since_validated) > 0:
+        validated_commit_state = "stale"
+    elif validated_commit_state == "reachable":
+        validated_commit_state = "fresh"
     git_log_short = read_git_log(cwd=ROOT, lines=int(args.git_log_lines))
     next_focus = _parse_next_focus(args.handoff) or str(latest.get("next_focus") or "")
     active_lanes = _active_lanes(feature_payload)
@@ -289,13 +376,18 @@ def main() -> None:
     catalog_exists = bool(args.scripts_catalog.is_file())
     if not full196_run_summary:
         coverage_integrity_phase = "recompute_pending"
-    elif full196_commits_since_validated and int(full196_commits_since_validated) > 0:
+    elif validated_commit_state == "invalid":
+        coverage_integrity_phase = "stale_or_invalid"
+    elif validated_commit_state == "stale":
         coverage_integrity_phase = "recompute_stale"
     else:
         coverage_integrity_phase = "recomputed_ok" if bool(full196_last_ok) else "recomputed_failed"
-    if (full196_commits_since_validated is not None) and int(full196_commits_since_validated) > 0:
+    if validated_commit_state in {"invalid", "stale"}:
         active_lanes = sorted(set(list(active_lanes) + ["coverage"]))
-        next_focus_by_lane.setdefault("coverage", "Run full196 force_compile matrix to refresh coverage evidence on HEAD.")
+        next_focus_by_lane.setdefault(
+            "coverage",
+            "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
+        )
     if need_ir_arch_lane:
         active_lanes = sorted(set(list(active_lanes) + ["ir_arch"]))
         next_focus_by_lane.setdefault(
@@ -319,6 +411,11 @@ def main() -> None:
         full196_validated_mode=full196_validated_mode,
         full196_validated_scope=full196_validated_scope,
         full196_validated_with_rvv_remote=full196_validated_with_rvv_remote,
+        coverage_mode=coverage_mode,
+        coverage_batches_expected=coverage_batches_expected,
+        coverage_batches_completed=coverage_batches_completed,
+        coverage_batches_failed=coverage_batches_failed,
+        full196_evidence_kind=full196_evidence_kind,
         catalog_path=_to_repo_rel(args.scripts_catalog),
         catalog_validated=catalog_exists,
         active_lanes=active_lanes,
@@ -337,6 +434,7 @@ def main() -> None:
         must_read_scripts_catalog=_to_repo_rel(args.scripts_catalog),
         active_lanes=active_lanes,
         next_focus_by_lane=next_focus_by_lane,
+        full196_coverage_rule=FULL196_COVERAGE_RULE,
     )
 
     out_status = dump_json(args.current_status_out, current_status)

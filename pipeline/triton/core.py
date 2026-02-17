@@ -1956,24 +1956,6 @@ def _tilelang_deterministic_intent_for(kernel_name: str):
     return None
 
 
-def _provider_deterministic_intent_for(*, kernel_name: str, triton_provider: str):
-    """
-    Provider-aware deterministic fallback intents.
-
-    For FlagGems coverage kernels, prefer provider-maintained canonical intents
-    before falling back to generic TileLang intents.
-    """
-    provider = str(triton_provider).strip().lower()
-    if provider != "flaggems":
-        return None
-    try:
-        from pipeline.triton.flaggems_intent_normalize import canonical_flaggems_intent_for_spec  # noqa: PLC0415
-
-        return canonical_flaggems_intent_for_spec(str(kernel_name))
-    except Exception:
-        return None
-
-
 def default_kernel_specs() -> List[KernelSpec]:
     def _norm_groupnorm(shapes: Dict[str, int]) -> Dict[str, int]:
         out = dict(shapes)
@@ -2685,6 +2667,11 @@ def run_pipeline_for_spec(
         "mode": str(seed_policy),
         "used": False,
     }
+    provider_name = str(triton_provider).strip().lower()
+    provider_plugin = get_provider_plugin(provider_name)
+    provider_source_op = getattr(spec, "source_op", getattr(spec, "name", None))
+    provider_capability_state = getattr(spec, "capability_state", getattr(spec, "capability_status", None))
+
     should_try_cache = bool(seed_policy in {"auto", "force_cache"})
     should_try_llm = bool(seed_policy in {"auto", "force_llm"})
     if should_try_cache and seed_path.is_file():
@@ -2812,13 +2799,12 @@ def run_pipeline_for_spec(
                 fb_intent = _attn_fwd_fallback_intent()
                 fallback_kind = "deterministic_attn"
             else:
-                provider_fb_intent = _provider_deterministic_intent_for(
-                    kernel_name=spec.name,
-                    triton_provider=triton_provider,
+                provider_fb_intent = provider_plugin.deterministic_intent_for_spec(
+                    spec_name=str(spec.name),
                 )
                 if provider_fb_intent is not None:
                     fb_intent = provider_fb_intent
-                    fallback_kind = "provider_canonical_deterministic"
+                    fallback_kind = f"provider.{provider_name}.deterministic"
                 else:
                     fb_intent = _tilelang_deterministic_intent_for(spec.name)
                     fallback_kind = "tilelang_deterministic"
@@ -2846,10 +2832,6 @@ def run_pipeline_for_spec(
             (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
             (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
     # Ensure schedule is attached even if the LLM emits only partial schedule fields.
-    provider_name = str(triton_provider).strip().lower()
-    provider_plugin = get_provider_plugin(provider_name)
-    provider_source_op = getattr(spec, "source_op", getattr(spec, "name", None))
-    provider_capability_state = getattr(spec, "capability_state", getattr(spec, "capability_status", None))
     cand, cand_expanded, norm_info = provider_plugin.maybe_normalize_candidate(
         spec_name=str(spec.name),
         candidate=cand,
@@ -2857,8 +2839,6 @@ def run_pipeline_for_spec(
     )
     if norm_info is not None:
         report["provider_intent_normalization"] = dict(norm_info)
-        if provider_name == "flaggems":
-            report["flaggems_intent_normalization"] = dict(norm_info)
         (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
         if cand_expanded is not None:
             (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(
@@ -2934,8 +2914,6 @@ def run_pipeline_for_spec(
                 )
                 if repair_norm_info is not None:
                     report["provider_intent_normalization"] = dict(repair_norm_info)
-                    if provider_name == "flaggems":
-                        report["flaggems_intent_normalization"] = dict(repair_norm_info)
 
                 _ensure_schedule(cand.intent, kernel_name=spec.name, triton_src=src)
                 _attach_access_witness_meta(cand.intent, cert_v2=cert_v2, canonical_shapes=dict(spec.canonical_shapes))
@@ -3089,8 +3067,6 @@ def run_pipeline_for_spec(
                 )
                 if repair_norm_info is not None:
                     report["provider_intent_normalization"] = dict(repair_norm_info)
-                    if provider_name == "flaggems":
-                        report["flaggems_intent_normalization"] = dict(repair_norm_info)
 
                 cand = cand_fix
                 cand_expanded = cand_fix_expanded
@@ -3170,38 +3146,18 @@ def run_pipeline_for_spec(
             except Exception:
                 pass
 
-    # Provider-level deterministic repair pass (only after LLM-based attempts fail).
-    if provider_name == "flaggems" and diffs_in and not all(d.ok for d in diffs_in):
+    # Provider-level deterministic repair pass (only after dynamic diff failure).
+    if diffs_in and not all(d.ok for d in diffs_in):
         try:
-            det_intent = _provider_deterministic_intent_for(
-                kernel_name=spec.name,
-                triton_provider=triton_provider,
+            repaired = provider_plugin.repair_candidate_after_diff(
+                spec_name=str(spec.name),
+                current_candidate=cand,
+                current_candidate_expanded=cand_expanded,
             )
-            if det_intent is not None:
-                det_candidate = CandidateIntent(
-                    intent=det_intent,
-                    problem_params={},
-                    schedule_params={},
-                    raw_json={"fallback": True, "source": "provider_canonical_repair"},
-                    llm_trace={},
-                )
-                enrich_intent_macros(det_candidate.intent)
-                det_expanded_intent = expand_macros(det_candidate.intent)
-                det_candidate_expanded = CandidateIntent(
-                    intent=det_expanded_intent,
-                    problem_params={},
-                    schedule_params={},
-                    raw_json={"fallback": True, "source": "provider_canonical_repair"},
-                    llm_trace={},
-                )
-                det_candidate, det_candidate_expanded, det_norm_info = provider_plugin.maybe_normalize_candidate(
-                    spec_name=str(spec.name),
-                    candidate=det_candidate,
-                    candidate_expanded=det_candidate_expanded,
-                )
+            if repaired is not None:
+                det_candidate, det_candidate_expanded, det_norm_info = repaired
                 if det_norm_info is not None:
                     report["provider_intent_normalization"] = dict(det_norm_info)
-                    report["flaggems_intent_normalization"] = dict(det_norm_info)
 
                 _ensure_schedule(det_candidate.intent, kernel_name=spec.name, triton_src=src)
                 _attach_access_witness_meta(det_candidate.intent, cert_v2=cert_v2, canonical_shapes=dict(spec.canonical_shapes))
@@ -3243,9 +3199,11 @@ def run_pipeline_for_spec(
                 det_diffs_in, det_cex_in = run_diff(det_for_run.intent, spec.runner, det_cases_in, tolerances=det_tol)
 
                 det_ok = bool(det_diffs_in and all(d.ok for d in det_diffs_in))
+                det_kind = str((det_norm_info or {}).get("repair_kind") or "provider_deterministic_repair")
                 report["provider_deterministic_repair"] = {
                     "used": True,
-                    "kind": "provider_canonical_deterministic",
+                    "provider": str(provider_name),
+                    "kind": det_kind,
                     "ok": bool(det_ok),
                 }
                 if det_ok:
@@ -3303,7 +3261,8 @@ def run_pipeline_for_spec(
         except Exception as e:
             report["provider_deterministic_repair"] = {
                 "used": True,
-                "kind": "provider_canonical_deterministic",
+                "provider": str(provider_name),
+                "kind": "provider_deterministic_repair",
                 "ok": False,
                 "error": f"{type(e).__name__}: {e}",
             }

@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import os
 from dataclasses import dataclass
 from typing import Any
 
+from intent_ir.macros import expand_macros
 from intent_ir.parser import CandidateIntent
 from pipeline.triton.providers.base import TritonProviderPlugin
-from pipeline.triton.providers.flaggems.intent_normalize import maybe_normalize_flaggems_candidate
+from pipeline.triton.providers.flaggems.intent_normalize import (
+    canonical_flaggems_intent_for_spec,
+    maybe_normalize_flaggems_candidate,
+)
 
 _ALWAYS_CANONICAL_SPECS = frozenset(
     {
@@ -108,6 +113,64 @@ def flaggems_canonical_normalization_enabled() -> bool:
 class FlaggemsProviderPlugin(TritonProviderPlugin):
     name: str = "flaggems"
     require_source_and_state: bool = True
+
+    def deterministic_intent_for_spec(self, *, spec_name: str):
+        return canonical_flaggems_intent_for_spec(str(spec_name))
+
+    def repair_candidate_after_diff(
+        self,
+        *,
+        spec_name: str,
+        current_candidate: CandidateIntent,
+        current_candidate_expanded: CandidateIntent | None,
+    ) -> tuple[CandidateIntent, CandidateIntent | None, dict[str, Any] | None] | None:
+        del current_candidate, current_candidate_expanded
+        det_intent = self.deterministic_intent_for_spec(spec_name=str(spec_name))
+        if det_intent is None:
+            return None
+        det_candidate = CandidateIntent(
+            intent=det_intent,
+            problem_params={},
+            schedule_params={},
+            raw_json={"fallback": True, "source": "provider_canonical_repair"},
+            llm_trace={},
+        )
+        det_expanded_intent = expand_macros(det_candidate.intent)
+        det_candidate_expanded = CandidateIntent(
+            intent=det_expanded_intent,
+            problem_params={},
+            schedule_params={},
+            raw_json={"fallback": True, "source": "provider_canonical_repair"},
+            llm_trace={},
+        )
+        det_candidate, det_candidate_expanded, info = self.maybe_normalize_candidate(
+            spec_name=str(spec_name),
+            candidate=det_candidate,
+            candidate_expanded=det_candidate_expanded,
+        )
+        wrapped = dict(info or {})
+        wrapped.setdefault("provider", "flaggems")
+        wrapped["repair_kind"] = "provider_canonical_deterministic"
+        return det_candidate, det_candidate_expanded, wrapped
+
+    def seed_payload_for_spec(self, *, spec_name: str) -> dict[str, Any] | None:
+        canonical = self.deterministic_intent_for_spec(spec_name=str(spec_name))
+        if canonical is None:
+            return None
+        expanded = expand_macros(canonical)
+        return {
+            "schema_version": "intent_seed_v1",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "kernel": str(spec_name),
+            "triton_provider": "flaggems",
+            "backend_target": None,
+            "intent": canonical.to_json_dict(),
+            "intent_expanded": expanded.to_json_dict(),
+            "problem_params": {},
+            "schedule_params": {},
+            "raw_json": {"fallback": True, "source": "provider_canonical_seed"},
+            "llm_trace": {"fallback": True, "source": "provider_canonical_seed"},
+        }
 
     def maybe_normalize_candidate(
         self,

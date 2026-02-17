@@ -1,10 +1,10 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-16T23:25:02+00:00",
+  "updated_at": "2026-02-17T01:35:52+00:00",
   "branch": "flaggems",
-  "head_commit": "6551229becf0544bf7fa0d3a3629dcadb0ec92bc",
+  "head_commit": "ec5ec4cdc0bba328a6a2498daba6a092c0825544",
   "mode": "mixed_development",
-  "coverage_integrity_phase": "recomputed_failed",
+  "coverage_integrity_phase": "stale_or_invalid",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260216/full196_force_compile_head_v3/run_summary.json",
   "full196_last_ok": false,
   "full196_validated_commit": "b53ebafed0875fcc69f456f17bc9d7997de67370",
@@ -12,6 +12,11 @@
   "full196_validated_mode": "force_compile",
   "full196_validated_scope": "coverage_158_kernels_to_196_semantics",
   "full196_validated_with_rvv_remote": false,
+  "coverage_mode": "single_run",
+  "coverage_batches_expected": 7,
+  "coverage_batches_completed": null,
+  "coverage_batches_failed": [],
+  "full196_evidence_kind": "single_run",
   "coverage": {
     "semantic_ops": 196,
     "dual_pass": 196,
@@ -81,11 +86,13 @@
     "catalog_validated": true
   },
   "active_lanes": [
-    "backend_compiler"
+    "backend_compiler",
+    "coverage"
   ],
   "next_focus_by_lane": {
     "backend_compiler": "Run full196 force_compile with RVV local+remote+CUDA on HEAD for fresh coverage evidence, then continue cpp codegen module split.",
-    "ir_arch": "Refresh full196 force_compile evidence on HEAD, then continue backend_compiler cpp module split wave."
+    "ir_arch": "Refresh full196 force_compile evidence on HEAD, then continue backend_compiler cpp module split wave.",
+    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD."
   },
   "latest_artifacts": {
     "run_summary": "artifacts/flaggems_matrix/daily/20260217/fixbatch8_fullstack_v2/run_summary.json",

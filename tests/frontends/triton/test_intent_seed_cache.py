@@ -7,9 +7,9 @@ from intent_ir.parser import CandidateIntent
 from pipeline.triton.core import (
     _intent_seed_path,
     _load_intent_seed,
-    _provider_deterministic_intent_for,
     _save_intent_seed,
 )
+from pipeline.triton.providers import get_provider_plugin
 
 
 def _simple_intent() -> IntentFunction:
@@ -63,17 +63,17 @@ def test_save_and_load_intent_seed_roundtrip(tmp_path: Path) -> None:
 
 
 def test_provider_deterministic_intent_for_flaggems_known_kernel() -> None:
-    intent = _provider_deterministic_intent_for(
-        kernel_name="bitwise_right_shift2d",
-        triton_provider="flaggems",
+    plugin = get_provider_plugin("flaggems")
+    intent = plugin.deterministic_intent_for_spec(
+        spec_name="bitwise_right_shift2d",
     )
     assert intent is not None
     assert intent.name == "bitwise_right_shift2d"
 
 
 def test_provider_deterministic_intent_for_non_flaggems_provider_returns_none() -> None:
-    intent = _provider_deterministic_intent_for(
-        kernel_name="bitwise_right_shift2d",
-        triton_provider="native",
+    plugin = get_provider_plugin("native")
+    intent = plugin.deterministic_intent_for_spec(
+        spec_name="bitwise_right_shift2d",
     )
     assert intent is None

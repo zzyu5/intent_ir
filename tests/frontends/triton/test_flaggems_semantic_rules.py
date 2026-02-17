@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pipeline.triton.flaggems_semantic_rules import resolve_semantic_mapping
+from pipeline.triton.providers.flaggems.semantic_rules import resolve_semantic_mapping
 
 
 def test_semantic_rule_templates_for_high_yield_ops() -> None:
