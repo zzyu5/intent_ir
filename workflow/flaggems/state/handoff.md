@@ -1,11 +1,9 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-16T23:22:46+00:00
-- Commit: `2ff245e8f145c6e3c7e74a0d3bbf17f4b1b15306`
-- Lane: `backend_compiler`
-- Summary: Patched CUDA cpp dispatch for min_dim (reduce_min+argmin) and closed 8-kernel fullstack regression batch with RVV local/remote + CUDA all pass.
-- Batch Ops (2): , 
-- Run Summary: `artifacts/flaggems_matrix/daily/20260217/fixbatch8_fullstack_v2/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260217/fixbatch8_fullstack_v2/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260217/fixbatch8_fullstack_v2/run_summary.json, artifacts/flaggems_matrix/daily/20260217/fixbatch8_fullstack_v2/stage_timing_breakdown.json, artifacts/flaggems_matrix/daily/20260217/fixbatch8_fullstack_v2/status_converged.json, artifacts/flaggems_matrix/daily/20260217/full196_force_compile_pipeline_v2/run_summary.json
-- Next Focus: Run full196 force_compile with RVV local+remote+CUDA on HEAD for fresh coverage evidence, then continue cpp codegen module split.
+- Timestamp: 2026-02-17T02:26:02Z
+- Commit: `a0f420bb16a7e476f7a4524ef62faf9ea24593cc`
+- Lane: `coverage`
+- Summary: Isolated `run_coverage_batches` family artifacts (`pipeline_out_dir`) and shared seed cache wiring; added dry-run regression test; started `full196_categories_head_v2` and completed `elementwise_broadcast` pipeline(98/98)+rvv_local before manual interrupt in rvv_remote stage.
+- Run Summary: `artifacts/flaggems_matrix/daily/20260217/full196_categories_head_v2/coverage_batch_runs.json` (in-progress)
+- Evidence Paths: `artifacts/flaggems_matrix/daily/20260217/full196_categories_head_v2/family_elementwise_broadcast/pipeline_reports/kernel_progress.jsonl`, `artifacts/flaggems_matrix/daily/20260217/full196_categories_head_v2/coverage_batch_runs.json`
+- Next Focus: Resume `scripts/flaggems/run_coverage_batches.py` on `full196_categories_head_v2` (elementwise_broadcast rvv_remote/cuda/aggregate), then complete remaining 6 families and refresh HEAD full196 evidence.

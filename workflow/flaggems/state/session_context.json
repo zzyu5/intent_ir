@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-17T01:37:01+00:00",
+  "updated_at": "2026-02-17T02:26:06+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -11,29 +11,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "2651e40 refactor: hard-cut flaggems provider boundary and add category coverage flow\nec5ec4c Refresh workflow snapshots after backend compiler batch\n6551229 Fix provider deterministic convergence and CUDA min_dim split lowering\n2ff245e backend_compiler: split wave3 emit/dispatch blocks into chunked includes\nc051aae workflow: record backend wave3 cpp split session and gate evidence\n183b029 backend_compiler: split cuda/rvv cpp_codegen wave3 modules\n008466d workflow: record ir_arch strict gate run and next backend wave\n12a949d ir_arch: enforce strict complexity gates and lane activation\nf604442 ir_arch: refresh mapping complexity from semantic rules in workflow and checks\n2da8b53 workflow: record cuda dropout split batch and refresh state\n431b267 backend: split cuda dropout emitter out of codegen main\nca43599 workflow: record rvv infer split batch and refresh state\n26ceba1 backend: split rvv shape inference dispatch from codegen main\naf0ba04 workflow: record backend schedule-env dedup matrix validation\n6a9dadd workflow: record schedule-env dedup session and refresh state\ne5ef6b4 backend: unify cuda/rvv schedule env parsing in common pipeline utils\n8b5813e workflow: record pipeline-utils refactor session and refresh state\n6850811 backend: deduplicate cuda/rvv pipeline driver helpers via common utils\n4b1004b workflow: record shared cpp build refactor session and refresh state\n3f6f80a backend: refactor cpp codegen build orchestration into shared module",
+  "git_log_short": "a0f420b flaggems: isolate coverage batch pipeline reports per family\n85515d8 workflow: refresh current status after provider/category cutover\n2651e40 refactor: hard-cut flaggems provider boundary and add category coverage flow\nec5ec4c Refresh workflow snapshots after backend compiler batch\n6551229 Fix provider deterministic convergence and CUDA min_dim split lowering\n2ff245e backend_compiler: split wave3 emit/dispatch blocks into chunked includes\nc051aae workflow: record backend wave3 cpp split session and gate evidence\n183b029 backend_compiler: split cuda/rvv cpp_codegen wave3 modules\n008466d workflow: record ir_arch strict gate run and next backend wave\n12a949d ir_arch: enforce strict complexity gates and lane activation\nf604442 ir_arch: refresh mapping complexity from semantic rules in workflow and checks\n2da8b53 workflow: record cuda dropout split batch and refresh state\n431b267 backend: split cuda dropout emitter out of codegen main\nca43599 workflow: record rvv infer split batch and refresh state\n26ceba1 backend: split rvv shape inference dispatch from codegen main\naf0ba04 workflow: record backend schedule-env dedup matrix validation\n6a9dadd workflow: record schedule-env dedup session and refresh state\ne5ef6b4 backend: unify cuda/rvv schedule env parsing in common pipeline utils\n8b5813e workflow: record pipeline-utils refactor session and refresh state\n6850811 backend: deduplicate cuda/rvv pipeline driver helpers via common utils",
   "progress_tail": [
-    {
-      "ts": "2026-02-16T20:15:07+00:00",
-      "commit": "e5ef6b4",
-      "lane": "backend_compiler",
-      "summary": "Consolidated CUDA/RVV pipeline schedule-env parsing into shared backend common utils and removed duplicated per-driver wrappers.",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260216/backend_pipeline_utils_refactor_v1/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260216/backend_pipeline_utils_refactor_v1/status_converged.json",
-      "next_focus": "Continue backend compiler modularization and keep monitoring full196_force_compile_head_v3; once done, run scoped fix waves from failed kernels.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260216/backend_pipeline_utils_refactor_v1/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260216/backend_pipeline_utils_refactor_v1/status_converged.json",
-        "tests/backends/cuda/test_cuda_pipeline_driver.py",
-        "tests/backends/spmd_rvv/test_rvv_pipeline_driver.py",
-        "tests/backends/test_pipeline_utils.py"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260216/backend_pipeline_utils_refactor_v1",
-      "counts_by_status": {}
-    },
     {
       "ts": "2026-02-16T20:17:07+00:00",
       "commit": "e5ef6b4",
@@ -205,9 +184,27 @@
         "blocked_backend": 188,
         "dual_pass": 8
       }
+    },
+    {
+      "ts": "2026-02-17T02:25:35Z",
+      "commit": "a0f420bb16a7e476f7a4524ef62faf9ea24593cc",
+      "lane": "coverage",
+      "summary": "Isolated run_coverage_batches per-family pipeline_out_dir/seed_cache_dir and added dry-run regression test; started full category run full196_categories_head_v2 and reached elementwise_broadcast kernel 98/98 pipeline + rvv_local complete before manual interrupt in rvv_remote stage for controlled continuation.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "",
+      "status_converged_path": "",
+      "next_focus": "Resume full196 category run from family elementwise_broadcast (rvv_remote/cuda/aggregate), then continue remaining 6 families and write fresh HEAD coverage evidence.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260217/full196_categories_head_v2/coverage_batch_runs.json",
+        "artifacts/flaggems_matrix/daily/20260217/full196_categories_head_v2/family_elementwise_broadcast/pipeline_reports/kernel_progress.jsonl"
+      ],
+      "run_ok": false,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260217/full196_categories_head_v2",
+      "counts_by_status": {}
     }
   ],
-  "next_focus": "Run full196 force_compile with RVV local+remote+CUDA on HEAD for fresh coverage evidence, then continue cpp codegen module split.",
+  "next_focus": "Resume `scripts/flaggems/run_coverage_batches.py` on `full196_categories_head_v2` (elementwise_broadcast rvv_remote/cuda/aggregate), then complete remaining 6 families and refresh HEAD full196 evidence.",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
   "active_lanes": [
     "backend_compiler",
@@ -216,7 +213,9 @@
   "next_focus_by_lane": {
     "backend_compiler": "Run full196 force_compile with RVV local+remote+CUDA on HEAD for fresh coverage evidence, then continue cpp codegen module split.",
     "ir_arch": "Refresh full196 force_compile evidence on HEAD, then continue backend_compiler cpp module split wave.",
-    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD."
+    "coverage": "Resume full196 category run from family elementwise_broadcast (rvv_remote/cuda/aggregate), then continue remaining 6 families and write fresh HEAD coverage evidence."
   },
-  "known_risks": []
+  "known_risks": [
+    "Isolated run_coverage_batches per-family pipeline_out_dir/seed_cache_dir and added dry-run regression test; started full category run full196_categories_head_v2 and reached elementwise_broadcast kernel 98/98 pipeline + rvv_local complete before manual interrupt in rvv_remote stage for controlled continuation."
+  ]
 }
