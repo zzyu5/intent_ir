@@ -518,9 +518,10 @@ def main() -> None:
         coverage_integrity_phase = "recomputed_ok" if bool(full196_last_ok) else "recomputed_failed"
     if validated_commit_state in {"invalid", "stale"}:
         active_lanes = sorted(set(list(active_lanes) + ["coverage"]))
-        next_focus_by_lane.setdefault(
-            "coverage",
-            "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
+        # When full196 evidence is stale/invalid, make coverage re-validation the primary focus
+        # regardless of any previous lane hints stored in progress/handoff.
+        next_focus_by_lane["coverage"] = (
+            "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD."
         )
     if need_ir_arch_lane:
         active_lanes = sorted(set(list(active_lanes) + ["ir_arch"]))
