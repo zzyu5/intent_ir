@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_roadmap_v1",
-  "generated_at": "2026-02-17T23:31:00+00:00",
+  "generated_at": "2026-02-17T18:39:33+00:00",
   "milestones": [
     {
       "id": "P3",
@@ -12,8 +12,8 @@
       "target": "Backend pure compilerization: remove fallback semantics and split CUDA/RVV cpp_codegen monoliths",
       "status": "in_progress",
       "todo": [
-        "finish CUDA cpp_codegen modular split (ir_model, shape_eval, op_registry, emit modules)",
-        "finish RVV cpp_codegen modular split with the same stage boundaries",
+        "continue splitting include-heavy emit/dispatch blocks into smaller compilation units (keep pybind entry stable)",
+        "continue RVV cpp_codegen modularization with the same stage boundaries",
         "keep python side orchestration-only; no semantic lowering logic in python path"
       ]
     },
@@ -30,35 +30,18 @@
     {
       "id": "P6",
       "target": "Dual-layer gates stable: scoped batch gate + nightly full196 gate with clean evidence chain",
-      "status": "in_progress",
-      "todo": [
-        "complete one fresh full196 recompute run after compiler changes",
-        "write full196 status to current_status.full196_last_run/full196_last_ok",
-        "ensure converge output uses complete reason_code and evidence fields"
-      ]
+      "status": "completed"
     },
     {
       "id": "M196",
       "target": "196 semantic ops remain full dual_pass under recomputed integrity (not stale registry-only status)",
-      "status": "in_progress",
-      "todo": [
-        "finish current full196_integrity_v1 run",
-        "derive failure clusters (RVV runtime_fail / CUDA lowering_missing_op / CUDA timeout)",
-        "execute coverage active batch fixes, then rerun full196 once"
-      ]
+      "status": "completed"
     },
     {
       "id": "CLEANUP_V1",
       "target": "Compiler cleanup v1: archive paper/experiments, converge scripts/tests/structure, then rerun full196 on cleanup branch",
-      "status": "in_progress",
-      "todo": [
-        "archive doc/ and experiment/ into archive/ (archive is non-runtime, gitignored by default)",
-        "converge scripts to catalog-defined active entrypoints; mark others deprecated or archive/delete",
-        "trim tests to gate + core correctness; remove paper/experiment evidence tests",
-        "refresh docs/README to only reference active entrypoints; archive is history-only",
-        "rerun 7/7 coverage batches (force_compile) on cleanup branch and write workflow evidence"
-      ]
+      "status": "completed"
     }
   ],
-  "notes": "Historical 196/196 remains reference only. Current truth is determined by recomputed full196 evidence after compiler refactors."
+  "notes": "Historical 196/196 remains reference only. Current truth is determined by recomputed full196 evidence after compiler refactors. CLEANUP_V1 completed with fresh full196 evidence on compiler-cleanup-v1."
 }
