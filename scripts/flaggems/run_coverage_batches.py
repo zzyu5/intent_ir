@@ -23,7 +23,11 @@ def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _run(cmd: list[str], *, stream_output: bool) -> tuple[int, str, str]:
+def _run(cmd: list[str], *, stream_output: bool, dry_run: bool) -> tuple[int, str, str]:
+    if bool(dry_run):
+        print(f"[dry-run] {' '.join(cmd)}", flush=True)
+        return 0, "(dry-run)", ""
+
     if not bool(stream_output):
         p = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
         return int(p.returncode), str(p.stdout or ""), str(p.stderr or "")
@@ -92,6 +96,7 @@ def main() -> None:
     ap.add_argument("--write-registry", action=argparse.BooleanOptionalAction, default=False)
     ap.add_argument("--stream-subprocess-output", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--aggregate", action=argparse.BooleanOptionalAction, default=True)
+    ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
     payload = _load_json(args.coverage_batches)
@@ -140,6 +145,10 @@ def main() -> None:
 
         family_out = _family_dir(out_root, family)
         family_out.mkdir(parents=True, exist_ok=True)
+        family_pipeline_out = family_out / "pipeline_reports"
+        family_seed_cache_dir = out_root / "seed_cache"
+        family_pipeline_out.mkdir(parents=True, exist_ok=True)
+        family_seed_cache_dir.mkdir(parents=True, exist_ok=True)
         run_summary_path = family_out / "run_summary.json"
         status_path = family_out / "status_converged.json"
 
@@ -206,6 +215,10 @@ def main() -> None:
             str(args.cuda_runtime_backend),
             "--out-dir",
             str(family_out),
+            "--pipeline-out-dir",
+            str(family_pipeline_out),
+            "--seed-cache-dir",
+            str(family_seed_cache_dir),
         ]
         cmd.append("--run-rvv-remote" if bool(args.run_rvv_remote) else "--no-run-rvv-remote")
         cmd.append("--rvv-use-key" if bool(args.rvv_use_key) else "--no-rvv-use-key")
@@ -215,7 +228,7 @@ def main() -> None:
         for kernel in kernels:
             cmd += ["--kernel", str(kernel)]
 
-        rc, out, err = _run(cmd, stream_output=bool(args.stream_subprocess_output))
+        rc, out, err = _run(cmd, stream_output=bool(args.stream_subprocess_output), dry_run=bool(args.dry_run))
         ok = int(rc) == 0
         family_rows.append(
             {
@@ -230,6 +243,9 @@ def main() -> None:
                 "stdout": str(out).strip(),
                 "stderr": str(err).strip(),
                 "skipped": False,
+                "cmd": cmd,
+                "pipeline_out_dir": str(family_pipeline_out),
+                "seed_cache_dir": str(family_seed_cache_dir),
             }
         )
         print(
@@ -250,7 +266,7 @@ def main() -> None:
     print(f"Coverage batch runs written: {runs_summary_path}", flush=True)
 
     aggregate_rc = 0
-    if bool(args.aggregate):
+    if bool(args.aggregate) and (not bool(args.dry_run)):
         aggregate_cmd = [
             sys.executable,
             "scripts/flaggems/aggregate_coverage_batches.py",
@@ -262,7 +278,11 @@ def main() -> None:
             str(args.intentir_mode),
         ]
         print("[coverage-batches] aggregate full196 evidence", flush=True)
-        aggregate_rc, _, _ = _run(aggregate_cmd, stream_output=bool(args.stream_subprocess_output))
+        aggregate_rc, _, _ = _run(
+            aggregate_cmd,
+            stream_output=bool(args.stream_subprocess_output),
+            dry_run=False,
+        )
 
     ok = bool(runs_payload["ok"]) and bool(aggregate_rc == 0)
     raise SystemExit(0 if ok else 1)

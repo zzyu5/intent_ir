@@ -144,3 +144,70 @@ def test_aggregate_coverage_batches_passes_on_complete_two_family_fixture(tmp_pa
     assert run_summary["coverage_batches_completed"] == 2
     assert status_converged["counts_global"]["dual_pass"] == 2
     assert coverage_integrity["coverage_integrity_ok"] is True
+
+
+def test_run_coverage_batches_dry_run_uses_family_pipeline_dirs(tmp_path: Path) -> None:
+    coverage_batches = tmp_path / "coverage_batches.json"
+    out_root = tmp_path / "runs"
+    coverage_batches.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_coverage_batches_v1",
+                "family_order": ["f1", "f2"],
+                "batches": [
+                    {
+                        "family": "f1",
+                        "semantic_ops": ["op1"],
+                        "kernels": ["k1"],
+                        "semantic_count": 1,
+                        "kernel_count": 1,
+                    },
+                    {
+                        "family": "f2",
+                        "semantic_ops": ["op2"],
+                        "kernels": ["k2"],
+                        "semantic_count": 1,
+                        "kernel_count": 1,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/run_coverage_batches.py",
+            "--coverage-batches",
+            str(coverage_batches),
+            "--out-root",
+            str(out_root),
+            "--dry-run",
+            "--no-resume",
+            "--no-run-rvv-remote",
+            "--allow-cuda-skip",
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+
+    runs_payload = json.loads((out_root / "coverage_batch_runs.json").read_text(encoding="utf-8"))
+    assert runs_payload["ok"] is True
+    seed_cache_dir = str(out_root / "seed_cache")
+    rows = {str(row["family"]): row for row in runs_payload["families"]}
+    assert set(rows) == {"f1", "f2"}
+    for family in ("f1", "f2"):
+        row = rows[family]
+        expected_pipeline_dir = str(out_root / f"family_{family}" / "pipeline_reports")
+        assert row["pipeline_out_dir"] == expected_pipeline_dir
+        assert row["seed_cache_dir"] == seed_cache_dir
+        cmd = list(row["cmd"])
+        assert "--pipeline-out-dir" in cmd
+        assert "--seed-cache-dir" in cmd
+        assert expected_pipeline_dir in cmd
+        assert seed_cache_dir in cmd
+
+    # Dry-run intentionally skips aggregation.
+    assert not (out_root / "run_summary.json").exists()
