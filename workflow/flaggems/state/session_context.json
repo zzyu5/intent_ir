@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-17T18:40:33+00:00",
+  "updated_at": "2026-02-17T18:41:33+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -11,28 +11,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "3e833d7 workflow: refresh full196 evidence on HEAD\ndbe6dc2 workflow: checkpoint cleanup full196 rerun (elementwise chunk 2)\nf7da8fa fix(workflow): restore rvv probe helper and keep coverage_batches portable\n99bd90f workflow(cleanup): track compiler-cleanup-v1 status + next-focus\n1a64882 chore(cleanup): archive legacy scripts/docs and tighten registry generation\n3050a3e chore(workflow): refresh full196 force_compile evidence on HEAD (2026-02-17)\n016b976 fix(workflow): make stage timing + rvv-remote inference work for category batches\n867e620 workflow: checkpoint family-scoped converge materialization rollout\n61f2767 coverage batches: always materialize family-scoped converge outputs\n49ff5dc workflow: record matmul coverage splitcheck and keep full196 stale until 7/7 rerun\nd9be4af workflow: checkpoint cuda custom-emitter split validation evidence\n5abc148 cuda cpp_codegen: split custom kernel emitter into focused include units\n1034da7 workflow: refresh full196 aggregate after outlier rollout\n6aeaaa1 workflow: checkpoint compile outlier stage rollout\ndecdf8b backend_compiler: emit compile outlier report with cold/warm split\n4e031b3 workflow: checkpoint cache-hit instrumentation backend evidence\nd17820e cuda smoke: expose compile cache-hit metadata for stage analysis\nb4b4594 workflow: record cache-scope mitigation evidence and stale full196 status\n6a4a315 cuda runtime: narrow extension hash scope to wrapper ABI\nade0998 workflow: refresh full196 evidence on HEAD after chunk0",
+  "git_log_short": "9e775d3 workflow: mark CLEANUP_V1 complete\n3e833d7 workflow: refresh full196 evidence on HEAD\ndbe6dc2 workflow: checkpoint cleanup full196 rerun (elementwise chunk 2)\nf7da8fa fix(workflow): restore rvv probe helper and keep coverage_batches portable\n99bd90f workflow(cleanup): track compiler-cleanup-v1 status + next-focus\n1a64882 chore(cleanup): archive legacy scripts/docs and tighten registry generation\n3050a3e chore(workflow): refresh full196 force_compile evidence on HEAD (2026-02-17)\n016b976 fix(workflow): make stage timing + rvv-remote inference work for category batches\n867e620 workflow: checkpoint family-scoped converge materialization rollout\n61f2767 coverage batches: always materialize family-scoped converge outputs\n49ff5dc workflow: record matmul coverage splitcheck and keep full196 stale until 7/7 rerun\nd9be4af workflow: checkpoint cuda custom-emitter split validation evidence\n5abc148 cuda cpp_codegen: split custom kernel emitter into focused include units\n1034da7 workflow: refresh full196 aggregate after outlier rollout\n6aeaaa1 workflow: checkpoint compile outlier stage rollout\ndecdf8b backend_compiler: emit compile outlier report with cold/warm split\n4e031b3 workflow: checkpoint cache-hit instrumentation backend evidence\nd17820e cuda smoke: expose compile cache-hit metadata for stage analysis\nb4b4594 workflow: record cache-scope mitigation evidence and stale full196 status\n6a4a315 cuda runtime: narrow extension hash scope to wrapper ABI",
   "progress_tail": [
-    {
-      "ts": "2026-02-17T12:42:57+00:00",
-      "commit": "6aeaaa1d2f3bcbd4a8cd1050c2c467882a3631ad",
-      "lane": "coverage",
-      "summary": "Refreshed full196 category aggregate evidence on current HEAD after compile_outlier stage rollout.",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/status_converged.json",
-      "next_focus": "Proceed with backend cold-compile optimization wave using compile_outliers cold/warm split; rerun impacted categories then refresh full196.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/coverage_integrity.json",
-        "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/stage_timing_breakdown.json",
-        "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
     {
       "ts": "2026-02-17T12:53:03+00:00",
       "commit": "5abc1481e82b93dd45f809036b4ddb05e530baf1",
@@ -184,14 +164,34 @@
       "run_ok": true,
       "run_out_dir": null,
       "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-17T18:41:29+00:00",
+      "commit": "9e775d31cb84c0e4af13f88b9c23ce9a03da5236",
+      "lane": "coverage",
+      "summary": "workflow checkpoint: CLEANUP_V1 marked complete",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_cleanup_v3/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_cleanup_v3/status_converged.json",
+      "next_focus": "Proceed backend_compiler lane: reduce cold compile outliers + continue cpp_codegen modularization; rerun impacted categories then refresh full196",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_cleanup_v3/ci_gate.json",
+        "artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_cleanup_v3/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_cleanup_v3/status_converged.json",
+        "workflow/flaggems/state/roadmap.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
     }
   ],
   "next_focus": "Proceed backend_compiler lane: reduce cold compile outliers + continue cpp_codegen modularization; rerun impacted categories then refresh full196",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
   "active_lanes": [],
   "next_focus_by_lane": {
-    "coverage": "Proceed backend_compiler lane: reduce cold compile outliers + continue cpp_codegen modularization; rerun impacted categories then refresh full196",
-    "backend_compiler": "Continue backend compiler phase4 by splitting remaining large emit include groups and rerunning impacted coverage categories before refreshing full196."
+    "backend_compiler": "Continue backend compiler phase4 by splitting remaining large emit include groups and rerunning impacted coverage categories before refreshing full196.",
+    "coverage": "Proceed backend_compiler lane: reduce cold compile outliers + continue cpp_codegen modularization; rerun impacted categories then refresh full196"
   },
   "known_risks": []
 }
