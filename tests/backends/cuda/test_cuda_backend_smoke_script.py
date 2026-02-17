@@ -232,6 +232,57 @@ def test_main_respects_runtime_backend_nvrtc(monkeypatch: pytest.MonkeyPatch, tm
     assert "effective_codegen_mode" not in payload
 
 
+def test_run_one_with_stage_timeouts_propagates_compile_cache_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    mod = _load_module()
+    payloads = [
+        {
+            "ok": True,
+            "timed_out": False,
+            "result": {
+                "kernel": "k",
+                "ok": True,
+                "reason_code": "ok",
+                "lower_ms": 1.0,
+                "compile_ms": 2.0,
+                "launch_ms": 0.0,
+                "total_ms": 3.0,
+                "compile_cache_hit": True,
+                "compile_module_name": "intentir_cuda_k_demo",
+                "compile_build_dir": "/tmp/intentir_cuda_k_demo",
+            },
+        },
+        {
+            "ok": True,
+            "timed_out": False,
+            "result": {
+                "kernel": "k",
+                "ok": True,
+                "reason_code": "ok",
+                "launch_ms": 3.5,
+            },
+        },
+    ]
+
+    def _fake_worker(*args, **kwargs):
+        _ = args, kwargs
+        return payloads.pop(0)
+
+    monkeypatch.setattr(mod, "_run_worker_with_timeout", _fake_worker)
+    res = mod._run_one_with_stage_timeouts(
+        "k",
+        frontend="triton",
+        triton_provider="flaggems",
+        artifact_dir=None,
+        compile_timeout_sec=5,
+        launch_timeout_sec=7,
+        runtime_backend="nvcc",
+    )
+    assert res["ok"] is True
+    assert res["compile_cache_hit"] is True
+    assert res["compile_module_name"] == "intentir_cuda_k_demo"
+    assert res["compile_build_dir"] == "/tmp/intentir_cuda_k_demo"
+
+
 def test_main_progress_prints_per_kernel_in_json_mode(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

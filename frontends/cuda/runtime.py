@@ -125,6 +125,19 @@ def _hash_src(text: str) -> str:
     return hashlib.sha256(str(text).encode("utf-8")).hexdigest()[:16]
 
 
+def _normalize_cuda_compile_flags(extra_cuda_cflags: Optional[Iterable[str]] = None) -> tuple[str, ...]:
+    flags_list = ["-O3"]
+    raw_fast_math = os.getenv("INTENTIR_CUDA_USE_FAST_MATH", "0").strip().lower()
+    if raw_fast_math in {"1", "true", "yes", "y"}:
+        flags_list.append("--use_fast_math")
+    for x in (extra_cuda_cflags or []):
+        s = str(x).strip()
+        if s:
+            flags_list.append(s)
+    seen: set[str] = set()
+    return tuple(s for s in flags_list if not (s in seen or seen.add(s)))
+
+
 def _default_torch_ext_root() -> Path:
     """
     Default Torch extension build root under the repo.
@@ -986,6 +999,38 @@ def _load_nvrtc_cached(
     return _NvrtcCudaModule(kernel_name=kernel_name, cuda_src=cuda_src, io_spec=io_spec, extra_cuda_cflags=extra_cuda_cflags)
 
 
+def cuda_extension_cache_info(
+    *,
+    kernel_name: str,
+    cuda_src: str,
+    extra_cuda_cflags: Optional[Iterable[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Return deterministic module identity and whether a built artifact already exists.
+
+    This is used for observability in backend smoke runs so we can distinguish
+    cold compile costs from warm-cache launches.
+    """
+    flags = _normalize_cuda_compile_flags(extra_cuda_cflags)
+    h = _hash_src(
+        cuda_src
+        + "\nRUNTIME_HEADERS:"
+        + _intentir_cuda_runtime_hash_payload()
+        + "\nRUNNER_PY:"
+        + _intentir_cuda_runner_hash_payload()
+        + "\nFLAGS:"
+        + " ".join(flags)
+    )
+    mod_name = f"intentir_cuda_{kernel_name}_{h}"
+    build_dir = _torch_ext_build_dir(mod_name)
+    return {
+        "module_name": str(mod_name),
+        "build_dir": str(build_dir),
+        "artifact_exists": bool(_has_built_extension_artifact(build_dir, mod_name)),
+        "flags": list(flags),
+    }
+
+
 def compile_cuda_extension(
     *,
     kernel_name: str,
@@ -998,27 +1043,13 @@ def compile_cuda_extension(
     """
     # Default to optimized builds. Torch's extension build defaults can vary across
     # environments; being explicit avoids accidental -O0 device code in benchmarks.
-    flags_list = ["-O3"]
-    raw_fast_math = os.getenv("INTENTIR_CUDA_USE_FAST_MATH", "0").strip().lower()
-    if raw_fast_math in {"1", "true", "yes", "y"}:
-        flags_list.append("--use_fast_math")
-    for x in (extra_cuda_cflags or []):
-        s = str(x).strip()
-        if s:
-            flags_list.append(s)
-    # De-duplicate while preserving order.
-    seen: set[str] = set()
-    flags: tuple[str, ...] = tuple(s for s in flags_list if not (s in seen or seen.add(s)))
-    h = _hash_src(
-        cuda_src
-        + "\nRUNTIME_HEADERS:"
-        + _intentir_cuda_runtime_hash_payload()
-        + "\nRUNNER_PY:"
-        + _intentir_cuda_runner_hash_payload()
-        + "\nFLAGS:"
-        + " ".join(flags)
+    cache_info = cuda_extension_cache_info(
+        kernel_name=kernel_name,
+        cuda_src=cuda_src,
+        extra_cuda_cflags=extra_cuda_cflags,
     )
-    mod_name = f"intentir_cuda_{kernel_name}_{h}"
+    flags: tuple[str, ...] = tuple(str(x) for x in list(cache_info.get("flags") or []))
+    mod_name = str(cache_info.get("module_name") or "")
     force_nvrtc_raw = os.getenv("INTENTIR_CUDA_FORCE_NVRTC", "0").strip().lower()
     force_nvrtc = force_nvrtc_raw in {"1", "true", "yes", "y"}
     if force_nvrtc:
@@ -1176,4 +1207,10 @@ def run_cuda_kernel_io(
     return out
 
 
-__all__ = ["CudaLaunch", "CudaRuntimeError", "compile_cuda_extension", "run_cuda_kernel_io"]
+__all__ = [
+    "CudaLaunch",
+    "CudaRuntimeError",
+    "compile_cuda_extension",
+    "cuda_extension_cache_info",
+    "run_cuda_kernel_io",
+]

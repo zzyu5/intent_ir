@@ -15,6 +15,7 @@ from frontends.cuda.runtime import (  # noqa: F401
     CudaLaunch,
     CudaRuntimeError,
     compile_cuda_extension,
+    cuda_extension_cache_info,
     run_cuda_kernel_io,
 )
 
@@ -47,4 +48,10 @@ def run_cuda_kernel(
     )
 
 
-__all__ = ["CudaLaunch", "CudaRuntimeError", "compile_cuda_extension", "run_cuda_kernel"]
+__all__ = [
+    "CudaLaunch",
+    "CudaRuntimeError",
+    "compile_cuda_extension",
+    "cuda_extension_cache_info",
+    "run_cuda_kernel",
+]

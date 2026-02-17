@@ -35,7 +35,12 @@ from backends.cuda.codegen.cpp_driver import (  # noqa: E402
     ensure_cpp_codegen_ext_loaded,
     lower_intent_to_cuda_kernel,
 )
-from backends.cuda.runtime import CudaRuntimeError, compile_cuda_extension, run_cuda_kernel  # noqa: E402
+from backends.cuda.runtime import (  # noqa: E402
+    CudaRuntimeError,
+    compile_cuda_extension,
+    cuda_extension_cache_info,
+    run_cuda_kernel,
+)
 from intent_ir.ir import IntentFunction  # noqa: E402
 from intent_ir.macros import expand_macros  # noqa: E402
 from verify.diff_runner import _with_io_aliases as _with_io_aliases_for_diff  # noqa: E402
@@ -374,6 +379,10 @@ def _run_compile_stage(
     t_lower = time.perf_counter()
     lowered = lower_intent_to_cuda_kernel(ctx["intent"], shape_bindings=ctx["bindings"])
     lower_ms = (time.perf_counter() - t_lower) * 1000.0
+    cache_info = cuda_extension_cache_info(
+        kernel_name=lowered.kernel_name,
+        cuda_src=lowered.cuda_src,
+    )
 
     t_compile = time.perf_counter()
     compile_cuda_extension(
@@ -392,6 +401,9 @@ def _run_compile_stage(
         "launch_ms": 0.0,
         "total_ms": float((time.perf_counter() - t_all) * 1000.0),
         "bindings": dict(ctx["bindings"]),
+        "compile_cache_hit": bool(cache_info.get("artifact_exists")),
+        "compile_module_name": str(cache_info.get("module_name") or ""),
+        "compile_build_dir": str(cache_info.get("build_dir") or ""),
     }
 
 
@@ -408,6 +420,10 @@ def _run_launch_stage(
     t_lower = time.perf_counter()
     lowered = lower_intent_to_cuda_kernel(ctx["intent"], shape_bindings=ctx["bindings"])
     lower_ms = (time.perf_counter() - t_lower) * 1000.0
+    cache_info = cuda_extension_cache_info(
+        kernel_name=lowered.kernel_name,
+        cuda_src=lowered.cuda_src,
+    )
 
     t_compile = time.perf_counter()
     compiled_mod = compile_cuda_extension(
@@ -466,6 +482,9 @@ def _run_launch_stage(
         "compile_ms": float(compile_ms),
         "launch_ms": float(launch_ms),
         "total_ms": float((time.perf_counter() - t_all) * 1000.0),
+        "compile_cache_hit": bool(cache_info.get("artifact_exists")),
+        "compile_module_name": str(cache_info.get("module_name") or ""),
+        "compile_build_dir": str(cache_info.get("build_dir") or ""),
     }
 
 
@@ -870,6 +889,9 @@ def _run_one_with_stage_timeouts(
             "compile_ms": float(compile_payload.get("compile_ms", 0.0)),
             "launch_ms": 0.0,
             "total_ms": float(compile_payload.get("total_ms", 0.0)),
+            "compile_cache_hit": bool(compile_payload.get("compile_cache_hit", False)),
+            "compile_module_name": str(compile_payload.get("compile_module_name") or ""),
+            "compile_build_dir": str(compile_payload.get("compile_build_dir") or ""),
         }
     if not bool(launch_res.get("ok")):
         err = launch_res.get("error") if isinstance(launch_res.get("error"), dict) else {}
@@ -882,6 +904,9 @@ def _run_one_with_stage_timeouts(
             "compile_ms": float(compile_payload.get("compile_ms", 0.0)),
             "launch_ms": 0.0,
             "total_ms": float(compile_payload.get("total_ms", 0.0)),
+            "compile_cache_hit": bool(compile_payload.get("compile_cache_hit", False)),
+            "compile_module_name": str(compile_payload.get("compile_module_name") or ""),
+            "compile_build_dir": str(compile_payload.get("compile_build_dir") or ""),
         }
 
     launch_payload = dict(launch_res.get("result") or {})
@@ -892,6 +917,9 @@ def _run_one_with_stage_timeouts(
     launch_payload["compile_ms"] = compile_ms
     launch_payload["launch_ms"] = launch_ms
     launch_payload["total_ms"] = float(lower_ms + compile_ms + launch_ms)
+    launch_payload["compile_cache_hit"] = bool(compile_payload.get("compile_cache_hit", False))
+    launch_payload["compile_module_name"] = str(compile_payload.get("compile_module_name") or "")
+    launch_payload["compile_build_dir"] = str(compile_payload.get("compile_build_dir") or "")
     return launch_payload
 
 
@@ -1112,7 +1140,8 @@ def main() -> None:
                 f"lower_ms={float(r.get('lower_ms', 0.0)):.3f} "
                 f"compile_ms={float(r.get('compile_ms', 0.0)):.3f} "
                 f"launch_ms={float(r.get('launch_ms', 0.0)):.3f} "
-                f"total_ms={float(r.get('total_ms', 0.0)):.3f}",
+                f"total_ms={float(r.get('total_ms', 0.0)):.3f} "
+                f"cache_hit={bool(r.get('compile_cache_hit', False))}",
                 flush=True,
             )
         if not args.json:
