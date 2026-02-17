@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_task_templates_v1",
-  "updated_at": "2026-02-16T00:00:00+00:00",
+  "updated_at": "2026-02-17T23:31:00+00:00",
   "tasks": [
     {
       "id": "ir_arch::primitive_catalog_guard",
@@ -846,6 +846,109 @@
       ],
       "evidence_paths": [],
       "description": "Continue RVV cpp_codegen modular split by extracting remaining dispatch and emit blocks into dedicated modules."
+    },
+    {
+      "id": "workflow::cleanup_v1_archive",
+      "track": "workflow",
+      "task_type": "cleanup",
+      "status": "pending",
+      "passes": false,
+      "priority": 10,
+      "gate_profile": "workflow",
+      "reason_code": "pending_cleanup",
+      "next_action": "archive_doc_and_experiment",
+      "acceptance": [
+        "top_level_doc_experiment_removed",
+        "archive_readme_present",
+        "workflow_not_depending_on_archive"
+      ],
+      "depends_on": [],
+      "evidence_paths": [],
+      "description": "Move paper/experiment materials into archive/ (history-only, non-runtime)."
+    },
+    {
+      "id": "workflow::cleanup_v1_scripts_governance",
+      "track": "workflow",
+      "task_type": "cleanup",
+      "status": "pending",
+      "passes": false,
+      "priority": 20,
+      "gate_profile": "workflow",
+      "reason_code": "pending_cleanup",
+      "next_action": "converge_scripts_to_catalog",
+      "acceptance": [
+        "catalog_active_entrypoints_only",
+        "deprecated_not_called_by_workflow",
+        "validate_catalog_green"
+      ],
+      "depends_on": [
+        "workflow::cleanup_v1_archive"
+      ],
+      "evidence_paths": [],
+      "description": "Converge scripts to catalog-defined active entrypoints; archive/delete duplicates."
+    },
+    {
+      "id": "workflow::cleanup_v1_tests_governance",
+      "track": "workflow",
+      "task_type": "cleanup",
+      "status": "pending",
+      "passes": false,
+      "priority": 30,
+      "gate_profile": "workflow",
+      "reason_code": "pending_cleanup",
+      "next_action": "trim_tests_to_core_gates",
+      "acceptance": [
+        "pytest_fast_and_stable",
+        "workflow_gate_tests_preserved",
+        "no_paper_experiment_tests_in_main_tree"
+      ],
+      "depends_on": [
+        "workflow::cleanup_v1_scripts_governance"
+      ],
+      "evidence_paths": [],
+      "description": "Trim tests to CI/gate and core correctness; remove paper/experiment evidence tests."
+    },
+    {
+      "id": "workflow::cleanup_v1_structure_convergence",
+      "track": "workflow",
+      "task_type": "cleanup",
+      "status": "pending",
+      "passes": false,
+      "priority": 40,
+      "gate_profile": "workflow",
+      "reason_code": "pending_cleanup",
+      "next_action": "converge_repo_structure_and_docs",
+      "acceptance": [
+        "readme_entrypoints_match_catalog",
+        "docs_architecture_updated",
+        "archive_is_history_only"
+      ],
+      "depends_on": [
+        "workflow::cleanup_v1_tests_governance"
+      ],
+      "evidence_paths": [],
+      "description": "Converge top-level structure and docs to a mature compiler layout; archive is history-only."
+    },
+    {
+      "id": "workflow::cleanup_v1_full196_post_cleanup",
+      "track": "workflow",
+      "task_type": "verification",
+      "status": "pending",
+      "passes": false,
+      "priority": 50,
+      "gate_profile": "workflow",
+      "reason_code": "pending_cleanup",
+      "next_action": "rerun_full196_on_cleanup_branch",
+      "acceptance": [
+        "full196_force_compile_passes_on_head",
+        "workflow_full196_fresh_on_head",
+        "ci_gate_coverage_green"
+      ],
+      "depends_on": [
+        "workflow::cleanup_v1_structure_convergence"
+      ],
+      "evidence_paths": [],
+      "description": "After cleanup, rerun 7/7 coverage batches (force_compile) and write workflow evidence on cleanup branch."
     }
   ]
 }

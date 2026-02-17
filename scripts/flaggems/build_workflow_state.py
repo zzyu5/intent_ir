@@ -55,6 +55,18 @@ def _parse_next_focus(handoff_path: Path) -> str:
     return ""
 
 
+def _parse_lane(handoff_path: Path) -> str:
+    if not handoff_path.is_file():
+        return ""
+    for line in handoff_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip().startswith("- Lane:"):
+            continue
+        lane = line.split(":", 1)[1].strip().strip("`")
+        if lane in {"coverage", "ir_arch", "backend_compiler"}:
+            return lane
+    return ""
+
+
 def _known_risks(progress_tail: list[dict[str, Any]]) -> list[str]:
     risks: list[str] = []
     for row in progress_tail:
@@ -446,6 +458,10 @@ def main() -> None:
     next_focus = _parse_next_focus(args.handoff) or str(latest.get("next_focus") or "")
     active_lanes = _active_lanes(feature_payload)
     next_focus_by_lane = _next_focus_by_lane(progress_tail)
+    handoff_lane = _parse_lane(args.handoff)
+    if next_focus and handoff_lane:
+        # Treat handoff as the most recent user-facing intent for "what to do next".
+        next_focus_by_lane[handoff_lane] = next_focus
     need_ir_arch_lane, ir_arch_reason = _mapping_quality_needs_ir_arch(feature_payload)
     catalog_exists = bool(args.scripts_catalog.is_file())
     if not full196_run_summary:

@@ -1,14 +1,14 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-17T15:31:00+00:00",
-  "branch": "flaggems",
-  "head_commit": "867e62052535312caf0f1b0b1bae30dda15cf9ab",
+  "updated_at": "2026-02-17T16:27:52+00:00",
+  "branch": "compiler-cleanup-v1",
+  "head_commit": "1a64882018b9ffa529fd3cf7bb7ccba49915d56d",
   "mode": "maintenance",
-  "coverage_integrity_phase": "recomputed_ok",
+  "coverage_integrity_phase": "recompute_stale",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_refresh_v1/run_summary.json",
   "full196_last_ok": true,
   "full196_validated_commit": "867e62052535312caf0f1b0b1bae30dda15cf9ab",
-  "full196_commits_since_validated": 0,
+  "full196_commits_since_validated": 3,
   "full196_validated_mode": "force_compile",
   "full196_validated_scope": "coverage_158_kernels_to_196_semantics",
   "full196_validated_with_rvv_remote": true,
@@ -85,10 +85,12 @@
     "catalog_path": "scripts/CATALOG.json",
     "catalog_validated": true
   },
-  "active_lanes": [],
+  "active_lanes": [
+    "coverage"
+  ],
   "next_focus_by_lane": {
     "backend_compiler": "Continue backend compiler phase4 by splitting remaining large emit include groups and rerunning impacted coverage categories before refreshing full196.",
-    "coverage": "Cut compiler-cleanup-v1 from this validated state; then archive doc/experiment and clean scripts/tests per plan"
+    "coverage": "On `compiler-cleanup-v1`, rerun 7/7 coverage batches (force_compile, strict miss-policy, RVV remote + CUDA local) and write fresh workflow evidence (`full196_validated_commit == HEAD`)."
   },
   "latest_artifacts": {
     "run_summary": "artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_refresh_v1/run_summary.json",
