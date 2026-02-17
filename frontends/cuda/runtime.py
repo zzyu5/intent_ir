@@ -8,6 +8,7 @@ only torch+nvcc (CuPy/cuda-python not required).
 
 from __future__ import annotations
 
+import importlib.machinery
 import hashlib
 import os
 import shutil
@@ -868,6 +869,41 @@ def _prune_stale_torch_lock(build_dir: Path) -> None:
         return
 
 
+def _has_built_extension_artifact(build_dir: Path, module_name: str) -> bool:
+    for suffix in importlib.machinery.EXTENSION_SUFFIXES:
+        candidate = build_dir / f"{module_name}{suffix}"
+        if candidate.is_file():
+            return True
+    return False
+
+
+def _reset_incomplete_torch_ext_build_dir(build_dir: Path, module_name: str) -> None:
+    if not build_dir.is_dir():
+        return
+    if _has_built_extension_artifact(build_dir, module_name):
+        return
+    has_partial = any((build_dir / p).exists() for p in ("build.ninja", "main.cpp", "cuda.cu", "main.o"))
+    if not has_partial:
+        return
+    try:
+        shutil.rmtree(build_dir)
+    except Exception:
+        return
+    build_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _is_missing_extension_so_error(msg: str, module_name: str) -> bool:
+    s = str(msg).lower()
+    if "cannot open shared object file" not in s:
+        return False
+    if module_name.lower() in s:
+        return True
+    for suffix in importlib.machinery.EXTENSION_SUFFIXES:
+        if f"{module_name}{suffix}".lower() in s:
+            return True
+    return False
+
+
 @lru_cache(maxsize=32)
 def _load_ext_cached(name: str, cuda_src: str, extra_cuda_cflags: Tuple[str, ...]) -> Any:
     torch = _torch()
@@ -892,6 +928,7 @@ def _load_ext_cached(name: str, cuda_src: str, extra_cuda_cflags: Tuple[str, ...
     build_dir = _torch_ext_build_dir(name)
     build_dir.mkdir(parents=True, exist_ok=True)
     _prune_stale_torch_lock(build_dir)
+    _reset_incomplete_torch_ext_build_dir(build_dir, name)
     # Torch uses Ninja by default; some remote machines (e.g. SSH-only clusters)
     # may not have it installed. Fall back to the distutils builder if needed.
     if os.getenv("USE_NINJA") is None and (shutil.which("ninja") is None or not is_ninja_available()):
@@ -913,10 +950,19 @@ def _load_ext_cached(name: str, cuda_src: str, extra_cuda_cflags: Tuple[str, ...
 
     try:
         return _do_load()
+    except ImportError as e:
+        msg = str(e)
+        if _is_missing_extension_so_error(msg, name):
+            _reset_incomplete_torch_ext_build_dir(build_dir, name)
+            return _do_load()
+        raise
     except RuntimeError as e:
         msg = str(e)
         if ("Ninja is required" in msg or "ninja" in msg.lower()) and os.getenv("USE_NINJA") != "0":
             os.environ["USE_NINJA"] = "0"
+            return _do_load()
+        if _is_missing_extension_so_error(msg, name):
+            _reset_incomplete_torch_ext_build_dir(build_dir, name)
             return _do_load()
         raise
 
