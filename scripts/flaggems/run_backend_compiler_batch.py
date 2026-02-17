@@ -218,6 +218,110 @@ def _emit_kernel_progress(out_dir: Path, selected_kernels: list[str]) -> None:
         print(line, flush=True)
 
 
+def _percentile(values: list[float], q: float) -> float:
+    vals = sorted(float(v) for v in list(values or []))
+    if not vals:
+        return 0.0
+    if len(vals) == 1:
+        return float(vals[0])
+    qq = min(1.0, max(0.0, float(q)))
+    idx = int(round((len(vals) - 1) * qq))
+    return float(vals[idx])
+
+
+def _emit_compile_outlier_report(out_dir: Path, *, top_k: int = 30) -> tuple[bool, str, str]:
+    """
+    Build compile-ms outlier report from cuda_local.json.
+
+    Report is non-invasive: when cuda_local artifacts are missing, we still emit
+    a structured JSON with `available=false` so workflow/gates can reason on it.
+    """
+    cuda_json = out_dir / "cuda_local.json"
+    out_path = out_dir / "compile_outliers.json"
+    generated_at = datetime.now(timezone.utc).isoformat()
+    if not cuda_json.is_file():
+        payload = {
+            "schema_version": "flaggems_compile_outliers_v1",
+            "generated_at": generated_at,
+            "available": False,
+            "reason": "missing_cuda_local_json",
+            "cuda_json": str(cuda_json),
+            "sample_count": 0,
+            "group_stats": {},
+            "top_compile_ms": [],
+            "top_compile_ms_cold": [],
+            "top_compile_ms_warm": [],
+        }
+        out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        return True, str(out_path), ""
+
+    raw = _load_json(cuda_json)
+    rows = raw.get("results")
+    if not isinstance(rows, list):
+        rows = []
+    samples: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        kernel = str(row.get("kernel") or "").strip()
+        if not kernel:
+            continue
+        compile_ms_raw = row.get("compile_ms")
+        if not isinstance(compile_ms_raw, (int, float)):
+            continue
+        sample = {
+            "kernel": kernel,
+            "compile_ms": float(compile_ms_raw),
+            "lower_ms": float(row.get("lower_ms", 0.0) or 0.0),
+            "launch_ms": float(row.get("launch_ms", 0.0) or 0.0),
+            "total_ms": float(row.get("total_ms", 0.0) or 0.0),
+            "reason_code": str(row.get("reason_code") or ""),
+            "ok": bool(row.get("ok")),
+            "compile_cache_hit": bool(row.get("compile_cache_hit", False)),
+            "compile_module_name": str(row.get("compile_module_name") or ""),
+            "compile_build_dir": str(row.get("compile_build_dir") or ""),
+        }
+        samples.append(sample)
+
+    def _stats(group: list[dict[str, Any]]) -> dict[str, Any]:
+        vals = [float(r.get("compile_ms", 0.0)) for r in group]
+        count = len(vals)
+        if count <= 0:
+            return {"count": 0, "mean_ms": 0.0, "p50_ms": 0.0, "p95_ms": 0.0, "max_ms": 0.0}
+        mean_ms = float(sum(vals) / float(count))
+        return {
+            "count": int(count),
+            "mean_ms": mean_ms,
+            "p50_ms": _percentile(vals, 0.50),
+            "p95_ms": _percentile(vals, 0.95),
+            "max_ms": float(max(vals)),
+        }
+
+    cold = [r for r in samples if not bool(r.get("compile_cache_hit"))]
+    warm = [r for r in samples if bool(r.get("compile_cache_hit"))]
+    top_all = sorted(samples, key=lambda r: float(r.get("compile_ms", 0.0)), reverse=True)[: int(max(1, top_k))]
+    top_cold = sorted(cold, key=lambda r: float(r.get("compile_ms", 0.0)), reverse=True)[: int(max(1, top_k))]
+    top_warm = sorted(warm, key=lambda r: float(r.get("compile_ms", 0.0)), reverse=True)[: int(max(1, top_k))]
+
+    payload = {
+        "schema_version": "flaggems_compile_outliers_v1",
+        "generated_at": generated_at,
+        "available": True,
+        "cuda_json": str(cuda_json),
+        "sample_count": int(len(samples)),
+        "group_stats": {
+            "all": _stats(samples),
+            "cold_compile": _stats(cold),
+            "warm_compile": _stats(warm),
+        },
+        "top_compile_ms": top_all,
+        "top_compile_ms_cold": top_cold,
+        "top_compile_ms_warm": top_warm,
+    }
+    out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return True, str(out_path), ""
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out-dir", type=Path, default=_default_out_dir())
@@ -374,6 +478,9 @@ def main() -> None:
     stage_timing_breakdown_path = ""
     stage_timing_breakdown_ok = True
     stage_timing_breakdown_stderr = ""
+    compile_outliers_path = ""
+    compile_outliers_ok = True
+    compile_outliers_stderr = ""
     baseline_dir = Path(args.timing_baseline_dir) if args.timing_baseline_dir is not None else _guess_baseline_dir(Path(args.out_dir))
     if bool(args.emit_timing_delta) and not bool(args.dry_run) and int(rc) == 0:
         current_rvv = Path(args.out_dir) / "rvv_local.json"
@@ -516,8 +623,39 @@ def main() -> None:
             run_summary["ok"] = bool(run_summary.get("ok")) and bool(stage_timing_breakdown_ok)
             run_summary_path.write_text(json.dumps(run_summary, indent=2, ensure_ascii=False), encoding="utf-8")
 
+    if not bool(args.dry_run) and int(rc) == 0:
+        try:
+            compile_outliers_ok, compile_outliers_path, compile_outliers_stderr = _emit_compile_outlier_report(Path(args.out_dir))
+        except Exception as e:  # noqa: BLE001
+            compile_outliers_ok = False
+            compile_outliers_stderr = f"{type(e).__name__}: {e}"
+            compile_outliers_path = str(Path(args.out_dir) / "compile_outliers.json")
+        run_summary_path = Path(args.out_dir) / "run_summary.json"
+        if run_summary_path.is_file():
+            run_summary = _load_json(run_summary_path)
+            stages = [s for s in list(run_summary.get("stages") or []) if isinstance(s, dict)]
+            stages = [s for s in stages if str(s.get("stage") or "") != "compile_outliers"]
+            stages.append(
+                {
+                    "stage": "compile_outliers",
+                    "rc": 0 if bool(compile_outliers_ok) else 1,
+                    "ok": bool(compile_outliers_ok),
+                    "stdout": (
+                        f"compile outliers generated at {compile_outliers_path}"
+                        if compile_outliers_path
+                        else ""
+                    ),
+                    "stderr": str(compile_outliers_stderr),
+                    "cmd": [],
+                    "json_path": compile_outliers_path,
+                }
+            )
+            run_summary["stages"] = stages
+            run_summary["ok"] = bool(run_summary.get("ok")) and bool(compile_outliers_ok)
+            run_summary_path.write_text(json.dumps(run_summary, indent=2, ensure_ascii=False), encoding="utf-8")
+
     summary = {
-        "ok": bool(rc == 0 and timing_delta_ok and schedule_profiles_ok and stage_timing_breakdown_ok),
+        "ok": bool(rc == 0 and timing_delta_ok and schedule_profiles_ok and stage_timing_breakdown_ok and compile_outliers_ok),
         "lane": "backend_compiler",
         "cmd": cmd,
         "out_dir": str(args.out_dir),
@@ -554,6 +692,11 @@ def main() -> None:
             "ok": bool(stage_timing_breakdown_ok),
             "path": stage_timing_breakdown_path,
             "stderr": stage_timing_breakdown_stderr,
+        },
+        "compile_outliers": {
+            "ok": bool(compile_outliers_ok),
+            "path": compile_outliers_path,
+            "stderr": compile_outliers_stderr,
         },
     }
     out = Path(args.out_dir)

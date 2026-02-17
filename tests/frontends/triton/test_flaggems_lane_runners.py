@@ -51,6 +51,9 @@ def test_run_backend_compiler_batch_dry_run(tmp_path: Path) -> None:
     payload = json.loads((out_dir / "backend_compiler_batch_summary.json").read_text(encoding="utf-8"))
     assert payload["lane"] == "backend_compiler"
     assert "scripts/flaggems/run_multibackend_matrix.py" in payload["cmd"]
+    assert isinstance(payload.get("compile_outliers"), dict)
+    assert payload["compile_outliers"]["ok"] is True
+    assert payload["compile_outliers"]["path"] == ""
     cmd = list(payload["cmd"])
     assert "--cuda-runtime-backend" in cmd
     assert "--cuda-codegen-mode" not in cmd
@@ -79,6 +82,8 @@ def test_run_backend_compiler_batch_uses_kernel_manifest_when_kernel_not_given(t
     )
     assert p.returncode == 0, p.stderr
     payload = json.loads((out_dir / "backend_compiler_batch_summary.json").read_text(encoding="utf-8"))
+    assert isinstance(payload.get("compile_outliers"), dict)
+    assert payload["compile_outliers"]["ok"] is True
     cmd = list(payload["cmd"])
     # Order in command preserves input order; both manifest kernels should be forwarded.
     assert cmd.count("--kernel") == 2
@@ -113,6 +118,8 @@ def test_run_backend_compiler_batch_supports_manifest_chunking(tmp_path: Path) -
     )
     assert p.returncode == 0, p.stderr
     payload = json.loads((out_dir / "backend_compiler_batch_summary.json").read_text(encoding="utf-8"))
+    assert isinstance(payload.get("compile_outliers"), dict)
+    assert payload["compile_outliers"]["ok"] is True
     assert payload["kernel_count_requested"] == 5
     assert payload["kernel_count_selected"] == 2
     assert payload["kernels_selected"] == ["clamp2d", "diag2d"]
