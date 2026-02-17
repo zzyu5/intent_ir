@@ -7,11 +7,11 @@ This repo mixes three kinds of dependencies:
 - Python 3.10+ recommended
 - Install: `pip install -r requirements/dev.txt`
 - Fully pinned install: `pip install -r requirements/lock/dev.lock.txt`
-- Quick check: `python scripts/check_env.py`
+- Quick check: `pytest -q`
 
 ## Triton pipeline (GPU)
 
-To run `scripts/triton/full_pipeline_verify.py` you need:
+To run `scripts/triton/flaggems_full_pipeline_verify.py` you need:
 
 - CUDA-capable GPU + working CUDA driver
 - `torch` (CUDA build)
@@ -27,14 +27,12 @@ These are set automatically by `pipeline/triton/core.py`.
 
 ## Remote RVV execution (Task6)
 
-To run `scripts/rvv_remote_run.py` you need:
+To run `scripts/rvv_remote_run.py` / `scripts/rvv_remote_suite.py` you need:
 
 - An SSH-accessible RVV host with `gcc` that supports `-march=rv64gcv`
 - Python package `paramiko` on the local machine
 
-You can validate the remote toolchain with:
-
-- `python scripts/check_env.py --remote-host <host> --remote-user <user> --use-key`
+Remote execution is exercised via the workflow runners (coverage batches or single-kernel remote run).
 
 Secrets are not committed:
 

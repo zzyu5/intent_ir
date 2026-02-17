@@ -12,14 +12,14 @@ IntentIR is a research prototype that extracts **high-level kernel intent** from
 - `scripts/`: User-facing CLI runners (full pipeline, backend smoke, remote RVV).
 - `pipeline/`: reusable orchestration library used by `scripts/`.
 - `docs/`: Maintainer docs: architecture, environment, testing.
-- `doc/`: Design/task notes (vibe-coding docs; not required for running the code).
+- `archive/`: History-only materials (papers/experiments/third-party clones). Not part of runtime/gates.
 
 ## Quickstart (Local)
 
-- Environment check: `python scripts/check_env.py`
+- Script governance check: `python scripts/validate_catalog.py`
 - Unit tests: `pytest -q`
 - Backend codegen (no LLM, no remote): `python scripts/backend_codegen_smoke.py`
-- Full pipeline (LLM + Triton launch + TTIR + verify): `python scripts/triton/full_pipeline_verify.py`
+- Triton pipeline (FlagGems provider): `python scripts/triton/flaggems_full_pipeline_verify.py --suite smoke`
 
 ## FlagGems Integration Status
 

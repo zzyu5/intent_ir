@@ -24,6 +24,7 @@ import torch
 from pipeline.triton.core import KernelSpec
 from pipeline.triton.providers.flaggems.registry import (
     DEFAULT_FLAGGEMS_OPSET,
+    ensure_flaggems_importable,
     list_supported_e2e_specs,
     load_registry,
     load_registry_entry_by_spec,
@@ -34,28 +35,51 @@ from verify.gen_cases import TestCase
 ROOT = Path(__file__).resolve().parents[4]
 
 
-def _ensure_flaggems_importable() -> None:
-    candidates: List[Path] = []
-    env = os.getenv("FLAGGEMS_SRC")
-    if isinstance(env, str) and env.strip():
-        candidates.append(Path(env.strip()))
-    candidates.append(ROOT / "experiment" / "FlagGems" / "src")
-    for p in candidates:
-        if p.is_dir() and str(p) not in sys.path:
-            sys.path.insert(0, str(p))
+class _LazyModule:
+    def __init__(self, mod_name: str):
+        self._mod_name = str(mod_name)
+        self._mod = None
+
+    def _load(self):
+        if self._mod is None:
+            # Support explicit local checkouts via FLAGGEMS_SRC (no implicit repo dependency).
+            ensure_flaggems_importable(None)
+            self._mod = importlib.import_module(self._mod_name)
+        return self._mod
+
+    def __getattr__(self, name: str):
+        return getattr(self._load(), name)
 
 
-_ensure_flaggems_importable()
-import flag_gems  # noqa: E402
-from flag_gems import ops as flag_gems_ops  # noqa: E402
+flag_gems = _LazyModule("flag_gems")
+flag_gems_ops = _LazyModule("flag_gems.ops")
 
 
-def _module_source_text(mod_name: str) -> str:
-    mod = importlib.import_module(mod_name)
-    p = Path(getattr(mod, "__file__", ""))
-    if not p.is_file():
-        return str(mod)
-    return p.read_text(encoding="utf-8")
+class _LazyModuleSource:
+    def __init__(self, mod_name: str):
+        self._mod_name = str(mod_name)
+        self._cached: str | None = None
+
+    def __str__(self) -> str:
+        if self._cached is not None:
+            return self._cached
+        try:
+            ensure_flaggems_importable(None)
+            mod = importlib.import_module(self._mod_name)
+            p = Path(getattr(mod, "__file__", ""))
+            if p.is_file():
+                self._cached = p.read_text(encoding="utf-8")
+            else:
+                self._cached = str(mod)
+        except Exception as e:
+            self._cached = f"# source unavailable: {self._mod_name} ({type(e).__name__}: {e})"
+        return self._cached
+
+
+def _module_source_text(mod_name: str) -> _LazyModuleSource:
+    # Keep stage2 source loading lazy: unit tests and tooling should not require
+    # `flag_gems` to be installed/importable unless a pipeline run needs it.
+    return _LazyModuleSource(str(mod_name))
 
 
 # Use full module source so LLM/evidence stage has enough context.

@@ -4,6 +4,11 @@ intent_ir/llm_providers.local.json
 # Documentation directory
 doc/
 
+# Archived local-only materials (history; not part of runtime/gates)
+archive/doc/
+archive/experiment/
+archive/data/
+
 # Artifacts directory
 artifacts/
 
@@ -24,6 +29,9 @@ __pycache__/
 *.pyo
 *.pyd
 .pytest_cache/
+
+# Editor / IDE
+.vscode/
 
 # Local logs
 autotuner.log

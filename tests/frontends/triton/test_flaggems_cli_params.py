@@ -46,15 +46,6 @@ def test_flaggems_matrix_cli_exposes_cuda_stage_timeout_flags() -> None:
     assert "--cuda-cpp-engine-strict" not in text
 
 
-def test_generic_full_pipeline_cli_hides_flaggems_only_flags() -> None:
-    for script_rel in ("scripts/full_pipeline_verify.py", "scripts/triton/full_pipeline_verify.py"):
-        text = _help_text(script_rel)
-        assert "--use-llm" not in text
-        assert "--no-use-llm" not in text
-        assert "--use-intent-ir" not in text
-        assert "--intentir-seed-policy" not in text
-
-
 def test_flaggems_pipeline_cli_rejects_invalid_path_mode_combo() -> None:
     p = subprocess.run(
         [

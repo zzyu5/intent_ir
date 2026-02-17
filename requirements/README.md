@@ -15,4 +15,4 @@ This repo uses a small set of always-needed Python packages, plus optional GPU f
 - Reproducible (pinned transitive): `pip install -r requirements/lock/dev.lock.txt`
 - Optional GPU pipelines: install CUDA-compatible Torch first, then `pip install -r requirements/gpu.txt`
 
-For a quick sanity check, run: `python scripts/check_env.py`.
+For a quick sanity check, run: `pytest -q`.

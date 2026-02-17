@@ -51,8 +51,3 @@ python scripts/validate_catalog.py
 - `scripts/flaggems/ci_gate.py`: aggregate lane gates.
 - `scripts/flaggems/nightly_maintenance.py`: nightly matrix + ci gate + workflow snapshot refresh.
 - `scripts/flaggems/install_systemd_nightly.py`: install/render systemd timer templates.
-
-## Deprecated
-
-Legacy and experimental scripts remain in-tree for history, but are not part of active workflow.
-Use `scripts/CATALOG.json` to identify deprecated entries and their replacements.

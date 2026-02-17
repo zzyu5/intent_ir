@@ -10,10 +10,8 @@ Usage:
   # or omit INTENTIR_SSH_PASSWORD and type it when prompted
 Requires: `artifacts/<frontend>_full_pipeline/<kernel>.json` produced beforehand.
 Artifact dirs:
-  - triton (native):   artifacts/full_pipeline_verify/ (historical)
-  - triton (flaggems): artifacts/flaggems_triton_full_pipeline/
-  - tilelang: artifacts/tilelang_full_pipeline/
-  - cuda:     artifacts/cuda_full_pipeline/
+  - triton (flaggems): artifacts/flaggems_triton_full_pipeline/ (active)
+  - other frontends: legacy/archived (not part of current workflow)
 """
 
 from __future__ import annotations
@@ -393,9 +391,10 @@ def run_remote(
     artifact_root = (Path(artifact_dir) if artifact_dir else (ROOT / "artifacts" / artifact_rel)).resolve()
     report_path = artifact_root / f"{kernel}.json"
     if not report_path.exists():
-        cmd_hint = f"python scripts/full_pipeline_verify.py --frontend {frontend}"
         if frontend == "triton" and str(triton_provider) == "flaggems":
-            cmd_hint += " --triton-provider flaggems"
+            cmd_hint = f"python scripts/triton/flaggems_full_pipeline_verify.py --kernel {kernel}"
+        else:
+            cmd_hint = "python scripts/triton/flaggems_full_pipeline_verify.py --suite coverage"
         raise FileNotFoundError(
             f"artifact not found: {report_path}, please run `{cmd_hint}` first"
         )
@@ -533,15 +532,11 @@ def run_remote(
                     bindings = dict(spec.canonical_shapes)
                 baseline = spec.runner(TestCase(shapes=bindings, dtypes={}, seed=0))
             except Exception as e:
-                triton_cmd = "python scripts/full_pipeline_verify.py --frontend triton"
-                if str(triton_provider) == "flaggems":
-                    triton_cmd += " --triton-provider flaggems"
+                triton_cmd = "python scripts/triton/flaggems_full_pipeline_verify.py --suite coverage"
                 raise RuntimeError(
                     "baseline not available: no cached baseline .npz in artifacts and live baseline launch failed. "
-                    f"Run `{triton_cmd}` (for Triton), "
-                    "`python scripts/full_pipeline_verify.py --frontend tilelang` (for TileLang), or "
-                    "`python scripts/full_pipeline_verify.py --frontend cuda` (for CUDA) on a CUDA machine to produce "
-                    "`artifacts/<frontend>_full_pipeline/<kernel>.baseline.npz`, or pass --baseline-npz.\n"
+                    f"Run `{triton_cmd}` to produce pipeline artifacts (and baseline .npz when applicable), "
+                    "or pass --baseline-npz.\n"
                     f"live launch error: {type(e).__name__}: {e}"
                 ) from e
 

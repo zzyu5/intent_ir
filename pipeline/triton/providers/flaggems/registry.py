@@ -20,7 +20,7 @@ from pipeline.triton.providers.flaggems.semantic_rules import resolve_semantic_m
 
 
 ROOT = Path(__file__).resolve().parents[4]
-DEFAULT_REGISTRY_PATH = Path(__file__).with_name("flaggems_registry.json")
+DEFAULT_REGISTRY_PATH = ROOT / "pipeline" / "triton" / "flaggems_registry.json"
 DEFAULT_FLAGGEMS_OPSET = "deterministic_forward"
 STATUS_VALUES = {"dual_pass", "rvv_only", "cuda_only", "blocked_ir", "blocked_backend"}
 FAMILY_ORDER = [
@@ -277,7 +277,6 @@ def ensure_flaggems_importable(flaggems_src: str | Path | None = None) -> None:
     env = os.getenv("FLAGGEMS_SRC")
     if isinstance(env, str) and env.strip():
         candidates.append(Path(env.strip()))
-    candidates.append(ROOT / "experiment" / "FlagGems" / "src")
 
     for p in candidates:
         if p.is_dir() and str(p) not in sys.path:
@@ -529,12 +528,23 @@ def load_registry(path: str | Path | None = None) -> dict:
     p = Path(path) if path is not None else DEFAULT_REGISTRY_PATH
     if p.is_file():
         return json.loads(p.read_text(encoding="utf-8"))
-    default_src = ROOT / "experiment" / "FlagGems" / "src"
-    all_ops = load_flaggems_all_ops(flaggems_src=default_src)
-    commit = infer_flaggems_commit_from_src(default_src)
-    if not commit:
-        raise RuntimeError(f"unable to infer FlagGems commit from {default_src}")
-    return build_registry(all_ops=all_ops, flaggems_commit=commit, flaggems_source=str(default_src))
+    # No frozen registry present. Try importing the installed `flag_gems` package
+    # (or an explicitly configured source via FLAGGEMS_SRC / explicit src path).
+    try:
+        all_ops = load_flaggems_all_ops(flaggems_src=None)
+    except Exception as e:
+        raise RuntimeError(
+            "flaggems registry missing and `flag_gems` is not importable; "
+            "install the `flag_gems` package or set FLAGGEMS_SRC / pass an explicit source path"
+        ) from e
+    # Commit/hash is best-effort here; the canonical metadata lives in the frozen registry.
+    env = os.getenv("FLAGGEMS_SRC")
+    commit = infer_flaggems_commit_from_src(env) if env else None
+    return build_registry(
+        all_ops=all_ops,
+        flaggems_commit=str(commit or "unknown"),
+        flaggems_source=(str(env) if env else "python:flag_gems"),
+    )
 
 
 def load_registry_entry_by_semantic(registry: dict, semantic_op: str) -> dict | None:

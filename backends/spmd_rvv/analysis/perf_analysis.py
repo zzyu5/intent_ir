@@ -4,7 +4,7 @@ Performance analysis helpers for the RVV backend.
 This module is intentionally dependency-light (no numpy/pandas). It consumes the
 JSON produced by:
   - scripts/rvv_remote_suite.py  (raw remote compile+run)
-  - scripts/benchmark_suite.py   (compact perf JSON)
+  - archived perf harnesses (see `archive/scripts/legacy/benchmark_suite.py`)
 
 Primary goal (PROJECT_CRITICAL_GAPS_ANALYSIS_2025.md):
   - connect *predicted* (cost model / tuning debug) with *measured* (remote bench)
@@ -237,4 +237,3 @@ __all__ = [
     "extract_remote_suite_rows",
     "summarize_rows",
 ]
-

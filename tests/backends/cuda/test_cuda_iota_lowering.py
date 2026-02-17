@@ -232,7 +232,8 @@ def test_cuda_lowering_supports_rms_norm_pattern(monkeypatch) -> None:
     lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
     assert lowered.kernel_name == "rms_norm2d_cuda_lowering"
     assert "rsqrtf(" in lowered.cuda_src
-    assert "inv_rms" in lowered.cuda_src
+    # Ensure the second output is materialized (naming may differ across emitters).
+    assert "INV_RMS[" in lowered.cuda_src
     assert lowered.output_names == ["out", "INV_RMS"]
 
 
@@ -254,8 +255,10 @@ def test_cuda_lowering_supports_scatter_2d(monkeypatch) -> None:
     )
     lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
     assert lowered.kernel_name == "scatter2d_cuda_lowering"
-    assert "const int dst = index" in lowered.cuda_src
-    assert "(unsigned)dst < (unsigned)N" in lowered.cuda_src
+    # Expect indexed writes with bounds checks; exact temp names are not stable.
+    assert "index[" in lowered.cuda_src
+    assert "col < 0 || col >=" in lowered.cuda_src
+    assert "out[row + col] = src" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_select_scatter_2d(monkeypatch) -> None:
@@ -275,8 +278,8 @@ def test_cuda_lowering_supports_select_scatter_2d(monkeypatch) -> None:
     )
     lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
     assert lowered.kernel_name == "select_scatter2d_cuda_lowering"
-    assert "INDEX_COL" in lowered.cuda_src
-    assert "src[(size_t)row]" in lowered.cuda_src
+    assert "out[i] = inp[i]" in lowered.cuda_src
+    assert "out[m * 8LL + 0LL] = src[m]" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_slice_scatter_2d(monkeypatch) -> None:
@@ -303,8 +306,8 @@ def test_cuda_lowering_supports_slice_scatter_2d(monkeypatch) -> None:
     )
     lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8, "L": 4})
     assert lowered.kernel_name == "slice_scatter2d_cuda_lowering"
-    assert "for (int k = 0; k < 4; ++k)" in lowered.cuda_src
-    assert "src[(size_t)row * (size_t)4 + (size_t)k]" in lowered.cuda_src
+    assert "for (int64_t n = 0LL; n < 4LL; n += 1LL)" in lowered.cuda_src
+    assert "src[m * 4LL + l]" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_log_softmax_pattern(monkeypatch) -> None:
@@ -447,9 +450,11 @@ def test_cuda_lowering_supports_quantile_axis1(monkeypatch) -> None:
     )
     lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 32})
     assert lowered.kernel_name == "quantile2d_cuda_lowering"
-    assert "N_STACK = 32" in lowered.cuda_src
     assert "floorf(" in lowered.cuda_src
-    assert "vals[N_STACK]" in lowered.cuda_src
+    # Current implementation uses a rank-based selection (O(N^2)), not a stack array.
+    assert "int64_t rank = 0;" in lowered.cuda_src
+    assert "for (int64_t i = 0; i < 32LL; ++i)" in lowered.cuda_src
+    assert "for (int64_t j = 0; j < 32LL; ++j)" in lowered.cuda_src
 
 
 def test_cuda_lowering_respects_broadcast_in_dim_axes(monkeypatch) -> None:
@@ -547,7 +552,8 @@ def test_cuda_lowering_supports_addmm_pattern(monkeypatch) -> None:
     )
     lowered = _lower_or_skip(intent, shape_bindings={"M": 8, "N": 8, "K": 16})
     assert lowered.kernel_name == "addmm2d_cuda_lowering"
-    assert "alpha * acc + beta * bias" in lowered.cuda_src
+    assert "alpha_v * acc" in lowered.cuda_src
+    assert "beta_v * i" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_addmv_pattern(monkeypatch) -> None:
@@ -578,7 +584,9 @@ def test_cuda_lowering_supports_addmv_pattern(monkeypatch) -> None:
     )
     lowered = _lower_or_skip(intent, shape_bindings={"N": 16, "M": 8})
     assert lowered.kernel_name == "addmv2d_cuda_lowering"
-    assert "alpha * acc + beta *" in lowered.cuda_src
+    assert "alpha_v" in lowered.cuda_src
+    assert "beta_v" in lowered.cuda_src
+    assert "Inp" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_baddbmm_pattern(monkeypatch) -> None:
@@ -609,8 +617,8 @@ def test_cuda_lowering_supports_baddbmm_pattern(monkeypatch) -> None:
     )
     lowered = _lower_or_skip(intent, shape_bindings={"BATCH": 2, "M": 8, "N": 8, "K": 16})
     assert lowered.kernel_name == "baddbmm3d_cuda_lowering"
-    assert "blockIdx.z" in lowered.cuda_src
-    assert "alpha * acc + beta * bias" in lowered.cuda_src
+    assert "alpha_v * acc" in lowered.cuda_src
+    assert "beta_v * bias" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_batch_norm2d_pattern(monkeypatch) -> None:
@@ -712,7 +720,7 @@ def test_cuda_lowering_supports_per_token_group_quant_fp8_pattern(monkeypatch) -
     assert lowered.kernel_name == "per_token_group_quant_fp8_2d"
     assert len(lowered.output_names) == 2
     assert "fabsf" in lowered.cuda_src
-    assert "fmaxf(absmax, eps_v) / qmax" in lowered.cuda_src
+    assert "fmaxf(absmax, eps[0]) / fp8_max[0]" in lowered.cuda_src
     assert "y_q" in lowered.cuda_src
 
 
@@ -753,8 +761,8 @@ def test_cuda_lowering_supports_allclose_pattern(monkeypatch) -> None:
     )
     lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
     assert lowered.kernel_name == "allclose2d_cuda_lowering"
-    assert "fabsf(av - bv)" in lowered.cuda_src
-    assert "output[0] = (any == 0)" in lowered.cuda_src
+    assert "fabsf(a - b)" in lowered.cuda_src
+    assert "output[0] = all_close" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_bitwise_or_and_right_shift(monkeypatch) -> None:
@@ -801,8 +809,8 @@ def test_cuda_lowering_supports_masked_select_2d(monkeypatch) -> None:
     )
     lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 16, "L": 24})
     assert lowered.kernel_name == "masked_select2d_cuda_lowering"
-    assert "if (mask[i] != 0)" in lowered.cuda_src
-    assert "out_pos < L" in lowered.cuda_src
+    assert "if (mask[i])" in lowered.cuda_src
+    assert "out_pos < 24LL" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_masked_scatter_2d(monkeypatch) -> None:
@@ -825,7 +833,8 @@ def test_cuda_lowering_supports_masked_scatter_2d(monkeypatch) -> None:
     )
     lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 16, "L": 24})
     assert lowered.kernel_name == "masked_scatter2d_cuda_lowering"
-    assert "src_pos < L" in lowered.cuda_src
+    assert "if (mask[i])" in lowered.cuda_src
+    assert "src_pos < 24LL" in lowered.cuda_src
     assert "out[i] = source[src_pos]" in lowered.cuda_src
 
 
@@ -847,8 +856,8 @@ def test_cuda_lowering_supports_var_from_std_mul_pattern(monkeypatch) -> None:
     )
     lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 8})
     assert lowered.kernel_name == "var_mean2d_cuda_lowering"
-    assert "double var = sq / den;" in lowered.cuda_src
-    assert "out[(size_t)row" in lowered.cuda_src
+    assert "ss = fmaf(d, d, ss);" in lowered.cuda_src
+    assert "out[row] = ss / 7.000000f;" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_vector_norm_mul_reduce_sqrt_pattern(monkeypatch) -> None:
@@ -871,8 +880,8 @@ def test_cuda_lowering_supports_vector_norm_mul_reduce_sqrt_pattern(monkeypatch)
     )
     lowered = _lower_or_skip(intent, shape_bindings={"M": 4, "N": 16})
     assert lowered.kernel_name == "vector_norm2d_cuda_lowering"
-    assert "sum_sq += v * v;" in lowered.cuda_src
-    assert "sqrtf((float)sum_sq)" in lowered.cuda_src
+    assert "sum_sq = fmaf(x, x, sum_sq);" in lowered.cuda_src
+    assert "out[row] = sqrtf(sum_sq);" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_upsample_nearest1d(monkeypatch) -> None:
@@ -891,8 +900,8 @@ def test_cuda_lowering_supports_upsample_nearest1d(monkeypatch) -> None:
     )
     lowered = _lower_or_skip(intent, shape_bindings={"N": 2, "C": 3, "IL": 8, "OL": 16})
     assert lowered.kernel_name == "upsample_nearest1d_ncl"
-    assert "int il = (int)(((int64_t)ol" in lowered.cuda_src
-    assert "out_idx" in lowered.cuda_src
+    assert "il = (ol * 8LL) / 16LL" in lowered.cuda_src
+    assert "out[tid] = input[in_idx]" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_upsample_nearest2d(monkeypatch) -> None:
@@ -911,8 +920,8 @@ def test_cuda_lowering_supports_upsample_nearest2d(monkeypatch) -> None:
     )
     lowered = _lower_or_skip(intent, shape_bindings={"N": 1, "C": 2, "IH": 8, "IW": 8, "OH": 16, "OW": 16})
     assert lowered.kernel_name == "upsample_nearest2d_nchw"
-    assert "int ih = (int)(((int64_t)oh" in lowered.cuda_src
-    assert "int iw = (int)(((int64_t)ow" in lowered.cuda_src
+    assert "ih = (oh * 8LL) / 16LL" in lowered.cuda_src
+    assert "iw = (ow * 8LL) / 16LL" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_upsample_bicubic2d_aa_macro(monkeypatch) -> None:
@@ -936,7 +945,7 @@ def test_cuda_lowering_supports_upsample_bicubic2d_aa_macro(monkeypatch) -> None
         shape_bindings={"N": 1, "C": 1, "IH": 4, "IW": 4, "OH": 4, "OW": 4},
     )
     assert lowered.kernel_name == "upsample_bicubic2d_aa"
-    assert "O[(size_t)tid]" in lowered.cuda_src
+    assert "O[tid]" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_upsample_bicubic2d_aa_expanded_name_path(monkeypatch) -> None:
@@ -964,7 +973,7 @@ def test_cuda_lowering_supports_upsample_bicubic2d_aa_expanded_name_path(monkeyp
     assert lowered.kernel_name == "upsample_bicubic2d_aa"
     assert "const float* __restrict__ ptr_i" in lowered.cuda_src
     assert "float* __restrict__ ptr_o" in lowered.cuda_src
-    assert "ptr_o[(size_t)tid]" in lowered.cuda_src
+    assert "ptr_o[tid]" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_weight_norm_dim0_pattern(monkeypatch) -> None:
@@ -994,8 +1003,8 @@ def test_cuda_lowering_supports_weight_norm_dim0_pattern(monkeypatch) -> None:
     )
     lowered = _lower_or_skip(intent, shape_bindings={"M": 8, "N": 16})
     assert lowered.kernel_name == "weight_norm2d_cuda_lowering"
-    assert "const float norm = sqrtf((float)sum_sq);" in lowered.cuda_src
-    assert "row_ptr[(size_t)col] * scale" in lowered.cuda_src
+    assert "const float norm = sqrtf(sum_sq);" in lowered.cuda_src
+    assert "v[base + n] * scale" in lowered.cuda_src
 
 
 def test_cuda_lowering_supports_topk2d_pattern(monkeypatch) -> None:

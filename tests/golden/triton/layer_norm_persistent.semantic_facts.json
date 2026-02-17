@@ -6,7 +6,8 @@
     "has_copy": true,
     "has_dot": false,
     "has_reduce": true,
-    "kernel_kind_hint": "reduce"
+    "kernel_kind_hint": "reduce",
+    "needs_mask": true
   },
   "canonical_evidence": {
     "accesses": [
@@ -22,7 +23,16 @@
           }
         ],
         "kind": "load",
-        "meta": {},
+        "meta": {
+          "address_index_exprs": [
+            {
+              "const": 0,
+              "terms": {
+                "r0": 1
+              }
+            }
+          ]
+        },
         "predicate": {
           "clauses": [
             "r0 < N"
@@ -38,13 +48,22 @@
           {
             "const": 0,
             "terms": {
-              "mul(N,pid0)": 1,
               "r0": 1
             }
           }
         ],
         "kind": "load",
-        "meta": {},
+        "meta": {
+          "address_index_exprs": [
+            {
+              "const": 0,
+              "terms": {
+                "mul(N,pid0)": 1,
+                "r0": 1
+              }
+            }
+          ]
+        },
         "predicate": {
           "clauses": [
             "r0 < N"
@@ -65,7 +84,16 @@
           }
         ],
         "kind": "load",
-        "meta": {},
+        "meta": {
+          "address_index_exprs": [
+            {
+              "const": 0,
+              "terms": {
+                "r0": 1
+              }
+            }
+          ]
+        },
         "predicate": {
           "clauses": [
             "r0 < N"
@@ -86,7 +114,16 @@
           }
         ],
         "kind": "store",
-        "meta": {},
+        "meta": {
+          "address_index_exprs": [
+            {
+              "const": 0,
+              "terms": {
+                "pid0": 1
+              }
+            }
+          ]
+        },
         "predicate": null,
         "rank": 1,
         "tensor": "out_mean_ptr"
@@ -98,13 +135,22 @@
           {
             "const": 0,
             "terms": {
-              "mul(N,pid0)": 1,
               "r0": 1
             }
           }
         ],
         "kind": "store",
-        "meta": {},
+        "meta": {
+          "address_index_exprs": [
+            {
+              "const": 0,
+              "terms": {
+                "mul(N,pid0)": 1,
+                "r0": 1
+              }
+            }
+          ]
+        },
         "predicate": {
           "clauses": [
             "r0 < N"
@@ -125,7 +171,16 @@
           }
         ],
         "kind": "store",
-        "meta": {},
+        "meta": {
+          "address_index_exprs": [
+            {
+              "const": 0,
+              "terms": {
+                "pid0": 1
+              }
+            }
+          ]
+        },
         "predicate": null,
         "rank": 1,
         "tensor": "out_rstd_ptr"
@@ -138,7 +193,8 @@
       "has_copy": true,
       "has_dot": false,
       "has_reduce": true,
-      "kernel_kind_hint": "reduce"
+      "kernel_kind_hint": "reduce",
+      "needs_mask": true
     },
     "meta": {
       "symbols": {

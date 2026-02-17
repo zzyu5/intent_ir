@@ -12,11 +12,11 @@ These tests cover IntentIR types/parser/printer and the TTIR facts/contract help
 
 Run:
 
-- `python scripts/triton/full_pipeline_verify.py`
+- `python scripts/triton/flaggems_full_pipeline_verify.py --suite smoke`
 
 Outputs are written under:
 
-- `artifacts/full_pipeline_verify/`
+- `artifacts/flaggems_triton_full_pipeline/`
 
 ## Backend codegen smoke (local C compile/run)
 
@@ -42,7 +42,5 @@ Run:
 
 ## Remote RVV perf suite (optional)
 
-Run:
-
-- `python scripts/benchmark_suite.py --frontend both --host <host> --user <user> --use-key --bench-iters 50 --bench-warmup 5 --out artifacts/perf_latest.json`
-- `python scripts/compare_perf.py --baseline <baseline.json> --current artifacts/perf_latest.json --threshold 0.05`
+This repo's performance tracking is done via the workflow artifacts (`schedule_profiles.json`, `timing_delta.json`,
+`stage_timing_breakdown.json`) produced by nightly and backend compiler lane runs.

@@ -6,7 +6,7 @@ FlagGems is integrated as a Triton `provider`, not a separate frontend.
 
 - Source of truth: `flag_gems.ops.__all__`
 - Frozen registry: `pipeline/triton/flaggems_registry.json`
-- Registry builder: `pipeline/triton/flaggems_registry.py`
+- Registry builder: `pipeline/triton/providers/flaggems/registry.py`
 - Generation command:
 
 ```bash
@@ -31,15 +31,6 @@ PYTHONPATH=. python scripts/triton/flaggems_full_pipeline_verify.py \
   --intentir-mode auto \
   --flaggems-opset deterministic_forward \
   --backend-target rvv \
-  --suite smoke
-```
-
-Equivalent unified entry:
-
-```bash
-PYTHONPATH=. python scripts/full_pipeline_verify.py \
-  --frontend triton \
-  --triton-provider flaggems \
   --suite smoke
 ```
 

@@ -93,9 +93,10 @@ def main() -> None:
 
     # Ensure operational script directories are cataloged to avoid duplicate entrypoints.
     must_catalog_globs = [
+        "scripts/*.py",
         "scripts/flaggems/*.py",
         "scripts/intentir/*.py",
-        "scripts/triton/flaggems_full_pipeline_verify.py",
+        "scripts/triton/*.py",
     ]
     for pattern in must_catalog_globs:
         for full in sorted(ROOT.glob(pattern)):

@@ -216,7 +216,7 @@
       "path": "scripts/flaggems/generate_registry.py",
       "owner_lane": "coverage_integrity",
       "purpose": "generate semantic registry from flag_gems.ops.__all__",
-      "inputs": ["experiment/FlagGems"],
+      "inputs": ["python:flag_gems (installed)", "archive/experiment/FlagGems (optional, explicit path)"],
       "outputs": ["pipeline/triton/flaggems_registry.json"],
       "status": "active",
       "replacement": "",
@@ -231,16 +231,6 @@
       "status": "active",
       "replacement": "",
       "tests": ["tests/frontends/triton/test_flaggems_systemd_install.py"]
-    },
-    {
-      "path": "scripts/flaggems/sync_feature_list_from_registry.py",
-      "owner_lane": "workflow",
-      "purpose": "legacy coverage-only feature list sync",
-      "inputs": ["pipeline/triton/flaggems_registry.json"],
-      "outputs": ["workflow/flaggems/state/feature_list.json"],
-      "status": "deprecated",
-      "replacement": "scripts/flaggems/sync_feature_list_mixed.py",
-      "tests": ["tests/frontends/triton/test_flaggems_workflow_state_scripts.py"]
     },
     {
       "path": "scripts/intentir/check_primitive_reuse.py",
@@ -321,16 +311,6 @@
       "status": "active",
       "replacement": "",
       "tests": ["tests/frontends/triton/test_flaggems_matrix_suite_resolution.py"]
-    },
-    {
-      "path": "scripts/experiments",
-      "owner_lane": "archive",
-      "purpose": "historical experiments and paper support scripts",
-      "inputs": [],
-      "outputs": [],
-      "status": "deprecated",
-      "replacement": "workflow/flaggems/README.md",
-      "tests": []
     }
   ]
 }
