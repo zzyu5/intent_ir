@@ -67,6 +67,12 @@ def main() -> None:
         default=True,
         help="Run RVV remote stage (default: true).",
     )
+    ap.add_argument(
+        "--skip-rvv-local",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Skip rvv_local stage and focus on rvv_remote evidence (default: true).",
+    )
     ap.add_argument("--rvv-host", default="192.168.8.72")
     ap.add_argument("--rvv-user", default="ubuntu")
     ap.add_argument("--rvv-port", type=int, default=22)
@@ -197,6 +203,7 @@ def main() -> None:
             str(args.cuda_runtime_backend),
         ]
         matrix_cmd.append("--run-rvv-remote" if bool(args.run_rvv_remote) else "--no-run-rvv-remote")
+        matrix_cmd.append("--skip-rvv-local" if bool(args.skip_rvv_local) else "--no-skip-rvv-local")
         matrix_cmd.append("--rvv-use-key" if bool(args.rvv_use_key) else "--no-rvv-use-key")
         matrix_cmd.append("--allow-cuda-skip" if bool(args.allow_cuda_skip) else "--no-allow-cuda-skip")
         if bool(args.write_registry):
@@ -243,6 +250,7 @@ def main() -> None:
             str(out_dir),
         ]
         matrix_cmd.append("--run-rvv-remote" if bool(args.run_rvv_remote) else "--no-run-rvv-remote")
+        matrix_cmd.append("--skip-rvv-local" if bool(args.skip_rvv_local) else "--no-skip-rvv-local")
         matrix_cmd.append("--rvv-use-key" if bool(args.rvv_use_key) else "--no-rvv-use-key")
         matrix_cmd.append("--allow-cuda-skip" if bool(args.allow_cuda_skip) else "--no-allow-cuda-skip")
         if bool(args.write_registry):

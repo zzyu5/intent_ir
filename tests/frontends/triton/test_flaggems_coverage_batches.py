@@ -201,13 +201,76 @@ def test_run_coverage_batches_dry_run_uses_family_pipeline_dirs(tmp_path: Path) 
     for family in ("f1", "f2"):
         row = rows[family]
         expected_pipeline_dir = str(out_root / f"family_{family}" / "pipeline_reports")
-        assert row["pipeline_out_dir"] == expected_pipeline_dir
-        assert row["seed_cache_dir"] == seed_cache_dir
-        cmd = list(row["cmd"])
+        assert row["chunk_count"] == 1
+        chunks = list(row["chunks"])
+        assert len(chunks) == 1
+        chunk = chunks[0]
+        assert chunk["pipeline_out_dir"] == expected_pipeline_dir
+        assert chunk["seed_cache_dir"] == seed_cache_dir
+        cmd = list(chunk["cmd"])
         assert "--pipeline-out-dir" in cmd
         assert "--seed-cache-dir" in cmd
+        assert "--skip-rvv-local" in cmd
         assert expected_pipeline_dir in cmd
         assert seed_cache_dir in cmd
 
     # Dry-run intentionally skips aggregation.
     assert not (out_root / "run_summary.json").exists()
+
+
+def test_run_coverage_batches_dry_run_supports_family_chunking(tmp_path: Path) -> None:
+    coverage_batches = tmp_path / "coverage_batches.json"
+    out_root = tmp_path / "runs"
+    coverage_batches.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_coverage_batches_v1",
+                "family_order": ["f1"],
+                "batches": [
+                    {
+                        "family": "f1",
+                        "semantic_ops": ["op1"],
+                        "kernels": ["k1", "k2", "k3"],
+                        "semantic_count": 1,
+                        "kernel_count": 3,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/run_coverage_batches.py",
+            "--coverage-batches",
+            str(coverage_batches),
+            "--out-root",
+            str(out_root),
+            "--family-kernel-chunk-size",
+            "2",
+            "--dry-run",
+            "--no-resume",
+            "--run-rvv-remote",
+            "--skip-rvv-local",
+            "--allow-cuda-skip",
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    runs_payload = json.loads((out_root / "coverage_batch_runs.json").read_text(encoding="utf-8"))
+    assert runs_payload["ok"] is True
+    assert len(runs_payload["families"]) == 1
+    row = runs_payload["families"][0]
+    assert row["chunk_enabled"] is True
+    assert row["chunk_count"] == 2
+    chunks = list(row["chunks"])
+    assert len(chunks) == 2
+    chunk0_cmd = list(chunks[0]["cmd"])
+    chunk1_cmd = list(chunks[1]["cmd"])
+    assert "--skip-rvv-local" in chunk0_cmd
+    assert "--run-rvv-remote" in chunk0_cmd
+    assert chunk0_cmd.count("--kernel") == 2
+    assert chunk1_cmd.count("--kernel") == 1

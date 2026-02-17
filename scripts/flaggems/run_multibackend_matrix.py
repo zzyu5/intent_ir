@@ -206,6 +206,11 @@ def main() -> None:
     )
     ap.add_argument("--skip-pipeline", action="store_true")
     ap.add_argument("--skip-rvv", action="store_true")
+    ap.add_argument(
+        "--skip-rvv-local",
+        action="store_true",
+        help="Skip RVV local stage only; useful when focusing on rvv_remote evidence.",
+    )
     ap.add_argument("--skip-cuda", action="store_true")
     ap.add_argument(
         "--run-rvv-remote",
@@ -382,7 +387,7 @@ def main() -> None:
         )
 
     rvv_json = out_dir / "rvv_local.json"
-    if not bool(args.skip_rvv) and not missing_provider_reports:
+    if not bool(args.skip_rvv) and (not bool(args.skip_rvv_local)) and not missing_provider_reports:
         cmd = [
             sys.executable,
             "scripts/backend_codegen_smoke.py",
@@ -634,6 +639,7 @@ def main() -> None:
         "seed_cache_dir": str(seed_cache_dir),
         "pipeline_out_dir": str(pipeline_out_dir),
         "active_batch_path": str(active_batch_path),
+        "skip_rvv_local": bool(args.skip_rvv_local),
         "stages": stage_results,
         "out_dir": str(out_dir),
     }

@@ -5,6 +5,7 @@ Run full coverage in fixed family batches and aggregate to one full196 evidence.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 import subprocess
 import sys
@@ -62,6 +63,158 @@ def _family_dir(out_root: Path, family: str) -> Path:
     return out_root / f"family_{str(family)}"
 
 
+def _chunk_kernels(kernels: list[str], chunk_size: int) -> list[list[str]]:
+    if int(chunk_size) <= 0 or len(kernels) <= int(chunk_size):
+        return [list(kernels)]
+    out: list[list[str]] = []
+    step = int(chunk_size)
+    for i in range(0, len(kernels), step):
+        out.append(list(kernels[i : i + step]))
+    return out
+
+
+def _entry_status_rank(status: str) -> int:
+    rank = {
+        "dual_pass": 6,
+        "rvv_only": 5,
+        "cuda_only": 4,
+        "blocked_backend": 3,
+        "blocked_ir": 2,
+        "unknown": 1,
+    }
+    return int(rank.get(str(status), 0))
+
+
+def _counts(entries: list[dict[str, Any]]) -> dict[str, int]:
+    c: Counter[str] = Counter()
+    for row in list(entries or []):
+        c[str(row.get("status") or "unknown")] += 1
+    return {k: int(v) for k, v in sorted(c.items(), key=lambda kv: kv[0])}
+
+
+def _placeholder_entry(*, semantic_op: str, family: str, reason_detail: str) -> dict[str, Any]:
+    reason = "pipeline_missing_report"
+    return {
+        "semantic_op": str(semantic_op),
+        "family": str(family),
+        "status": "blocked_backend",
+        "reason_code": str(reason),
+        "status_reason": str(reason),
+        "status_reason_detail": str(reason_detail),
+        "runtime": {"provider": "missing", "rvv": "unknown", "cuda": "unknown"},
+        "runtime_detail": {
+            "rvv": {"reason_code": str(reason), "reason_detail": str(reason_detail)},
+            "cuda": {"reason_code": str(reason), "reason_detail": str(reason_detail)},
+        },
+        "compiler_stage": {
+            "provider_report": "missing",
+            "rvv_result": "missing",
+            "cuda_result": "missing",
+        },
+        "artifact_complete": False,
+        "determinability": False,
+    }
+
+
+def _materialize_family_outputs(
+    *,
+    family: str,
+    semantics: list[str],
+    kernels: list[str],
+    family_out: Path,
+    chunk_rows: list[dict[str, Any]],
+) -> tuple[bool, Path, Path]:
+    semantic_set = set(semantics)
+    merged_by_semantic: dict[str, dict[str, Any]] = {}
+    all_chunks_ok = True
+    for row in list(chunk_rows or []):
+        all_chunks_ok = bool(all_chunks_ok and bool(row.get("ok")))
+        status_path = Path(str(row.get("status_converged_path") or ""))
+        if not status_path.is_file():
+            all_chunks_ok = False
+            continue
+        try:
+            payload = _load_json(status_path)
+        except Exception:
+            all_chunks_ok = False
+            continue
+        for entry in list(payload.get("entries") or []):
+            if not isinstance(entry, dict):
+                continue
+            sop = str(entry.get("semantic_op") or "").strip()
+            if not sop or sop not in semantic_set:
+                continue
+            prev = merged_by_semantic.get(sop)
+            if prev is None or _entry_status_rank(str(entry.get("status") or "")) >= _entry_status_rank(
+                str(prev.get("status") or "")
+            ):
+                merged_by_semantic[sop] = entry
+
+    final_entries: list[dict[str, Any]] = []
+    missing_semantics: list[str] = []
+    non_dual_semantics: list[str] = []
+    for sop in semantics:
+        entry = merged_by_semantic.get(sop)
+        if entry is None:
+            missing_semantics.append(sop)
+            entry = _placeholder_entry(
+                semantic_op=sop,
+                family=family,
+                reason_detail=f"missing semantic entry after chunk merge for family={family}",
+            )
+        if str(entry.get("status") or "") != "dual_pass":
+            non_dual_semantics.append(sop)
+        final_entries.append(entry)
+
+    family_ok = bool(all_chunks_ok and not missing_semantics and not non_dual_semantics)
+    status_path = family_out / "status_converged.json"
+    run_summary_path = family_out / "run_summary.json"
+    status_payload = {
+        "schema_version": "flaggems_status_converged_v3",
+        "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "scope_enabled": False,
+        "entries": final_entries,
+        "counts_global": _counts(final_entries),
+        "counts_scoped": _counts(final_entries),
+        "counts_scoped_active": _counts(final_entries),
+        "counts_scoped_kernel_alias": _counts(final_entries),
+        "global_entries_count": int(len(final_entries)),
+        "scoped_entries_count": int(len(final_entries)),
+        "scoped_entries_active_count": int(len(final_entries)),
+        "scoped_entries_kernel_alias_count": int(len(final_entries)),
+    }
+    status_path.write_text(json.dumps(status_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    run_payload = {
+        "ok": bool(family_ok),
+        "suite": "coverage",
+        "requested_suite": "coverage",
+        "kernel_filter": list(kernels),
+        "scope_kernels": list(kernels),
+        "coverage_mode": "category_batches",
+        "full196_evidence_kind": "batch_aggregate",
+        "family": str(family),
+        "chunk_count": int(len(chunk_rows)),
+        "missing_semantics": list(missing_semantics),
+        "non_dual_semantics": list(non_dual_semantics),
+        "status_converged_path": str(status_path),
+        "chunk_runs": [
+            {
+                "chunk": str(r.get("chunk") or ""),
+                "ok": bool(r.get("ok")),
+                "rc": int(r.get("rc", 1)),
+                "out_dir": str(r.get("out_dir") or ""),
+                "run_summary_path": str(r.get("run_summary_path") or ""),
+                "status_converged_path": str(r.get("status_converged_path") or ""),
+                "kernel_count": int(r.get("kernel_count", 0)),
+                "kernels": list(r.get("kernels") or []),
+            }
+            for r in list(chunk_rows or [])
+        ],
+    }
+    run_summary_path.write_text(json.dumps(run_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return family_ok, run_summary_path, status_path
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -84,6 +237,12 @@ def main() -> None:
     ap.add_argument("--flaggems-opset", choices=["deterministic_forward"], default="deterministic_forward")
     ap.add_argument("--backend-target", choices=["rvv", "cuda_h100", "cuda_5090d"], default="rvv")
     ap.add_argument("--run-rvv-remote", action=argparse.BooleanOptionalAction, default=True)
+    ap.add_argument(
+        "--skip-rvv-local",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Skip rvv_local stage and rely on rvv_remote + cuda_local (default: true).",
+    )
     ap.add_argument("--rvv-host", default="192.168.8.72")
     ap.add_argument("--rvv-user", default="ubuntu")
     ap.add_argument("--rvv-port", type=int, default=22)
@@ -93,6 +252,12 @@ def main() -> None:
     ap.add_argument("--cuda-compile-timeout-sec", type=int, default=120)
     ap.add_argument("--cuda-launch-timeout-sec", type=int, default=120)
     ap.add_argument("--cuda-runtime-backend", choices=["auto", "nvcc", "nvrtc"], default="nvrtc")
+    ap.add_argument(
+        "--family-kernel-chunk-size",
+        type=int,
+        default=12,
+        help="Split each family into chunks with at most N kernels (default: 12, <=0 disables).",
+    )
     ap.add_argument("--write-registry", action=argparse.BooleanOptionalAction, default=False)
     ap.add_argument("--stream-subprocess-output", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--aggregate", action=argparse.BooleanOptionalAction, default=True)
@@ -145,9 +310,7 @@ def main() -> None:
 
         family_out = _family_dir(out_root, family)
         family_out.mkdir(parents=True, exist_ok=True)
-        family_pipeline_out = family_out / "pipeline_reports"
         family_seed_cache_dir = out_root / "seed_cache"
-        family_pipeline_out.mkdir(parents=True, exist_ok=True)
         family_seed_cache_dir.mkdir(parents=True, exist_ok=True)
         run_summary_path = family_out / "run_summary.json"
         status_path = family_out / "status_converged.json"
@@ -176,80 +339,165 @@ def main() -> None:
                 )
                 continue
 
+        chunks = _chunk_kernels(kernels, int(args.family_kernel_chunk_size))
+        chunk_enabled = bool(len(chunks) > 1)
         print(
-            f"[{idx}/{total_families}] RUN family={family} kernels={len(kernels)} semantics={len(semantics)}",
+            f"[{idx}/{total_families}] RUN family={family} kernels={len(kernels)} semantics={len(semantics)} "
+            f"chunks={len(chunks)} chunk_size={int(args.family_kernel_chunk_size)}",
             flush=True,
         )
-        cmd = [
-            sys.executable,
-            "scripts/flaggems/run_multibackend_matrix.py",
-            "--suite",
-            str(args.suite),
-            "--lane",
-            "coverage",
-            "--cases-limit",
-            str(int(args.cases_limit)),
-            "--flaggems-path",
-            str(args.flaggems_path),
-            "--intentir-mode",
-            str(args.intentir_mode),
-            "--intentir-miss-policy",
-            str(args.intentir_miss_policy),
-            "--flaggems-opset",
-            str(args.flaggems_opset),
-            "--backend-target",
-            str(args.backend_target),
-            "--rvv-host",
-            str(args.rvv_host),
-            "--rvv-user",
-            str(args.rvv_user),
-            "--rvv-port",
-            str(int(args.rvv_port)),
-            "--cuda-timeout-sec",
-            str(int(args.cuda_timeout_sec)),
-            "--cuda-compile-timeout-sec",
-            str(int(args.cuda_compile_timeout_sec)),
-            "--cuda-launch-timeout-sec",
-            str(int(args.cuda_launch_timeout_sec)),
-            "--cuda-runtime-backend",
-            str(args.cuda_runtime_backend),
-            "--out-dir",
-            str(family_out),
-            "--pipeline-out-dir",
-            str(family_pipeline_out),
-            "--seed-cache-dir",
-            str(family_seed_cache_dir),
-        ]
-        cmd.append("--run-rvv-remote" if bool(args.run_rvv_remote) else "--no-run-rvv-remote")
-        cmd.append("--rvv-use-key" if bool(args.rvv_use_key) else "--no-rvv-use-key")
-        cmd.append("--allow-cuda-skip" if bool(args.allow_cuda_skip) else "--no-allow-cuda-skip")
-        if bool(args.write_registry):
-            cmd.append("--write-registry")
-        for kernel in kernels:
-            cmd += ["--kernel", str(kernel)]
 
-        rc, out, err = _run(cmd, stream_output=bool(args.stream_subprocess_output), dry_run=bool(args.dry_run))
-        ok = int(rc) == 0
+        chunk_rows: list[dict[str, Any]] = []
+        for chunk_idx, chunk_kernels in enumerate(chunks, start=1):
+            chunk_name = f"chunk_{chunk_idx:03d}"
+            chunk_out = (family_out / chunk_name) if chunk_enabled else family_out
+            chunk_pipeline_out = chunk_out / "pipeline_reports"
+            chunk_out.mkdir(parents=True, exist_ok=True)
+            chunk_pipeline_out.mkdir(parents=True, exist_ok=True)
+            chunk_run_summary = chunk_out / "run_summary.json"
+            chunk_status = chunk_out / "status_converged.json"
+            if bool(args.resume) and chunk_run_summary.is_file() and chunk_status.is_file():
+                try:
+                    chunk_summary_payload = _load_json(chunk_run_summary)
+                    chunk_resume_ok = bool(chunk_summary_payload.get("ok"))
+                except Exception:
+                    chunk_resume_ok = False
+                if chunk_resume_ok:
+                    print(
+                        f"[{idx}/{total_families}] SKIP family={family} {chunk_name} "
+                        f"(resume hit kernels={len(chunk_kernels)})",
+                        flush=True,
+                    )
+                    chunk_rows.append(
+                        {
+                            "family": family,
+                            "chunk": chunk_name,
+                            "chunk_index": int(chunk_idx),
+                            "ok": True,
+                            "rc": 0,
+                            "reason": "resume_hit",
+                            "kernel_count": int(len(chunk_kernels)),
+                            "kernels": list(chunk_kernels),
+                            "out_dir": str(chunk_out),
+                            "run_summary_path": str(chunk_run_summary),
+                            "status_converged_path": str(chunk_status),
+                            "pipeline_out_dir": str(chunk_pipeline_out),
+                            "seed_cache_dir": str(family_seed_cache_dir),
+                            "skipped": True,
+                        }
+                    )
+                    continue
+
+            cmd = [
+                sys.executable,
+                "scripts/flaggems/run_multibackend_matrix.py",
+                "--suite",
+                str(args.suite),
+                "--lane",
+                "coverage",
+                "--cases-limit",
+                str(int(args.cases_limit)),
+                "--flaggems-path",
+                str(args.flaggems_path),
+                "--intentir-mode",
+                str(args.intentir_mode),
+                "--intentir-miss-policy",
+                str(args.intentir_miss_policy),
+                "--flaggems-opset",
+                str(args.flaggems_opset),
+                "--backend-target",
+                str(args.backend_target),
+                "--rvv-host",
+                str(args.rvv_host),
+                "--rvv-user",
+                str(args.rvv_user),
+                "--rvv-port",
+                str(int(args.rvv_port)),
+                "--cuda-timeout-sec",
+                str(int(args.cuda_timeout_sec)),
+                "--cuda-compile-timeout-sec",
+                str(int(args.cuda_compile_timeout_sec)),
+                "--cuda-launch-timeout-sec",
+                str(int(args.cuda_launch_timeout_sec)),
+                "--cuda-runtime-backend",
+                str(args.cuda_runtime_backend),
+                "--out-dir",
+                str(chunk_out),
+                "--pipeline-out-dir",
+                str(chunk_pipeline_out),
+                "--seed-cache-dir",
+                str(family_seed_cache_dir),
+            ]
+            cmd.append("--skip-rvv-local" if bool(args.skip_rvv_local) else "--no-skip-rvv-local")
+            cmd.append("--run-rvv-remote" if bool(args.run_rvv_remote) else "--no-run-rvv-remote")
+            cmd.append("--rvv-use-key" if bool(args.rvv_use_key) else "--no-rvv-use-key")
+            cmd.append("--allow-cuda-skip" if bool(args.allow_cuda_skip) else "--no-allow-cuda-skip")
+            if bool(args.write_registry):
+                cmd.append("--write-registry")
+            for kernel in chunk_kernels:
+                cmd += ["--kernel", str(kernel)]
+
+            print(
+                f"  - chunk {chunk_idx}/{len(chunks)} family={family} kernels={len(chunk_kernels)}",
+                flush=True,
+            )
+            rc, out, err = _run(cmd, stream_output=bool(args.stream_subprocess_output), dry_run=bool(args.dry_run))
+            chunk_rows.append(
+                {
+                    "family": family,
+                    "chunk": chunk_name,
+                    "chunk_index": int(chunk_idx),
+                    "ok": int(rc) == 0,
+                    "rc": int(rc),
+                    "kernel_count": int(len(chunk_kernels)),
+                    "kernels": list(chunk_kernels),
+                    "out_dir": str(chunk_out),
+                    "run_summary_path": str(chunk_run_summary),
+                    "status_converged_path": str(chunk_status),
+                    "stdout": str(out).strip(),
+                    "stderr": str(err).strip(),
+                    "skipped": False,
+                    "cmd": cmd,
+                    "pipeline_out_dir": str(chunk_pipeline_out),
+                    "seed_cache_dir": str(family_seed_cache_dir),
+                }
+            )
+
+        if chunk_enabled and (not bool(args.dry_run)):
+            family_ok, run_summary_path, status_path = _materialize_family_outputs(
+                family=family,
+                semantics=semantics,
+                kernels=kernels,
+                family_out=family_out,
+                chunk_rows=chunk_rows,
+            )
+        else:
+            family_ok = bool(all(bool(r.get("ok")) for r in chunk_rows))
+            if chunk_rows:
+                run_summary_path = Path(str(chunk_rows[-1].get("run_summary_path") or run_summary_path))
+                status_path = Path(str(chunk_rows[-1].get("status_converged_path") or status_path))
+
         family_rows.append(
             {
                 "family": family,
-                "ok": bool(ok),
-                "rc": int(rc),
+                "ok": bool(family_ok),
+                "rc": int(0 if family_ok else 1),
                 "semantic_count": int(len(semantics)),
                 "kernel_count": int(len(kernels)),
+                "chunk_count": int(len(chunks)),
+                "chunk_size": int(args.family_kernel_chunk_size),
+                "chunk_enabled": bool(chunk_enabled),
                 "out_dir": str(family_out),
                 "run_summary_path": str(run_summary_path),
                 "status_converged_path": str(status_path),
-                "stdout": str(out).strip(),
-                "stderr": str(err).strip(),
-                "skipped": False,
-                "cmd": cmd,
-                "pipeline_out_dir": str(family_pipeline_out),
+                "chunks": chunk_rows,
+                "skipped": bool(len(chunk_rows) > 0 and all(bool(r.get("skipped")) for r in chunk_rows)),
                 "seed_cache_dir": str(family_seed_cache_dir),
             }
         )
         print(
-            f"[{idx}/{total_families}] DONE family={family} rc={rc} run_summary={run_summary_path}",
+            f"[{idx}/{total_families}] DONE family={family} ok={family_ok} "
+            f"chunks={len(chunks)} run_summary={run_summary_path}",
             flush=True,
         )
 
