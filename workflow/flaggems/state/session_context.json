@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-17T12:18:45+00:00",
+  "updated_at": "2026-02-17T12:20:30+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -11,32 +11,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "be8e2c5 workflow: checkpoint backend compiler wave4 chunk5 evidence\nf224feb workflow: checkpoint backend compiler wave4 chunk3 evidence\na40a69d backend_compiler: stream chunk progress and checkpoint wave4 chunk2\n9ab921e workflow: mark full196 category aggregate fresh on HEAD (7/7, dual_pass=196)\nbabb1e9 workflow: checkpoint coverage rerun progress (reduction done, 2-of-7 categories)\nbbf60a7 workflow: refresh state snapshot after wave3 backend compiler commits\nb063afc workflow: close backend_compiler wave3 batch and refresh coverage evidence state\nf9a25d3 backend compiler wave3: split cuda/rvv emit blocks and fix max-pool cuda i64 lowering\n9c3cfa1 coverage: finalize 7-family aggregate freshness and timing evidence\neb46c98 Fix RVV compare IO dtype alignment and identity cast lowering\n11120cf flaggems: canonicalize failed family intents and checkpoint coverage workflow\nad9d6a2 workflow: record cuda reduction lowering fix and next coverage steps\n53355c2 cuda: support llm-expanded cumsum/mean/var_mean lowering patterns\n908c014 workflow: checkpoint chunked remote-only coverage progress\nd4a54fa flaggems: chunk coverage batches and support rvv remote-only mode\n093eaad workflow: record coverage batch rerun progress on head\na0f420b flaggems: isolate coverage batch pipeline reports per family\n85515d8 workflow: refresh current status after provider/category cutover\n2651e40 refactor: hard-cut flaggems provider boundary and add category coverage flow\nec5ec4c Refresh workflow snapshots after backend compiler batch",
+  "git_log_short": "30cc5e1 workflow: checkpoint backend compiler wave4 chunk0 evidence\nbe8e2c5 workflow: checkpoint backend compiler wave4 chunk5 evidence\nf224feb workflow: checkpoint backend compiler wave4 chunk3 evidence\na40a69d backend_compiler: stream chunk progress and checkpoint wave4 chunk2\n9ab921e workflow: mark full196 category aggregate fresh on HEAD (7/7, dual_pass=196)\nbabb1e9 workflow: checkpoint coverage rerun progress (reduction done, 2-of-7 categories)\nbbf60a7 workflow: refresh state snapshot after wave3 backend compiler commits\nb063afc workflow: close backend_compiler wave3 batch and refresh coverage evidence state\nf9a25d3 backend compiler wave3: split cuda/rvv emit blocks and fix max-pool cuda i64 lowering\n9c3cfa1 coverage: finalize 7-family aggregate freshness and timing evidence\neb46c98 Fix RVV compare IO dtype alignment and identity cast lowering\n11120cf flaggems: canonicalize failed family intents and checkpoint coverage workflow\nad9d6a2 workflow: record cuda reduction lowering fix and next coverage steps\n53355c2 cuda: support llm-expanded cumsum/mean/var_mean lowering patterns\n908c014 workflow: checkpoint chunked remote-only coverage progress\nd4a54fa flaggems: chunk coverage batches and support rvv remote-only mode\n093eaad workflow: record coverage batch rerun progress on head\na0f420b flaggems: isolate coverage batch pipeline reports per family\n85515d8 workflow: refresh current status after provider/category cutover\n2651e40 refactor: hard-cut flaggems provider boundary and add category coverage flow",
   "progress_tail": [
-    {
-      "ts": "2026-02-17T11:29:11+00:00",
-      "commit": "9ab921e63c6a59bd486cb4fbb0b9a1404ac30641",
-      "lane": "backend_compiler",
-      "summary": "Backend compiler wave4 progressed with chunk1/chunk2 full pass and streamed per-kernel progress output; detected CUDA compile-time spike on sqrt2d for follow-up tuning.",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1_chunk2/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1_chunk2/status_converged.json",
-      "next_focus": "Continue backend_compiler wave4 chunk3+; investigate sqrt2d CUDA compile_ms spike and apply schedule/codegen optimization, then rerun impacted coverage categories.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1_chunk1/backend_compiler_batch_summary.json",
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1_chunk2/backend_compiler_batch_summary.json",
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1_chunk2/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1_chunk2/stage_timing_breakdown.json",
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1_chunk2/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1_chunk2",
-      "counts_by_status": {
-        "blocked_backend": 176,
-        "dual_pass": 20
-      }
-    },
     {
       "ts": "2026-02-17T11:37:27+00:00",
       "commit": "a40a69d2cb107b51774f3d2ba95178ad1a5a0402",
@@ -191,14 +167,34 @@
         "blocked_backend": 179,
         "dual_pass": 17
       }
+    },
+    {
+      "ts": "2026-02-17T12:20:30+00:00",
+      "commit": "30cc5e1fb6243461f122e3034eafce9faf8b5947",
+      "lane": "coverage",
+      "summary": "Refreshed full196 category aggregate evidence on latest HEAD via resume+aggregate after workflow checkpoint commit.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/status_converged.json",
+      "next_focus": "Continue backend compiler maturity: analyze wave4 chunk0-7 compile_ms outliers and apply codegen/schedule optimization; rerun impacted categories and refresh full196.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/coverage_integrity.json",
+        "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/stage_timing_breakdown.json",
+        "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
     }
   ],
-  "next_focus": "Aggregate wave4 chunk0-7 compile_ms outliers and implement schedule/codegen mitigation; rerun impacted coverage families then refresh full196 on HEAD.",
+  "next_focus": "Continue backend compiler maturity: analyze wave4 chunk0-7 compile_ms outliers and apply codegen/schedule optimization; rerun impacted categories and refresh full196.",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
   "active_lanes": [],
   "next_focus_by_lane": {
     "backend_compiler": "Aggregate wave4 chunk0-7 compile_ms outliers and implement schedule/codegen mitigation; rerun impacted coverage families then refresh full196 on HEAD.",
-    "coverage": "Continue backend_compiler wave4 chunk6-8 and compile_ms outlier optimization."
+    "coverage": "Continue backend compiler maturity: analyze wave4 chunk0-7 compile_ms outliers and apply codegen/schedule optimization; rerun impacted categories and refresh full196."
   },
   "known_risks": []
 }

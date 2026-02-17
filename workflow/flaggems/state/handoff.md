@@ -1,11 +1,11 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-17T12:18:45+00:00
-- Commit: `be8e2c50ef606b159a0b1bb77ea009ae72b30921`
-- Lane: `backend_compiler`
-- Summary: Backend compiler wave4 chunk0 completed with full dual-pass across pipeline+rvv local+rvv remote+cuda; chunked wave now has indices 0-7 fully evidenced.
+- Timestamp: 2026-02-17T12:20:30+00:00
+- Commit: `30cc5e1fb6243461f122e3034eafce9faf8b5947`
+- Lane: `coverage`
+- Summary: Refreshed full196 category aggregate evidence on latest HEAD via resume+aggregate after workflow checkpoint commit.
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1/backend_compiler_batch_summary.json, artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1/run_summary.json, artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1/stage_timing_breakdown.json, artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1/status_converged.json
-- Next Focus: Aggregate wave4 chunk0-7 compile_ms outliers and implement schedule/codegen mitigation; rerun impacted coverage families then refresh full196 on HEAD.
+- Run Summary: `artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/status_converged.json`
+- Evidence Paths: artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/coverage_integrity.json, artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/run_summary.json, artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/stage_timing_breakdown.json, artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/status_converged.json
+- Next Focus: Continue backend compiler maturity: analyze wave4 chunk0-7 compile_ms outliers and apply codegen/schedule optimization; rerun impacted categories and refresh full196.

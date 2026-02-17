@@ -1,13 +1,13 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-17T12:18:45+00:00",
+  "updated_at": "2026-02-17T12:20:30+00:00",
   "branch": "flaggems",
-  "head_commit": "be8e2c50ef606b159a0b1bb77ea009ae72b30921",
+  "head_commit": "30cc5e1fb6243461f122e3034eafce9faf8b5947",
   "mode": "maintenance",
   "coverage_integrity_phase": "recomputed_ok",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/run_summary.json",
   "full196_last_ok": true,
-  "full196_validated_commit": "be8e2c50ef606b159a0b1bb77ea009ae72b30921",
+  "full196_validated_commit": "30cc5e1fb6243461f122e3034eafce9faf8b5947",
   "full196_commits_since_validated": 0,
   "full196_validated_mode": "force_compile",
   "full196_validated_scope": "coverage_158_kernels_to_196_semantics",
@@ -88,11 +88,11 @@
   "active_lanes": [],
   "next_focus_by_lane": {
     "backend_compiler": "Aggregate wave4 chunk0-7 compile_ms outliers and implement schedule/codegen mitigation; rerun impacted coverage families then refresh full196 on HEAD.",
-    "coverage": "Continue backend_compiler wave4 chunk6-8 and compile_ms outlier optimization."
+    "coverage": "Continue backend compiler maturity: analyze wave4 chunk0-7 compile_ms outliers and apply codegen/schedule optimization; rerun impacted categories and refresh full196."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/status_converged.json"
   },
   "lanes": {
     "coverage": {
