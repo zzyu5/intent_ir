@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-17T07:46:03+00:00",
+  "updated_at": "2026-02-17T10:45:34+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -11,26 +11,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "bbf60a7 workflow: refresh state snapshot after wave3 backend compiler commits\nb063afc workflow: close backend_compiler wave3 batch and refresh coverage evidence state\nf9a25d3 backend compiler wave3: split cuda/rvv emit blocks and fix max-pool cuda i64 lowering\n9c3cfa1 coverage: finalize 7-family aggregate freshness and timing evidence\neb46c98 Fix RVV compare IO dtype alignment and identity cast lowering\n11120cf flaggems: canonicalize failed family intents and checkpoint coverage workflow\nad9d6a2 workflow: record cuda reduction lowering fix and next coverage steps\n53355c2 cuda: support llm-expanded cumsum/mean/var_mean lowering patterns\n908c014 workflow: checkpoint chunked remote-only coverage progress\nd4a54fa flaggems: chunk coverage batches and support rvv remote-only mode\n093eaad workflow: record coverage batch rerun progress on head\na0f420b flaggems: isolate coverage batch pipeline reports per family\n85515d8 workflow: refresh current status after provider/category cutover\n2651e40 refactor: hard-cut flaggems provider boundary and add category coverage flow\nec5ec4c Refresh workflow snapshots after backend compiler batch\n6551229 Fix provider deterministic convergence and CUDA min_dim split lowering\n2ff245e backend_compiler: split wave3 emit/dispatch blocks into chunked includes\nc051aae workflow: record backend wave3 cpp split session and gate evidence\n183b029 backend_compiler: split cuda/rvv cpp_codegen wave3 modules\n008466d workflow: record ir_arch strict gate run and next backend wave",
+  "git_log_short": "babb1e9 workflow: checkpoint coverage rerun progress (reduction done, 2-of-7 categories)\nbbf60a7 workflow: refresh state snapshot after wave3 backend compiler commits\nb063afc workflow: close backend_compiler wave3 batch and refresh coverage evidence state\nf9a25d3 backend compiler wave3: split cuda/rvv emit blocks and fix max-pool cuda i64 lowering\n9c3cfa1 coverage: finalize 7-family aggregate freshness and timing evidence\neb46c98 Fix RVV compare IO dtype alignment and identity cast lowering\n11120cf flaggems: canonicalize failed family intents and checkpoint coverage workflow\nad9d6a2 workflow: record cuda reduction lowering fix and next coverage steps\n53355c2 cuda: support llm-expanded cumsum/mean/var_mean lowering patterns\n908c014 workflow: checkpoint chunked remote-only coverage progress\nd4a54fa flaggems: chunk coverage batches and support rvv remote-only mode\n093eaad workflow: record coverage batch rerun progress on head\na0f420b flaggems: isolate coverage batch pipeline reports per family\n85515d8 workflow: refresh current status after provider/category cutover\n2651e40 refactor: hard-cut flaggems provider boundary and add category coverage flow\nec5ec4c Refresh workflow snapshots after backend compiler batch\n6551229 Fix provider deterministic convergence and CUDA min_dim split lowering\n2ff245e backend_compiler: split wave3 emit/dispatch blocks into chunked includes\nc051aae workflow: record backend wave3 cpp split session and gate evidence\n183b029 backend_compiler: split cuda/rvv cpp_codegen wave3 modules",
   "progress_tail": [
-    {
-      "ts": "2026-02-17T02:41:05Z",
-      "commit": "d4a54fabec86f6ac1e5d19ee3ae8cf518f80c5d1",
-      "lane": "coverage",
-      "summary": "Added category chunking (family-kernel-chunk-size=12 default), remote-only RVV mode (--skip-rvv-local), and validated attention_sequence fullstack (pipeline+rvv_remote+cuda). Started non-elementwise multi-family run in remote-only mode and reached reduction chunk_001 rvv_remote in-progress before controlled interrupt for checkpointing.",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
-      "run_summary_path": "",
-      "status_converged_path": "",
-      "next_focus": "Resume coverage_non_elementwise_remote_cuda_v1 with --resume, then run elementwise_broadcast by chunks and aggregate all 7 categories for HEAD freshness.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260217/coverage_family_attention_remote_cuda_v1/family_attention_sequence/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260217/coverage_non_elementwise_remote_cuda_v1/family_reduction/chunk_001/pipeline_reports/kernel_progress.jsonl"
-      ],
-      "run_ok": false,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260217/coverage_non_elementwise_remote_cuda_v1",
-      "counts_by_status": {}
-    },
     {
       "ts": "2026-02-17T03:01:55Z",
       "commit": "53355c2b8e245ec7ec59815aaac5699ad0a0680d",
@@ -189,19 +171,36 @@
       "run_ok": true,
       "run_out_dir": null,
       "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-17T10:45:30+00:00",
+      "commit": "babb1e918d21255a06e7c159072da59fc872c0c7",
+      "lane": "coverage",
+      "summary": "Completed 7/7 category coverage aggregate with dual_pass=196 on force_compile.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/status_converged.json",
+      "next_focus": "Switch back to backend_compiler lane (cpp modularization + stage_timing_breakdown) and run impacted coverage categories after changes.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/coverage_integrity.json",
+        "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/stage_timing_breakdown.json",
+        "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
     }
   ],
-  "next_focus": "Resume remaining coverage families in same out-root with --resume (norm_activation/index_scatter_gather/matmul_linear/attention_sequence), then run elementwise_broadcast chunks and finish 7/7 aggregate.",
+  "next_focus": "Switch back to backend_compiler lane (cpp modularization + stage_timing_breakdown) and run impacted coverage categories after changes.",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
-  "active_lanes": [
-    "coverage"
-  ],
+  "active_lanes": [],
   "next_focus_by_lane": {
-    "coverage": "Resume remaining coverage families in same out-root with --resume (norm_activation/index_scatter_gather/matmul_linear/attention_sequence), then run elementwise_broadcast chunks and finish 7/7 aggregate.",
-    "backend_compiler": "Continue backend compiler wave3: run remaining manifest chunks in smaller batches, then update feature_list wave3 tasks to done and re-run backend_compiler gate."
+    "backend_compiler": "Continue backend compiler wave3: run remaining manifest chunks in smaller batches, then update feature_list wave3 tasks to done and re-run backend_compiler gate.",
+    "coverage": "Switch back to backend_compiler lane (cpp modularization + stage_timing_breakdown) and run impacted coverage categories after changes."
   },
   "known_risks": [
-    "Added category chunking (family-kernel-chunk-size=12 default), remote-only RVV mode (--skip-rvv-local), and validated attention_sequence fullstack (pipeline+rvv_remote+cuda). Started non-elementwise multi-family run in remote-only mode and reached reduction chunk_001 rvv_remote in-progress before controlled interrupt for checkpointing.",
     "Resumed 7-family category coverage run with chunk_size=12 and remote-only RVV + CUDA; reduction/norm_activation/matmul_linear rerun now fully dual_pass, elementwise_broadcast in progress."
   ]
 }
