@@ -1,14 +1,14 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-17T13:02:44+00:00",
+  "updated_at": "2026-02-17T15:31:00+00:00",
   "branch": "flaggems",
-  "head_commit": "61f27676d153041049dc9a1777c5f5f65942a5a3",
+  "head_commit": "867e62052535312caf0f1b0b1bae30dda15cf9ab",
   "mode": "maintenance",
-  "coverage_integrity_phase": "recompute_stale",
-  "full196_last_run": "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/run_summary.json",
+  "coverage_integrity_phase": "recomputed_ok",
+  "full196_last_run": "artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_refresh_v1/run_summary.json",
   "full196_last_ok": true,
-  "full196_validated_commit": "6aeaaa1d2f3bcbd4a8cd1050c2c467882a3631ad",
-  "full196_commits_since_validated": 5,
+  "full196_validated_commit": "867e62052535312caf0f1b0b1bae30dda15cf9ab",
+  "full196_commits_since_validated": 0,
   "full196_validated_mode": "force_compile",
   "full196_validated_scope": "coverage_158_kernels_to_196_semantics",
   "full196_validated_with_rvv_remote": true,
@@ -85,16 +85,14 @@
     "catalog_path": "scripts/CATALOG.json",
     "catalog_validated": true
   },
-  "active_lanes": [
-    "coverage"
-  ],
+  "active_lanes": [],
   "next_focus_by_lane": {
     "backend_compiler": "Continue backend compiler phase4 by splitting remaining large emit include groups and rerunning impacted coverage categories before refreshing full196.",
-    "coverage": "Rerun next impacted categories with new family-scoped converge behavior, then perform 7/7 aggregate full196 refresh on HEAD."
+    "coverage": "Cut compiler-cleanup-v1 from this validated state; then archive doc/experiment and clean scripts/tests per plan"
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260217/coverage_matmul_splitcheck_v1/family_matmul_linear/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260217/coverage_matmul_splitcheck_v1/family_matmul_linear/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_refresh_v1/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_refresh_v1/status_converged.json"
   },
   "lanes": {
     "coverage": {

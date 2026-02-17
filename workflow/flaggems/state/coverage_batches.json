@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_coverage_batches_v1",
-  "generated_at": "2026-02-17T01:35:52+00:00",
+  "generated_at": "2026-02-17T13:38:26+00:00",
   "family_order": [
     "elementwise_broadcast",
     "reduction",
@@ -453,5 +453,5 @@
       "attention_sequence": 2
     }
   },
-  "source_registry_path": "/home/kingdom/intentir/pipeline/triton/flaggems_registry.json"
+  "source_registry_path": "pipeline/triton/flaggems_registry.json"
 }
