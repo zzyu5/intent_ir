@@ -311,6 +311,16 @@
       "status": "active",
       "replacement": "",
       "tests": ["tests/frontends/triton/test_flaggems_matrix_suite_resolution.py"]
+    },
+    {
+      "path": "scripts/rvv_probe.sh",
+      "owner_lane": "backend_compiler_rewrite",
+      "purpose": "RVV remote device probe helper (used by device_query/query_remote_device)",
+      "inputs": ["ssh access to RVV host"],
+      "outputs": ["JSON RVVHardwareProfile on stdout"],
+      "status": "active",
+      "replacement": "",
+      "tests": []
     }
   ]
 }

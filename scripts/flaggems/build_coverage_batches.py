@@ -40,7 +40,8 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 def _dump_json(path: Path, payload: dict[str, Any]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    # Keep a stable trailing newline for clean diffs.
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return path
 
 
@@ -135,6 +136,13 @@ def _build_batches(registry_payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _repo_rel(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(ROOT))
+    except Exception:
+        return str(path)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -151,7 +159,7 @@ def main() -> None:
 
     registry_payload = _load_json(args.registry)
     payload = _build_batches(registry_payload)
-    payload["source_registry_path"] = str(args.registry)
+    payload["source_registry_path"] = _repo_rel(args.registry)
 
     out_path = _dump_json(args.out, payload)
     summary = dict(payload.get("summary") or {})
