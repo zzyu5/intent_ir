@@ -1,11 +1,11 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-17T16:51:07+00:00
-- Commit: `f7da8fab739fe703ea5dfa85ed9fbfa8991b238d`
+- Timestamp: 2026-02-17T18:28:58+00:00
+- Commit: `dbe6dc24e4033c3bf4771f9f0f85b9af53bdffb6`
 - Lane: `coverage`
-- Summary: Started full196 force_compile rerun on compiler-cleanup-v1; elementwise_broadcast chunk_1-2 passed on RVV remote + CUDA; run interrupted mid chunk_3
+- Summary: full196 force_compile (7/7 families) refreshed on HEAD via coverage batches
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_cleanup_v3/family_elementwise_broadcast/chunk_002/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_cleanup_v3/family_elementwise_broadcast/chunk_002/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_cleanup_v3/family_elementwise_broadcast/chunk_001/run_summary.json, artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_cleanup_v3/family_elementwise_broadcast/chunk_001/status_converged.json, artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_cleanup_v3/family_elementwise_broadcast/chunk_002/run_summary.json, artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_cleanup_v3/family_elementwise_broadcast/chunk_002/status_converged.json
-- Next Focus: Resume full196 category batches on compiler-cleanup-v1 (same out-root) until 7/7 complete, then aggregate + ci_gate + build_workflow_state
+- Run Summary: `artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_cleanup_v3/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_cleanup_v3/status_converged.json`
+- Evidence Paths: artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_cleanup_v3/coverage_batch_runs.json, artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_cleanup_v3/coverage_integrity.json, artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_cleanup_v3/run_summary.json, artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_cleanup_v3/stage_timing_breakdown.json, artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_cleanup_v3/status_converged.json
+- Next Focus: Run ci_gate/build_workflow_state checkpoint commit; then proceed compiler-cleanup-v1 Phase2-6 cleanup tasks
