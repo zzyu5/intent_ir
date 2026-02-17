@@ -11,15 +11,32 @@ import math
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _run(cmd: list[str], *, dry_run: bool) -> tuple[int, str, str]:
+def _run(cmd: list[str], *, dry_run: bool, stream_output: bool) -> tuple[int, str, str]:
     if dry_run:
         return 0, "(dry-run)", ""
-    p = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
-    return int(p.returncode), str(p.stdout or ""), str(p.stderr or "")
+    if not bool(stream_output):
+        p = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
+        return int(p.returncode), str(p.stdout or ""), str(p.stderr or "")
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(ROOT),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    merged: list[str] = []
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        merged.append(line)
+        print(line, end="", flush=True)
+    rc = int(proc.wait())
+    return rc, "".join(merged), ""
 
 
 def _default_out_dir() -> Path:
@@ -118,6 +135,89 @@ def _select_chunk(*, kernels: list[str], chunk_size: int, chunk_index: int) -> t
     }
 
 
+def _results_by_kernel(path: Path) -> dict[str, dict[str, Any]]:
+    payload = _load_json(path)
+    rows = payload.get("results")
+    if not isinstance(rows, list):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        kernel = str(row.get("kernel") or "").strip()
+        if not kernel:
+            continue
+        out[kernel] = row
+    return out
+
+
+def _kernel_status_by_spec(path: Path) -> dict[str, dict[str, Any]]:
+    payload = _load_json(path)
+    entries = payload.get("entries")
+    if not isinstance(entries, list):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for row in entries:
+        if not isinstance(row, dict):
+            continue
+        spec = str(row.get("e2e_spec") or "").strip()
+        if not spec:
+            continue
+        out[spec] = row
+    return out
+
+
+def _reason_or_ok(row: dict[str, Any]) -> str:
+    reason = str(row.get("reason_code") or "").strip()
+    if reason:
+        return reason
+    ok = row.get("ok")
+    if isinstance(ok, bool):
+        return "ok" if ok else "fail"
+    return "unknown"
+
+
+def _ms_triplet(row: dict[str, Any]) -> str:
+    lower = row.get("lower_ms")
+    compile_ms = row.get("compile_ms")
+    launch = row.get("launch_ms")
+    if not isinstance(lower, (int, float)) and not isinstance(compile_ms, (int, float)) and not isinstance(launch, (int, float)):
+        return ""
+    l = f"{float(lower):.1f}" if isinstance(lower, (int, float)) else "-"
+    c = f"{float(compile_ms):.1f}" if isinstance(compile_ms, (int, float)) else "-"
+    r = f"{float(launch):.1f}" if isinstance(launch, (int, float)) else "-"
+    return f"{l}/{c}/{r}ms"
+
+
+def _emit_kernel_progress(out_dir: Path, selected_kernels: list[str]) -> None:
+    status_by_spec = _kernel_status_by_spec(out_dir / "status_converged.json")
+    rvv_path = out_dir / "rvv_remote.json"
+    if not rvv_path.is_file():
+        rvv_path = out_dir / "rvv_local.json"
+    rvv_by_kernel = _results_by_kernel(rvv_path)
+    cuda_by_kernel = _results_by_kernel(out_dir / "cuda_local.json")
+    if not status_by_spec and not rvv_by_kernel and not cuda_by_kernel:
+        print("[backend-batch] kernel progress unavailable (missing status/rvv/cuda artifacts)", flush=True)
+        return
+    print("[backend-batch] per-kernel result summary:", flush=True)
+    for kernel in selected_kernels:
+        entry = status_by_spec.get(str(kernel), {})
+        rvv = rvv_by_kernel.get(str(kernel), {})
+        cuda = cuda_by_kernel.get(str(kernel), {})
+        semantic = str(entry.get("semantic_op") or "-")
+        status = str(entry.get("status") or "unknown")
+        rvv_reason = _reason_or_ok(rvv) if rvv else "missing"
+        cuda_reason = _reason_or_ok(cuda) if cuda else "missing"
+        rvv_ms = _ms_triplet(rvv) if rvv else ""
+        cuda_ms = _ms_triplet(cuda) if cuda else ""
+        line = (
+            f"  - {kernel}: semantic={semantic} status={status} "
+            f"rvv={rvv_reason}{(' ' + rvv_ms) if rvv_ms else ''} "
+            f"cuda={cuda_reason}{(' ' + cuda_ms) if cuda_ms else ''}"
+        )
+        print(line, flush=True)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out-dir", type=Path, default=_default_out_dir())
@@ -161,6 +261,18 @@ def main() -> None:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Emit stage timing delta report against previous backend run.",
+    )
+    ap.add_argument(
+        "--stream-subprocess-output",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Stream matrix subprocess logs in real time (default: true).",
+    )
+    ap.add_argument(
+        "--print-kernel-progress",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Print one-line status for each selected kernel after run (default: true).",
     )
     ap.add_argument("--timing-baseline-dir", type=Path, default=None)
     ap.add_argument("--dry-run", action="store_true")
@@ -241,10 +353,18 @@ def main() -> None:
         cmd.append("--allow-cuda-skip")
     else:
         cmd.append("--no-allow-cuda-skip")
+    if bool(args.stream_subprocess_output):
+        cmd.append("--stream-subprocess-output")
+    else:
+        cmd.append("--no-stream-subprocess-output")
     for k in selected_kernels:
         cmd += ["--kernel", str(k)]
 
-    rc, stdout, stderr = _run(cmd, dry_run=bool(args.dry_run))
+    rc, stdout, stderr = _run(
+        cmd,
+        dry_run=bool(args.dry_run),
+        stream_output=bool(args.stream_subprocess_output),
+    )
     timing_delta_path = ""
     timing_delta_ok = True
     timing_delta_stderr = ""
@@ -275,7 +395,11 @@ def main() -> None:
             delta_cmd += ["--baseline-rvv", str(baseline_rvv)]
         if baseline_cuda is not None:
             delta_cmd += ["--baseline-cuda", str(baseline_cuda)]
-        rc_delta, _out_delta, err_delta = _run(delta_cmd, dry_run=False)
+        rc_delta, _out_delta, err_delta = _run(
+            delta_cmd,
+            dry_run=False,
+            stream_output=False,
+        )
         timing_delta_ok = int(rc_delta) == 0
         timing_delta_stderr = str(err_delta).strip()
         timing_delta_path = str(timing_delta)
@@ -321,7 +445,11 @@ def main() -> None:
             profiles_cmd += ["--rvv-tile-n", str(int(args.rvv_tile_n))]
         if args.rvv_tile_k is not None:
             profiles_cmd += ["--rvv-tile-k", str(int(args.rvv_tile_k))]
-        rc_profiles, _out_profiles, err_profiles = _run(profiles_cmd, dry_run=False)
+        rc_profiles, _out_profiles, err_profiles = _run(
+            profiles_cmd,
+            dry_run=False,
+            stream_output=False,
+        )
         schedule_profiles_ok = int(rc_profiles) == 0
         schedule_profiles_stderr = str(err_profiles).strip()
         schedule_profiles_path = str(schedule_profiles)
@@ -356,7 +484,11 @@ def main() -> None:
             "--out",
             str(stage_timing_breakdown),
         ]
-        rc_breakdown, _out_breakdown, err_breakdown = _run(breakdown_cmd, dry_run=False)
+        rc_breakdown, _out_breakdown, err_breakdown = _run(
+            breakdown_cmd,
+            dry_run=False,
+            stream_output=False,
+        )
         stage_timing_breakdown_ok = int(rc_breakdown) == 0
         stage_timing_breakdown_stderr = str(err_breakdown).strip()
         stage_timing_breakdown_path = str(stage_timing_breakdown)
@@ -429,6 +561,8 @@ def main() -> None:
     batch_summary = out / "backend_compiler_batch_summary.json"
     batch_summary.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"backend_compiler batch summary written: {batch_summary}")
+    if bool(args.print_kernel_progress) and not bool(args.dry_run):
+        _emit_kernel_progress(out, selected_kernels)
     raise SystemExit(0 if summary["ok"] else 1)
 
 
