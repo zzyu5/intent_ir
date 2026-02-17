@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-17T02:41:19+00:00",
+  "updated_at": "2026-02-17T03:02:12+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -11,34 +11,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "d4a54fa flaggems: chunk coverage batches and support rvv remote-only mode\n093eaad workflow: record coverage batch rerun progress on head\na0f420b flaggems: isolate coverage batch pipeline reports per family\n85515d8 workflow: refresh current status after provider/category cutover\n2651e40 refactor: hard-cut flaggems provider boundary and add category coverage flow\nec5ec4c Refresh workflow snapshots after backend compiler batch\n6551229 Fix provider deterministic convergence and CUDA min_dim split lowering\n2ff245e backend_compiler: split wave3 emit/dispatch blocks into chunked includes\nc051aae workflow: record backend wave3 cpp split session and gate evidence\n183b029 backend_compiler: split cuda/rvv cpp_codegen wave3 modules\n008466d workflow: record ir_arch strict gate run and next backend wave\n12a949d ir_arch: enforce strict complexity gates and lane activation\nf604442 ir_arch: refresh mapping complexity from semantic rules in workflow and checks\n2da8b53 workflow: record cuda dropout split batch and refresh state\n431b267 backend: split cuda dropout emitter out of codegen main\nca43599 workflow: record rvv infer split batch and refresh state\n26ceba1 backend: split rvv shape inference dispatch from codegen main\naf0ba04 workflow: record backend schedule-env dedup matrix validation\n6a9dadd workflow: record schedule-env dedup session and refresh state\ne5ef6b4 backend: unify cuda/rvv schedule env parsing in common pipeline utils",
+  "git_log_short": "53355c2 cuda: support llm-expanded cumsum/mean/var_mean lowering patterns\n908c014 workflow: checkpoint chunked remote-only coverage progress\nd4a54fa flaggems: chunk coverage batches and support rvv remote-only mode\n093eaad workflow: record coverage batch rerun progress on head\na0f420b flaggems: isolate coverage batch pipeline reports per family\n85515d8 workflow: refresh current status after provider/category cutover\n2651e40 refactor: hard-cut flaggems provider boundary and add category coverage flow\nec5ec4c Refresh workflow snapshots after backend compiler batch\n6551229 Fix provider deterministic convergence and CUDA min_dim split lowering\n2ff245e backend_compiler: split wave3 emit/dispatch blocks into chunked includes\nc051aae workflow: record backend wave3 cpp split session and gate evidence\n183b029 backend_compiler: split cuda/rvv cpp_codegen wave3 modules\n008466d workflow: record ir_arch strict gate run and next backend wave\n12a949d ir_arch: enforce strict complexity gates and lane activation\nf604442 ir_arch: refresh mapping complexity from semantic rules in workflow and checks\n2da8b53 workflow: record cuda dropout split batch and refresh state\n431b267 backend: split cuda dropout emitter out of codegen main\nca43599 workflow: record rvv infer split batch and refresh state\n26ceba1 backend: split rvv shape inference dispatch from codegen main\naf0ba04 workflow: record backend schedule-env dedup matrix validation",
   "progress_tail": [
-    {
-      "ts": "2026-02-16T20:23:14+00:00",
-      "commit": "26ceba1",
-      "lane": "backend_compiler",
-      "summary": "Refactored RVV C++ codegen by splitting the large shape/dtype inference dispatch block out of intentir_codegen.cpp into infer_shapes_dispatch.inc with no behavior change.",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260217/backend_rvv_infer_split_v1/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260217/backend_rvv_infer_split_v1/status_converged.json",
-      "next_focus": "Continue backend modularization on CUDA cpp_codegen while full196 force_compile run progresses; use scoped batches for regression guard.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260217/backend_rvv_infer_split_v1/batch_gate_backend_compiler.json",
-        "artifacts/flaggems_matrix/daily/20260217/backend_rvv_infer_split_v1/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260217/backend_rvv_infer_split_v1/stage_timing_breakdown.json",
-        "artifacts/flaggems_matrix/daily/20260217/backend_rvv_infer_split_v1/status_converged.json",
-        "tests/backends/cuda/test_cuda_pipeline_driver.py",
-        "tests/backends/spmd_rvv/test_rvv_codegen_shim.py",
-        "tests/backends/spmd_rvv/test_rvv_pipeline_driver.py"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260217/backend_rvv_infer_split_v1",
-      "counts_by_status": {
-        "blocked_backend": 194,
-        "dual_pass": 2
-      }
-    },
     {
       "ts": "2026-02-16T20:25:37+00:00",
       "commit": "431b267",
@@ -194,16 +168,40 @@
       "run_ok": false,
       "run_out_dir": "artifacts/flaggems_matrix/daily/20260217/coverage_non_elementwise_remote_cuda_v1",
       "counts_by_status": {}
+    },
+    {
+      "ts": "2026-02-17T03:01:55Z",
+      "commit": "53355c2b8e245ec7ec59815aaac5699ad0a0680d",
+      "lane": "backend_compiler",
+      "summary": "Fixed CUDA C++ dispatch for LLM-expanded reduction patterns: cumsum(iota+identity wrappers), row_mean(const+reduce_sum+cast+div), and expanded var_mean2d(9-op, Var/Mean outputs).",
+      "batch_ops": [
+        "cumsum2d",
+        "row_mean",
+        "var_mean2d"
+      ],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260217/fix_cuda_reduction_triplet_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260217/fix_cuda_reduction_triplet_v1/status_converged.json",
+      "next_focus": "Resume non-elementwise category batches with remote-only RVV + CUDA, then complete elementwise chunks and aggregate full196 evidence on HEAD.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260217/fix_cuda_reduction_triplet_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260217/fix_cuda_reduction_triplet_v1/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260217/fix_cuda_reduction_triplet_v1/cuda_local.json",
+        "artifacts/flaggems_matrix/daily/20260217/fix_cuda_reduction_triplet_v1/rvv_remote.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260217/fix_cuda_reduction_triplet_v1",
+      "counts_by_status": {}
     }
   ],
-  "next_focus": "Resume `coverage_non_elementwise_remote_cuda_v1` with `--resume`, then run `elementwise_broadcast` by chunks and finish 7-family aggregate full196 evidence on HEAD.",
+  "next_focus": "Resume category-batch coverage (`coverage_non_elementwise_remote_cuda_v1` then `elementwise_broadcast`) with `--skip-rvv-local --run-rvv-remote`, then run 7-family aggregate for HEAD freshness.",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
   "active_lanes": [
     "backend_compiler",
     "coverage"
   ],
   "next_focus_by_lane": {
-    "backend_compiler": "Run full196 force_compile with RVV local+remote+CUDA on HEAD for fresh coverage evidence, then continue cpp codegen module split.",
+    "backend_compiler": "Resume non-elementwise category batches with remote-only RVV + CUDA, then complete elementwise chunks and aggregate full196 evidence on HEAD.",
     "ir_arch": "Refresh full196 force_compile evidence on HEAD, then continue backend_compiler cpp module split wave.",
     "coverage": "Resume coverage_non_elementwise_remote_cuda_v1 with --resume, then run elementwise_broadcast by chunks and aggregate all 7 categories for HEAD freshness."
   },
