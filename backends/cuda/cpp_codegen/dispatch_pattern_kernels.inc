@@ -21,6 +21,11 @@
   if (intent.ops.size() == 2 && intent.ops[0].op == "std" && intent.ops[1].op == "mul") {
     return emit_var_mean2d_f32(intent, bindings_json);
   }
+  if (intent.ops.size() == 9 && intent.ops[0].op == "const" && intent.ops[1].op == "reduce_sum" && intent.ops[2].op == "broadcast_in_dim" &&
+      intent.ops[3].op == "sub" && intent.ops[4].op == "mul" && intent.ops[5].op == "reduce_sum" && intent.ops[6].op == "sub" &&
+      intent.ops[7].op == "div" && intent.ops[8].op == "identity") {
+    return emit_var_mean2d_f32(intent, bindings_json);
+  }
   if (intent.ops.size() == 3 && intent.ops[0].op == "mul" && intent.ops[1].op == "reduce_sum" && intent.ops[2].op == "sqrt") {
     return emit_vector_norm2d_f32(intent, bindings_json);
   }

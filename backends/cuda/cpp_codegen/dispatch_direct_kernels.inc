@@ -78,6 +78,23 @@
   if (intent.ops.size() == 3 && intent.ops[0].op == "const" && intent.ops[1].op == "reduce_sum" && intent.ops[2].op == "div") {
     return emit_reduce_mean_2d_axis1_f32(intent, bindings_json);
   }
+  if (intent.ops.size() == 4 && intent.ops[0].op == "const" && intent.ops[1].op == "reduce_sum" && intent.ops[2].op == "cast" &&
+      intent.ops[3].op == "div") {
+    const Op& cst = intent.ops[0];
+    const Op& red = intent.ops[1];
+    const Op& cast = intent.ops[2];
+    const Op& div = intent.ops[3];
+    const bool cast_wires_const = (cast.inputs.size() == 1 && cast.inputs[0] == cst.output);
+    const bool div_wires_cast = (div.inputs.size() == 2 && div.inputs[0] == red.output && div.inputs[1] == cast.output);
+    const bool cast_to_f32 = (cast.attrs.value("to", std::string("f32")) == "f32");
+    if (cast_wires_const && div_wires_cast && cast_to_f32) {
+      Intent tmp = intent;
+      Op mean_div = div;
+      mean_div.inputs = {red.output, cst.output};
+      tmp.ops = {cst, red, mean_div};
+      return emit_reduce_mean_2d_axis1_f32(tmp, bindings_json);
+    }
+  }
   if (intent.ops.size() == 1 && intent.ops[0].op == "gather") return emit_gather2d_f32(intent, bindings_json);
   if (intent.ops.size() == 1 && intent.ops[0].op == "conv1d") return emit_conv1d_ncl_f32(intent, bindings_json);
   if ((intent.ops.size() == 1 && intent.ops[0].op == "conv2d") ||
@@ -113,6 +130,22 @@
   if (intent.ops.size() == 1 && intent.ops[0].op == "upsample_nearest1d") return emit_upsample_nearest1d_ncl_f32(intent, bindings_json);
   if (intent.ops.size() == 1 && intent.ops[0].op == "upsample_nearest2d") return emit_upsample_nearest2d_nchw_f32(intent, bindings_json);
   if (intent.ops.size() == 1 && intent.ops[0].op == "cumsum") return emit_cumsum2d_axis1_f32(intent, bindings_json);
+  if (intent.ops.size() == 4 && intent.ops[0].op == "iota" && intent.ops[1].op == "identity" && intent.ops[2].op == "cumsum" &&
+      intent.ops[3].op == "identity") {
+    const Op& id_in = intent.ops[1];
+    const Op& cumsum = intent.ops[2];
+    const Op& id_out = intent.ops[3];
+    const bool cumsum_wires_id = (cumsum.inputs.size() == 1 && cumsum.inputs[0] == id_in.output);
+    const bool out_wires_cumsum = (id_out.inputs.size() == 1 && id_out.inputs[0] == cumsum.output);
+    if (cumsum_wires_id && out_wires_cumsum && id_in.inputs.size() == 1) {
+      Intent tmp = intent;
+      Op cumsum_op = cumsum;
+      cumsum_op.inputs = {id_in.inputs[0]};
+      cumsum_op.output = id_out.output;
+      tmp.ops = {cumsum_op};
+      return emit_cumsum2d_axis1_f32(tmp, bindings_json);
+    }
+  }
   if (intent.ops.size() == 1 && intent.ops[0].op == "cummax") return emit_cumextrema1d_f32(intent, bindings_json, true);
   if (intent.ops.size() == 1 && intent.ops[0].op == "cummin") return emit_cumextrema1d_f32(intent, bindings_json, false);
   if (intent.ops.size() == 1 && intent.ops[0].op == "scaled_dot_product_attention") {

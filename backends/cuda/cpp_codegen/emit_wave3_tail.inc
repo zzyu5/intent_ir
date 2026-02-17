@@ -823,27 +823,90 @@ json emit_slice_scatter2d_dim1_f32(const Intent& intent, const json& bindings) {
 }
 
 json emit_var_mean2d_f32(const Intent& intent, const json& bindings) {
-  if (intent.ops.size() != 2 || intent.ops[0].op != "std" || intent.ops[1].op != "mul") {
-    fail("var_mean lowering expects std->mul pattern");
+  const bool std_mul_pattern = (intent.ops.size() == 2 && intent.ops[0].op == "std" && intent.ops[1].op == "mul");
+  const bool expanded_pattern =
+      (intent.ops.size() == 9 && intent.ops[0].op == "const" && intent.ops[1].op == "reduce_sum" && intent.ops[2].op == "broadcast_in_dim" &&
+       intent.ops[3].op == "sub" && intent.ops[4].op == "mul" && intent.ops[5].op == "reduce_sum" && intent.ops[6].op == "sub" &&
+       intent.ops[7].op == "div" && intent.ops[8].op == "identity");
+  if (!std_mul_pattern && !expanded_pattern) {
+    fail("var_mean lowering expects std->mul or expanded reduce_sum->...->div->identity pattern");
   }
-  const Op& std_op = intent.ops[0];
-  const Op& mul_op = intent.ops[1];
-  if (std_op.inputs.size() != 1 || mul_op.inputs.size() != 2) fail("var_mean arity mismatch");
-  if (!((mul_op.inputs[0] == std_op.output && mul_op.inputs[1] == std_op.output))) fail("var_mean expects mul(std_out,std_out)");
-  if (!_reduce_axis_is_1(std_op.attrs)) fail("var_mean currently supports axis=1 only");
-  const int64_t correction = std_op.attrs.value("correction", static_cast<int64_t>(1));
-  const std::string inp = std_op.inputs[0];
-  const std::string out_name = mul_op.output;
+
+  std::string inp;
+  std::string out_var;
+  std::string out_mean;
+  bool has_mean_output = false;
+  int64_t correction = 1;
+  std::string correction_tensor;
+  std::string correction_dtype;
+
+  if (std_mul_pattern) {
+    const Op& std_op = intent.ops[0];
+    const Op& mul_op = intent.ops[1];
+    if (std_op.inputs.size() != 1 || mul_op.inputs.size() != 2) fail("var_mean arity mismatch");
+    if (!((mul_op.inputs[0] == std_op.output && mul_op.inputs[1] == std_op.output))) fail("var_mean expects mul(std_out,std_out)");
+    if (!_reduce_axis_is_1(std_op.attrs)) fail("var_mean currently supports axis=1 only");
+    inp = std_op.inputs[0];
+    out_var = mul_op.output;
+    correction = std_op.attrs.value("correction", static_cast<int64_t>(1));
+  } else {
+    const Op& red_mean = intent.ops[1];
+    const Op& bcast_mean = intent.ops[2];
+    const Op& sub_center = intent.ops[3];
+    const Op& mul_sq = intent.ops[4];
+    const Op& red_var = intent.ops[5];
+    const Op& sub_denom = intent.ops[6];
+    const Op& div_var = intent.ops[7];
+    const Op& id_mean = intent.ops[8];
+    if (red_mean.inputs.size() != 1) fail("var_mean expanded: reduce_sum(mean) expects 1 input");
+    if (!_reduce_axis_is_1(red_mean.attrs)) fail("var_mean expanded: reduce_sum(mean) expects axis=1");
+    inp = red_mean.inputs[0];
+    if (bcast_mean.inputs.size() != 1 || bcast_mean.inputs[0] != red_mean.output) fail("var_mean expanded: broadcast wiring mismatch");
+    if (sub_center.inputs.size() != 2 || sub_center.inputs[0] != inp || sub_center.inputs[1] != bcast_mean.output) {
+      fail("var_mean expanded: center-sub wiring mismatch");
+    }
+    if (mul_sq.inputs.size() != 2 || mul_sq.inputs[0] != sub_center.output || mul_sq.inputs[1] != sub_center.output) {
+      fail("var_mean expanded: squared-diff wiring mismatch");
+    }
+    if (red_var.inputs.size() != 1 || red_var.inputs[0] != mul_sq.output || !_reduce_axis_is_1(red_var.attrs)) {
+      fail("var_mean expanded: reduce_sum(var) wiring/axis mismatch");
+    }
+    if (sub_denom.inputs.size() != 2 || sub_denom.inputs[0] != intent.ops[0].output) {
+      fail("var_mean expanded: denominator sub wiring mismatch");
+    }
+    if (div_var.inputs.size() != 2 || div_var.inputs[0] != red_var.output || div_var.inputs[1] != sub_denom.output) {
+      fail("var_mean expanded: div wiring mismatch");
+    }
+    if (id_mean.inputs.size() != 1 || id_mean.inputs[0] != red_mean.output) fail("var_mean expanded: mean identity wiring mismatch");
+
+    out_var = div_var.output;
+    out_mean = id_mean.output;
+    has_mean_output = true;
+
+    correction_tensor = sub_denom.inputs[1];
+    auto c_it = intent.tensors.find(correction_tensor);
+    if (c_it != intent.tensors.end()) {
+      correction_dtype = c_it->second.dtype;
+    }
+  }
+
   auto i_it = intent.tensors.find(inp);
-  auto o_it = intent.tensors.find(out_name);
-  if (i_it == intent.tensors.end() || o_it == intent.tensors.end()) fail("var_mean missing tensors");
-  if (i_it->second.dtype != "f32" || o_it->second.dtype != "f32") fail("var_mean supports f32 only");
+  auto v_it = intent.tensors.find(out_var);
+  if (i_it == intent.tensors.end() || v_it == intent.tensors.end()) fail("var_mean missing tensors");
+  if (i_it->second.dtype != "f32" || v_it->second.dtype != "f32") fail("var_mean supports f32 only");
   auto i_shape = resolve_shape_required(i_it->second, bindings, "var_mean.inp");
-  auto o_shape = resolve_shape_required(o_it->second, bindings, "var_mean.out");
-  if (i_shape.size() != 2 || o_shape.size() != 1 || o_shape[0] != i_shape[0]) fail("var_mean shape mismatch");
+  auto v_shape = resolve_shape_required(v_it->second, bindings, "var_mean.var_out");
+  if (i_shape.size() != 2 || v_shape.size() != 1 || v_shape[0] != i_shape[0]) fail("var_mean shape mismatch for variance output");
+  if (has_mean_output) {
+    auto m_it = intent.tensors.find(out_mean);
+    if (m_it == intent.tensors.end()) fail("var_mean mean output tensor missing");
+    if (m_it->second.dtype != "f32") fail("var_mean mean output supports f32 only");
+    auto m_shape = resolve_shape_required(m_it->second, bindings, "var_mean.mean_out");
+    if (m_shape.size() != 1 || m_shape[0] != i_shape[0]) fail("var_mean mean output shape mismatch");
+  }
   const int64_t M = i_shape[0];
   const int64_t N = i_shape[1];
-  const float denom = (N - correction > 0) ? static_cast<float>(N - correction) : 1.0f;
+  const float static_denom = (N - correction > 0) ? static_cast<float>(N - correction) : 1.0f;
 
   int64_t block_x = resolve_schedule_int(intent, bindings, "tile_m", 256);
   if (block_x <= 0) block_x = 256;
@@ -860,7 +923,20 @@ json emit_var_mean2d_f32(const Intent& intent, const json& bindings) {
   w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_x) + ") void " + intent.name + "(");
   w.indent();
   w.line("const float* __restrict__ " + inp + ",");
-  w.line("float* __restrict__ " + out_name);
+  w.line("float* __restrict__ " + out_var + ",");
+  if (has_mean_output) {
+    const bool has_corr_arg = (!correction_tensor.empty() && (correction_dtype == "i32" || correction_dtype == "f32"));
+    if (has_corr_arg) {
+      w.line("float* __restrict__ " + out_mean + ",");
+      if (correction_dtype == "i32") {
+        w.line("const int* __restrict__ " + correction_tensor);
+      } else {
+        w.line("const float* __restrict__ " + correction_tensor);
+      }
+    } else {
+      w.line("float* __restrict__ " + out_mean);
+    }
+  }
   w.dedent();
   w.line(") {");
   w.indent();
@@ -877,7 +953,21 @@ json emit_var_mean2d_f32(const Intent& intent, const json& bindings) {
   w.line("ss = fmaf(d, d, ss);");
   w.dedent();
   w.line("}");
-  w.line(out_name + "[row] = ss / " + std::to_string(denom) + "f;");
+  if (has_mean_output) {
+    if (!correction_tensor.empty() && correction_dtype == "i32") {
+      w.line("const float corr = " + correction_tensor + " ? (float)" + correction_tensor + "[0] : 1.0f;");
+      w.line("const float denom = fmaxf((float)" + std::to_string(N) + " - corr, 1.0f);");
+    } else if (!correction_tensor.empty() && correction_dtype == "f32") {
+      w.line("const float corr = " + correction_tensor + " ? " + correction_tensor + "[0] : 1.0f;");
+      w.line("const float denom = fmaxf((float)" + std::to_string(N) + " - corr, 1.0f);");
+    } else {
+      w.line("const float denom = " + std::to_string(static_denom) + "f;");
+    }
+    w.line(out_var + "[row] = ss / denom;");
+    w.line(out_mean + "[row] = mean;");
+  } else {
+    w.line(out_var + "[row] = ss / " + std::to_string(static_denom) + "f;");
+  }
   w.dedent();
   w.line("}");
 
@@ -888,9 +978,20 @@ json emit_var_mean2d_f32(const Intent& intent, const json& bindings) {
   json out;
   out["kernel_name"] = intent.name;
   out["cuda_src"] = cuda_ss.str();
-  out["io_spec"] = io_spec_from_args(intent, {inp, out_name}, {}, {inp, out_name});
+  if (has_mean_output) {
+    std::vector<std::string> tensor_args = {inp, out_var, out_mean};
+    std::vector<std::string> arg_names = {inp, out_var, out_mean};
+    if (!correction_tensor.empty() && (correction_dtype == "i32" || correction_dtype == "f32")) {
+      tensor_args.push_back(correction_tensor);
+      arg_names.push_back(correction_tensor);
+    }
+    out["io_spec"] = io_spec_from_args(intent, tensor_args, {}, arg_names);
+    out["output_names"] = {out_var, out_mean};
+  } else {
+    out["io_spec"] = io_spec_from_args(intent, {inp, out_var}, {}, {inp, out_var});
+    out["output_names"] = {out_var};
+  }
   out["launch"] = {{"grid", {grid_x, 1, 1}}, {"block", {block_x, 1, 1}}, {"shared_mem", 0}};
-  out["output_names"] = {out_name};
   out["bindings"] = out_bindings;
   return out;
 }
@@ -1371,4 +1472,3 @@ json emit_per_token_group_quant_fp8_2d_f32(const Intent& intent, const json& bin
   out["bindings"] = bindings;
   return out;
 }
-
