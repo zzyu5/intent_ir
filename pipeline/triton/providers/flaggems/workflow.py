@@ -494,7 +494,10 @@ def build_current_status_payload(
     coverage_integrity_phase: str = "recompute_pending",
     full196_last_ok: bool | None = None,
     full196_validated_commit: str = "",
+    full196_validated_commit_source: str = "",
     full196_commits_since_validated: int | None = None,
+    full196_commits_since_validated_total: int | None = None,
+    full196_lifted_to_head: bool = False,
     full196_validated_mode: str = "",
     full196_validated_scope: str = "",
     full196_validated_with_rvv_remote: bool | None = None,
@@ -537,9 +540,16 @@ def build_current_status_payload(
         "full196_last_run": str(full196_run_summary_path),
         "full196_last_ok": (None if full196_last_ok is None else bool(full196_last_ok)),
         "full196_validated_commit": str(full196_validated_commit or ""),
+        "full196_validated_commit_source": str(full196_validated_commit_source or ""),
         "full196_commits_since_validated": (
             None if full196_commits_since_validated is None else int(full196_commits_since_validated)
         ),
+        "full196_commits_since_validated_total": (
+            None
+            if full196_commits_since_validated_total is None
+            else int(full196_commits_since_validated_total)
+        ),
+        "full196_lifted_to_head": bool(full196_lifted_to_head),
         "full196_validated_mode": str(full196_validated_mode or ""),
         "full196_validated_scope": str(full196_validated_scope or ""),
         "full196_validated_with_rvv_remote": (

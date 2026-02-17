@@ -387,6 +387,39 @@ def _commits_since_validated(validated_commit: str, head_commit: str) -> int | N
         return None
 
 
+_STATE_ONLY_PREFIXES: tuple[str, ...] = ("workflow/flaggems/state/",)
+
+
+def _changed_paths_between(base_commit: str, head_commit: str) -> list[str]:
+    base = str(base_commit or "").strip()
+    head = str(head_commit or "").strip()
+    if not base or not head:
+        return []
+    p = subprocess.run(
+        ["git", "diff", "--name-only", f"{base}..{head}"],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    if p.returncode != 0:
+        return []
+    out: list[str] = []
+    for line in str(p.stdout or "").splitlines():
+        s = str(line).strip()
+        if s:
+            out.append(s)
+    return out
+
+
+def _is_state_only_change(paths: list[str]) -> bool:
+    if not paths:
+        return True
+    for p in paths:
+        if not any(str(p).startswith(prefix) for prefix in _STATE_ONLY_PREFIXES):
+            return False
+    return True
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--feature-list", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "feature_list.json"))
@@ -438,6 +471,9 @@ def main() -> None:
             coverage_batches_expected = None
 
     validated_commit_state = "missing"
+    full196_validated_commit_source = str(full196_validated_commit or "")
+    full196_commits_since_validated_total: int | None = None
+    full196_lifted_to_head = False
     if full196_validated_commit:
         if not _commit_exists(full196_validated_commit):
             validated_commit_state = "invalid"
@@ -445,15 +481,23 @@ def main() -> None:
             validated_commit_state = "invalid"
         else:
             validated_commit_state = "reachable"
-    full196_commits_since_validated = (
-        _commits_since_validated(full196_validated_commit, head_commit)
-        if validated_commit_state == "reachable"
-        else None
-    )
-    if validated_commit_state == "reachable" and full196_commits_since_validated is not None and int(full196_commits_since_validated) > 0:
-        validated_commit_state = "stale"
-    elif validated_commit_state == "reachable":
-        validated_commit_state = "fresh"
+    full196_commits_since_validated = None
+    if validated_commit_state == "reachable":
+        full196_commits_since_validated_total = _commits_since_validated(full196_validated_commit, head_commit)
+        full196_commits_since_validated = full196_commits_since_validated_total
+        # If only workflow state files changed since the last validated full196 evidence,
+        # treat the evidence as still fresh on HEAD and "lift" it to the current commit.
+        if full196_commits_since_validated_total is not None and int(full196_commits_since_validated_total) > 0:
+            changed_paths = _changed_paths_between(full196_validated_commit, head_commit)
+            if _is_state_only_change(changed_paths):
+                full196_lifted_to_head = True
+                full196_validated_commit = head_commit
+                full196_commits_since_validated = 0
+                validated_commit_state = "fresh"
+            else:
+                validated_commit_state = "stale"
+        else:
+            validated_commit_state = "fresh"
     git_log_short = read_git_log(cwd=ROOT, lines=int(args.git_log_lines))
     next_focus = _parse_next_focus(args.handoff) or str(latest.get("next_focus") or "")
     active_lanes = _active_lanes(feature_payload)
@@ -497,7 +541,10 @@ def main() -> None:
         coverage_integrity_phase=coverage_integrity_phase,
         full196_last_ok=full196_last_ok,
         full196_validated_commit=full196_validated_commit,
+        full196_validated_commit_source=full196_validated_commit_source,
         full196_commits_since_validated=full196_commits_since_validated,
+        full196_commits_since_validated_total=full196_commits_since_validated_total,
+        full196_lifted_to_head=full196_lifted_to_head,
         full196_validated_mode=full196_validated_mode,
         full196_validated_scope=full196_validated_scope,
         full196_validated_with_rvv_remote=full196_validated_with_rvv_remote,
