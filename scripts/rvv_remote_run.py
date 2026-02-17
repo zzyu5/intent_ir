@@ -25,6 +25,7 @@ import math
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -941,21 +942,26 @@ def run_remote(
             f"gcc {opt} -std=c11 -march=rv64gcv -fopenmp{vec_define} -I{remote_dir} -o {remote_bin} {remote_c} "
             f"{remote_dir}/intentir_runtime.c {remote_dir}/intentir_driver.c {remote_dir}/intentir_ops.c -lm -lrt"
         )
+        t_compile0 = time.perf_counter()
         stdin, stdout, stderr = client.exec_command(compile_cmd, timeout=60)
         comp_out = stdout.read().decode()
         comp_err = stderr.read().decode()
         compile_rc = stdout.channel.recv_exit_status()
+        compile_ms = float((time.perf_counter() - t_compile0) * 1000.0)
         if compile_rc != 0:
             return {
                 "compile_rc": compile_rc,
                 "compile_stdout": comp_out,
                 "compile_stderr": comp_err,
+                "compile_ms": compile_ms,
                 "run_rc": None,
                 "stdout": "",
                 "stderr": "",
                 "bench": None,
                 "profile_ops": None,
                 "omp": None,
+                "launch_ms": 0.0,
+                "total_ms": compile_ms,
             }
 
         def _parse_bench(stdout_text: str) -> dict | None:
@@ -1002,16 +1008,19 @@ def run_remote(
                     f"INTENTIR_BENCH_ITERS={bi} INTENTIR_BENCH_WARMUP={bw} INTENTIR_BENCH_SEED={bs} {remote_bin}"
                 )
 
+            t_run0 = time.perf_counter()
             stdin, stdout, stderr = client.exec_command(cmd, timeout=60)
             run_out = stdout.read().decode()
             run_err = stderr.read().decode()
             run_rc = stdout.channel.recv_exit_status()
+            run_wall_ms = float((time.perf_counter() - t_run0) * 1000.0)
             return {
                 "run_rc": run_rc,
                 "stdout": run_out,
                 "stderr": run_err,
                 "bench": _parse_bench(run_out),
                 "profile_ops": _parse_profile(run_out),
+                "run_wall_ms": run_wall_ms,
             }
 
         _log(f"[{frontend}:{kernel}] remote run")
@@ -1055,11 +1064,14 @@ def run_remote(
             "compile_rc": compile_rc,
             "compile_stdout": comp_out,
             "compile_stderr": comp_err,
+            "compile_ms": compile_ms,
             "run_rc": run.get("run_rc"),
             "stdout": run.get("stdout") or "",
             "stderr": run.get("stderr") or "",
             "bench": run.get("bench"),
             "profile_ops": run.get("profile_ops"),
+            "launch_ms": float(run.get("run_wall_ms") or 0.0),
+            "total_ms": float(compile_ms + float(run.get("run_wall_ms") or 0.0)),
             "omp": {
                 "threads": int(omp_threads),
                 "proc_bind": proc_bind_used,
@@ -1134,6 +1146,9 @@ def run_remote(
     run_err = str(chosen.get("stderr") or "")
     bench = chosen.get("bench")
     prof = chosen.get("profile_ops")
+    compile_ms = float(chosen.get("compile_ms") or 0.0)
+    launch_ms = float(chosen.get("launch_ms") or 0.0)
+    total_ms = float(chosen.get("total_ms") or (compile_ms + launch_ms))
     # Include a compact baseline summary for quick inspection (avoid huge blobs).
     baseline_summary = {}
     try:
@@ -1180,6 +1195,10 @@ def run_remote(
         },
         "compile_rc": rc,
         "run_rc": run_rc,
+        "lower_ms": 0.0,
+        "compile_ms": compile_ms,
+        "launch_ms": launch_ms,
+        "total_ms": total_ms,
         "stdout": run_out,
         "stderr": run_err,
         "baseline_summary": baseline_summary,

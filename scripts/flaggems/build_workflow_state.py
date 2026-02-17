@@ -175,6 +175,40 @@ def _load_json_if_exists(path: Path | None) -> dict[str, Any]:
         return {}
 
 
+def _infer_category_batch_rvv_remote_ok(run_summary: dict[str, Any]) -> bool:
+    """Infer rvv_remote execution status for category-batch aggregate runs.
+
+    Aggregate run summaries intentionally store per-family run paths instead of
+    forwarding backend stages. Use those family run summaries to recover a
+    trustworthy rvv_remote signal for workflow freshness display.
+    """
+    families = [x for x in list(run_summary.get("families") or []) if isinstance(x, dict)]
+    if not families:
+        families = [x for x in list(run_summary.get("family_runs") or []) if isinstance(x, dict)]
+    if not families:
+        return False
+    for family in families:
+        family_run_path = _resolve_artifact(str(family.get("run_summary_path") or ""))
+        family_run_payload = _load_json_if_exists(family_run_path)
+        family_stages = [s for s in list(family_run_payload.get("stages") or []) if isinstance(s, dict)]
+        family_stage_map = {str(s.get("stage") or ""): s for s in family_stages}
+        if bool((family_stage_map.get("rvv_remote") or {}).get("ok")):
+            continue
+        # Chunked family summaries may not expose backend stages at family root.
+        # In that case, require every chunk run summary to pass rvv_remote.
+        chunk_runs = [x for x in list(family_run_payload.get("chunk_runs") or []) if isinstance(x, dict)]
+        if not chunk_runs:
+            return False
+        for chunk in chunk_runs:
+            chunk_run_path = _resolve_artifact(str(chunk.get("run_summary_path") or ""))
+            chunk_run_payload = _load_json_if_exists(chunk_run_path)
+            chunk_stages = [s for s in list(chunk_run_payload.get("stages") or []) if isinstance(s, dict)]
+            chunk_stage_map = {str(s.get("stage") or ""): s for s in chunk_stages}
+            if not bool((chunk_stage_map.get("rvv_remote") or {}).get("ok")):
+                return False
+    return True
+
+
 def _classify_full196_run(run_summary_path: Path | None) -> tuple[bool, bool | None, dict[str, Any]]:
     run_summary = _load_json_if_exists(run_summary_path)
     if not run_summary:
@@ -195,12 +229,15 @@ def _classify_full196_run(run_summary_path: Path | None) -> tuple[bool, bool | N
     coverage_payload = _load_json_if_exists(coverage_json)
     coverage_ok = bool(coverage_payload.get("coverage_integrity_ok"))
     stage_map = {str(s.get("stage") or ""): s for s in stages}
+    rvv_remote_ok = bool((stage_map.get("rvv_remote") or {}).get("ok"))
+    if not rvv_remote_ok and str(run_summary.get("coverage_mode") or "") == "category_batches":
+        rvv_remote_ok = _infer_category_batch_rvv_remote_ok(run_summary)
     # Use coverage_integrity as the source of truth for full196 health.
     # run_summary.ok can be false for non-functional governance mismatches.
     metadata = {
         "validated_mode": str(run_summary.get("intentir_mode") or ""),
         "validated_scope": FULL196_VALIDATED_SCOPE,
-        "validated_with_rvv_remote": bool((stage_map.get("rvv_remote") or {}).get("ok")),
+        "validated_with_rvv_remote": bool(rvv_remote_ok),
         "coverage_mode": str(run_summary.get("coverage_mode") or "single_run"),
         "full196_evidence_kind": str(run_summary.get("full196_evidence_kind") or "single_run"),
         "coverage_batches_expected": run_summary.get("coverage_batches_expected"),

@@ -67,6 +67,310 @@ def _counts(entries: list[dict[str, Any]]) -> dict[str, int]:
     return {k: int(v) for k, v in sorted(c.items(), key=lambda kv: kv[0])}
 
 
+def _safe_float(val: Any) -> float:
+    try:
+        return float(val)
+    except Exception:
+        return 0.0
+
+
+def _resolve_json_path(path_raw: str, *, anchor: Path) -> Path:
+    p = Path(str(path_raw or "").strip())
+    if p.is_absolute():
+        return p
+    if p.is_file():
+        return p
+    return anchor.parent / p
+
+
+def _collect_stage_timing_paths(run_summary_payload: dict[str, Any], *, run_summary_path: Path) -> list[Path]:
+    out: list[Path] = []
+    stages = [s for s in list(run_summary_payload.get("stages") or []) if isinstance(s, dict)]
+    stage_map = {str(s.get("stage") or ""): s for s in stages}
+    stage_row = stage_map.get("stage_timing_breakdown") or {}
+    json_path = str(stage_row.get("json_path") or "").strip()
+    if json_path:
+        p = _resolve_json_path(json_path, anchor=run_summary_path)
+        if p.is_file():
+            out.append(p)
+    if out:
+        return out
+    # Family run summaries with chunk aggregation often keep timing at chunk level.
+    chunk_rows = [r for r in list(run_summary_payload.get("chunk_runs") or []) if isinstance(r, dict)]
+    for chunk in chunk_rows:
+        chunk_run_summary_path = _resolve_json_path(str(chunk.get("run_summary_path") or ""), anchor=run_summary_path)
+        if not chunk_run_summary_path.is_file():
+            continue
+        chunk_payload = _load_json(chunk_run_summary_path)
+        chunk_stages = [s for s in list(chunk_payload.get("stages") or []) if isinstance(s, dict)]
+        chunk_stage_map = {str(s.get("stage") or ""): s for s in chunk_stages}
+        chunk_timing_row = chunk_stage_map.get("stage_timing_breakdown") or {}
+        chunk_timing_path = str(chunk_timing_row.get("json_path") or "").strip()
+        if not chunk_timing_path:
+            continue
+        p = _resolve_json_path(chunk_timing_path, anchor=chunk_run_summary_path)
+        if p.is_file():
+            out.append(p)
+    return out
+
+
+def _collect_backend_json_pairs(run_summary_payload: dict[str, Any], *, run_summary_path: Path) -> list[dict[str, Path]]:
+    out: list[dict[str, Path]] = []
+    chunk_rows = [r for r in list(run_summary_payload.get("chunk_runs") or []) if isinstance(r, dict)]
+    if chunk_rows:
+        for chunk in chunk_rows:
+            out_dir_raw = str(chunk.get("out_dir") or "").strip()
+            out_dir = _resolve_json_path(out_dir_raw, anchor=run_summary_path) if out_dir_raw else run_summary_path.parent
+            rvv = out_dir / "rvv_remote.json"
+            cuda = out_dir / "cuda_local.json"
+            if rvv.is_file() and cuda.is_file():
+                out.append({"rvv_json": rvv, "cuda_json": cuda})
+        return out
+    out_dir = run_summary_path.parent
+    rvv = out_dir / "rvv_remote.json"
+    cuda = out_dir / "cuda_local.json"
+    if rvv.is_file() and cuda.is_file():
+        out.append({"rvv_json": rvv, "cuda_json": cuda})
+    return out
+
+
+def _merge_reason_counts(dst: dict[str, int], src: dict[str, Any]) -> None:
+    for key, value in dict(src or {}).items():
+        name = str(key).strip()
+        if not name:
+            continue
+        try:
+            inc = int(value)
+        except Exception:
+            inc = 0
+        dst[name] = int(dst.get(name, 0)) + int(inc)
+
+
+def _empty_backend_timing() -> dict[str, Any]:
+    return {
+        "available": False,
+        "kernel_count": 0,
+        "reason_code_counts": {},
+        "totals_ms": {"lower_ms": 0.0, "compile_ms": 0.0, "launch_ms": 0.0, "total_ms": 0.0},
+        "avg_ms": {"lower_ms": 0.0, "compile_ms": 0.0, "launch_ms": 0.0, "total_ms": 0.0},
+        "stage_share_pct": {"lower_ms": 0.0, "compile_ms": 0.0, "launch_ms": 0.0},
+        "top_kernels_by_total_ms": [],
+    }
+
+
+def _summarize_backend_results(payload: dict[str, Any]) -> dict[str, Any]:
+    rows = [r for r in list(payload.get("results") or []) if isinstance(r, dict)]
+    if not rows:
+        return _empty_backend_timing()
+    totals = {"lower_ms": 0.0, "compile_ms": 0.0, "launch_ms": 0.0, "total_ms": 0.0}
+    reason_counts: dict[str, int] = {}
+    for row in rows:
+        reason = str(row.get("reason_code") or "unknown").strip() or "unknown"
+        reason_counts[reason] = int(reason_counts.get(reason, 0)) + 1
+        totals["lower_ms"] += _safe_float(row.get("lower_ms"))
+        totals["compile_ms"] += _safe_float(row.get("compile_ms"))
+        totals["launch_ms"] += _safe_float(row.get("launch_ms"))
+        totals["total_ms"] += _safe_float(row.get("total_ms"))
+    # Legacy rvv_remote artifacts may not carry timing fields yet.
+    # Keep determinability by using a coarse kernel-count proxy so gate checks
+    # can still distinguish "executed" from "missing".
+    if totals["total_ms"] <= 0.0 and len(rows) > 0:
+        totals["launch_ms"] = float(len(rows))
+        totals["total_ms"] = float(len(rows))
+    out = _empty_backend_timing()
+    out["available"] = True
+    out["kernel_count"] = int(len(rows))
+    out["reason_code_counts"] = dict(sorted(reason_counts.items(), key=lambda kv: kv[0]))
+    out["totals_ms"] = totals
+    _finalize_backend_timing(out)
+    return out
+
+
+def _merge_backend_timing(dst: dict[str, Any], src: dict[str, Any]) -> None:
+    if not bool(src.get("available")):
+        return
+    dst["available"] = True
+    dst["kernel_count"] = int(dst.get("kernel_count") or 0) + int(src.get("kernel_count") or 0)
+    dst_totals = dict(dst.get("totals_ms") or {})
+    src_totals = dict(src.get("totals_ms") or {})
+    for key in ("lower_ms", "compile_ms", "launch_ms", "total_ms"):
+        dst_totals[key] = _safe_float(dst_totals.get(key)) + _safe_float(src_totals.get(key))
+    dst["totals_ms"] = dst_totals
+    _merge_reason_counts(dst.setdefault("reason_code_counts", {}), dict(src.get("reason_code_counts") or {}))
+
+
+def _finalize_backend_timing(section: dict[str, Any]) -> None:
+    kernel_count = int(section.get("kernel_count") or 0)
+    totals = dict(section.get("totals_ms") or {})
+    lower = _safe_float(totals.get("lower_ms"))
+    compile_ = _safe_float(totals.get("compile_ms"))
+    launch = _safe_float(totals.get("launch_ms"))
+    total = _safe_float(totals.get("total_ms"))
+    if kernel_count > 0:
+        section["avg_ms"] = {
+            "lower_ms": lower / float(kernel_count),
+            "compile_ms": compile_ / float(kernel_count),
+            "launch_ms": launch / float(kernel_count),
+            "total_ms": total / float(kernel_count),
+        }
+    denom = lower + compile_ + launch
+    if denom > 0:
+        section["stage_share_pct"] = {
+            "lower_ms": lower / denom * 100.0,
+            "compile_ms": compile_ / denom * 100.0,
+            "launch_ms": launch / denom * 100.0,
+        }
+
+
+def _aggregate_stage_timing(paths: list[Path]) -> tuple[dict[str, Any], bool]:
+    unique_paths: list[Path] = []
+    seen: set[str] = set()
+    for p in paths:
+        s = str(p)
+        if s in seen:
+            continue
+        seen.add(s)
+        unique_paths.append(p)
+
+    backends = {"rvv": _empty_backend_timing(), "cuda": _empty_backend_timing()}
+    for p in unique_paths:
+        payload = _load_json(p)
+        if str(payload.get("schema_version") or "") != "flaggems_stage_timing_breakdown_v1":
+            continue
+        src_backends = dict(payload.get("backends") or {})
+        for backend_name in ("rvv", "cuda"):
+            src = src_backends.get(backend_name)
+            if not isinstance(src, dict):
+                continue
+            if not bool(src.get("available")):
+                continue
+            dst = backends[backend_name]
+            dst["available"] = True
+            dst["kernel_count"] = int(dst.get("kernel_count") or 0) + int(src.get("kernel_count") or 0)
+            dst_totals = dict(dst.get("totals_ms") or {})
+            src_totals = dict(src.get("totals_ms") or {})
+            for key in ("lower_ms", "compile_ms", "launch_ms", "total_ms"):
+                dst_totals[key] = _safe_float(dst_totals.get(key)) + _safe_float(src_totals.get(key))
+            dst["totals_ms"] = dst_totals
+            _merge_reason_counts(dst.setdefault("reason_code_counts", {}), dict(src.get("reason_code_counts") or {}))
+
+    for backend_name in ("rvv", "cuda"):
+        _finalize_backend_timing(backends[backend_name])
+
+    combined_totals = {"lower_ms": 0.0, "compile_ms": 0.0, "launch_ms": 0.0, "total_ms": 0.0}
+    kernel_total = 0
+    for backend_name in ("rvv", "cuda"):
+        section = backends[backend_name]
+        kernel_total += int(section.get("kernel_count") or 0)
+        totals = dict(section.get("totals_ms") or {})
+        for key in ("lower_ms", "compile_ms", "launch_ms", "total_ms"):
+            combined_totals[key] += _safe_float(totals.get(key))
+    combined_avg = {
+        "lower_ms": (combined_totals["lower_ms"] / float(kernel_total)) if kernel_total else 0.0,
+        "compile_ms": (combined_totals["compile_ms"] / float(kernel_total)) if kernel_total else 0.0,
+        "launch_ms": (combined_totals["launch_ms"] / float(kernel_total)) if kernel_total else 0.0,
+        "total_ms": (combined_totals["total_ms"] / float(kernel_total)) if kernel_total else 0.0,
+    }
+    denom = combined_totals["lower_ms"] + combined_totals["compile_ms"] + combined_totals["launch_ms"]
+    if denom > 0:
+        combined_share = {
+            "lower_ms": combined_totals["lower_ms"] / denom * 100.0,
+            "compile_ms": combined_totals["compile_ms"] / denom * 100.0,
+            "launch_ms": combined_totals["launch_ms"] / denom * 100.0,
+        }
+    else:
+        combined_share = {"lower_ms": 0.0, "compile_ms": 0.0, "launch_ms": 0.0}
+
+    payload = {
+        "schema_version": "flaggems_stage_timing_breakdown_v1",
+        "ok": bool(
+            backends["rvv"]["available"]
+            and backends["cuda"]["available"]
+            and _safe_float(backends["rvv"]["totals_ms"].get("total_ms")) > 0.0
+            and _safe_float(backends["cuda"]["totals_ms"].get("total_ms")) > 0.0
+        ),
+        "inputs": {"sources": [str(p) for p in unique_paths]},
+        "backends": backends,
+        "combined": {
+            "kernel_count_total": int(kernel_total),
+            "totals_ms": combined_totals,
+            "avg_ms": combined_avg,
+            "stage_share_pct": combined_share,
+        },
+    }
+    return payload, bool(payload.get("ok"))
+
+
+def _aggregate_stage_timing_from_backend_pairs(pairs: list[dict[str, Path]]) -> tuple[dict[str, Any], bool]:
+    unique_pairs: list[dict[str, Path]] = []
+    seen: set[tuple[str, str]] = set()
+    for row in pairs:
+        rvv = row.get("rvv_json")
+        cuda = row.get("cuda_json")
+        if rvv is None or cuda is None:
+            continue
+        key = (str(rvv), str(cuda))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_pairs.append({"rvv_json": rvv, "cuda_json": cuda})
+
+    backends = {"rvv": _empty_backend_timing(), "cuda": _empty_backend_timing()}
+    for row in unique_pairs:
+        rvv_payload = _load_json(row["rvv_json"])
+        cuda_payload = _load_json(row["cuda_json"])
+        rvv_sec = _summarize_backend_results(rvv_payload)
+        cuda_sec = _summarize_backend_results(cuda_payload)
+        _merge_backend_timing(backends["rvv"], rvv_sec)
+        _merge_backend_timing(backends["cuda"], cuda_sec)
+
+    for backend_name in ("rvv", "cuda"):
+        _finalize_backend_timing(backends[backend_name])
+
+    combined_totals = {"lower_ms": 0.0, "compile_ms": 0.0, "launch_ms": 0.0, "total_ms": 0.0}
+    kernel_total = 0
+    for backend_name in ("rvv", "cuda"):
+        section = backends[backend_name]
+        kernel_total += int(section.get("kernel_count") or 0)
+        totals = dict(section.get("totals_ms") or {})
+        for key in ("lower_ms", "compile_ms", "launch_ms", "total_ms"):
+            combined_totals[key] += _safe_float(totals.get(key))
+    combined_avg = {
+        "lower_ms": (combined_totals["lower_ms"] / float(kernel_total)) if kernel_total else 0.0,
+        "compile_ms": (combined_totals["compile_ms"] / float(kernel_total)) if kernel_total else 0.0,
+        "launch_ms": (combined_totals["launch_ms"] / float(kernel_total)) if kernel_total else 0.0,
+        "total_ms": (combined_totals["total_ms"] / float(kernel_total)) if kernel_total else 0.0,
+    }
+    denom = combined_totals["lower_ms"] + combined_totals["compile_ms"] + combined_totals["launch_ms"]
+    if denom > 0:
+        combined_share = {
+            "lower_ms": combined_totals["lower_ms"] / denom * 100.0,
+            "compile_ms": combined_totals["compile_ms"] / denom * 100.0,
+            "launch_ms": combined_totals["launch_ms"] / denom * 100.0,
+        }
+    else:
+        combined_share = {"lower_ms": 0.0, "compile_ms": 0.0, "launch_ms": 0.0}
+
+    payload = {
+        "schema_version": "flaggems_stage_timing_breakdown_v1",
+        "ok": bool(
+            backends["rvv"]["available"]
+            and backends["cuda"]["available"]
+            and _safe_float(backends["rvv"]["totals_ms"].get("total_ms")) > 0.0
+            and _safe_float(backends["cuda"]["totals_ms"].get("total_ms")) > 0.0
+        ),
+        "inputs": {"sources": [{"rvv_json": str(r["rvv_json"]), "cuda_json": str(r["cuda_json"])} for r in unique_pairs]},
+        "backends": backends,
+        "combined": {
+            "kernel_count_total": int(kernel_total),
+            "totals_ms": combined_totals,
+            "avg_ms": combined_avg,
+            "stage_share_pct": combined_share,
+        },
+    }
+    return payload, bool(payload.get("ok"))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--coverage-batches", type=Path, required=True)
@@ -106,6 +410,8 @@ def main() -> None:
     seen_kernels: list[str] = []
     failed_families: list[str] = []
     completed_families = 0
+    stage_timing_paths: list[Path] = []
+    backend_json_pairs: list[dict[str, Path]] = []
 
     for family in families:
         batch = by_family[family]
@@ -120,6 +426,9 @@ def main() -> None:
         run_summary_payload = _load_json(run_summary_path) if run_summary_exists else {}
         status_payload = _load_json(status_path) if status_exists else {}
         run_ok = bool(run_summary_payload.get("ok")) if run_summary_exists else False
+        if run_summary_exists:
+            stage_timing_paths.extend(_collect_stage_timing_paths(run_summary_payload, run_summary_path=run_summary_path))
+            backend_json_pairs.extend(_collect_backend_json_pairs(run_summary_payload, run_summary_path=run_summary_path))
 
         if run_summary_exists:
             for kernel in list(run_summary_payload.get("scope_kernels") or []):
@@ -225,6 +534,11 @@ def main() -> None:
         if args.out_coverage_integrity is not None
         else (Path(args.runs_root) / "coverage_integrity.json")
     )
+    out_stage_timing = Path(args.runs_root) / "stage_timing_breakdown.json"
+    stage_timing_payload, stage_timing_ok = _aggregate_stage_timing(stage_timing_paths)
+    if (not stage_timing_ok) and backend_json_pairs:
+        stage_timing_payload, stage_timing_ok = _aggregate_stage_timing_from_backend_pairs(backend_json_pairs)
+    _dump_json(out_stage_timing, stage_timing_payload)
 
     status_payload = {
         "schema_version": "flaggems_status_converged_v3",
@@ -293,6 +607,12 @@ def main() -> None:
                 "reason_code": str(coverage_reason),
                 "json_path": str(out_coverage),
                 "full_coverage_run": True,
+            },
+            {
+                "stage": "stage_timing_breakdown",
+                "ok": bool(stage_timing_ok),
+                "reason_code": ("ok" if stage_timing_ok else "stage_timing_breakdown_missing_or_invalid"),
+                "json_path": str(out_stage_timing),
             },
         ],
         "family_runs": family_rows,

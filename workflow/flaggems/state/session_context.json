@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-17T04:36:42+00:00",
+  "updated_at": "2026-02-17T06:24:54+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -11,50 +11,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "ad9d6a2 workflow: record cuda reduction lowering fix and next coverage steps\n53355c2 cuda: support llm-expanded cumsum/mean/var_mean lowering patterns\n908c014 workflow: checkpoint chunked remote-only coverage progress\nd4a54fa flaggems: chunk coverage batches and support rvv remote-only mode\n093eaad workflow: record coverage batch rerun progress on head\na0f420b flaggems: isolate coverage batch pipeline reports per family\n85515d8 workflow: refresh current status after provider/category cutover\n2651e40 refactor: hard-cut flaggems provider boundary and add category coverage flow\nec5ec4c Refresh workflow snapshots after backend compiler batch\n6551229 Fix provider deterministic convergence and CUDA min_dim split lowering\n2ff245e backend_compiler: split wave3 emit/dispatch blocks into chunked includes\nc051aae workflow: record backend wave3 cpp split session and gate evidence\n183b029 backend_compiler: split cuda/rvv cpp_codegen wave3 modules\n008466d workflow: record ir_arch strict gate run and next backend wave\n12a949d ir_arch: enforce strict complexity gates and lane activation\nf604442 ir_arch: refresh mapping complexity from semantic rules in workflow and checks\n2da8b53 workflow: record cuda dropout split batch and refresh state\n431b267 backend: split cuda dropout emitter out of codegen main\nca43599 workflow: record rvv infer split batch and refresh state\n26ceba1 backend: split rvv shape inference dispatch from codegen main",
+  "git_log_short": "eb46c98 Fix RVV compare IO dtype alignment and identity cast lowering\n11120cf flaggems: canonicalize failed family intents and checkpoint coverage workflow\nad9d6a2 workflow: record cuda reduction lowering fix and next coverage steps\n53355c2 cuda: support llm-expanded cumsum/mean/var_mean lowering patterns\n908c014 workflow: checkpoint chunked remote-only coverage progress\nd4a54fa flaggems: chunk coverage batches and support rvv remote-only mode\n093eaad workflow: record coverage batch rerun progress on head\na0f420b flaggems: isolate coverage batch pipeline reports per family\n85515d8 workflow: refresh current status after provider/category cutover\n2651e40 refactor: hard-cut flaggems provider boundary and add category coverage flow\nec5ec4c Refresh workflow snapshots after backend compiler batch\n6551229 Fix provider deterministic convergence and CUDA min_dim split lowering\n2ff245e backend_compiler: split wave3 emit/dispatch blocks into chunked includes\nc051aae workflow: record backend wave3 cpp split session and gate evidence\n183b029 backend_compiler: split cuda/rvv cpp_codegen wave3 modules\n008466d workflow: record ir_arch strict gate run and next backend wave\n12a949d ir_arch: enforce strict complexity gates and lane activation\nf604442 ir_arch: refresh mapping complexity from semantic rules in workflow and checks\n2da8b53 workflow: record cuda dropout split batch and refresh state\n431b267 backend: split cuda dropout emitter out of codegen main",
   "progress_tail": [
-    {
-      "ts": "2026-02-16T20:32:23+00:00",
-      "commit": "f604442",
-      "lane": "ir_arch",
-      "summary": "Refreshed IR complexity accounting to resolve semantic mappings from rules, eliminating stale registry-intent drift in workflow and ir_arch gate.",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_ir_arch.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260217/ir_arch_mapping_refresh_v1/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260217/ir_arch_mapping_refresh_v1/status_converged.json",
-      "next_focus": "Continue IR simplification by reducing raw single-semantic ratio while keeping complex-family ratio at 0; then proceed backend modular splits.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260217/ir_arch_mapping_refresh_v1/macro_composition_report.json",
-        "artifacts/flaggems_matrix/daily/20260217/ir_arch_mapping_refresh_v1/mapping_complexity_report.json",
-        "artifacts/flaggems_matrix/daily/20260217/ir_arch_mapping_refresh_v1/primitive_reuse_report.json",
-        "artifacts/flaggems_matrix/daily/20260217/ir_arch_mapping_refresh_v1/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260217/ir_arch_mapping_refresh_v1/status_converged.json",
-        "tests/frontends/triton/test_flaggems_workflow.py",
-        "tests/intentir/test_mapping_complexity_report.py"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260217/ir_arch_mapping_refresh_v1",
-      "counts_by_status": {}
-    },
-    {
-      "ts": "2026-02-16T20:40:12+00:00",
-      "commit": "12a949d",
-      "lane": "ir_arch",
-      "summary": "Enabled strict ir_arch complexity gates (complex<=10%, global_unique<=40%) and validated m2 run.",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_ir_arch.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260217/ir_arch_strict_m2_v1/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260217/ir_arch_strict_m2_v1/status_converged.json",
-      "next_focus": "Refresh full196 force_compile evidence on HEAD, then continue backend_compiler cpp module split wave.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260217/ir_arch_strict_m2_v1/mapping_complexity_report.json",
-        "artifacts/flaggems_matrix/daily/20260217/ir_arch_strict_m2_v1/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260217/ir_arch_strict_m2_v1/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260217/ir_arch_strict_m2_v1",
-      "counts_by_status": {}
-    },
     {
       "ts": "2026-02-16T20:47:32+00:00",
       "commit": "183b029",
@@ -186,18 +144,63 @@
       "run_ok": false,
       "run_out_dir": "artifacts/flaggems_matrix/daily/20260217/coverage_failed_families_fix1_v1",
       "counts_by_status": {}
+    },
+    {
+      "ts": "2026-02-17T06:15:46+00:00",
+      "commit": "eb46c98773576e98b6da52973bdc8d9d86714d6c",
+      "lane": "coverage",
+      "summary": "Completed 7-family coverage batch run (remote RVV + CUDA) and aggregated full196 evidence on HEAD with dual_pass=196.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260217/coverage_failed_families_fix1_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260217/coverage_failed_families_fix1_v1/status_converged.json",
+      "next_focus": "Refresh workflow freshness on HEAD and continue Phase4/Phase5: cpp_codegen module split + IR complexity gate tightening with category-scoped regressions.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260217/coverage_failed_families_fix1_v1/coverage_batch_runs.json",
+        "artifacts/flaggems_matrix/daily/20260217/coverage_failed_families_fix1_v1/coverage_integrity.json",
+        "artifacts/flaggems_matrix/daily/20260217/coverage_failed_families_fix1_v1/family_attention_sequence/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260217/coverage_failed_families_fix1_v1/family_conv_pool_interp/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260217/coverage_failed_families_fix1_v1/family_elementwise_broadcast/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260217/coverage_failed_families_fix1_v1/family_index_scatter_gather/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260217/coverage_failed_families_fix1_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260217/coverage_failed_families_fix1_v1/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-17T06:24:51+00:00",
+      "commit": "eb46c98773576e98b6da52973bdc8d9d86714d6c",
+      "lane": "coverage",
+      "summary": "Fixed coverage freshness semantics for category aggregate runs and restored coverage ci_gate pass with stage_timing breakdown under remote-only RVV mode.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260217/coverage_failed_families_fix1_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260217/coverage_failed_families_fix1_v1/status_converged.json",
+      "next_focus": "Continue Phase4/Phase5: split remaining cpp_codegen monolith blocks and run category-scoped regressions; at milestone, rerun full 7-family aggregate on HEAD.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260217/coverage_failed_families_fix1_v1/ci_gate_coverage.json",
+        "artifacts/flaggems_matrix/daily/20260217/coverage_failed_families_fix1_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260217/coverage_failed_families_fix1_v1/stage_timing_breakdown.json",
+        "artifacts/flaggems_matrix/daily/20260217/coverage_failed_families_fix1_v1/status_converged.json",
+        "scripts/flaggems/aggregate_coverage_batches.py",
+        "scripts/flaggems/build_workflow_state.py",
+        "scripts/rvv_remote_run.py"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
     }
   ],
-  "next_focus": "Let the 7-family category run finish (remaining elementwise/index/conv/attention), then execute aggregate and workflow freshness update on current HEAD.",
+  "next_focus": "Continue Phase4/Phase5: split remaining cpp_codegen monolith blocks and run category-scoped regressions; at milestone, rerun full 7-family aggregate on HEAD.",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
   "active_lanes": [
-    "backend_compiler",
-    "coverage"
+    "backend_compiler"
   ],
   "next_focus_by_lane": {
-    "ir_arch": "Refresh full196 force_compile evidence on HEAD, then continue backend_compiler cpp module split wave.",
     "backend_compiler": "Resume non-elementwise category batches with remote-only RVV + CUDA, then complete elementwise chunks and aggregate full196 evidence on HEAD.",
-    "coverage": "Let coverage_failed_families_fix1_v1 finish all remaining families (elementwise/index/conv/attention) and then aggregate 7/7 categories into fresh full196 evidence on HEAD."
+    "coverage": "Continue Phase4/Phase5: split remaining cpp_codegen monolith blocks and run category-scoped regressions; at milestone, rerun full 7-family aggregate on HEAD."
   },
   "known_risks": [
     "Isolated run_coverage_batches per-family pipeline_out_dir/seed_cache_dir and added dry-run regression test; started full category run full196_categories_head_v2 and reached elementwise_broadcast kernel 98/98 pipeline + rvv_local complete before manual interrupt in rvv_remote stage for controlled continuation.",
