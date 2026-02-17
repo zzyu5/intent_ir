@@ -1,9 +1,9 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-17T02:26:02Z
-- Commit: `a0f420bb16a7e476f7a4524ef62faf9ea24593cc`
+- Timestamp: 2026-02-17T02:41:13Z
+- Commit: `d4a54fabec86f6ac1e5d19ee3ae8cf518f80c5d1`
 - Lane: `coverage`
-- Summary: Isolated `run_coverage_batches` family artifacts (`pipeline_out_dir`) and shared seed cache wiring; added dry-run regression test; started `full196_categories_head_v2` and completed `elementwise_broadcast` pipeline(98/98)+rvv_local before manual interrupt in rvv_remote stage.
-- Run Summary: `artifacts/flaggems_matrix/daily/20260217/full196_categories_head_v2/coverage_batch_runs.json` (in-progress)
-- Evidence Paths: `artifacts/flaggems_matrix/daily/20260217/full196_categories_head_v2/family_elementwise_broadcast/pipeline_reports/kernel_progress.jsonl`, `artifacts/flaggems_matrix/daily/20260217/full196_categories_head_v2/coverage_batch_runs.json`
-- Next Focus: Resume `scripts/flaggems/run_coverage_batches.py` on `full196_categories_head_v2` (elementwise_broadcast rvv_remote/cuda/aggregate), then complete remaining 6 families and refresh HEAD full196 evidence.
+- Summary: Added chunked category execution (`family-kernel-chunk-size`) and remote-only RVV mode (`--skip-rvv-local`), verified `attention_sequence` fullstack on `rvv_remote + cuda_local`, then started non-elementwise category sweep and reached reduction chunk_001 remote stage before checkpoint.
+- Run Summary: `artifacts/flaggems_matrix/daily/20260217/coverage_family_attention_remote_cuda_v1/family_attention_sequence/run_summary.json`
+- Evidence Paths: `artifacts/flaggems_matrix/daily/20260217/coverage_family_attention_remote_cuda_v1/family_attention_sequence/run_summary.json`, `artifacts/flaggems_matrix/daily/20260217/coverage_non_elementwise_remote_cuda_v1/family_reduction/chunk_001/pipeline_reports/kernel_progress.jsonl`
+- Next Focus: Resume `coverage_non_elementwise_remote_cuda_v1` with `--resume`, then run `elementwise_broadcast` by chunks and finish 7-family aggregate full196 evidence on HEAD.
