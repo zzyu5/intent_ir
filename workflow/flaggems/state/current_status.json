@@ -1,8 +1,8 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-17T01:35:52+00:00",
+  "updated_at": "2026-02-17T01:37:01+00:00",
   "branch": "flaggems",
-  "head_commit": "ec5ec4cdc0bba328a6a2498daba6a092c0825544",
+  "head_commit": "2651e40d03ee0467e5eff315a650798eda9730d1",
   "mode": "mixed_development",
   "coverage_integrity_phase": "stale_or_invalid",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260216/full196_force_compile_head_v3/run_summary.json",
