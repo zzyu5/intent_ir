@@ -1,14 +1,14 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-17T12:20:30+00:00",
+  "updated_at": "2026-02-17T12:30:25+00:00",
   "branch": "flaggems",
-  "head_commit": "30cc5e1fb6243461f122e3034eafce9faf8b5947",
+  "head_commit": "6a4a3151dac805da918eb9db888dd2efb331af5a",
   "mode": "maintenance",
-  "coverage_integrity_phase": "recomputed_ok",
+  "coverage_integrity_phase": "recompute_stale",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/run_summary.json",
   "full196_last_ok": true,
-  "full196_validated_commit": "30cc5e1fb6243461f122e3034eafce9faf8b5947",
-  "full196_commits_since_validated": 0,
+  "full196_validated_commit": "ade0998f253f860c595ad9c4621539b568ec23f9",
+  "full196_commits_since_validated": 1,
   "full196_validated_mode": "force_compile",
   "full196_validated_scope": "coverage_158_kernels_to_196_semantics",
   "full196_validated_with_rvv_remote": true,
@@ -85,14 +85,16 @@
     "catalog_path": "scripts/CATALOG.json",
     "catalog_validated": true
   },
-  "active_lanes": [],
+  "active_lanes": [
+    "coverage"
+  ],
   "next_focus_by_lane": {
-    "backend_compiler": "Aggregate wave4 chunk0-7 compile_ms outliers and implement schedule/codegen mitigation; rerun impacted coverage families then refresh full196 on HEAD.",
-    "coverage": "Continue backend compiler maturity: analyze wave4 chunk0-7 compile_ms outliers and apply codegen/schedule optimization; rerun impacted categories and refresh full196."
+    "backend_compiler": "Continue phase4: move compile_ms mitigation from cache-scope fix to codegen/schedule level for cold builds; then rerun impacted categories and refresh full196 on HEAD.",
+    "coverage": "Continue backend compiler maturity: compile_ms outlier analysis and mitigation; rerun impacted categories and refresh full196."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_hash_scope_check_v1_rerun/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_hash_scope_check_v1_rerun/status_converged.json"
   },
   "lanes": {
     "coverage": {
