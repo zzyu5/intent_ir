@@ -274,3 +274,56 @@ def test_run_coverage_batches_dry_run_supports_family_chunking(tmp_path: Path) -
     assert "--run-rvv-remote" in chunk0_cmd
     assert chunk0_cmd.count("--kernel") == 2
     assert chunk1_cmd.count("--kernel") == 1
+
+
+def test_materialize_family_outputs_scopes_single_chunk_semantics(tmp_path: Path) -> None:
+    from scripts.flaggems.run_coverage_batches import _materialize_family_outputs
+
+    family_out = tmp_path / "family_f1"
+    family_out.mkdir(parents=True, exist_ok=True)
+    chunk_status = family_out / "status_converged.json"
+    chunk_run_summary = family_out / "run_summary.json"
+
+    chunk_run_summary.write_text(
+        json.dumps({"ok": True}),
+        encoding="utf-8",
+    )
+    chunk_status.write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {"semantic_op": "op1", "status": "dual_pass", "reason_code": "ok"},
+                    {"semantic_op": "op2", "status": "blocked_backend", "reason_code": "lowering_missing_op"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    chunk_rows = [
+        {
+            "chunk": "chunk_001",
+            "ok": True,
+            "rc": 0,
+            "out_dir": str(family_out),
+            "run_summary_path": str(chunk_run_summary),
+            "status_converged_path": str(chunk_status),
+            "kernel_count": 1,
+            "kernels": ["k1"],
+        }
+    ]
+    family_ok, run_summary_path, status_path = _materialize_family_outputs(
+        family="f1",
+        semantics=["op1"],
+        kernels=["k1"],
+        family_out=family_out,
+        chunk_rows=chunk_rows,
+    )
+    assert family_ok is True
+    assert run_summary_path == family_out / "run_summary.json"
+    assert status_path == family_out / "status_converged.json"
+    status_payload = json.loads(status_path.read_text(encoding="utf-8"))
+    entries = list(status_payload["entries"])
+    assert len(entries) == 1
+    assert entries[0]["semantic_op"] == "op1"
+    assert entries[0]["status"] == "dual_pass"
+    assert status_payload["counts_global"] == {"dual_pass": 1}

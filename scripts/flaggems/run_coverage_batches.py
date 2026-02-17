@@ -463,7 +463,11 @@ def main() -> None:
                 }
             )
 
-        if chunk_enabled and (not bool(args.dry_run)):
+        # Always materialize a family-level summary/status from chunk outputs.
+        # This keeps family runs scoped to the selected semantics even when
+        # chunk_count == 1 (no chunk subdirectory), avoiding misleading 196-op
+        # full-scope converge payloads for partial family reruns.
+        if not bool(args.dry_run):
             family_ok, run_summary_path, status_path = _materialize_family_outputs(
                 family=family,
                 semantics=semantics,
