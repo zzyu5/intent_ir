@@ -93,6 +93,13 @@ _ALWAYS_CANONICAL_SPECS = frozenset(
         "elu2d",
         "eye2d",
         "eye_m2d",
+        "flash_attn_varlen_func_bhsd",
+        "rms_norm2d",
+        "vector_norm2d",
+        "mm2d",
+        "addmm2d",
+        "dot1d",
+        "vdot1d",
     }
 )
 

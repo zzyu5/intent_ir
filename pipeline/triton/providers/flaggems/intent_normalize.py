@@ -327,6 +327,74 @@ def _canonical_vector_norm2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_mm2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "mm2d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "K"], "layout": "row_major"},
+                "B": {"dtype": "f32", "shape": ["K", "N"], "layout": "row_major"},
+                "C": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "matmul", "inputs": ["A", "B"], "output": "C", "attrs": {"transpose_a": False, "transpose_b": False}},
+            ],
+            "outputs": ["C"],
+        }
+    )
+
+
+def _canonical_addmm2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "addmm2d",
+            "tensors": {
+                "mat1": {"dtype": "f32", "shape": ["M", "K"], "layout": "row_major"},
+                "mat2": {"dtype": "f32", "shape": ["K", "N"], "layout": "row_major"},
+                "input": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "alpha": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "beta": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "mm_out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "scaled_mm": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "scaled_bias": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "add_out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "matmul", "inputs": ["mat1", "mat2"], "output": "mm_out", "attrs": {"transpose_a": False, "transpose_b": False}},
+                {"op": "mul", "inputs": ["mm_out", "alpha"], "output": "scaled_mm"},
+                {"op": "mul", "inputs": ["input", "beta"], "output": "scaled_bias"},
+                {"op": "add", "inputs": ["scaled_mm", "scaled_bias"], "output": "add_out"},
+                {"op": "cast", "inputs": ["add_out"], "output": "out", "attrs": {"to": "f32"}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_dot1d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "dot1d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "y": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "x_f32": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "y_f32": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "mul_out": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": [], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cast", "inputs": ["x"], "output": "x_f32", "attrs": {"to": "f32"}},
+                {"op": "cast", "inputs": ["y"], "output": "y_f32", "attrs": {"to": "f32"}},
+                {"op": "mul", "inputs": ["x_f32", "y_f32"], "output": "mul_out"},
+                {"op": "reduce_sum", "inputs": ["mul_out"], "output": "out", "attrs": {"dims": [0], "keepdims": False}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def _canonical_vdot1d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -346,6 +414,51 @@ def _canonical_vdot1d_intent() -> IntentFunction:
                 {"op": "reduce_sum", "inputs": ["mul_out"], "output": "out", "attrs": {"dims": [0], "keepdims": False}},
             ],
             "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_rms_norm2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "rms_norm2d",
+            "tensors": {
+                "input": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "weight": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "eps": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "N_scalar": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "x_sq": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "sum_sq": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "mean_sq": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "var_eps": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "INV_RMS": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "inv_rms_bcast": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "w_bcast": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "x_norm": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "mul", "inputs": ["input", "input"], "output": "x_sq"},
+                {"op": "reduce_sum", "inputs": ["x_sq"], "output": "sum_sq", "attrs": {"dims": [1], "keepdims": False}},
+                {"op": "div", "inputs": ["sum_sq", "N_scalar"], "output": "mean_sq"},
+                {"op": "add", "inputs": ["mean_sq", "eps"], "output": "var_eps"},
+                {"op": "rsqrt", "inputs": ["var_eps"], "output": "INV_RMS"},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["INV_RMS"],
+                    "output": "inv_rms_bcast",
+                    "attrs": {"out_shape": ["M", "N"], "broadcast_dims": [0]},
+                },
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["weight"],
+                    "output": "w_bcast",
+                    "attrs": {"out_shape": ["M", "N"], "broadcast_dims": [1]},
+                },
+                {"op": "mul", "inputs": ["input", "inv_rms_bcast"], "output": "x_norm"},
+                {"op": "mul", "inputs": ["x_norm", "w_bcast"], "output": "out"},
+            ],
+            "outputs": ["out", "INV_RMS"],
         }
     )
 
@@ -2314,10 +2427,18 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_std2d_intent()
     if name == "var_mean2d":
         return _canonical_var_mean2d_intent()
+    if name == "mm2d":
+        return _canonical_mm2d_intent()
+    if name == "addmm2d":
+        return _canonical_addmm2d_intent()
+    if name == "dot1d":
+        return _canonical_dot1d_intent()
     if name == "vector_norm2d":
         return _canonical_vector_norm2d_intent()
     if name == "vdot1d":
         return _canonical_vdot1d_intent()
+    if name == "rms_norm2d":
+        return _canonical_rms_norm2d_intent()
     if name == "vstack2d":
         return _canonical_vstack2d_intent()
     if name == "where2d":

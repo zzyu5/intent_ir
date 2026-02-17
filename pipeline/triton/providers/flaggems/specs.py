@@ -3468,6 +3468,9 @@ def _run_flaggems_rms_norm_reference(case: TestCase) -> Dict[str, np.ndarray]:
         "W": w_np,
         "Y": y_np,
         "InvRms": inv_rms_np,
+        "out": y_np,
+        "INV_RMS": inv_rms_np,
+        "N_scalar": np.array(float(n), dtype=np.float32),
         "eps": np.array(eps, dtype=np.float32),
         # Common aliases.
         "input": x_np,
