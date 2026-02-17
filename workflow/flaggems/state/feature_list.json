@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_feature_list_v2",
-  "generated_at": "2026-02-16T20:39:25+00:00",
+  "generated_at": "2026-02-17T06:29:29+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
@@ -6681,10 +6681,10 @@
       "id": "backend_compiler::cpp_codegen_modular_split_wave3_cuda",
       "semantic_op": "",
       "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "pending_modular_split",
-      "next_action": "split_cuda_codegen_modules_wave3",
+      "status": "done",
+      "passes": true,
+      "reason_code": "ok",
+      "next_action": "none",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "backend_compiler",
@@ -6699,17 +6699,25 @@
       "depends_on": [
         "backend_compiler::cpp_codegen_modular_split_wave2_cuda"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave3_split_v2_chunk0/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave3_split_v2_chunk0/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave3_split_v2_chunk0/batch_gate_backend_compiler.json",
+        "backends/cuda/cpp_codegen/emit_conv_kernels.inc",
+        "backends/cuda/cpp_codegen/emit_pool_sort_misc.inc",
+        "backends/cuda/cpp_codegen/emit_upsample_kernels.inc",
+        "backends/cuda/cpp_codegen/emit_conv_pool_upsample.inc"
+      ],
       "description": "Continue CUDA cpp_codegen modular split by extracting remaining dispatch and emit blocks into dedicated modules."
     },
     {
       "id": "backend_compiler::cpp_codegen_modular_split_wave3_rvv",
       "semantic_op": "",
       "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "pending_modular_split",
-      "next_action": "split_rvv_codegen_modules_wave3",
+      "status": "done",
+      "passes": true,
+      "reason_code": "ok",
+      "next_action": "none",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "backend_compiler",
@@ -6724,7 +6732,15 @@
       "depends_on": [
         "backend_compiler::cpp_codegen_modular_split_wave2_rvv"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave3_split_v2_chunk0/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave3_split_v2_chunk0/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave3_split_v2_chunk0/batch_gate_backend_compiler.json",
+        "backends/spmd_rvv/cpp_codegen/emit_elemwise_reduce_part1.inc",
+        "backends/spmd_rvv/cpp_codegen/emit_elemwise_reduce_part2.inc",
+        "backends/spmd_rvv/cpp_codegen/emit_elemwise_reduce_part3.inc",
+        "backends/spmd_rvv/cpp_codegen/emit_elemwise_reduce_helpers.inc"
+      ],
       "description": "Continue RVV cpp_codegen modular split by extracting remaining dispatch and emit blocks into dedicated modules."
     }
   ]

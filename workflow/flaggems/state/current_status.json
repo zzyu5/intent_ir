@@ -1,14 +1,14 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-17T06:24:54+00:00",
+  "updated_at": "2026-02-17T07:20:30+00:00",
   "branch": "flaggems",
-  "head_commit": "eb46c98773576e98b6da52973bdc8d9d86714d6c",
-  "mode": "mixed_development",
-  "coverage_integrity_phase": "recomputed_ok",
+  "head_commit": "9c3cfa14fdbd0814dc88cd4279503d2f995ef999",
+  "mode": "maintenance",
+  "coverage_integrity_phase": "recompute_stale",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260217/coverage_failed_families_fix1_v1/run_summary.json",
   "full196_last_ok": true,
   "full196_validated_commit": "eb46c98773576e98b6da52973bdc8d9d86714d6c",
-  "full196_commits_since_validated": 0,
+  "full196_commits_since_validated": 1,
   "full196_validated_mode": "force_compile",
   "full196_validated_scope": "coverage_158_kernels_to_196_semantics",
   "full196_validated_with_rvv_remote": true,
@@ -86,15 +86,15 @@
     "catalog_validated": true
   },
   "active_lanes": [
-    "backend_compiler"
+    "coverage"
   ],
   "next_focus_by_lane": {
-    "backend_compiler": "Resume non-elementwise category batches with remote-only RVV + CUDA, then complete elementwise chunks and aggregate full196 evidence on HEAD.",
-    "coverage": "Continue Phase4/Phase5: split remaining cpp_codegen monolith blocks and run category-scoped regressions; at milestone, rerun full 7-family aggregate on HEAD."
+    "coverage": "Continue category-batch regression on impacted families with chunked remote execution; then run 7-category aggregate full196 on HEAD.",
+    "backend_compiler": "Continue backend compiler wave3: run remaining manifest chunks in smaller batches, then update feature_list wave3 tasks to done and re-run backend_compiler gate."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260217/coverage_failed_families_fix1_v1/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260217/coverage_failed_families_fix1_v1/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/family_conv_pool_interp/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/family_conv_pool_interp/status_converged.json"
   },
   "lanes": {
     "coverage": {
@@ -110,8 +110,8 @@
       "active_batch_path": "workflow/flaggems/state/active_batch_ir_arch.json"
     },
     "backend_compiler": {
-      "pending": 2,
-      "done": 26,
+      "pending": 0,
+      "done": 28,
       "total": 28,
       "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json"
     }

@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_registry_v2",
-  "generated_at": "2026-02-16T08:19:41.922733+00:00",
+  "generated_at": "2026-02-17T06:27:34.400396+00:00",
   "opset": "deterministic_forward",
   "flaggems_commit": "21a7cbf880cd4be1c66e1d79e89fe65288617a18",
   "flaggems_source": "/home/kingdom/intentir/experiment/FlagGems/src",
@@ -119,10 +119,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "7ee45e08346bad61e90cfbe0b124f69bcdfcbf8a",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "7ee45e08346bad61e90cfbe0b124f69bcdfcbf8a"
     },
     {
       "semantic_op": "acos",
@@ -212,10 +209,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "3b44e84290fcefc3fc3b0d430a5d97954c6fbacb",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "3b44e84290fcefc3fc3b0d430a5d97954c6fbacb"
     },
     {
       "semantic_op": "add",
@@ -305,10 +299,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "14466e7a22e8b6c361c5dd51d07503a888aab72a",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "14466e7a22e8b6c361c5dd51d07503a888aab72a"
     },
     {
       "semantic_op": "addcdiv",
@@ -428,10 +419,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "4170cfcec64214a374470554734257651a84be5b",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "4170cfcec64214a374470554734257651a84be5b"
     },
     {
       "semantic_op": "addcmul",
@@ -542,10 +530,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "1dd852c51337d29bf7f8d9e30be46452793d20bb",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "1dd852c51337d29bf7f8d9e30be46452793d20bb"
     },
     {
       "semantic_op": "addmv",
@@ -646,10 +631,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "dd2c46aa9929f2087c7731d9e1f1b74de6b06947",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "dd2c46aa9929f2087c7731d9e1f1b74de6b06947"
     },
     {
       "semantic_op": "addr",
@@ -771,10 +753,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "ce4ff9da16a03383d4ceac33d36553af38794205",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "ce4ff9da16a03383d4ceac33d36553af38794205"
     },
     {
       "semantic_op": "angle",
@@ -864,10 +843,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "1e4ae0f37848e8c344ed2c579c8bdd265fb306d9",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "1e4ae0f37848e8c344ed2c579c8bdd265fb306d9"
     },
     {
       "semantic_op": "arange",
@@ -958,10 +934,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "274feacf9c1b75a0309bf998817f7c665cde9b53",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "274feacf9c1b75a0309bf998817f7c665cde9b53"
     },
     {
       "semantic_op": "atan",
@@ -1051,10 +1024,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "2b5f61ba346621c43bcf0d629cb337f3d238a4d8",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "2b5f61ba346621c43bcf0d629cb337f3d238a4d8"
     },
     {
       "semantic_op": "bitwise_and_scalar",
@@ -1144,10 +1114,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "f106bd812dde3137e0e6f1be66968e60e294c369",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "f106bd812dde3137e0e6f1be66968e60e294c369"
     },
     {
       "semantic_op": "bitwise_and_scalar_tensor",
@@ -1237,10 +1204,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "f106bd812dde3137e0e6f1be66968e60e294c369",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "f106bd812dde3137e0e6f1be66968e60e294c369"
     },
     {
       "semantic_op": "bitwise_and_tensor",
@@ -1330,10 +1294,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "f106bd812dde3137e0e6f1be66968e60e294c369",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "f106bd812dde3137e0e6f1be66968e60e294c369"
     },
     {
       "semantic_op": "bitwise_left_shift",
@@ -1423,10 +1384,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "7b90e8c1900c7f323d84ad8bb70a9e763f51c6f2",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "7b90e8c1900c7f323d84ad8bb70a9e763f51c6f2"
     },
     {
       "semantic_op": "bitwise_not",
@@ -1516,10 +1474,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "4a8f2b0b954171adbe5eabaa1c7074bfe26130c2",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "4a8f2b0b954171adbe5eabaa1c7074bfe26130c2"
     },
     {
       "semantic_op": "bitwise_or_scalar",
@@ -1609,10 +1564,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "02b2ff7b875f89b1ba97261f20776ce3a16589b2",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "02b2ff7b875f89b1ba97261f20776ce3a16589b2"
     },
     {
       "semantic_op": "bitwise_or_scalar_tensor",
@@ -1702,10 +1654,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "02b2ff7b875f89b1ba97261f20776ce3a16589b2",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "02b2ff7b875f89b1ba97261f20776ce3a16589b2"
     },
     {
       "semantic_op": "bitwise_or_tensor",
@@ -1795,10 +1744,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "02b2ff7b875f89b1ba97261f20776ce3a16589b2",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "02b2ff7b875f89b1ba97261f20776ce3a16589b2"
     },
     {
       "semantic_op": "bitwise_right_shift",
@@ -1888,10 +1834,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "867b0bc398cb2b6ff98089b5e7c86587bbee2f72",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "867b0bc398cb2b6ff98089b5e7c86587bbee2f72"
     },
     {
       "semantic_op": "cat",
@@ -1981,10 +1924,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "4f8772d18aa02bb46d869989567fa8396d820103",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "4f8772d18aa02bb46d869989567fa8396d820103"
     },
     {
       "semantic_op": "ceil",
@@ -2096,10 +2036,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "21a18f81497d493b2be85d81ba58a44761b7fa6e",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "21a18f81497d493b2be85d81ba58a44761b7fa6e"
     },
     {
       "semantic_op": "celu",
@@ -2230,10 +2167,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "2194b1e86373f2c101862f943fae3d9d6f163aca",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "2194b1e86373f2c101862f943fae3d9d6f163aca"
     },
     {
       "semantic_op": "clamp",
@@ -2333,10 +2267,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "3a69954bbaa5dd449bbd7ab533eef4b3a7bacdf8",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "3a69954bbaa5dd449bbd7ab533eef4b3a7bacdf8"
     },
     {
       "semantic_op": "clamp_min",
@@ -2426,10 +2357,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "aaadfba24612f96aac3cba5f0f18de5c5a00977b",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "aaadfba24612f96aac3cba5f0f18de5c5a00977b"
     },
     {
       "semantic_op": "clamp_tensor",
@@ -2529,10 +2457,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "3a69954bbaa5dd449bbd7ab533eef4b3a7bacdf8",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "3a69954bbaa5dd449bbd7ab533eef4b3a7bacdf8"
     },
     {
       "semantic_op": "constant_pad_nd",
@@ -2622,10 +2547,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "34067d7e050d59d417786be93fd85097d87ee92f",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "34067d7e050d59d417786be93fd85097d87ee92f"
     },
     {
       "semantic_op": "contiguous",
@@ -2715,10 +2637,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "344ad843cbaf417f84d28dffab71cb5c78a4e2f2",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "344ad843cbaf417f84d28dffab71cb5c78a4e2f2"
     },
     {
       "semantic_op": "copy",
@@ -2808,10 +2727,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "344ad843cbaf417f84d28dffab71cb5c78a4e2f2",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "344ad843cbaf417f84d28dffab71cb5c78a4e2f2"
     },
     {
       "semantic_op": "cos",
@@ -2901,10 +2817,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "5d99b65fd7b99488d7b35d0bdeeb105765d9c1e3",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "5d99b65fd7b99488d7b35d0bdeeb105765d9c1e3"
     },
     {
       "semantic_op": "diag",
@@ -2994,10 +2907,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "a993668ab6390cb468d824b200bc036bb9296ec6",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "a993668ab6390cb468d824b200bc036bb9296ec6"
     },
     {
       "semantic_op": "diag_embed",
@@ -3087,10 +2997,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "36576bd040a3861a972eba06557d7dc7d69d5619",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "36576bd040a3861a972eba06557d7dc7d69d5619"
     },
     {
       "semantic_op": "div_mode",
@@ -3180,10 +3087,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "11b4378110944033914b77be15b073fe36ef7dbe",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "11b4378110944033914b77be15b073fe36ef7dbe"
     },
     {
       "semantic_op": "elu",
@@ -3314,10 +3218,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "d8888d0124050c88645b515d5a055c96ed6a9029",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "d8888d0124050c88645b515d5a055c96ed6a9029"
     },
     {
       "semantic_op": "eq",
@@ -3417,10 +3318,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "a18a83ad4b2afbedce5bf8224d3b7bc04d211ec4",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "a18a83ad4b2afbedce5bf8224d3b7bc04d211ec4"
     },
     {
       "semantic_op": "eq_scalar",
@@ -3520,10 +3418,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "a18a83ad4b2afbedce5bf8224d3b7bc04d211ec4",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "a18a83ad4b2afbedce5bf8224d3b7bc04d211ec4"
     },
     {
       "semantic_op": "equal",
@@ -3623,10 +3518,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "a18a83ad4b2afbedce5bf8224d3b7bc04d211ec4",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "a18a83ad4b2afbedce5bf8224d3b7bc04d211ec4"
     },
     {
       "semantic_op": "erf",
@@ -3716,10 +3608,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "5cb2466885c1547b501073f86c48ec713d4015d2",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "5cb2466885c1547b501073f86c48ec713d4015d2"
     },
     {
       "semantic_op": "exp",
@@ -3810,10 +3699,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "1c982e04423731458f3dfd82c8df1362d752e980",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "1c982e04423731458f3dfd82c8df1362d752e980"
     },
     {
       "semantic_op": "exp2",
@@ -3923,10 +3809,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "b8a0cb195cfb6ca458c30c7f63054a5b649095b4",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "b8a0cb195cfb6ca458c30c7f63054a5b649095b4"
     },
     {
       "semantic_op": "eye",
@@ -4047,10 +3930,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "5640bfaf9c7044ee8f43cd924b2960bcf55d7dba",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "5640bfaf9c7044ee8f43cd924b2960bcf55d7dba"
     },
     {
       "semantic_op": "eye_m",
@@ -4171,10 +4051,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "522fd0a2732dd2c0ab9595bb20447d443a238e95",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "522fd0a2732dd2c0ab9595bb20447d443a238e95"
     },
     {
       "semantic_op": "fill_scalar",
@@ -4274,10 +4151,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "6195835e6c473367d7a1fbbe8e12f6bf9eb52637",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "6195835e6c473367d7a1fbbe8e12f6bf9eb52637"
     },
     {
       "semantic_op": "fill_tensor",
@@ -4377,10 +4251,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "6195835e6c473367d7a1fbbe8e12f6bf9eb52637",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "6195835e6c473367d7a1fbbe8e12f6bf9eb52637"
     },
     {
       "semantic_op": "floor_divide",
@@ -4470,10 +4341,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "11b4378110944033914b77be15b073fe36ef7dbe",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "11b4378110944033914b77be15b073fe36ef7dbe"
     },
     {
       "semantic_op": "full",
@@ -4573,10 +4441,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "6195835e6c473367d7a1fbbe8e12f6bf9eb52637",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "6195835e6c473367d7a1fbbe8e12f6bf9eb52637"
     },
     {
       "semantic_op": "full_like",
@@ -4676,10 +4541,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "6195835e6c473367d7a1fbbe8e12f6bf9eb52637",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "6195835e6c473367d7a1fbbe8e12f6bf9eb52637"
     },
     {
       "semantic_op": "ge",
@@ -4769,10 +4631,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "e192a55bfb07ac60fb1e28c0a6766a2ff8b3731d",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "e192a55bfb07ac60fb1e28c0a6766a2ff8b3731d"
     },
     {
       "semantic_op": "ge_scalar",
@@ -4862,10 +4721,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "e192a55bfb07ac60fb1e28c0a6766a2ff8b3731d",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "e192a55bfb07ac60fb1e28c0a6766a2ff8b3731d"
     },
     {
       "semantic_op": "glu",
@@ -4955,10 +4811,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "1d51459d7e17bce313ae02265d7c074d11e20175",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "1d51459d7e17bce313ae02265d7c074d11e20175"
     },
     {
       "semantic_op": "gt",
@@ -5048,10 +4901,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "b5c1dff47aaa2308fca060a7ca7b577633b0319a",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "b5c1dff47aaa2308fca060a7ca7b577633b0319a"
     },
     {
       "semantic_op": "gt_scalar",
@@ -5141,10 +4991,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "b5c1dff47aaa2308fca060a7ca7b577633b0319a",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "b5c1dff47aaa2308fca060a7ca7b577633b0319a"
     },
     {
       "semantic_op": "hstack",
@@ -5234,10 +5081,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "993feb2c1c4ba320cbd4931efd8d7b83dac1b8cd",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "993feb2c1c4ba320cbd4931efd8d7b83dac1b8cd"
     },
     {
       "semantic_op": "isclose",
@@ -5368,10 +5212,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "f77a44615ea82118e7b0cc2947f79c6c3e55c2a0",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "f77a44615ea82118e7b0cc2947f79c6c3e55c2a0"
     },
     {
       "semantic_op": "isfinite",
@@ -5481,10 +5322,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "18b83f7578005c78fc6f550d537764cfd913f801",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "18b83f7578005c78fc6f550d537764cfd913f801"
     },
     {
       "semantic_op": "isin",
@@ -5605,10 +5443,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "f0f9d133ea4bf8ce009db63cd7f522a2e2a627f6",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "f0f9d133ea4bf8ce009db63cd7f522a2e2a627f6"
     },
     {
       "semantic_op": "isinf",
@@ -5718,10 +5553,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "4a6def24a0d1ffe2362bf469990c6d377fd54c3b",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "4a6def24a0d1ffe2362bf469990c6d377fd54c3b"
     },
     {
       "semantic_op": "isnan",
@@ -5811,10 +5643,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "9f9c8a14eb757c8ec150d5d7a61747e0cfff3c21",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "9f9c8a14eb757c8ec150d5d7a61747e0cfff3c21"
     },
     {
       "semantic_op": "kron",
@@ -5904,10 +5733,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "bb6f0f2c1e9e2df8127681fb4d413aac82334d8e",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "bb6f0f2c1e9e2df8127681fb4d413aac82334d8e"
     },
     {
       "semantic_op": "le",
@@ -5997,10 +5823,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "780f9386a837732aa41cb312dae8fb46a10d1624",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "780f9386a837732aa41cb312dae8fb46a10d1624"
     },
     {
       "semantic_op": "le_scalar",
@@ -6090,10 +5913,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "780f9386a837732aa41cb312dae8fb46a10d1624",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "780f9386a837732aa41cb312dae8fb46a10d1624"
     },
     {
       "semantic_op": "lerp_scalar",
@@ -6203,10 +6023,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "f2c51234504cd17b95299dafdd3fd735aa15919e",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "f2c51234504cd17b95299dafdd3fd735aa15919e"
     },
     {
       "semantic_op": "lerp_tensor",
@@ -6316,10 +6133,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "f2c51234504cd17b95299dafdd3fd735aa15919e",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "f2c51234504cd17b95299dafdd3fd735aa15919e"
     },
     {
       "semantic_op": "linspace",
@@ -6459,10 +6273,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "a1d55a83cb064ebf5a981c2a15dabcff6977c3fd",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "a1d55a83cb064ebf5a981c2a15dabcff6977c3fd"
     },
     {
       "semantic_op": "log",
@@ -6552,10 +6363,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "e599e6c02245dfbfff5bf757f61c30d76c26571c",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "e599e6c02245dfbfff5bf757f61c30d76c26571c"
     },
     {
       "semantic_op": "logical_and",
@@ -6645,10 +6453,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "5f194e6d1b13852a88055f1a63039168e0cd5940",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "5f194e6d1b13852a88055f1a63039168e0cd5940"
     },
     {
       "semantic_op": "logical_not",
@@ -6738,10 +6543,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "0f4f38651b583a857c3e90eda2cf115ed2bdb7e9",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "0f4f38651b583a857c3e90eda2cf115ed2bdb7e9"
     },
     {
       "semantic_op": "logical_or",
@@ -6831,10 +6633,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "3455f611892ee15f9278c2720b4faaad63801ed3",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "3455f611892ee15f9278c2720b4faaad63801ed3"
     },
     {
       "semantic_op": "logical_xor",
@@ -6945,10 +6744,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "c59afe23b1acb2dc876cb46a5c07060a581dc6c1",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "c59afe23b1acb2dc876cb46a5c07060a581dc6c1"
     },
     {
       "semantic_op": "logspace",
@@ -7099,10 +6895,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "d42b6861bfe873978e56f9b68b574e2f6f60a9d3",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "d42b6861bfe873978e56f9b68b574e2f6f60a9d3"
     },
     {
       "semantic_op": "lt",
@@ -7192,10 +6985,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "ff46a54b1744f120b181a549edc470f1d7a0cbe2",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "ff46a54b1744f120b181a549edc470f1d7a0cbe2"
     },
     {
       "semantic_op": "lt_scalar",
@@ -7285,10 +7075,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "ff46a54b1744f120b181a549edc470f1d7a0cbe2",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "ff46a54b1744f120b181a549edc470f1d7a0cbe2"
     },
     {
       "semantic_op": "masked_fill",
@@ -7378,10 +7165,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "9d4f84ed8b351d77a49b038029147bc1560e6d26",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "9d4f84ed8b351d77a49b038029147bc1560e6d26"
     },
     {
       "semantic_op": "max",
@@ -7471,10 +7255,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "22c9991f8ccff09e33eda617475c561fc00f3fb8",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "22c9991f8ccff09e33eda617475c561fc00f3fb8"
     },
     {
       "semantic_op": "max_dim",
@@ -7564,10 +7345,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "22c9991f8ccff09e33eda617475c561fc00f3fb8",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "22c9991f8ccff09e33eda617475c561fc00f3fb8"
     },
     {
       "semantic_op": "maximum",
@@ -7657,10 +7435,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "aaadfba24612f96aac3cba5f0f18de5c5a00977b",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "aaadfba24612f96aac3cba5f0f18de5c5a00977b"
     },
     {
       "semantic_op": "min",
@@ -7750,10 +7525,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "61c4110eda72467f168fe3f8d7b7fb2730a4c42e",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "61c4110eda72467f168fe3f8d7b7fb2730a4c42e"
     },
     {
       "semantic_op": "min_dim",
@@ -7843,10 +7615,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "c29b0d50a78bfbf9c17ab519710eb22f6f73282b",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "c29b0d50a78bfbf9c17ab519710eb22f6f73282b"
     },
     {
       "semantic_op": "minimum",
@@ -7936,10 +7705,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "a3b5e26cbcb7cdd07b1c9a21152f8976ebf24c11",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "a3b5e26cbcb7cdd07b1c9a21152f8976ebf24c11"
     },
     {
       "semantic_op": "mse_loss",
@@ -8029,10 +7795,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "71e6bf1378257287e998ca5a0536b6fe10b1163b",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "71e6bf1378257287e998ca5a0536b6fe10b1163b"
     },
     {
       "semantic_op": "mul",
@@ -8122,10 +7885,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "d259e5d6e49f95f7cd5f9ca4efbbd1cd5ba982ce",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "d259e5d6e49f95f7cd5f9ca4efbbd1cd5ba982ce"
     },
     {
       "semantic_op": "mv",
@@ -8215,10 +7975,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "1bb55150785174d4a3f7cc4f7be7ba3b3fd91428",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "1bb55150785174d4a3f7cc4f7be7ba3b3fd91428"
     },
     {
       "semantic_op": "nan_to_num",
@@ -8308,10 +8065,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "a6d78489af5e2c4da9a35f17a0e264ed805d7168",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "a6d78489af5e2c4da9a35f17a0e264ed805d7168"
     },
     {
       "semantic_op": "ne",
@@ -8401,10 +8155,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "2d779438c01ae23fb0538f116053eb6ae9307d61",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "2d779438c01ae23fb0538f116053eb6ae9307d61"
     },
     {
       "semantic_op": "ne_scalar",
@@ -8494,10 +8245,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "2d779438c01ae23fb0538f116053eb6ae9307d61",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "2d779438c01ae23fb0538f116053eb6ae9307d61"
     },
     {
       "semantic_op": "neg",
@@ -8597,10 +8345,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "d0e96cf055a0c35ebed88100957302ba467cae5f",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "d0e96cf055a0c35ebed88100957302ba467cae5f"
     },
     {
       "semantic_op": "nll_loss2d_forward",
@@ -8690,10 +8435,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "50426452fde21ac98462a423725cbee11779c449",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "50426452fde21ac98462a423725cbee11779c449"
     },
     {
       "semantic_op": "nll_loss_forward",
@@ -8783,10 +8525,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "4622e37ea1aef435ef432c3d5dbdbb69df0f7886",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "4622e37ea1aef435ef432c3d5dbdbb69df0f7886"
     },
     {
       "semantic_op": "nonzero",
@@ -8876,10 +8615,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "a168de51ebc36293dcf651353f86c45e3b7d2d8f",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "a168de51ebc36293dcf651353f86c45e3b7d2d8f"
     },
     {
       "semantic_op": "one_hot",
@@ -9009,10 +8745,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "d39a7ea10c0c6b5c6014179dafccb4eca25f9709",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "d39a7ea10c0c6b5c6014179dafccb4eca25f9709"
     },
     {
       "semantic_op": "ones",
@@ -9112,10 +8845,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "6195835e6c473367d7a1fbbe8e12f6bf9eb52637",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "6195835e6c473367d7a1fbbe8e12f6bf9eb52637"
     },
     {
       "semantic_op": "ones_like",
@@ -9215,10 +8945,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "6195835e6c473367d7a1fbbe8e12f6bf9eb52637",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "6195835e6c473367d7a1fbbe8e12f6bf9eb52637"
     },
     {
       "semantic_op": "pad",
@@ -9308,10 +9035,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "f7a89d2e9efc24eeb8b5733d756a8cd97baabb5d",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "f7a89d2e9efc24eeb8b5733d756a8cd97baabb5d"
     },
     {
       "semantic_op": "per_token_group_quant_fp8",
@@ -9401,10 +9125,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "d067d09826a04b465185dc595ad4b9d7c4079ed7",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "d067d09826a04b465185dc595ad4b9d7c4079ed7"
     },
     {
       "semantic_op": "polar",
@@ -9494,10 +9215,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "d59de1751368cc5c2f94b27a00369abc03d90176",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "d59de1751368cc5c2f94b27a00369abc03d90176"
     },
     {
       "semantic_op": "pow_scalar",
@@ -9587,10 +9305,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "fb217882a1aea789f8d32269e749d2e3cc574e24",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "fb217882a1aea789f8d32269e749d2e3cc574e24"
     },
     {
       "semantic_op": "pow_tensor_scalar",
@@ -9680,10 +9395,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "44d3809b60308c2a9cfb763e15be52f8f13a9d4e",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "44d3809b60308c2a9cfb763e15be52f8f13a9d4e"
     },
     {
       "semantic_op": "pow_tensor_tensor",
@@ -9773,10 +9485,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "55fc16e1d68b72c452fd567dd6b40fb5ab6e48cb",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "55fc16e1d68b72c452fd567dd6b40fb5ab6e48cb"
     },
     {
       "semantic_op": "quantile",
@@ -9866,10 +9575,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "2f289a2a3e436ff46be465cc2b9366fb8b5de44f",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "2f289a2a3e436ff46be465cc2b9366fb8b5de44f"
     },
     {
       "semantic_op": "reciprocal",
@@ -9969,10 +9675,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "9980f4dcf450f3a7450211bddcd12ebf89ce3602",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "9980f4dcf450f3a7450211bddcd12ebf89ce3602"
     },
     {
       "semantic_op": "remainder",
@@ -10062,10 +9765,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "3755658c091e094188ae4dbcf9b6dfc6a84266e7",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "3755658c091e094188ae4dbcf9b6dfc6a84266e7"
     },
     {
       "semantic_op": "repeat",
@@ -10155,10 +9855,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "806555a2d9e5bda683f341b40652f062b6dfb8b4",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "806555a2d9e5bda683f341b40652f062b6dfb8b4"
     },
     {
       "semantic_op": "repeat_interleave_self_int",
@@ -10248,10 +9945,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "2353ddcdb41d43f8ab9516dc893e992bd57eaa62",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "2353ddcdb41d43f8ab9516dc893e992bd57eaa62"
     },
     {
       "semantic_op": "repeat_interleave_self_tensor",
@@ -10341,10 +10035,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "6f9d77d53d09718f1193f076416638b3d2bb5dd6",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "6f9d77d53d09718f1193f076416638b3d2bb5dd6"
     },
     {
       "semantic_op": "repeat_interleave_tensor",
@@ -10434,10 +10125,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "4eefa52cdfe87563ba2257b3ffb952a48d928676",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "4eefa52cdfe87563ba2257b3ffb952a48d928676"
     },
     {
       "semantic_op": "resolve_conj",
@@ -10527,10 +10215,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "344ad843cbaf417f84d28dffab71cb5c78a4e2f2",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "344ad843cbaf417f84d28dffab71cb5c78a4e2f2"
     },
     {
       "semantic_op": "resolve_neg",
@@ -10620,10 +10305,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "344ad843cbaf417f84d28dffab71cb5c78a4e2f2",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "344ad843cbaf417f84d28dffab71cb5c78a4e2f2"
     },
     {
       "semantic_op": "rsqrt",
@@ -10713,10 +10395,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "68574b84ee9723e3bdcd2ab93fe37f9539dbd5a7",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "68574b84ee9723e3bdcd2ab93fe37f9539dbd5a7"
     },
     {
       "semantic_op": "sin",
@@ -10806,10 +10485,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "49693229b03e57ab371a8148d11f01a2e52c25e9",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "49693229b03e57ab371a8148d11f01a2e52c25e9"
     },
     {
       "semantic_op": "sort",
@@ -10899,10 +10575,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "ae2623ef6ceb9ad1f098f67924bd01bcc3531937",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "ae2623ef6ceb9ad1f098f67924bd01bcc3531937"
     },
     {
       "semantic_op": "sort_stable",
@@ -10992,10 +10665,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "f6d651894d347f5740cd2a8627eb86a69998d565",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "f6d651894d347f5740cd2a8627eb86a69998d565"
     },
     {
       "semantic_op": "sqrt",
@@ -11095,10 +10765,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "c7d444c59411139fe6f25d4e5722f9e9bf963246",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "c7d444c59411139fe6f25d4e5722f9e9bf963246"
     },
     {
       "semantic_op": "stack",
@@ -11188,10 +10855,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "f43d6e5bc13d5cbf48ae61c684284952a8d40e2a",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "f43d6e5bc13d5cbf48ae61c684284952a8d40e2a"
     },
     {
       "semantic_op": "sub",
@@ -11281,10 +10945,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "01e2e4451937ce0d464fa348fd4ca1895bf1b6e0",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "01e2e4451937ce0d464fa348fd4ca1895bf1b6e0"
     },
     {
       "semantic_op": "tan",
@@ -11374,10 +11035,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "fe1dcf236474a1854f4d38493df554fdfa072cf0",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "fe1dcf236474a1854f4d38493df554fdfa072cf0"
     },
     {
       "semantic_op": "threshold",
@@ -11487,10 +11145,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "4704a975a8d4f0070a444c2dbd4d75f3cfa8c629",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "4704a975a8d4f0070a444c2dbd4d75f3cfa8c629"
     },
     {
       "semantic_op": "tile",
@@ -11580,10 +11235,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "b6dbe7f72588bb81a9fe996824ff55d07f39da1f",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "b6dbe7f72588bb81a9fe996824ff55d07f39da1f"
     },
     {
       "semantic_op": "to_copy",
@@ -11673,10 +11325,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "719637aa7898c97f5329f5290503dea9c01d2041",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "719637aa7898c97f5329f5290503dea9c01d2041"
     },
     {
       "semantic_op": "topk",
@@ -11766,10 +11415,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "40464f28f09b6b908da218ab34fb1f7432810e4c",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "40464f28f09b6b908da218ab34fb1f7432810e4c"
     },
     {
       "semantic_op": "trace",
@@ -11859,10 +11505,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "6c7cb807462fe3a21befe43375004a458105ceee",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "6c7cb807462fe3a21befe43375004a458105ceee"
     },
     {
       "semantic_op": "triu",
@@ -11952,10 +11595,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "fe992e6a8d37e4c3babbe72d64e426fa4aa6910b",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "fe992e6a8d37e4c3babbe72d64e426fa4aa6910b"
     },
     {
       "semantic_op": "true_divide",
@@ -12046,10 +11686,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "11b4378110944033914b77be15b073fe36ef7dbe",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "11b4378110944033914b77be15b073fe36ef7dbe"
     },
     {
       "semantic_op": "unique2",
@@ -12139,10 +11776,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "958607c8a317e34b4cf14cb857229f0cdc64ba3e",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "958607c8a317e34b4cf14cb857229f0cdc64ba3e"
     },
     {
       "semantic_op": "vstack",
@@ -12232,10 +11866,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "eb67c1b778f57374e80ee73341fe3166442ec9e5",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "eb67c1b778f57374e80ee73341fe3166442ec9e5"
     },
     {
       "semantic_op": "zeros",
@@ -12335,10 +11966,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "6195835e6c473367d7a1fbbe8e12f6bf9eb52637",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "6195835e6c473367d7a1fbbe8e12f6bf9eb52637"
     },
     {
       "semantic_op": "zeros_like",
@@ -12438,10 +12066,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "6195835e6c473367d7a1fbbe8e12f6bf9eb52637",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "6195835e6c473367d7a1fbbe8e12f6bf9eb52637"
     },
     {
       "semantic_op": "all",
@@ -12544,10 +12169,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "9692eaf2a9d9cbc3c12a0eab7a8d25073119a6ec",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "9692eaf2a9d9cbc3c12a0eab7a8d25073119a6ec"
     },
     {
       "semantic_op": "allclose",
@@ -12699,10 +12321,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "76bfc0ff98c1dff575cc974138a76a26540bfbe9",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "76bfc0ff98c1dff575cc974138a76a26540bfbe9"
     },
     {
       "semantic_op": "amax",
@@ -12802,10 +12421,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "22c9991f8ccff09e33eda617475c561fc00f3fb8",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "22c9991f8ccff09e33eda617475c561fc00f3fb8"
     },
     {
       "semantic_op": "any",
@@ -12907,10 +12523,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "c0fef961b7503eebdc4e933189cd4d195947eb51",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "c0fef961b7503eebdc4e933189cd4d195947eb51"
     },
     {
       "semantic_op": "argmax",
@@ -13010,10 +12623,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "29b6e7700daedea1f34512c41d4067fd72a8ccc0",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "29b6e7700daedea1f34512c41d4067fd72a8ccc0"
     },
     {
       "semantic_op": "argmin",
@@ -13113,10 +12723,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "8c6dc18654981cf488746de8f295b521e8ba4d72",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "8c6dc18654981cf488746de8f295b521e8ba4d72"
     },
     {
       "semantic_op": "count_nonzero",
@@ -13236,10 +12843,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "36a5b3b953b13f58bb6c31c22283e1f8e84f9092",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "36a5b3b953b13f58bb6c31c22283e1f8e84f9092"
     },
     {
       "semantic_op": "cumsum",
@@ -13340,10 +12944,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "2e194dacad1221b48e9bf59686161ded3bc918a4",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "2e194dacad1221b48e9bf59686161ded3bc918a4"
     },
     {
       "semantic_op": "flash_attn_varlen_func",
@@ -13444,10 +13045,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "2db2e7190b75a9ca2dd19615d14d158f5681d7d2",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "2db2e7190b75a9ca2dd19615d14d158f5681d7d2"
     },
     {
       "semantic_op": "log_softmax",
@@ -13547,10 +13145,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "732bbe58cd58ab1aed6da1672e31720687e45593",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "732bbe58cd58ab1aed6da1672e31720687e45593"
     },
     {
       "semantic_op": "mean",
@@ -13650,10 +13245,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "7664f1015427c55a9223d3b2e1ab7adadba3214b",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "7664f1015427c55a9223d3b2e1ab7adadba3214b"
     },
     {
       "semantic_op": "mean_dim",
@@ -13753,10 +13345,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "7664f1015427c55a9223d3b2e1ab7adadba3214b",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "7664f1015427c55a9223d3b2e1ab7adadba3214b"
     },
     {
       "semantic_op": "prod",
@@ -13856,10 +13445,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "f901e9b2b8fadcfe2a600a8f3ad6675d25c9072f",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "f901e9b2b8fadcfe2a600a8f3ad6675d25c9072f"
     },
     {
       "semantic_op": "prod_dim",
@@ -13959,10 +13545,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "9552710bdb6384343f2f729a145536a0c33092bb",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "9552710bdb6384343f2f729a145536a0c33092bb"
     },
     {
       "semantic_op": "scaled_softmax_forward",
@@ -14092,10 +13675,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "46458705e5dcb9b42eebc36c2520ebd0988fba2f",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "46458705e5dcb9b42eebc36c2520ebd0988fba2f"
     },
     {
       "semantic_op": "softmax",
@@ -14225,10 +13805,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "46458705e5dcb9b42eebc36c2520ebd0988fba2f",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "46458705e5dcb9b42eebc36c2520ebd0988fba2f"
     },
     {
       "semantic_op": "std",
@@ -14331,10 +13908,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "cf51bce6b70a4b172ade9439676f8c36b36d2e0d",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "cf51bce6b70a4b172ade9439676f8c36b36d2e0d"
     },
     {
       "semantic_op": "sum",
@@ -14435,10 +14009,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "5586c401022e75e81e292d7f9f2c683a6cf5ed83",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "5586c401022e75e81e292d7f9f2c683a6cf5ed83"
     },
     {
       "semantic_op": "sum_dim",
@@ -14539,10 +14110,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "5586c401022e75e81e292d7f9f2c683a6cf5ed83",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "5586c401022e75e81e292d7f9f2c683a6cf5ed83"
     },
     {
       "semantic_op": "var_mean",
@@ -14642,10 +14210,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "59a51e6d50203529d6d858df91409702a49422af",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "59a51e6d50203529d6d858df91409702a49422af"
     },
     {
       "semantic_op": "batch_norm",
@@ -14795,10 +14360,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "7f1b47f43220c5886fd18b01b65a800b1541aef9",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "7f1b47f43220c5886fd18b01b65a800b1541aef9"
     },
     {
       "semantic_op": "gelu",
@@ -14920,10 +14482,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "84499e15fff78413e59a5890512a80c4e42c4651",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "84499e15fff78413e59a5890512a80c4e42c4651"
     },
     {
       "semantic_op": "group_norm",
@@ -15073,10 +14632,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "6c820000ab001072bd4881879d59a4b7bfb6ab3d",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "6c820000ab001072bd4881879d59a4b7bfb6ab3d"
     },
     {
       "semantic_op": "layer_norm",
@@ -15226,10 +14782,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "5fee7c916b8256d5db1b163c8ce81eac6ad3368d",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "5fee7c916b8256d5db1b163c8ce81eac6ad3368d"
     },
     {
       "semantic_op": "log_sigmoid",
@@ -15332,10 +14885,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "e1a1c098cf84d3b1283f7c8e5fd19d02209162a9",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "e1a1c098cf84d3b1283f7c8e5fd19d02209162a9"
     },
     {
       "semantic_op": "normed_cumsum",
@@ -15435,10 +14985,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "e178d4eef04c900602943207ab10114a4fe1cb44",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "e178d4eef04c900602943207ab10114a4fe1cb44"
     },
     {
       "semantic_op": "relu",
@@ -15538,10 +15085,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "a22b174da06065ee49fc8a16dd5343f70cb33bbf",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "a22b174da06065ee49fc8a16dd5343f70cb33bbf"
     },
     {
       "semantic_op": "rms_norm",
@@ -15662,10 +15206,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "9e206e2fc11de7e24b2e2b2dd5ac15a0b24f48a9",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "9e206e2fc11de7e24b2e2b2dd5ac15a0b24f48a9"
     },
     {
       "semantic_op": "rms_norm_forward",
@@ -15786,10 +15327,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "9e206e2fc11de7e24b2e2b2dd5ac15a0b24f48a9",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "9e206e2fc11de7e24b2e2b2dd5ac15a0b24f48a9"
     },
     {
       "semantic_op": "sigmoid",
@@ -15919,10 +15457,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "2ac2c8fb6e29382e9ab031a3250d75844041d272",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "2ac2c8fb6e29382e9ab031a3250d75844041d272"
     },
     {
       "semantic_op": "silu",
@@ -16053,10 +15588,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "a7f302f52060c4baf281d93bc0d2b5898d754222",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "a7f302f52060c4baf281d93bc0d2b5898d754222"
     },
     {
       "semantic_op": "softplus",
@@ -16166,10 +15698,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "a442634fb6150d015da0eac52f9f1a0a23913d9c",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "a442634fb6150d015da0eac52f9f1a0a23913d9c"
     },
     {
       "semantic_op": "tanh",
@@ -16309,10 +15838,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "545d7fe9819c6ab552c944021516c487989a21dc",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "545d7fe9819c6ab552c944021516c487989a21dc"
     },
     {
       "semantic_op": "vector_norm",
@@ -16422,10 +15948,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "8686c1837dbd358762ba8741c24595e6a5fcf984",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "8686c1837dbd358762ba8741c24595e6a5fcf984"
     },
     {
       "semantic_op": "weight_norm_interface",
@@ -16556,10 +16079,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "6737df4c0ac1f1ec64b07760e2441ec9776847f1",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "6737df4c0ac1f1ec64b07760e2441ec9776847f1"
     },
     {
       "semantic_op": "flip",
@@ -16659,10 +16179,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "bc00bed40cec1c30f1db6575dcf25f06cda3495b",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "bc00bed40cec1c30f1db6575dcf25f06cda3495b"
     },
     {
       "semantic_op": "gather",
@@ -16762,10 +16279,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "d93e9b32ec16f86c1f79d55685b53f2ca9a3dfd6",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "d93e9b32ec16f86c1f79d55685b53f2ca9a3dfd6"
     },
     {
       "semantic_op": "index",
@@ -16865,10 +16379,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "6d255451e42ec9e1d355c994e8a677a95e7ba09d",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "6d255451e42ec9e1d355c994e8a677a95e7ba09d"
     },
     {
       "semantic_op": "index_add",
@@ -16877,10 +16388,11 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [
+        "cast",
         "index_add"
       ],
-      "mapping_kind": "direct_supported_op",
-      "intent_pattern_id": "direct.index_add",
+      "mapping_kind": "index_template",
+      "intent_pattern_id": "index.index_add_via_cast_index_add",
       "e2e_spec": "index_add2d",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
@@ -16890,13 +16402,16 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "index_add"
           ],
           "known_ops": [
+            "cast",
             "index_add"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "index_add"
           ],
           "missing_ops": []
@@ -16905,13 +16420,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "index_add"
           ],
           "known_ops": [
+            "cast",
             "index_add"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "index_add"
           ],
           "missing_ops": []
@@ -16920,13 +16438,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "index_add"
           ],
           "known_ops": [
+            "cast",
             "index_add"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "index_add"
           ],
           "missing_ops": []
@@ -16958,10 +16479,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "c6bcd01b6cd984fbbeae0b18aac10b25bc8deb9f",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "c6bcd01b6cd984fbbeae0b18aac10b25bc8deb9f"
     },
     {
       "semantic_op": "index_put",
@@ -17061,10 +16579,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "4e335b24d3e1b26e915ed94b4544be28d28572cb",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "4e335b24d3e1b26e915ed94b4544be28d28572cb"
     },
     {
       "semantic_op": "index_select",
@@ -17164,10 +16679,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "6d255451e42ec9e1d355c994e8a677a95e7ba09d",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "6d255451e42ec9e1d355c994e8a677a95e7ba09d"
     },
     {
       "semantic_op": "masked_scatter",
@@ -17267,10 +16779,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "331f67f504b3fa09c9de2312636ea2e6174aeefd",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "331f67f504b3fa09c9de2312636ea2e6174aeefd"
     },
     {
       "semantic_op": "masked_select",
@@ -17380,10 +16889,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "7d1f9060792fdbd55e61648819b92289af6570a1",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "7d1f9060792fdbd55e61648819b92289af6570a1"
     },
     {
       "semantic_op": "scatter",
@@ -17392,10 +16898,11 @@
       ],
       "family": "index_scatter_gather",
       "intent_ops": [
+        "cast",
         "scatter"
       ],
       "mapping_kind": "index_template",
-      "intent_pattern_id": "index.scatter",
+      "intent_pattern_id": "index.scatter_via_cast_scatter",
       "e2e_spec": "scatter2d",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
@@ -17405,13 +16912,16 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "scatter"
           ],
           "known_ops": [
+            "cast",
             "scatter"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "scatter"
           ],
           "missing_ops": []
@@ -17420,13 +16930,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "scatter"
           ],
           "known_ops": [
+            "cast",
             "scatter"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "scatter"
           ],
           "missing_ops": []
@@ -17435,13 +16948,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "scatter"
           ],
           "known_ops": [
+            "cast",
             "scatter"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "scatter"
           ],
           "missing_ops": []
@@ -17473,10 +16989,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "f64d27c7420e99d025de015e35193e06fb661aa5",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "f64d27c7420e99d025de015e35193e06fb661aa5"
     },
     {
       "semantic_op": "select_scatter",
@@ -17576,10 +17089,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "650553dc4baa2d10e23bc0f43a163270a328ba0d",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "650553dc4baa2d10e23bc0f43a163270a328ba0d"
     },
     {
       "semantic_op": "slice_scatter",
@@ -17679,10 +17189,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "49cb4dddb6edbcfb57fe0b8f97dd4080b36d63af",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "49cb4dddb6edbcfb57fe0b8f97dd4080b36d63af"
     },
     {
       "semantic_op": "where_scalar_other",
@@ -17782,10 +17289,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "d207eab15981dbeaa22468cb20c353c59cbf4814",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "d207eab15981dbeaa22468cb20c353c59cbf4814"
     },
     {
       "semantic_op": "where_scalar_self",
@@ -17885,10 +17389,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "d207eab15981dbeaa22468cb20c353c59cbf4814",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "d207eab15981dbeaa22468cb20c353c59cbf4814"
     },
     {
       "semantic_op": "where_self",
@@ -17989,10 +17490,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "d207eab15981dbeaa22468cb20c353c59cbf4814",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "d207eab15981dbeaa22468cb20c353c59cbf4814"
     },
     {
       "semantic_op": "addmm",
@@ -18093,10 +17591,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "f9d2020fcb3ad7d1b5c6a8256c18350fd5da4eb5",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "f9d2020fcb3ad7d1b5c6a8256c18350fd5da4eb5"
     },
     {
       "semantic_op": "baddbmm",
@@ -18196,10 +17691,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "94420bf67aabbbc1e64142a698b440388837cdc9",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "94420bf67aabbbc1e64142a698b440388837cdc9"
     },
     {
       "semantic_op": "bmm",
@@ -18301,10 +17793,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "fba8bd9c8ea8af06d60c4f10ef9e9cb8f497c644",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "fba8bd9c8ea8af06d60c4f10ef9e9cb8f497c644"
     },
     {
       "semantic_op": "cummax",
@@ -18313,10 +17802,11 @@
       ],
       "family": "matmul_linear",
       "intent_ops": [
+        "cast",
         "cummax"
       ],
-      "mapping_kind": "direct_supported_op",
-      "intent_pattern_id": "direct.cummax",
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.cummax_via_cast",
       "e2e_spec": "cummax1d",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
@@ -18326,13 +17816,16 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "cummax"
           ],
           "known_ops": [
+            "cast",
             "cummax"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "cummax"
           ],
           "missing_ops": []
@@ -18341,13 +17834,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "cummax"
           ],
           "known_ops": [
+            "cast",
             "cummax"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "cummax"
           ],
           "missing_ops": []
@@ -18356,13 +17852,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "cummax"
           ],
           "known_ops": [
+            "cast",
             "cummax"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "cummax"
           ],
           "missing_ops": []
@@ -18394,10 +17893,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "bbdfed97264af7c627ad4be8bb25b0c382e8dc51",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "bbdfed97264af7c627ad4be8bb25b0c382e8dc51"
     },
     {
       "semantic_op": "cummin",
@@ -18406,10 +17902,11 @@
       ],
       "family": "matmul_linear",
       "intent_ops": [
+        "cast",
         "cummin"
       ],
-      "mapping_kind": "direct_supported_op",
-      "intent_pattern_id": "direct.cummin",
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.cummin_via_cast",
       "e2e_spec": "cummin1d",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
@@ -18419,13 +17916,16 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "cummin"
           ],
           "known_ops": [
+            "cast",
             "cummin"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "cummin"
           ],
           "missing_ops": []
@@ -18434,13 +17934,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "cummin"
           ],
           "known_ops": [
+            "cast",
             "cummin"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "cummin"
           ],
           "missing_ops": []
@@ -18449,13 +17952,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "cummin"
           ],
           "known_ops": [
+            "cast",
             "cummin"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "cummin"
           ],
           "missing_ops": []
@@ -18487,10 +17993,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "08e2af0f5904616414fc2dc1325b6623e70ceabd",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "08e2af0f5904616414fc2dc1325b6623e70ceabd"
     },
     {
       "semantic_op": "dot",
@@ -18601,10 +18104,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "f656475cc76889036e235188e908df95ebfe17bc",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "f656475cc76889036e235188e908df95ebfe17bc"
     },
     {
       "semantic_op": "mm",
@@ -18706,10 +18206,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "ec2d21918388d166a4b451cb9e6d304547a92865",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "ec2d21918388d166a4b451cb9e6d304547a92865"
     },
     {
       "semantic_op": "vdot",
@@ -18820,10 +18317,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "40c799e520c96ce52962a0707f597561503544e0",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "40c799e520c96ce52962a0707f597561503544e0"
     },
     {
       "semantic_op": "avg_pool2d",
@@ -18832,10 +18326,12 @@
       ],
       "family": "conv_pool_interp",
       "intent_ops": [
-        "avg_pool2d"
+        "cast",
+        "avg_pool2d",
+        "cast"
       ],
       "mapping_kind": "macro_template",
-      "intent_pattern_id": "macro.avg_pool2d",
+      "intent_pattern_id": "macro.avg_pool2d_pre_post_cast",
       "e2e_spec": "avg_pool2d_nchw",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
@@ -18845,14 +18341,17 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [
-            "avg_pool2d"
+            "avg_pool2d",
+            "cast"
           ],
           "known_ops": [
-            "avg_pool2d"
+            "avg_pool2d",
+            "cast"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "avg_pool2d"
+            "avg_pool2d",
+            "cast"
           ],
           "missing_ops": []
         },
@@ -18860,14 +18359,17 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
-            "avg_pool2d"
+            "avg_pool2d",
+            "cast"
           ],
           "known_ops": [
-            "avg_pool2d"
+            "avg_pool2d",
+            "cast"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "avg_pool2d"
+            "avg_pool2d",
+            "cast"
           ],
           "missing_ops": []
         },
@@ -18875,14 +18377,17 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
-            "avg_pool2d"
+            "avg_pool2d",
+            "cast"
           ],
           "known_ops": [
-            "avg_pool2d"
+            "avg_pool2d",
+            "cast"
           ],
           "unknown_ops": [],
           "supported_ops": [
-            "avg_pool2d"
+            "avg_pool2d",
+            "cast"
           ],
           "missing_ops": []
         }
@@ -18913,10 +18418,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "a0cdd8482a345cb8cbbb09a155710ab1bcd8958a",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "a0cdd8482a345cb8cbbb09a155710ab1bcd8958a"
     },
     {
       "semantic_op": "conv1d",
@@ -18925,10 +18427,12 @@
       ],
       "family": "conv_pool_interp",
       "intent_ops": [
-        "conv1d"
+        "cast",
+        "conv1d",
+        "cast"
       ],
       "mapping_kind": "macro_template",
-      "intent_pattern_id": "macro.conv1d",
+      "intent_pattern_id": "macro.conv1d_pre_post_cast",
       "e2e_spec": "conv1d_ncl",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
@@ -18938,13 +18442,16 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "conv1d"
           ],
           "known_ops": [
+            "cast",
             "conv1d"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "conv1d"
           ],
           "missing_ops": []
@@ -18953,13 +18460,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "conv1d"
           ],
           "known_ops": [
+            "cast",
             "conv1d"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "conv1d"
           ],
           "missing_ops": []
@@ -18968,13 +18478,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "conv1d"
           ],
           "known_ops": [
+            "cast",
             "conv1d"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "conv1d"
           ],
           "missing_ops": []
@@ -19006,10 +18519,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "9dbe02f176d19f0d6106d9a6fc471c96ac0159d1",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "9dbe02f176d19f0d6106d9a6fc471c96ac0159d1"
     },
     {
       "semantic_op": "conv2d",
@@ -19018,10 +18528,12 @@
       ],
       "family": "conv_pool_interp",
       "intent_ops": [
-        "conv2d"
+        "cast",
+        "conv2d",
+        "cast"
       ],
-      "mapping_kind": "direct_supported_op",
-      "intent_pattern_id": "direct.conv2d",
+      "mapping_kind": "macro_template",
+      "intent_pattern_id": "macro.conv2d_pre_post_cast",
       "e2e_spec": "conv2d_nchw",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
@@ -19031,13 +18543,16 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "conv2d"
           ],
           "known_ops": [
+            "cast",
             "conv2d"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "conv2d"
           ],
           "missing_ops": []
@@ -19046,13 +18561,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "conv2d"
           ],
           "known_ops": [
+            "cast",
             "conv2d"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "conv2d"
           ],
           "missing_ops": []
@@ -19061,13 +18579,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "conv2d"
           ],
           "known_ops": [
+            "cast",
             "conv2d"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "conv2d"
           ],
           "missing_ops": []
@@ -19099,10 +18620,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "36cd939fdf18676484a5a835895fa09668d20849",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "36cd939fdf18676484a5a835895fa09668d20849"
     },
     {
       "semantic_op": "conv3d",
@@ -19111,10 +18629,12 @@
       ],
       "family": "conv_pool_interp",
       "intent_ops": [
-        "conv3d"
+        "cast",
+        "conv3d",
+        "cast"
       ],
       "mapping_kind": "macro_template",
-      "intent_pattern_id": "macro.conv3d",
+      "intent_pattern_id": "macro.conv3d_pre_post_cast",
       "e2e_spec": "conv3d_ncdhw",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
@@ -19124,13 +18644,16 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "conv3d"
           ],
           "known_ops": [
+            "cast",
             "conv3d"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "conv3d"
           ],
           "missing_ops": []
@@ -19139,13 +18662,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "conv3d"
           ],
           "known_ops": [
+            "cast",
             "conv3d"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "conv3d"
           ],
           "missing_ops": []
@@ -19154,13 +18680,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "conv3d"
           ],
           "known_ops": [
+            "cast",
             "conv3d"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "conv3d"
           ],
           "missing_ops": []
@@ -19192,10 +18721,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "12f80dc5d7f98f88e75fcb2c4651fb521676967c",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "12f80dc5d7f98f88e75fcb2c4651fb521676967c"
     },
     {
       "semantic_op": "conv_depthwise2d",
@@ -19204,10 +18730,12 @@
       ],
       "family": "conv_pool_interp",
       "intent_ops": [
-        "conv_depthwise2d"
+        "cast",
+        "conv_depthwise2d",
+        "cast"
       ],
       "mapping_kind": "macro_template",
-      "intent_pattern_id": "macro.conv_depthwise2d",
+      "intent_pattern_id": "macro.conv_depthwise2d_pre_post_cast",
       "e2e_spec": "conv_depthwise2d_nchw",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
@@ -19217,13 +18745,16 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "conv_depthwise2d"
           ],
           "known_ops": [
+            "cast",
             "conv_depthwise2d"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "conv_depthwise2d"
           ],
           "missing_ops": []
@@ -19232,13 +18763,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "conv_depthwise2d"
           ],
           "known_ops": [
+            "cast",
             "conv_depthwise2d"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "conv_depthwise2d"
           ],
           "missing_ops": []
@@ -19247,13 +18781,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "conv_depthwise2d"
           ],
           "known_ops": [
+            "cast",
             "conv_depthwise2d"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "conv_depthwise2d"
           ],
           "missing_ops": []
@@ -19285,10 +18822,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "ea650e50c7d0fd1cdd7372becaef8cde81f8158b",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "ea650e50c7d0fd1cdd7372becaef8cde81f8158b"
     },
     {
       "semantic_op": "max_pool2d_with_indices",
@@ -19379,10 +18913,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "9a746524f1c8ed40e9338d22480508d11bf51eb9",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "9a746524f1c8ed40e9338d22480508d11bf51eb9"
     },
     {
       "semantic_op": "upsample_bicubic2d_aa",
@@ -19391,10 +18922,12 @@
       ],
       "family": "conv_pool_interp",
       "intent_ops": [
-        "upsample_bicubic2d_aa"
+        "cast",
+        "upsample_bicubic2d_aa",
+        "cast"
       ],
       "mapping_kind": "macro_template",
-      "intent_pattern_id": "macro.upsample_bicubic2d_aa",
+      "intent_pattern_id": "macro.upsample_bicubic2d_aa_pre_post_cast",
       "e2e_spec": "upsample_bicubic2d_aa",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
@@ -19404,13 +18937,16 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "upsample_bicubic2d_aa"
           ],
           "known_ops": [
+            "cast",
             "upsample_bicubic2d_aa"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "upsample_bicubic2d_aa"
           ],
           "missing_ops": []
@@ -19419,13 +18955,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "upsample_bicubic2d_aa"
           ],
           "known_ops": [
+            "cast",
             "upsample_bicubic2d_aa"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "upsample_bicubic2d_aa"
           ],
           "missing_ops": []
@@ -19434,13 +18973,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "upsample_bicubic2d_aa"
           ],
           "known_ops": [
+            "cast",
             "upsample_bicubic2d_aa"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "upsample_bicubic2d_aa"
           ],
           "missing_ops": []
@@ -19472,10 +19014,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "7929cfdeef63265d6db3d860985597b1213141da",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "7929cfdeef63265d6db3d860985597b1213141da"
     },
     {
       "semantic_op": "upsample_nearest1d",
@@ -19484,10 +19023,12 @@
       ],
       "family": "conv_pool_interp",
       "intent_ops": [
-        "upsample_nearest1d"
+        "cast",
+        "upsample_nearest1d",
+        "cast"
       ],
       "mapping_kind": "macro_template",
-      "intent_pattern_id": "macro.upsample_nearest1d",
+      "intent_pattern_id": "macro.upsample_nearest1d_pre_post_cast",
       "e2e_spec": "upsample_nearest1d_ncl",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
@@ -19497,13 +19038,16 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "upsample_nearest1d"
           ],
           "known_ops": [
+            "cast",
             "upsample_nearest1d"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "upsample_nearest1d"
           ],
           "missing_ops": []
@@ -19512,13 +19056,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "upsample_nearest1d"
           ],
           "known_ops": [
+            "cast",
             "upsample_nearest1d"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "upsample_nearest1d"
           ],
           "missing_ops": []
@@ -19527,13 +19074,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "upsample_nearest1d"
           ],
           "known_ops": [
+            "cast",
             "upsample_nearest1d"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "upsample_nearest1d"
           ],
           "missing_ops": []
@@ -19565,10 +19115,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "d42239248a2ea644f6d46ce66ed7bc57ec192674",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "d42239248a2ea644f6d46ce66ed7bc57ec192674"
     },
     {
       "semantic_op": "upsample_nearest2d",
@@ -19577,10 +19124,12 @@
       ],
       "family": "conv_pool_interp",
       "intent_ops": [
-        "upsample_nearest2d"
+        "cast",
+        "upsample_nearest2d",
+        "cast"
       ],
       "mapping_kind": "macro_template",
-      "intent_pattern_id": "macro.upsample_nearest2d",
+      "intent_pattern_id": "macro.upsample_nearest2d_pre_post_cast",
       "e2e_spec": "upsample_nearest2d_nchw",
       "status": "dual_pass",
       "status_reason": "runtime_dual_backend_pass",
@@ -19590,13 +19139,16 @@
           "target": "rvv",
           "ok": true,
           "requested_ops": [
+            "cast",
             "upsample_nearest2d"
           ],
           "known_ops": [
+            "cast",
             "upsample_nearest2d"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "upsample_nearest2d"
           ],
           "missing_ops": []
@@ -19605,13 +19157,16 @@
           "target": "cuda_h100",
           "ok": true,
           "requested_ops": [
+            "cast",
             "upsample_nearest2d"
           ],
           "known_ops": [
+            "cast",
             "upsample_nearest2d"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "upsample_nearest2d"
           ],
           "missing_ops": []
@@ -19620,13 +19175,16 @@
           "target": "cuda_5090d",
           "ok": true,
           "requested_ops": [
+            "cast",
             "upsample_nearest2d"
           ],
           "known_ops": [
+            "cast",
             "upsample_nearest2d"
           ],
           "unknown_ops": [],
           "supported_ops": [
+            "cast",
             "upsample_nearest2d"
           ],
           "missing_ops": []
@@ -19658,10 +19216,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "5d99ff0a2610a971f6a780c13617a8f4a8a7ddbd",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "5d99ff0a2610a971f6a780c13617a8f4a8a7ddbd"
     },
     {
       "semantic_op": "ScaleDotProductAttention",
@@ -19762,10 +19317,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "93b9c44d8a09452f3553acc57890e52075c6995c",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "93b9c44d8a09452f3553acc57890e52075c6995c"
     },
     {
       "semantic_op": "embedding",
@@ -19865,10 +19417,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "a464b07457941ba80b510fde835c4bebac9a2d86",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "a464b07457941ba80b510fde835c4bebac9a2d86"
     },
     {
       "semantic_op": "flash_attention_forward",
@@ -19969,10 +19518,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "93b9c44d8a09452f3553acc57890e52075c6995c",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "93b9c44d8a09452f3553acc57890e52075c6995c"
     },
     {
       "semantic_op": "scaled_dot_product_attention",
@@ -20073,10 +19619,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "93b9c44d8a09452f3553acc57890e52075c6995c",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "93b9c44d8a09452f3553acc57890e52075c6995c"
     },
     {
       "semantic_op": "scaled_dot_product_attention_forward",
@@ -20177,10 +19720,7 @@
       },
       "artifact_complete": true,
       "determinability": true,
-      "evidence_hash": "93b9c44d8a09452f3553acc57890e52075c6995c",
-      "in_scope": true,
-      "in_scope_active": true,
-      "in_scope_kernel_alias": true
+      "evidence_hash": "93b9c44d8a09452f3553acc57890e52075c6995c"
     }
   ]
 }
