@@ -1615,32 +1615,9 @@ void intentir_cmp_f32_broadcast_u8(
   if (!a || !b || !out || !out_shape || !a_shape || !b_shape) return;
   if (rank < 1 || rank > 4) return;
   const size_t n = intentir_numel_rank(out_shape, rank);
-#if defined(__riscv_vector) || defined(__riscv_v)
-  if (!intentir_shapes_equal(a_shape, out_shape, rank) || !intentir_shapes_equal(b_shape, out_shape, rank)) {
-    intentir_cmp_f32_broadcast_vec(a, b, out, out_shape, a_shape, b_shape, rank, op);
-    return;
-  }
-  if (intentir_shapes_equal(a_shape, out_shape, rank) && intentir_shapes_equal(b_shape, out_shape, rank)) {
-    for (size_t i = 0; i < n;) {
-      size_t vl = intentir_vsetvl_e32m1(n - i);
-      vfloat32m1_t va = __riscv_vle32_v_f32m1(&a[i], vl);
-      vfloat32m1_t vb = __riscv_vle32_v_f32m1(&b[i], vl);
-      vbool32_t m;
-      if (op == INTENTIR_CMP_LT) m = __riscv_vmflt_vv_f32m1_b32(va, vb, vl);
-      else if (op == INTENTIR_CMP_LE) m = __riscv_vmfle_vv_f32m1_b32(va, vb, vl);
-      else if (op == INTENTIR_CMP_GT) m = __riscv_vmfgt_vv_f32m1_b32(va, vb, vl);
-      else if (op == INTENTIR_CMP_GE) m = __riscv_vmfge_vv_f32m1_b32(va, vb, vl);
-      else if (op == INTENTIR_CMP_NE) m = __riscv_vmfne_vv_f32m1_b32(va, vb, vl);
-      else m = __riscv_vmfne_vv_f32m1_b32(va, vb, vl);
-      vuint8mf4_t ones = __riscv_vmv_v_x_u8mf4(1, vl);
-      vuint8mf4_t zeros = __riscv_vmv_v_x_u8mf4(0, vl);
-      vuint8mf4_t vo = __riscv_vmerge_vvm_u8mf4(zeros, ones, m, vl);
-      __riscv_vse8_v_u8mf4(&out[i], vo, vl);
-      i += vl;
-    }
-    return;
-  }
-#endif
+  // Correctness-first path:
+  // We observed sporadic mismatch in vector compare on remote RVV for cmp ops.
+  // Keep a scalar fallback here until vector compare path is fully revalidated.
   int64_t coords[4] = {0, 0, 0, 0};
   for (size_t i = 0; i < n; ++i) {
     intentir_unravel_index(i, out_shape, rank, coords);
@@ -1655,43 +1632,8 @@ void intentir_cmp_i32_broadcast_u8(
   if (!a || !b || !out || !out_shape || !a_shape || !b_shape) return;
   if (rank < 1 || rank > 4) return;
   const size_t n = intentir_numel_rank(out_shape, rank);
-#if defined(__riscv_vector) || defined(__riscv_v)
-  if (!intentir_shapes_equal(a_shape, out_shape, rank) || !intentir_shapes_equal(b_shape, out_shape, rank)) {
-    intentir_cmp_i32_broadcast_vec(a, b, out, out_shape, a_shape, b_shape, rank, op);
-    return;
-  }
-  if (intentir_shapes_equal(a_shape, out_shape, rank) && intentir_shapes_equal(b_shape, out_shape, rank)) {
-    for (size_t i = 0; i < n;) {
-      size_t vl = intentir_vsetvl_e32m1(n - i);
-      vint32m1_t va = __riscv_vle32_v_i32m1(&a[i], vl);
-      vint32m1_t vb = __riscv_vle32_v_i32m1(&b[i], vl);
-      vbool32_t m;
-      if (op == INTENTIR_CMP_LT) {
-        m = __riscv_vmslt_vv_i32m1_b32(va, vb, vl);
-      } else if (op == INTENTIR_CMP_LE) {
-        vbool32_t lt = __riscv_vmslt_vv_i32m1_b32(va, vb, vl);
-        vbool32_t eq = __riscv_vmseq_vv_i32m1_b32(va, vb, vl);
-        m = __riscv_vmor_mm_b32(lt, eq, vl);
-      } else if (op == INTENTIR_CMP_GT) {
-        m = __riscv_vmslt_vv_i32m1_b32(vb, va, vl);
-      } else if (op == INTENTIR_CMP_GE) {
-        vbool32_t gt = __riscv_vmslt_vv_i32m1_b32(vb, va, vl);
-        vbool32_t eq = __riscv_vmseq_vv_i32m1_b32(va, vb, vl);
-        m = __riscv_vmor_mm_b32(gt, eq, vl);
-      } else if (op == INTENTIR_CMP_NE) {
-        m = __riscv_vmsne_vv_i32m1_b32(va, vb, vl);
-      } else {
-        m = __riscv_vmsne_vv_i32m1_b32(va, vb, vl);
-      }
-      vuint8mf4_t ones = __riscv_vmv_v_x_u8mf4(1, vl);
-      vuint8mf4_t zeros = __riscv_vmv_v_x_u8mf4(0, vl);
-      vuint8mf4_t vo = __riscv_vmerge_vvm_u8mf4(zeros, ones, m, vl);
-      __riscv_vse8_v_u8mf4(&out[i], vo, vl);
-      i += vl;
-    }
-    return;
-  }
-#endif
+  // Correctness-first path:
+  // Keep scalar compare until vector compare path is fully revalidated.
   int64_t coords[4] = {0, 0, 0, 0};
   for (size_t i = 0; i < n; ++i) {
     intentir_unravel_index(i, out_shape, rank, coords);

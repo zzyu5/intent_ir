@@ -7,7 +7,7 @@
     for (size_t i = 0; i < intent.ops.size(); ++i) {
       const auto& op = intent.ops[i];
       if (op.op == "const") continue;
-      if (op.op == "reshape" || op.op == "identity" || op.op == "layout_cast") continue;
+      if (op.op == "reshape" || op.op == "layout_cast") continue;
       emit_ops.push_back(i);
     }
 

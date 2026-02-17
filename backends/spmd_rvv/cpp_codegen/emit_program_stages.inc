@@ -31,7 +31,7 @@
     for (size_t i = 0; i < intent.ops.size(); ++i) {
       const auto& op = intent.ops[i];
       if (op.op == "const") continue;
-      if (op.op == "reshape" || op.op == "identity" || op.op == "layout_cast") continue;
+      if (op.op == "reshape" || op.op == "layout_cast") continue;
       prof_names.push_back("op[" + std::to_string(i) + "] " + op.op + " -> " + op.output);
     }
     w.line("// profiler state (optional)");
@@ -183,7 +183,9 @@
 		      if (op.op == "const") continue;
 	      const std::string& out = op.output;
 	      const std::string& out_var = v(out);
-	      if (op.op == "reshape" || op.op == "identity" || op.op == "layout_cast") {
+	      const bool identity_alias =
+	          (op.op == "identity" && !op.inputs.empty() && dtype_env.at(out) == dtype_env.at(op.inputs[0]));
+	      if (op.op == "reshape" || op.op == "layout_cast" || identity_alias) {
 	        std::string ct = ctype_for_dtype(dtype_env.at(out));
 	        const std::string& in0_var = v(op.inputs[0]);
 	        w.line("// " + op.op + " alias");
@@ -302,4 +304,3 @@
       w.line("}");
     }
   }
-

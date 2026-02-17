@@ -23,6 +23,7 @@ import getpass
 import json
 import math
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Callable
@@ -184,6 +185,42 @@ def _to_raw_bytes(arr: "np.ndarray", dt: str) -> bytes:
     if dt == "f64":
         return np.asarray(arr_np, dtype=np.float64).tobytes(order="C")
     return np.asarray(arr_np, dtype=np.float32).tobytes(order="C")
+
+
+_BUF_DESC_RE = re.compile(r'\{\s*"(?P<name>[^"]+)"\s*,.*?(?P<dtype>INTENTIR_DTYPE_[A-Z0-9_]+)')
+
+
+def _dtype_from_buffer_token(tok: str) -> str | None:
+    m = {
+        "INTENTIR_DTYPE_F16": "f16",
+        "INTENTIR_DTYPE_BF16": "bf16",
+        "INTENTIR_DTYPE_F32": "f32",
+        "INTENTIR_DTYPE_F64": "f64",
+        "INTENTIR_DTYPE_I8": "i8",
+        "INTENTIR_DTYPE_U8": "u8",
+        "INTENTIR_DTYPE_I16": "i16",
+        "INTENTIR_DTYPE_I32": "i32",
+        "INTENTIR_DTYPE_I64": "i64",
+        "INTENTIR_DTYPE_BOOL": "bool",
+        "INTENTIR_DTYPE_I1": "i1",
+    }
+    return m.get(str(tok))
+
+
+def _extract_buffer_declared_dtypes(c_src: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for line in str(c_src).splitlines():
+        s = line.strip()
+        if not s.startswith('{"') or "INTENTIR_DTYPE_" not in s:
+            continue
+        m = _BUF_DESC_RE.search(s)
+        if not m:
+            continue
+        name = str(m.group("name"))
+        dt = _dtype_from_buffer_token(str(m.group("dtype")))
+        if dt:
+            out[name] = dt
+    return out
 
 
 def _derive_scalar_input_array(name: str, *, dtype: str, bindings: dict) -> "np.ndarray" | None:
@@ -814,36 +851,7 @@ def run_remote(
         intent_j["outputs"] = list(outputs)
         intent_codegen = IntentFunction.from_json_dict(intent_j)
 
-    if not bool(bench_only):
-        # Upload inputs/refs for correctness runs.
-        _log(f"[{frontend}:{kernel}] upload inputs/refs")
-        assert baseline is not None
-        for name in external_inputs:
-            dt = intent.tensors[name].dtype
-            if name not in baseline:
-                tt = intent.tensors.get(name)
-                if tt is not None:
-                    if len(getattr(tt, "shape", [])) == 0:
-                        arr0 = _derive_scalar_input_array(str(name), dtype=str(tt.dtype), bindings=bindings)
-                        if arr0 is not None:
-                            baseline[name] = arr0
-                    else:
-                        arrn = _derive_optional_tensor_input_array(str(name), tensor=tt, bindings=bindings)
-                        if arrn is not None:
-                            baseline[name] = arrn
-            if name not in baseline:
-                raise RuntimeError(f"baseline missing input tensor {name} for {kernel}")
-            raw = _to_raw_bytes(np.asarray(baseline[name]), str(dt))
-            _sftp_write_bytes(sftp, f"{remote_dir}/{name}.bin", raw)
-
-        for name in outputs:
-            if name not in baseline:
-                raise RuntimeError(f"baseline missing output tensor {name} for {kernel}")
-            dt = intent.tensors[name].dtype
-            raw = _to_raw_bytes(np.asarray(baseline[name]), str(dt))
-            _sftp_write_bytes(sftp, f"{remote_dir}/{name}_ref.bin", raw)
-
-    # Lower the IntentIR op list to C and run on RVV target.
+    # Lowering tolerances are shared across data materialization + compile/run.
     #
     # Remote runs compare against a GPU-produced baseline (Triton/TileLang CUDA),
     # so keep tolerances at least legacy-default to avoid false negatives.
@@ -857,16 +865,60 @@ def run_remote(
         rtol_use = 1e-3
     backend_used = "cpp"
 
+    # Materialize one lowered C source early to derive the final buffer dtypes.
+    # This avoids intent-vs-lowered dtype drift (e.g. compare outputs lowered to u8).
+    initial_src = lower_intent_to_c_with_files(
+        intent_codegen,
+        shape_bindings=bindings,
+        atol=float(atol_use),
+        rtol=float(rtol_use),
+        mode=("bench" if bool(bench_only) else "verify"),
+    )
+    declared_dtypes = _extract_buffer_declared_dtypes(initial_src)
+
+    if not bool(bench_only):
+        # Upload inputs/refs for correctness runs.
+        _log(f"[{frontend}:{kernel}] upload inputs/refs")
+        assert baseline is not None
+        for name in external_inputs:
+            declared_dt = declared_dtypes.get(name, str(intent.tensors[name].dtype))
+            if name not in baseline:
+                tt = intent.tensors.get(name)
+                if tt is not None:
+                    if len(getattr(tt, "shape", [])) == 0:
+                        arr0 = _derive_scalar_input_array(str(name), dtype=str(tt.dtype), bindings=bindings)
+                        if arr0 is not None:
+                            baseline[name] = arr0
+                    else:
+                        arrn = _derive_optional_tensor_input_array(str(name), tensor=tt, bindings=bindings)
+                        if arrn is not None:
+                            baseline[name] = arrn
+            if name not in baseline:
+                raise RuntimeError(f"baseline missing input tensor {name} for {kernel}")
+            raw = _to_raw_bytes(np.asarray(baseline[name]), str(declared_dt))
+            _sftp_write_bytes(sftp, f"{remote_dir}/{name}.bin", raw)
+
+        for name in outputs:
+            if name not in baseline:
+                raise RuntimeError(f"baseline missing output tensor {name} for {kernel}")
+            declared_dt = declared_dtypes.get(name, str(intent.tensors[name].dtype))
+            raw = _to_raw_bytes(np.asarray(baseline[name]), str(declared_dt))
+            _sftp_write_bytes(sftp, f"{remote_dir}/{name}_ref.bin", raw)
+
     def _compile_and_run(schedule) -> dict:
         # Generate + upload code for this schedule.
         intent_codegen.schedule = schedule
-        src = lower_intent_to_c_with_files(
-            intent_codegen,
-            shape_bindings=bindings,
-            atol=float(atol_use),
-            rtol=float(rtol_use),
-            mode=("bench" if bool(bench_only) else "verify"),
-        )
+        # Reuse the already-lowered source when schedule is unchanged.
+        if schedule == intent.schedule:
+            src = initial_src
+        else:
+            src = lower_intent_to_c_with_files(
+                intent_codegen,
+                shape_bindings=bindings,
+                atol=float(atol_use),
+                rtol=float(rtol_use),
+                mode=("bench" if bool(bench_only) else "verify"),
+            )
         with sftp.file(remote_c, "w") as f:
             f.write(src)
 

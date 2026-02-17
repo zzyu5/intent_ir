@@ -189,6 +189,9 @@
 	        emit_erf(w, out_var, v(op.inputs[0]), out_shape);
 	      } else if (op.op == "cast") {
 	        emit_cast(w, out_var, v(op.inputs[0]), out_shape, dtype_env.at(op.inputs[0]), dtype_env.at(out));
+	      } else if (op.op == "identity") {
+	        // Identity is treated as a real op when input/output dtypes differ.
+	        emit_cast(w, out_var, v(op.inputs[0]), out_shape, dtype_env.at(op.inputs[0]), dtype_env.at(out));
 	      } else if (op.op == "where") {
 	        emit_where(w, out_var, v(op.inputs[0]), v(op.inputs[1]), v(op.inputs[2]), shape_env.at(op.inputs[0]), shape_env.at(op.inputs[1]), shape_env.at(op.inputs[2]), out_shape,
 	                   dtype_env.at(op.inputs[0]), dtype_env.at(op.inputs[1]), dtype_env.at(op.inputs[2]), dtype_env.at(out));
