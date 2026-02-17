@@ -1,13 +1,13 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-17T12:01:55+00:00",
+  "updated_at": "2026-02-17T12:18:45+00:00",
   "branch": "flaggems",
-  "head_commit": "f224feb79a16df6f44ffffe716cd414f653add6e",
+  "head_commit": "be8e2c50ef606b159a0b1bb77ea009ae72b30921",
   "mode": "maintenance",
   "coverage_integrity_phase": "recomputed_ok",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260217/coverage_conv_pool_wave3_split_v1/run_summary.json",
   "full196_last_ok": true,
-  "full196_validated_commit": "f224feb79a16df6f44ffffe716cd414f653add6e",
+  "full196_validated_commit": "be8e2c50ef606b159a0b1bb77ea009ae72b30921",
   "full196_commits_since_validated": 0,
   "full196_validated_mode": "force_compile",
   "full196_validated_scope": "coverage_158_kernels_to_196_semantics",
@@ -87,12 +87,12 @@
   },
   "active_lanes": [],
   "next_focus_by_lane": {
-    "coverage": "Continue backend_compiler wave4 chunk4+ and investigate CUDA compile_ms outliers while preserving full196 freshness checkpoints.",
-    "backend_compiler": "Continue wave4 chunk6-8, then implement compile_ms outlier mitigation and rerun impacted categories/full196 refresh on HEAD."
+    "backend_compiler": "Aggregate wave4 chunk0-7 compile_ms outliers and implement schedule/codegen mitigation; rerun impacted coverage families then refresh full196 on HEAD.",
+    "coverage": "Continue backend_compiler wave4 chunk6-8 and compile_ms outlier optimization."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1_chunk5/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1_chunk5/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1/status_converged.json"
   },
   "lanes": {
     "coverage": {
