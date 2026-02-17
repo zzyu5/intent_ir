@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import hashlib
+import inspect
 import os
 import shutil
 import sys
@@ -648,15 +649,19 @@ def _intentir_cuda_runtime_hash_payload() -> str:
 @lru_cache(maxsize=1)
 def _intentir_cuda_runner_hash_payload() -> str:
     """
-    Content hash payload for this Python-side CUDA extension runner.
+    Content hash payload for Python-side CUDA extension wrapper generation.
 
-    The module name hash is used for caching build products; include the runner
-    implementation so changes to the generated wrapper code force a rebuild.
+    Keep this payload narrowly scoped to wrapper ABI/build-surface helpers so
+    unrelated runtime.py edits do not invalidate all cached kernel modules.
     """
-    try:
-        return Path(__file__).read_text(encoding="utf-8")
-    except Exception:
-        return ""
+    abi_version = "runner_abi_v2"
+    parts: list[str] = [f"runner_abi={abi_version}"]
+    for fn in (_c_type, _build_extension_src):
+        try:
+            parts.append(inspect.getsource(fn))
+        except Exception:
+            parts.append(f"source_unavailable:{getattr(fn, '__name__', 'unknown')}")
+    return "\n".join(parts)
 
 
 def _build_extension_src(cuda_src: str, *, kernel_name: str, io_spec: Dict[str, Any]) -> str:
