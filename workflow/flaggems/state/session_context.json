@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-17T12:36:33+00:00",
+  "updated_at": "2026-02-17T12:42:23+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -11,54 +11,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "b4b4594 workflow: record cache-scope mitigation evidence and stale full196 status\n6a4a315 cuda runtime: narrow extension hash scope to wrapper ABI\nade0998 workflow: refresh full196 evidence on HEAD after chunk0\n30cc5e1 workflow: checkpoint backend compiler wave4 chunk0 evidence\nbe8e2c5 workflow: checkpoint backend compiler wave4 chunk5 evidence\nf224feb workflow: checkpoint backend compiler wave4 chunk3 evidence\na40a69d backend_compiler: stream chunk progress and checkpoint wave4 chunk2\n9ab921e workflow: mark full196 category aggregate fresh on HEAD (7/7, dual_pass=196)\nbabb1e9 workflow: checkpoint coverage rerun progress (reduction done, 2-of-7 categories)\nbbf60a7 workflow: refresh state snapshot after wave3 backend compiler commits\nb063afc workflow: close backend_compiler wave3 batch and refresh coverage evidence state\nf9a25d3 backend compiler wave3: split cuda/rvv emit blocks and fix max-pool cuda i64 lowering\n9c3cfa1 coverage: finalize 7-family aggregate freshness and timing evidence\neb46c98 Fix RVV compare IO dtype alignment and identity cast lowering\n11120cf flaggems: canonicalize failed family intents and checkpoint coverage workflow\nad9d6a2 workflow: record cuda reduction lowering fix and next coverage steps\n53355c2 cuda: support llm-expanded cumsum/mean/var_mean lowering patterns\n908c014 workflow: checkpoint chunked remote-only coverage progress\nd4a54fa flaggems: chunk coverage batches and support rvv remote-only mode\n093eaad workflow: record coverage batch rerun progress on head",
+  "git_log_short": "decdf8b backend_compiler: emit compile outlier report with cold/warm split\n4e031b3 workflow: checkpoint cache-hit instrumentation backend evidence\nd17820e cuda smoke: expose compile cache-hit metadata for stage analysis\nb4b4594 workflow: record cache-scope mitigation evidence and stale full196 status\n6a4a315 cuda runtime: narrow extension hash scope to wrapper ABI\nade0998 workflow: refresh full196 evidence on HEAD after chunk0\n30cc5e1 workflow: checkpoint backend compiler wave4 chunk0 evidence\nbe8e2c5 workflow: checkpoint backend compiler wave4 chunk5 evidence\nf224feb workflow: checkpoint backend compiler wave4 chunk3 evidence\na40a69d backend_compiler: stream chunk progress and checkpoint wave4 chunk2\n9ab921e workflow: mark full196 category aggregate fresh on HEAD (7/7, dual_pass=196)\nbabb1e9 workflow: checkpoint coverage rerun progress (reduction done, 2-of-7 categories)\nbbf60a7 workflow: refresh state snapshot after wave3 backend compiler commits\nb063afc workflow: close backend_compiler wave3 batch and refresh coverage evidence state\nf9a25d3 backend compiler wave3: split cuda/rvv emit blocks and fix max-pool cuda i64 lowering\n9c3cfa1 coverage: finalize 7-family aggregate freshness and timing evidence\neb46c98 Fix RVV compare IO dtype alignment and identity cast lowering\n11120cf flaggems: canonicalize failed family intents and checkpoint coverage workflow\nad9d6a2 workflow: record cuda reduction lowering fix and next coverage steps\n53355c2 cuda: support llm-expanded cumsum/mean/var_mean lowering patterns",
   "progress_tail": [
-    {
-      "ts": "2026-02-17T12:08:09+00:00",
-      "commit": "be8e2c50ef606b159a0b1bb77ea009ae72b30921",
-      "lane": "backend_compiler",
-      "summary": "Backend compiler wave4 chunk6 passed (12/12 dual_pass). CUDA compile_ms mostly normal in this chunk except first-kernel warmup cost.",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1_chunk6/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1_chunk6/status_converged.json",
-      "next_focus": "Finish wave4 chunk7-8, then implement compile_ms outlier mitigation and rerun impacted coverage categories/full196 refresh.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1_chunk6/backend_compiler_batch_summary.json",
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1_chunk6/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1_chunk6/stage_timing_breakdown.json",
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1_chunk6/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1_chunk6",
-      "counts_by_status": {
-        "blocked_backend": 183,
-        "dual_pass": 13
-      }
-    },
-    {
-      "ts": "2026-02-17T12:18:45+00:00",
-      "commit": "be8e2c50ef606b159a0b1bb77ea009ae72b30921",
-      "lane": "backend_compiler",
-      "summary": "Backend compiler wave4 chunk0 completed with full dual-pass across pipeline+rvv local+rvv remote+cuda; chunked wave now has indices 0-7 fully evidenced.",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1/status_converged.json",
-      "next_focus": "Aggregate wave4 chunk0-7 compile_ms outliers and implement schedule/codegen mitigation; rerun impacted coverage families then refresh full196 on HEAD.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1/backend_compiler_batch_summary.json",
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1/stage_timing_breakdown.json",
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave4_smoke_chunked_v1",
-      "counts_by_status": {
-        "blocked_backend": 179,
-        "dual_pass": 17
-      }
-    },
     {
       "ts": "2026-02-17T12:20:30+00:00",
       "commit": "30cc5e1fb6243461f122e3034eafce9faf8b5947",
@@ -187,16 +141,62 @@
         "blocked_backend": 195,
         "dual_pass": 1
       }
+    },
+    {
+      "ts": "2026-02-17T12:41:17+00:00",
+      "commit": "4e031b313e71b229c383c10b341ebd81f9170ecb",
+      "lane": "backend_compiler",
+      "summary": "Added compile_outliers.json generation in backend compiler batch runner with cold/warm(cache-hit) split and integrated stage metadata into run_summary.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_compile_outliers_neg_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_compile_outliers_neg_v1/status_converged.json",
+      "next_focus": "Use compile_outliers cold/warm split to target true cold-compile regressions, optimize top kernels, then rerun impacted coverage categories and refresh full196 on HEAD.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_compile_outliers_neg_v1/compile_outliers.json",
+        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_compile_outliers_neg_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_compile_outliers_neg_v1/stage_timing_breakdown.json",
+        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_compile_outliers_neg_v1/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_compile_outliers_neg_v1",
+      "counts_by_status": {
+        "blocked_backend": 195,
+        "dual_pass": 1
+      }
+    },
+    {
+      "ts": "2026-02-17T12:42:23+00:00",
+      "commit": "decdf8b25af3948551d049ba4860063a7d51469f",
+      "lane": "backend_compiler",
+      "summary": "Landed compile_outliers stage in backend compiler runner and validated gate on neg2d full backend stages.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_compile_outliers_neg_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_compile_outliers_neg_v1/status_converged.json",
+      "next_focus": "Apply cold-compile optimizations for top kernels using new cold/warm outlier report, rerun affected categories, then refresh full196 on HEAD.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_compile_outliers_neg_v1/batch_gate_backend_compiler.json",
+        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_compile_outliers_neg_v1/compile_outliers.json",
+        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_compile_outliers_neg_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_compile_outliers_neg_v1/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_compile_outliers_neg_v1",
+      "counts_by_status": {
+        "blocked_backend": 195,
+        "dual_pass": 1
+      }
     }
   ],
-  "next_focus": "Use compile cache metadata in outlier reports, then implement cold-compile optimization for top kernels and rerun impacted coverage families.",
+  "next_focus": "Apply cold-compile optimizations for top kernels using new cold/warm outlier report, rerun affected categories, then refresh full196 on HEAD.",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
   "active_lanes": [
     "coverage"
   ],
   "next_focus_by_lane": {
-    "backend_compiler": "Use compile cache metadata in outlier reports, then implement cold-compile optimization for top kernels and rerun impacted coverage families.",
-    "coverage": "Continue backend compiler maturity: compile_ms outlier analysis and mitigation; rerun impacted categories and refresh full196."
+    "coverage": "Continue backend compiler maturity: compile_ms outlier analysis and mitigation; rerun impacted categories and refresh full196.",
+    "backend_compiler": "Apply cold-compile optimizations for top kernels using new cold/warm outlier report, rerun affected categories, then refresh full196 on HEAD."
   },
   "known_risks": []
 }
