@@ -1,0 +1,141 @@
+{
+  "schema_version": "intentir_tests_catalog_v1",
+  "updated_at": "2026-02-18T00:00:00+00:00",
+  "entries": [
+    {
+      "path": "tests/test_ir_types.py",
+      "track": "core_ir",
+      "purpose": "IntentIR schema/type validation and structural invariants"
+    },
+    {
+      "path": "tests/test_interpreter_extended_ops.py",
+      "track": "core_ir",
+      "purpose": "Interpreter semantics for extended op coverage"
+    },
+    {
+      "path": "tests/test_tolerances.py",
+      "track": "core_ir",
+      "purpose": "Numerical tolerance policy checks for diff comparison"
+    },
+    {
+      "path": "tests/test_parser_llm.py",
+      "track": "core_ir",
+      "purpose": "LLM JSON parsing, merge, and validation behavior"
+    },
+    {
+      "path": "tests/test_backend_capability.py",
+      "track": "backend_contract",
+      "purpose": "Backend capability query and dual-target support checks"
+    },
+    {
+      "path": "tests/test_pipeline_batch.py",
+      "track": "workflow_contract",
+      "purpose": "Batch runner error-continuation contract"
+    },
+    {
+      "path": "tests/test_backend_codegen_smoke_timings.py",
+      "track": "backend_contract",
+      "purpose": "Smoke timing fields and codegen temp-output behavior"
+    },
+    {
+      "path": "tests/frontends/triton/test_provider_boundary.py",
+      "track": "frontend_triton",
+      "purpose": "Enforce provider plugin boundary (no legacy direct imports)"
+    },
+    {
+      "path": "tests/frontends/triton/test_provider_plugins.py",
+      "track": "frontend_triton",
+      "purpose": "Provider registry/plugin resolution and behavior"
+    },
+    {
+      "path": "tests/frontends/triton/test_provider_hooks.py",
+      "track": "frontend_triton",
+      "purpose": "Provider deterministic hooks and normalization policy"
+    },
+    {
+      "path": "tests/frontends/triton/test_intentir_cli.py",
+      "track": "cli",
+      "purpose": "Unified CLI argument wiring and dry-run smoke"
+    },
+    {
+      "path": "tests/frontends/triton/test_flaggems_workflow.py",
+      "track": "workflow",
+      "purpose": "Workflow helper behavior (batch selection, status snapshots)"
+    },
+    {
+      "path": "tests/frontends/triton/test_flaggems_workflow_state_scripts.py",
+      "track": "workflow",
+      "purpose": "Workflow state scripts: sync/build freshness and lane activation"
+    },
+    {
+      "path": "tests/frontends/triton/test_flaggems_session_scripts.py",
+      "track": "workflow",
+      "purpose": "Session lifecycle scripts (plan/start/end) contract"
+    },
+    {
+      "path": "tests/frontends/triton/test_flaggems_batch_gate.py",
+      "track": "workflow",
+      "purpose": "Scoped batch gate enforcement and active-op dual-pass checks"
+    },
+    {
+      "path": "tests/frontends/triton/test_flaggems_ci_gate.py",
+      "track": "workflow",
+      "purpose": "CI gate aggregation, reason-code completeness, freshness checks"
+    },
+    {
+      "path": "tests/frontends/triton/test_flaggems_script_catalog.py",
+      "track": "workflow",
+      "purpose": "Scripts catalog validation and active-entrypoint constraints"
+    },
+    {
+      "path": "tests/frontends/triton/test_flaggems_coverage_batches.py",
+      "track": "coverage_integrity",
+      "purpose": "Coverage batch build/run/aggregate behavior"
+    },
+    {
+      "path": "tests/frontends/triton/test_flaggems_coverage_integrity.py",
+      "track": "coverage_integrity",
+      "purpose": "Coverage integrity recomputation from artifact evidence"
+    },
+    {
+      "path": "tests/intentir/test_primitive_catalog.py",
+      "track": "ir_arch_quality",
+      "purpose": "Primitive catalog baseline and primitive reuse check"
+    },
+    {
+      "path": "tests/intentir/test_composition_policy.py",
+      "track": "ir_arch_quality",
+      "purpose": "IR composition policy targets and gating rules"
+    },
+    {
+      "path": "tests/intentir/test_macro_composition.py",
+      "track": "ir_arch_quality",
+      "purpose": "Macro composition validity and provider-specific rejection checks"
+    },
+    {
+      "path": "tests/intentir/test_mapping_complexity_report.py",
+      "track": "ir_arch_quality",
+      "purpose": "Mapping complexity ratios/threshold checks"
+    },
+    {
+      "path": "tests/backends/cuda/test_cuda_pipeline_driver.py",
+      "track": "backend_compiler",
+      "purpose": "CUDA backend pipeline stage artifacts and schedule profile contract"
+    },
+    {
+      "path": "tests/backends/cuda/test_cuda_backend_smoke.py",
+      "track": "backend_compiler",
+      "purpose": "CUDA backend correctness smoke for key op families"
+    },
+    {
+      "path": "tests/backends/spmd_rvv/test_rvv_pipeline_driver.py",
+      "track": "backend_compiler",
+      "purpose": "RVV backend pipeline stage artifacts and scheduling contract"
+    },
+    {
+      "path": "tests/backends/spmd_rvv/test_rvv_remote_run_bytes.py",
+      "track": "backend_compiler",
+      "purpose": "RVV remote byte serialization dtype correctness"
+    }
+  ]
+}

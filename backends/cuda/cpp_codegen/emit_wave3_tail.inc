@@ -923,8 +923,8 @@ json emit_var_mean2d_f32(const Intent& intent, const json& bindings) {
   w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_x) + ") void " + intent.name + "(");
   w.indent();
   w.line("const float* __restrict__ " + inp + ",");
-  w.line("float* __restrict__ " + out_var + ",");
   if (has_mean_output) {
+    w.line("float* __restrict__ " + out_var + ",");
     const bool has_corr_arg = (!correction_tensor.empty() && (correction_dtype == "i32" || correction_dtype == "f32"));
     if (has_corr_arg) {
       w.line("float* __restrict__ " + out_mean + ",");
@@ -936,6 +936,9 @@ json emit_var_mean2d_f32(const Intent& intent, const json& bindings) {
     } else {
       w.line("float* __restrict__ " + out_mean);
     }
+  } else {
+    // Keep signature comma-safe for std->mul variant that only writes variance.
+    w.line("float* __restrict__ " + out_var);
   }
   w.dedent();
   w.line(") {");
