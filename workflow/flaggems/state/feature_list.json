@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_feature_list_v2",
-  "generated_at": "2026-02-18T05:34:51+00:00",
+  "generated_at": "2026-02-18T05:40:07+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
@@ -6789,10 +6789,10 @@
       "id": "workflow::cleanup_v1_tests_governance",
       "semantic_op": "",
       "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "pending_cleanup",
-      "next_action": "trim_tests_to_core_gates",
+      "status": "done",
+      "passes": true,
+      "reason_code": "ok",
+      "next_action": "none",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "workflow",
@@ -6807,17 +6807,21 @@
       "depends_on": [
         "workflow::cleanup_v1_scripts_governance"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "archive/tests",
+        "artifacts/flaggems_matrix/daily/20260218/workflow_tests_governance_v1/pytest_core_gate.log",
+        "tests/README.md"
+      ],
       "description": "Trim tests to CI/gate and core correctness; remove paper/experiment evidence tests."
     },
     {
       "id": "workflow::cleanup_v1_structure_convergence",
       "semantic_op": "",
       "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "pending_cleanup",
-      "next_action": "converge_repo_structure_and_docs",
+      "status": "done",
+      "passes": true,
+      "reason_code": "ok",
+      "next_action": "none",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "workflow",
@@ -6832,7 +6836,14 @@
       "depends_on": [
         "workflow::cleanup_v1_tests_governance"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "README.md",
+        "archive/README.md",
+        "artifacts/flaggems_matrix/daily/20260218/workflow_structure_convergence_v1/catalog_validation.json",
+        "docs/ARCHITECTURE.md",
+        "scripts/README.md",
+        "workflow/flaggems/README.md"
+      ],
       "description": "Converge top-level structure and docs to a mature compiler layout; archive is history-only."
     },
     {

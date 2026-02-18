@@ -1,11 +1,13 @@
 # Architecture
 
-IntentIR is organized as a pipeline with stable intermediate artifacts:
+IntentIR is organized as a compiler-style pipeline with stable intermediate artifacts.
+User-facing execution is unified under `scripts/intentir.py`; workflow/gate orchestration
+is under `workflow/flaggems/` + `scripts/flaggems/*`.
 
 For the formal (paper-facing) meaning of IntentIR ops and what the verifier
 does/does not guarantee, see `docs/FORMAL_SEMANTICS.md`.
 
-## Pipeline (Triton today)
+## Pipeline (Triton + Provider Plugins)
 
 1. **Source acquisition** (frontend)
    - Input: a Triton kernel function (DSL source).
@@ -32,9 +34,12 @@ does/does not guarantee, see `docs/FORMAL_SEMANTICS.md`.
    - Run: Triton baseline runner vs IntentIR interpreter; compare outputs (and run metamorphic/mutation-kill).
    - Output: diff report + counterexamples in the report JSON.
 
-7. **Backend lowering** (Task6)
-   - Lower IntentIR ops to standalone C (via C++ codegen tool) and run on the RVV host.
-   - Compare remote results with the baseline runner outputs from step 4.
+7. **Backend lowering + execution** (Task6)
+   - Lower IntentIR via compiler stages:
+     - CUDA: `legalize -> shape_infer -> schedule -> emit -> compile -> launch`
+     - RVV: `legalize -> shape_infer -> schedule -> emit_cpp -> compile -> run`
+   - Execute local CUDA and remote RVV (`ubuntu@192.168.8.72` by default in workflow).
+   - Compare backend outputs with baseline outputs from step 4.
 
 ## Extension Points
 
@@ -78,3 +83,9 @@ Primary artifacts:
 - `artifacts/flaggems_matrix/daily/<date>/<run>/status_converged*.json`
 - `workflow/flaggems/state/progress_log.jsonl`
 - `workflow/flaggems/state/handoff.md`
+
+## Runtime vs Archive Boundary
+
+- Runtime/gates: `intent_ir/`, `frontends/`, `pipeline/`, `backends/`, `verify/`, `scripts/`, `workflow/`, `docs/`.
+- History-only: `archive/` (papers, experiments, third-party clones, legacy tests/scripts).
+- Mainline commands and workflow scripts must not implicitly depend on `archive/`.
