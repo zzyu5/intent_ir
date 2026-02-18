@@ -16,18 +16,25 @@ if str(ROOT) not in sys.path:
 
 from intent_ir.ops import MACRO_OPS
 from intent_ir.ops.specs import op_spec_for
+from source_loader import load_entries
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--registry", type=Path, default=(ROOT / "pipeline" / "triton" / "flaggems_registry.json"))
+    ap.add_argument(
+        "--mlir-manifest",
+        type=Path,
+        default=None,
+        help="Use MLIR manifest as source instead of registry.",
+    )
     ap.add_argument("--out", type=Path, default=(ROOT / "artifacts" / "intentir" / "macro_composition_report.json"))
     args = ap.parse_args()
 
-    if not args.registry.is_file():
-        raise FileNotFoundError(f"registry not found: {args.registry}")
-    payload = json.loads(args.registry.read_text(encoding="utf-8"))
-    entries = [e for e in list(payload.get("entries") or []) if isinstance(e, dict)]
+    entries, source = load_entries(
+        registry_path=(None if args.mlir_manifest is not None else args.registry),
+        mlir_manifest_path=args.mlir_manifest,
+    )
 
     macro_hits: dict[str, int] = {}
     violations: list[dict[str, Any]] = []
@@ -67,7 +74,7 @@ def main() -> None:
 
     report = {
         "ok": len(violations) == 0,
-        "registry": str(args.registry),
+        "source": str(source),
         "macro_ops_in_catalog": sorted(list(MACRO_OPS)),
         "macro_hits": dict(sorted(macro_hits.items(), key=lambda kv: kv[0])),
         "violations": violations,
@@ -80,4 +87,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

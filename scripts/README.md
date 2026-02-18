@@ -49,6 +49,7 @@ python scripts/validate_catalog.py
 - `scripts/intentir/check_primitive_reuse.py`: primitive reuse + provider leakage guard.
 - `scripts/intentir/check_macro_composition.py`: macro composition guard.
 - `scripts/intentir/report_mapping_complexity.py`: family-level mapping complexity report.
+- IR guards support both `--registry` and `--mlir-manifest` sources so migration quality can run on intent-dialect MLIR artifacts directly.
 - `scripts/flaggems/run_ir_arch_batch.py`: run ir_arch lane batch.
 
 ## Active Backend Compiler Entrypoints

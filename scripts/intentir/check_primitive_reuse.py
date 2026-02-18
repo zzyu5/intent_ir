@@ -15,19 +15,26 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from intent_ir.ops.primitive_catalog import catalog_summary, is_allowed_primitive
+from source_loader import load_entries
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--registry", type=Path, default=(ROOT / "pipeline" / "triton" / "flaggems_registry.json"))
+    ap.add_argument(
+        "--mlir-manifest",
+        type=Path,
+        default=None,
+        help="Use MLIR manifest as source instead of registry.",
+    )
     ap.add_argument("--allow-macro", action=argparse.BooleanOptionalAction, default=False)
     ap.add_argument("--out", type=Path, default=(ROOT / "artifacts" / "intentir" / "primitive_reuse_report.json"))
     args = ap.parse_args()
 
-    if not args.registry.is_file():
-        raise FileNotFoundError(f"registry not found: {args.registry}")
-    registry = json.loads(args.registry.read_text(encoding="utf-8"))
-    entries = [e for e in list(registry.get("entries") or []) if isinstance(e, dict)]
+    entries, source = load_entries(
+        registry_path=(None if args.mlir_manifest is not None else args.registry),
+        mlir_manifest_path=args.mlir_manifest,
+    )
 
     violations: list[dict[str, Any]] = []
     reused: dict[str, int] = {}
@@ -55,7 +62,7 @@ def main() -> None:
 
     payload = {
         "ok": len(violations) == 0,
-        "registry": str(args.registry),
+        "source": str(source),
         "allow_macro": bool(args.allow_macro),
         "catalog_summary": dict(catalog_summary()),
         "reused_primitives": dict(sorted(reused.items(), key=lambda kv: kv[0])),

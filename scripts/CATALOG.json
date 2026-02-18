@@ -263,6 +263,19 @@
       "tests": ["tests/intentir/test_mapping_complexity_report.py"]
     },
     {
+      "path": "scripts/intentir/source_loader.py",
+      "owner_lane": "ir_arch_quality",
+      "purpose": "shared source adapter for registry/mlir-manifest inputs in IR quality guards",
+      "inputs": [
+        "pipeline/triton/flaggems_registry.json",
+        "artifacts/**/intentir.intentdialect*.mlir"
+      ],
+      "outputs": [],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/intentir/test_mlir_source_scripts.py"]
+    },
+    {
       "path": "scripts/intentir.py",
       "owner_lane": "workflow",
       "purpose": "unified user-facing CLI (suite/kernel/env) across triton/tilelang/cuda",

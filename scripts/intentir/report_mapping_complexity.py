@@ -23,11 +23,7 @@ from intent_ir.ops.composition_policy import (
     evaluate_complex_family_ratio,
     single_intent_ratio_target,
 )
-
-
-def _load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
+from source_loader import load_entries
 
 def _ratio(numer: int, denom: int) -> float:
     return (float(numer) / float(denom)) if denom > 0 else 0.0
@@ -46,6 +42,12 @@ def _split_complex_families(raw: list[str]) -> list[str]:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--registry", type=Path, default=(ROOT / "pipeline" / "triton" / "flaggems_registry.json"))
+    ap.add_argument(
+        "--mlir-manifest",
+        type=Path,
+        default=None,
+        help="Use MLIR manifest as source instead of registry.",
+    )
     ap.add_argument("--out", type=Path, default=(ROOT / "artifacts" / "intentir" / "mapping_complexity_report.json"))
     ap.add_argument(
         "--complex-families",
@@ -94,10 +96,12 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    if not args.registry.is_file():
-        raise FileNotFoundError(f"registry not found: {args.registry}")
-    payload = _load_json(args.registry)
-    entries = [e for e in list(payload.get("entries") or []) if isinstance(e, dict)]
+    if args.mlir_manifest is not None and bool(args.refresh_mappings_from_rules):
+        raise ValueError("--refresh-mappings-from-rules is incompatible with --mlir-manifest")
+    entries, source = load_entries(
+        registry_path=(None if args.mlir_manifest is not None else args.registry),
+        mlir_manifest_path=args.mlir_manifest,
+    )
 
     complex_families = set(_split_complex_families(list(args.complex_families or [])))
     resolver = None
@@ -192,7 +196,7 @@ def main() -> None:
     }
     out = {
         "schema_version": "intentir_mapping_complexity_v1",
-        "registry": str(args.registry),
+        "source": str(source),
         "policy_stage": str(args.policy_stage),
         "total": int(total),
         "single_intent_ops": int(single),
