@@ -8,6 +8,8 @@ This mirrors the Triton pipeline shape, but uses the TileLang adapter:
 from __future__ import annotations
 
 import json
+import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -26,6 +28,7 @@ from verify.tolerances import infer_tolerances
 
 from intent_ir.llm import LLMIntentHub
 from intent_ir.macros import expand_macros, enrich_intent_macros
+from intent_ir.mlir import detect_mlir_toolchain, run_pipeline as run_mlir_pipeline, to_mlir
 from intent_ir.parser import CandidateIntent
 from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, TensorType
 from intent_ir.ir.printer_mlir_like import print_mlir_like
@@ -2672,6 +2675,57 @@ def run_pipeline_for_spec(
             }
     except Exception as e:
         report["baseline"] = {"error": f"{type(e).__name__}: {e}"}
+
+    report["mlir"] = {
+        "enabled": str(os.getenv("INTENTIR_MLIR_SHADOW", "1")).strip().lower() not in {"0", "false", "no", "off"},
+        "execution_ir": str(os.getenv("INTENTIR_EXECUTION_IR", "intent")).strip().lower(),
+        "toolchain": detect_mlir_toolchain(),
+    }
+    try:
+        if bool(report["mlir"]["enabled"]) or str(report["mlir"]["execution_ir"]) == "mlir":
+            t0 = time.perf_counter()
+            mod = to_mlir(cand_for_run.intent)
+            mod_path = out_dir / f"{spec.name}.intentir.intentdialect.mlir"
+            mod_path.write_text(mod.module_text, encoding="utf-8")
+            t1 = time.perf_counter()
+            up_mod, up_trace = run_mlir_pipeline(mod, "upstream", out_dir=(out_dir / "mlir_upstream"))
+            mid_mod, mid_trace = run_mlir_pipeline(up_mod, "midend", out_dir=(out_dir / "mlir_midend"))
+            mid_path = out_dir / f"{spec.name}.intentir.intentdialect.midend.mlir"
+            mid_path.write_text(mid_mod.module_text, encoding="utf-8")
+            t2 = time.perf_counter()
+            backend_target = str(os.getenv("INTENTIR_BACKEND_TARGET", "")).strip().lower()
+            down_name: str | None = None
+            down_backend: str | None = None
+            if backend_target:
+                if "rvv" in backend_target:
+                    down_name, down_backend = "downstream_rvv", "rvv"
+                elif "cuda" in backend_target:
+                    down_name, down_backend = "downstream_cuda", "cuda"
+            if down_name is not None:
+                down_mod, down_trace = run_mlir_pipeline(
+                    mid_mod,
+                    down_name,
+                    backend=down_backend,
+                    out_dir=(out_dir / f"mlir_{down_name}"),
+                )
+                down_path = out_dir / f"{spec.name}.intentir.intentdialect.{down_name}.mlir"
+                down_path.write_text(down_mod.module_text, encoding="utf-8")
+                report["mlir"]["downstream"] = dict(down_trace)
+                report["mlir"]["downstream_module_path"] = str(down_path)
+            else:
+                down_trace = {"ok": True, "skipped": True, "reason": "backend_target_not_set"}
+                report["mlir"]["downstream"] = dict(down_trace)
+            t3 = time.perf_counter()
+            report["mlir"]["module_path"] = str(mod_path)
+            report["mlir"]["midend_module_path"] = str(mid_path)
+            report["mlir"]["upstream"] = dict(up_trace)
+            report["mlir"]["midend"] = dict(mid_trace)
+            report["mlir"]["mlir_parse_ms"] = float(max(0.0, (t1 - t0) * 1000.0))
+            report["mlir"]["mlir_pass_ms"] = float(max(0.0, (t2 - t1) * 1000.0))
+            report["mlir"]["mlir_lower_ms"] = float(max(0.0, (t3 - t2) * 1000.0))
+    except Exception as e:
+        report["mlir"]["ok"] = False
+        report["mlir"]["error"] = f"{type(e).__name__}: {e}"
 
     return report
 

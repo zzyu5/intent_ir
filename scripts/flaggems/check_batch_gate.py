@@ -74,6 +74,8 @@ def _validate_coverage_fresh_on_head(current_status_path: Path) -> tuple[bool, s
 def _default_active_batch(profile: str) -> Path:
     if profile == "coverage":
         return ROOT / "workflow" / "flaggems" / "state" / "active_batch_coverage.json"
+    if profile == "mlir_migration":
+        return ROOT / "workflow" / "flaggems" / "state" / "active_batch_mlir_migration.json"
     return ROOT / "workflow" / "flaggems" / "state" / f"active_batch_{profile}.json"
 
 
@@ -359,7 +361,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--profile",
-        choices=["coverage", "ir_arch", "backend_compiler", "workflow"],
+        choices=["coverage", "ir_arch", "backend_compiler", "workflow", "mlir_migration"],
         default="coverage",
         help="Gate profile to evaluate.",
     )
@@ -467,7 +469,7 @@ def main() -> None:
     active_items = [e for e in (active.get("items") or []) if isinstance(e, dict)]
     active_ops = [str(e.get("semantic_op") or "") for e in active_items if str(e.get("semantic_op") or "")]
 
-    if profile in {"ir_arch", "backend_compiler", "workflow"}:
+    if profile in {"ir_arch", "backend_compiler", "workflow", "mlir_migration"}:
         reason_complete = True
     else:
         if not gate_entries and not active_ops:
@@ -704,17 +706,17 @@ def main() -> None:
                 budget_detail,
             )
         )
-    elif profile == "workflow":
+    elif profile in {"workflow", "mlir_migration"}:
         stage_map = _stage_map(run_summary)
         required = list(args.require_stage or [])
         missing_or_fail = [s for s in required if not bool((stage_map.get(s) or {}).get("ok"))]
         checks.append(
             _check(
-                "workflow.required_stage_ok",
+                f"{profile}.required_stage_ok",
                 not missing_or_fail,
-                "required workflow stages passed"
+                f"required {profile} stages passed"
                 if not missing_or_fail
-                else f"missing or failed workflow stage(s): {missing_or_fail}",
+                else f"missing or failed {profile} stage(s): {missing_or_fail}",
             )
         )
 

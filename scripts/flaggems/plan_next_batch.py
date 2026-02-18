@@ -43,7 +43,7 @@ def main() -> None:
     ap.add_argument("--feature-list", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "feature_list.json"))
     ap.add_argument(
         "--lane",
-        choices=["coverage", "ir_arch", "backend_compiler", "workflow"],
+        choices=["coverage", "ir_arch", "backend_compiler", "workflow", "mlir_migration"],
         default="coverage",
         help="Batch lane selector (default: coverage).",
     )

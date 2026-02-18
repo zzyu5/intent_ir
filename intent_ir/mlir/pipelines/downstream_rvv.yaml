@@ -1,0 +1,3 @@
+passes:
+  - python:attach_provider_meta
+

@@ -189,6 +189,11 @@ def main() -> None:
         default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch_workflow.json"),
     )
     ap.add_argument(
+        "--active-batch-mlir-migration",
+        type=Path,
+        default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch_mlir_migration.json"),
+    )
+    ap.add_argument(
         "--profiles",
         action="append",
         default=[],
@@ -248,6 +253,7 @@ def main() -> None:
         "ir_arch": args.active_batch_ir_arch,
         "backend_compiler": args.active_batch_backend_compiler,
         "workflow": args.active_batch_workflow,
+        "mlir_migration": args.active_batch_mlir_migration,
     }
 
     checks: list[dict[str, Any]] = []
@@ -450,6 +456,7 @@ def main() -> None:
             "active_batch_ir_arch": _to_repo_rel(active_by_profile["ir_arch"]),
             "active_batch_backend_compiler": _to_repo_rel(active_by_profile["backend_compiler"]),
             "active_batch_workflow": _to_repo_rel(active_by_profile["workflow"]),
+            "active_batch_mlir_migration": _to_repo_rel(active_by_profile["mlir_migration"]),
             "run_summary": _to_repo_rel(args.run_summary),
             "status_converged": _to_repo_rel(args.status_converged),
             "profiles": profiles,

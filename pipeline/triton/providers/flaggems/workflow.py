@@ -46,7 +46,7 @@ def summarize_registry(registry_payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-LANES: tuple[str, ...] = ("coverage", "ir_arch", "backend_compiler", "workflow")
+LANES: tuple[str, ...] = ("coverage", "ir_arch", "backend_compiler", "workflow", "mlir_migration")
 
 
 def normalize_lane(raw: str) -> str:
@@ -506,6 +506,10 @@ def build_current_status_payload(
     coverage_batches_completed: int | None = None,
     coverage_batches_failed: list[str] | None = None,
     full196_evidence_kind: str = "single_run",
+    mlir_migration_phase: str = "",
+    mlir_default_enabled: bool | None = None,
+    mlir_toolchain_ok: bool | None = None,
+    mlir_full196_validated_commit: str = "",
     catalog_path: str = "scripts/CATALOG.json",
     catalog_validated: bool = False,
     active_lanes: list[str] | None = None,
@@ -566,6 +570,10 @@ def build_current_status_payload(
         ),
         "coverage_batches_failed": [str(x) for x in list(coverage_batches_failed or []) if str(x).strip()],
         "full196_evidence_kind": str(full196_evidence_kind or "single_run"),
+        "mlir_migration_phase": str(mlir_migration_phase or ""),
+        "mlir_default_enabled": (None if mlir_default_enabled is None else bool(mlir_default_enabled)),
+        "mlir_toolchain_ok": (None if mlir_toolchain_ok is None else bool(mlir_toolchain_ok)),
+        "mlir_full196_validated_commit": str(mlir_full196_validated_commit or ""),
         "coverage": {
             "semantic_ops": semantic_ops,
             "dual_pass": dual_pass,
@@ -617,6 +625,7 @@ def build_session_context_payload(
             "workflow/flaggems/state/active_batch_ir_arch.json",
             "workflow/flaggems/state/active_batch_backend_compiler.json",
             "workflow/flaggems/state/active_batch_workflow.json",
+            "workflow/flaggems/state/active_batch_mlir_migration.json",
             "workflow/flaggems/state/handoff.md",
         ],
         "must_read_scripts_catalog": str(must_read_scripts_catalog),

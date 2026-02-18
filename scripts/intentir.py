@@ -13,23 +13,30 @@ from __future__ import annotations
 import argparse
 import importlib
 import os
+import json
 from pathlib import Path
 import subprocess
 import sys
 from typing import Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
-def _run(cmd: Sequence[str], *, stream: bool, dry_run: bool) -> int:
+def _run(cmd: Sequence[str], *, stream: bool, dry_run: bool, env_overrides: dict[str, str] | None = None) -> int:
     pretty = " ".join(str(x) for x in cmd)
     print(f"[intentir] $ {pretty}", flush=True)
     if dry_run:
         return 0
+    env = None
+    if env_overrides:
+        env = dict(os.environ)
+        env.update({str(k): str(v) for k, v in env_overrides.items()})
     if stream:
-        p = subprocess.run(list(cmd), cwd=str(ROOT))
+        p = subprocess.run(list(cmd), cwd=str(ROOT), env=env)
     else:
-        p = subprocess.run(list(cmd), cwd=str(ROOT), capture_output=True, text=True)
+        p = subprocess.run(list(cmd), cwd=str(ROOT), capture_output=True, text=True, env=env)
         if p.stdout:
             print(p.stdout, end="")
         if p.stderr:
@@ -44,12 +51,14 @@ def _python_cmd(script: str, *extra: str) -> list[str]:
 def _cmd_suite(args: argparse.Namespace) -> int:
     out_root = Path(args.out_root) if args.out_root else (ROOT / "artifacts" / "intentir_suite")
     out_root.mkdir(parents=True, exist_ok=True)
+    env_overrides = {"INTENTIR_EXECUTION_IR": str(args.execution_ir)}
 
     if args.suite == "flaggems-full196":
         rc = _run(
             _python_cmd("scripts/flaggems/build_coverage_batches.py"),
             stream=bool(args.stream),
             dry_run=bool(args.dry_run),
+            env_overrides=env_overrides,
         )
         if rc != 0:
             return rc
@@ -90,7 +99,7 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             cmd.append("--write-registry")
         for fam in list(args.family or []):
             cmd.extend(["--family", str(fam)])
-        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run))
+        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
 
     if args.suite == "triton-smoke":
         cmd = _python_cmd(
@@ -125,7 +134,7 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             cmd.append("--write-registry")
         for kernel in list(args.kernel or []):
             cmd.extend(["--kernel", str(kernel)])
-        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run))
+        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
 
     if args.suite == "flaggems-coverage-single":
         cmd = _python_cmd(
@@ -160,7 +169,7 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             cmd.append("--write-registry")
         for kernel in list(args.kernel or []):
             cmd.extend(["--kernel", str(kernel)])
-        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run))
+        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
 
     if args.suite == "tilelang-smoke":
         cmd = _python_cmd(
@@ -172,7 +181,7 @@ def _cmd_suite(args: argparse.Namespace) -> int:
         )
         for kernel in list(args.kernel or []):
             cmd.extend(["--kernel", str(kernel)])
-        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run))
+        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
 
     if args.suite == "cuda-smoke":
         cmd = _python_cmd(
@@ -184,7 +193,7 @@ def _cmd_suite(args: argparse.Namespace) -> int:
         )
         for kernel in list(args.kernel or []):
             cmd.extend(["--kernel", str(kernel)])
-        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run))
+        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
 
     print(f"unsupported suite: {args.suite}", file=sys.stderr)
     return 2
@@ -193,6 +202,7 @@ def _cmd_suite(args: argparse.Namespace) -> int:
 def _cmd_kernel(args: argparse.Namespace) -> int:
     out_dir = Path(args.out_dir) if args.out_dir else (ROOT / "artifacts" / "intentir_kernel")
     out_dir.mkdir(parents=True, exist_ok=True)
+    env_overrides = {"INTENTIR_EXECUTION_IR": str(args.execution_ir)}
 
     if args.frontend == "triton":
         cmd = _python_cmd(
@@ -226,7 +236,7 @@ def _cmd_kernel(args: argparse.Namespace) -> int:
         )
         if str(args.provider) == "native":
             cmd.extend(["--flaggems-path", "original"])
-        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run))
+        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
 
     if args.frontend == "tilelang":
         cmd = _python_cmd(
@@ -238,7 +248,7 @@ def _cmd_kernel(args: argparse.Namespace) -> int:
             "--cases-limit",
             str(int(args.cases_limit)),
         )
-        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run))
+        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
 
     if args.frontend == "cuda":
         cmd = _python_cmd(
@@ -250,7 +260,7 @@ def _cmd_kernel(args: argparse.Namespace) -> int:
             "--cases-limit",
             str(int(args.cases_limit)),
         )
-        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run))
+        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
 
     print(f"unsupported frontend: {args.frontend}", file=sys.stderr)
     return 2
@@ -283,7 +293,60 @@ def _cmd_env(_: argparse.Namespace) -> int:
         print(f"cuda_probe_error: {e}")
     print(f"rvv_default_host: {os.getenv('INTENTIR_RVV_HOST', '192.168.8.72')}")
     print(f"rvv_default_user: {os.getenv('INTENTIR_RVV_USER', 'ubuntu')}")
+    print(f"intentir.execution_ir: {os.getenv('INTENTIR_EXECUTION_IR', 'intent')}")
     return 0
+
+
+def _cmd_mlir_check(args: argparse.Namespace) -> int:
+    from intent_ir.mlir import detect_mlir_toolchain, to_mlir, to_intent  # noqa: PLC0415
+    from intent_ir.ir import IntentFunction  # noqa: PLC0415
+
+    report: dict[str, object] = {"toolchain": detect_mlir_toolchain()}
+    if args.intent_json is not None:
+        payload = json.loads(Path(args.intent_json).read_text(encoding="utf-8"))
+        if "intent" in payload and isinstance(payload.get("intent"), dict):
+            payload = payload["intent"]
+        intent = IntentFunction.from_json_dict(payload)
+        module = to_mlir(intent)
+        _ = to_intent(module)
+        report["roundtrip_ok"] = True
+        report["intent_name"] = str(intent.name)
+        report["symbol_count"] = len(list(module.symbols or []))
+    out = Path(args.out) if args.out else None
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"[intentir] wrote {out}")
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0
+
+
+def _cmd_mlir_pass(args: argparse.Namespace) -> int:
+    from intent_ir.mlir import run_pipeline, to_mlir  # noqa: PLC0415
+    from intent_ir.ir import IntentFunction  # noqa: PLC0415
+
+    payload = json.loads(Path(args.intent_json).read_text(encoding="utf-8"))
+    if "intent" in payload and isinstance(payload.get("intent"), dict):
+        payload = payload["intent"]
+    intent = IntentFunction.from_json_dict(payload)
+    module = to_mlir(intent)
+    out_dir = Path(args.out_dir) if args.out_dir else (ROOT / "artifacts" / "intentir_mlir_pass")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_module, trace = run_pipeline(
+        module,
+        str(args.pipeline),
+        backend=(str(args.backend) if args.backend else None),
+        out_dir=out_dir,
+        fail_on_error=bool(args.fail_on_error),
+    )
+    out_mlir = out_dir / "module.mlir"
+    out_mlir.write_text(out_module.module_text, encoding="utf-8")
+    out_trace = out_dir / "pass_trace.json"
+    if "pass_trace_path" not in trace:
+        out_trace.write_text(json.dumps(trace, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"[intentir] mlir module: {out_mlir}")
+    print(f"[intentir] pass trace: {out_trace}")
+    return 0 if bool(trace.get("ok")) else 1
 
 
 def _cmd_tilelang_export_cuda_snapshots(args: argparse.Namespace) -> int:
@@ -313,6 +376,7 @@ def _build_parser() -> argparse.ArgumentParser:
     suite.add_argument("--family", action="append", default=[])
     suite.add_argument("--kernel", action="append", default=[])
     suite.add_argument("--cases-limit", type=int, default=8)
+    suite.add_argument("--execution-ir", choices=["intent", "mlir"], default="intent")
     suite.add_argument("--family-kernel-chunk-size", type=int, default=12)
     suite.add_argument("--progress-style", choices=["tqdm", "plain", "none"], default="tqdm")
     suite.add_argument(
@@ -344,6 +408,7 @@ def _build_parser() -> argparse.ArgumentParser:
     kernel.add_argument("--kernel", required=True)
     kernel.add_argument("--out-dir", default=None)
     kernel.add_argument("--cases-limit", type=int, default=8)
+    kernel.add_argument("--execution-ir", choices=["intent", "mlir"], default="intent")
     kernel.add_argument("--flaggems-path", choices=["intentir", "original"], default="intentir")
     kernel.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="auto")
     kernel.add_argument("--intentir-miss-policy", choices=["deterministic", "strict"], default="strict")
@@ -370,6 +435,22 @@ def _build_parser() -> argparse.ArgumentParser:
     tilelang_export.add_argument("--stream", action=argparse.BooleanOptionalAction, default=True)
     tilelang_export.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=False)
     tilelang_export.set_defaults(func=_cmd_tilelang_export_cuda_snapshots)
+
+    mlir = sub.add_parser("mlir", help="MLIR migration helpers")
+    mlir_sub = mlir.add_subparsers(dest="mlir_cmd", required=True)
+
+    mlir_check = mlir_sub.add_parser("check", help="Probe MLIR toolchain and optional Intent roundtrip")
+    mlir_check.add_argument("--intent-json", default=None, help="Path to intent JSON (or report with `intent` field)")
+    mlir_check.add_argument("--out", default=None, help="Optional JSON output path")
+    mlir_check.set_defaults(func=_cmd_mlir_check)
+
+    mlir_pass = mlir_sub.add_parser("pass", help="Run MLIR pipeline on one intent payload")
+    mlir_pass.add_argument("--intent-json", required=True, help="Path to intent JSON (or report with `intent` field)")
+    mlir_pass.add_argument("--pipeline", required=True, choices=["upstream", "midend", "downstream_cuda", "downstream_rvv"])
+    mlir_pass.add_argument("--backend", default=None, help="Optional backend hint (cuda/rvv)")
+    mlir_pass.add_argument("--out-dir", default=None, help="Output directory for module + pass trace")
+    mlir_pass.add_argument("--fail-on-error", action=argparse.BooleanOptionalAction, default=False)
+    mlir_pass.set_defaults(func=_cmd_mlir_pass)
 
     return ap
 

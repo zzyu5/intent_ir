@@ -51,6 +51,33 @@ def _load_manual_tasks(path: Path) -> list[dict[str, object]]:
     return out
 
 
+def _ensure_default_mlir_tasks(tasks: list[dict[str, object]]) -> list[dict[str, object]]:
+    has_mlir = any(str(t.get("track") or "") == "mlir_migration" for t in tasks)
+    if has_mlir:
+        return tasks
+    defaults = [
+        {
+            "id": "mlir_migration::module_bridge_bootstrap",
+            "track": "mlir_migration",
+            "task_type": "compilerization",
+            "status": "pending",
+            "passes": False,
+            "priority": 10,
+            "gate_profile": "mlir_migration",
+            "reason_code": "pending",
+            "next_action": "implement_intent_mlir_module",
+            "acceptance": [
+                "intent_to_mlir_roundtrip_passes",
+                "mlir_pass_pipeline_upstream_midend_available",
+            ],
+            "depends_on": [],
+            "evidence_paths": [],
+            "description": "Bootstrap IntentIR <-> MLIR dual-track bridge and pass orchestration.",
+        }
+    ]
+    return [*tasks, *defaults]
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY_PATH)
@@ -81,7 +108,7 @@ def main() -> None:
     args = ap.parse_args()
 
     registry_payload = load_json(args.registry)
-    manual_tasks = _load_manual_tasks(args.task_templates)
+    manual_tasks = _ensure_default_mlir_tasks(_load_manual_tasks(args.task_templates))
     feature_payload = build_feature_list_payload(
         registry_payload=registry_payload,
         source_registry_path=_to_repo_rel(args.registry),

@@ -11,6 +11,7 @@ import numpy as np
 from typing import Any, Mapping
 
 from backends.cuda.runtime import CudaLaunch, compile_cuda_extension, run_cuda_kernel
+from backends.common.mlir_bridge import resolve_intent_payload
 from backends.common.pipeline_utils import (
     collect_intent_info,
     has_symbolic_dims,
@@ -80,6 +81,7 @@ def run_cuda_pipeline(
     shape_bindings: Mapping[str, Any] | None = None,
     pipeline_mode: str = "full",
 ) -> CudaPipelineResult:
+    intent_payload = resolve_intent_payload(intent_payload)
     mode = str(pipeline_mode or "full").strip().lower()
     if mode not in {"full", "schedule_only"}:
         raise ValueError(f"unsupported cuda pipeline_mode: {pipeline_mode}")

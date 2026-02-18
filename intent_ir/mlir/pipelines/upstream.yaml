@@ -1,0 +1,4 @@
+passes:
+  - python:normalize_symbols
+  - python:attach_provider_meta
+

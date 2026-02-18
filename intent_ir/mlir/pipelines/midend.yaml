@@ -1,0 +1,4 @@
+passes:
+  - python:canonicalize_intent
+  - python:cse_like
+

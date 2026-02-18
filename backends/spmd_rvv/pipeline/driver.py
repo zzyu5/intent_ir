@@ -14,6 +14,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Mapping
 
+from backends.common.mlir_bridge import resolve_intent_payload
 from backends.common.pipeline_utils import (
     collect_intent_info,
     has_symbolic_dims,
@@ -133,6 +134,7 @@ def run_rvv_pipeline(
     shape_bindings: Mapping[str, Any] | None = None,
     pipeline_mode: str = "full",
 ) -> RvvPipelineResult:
+    intent_payload = resolve_intent_payload(intent_payload)
     mode = str(pipeline_mode or "full").strip().lower()
     if mode not in {"full", "schedule_only"}:
         raise ValueError(f"unsupported rvv pipeline_mode: {pipeline_mode}")

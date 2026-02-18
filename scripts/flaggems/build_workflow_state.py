@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -22,6 +23,7 @@ from pipeline.triton.providers.flaggems.workflow import (
     load_json,
     read_git_log,
 )
+from intent_ir.mlir import detect_mlir_toolchain  # noqa: E402
 
 
 FULL196_VALIDATED_SCOPE = "coverage_158_kernels_to_196_semantics"
@@ -62,7 +64,7 @@ def _parse_lane(handoff_path: Path) -> str:
         if not line.strip().startswith("- Lane:"):
             continue
         lane = line.split(":", 1)[1].strip().strip("`")
-        if lane in {"coverage", "ir_arch", "backend_compiler", "workflow"}:
+        if lane in {"coverage", "ir_arch", "backend_compiler", "workflow", "mlir_migration"}:
             return lane
     return ""
 
@@ -462,6 +464,11 @@ def main() -> None:
         type=Path,
         default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch_workflow.json"),
     )
+    ap.add_argument(
+        "--active-batch-mlir-migration",
+        type=Path,
+        default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch_mlir_migration.json"),
+    )
     ap.add_argument("--current-status-out", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "current_status.json"))
     ap.add_argument("--session-context-out", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "session_context.json"))
     ap.add_argument("--scripts-catalog", type=Path, default=(ROOT / "scripts" / "CATALOG.json"))
@@ -572,6 +579,20 @@ def main() -> None:
             "workflow",
             "Execute workflow cleanup active batch, update task_templates, then resync feature list and rebuild workflow state.",
         )
+    if "mlir_migration" in active_lanes:
+        next_focus_by_lane.setdefault(
+            "mlir_migration",
+            "Advance IntentIR->MLIR dual-track migration (module conversion, pass pipelines, shadow-mode integration).",
+        )
+
+    mlir_tc = detect_mlir_toolchain()
+    mlir_default_enabled = str(os.getenv("INTENTIR_EXECUTION_IR", "intent")).strip().lower() == "mlir"
+    mlir_phase = "shadow_mode"
+    if mlir_default_enabled:
+        mlir_phase = "default_mlir"
+    elif "mlir_migration" in active_lanes:
+        mlir_phase = "in_progress"
+    mlir_validated_commit = head_commit if (validated_commit_state == "fresh" and bool(full196_last_ok)) else ""
 
     current_status = build_current_status_payload(
         branch=branch,
@@ -595,6 +616,10 @@ def main() -> None:
         coverage_batches_completed=coverage_batches_completed,
         coverage_batches_failed=coverage_batches_failed,
         full196_evidence_kind=full196_evidence_kind,
+        mlir_migration_phase=mlir_phase,
+        mlir_default_enabled=bool(mlir_default_enabled),
+        mlir_toolchain_ok=bool(mlir_tc.get("ok")),
+        mlir_full196_validated_commit=mlir_validated_commit,
         catalog_path=_to_repo_rel(args.scripts_catalog),
         catalog_validated=catalog_exists,
         active_lanes=active_lanes,
@@ -604,6 +629,7 @@ def main() -> None:
             "ir_arch": _to_repo_rel(args.active_batch_ir_arch),
             "backend_compiler": _to_repo_rel(args.active_batch_backend_compiler),
             "workflow": _to_repo_rel(args.active_batch_workflow),
+            "mlir_migration": _to_repo_rel(args.active_batch_mlir_migration),
         },
     )
     session_context = build_session_context_payload(

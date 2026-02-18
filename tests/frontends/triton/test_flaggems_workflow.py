@@ -172,7 +172,13 @@ def test_current_status_and_session_context_builders() -> None:
                 "track": "ir_arch",
                 "status": "pending",
                 "passes": False,
-            }
+            },
+            {
+                "id": "mlir_migration::bootstrap",
+                "track": "mlir_migration",
+                "status": "in_progress",
+                "passes": False,
+            },
         ],
     )
     current = build_current_status_payload(
@@ -181,7 +187,15 @@ def test_current_status_and_session_context_builders() -> None:
         feature_payload=feature_payload,
         latest_run_summary_path="artifacts/run_summary.json",
         latest_status_converged_path="artifacts/status_converged.json",
-        lane_batch_paths={"coverage": "a.json", "ir_arch": "b.json", "backend_compiler": "c.json"},
+        lane_batch_paths={
+            "coverage": "a.json",
+            "ir_arch": "b.json",
+            "backend_compiler": "c.json",
+            "mlir_migration": "d.json",
+        },
+        mlir_migration_phase="shadow_mode",
+        mlir_default_enabled=False,
+        mlir_toolchain_ok=False,
     )
     assert current["schema_version"] == "flaggems_current_status_v1"
     assert current["mode"] == "mixed_development"
@@ -194,16 +208,26 @@ def test_current_status_and_session_context_builders() -> None:
     assert "full196_validated_mode" in current
     assert "full196_validated_scope" in current
     assert "full196_validated_with_rvv_remote" in current
+    assert current["lanes"]["mlir_migration"]["pending"] == 1
+    assert current["lanes"]["mlir_migration"]["active_batch_path"] == "d.json"
+    assert current["mlir_migration_phase"] == "shadow_mode"
+    assert current["mlir_default_enabled"] is False
+    assert current["mlir_toolchain_ok"] is False
 
     ctx = build_session_context_payload(
         git_log_short="a\nb",
         progress_tail=[{"summary": "x"}],
         next_focus="run primitive guard",
         known_risks=["risk-a"],
+        active_lanes=["coverage", "mlir_migration"],
+        next_focus_by_lane={"mlir_migration": "finish bootstrap"},
     )
     assert ctx["schema_version"] == "flaggems_session_context_v1"
     assert ctx["next_focus"] == "run primitive guard"
     assert ctx["must_read_scripts_catalog"] == "scripts/CATALOG.json"
+    assert "workflow/flaggems/state/active_batch_mlir_migration.json" in list(ctx["read_order"])
+    assert "mlir_migration" in list(ctx["active_lanes"])
+    assert ctx["next_focus_by_lane"]["mlir_migration"] == "finish bootstrap"
 
 
 def test_select_next_batch_respects_dependencies_for_non_coverage() -> None:

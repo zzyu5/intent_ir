@@ -25,6 +25,7 @@ from frontends.cuda.runtime import CudaLaunch, CudaRuntimeError, run_cuda_kernel
 from frontends.cuda.signature import infer_runtime_io_spec
 from intent_ir.llm import LLMClientError, LLMIntentHub
 from intent_ir.macros import expand_macros, enrich_intent_macros
+from intent_ir.mlir import detect_mlir_toolchain, run_pipeline as run_mlir_pipeline, to_mlir
 from intent_ir.parser import CandidateIntent
 from intent_ir.ir import ScheduleSketch
 from intent_ir.ir.printer_mlir_like import print_mlir_like
@@ -1673,6 +1674,40 @@ def run_pipeline_for_spec(
         }
     else:
         report["mutation_kill"] = {"skipped": True, "reason": ("diff_failed" if mutation_kill and not diff_ok else "disabled_or_no_cases")}
+
+    # MLIR shadow artifacts (dual-track migration; does not change execution path).
+    report["mlir"] = {
+        "enabled": bool(str(os.getenv("INTENTIR_MLIR_SHADOW", "1")).strip().lower() in {"1", "true", "yes", "on"}),
+        "execution_ir": str(os.getenv("INTENTIR_EXECUTION_IR", "intent")).strip().lower(),
+        "toolchain": detect_mlir_toolchain(),
+    }
+    try:
+        if bool(report["mlir"]["enabled"]) or str(report["mlir"]["execution_ir"]) == "mlir":
+            mod = to_mlir(cand_for_run.intent)
+            mod_path = out_dir / f"{spec.name}.intentir.intentdialect.mlir"
+            mod_path.write_text(mod.module_text, encoding="utf-8")
+            up_mod, up_trace = run_mlir_pipeline(mod, "upstream", out_dir=(out_dir / "mlir_upstream"))
+            mid_mod, mid_trace = run_mlir_pipeline(up_mod, "midend", out_dir=(out_dir / "mlir_midend"))
+            mid_path = out_dir / f"{spec.name}.intentir.intentdialect.midend.mlir"
+            mid_path.write_text(mid_mod.module_text, encoding="utf-8")
+            down_mod, down_trace = run_mlir_pipeline(mid_mod, "downstream_cuda", backend="cuda", out_dir=(out_dir / "mlir_downstream_cuda"))
+            down_path = out_dir / f"{spec.name}.intentir.intentdialect.downstream_cuda.mlir"
+            down_path.write_text(down_mod.module_text, encoding="utf-8")
+            report["mlir"]["module_path"] = str(mod_path)
+            report["mlir"]["midend_module_path"] = str(mid_path)
+            report["mlir"]["downstream_module_path"] = str(down_path)
+            report["mlir"]["upstream"] = dict(up_trace)
+            report["mlir"]["midend"] = dict(mid_trace)
+            report["mlir"]["downstream"] = dict(down_trace)
+            report["mlir"]["mlir_parse_ms"] = 0.0
+            report["mlir"]["mlir_pass_ms"] = float(
+                sum(float(p.get("ms") or 0.0) for p in list(up_trace.get("passes") or []))
+                + sum(float(p.get("ms") or 0.0) for p in list(mid_trace.get("passes") or []))
+            )
+            report["mlir"]["mlir_lower_ms"] = float(sum(float(p.get("ms") or 0.0) for p in list(down_trace.get("passes") or [])))
+    except Exception as e:
+        report["mlir"]["ok"] = False
+        report["mlir"]["error"] = f"{type(e).__name__}: {e}"
 
     return report
 

@@ -26,6 +26,7 @@ from intent_ir.macros import expand_macros, enrich_intent_macros
 from intent_ir.parser import CandidateIntent
 from intent_ir.ir.printer_mlir_like import print_mlir_like
 from intent_ir.ir.repair import materialize_missing_op_output_tensors
+from intent_ir.mlir import detect_mlir_toolchain, run_pipeline as run_mlir_pipeline, to_mlir
 from frontends.common.static_validate import static_validate
 from pipeline import registry as pipeline_registry
 from pipeline.interfaces import FrontendConstraints
@@ -177,6 +178,86 @@ def _load_intent_seed(seed_path: Path) -> tuple[CandidateIntent, CandidateIntent
             llm_trace=dict(cand.llm_trace),
         )
     return cand, cand_expanded
+
+
+def _mlir_shadow_mode_enabled() -> bool:
+    # Transitional default: keep shadow artifacts on unless explicitly disabled.
+    return str(os.getenv("INTENTIR_MLIR_SHADOW", "1")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _execution_ir_mode() -> str:
+    mode = str(os.getenv("INTENTIR_EXECUTION_IR", "intent")).strip().lower()
+    return mode if mode in {"intent", "mlir"} else "intent"
+
+
+def _downstream_pipeline_name(backend_target: str | None) -> str | None:
+    target = str(backend_target or "").strip().lower()
+    if not target:
+        return None
+    if target.startswith("cuda"):
+        return "downstream_cuda"
+    if target.startswith("rvv"):
+        return "downstream_rvv"
+    return None
+
+
+def _emit_mlir_shadow_artifacts(
+    *,
+    spec_name: str,
+    out_dir: Path,
+    intent: IntentFunction,
+    report: Dict[str, object],
+    backend_target: str | None,
+) -> None:
+    if not _mlir_shadow_mode_enabled() and _execution_ir_mode() != "mlir":
+        return
+    mlir_report: dict[str, object] = dict(report.get("mlir") or {})
+    mlir_report["enabled"] = True
+    mlir_report["execution_ir"] = _execution_ir_mode()
+    mlir_report["shadow_mode"] = bool(_mlir_shadow_mode_enabled())
+    mlir_report["toolchain"] = detect_mlir_toolchain()
+    try:
+        mod = to_mlir(intent)
+        mod_path = out_dir / f"{spec_name}.intentir.intentdialect.mlir"
+        mod_path.write_text(mod.module_text, encoding="utf-8")
+        mlir_report["module_path"] = str(mod_path)
+        mlir_report["dialect_version"] = str(mod.dialect_version)
+
+        upstream_mod, upstream_trace = run_mlir_pipeline(mod, "upstream", out_dir=(out_dir / "mlir_upstream"))
+        mid_mod, mid_trace = run_mlir_pipeline(upstream_mod, "midend", out_dir=(out_dir / "mlir_midend"))
+        mid_path = out_dir / f"{spec_name}.intentir.intentdialect.midend.mlir"
+        mid_path.write_text(mid_mod.module_text, encoding="utf-8")
+        mlir_report["midend_module_path"] = str(mid_path)
+        mlir_report["upstream"] = dict(upstream_trace)
+        mlir_report["midend"] = dict(mid_trace)
+        up_ms = sum(float(p.get("ms") or 0.0) for p in list(upstream_trace.get("passes") or []))
+        mid_ms = sum(float(p.get("ms") or 0.0) for p in list(mid_trace.get("passes") or []))
+        mlir_report["mlir_parse_ms"] = 0.0
+        mlir_report["mlir_pass_ms"] = float(up_ms + mid_ms)
+        mlir_report["mlir_lower_ms"] = 0.0
+
+        down = _downstream_pipeline_name(backend_target)
+        if down is not None:
+            down_mod, down_trace = run_mlir_pipeline(
+                mid_mod,
+                down,
+                backend=str(backend_target),
+                out_dir=(out_dir / f"mlir_{down}"),
+            )
+            down_path = out_dir / f"{spec_name}.intentir.intentdialect.{down}.mlir"
+            down_path.write_text(down_mod.module_text, encoding="utf-8")
+            mlir_report["downstream"] = dict(down_trace)
+            mlir_report["downstream_module_path"] = str(down_path)
+            down_ms = sum(float(p.get("ms") or 0.0) for p in list(down_trace.get("passes") or []))
+            mlir_report["mlir_lower_ms"] = float(down_ms)
+        else:
+            mlir_report["downstream"] = {"ok": True, "skipped": True, "reason": "backend_target_not_set"}
+
+        report["mlir"] = mlir_report
+    except Exception as e:
+        mlir_report["ok"] = False
+        mlir_report["error"] = f"{type(e).__name__}: {e}"
+        report["mlir"] = mlir_report
 
 
 def _ensure_schedule(intent, *, kernel_name: str, triton_src: str) -> None:
@@ -2633,6 +2714,13 @@ def run_pipeline_for_spec(
         report["diff"] = {"ok": True, "skipped": True, "reason": "traditional_provider_path_no_intent_ir"}
         report["stage_c"] = {"ok": True, "skipped": True, "reason": "no_intent_ir"}
         report["mutation_kill"] = {"skipped": True, "reason": "no_intent_ir"}
+        report["mlir"] = {
+            "enabled": False,
+            "execution_ir": _execution_ir_mode(),
+            "shadow_mode": bool(_mlir_shadow_mode_enabled()),
+            "reason": "no_intent_ir",
+            "toolchain": detect_mlir_toolchain(),
+        }
         _persist_baseline_snapshot(
             report=report,
             out_dir=out_dir,
@@ -3417,6 +3505,14 @@ def run_pipeline_for_spec(
         except Exception as e:
             report["intent_seed"]["saved"] = False
             report["intent_seed"]["error"] = f"{type(e).__name__}: {e}"
+
+    _emit_mlir_shadow_artifacts(
+        spec_name=spec.name,
+        out_dir=out_dir,
+        intent=cand.intent,
+        report=report,
+        backend_target=backend_target,
+    )
 
     # Persist baseline IO aligned to the final macro intent, so Task6 tools can
     # reuse the same snapshot without re-launching Triton.
