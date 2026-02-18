@@ -1,16 +1,16 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-18T03:47:17+00:00",
+  "updated_at": "2026-02-18T05:24:21+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "cae48240917cd994a8c9ee1e22b3420163d40006",
+  "head_commit": "dbc62813fa98d8f13987cc14a8bbf7a16c07b57a",
   "mode": "maintenance",
-  "coverage_integrity_phase": "recompute_stale",
-  "full196_last_run": "artifacts/flaggems_matrix/daily/20260218/full196_forcecompile_refresh_v5/run_summary.json",
+  "coverage_integrity_phase": "recomputed_ok",
+  "full196_last_run": "artifacts/flaggems_matrix/daily/20260218/full196_after_cli_cutover_v1/run_summary.json",
   "full196_last_ok": true,
-  "full196_validated_commit": "bb60beda9483aacbf6838f7d63b447d2af02fe1f",
+  "full196_validated_commit": "dbc62813fa98d8f13987cc14a8bbf7a16c07b57a",
   "full196_validated_commit_source": "run_summary.repo.head_commit",
-  "full196_commits_since_validated": 3,
-  "full196_commits_since_validated_total": 3,
+  "full196_commits_since_validated": 0,
+  "full196_commits_since_validated_total": 0,
   "full196_lifted_to_head": false,
   "full196_validated_mode": "force_compile",
   "full196_validated_scope": "coverage_158_kernels_to_196_semantics",
@@ -88,15 +88,13 @@
     "catalog_path": "scripts/CATALOG.json",
     "catalog_validated": true
   },
-  "active_lanes": [
-    "coverage"
-  ],
+  "active_lanes": [],
   "next_focus_by_lane": {
-    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD."
+    "coverage": "Run ci_gate freshness checks, refresh workflow state, then continue cleanup phases."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260218/full196_forcecompile_refresh_v5/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260218/full196_forcecompile_refresh_v5/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260218/full196_after_cli_cutover_v1/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260218/full196_after_cli_cutover_v1/status_converged.json"
   },
   "lanes": {
     "coverage": {

@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-18T03:47:17+00:00",
+  "updated_at": "2026-02-18T05:24:21+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -11,27 +11,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "cae4824 refactor(workflow): route nightly through unified intentir CLI\n04417f5 chore(workflow): refresh long-run state after full196+tanh and cli refactor\na9d1e52 refactor(cli): add unified intentir entrypoint and fix tanh coverage convergence\nbb60bed fix(workflow): make coverage batches idempotent + stamp repo provenance\n943ee25 fix(workflow): make stale coverage next_focus explicit\nfa957ae fix(workflow): keep full196 fresh across state-only commits\n241a74b workflow: checkpoint CLEANUP_V1 completion\n9e775d3 workflow: mark CLEANUP_V1 complete\n3e833d7 workflow: refresh full196 evidence on HEAD\ndbe6dc2 workflow: checkpoint cleanup full196 rerun (elementwise chunk 2)\nf7da8fa fix(workflow): restore rvv probe helper and keep coverage_batches portable\n99bd90f workflow(cleanup): track compiler-cleanup-v1 status + next-focus\n1a64882 chore(cleanup): archive legacy scripts/docs and tighten registry generation\n3050a3e chore(workflow): refresh full196 force_compile evidence on HEAD (2026-02-17)\n016b976 fix(workflow): make stage timing + rvv-remote inference work for category batches\n867e620 workflow: checkpoint family-scoped converge materialization rollout\n61f2767 coverage batches: always materialize family-scoped converge outputs\n49ff5dc workflow: record matmul coverage splitcheck and keep full196 stale until 7/7 rerun\nd9be4af workflow: checkpoint cuda custom-emitter split validation evidence\n5abc148 cuda cpp_codegen: split custom kernel emitter into focused include units",
+  "git_log_short": "dbc6281 chore(workflow): refresh state after nightly CLI cutover session\ncae4824 refactor(workflow): route nightly through unified intentir CLI\n04417f5 chore(workflow): refresh long-run state after full196+tanh and cli refactor\na9d1e52 refactor(cli): add unified intentir entrypoint and fix tanh coverage convergence\nbb60bed fix(workflow): make coverage batches idempotent + stamp repo provenance\n943ee25 fix(workflow): make stale coverage next_focus explicit\nfa957ae fix(workflow): keep full196 fresh across state-only commits\n241a74b workflow: checkpoint CLEANUP_V1 completion\n9e775d3 workflow: mark CLEANUP_V1 complete\n3e833d7 workflow: refresh full196 evidence on HEAD\ndbe6dc2 workflow: checkpoint cleanup full196 rerun (elementwise chunk 2)\nf7da8fa fix(workflow): restore rvv probe helper and keep coverage_batches portable\n99bd90f workflow(cleanup): track compiler-cleanup-v1 status + next-focus\n1a64882 chore(cleanup): archive legacy scripts/docs and tighten registry generation\n3050a3e chore(workflow): refresh full196 force_compile evidence on HEAD (2026-02-17)\n016b976 fix(workflow): make stage timing + rvv-remote inference work for category batches\n867e620 workflow: checkpoint family-scoped converge materialization rollout\n61f2767 coverage batches: always materialize family-scoped converge outputs\n49ff5dc workflow: record matmul coverage splitcheck and keep full196 stale until 7/7 rerun\nd9be4af workflow: checkpoint cuda custom-emitter split validation evidence",
   "progress_tail": [
-    {
-      "ts": "2026-02-17T15:24:16+00:00",
-      "commit": "867e62052535312caf0f1b0b1bae30dda15cf9ab",
-      "lane": "coverage",
-      "summary": "full196 refresh (7/7 category batches) intentir=force_compile miss_policy=strict rvv_remote+cuda_local",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_refresh_v1/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_refresh_v1/status_converged.json",
-      "next_focus": "Cut compiler-cleanup-v1 from this validated state; then archive doc/experiment and clean scripts/tests per plan",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_refresh_v1/coverage_integrity.json",
-        "artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_refresh_v1/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260217/full196_forcecompile_refresh_v1/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
     {
       "ts": "2026-02-17T16:51:07+00:00",
       "commit": "f7da8fab739fe703ea5dfa85ed9fbfa8991b238d",
@@ -175,15 +156,33 @@
       "run_ok": true,
       "run_out_dir": null,
       "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-18T05:24:16+00:00",
+      "commit": "dbc62813fa98d8f13987cc14a8bbf7a16c07b57a",
+      "lane": "coverage",
+      "summary": "full196 force_compile rerun complete on current HEAD via category batches (7/7 passed).",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260218/full196_after_cli_cutover_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260218/full196_after_cli_cutover_v1/status_converged.json",
+      "next_focus": "Run ci_gate freshness checks, refresh workflow state, then continue cleanup phases.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260218/full196_after_cli_cutover_v1/coverage_batch_runs.json",
+        "artifacts/flaggems_matrix/daily/20260218/full196_after_cli_cutover_v1/coverage_integrity.json",
+        "artifacts/flaggems_matrix/daily/20260218/full196_after_cli_cutover_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260218/full196_after_cli_cutover_v1/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
     }
   ],
-  "next_focus": "Run refreshed full196 on current HEAD after CLI/nightly refactor, then continue script/test cleanup phases.",
+  "next_focus": "Run ci_gate freshness checks, refresh workflow state, then continue cleanup phases.",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
-  "active_lanes": [
-    "coverage"
-  ],
+  "active_lanes": [],
   "next_focus_by_lane": {
-    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD."
+    "coverage": "Run ci_gate freshness checks, refresh workflow state, then continue cleanup phases."
   },
   "known_risks": []
 }
