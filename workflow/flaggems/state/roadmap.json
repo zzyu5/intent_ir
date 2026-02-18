@@ -41,7 +41,32 @@
       "id": "CLEANUP_V1",
       "target": "Compiler cleanup v1: archive paper/experiments, converge scripts/tests/structure, then rerun full196 on cleanup branch",
       "status": "completed"
+    },
+    {
+      "id": "MLIR_M1",
+      "target": "IntentIR↔MLIR dual-track bootstrap: module type, converters, pass manager, and workflow lane",
+      "status": "in_progress",
+      "todo": [
+        "stabilize conversion roundtrip contracts and failure surfaces",
+        "wire mlir migration lane into daily session workflow",
+        "track mlir toolchain availability in current_status"
+      ]
+    },
+    {
+      "id": "MLIR_M2",
+      "target": "Frontend MLIR shadow: triton/tilelang/cuda all emit intent dialect artifacts and pass traces",
+      "status": "in_progress",
+      "todo": [
+        "verify shadow artifacts are emitted by all three frontends",
+        "attach mlir timing fields to pipeline reports",
+        "keep provider boundary clean (no flaggems special path in core)"
+      ]
+    },
+    {
+      "id": "MLIR_M3",
+      "target": "Backend MLIR bridge: CUDA/RVV pipeline drivers accept MLIR payload and report mlir stage metrics",
+      "status": "pending"
     }
   ],
-  "notes": "Historical 196/196 remains reference only. Current truth is determined by recomputed full196 evidence after compiler refactors. CLEANUP_V1 completed with fresh full196 evidence on compiler-cleanup-v1."
+  "notes": "Historical 196/196 remains reference only. Current truth is determined by recomputed full196 evidence after compiler refactors. CLEANUP_V1 completed with fresh full196 evidence on compiler-cleanup-v1. MLIR migration now runs as a dedicated workflow lane."
 }

@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-18T13:42:42+00:00",
+  "updated_at": "2026-02-18T15:00:24+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -9,10 +9,11 @@
     "workflow/flaggems/state/active_batch_ir_arch.json",
     "workflow/flaggems/state/active_batch_backend_compiler.json",
     "workflow/flaggems/state/active_batch_workflow.json",
+    "workflow/flaggems/state/active_batch_mlir_migration.json",
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "502c4cc refactor(cleanup): remove docker artifacts and tighten gpu dependency docs\n087c923 chore(workflow): refresh full196 auto evidence on current HEAD\nf8919fd fix(cuda): repair var_mean2d signature and document test catalog\nedd3bec chore(workflow): log coverage-runner optimization session\n7d69d7d feat(cli): add chunk progress + stable seed cache for coverage runs\nd3f361c chore(workflow): refresh status after post-validation commits\n04a715c fix(workflow): treat rvv_remote as backend evidence and close wave3 backlog\n0ede08f chore(workflow): record full196 post-cleanup evidence and advance lanes\n770a098 refactor(cleanup): slim test gate set and advance workflow cleanup lanes\n87c5f09 refactor(workflow): add workflow lane + remove docker + advance cleanup state\n2ef4197 chore(workflow): align current status with latest full196 evidence\n2ec0cdf chore(workflow): refresh full196 coverage evidence on HEAD\ndbc6281 chore(workflow): refresh state after nightly CLI cutover session\ncae4824 refactor(workflow): route nightly through unified intentir CLI\n04417f5 chore(workflow): refresh long-run state after full196+tanh and cli refactor\na9d1e52 refactor(cli): add unified intentir entrypoint and fix tanh coverage convergence\nbb60bed fix(workflow): make coverage batches idempotent + stamp repo provenance\n943ee25 fix(workflow): make stale coverage next_focus explicit\nfa957ae fix(workflow): keep full196 fresh across state-only commits\n241a74b workflow: checkpoint CLEANUP_V1 completion",
+  "git_log_short": "78f78f9 chore(workflow): refresh state after cleanup commit\n502c4cc refactor(cleanup): remove docker artifacts and tighten gpu dependency docs\n087c923 chore(workflow): refresh full196 auto evidence on current HEAD\nf8919fd fix(cuda): repair var_mean2d signature and document test catalog\nedd3bec chore(workflow): log coverage-runner optimization session\n7d69d7d feat(cli): add chunk progress + stable seed cache for coverage runs\nd3f361c chore(workflow): refresh status after post-validation commits\n04a715c fix(workflow): treat rvv_remote as backend evidence and close wave3 backlog\n0ede08f chore(workflow): record full196 post-cleanup evidence and advance lanes\n770a098 refactor(cleanup): slim test gate set and advance workflow cleanup lanes\n87c5f09 refactor(workflow): add workflow lane + remove docker + advance cleanup state\n2ef4197 chore(workflow): align current status with latest full196 evidence\n2ec0cdf chore(workflow): refresh full196 coverage evidence on HEAD\ndbc6281 chore(workflow): refresh state after nightly CLI cutover session\ncae4824 refactor(workflow): route nightly through unified intentir CLI\n04417f5 chore(workflow): refresh long-run state after full196+tanh and cli refactor\na9d1e52 refactor(cli): add unified intentir entrypoint and fix tanh coverage convergence\nbb60bed fix(workflow): make coverage batches idempotent + stamp repo provenance\n943ee25 fix(workflow): make stale coverage next_focus explicit\nfa957ae fix(workflow): keep full196 fresh across state-only commits",
   "progress_tail": [
     {
       "ts": "2026-02-18T03:41:15+00:00",
@@ -181,12 +182,14 @@
   "next_focus": "continue plan P4/P5: cpp_codegen modular split and backend performance-wave artifacts",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
   "active_lanes": [
-    "coverage"
+    "coverage",
+    "mlir_migration"
   ],
   "next_focus_by_lane": {
     "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
     "backend_compiler": "Performance wave: schedule profile specialization and timing_delta thresholds.",
-    "workflow": "continue plan P4/P5: cpp_codegen modular split and backend performance-wave artifacts"
+    "workflow": "continue plan P4/P5: cpp_codegen modular split and backend performance-wave artifacts",
+    "mlir_migration": "Advance IntentIR->MLIR dual-track migration (module conversion, pass pipelines, shadow-mode integration)."
   },
   "known_risks": []
 }

@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_feature_list_v2",
-  "generated_at": "2026-02-18T07:37:22+00:00",
+  "generated_at": "2026-02-18T14:58:47+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
@@ -16,12 +16,13 @@
       "conv_pool_interp": 9,
       "attention_sequence": 5
     },
-    "tasks_total": 234,
+    "tasks_total": 237,
     "by_track": {
       "coverage": 196,
       "ir_arch": 5,
       "backend_compiler": 28,
-      "workflow": 5
+      "workflow": 5,
+      "mlir_migration": 3
     }
   },
   "features": [
@@ -6887,6 +6888,94 @@
         "artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/ci_gate.json"
       ],
       "description": "After cleanup, rerun 7/7 coverage batches (force_compile) and write workflow evidence on cleanup branch."
+    },
+    {
+      "id": "mlir_migration::module_bridge_bootstrap",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "in_progress",
+      "passes": false,
+      "reason_code": "pending",
+      "next_action": "frontend_shadow_integration",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "mlir_migration",
+      "task_type": "compilerization",
+      "priority": 10,
+      "acceptance": [
+        "intent_to_mlir_roundtrip_passes",
+        "mlir_pass_pipeline_upstream_midend_available",
+        "workflow_current_status_includes_mlir_fields"
+      ],
+      "gate_profile": "mlir_migration",
+      "depends_on": [],
+      "evidence_paths": [
+        "intent_ir/mlir/module.py",
+        "intent_ir/mlir/convert_from_intent.py",
+        "intent_ir/mlir/convert_to_intent.py",
+        "intent_ir/mlir/pass_manager.py",
+        "tests/intentir/test_mlir_migration.py"
+      ],
+      "description": "Bootstrap IntentIR <-> MLIR dual-track bridge and pass orchestration."
+    },
+    {
+      "id": "mlir_migration::frontend_shadow_mode",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "in_progress",
+      "passes": false,
+      "reason_code": "pending",
+      "next_action": "backend_bridge_and_full196",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "mlir_migration",
+      "task_type": "integration",
+      "priority": 20,
+      "acceptance": [
+        "triton_pipeline_emits_intent_dialect_artifacts",
+        "tilelang_pipeline_emits_intent_dialect_artifacts",
+        "cuda_pipeline_emits_intent_dialect_artifacts"
+      ],
+      "gate_profile": "mlir_migration",
+      "depends_on": [
+        "mlir_migration::module_bridge_bootstrap"
+      ],
+      "evidence_paths": [
+        "pipeline/triton/core.py",
+        "pipeline/tilelang/core.py",
+        "pipeline/cuda/core.py"
+      ],
+      "description": "Enable MLIR shadow mode across all frontends with pass trace and timing outputs."
+    },
+    {
+      "id": "mlir_migration::backend_bridge_contract",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending",
+      "next_action": "mlir_default_cutover_readiness",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "mlir_migration",
+      "task_type": "integration",
+      "priority": 30,
+      "acceptance": [
+        "cuda_driver_accepts_mlir_module_or_text",
+        "rvv_driver_accepts_mlir_module_or_text",
+        "mlir_stage_metrics_present_in_reports"
+      ],
+      "gate_profile": "mlir_migration",
+      "depends_on": [
+        "mlir_migration::frontend_shadow_mode"
+      ],
+      "evidence_paths": [
+        "backends/common/mlir_bridge.py",
+        "backends/cuda/pipeline/driver.py",
+        "backends/spmd_rvv/pipeline/driver.py",
+        "tests/backends/test_mlir_bridge.py"
+      ],
+      "description": "Bridge MLIR modules into backend pipeline contracts before full MLIR default switch."
     }
   ]
 }
