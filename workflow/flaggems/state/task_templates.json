@@ -809,12 +809,12 @@
       "id": "backend_compiler::cpp_codegen_modular_split_wave3_cuda",
       "track": "backend_compiler",
       "task_type": "compilerization",
-      "status": "pending",
-      "passes": false,
+      "status": "done",
+      "passes": true,
       "priority": 260,
       "gate_profile": "backend_compiler",
-      "reason_code": "pending_modular_split",
-      "next_action": "split_cuda_codegen_modules_wave3",
+      "reason_code": "done",
+      "next_action": "advance_schedule_profile_specialization_wave4",
       "acceptance": [
         "cuda_codegen_dispatch_and_remaining_emit_blocks_split",
         "backend_compiler_batch_pass_after_wave3_split",
@@ -823,19 +823,25 @@
       "depends_on": [
         "backend_compiler::cpp_codegen_modular_split_wave2_cuda"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/backend_compiler_gate.json",
+        "artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/stage_timing_breakdown.json",
+        "backends/cuda/cpp_codegen/emit_wave3_core.inc",
+        "backends/cuda/cpp_codegen/emit_wave3_mid.inc",
+        "backends/cuda/cpp_codegen/emit_wave3_tail.inc"
+      ],
       "description": "Continue CUDA cpp_codegen modular split by extracting remaining dispatch and emit blocks into dedicated modules."
     },
     {
       "id": "backend_compiler::cpp_codegen_modular_split_wave3_rvv",
       "track": "backend_compiler",
       "task_type": "compilerization",
-      "status": "pending",
-      "passes": false,
+      "status": "done",
+      "passes": true,
       "priority": 270,
       "gate_profile": "backend_compiler",
-      "reason_code": "pending_modular_split",
-      "next_action": "split_rvv_codegen_modules_wave3",
+      "reason_code": "done",
+      "next_action": "advance_schedule_profile_specialization_wave4",
       "acceptance": [
         "rvv_codegen_dispatch_and_remaining_emit_blocks_split",
         "backend_compiler_batch_pass_after_wave3_split",
@@ -844,7 +850,13 @@
       "depends_on": [
         "backend_compiler::cpp_codegen_modular_split_wave2_rvv"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/backend_compiler_gate.json",
+        "artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/stage_timing_breakdown.json",
+        "backends/spmd_rvv/cpp_codegen/emit_op_dispatch_part1.inc",
+        "backends/spmd_rvv/cpp_codegen/emit_op_dispatch_part2.inc",
+        "backends/spmd_rvv/cpp_codegen/emit_op_dispatch_part3.inc"
+      ],
       "description": "Continue RVV cpp_codegen modular split by extracting remaining dispatch and emit blocks into dedicated modules."
     },
     {

@@ -1,11 +1,11 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-18T07:32:20+00:00
-- Commit: `770a0985be1b4088bab9bf78b26fccf0b8edb80f`
-- Lane: `coverage`
-- Summary: full196 force_compile rerun complete on current HEAD via category batches (7/7 passed, post-cleanup).
+- Timestamp: 2026-02-18T07:37:45+00:00
+- Commit: `0ede08f96c0c359caa7cc78b5da52b71bba5c3ce`
+- Lane: `backend_compiler`
+- Summary: Backend compiler gate now accepts full196 aggregate evidence (rvv_remote + cuda); wave3 modular split tasks closed.
 - Batch Ops (0): (none)
 - Run Summary: `artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/run_summary.json`
 - Status Converged: `artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/coverage_batch_runs.json, artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/coverage_integrity.json, artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/run_summary.json, artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/status_converged.json
-- Next Focus: Run coverage freshness gate, refresh workflow state snapshots, then continue cleanup phase backlog.
+- Evidence Paths: artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/backend_compiler_gate.json, artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/run_summary.json, artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/stage_timing_breakdown.json, artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/status_converged.json
+- Next Focus: Performance wave: schedule profile specialization and timing_delta thresholds.

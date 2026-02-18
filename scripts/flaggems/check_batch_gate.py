@@ -88,6 +88,22 @@ def _stage_map(run_summary: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return out
 
 
+def _resolve_backend_stage(
+    stage_map: dict[str, dict[str, Any]], stage_name: str
+) -> tuple[str, dict[str, Any]]:
+    aliases: dict[str, tuple[str, ...]] = {
+        "rvv_local": ("rvv_local", "rvv_remote"),
+        "rvv_remote": ("rvv_remote", "rvv_local"),
+        "cuda_local": ("cuda_local", "cuda"),
+        "cuda": ("cuda", "cuda_local"),
+    }
+    for candidate in aliases.get(stage_name, (stage_name,)):
+        row = stage_map.get(candidate)
+        if isinstance(row, dict):
+            return candidate, row
+    return stage_name, {}
+
+
 def _validate_backend_timing(summary_path: Path) -> tuple[bool, str]:
     if not summary_path.is_file():
         return False, f"backend stage json missing: {summary_path}"
@@ -221,6 +237,27 @@ def _validate_stage_timing_breakdown(stage_path: Path) -> tuple[bool, str]:
     if failures:
         return False, "; ".join(failures)
     return True, "stage timing breakdown complete for rvv/cuda"
+
+
+def _breakdown_backend_has_evidence(stage_path: Path, backend: str) -> bool:
+    if not stage_path.is_file():
+        return False
+    payload = _load_json(stage_path)
+    backends = payload.get("backends")
+    if not isinstance(backends, dict):
+        return False
+    section = backends.get(backend)
+    if not isinstance(section, dict):
+        return False
+    if not bool(section.get("available")):
+        return False
+    totals = section.get("totals_ms")
+    if not isinstance(totals, dict):
+        return False
+    try:
+        return float(totals.get("total_ms", 0.0)) > 0.0
+    except Exception:
+        return False
 
 
 def _validate_ir_arch_mapping_quality(
@@ -545,8 +582,31 @@ def main() -> None:
             checks.append(_check("ir_arch.mapping_quality_thresholds", ok_map, detail_map))
     elif profile == "backend_compiler":
         stage_map = _stage_map(run_summary)
-        required = list(args.require_stage or ["rvv_local", "cuda_local"])
-        missing_or_fail = [s for s in required if not bool((stage_map.get(s) or {}).get("ok"))]
+        stage_timing_row = stage_map.get("stage_timing_breakdown") or {}
+        stage_timing_json = str(stage_timing_row.get("json_path") or "").strip()
+        stage_timing_path = Path(stage_timing_json) if stage_timing_json else Path("")
+
+        def _backend_key_for_stage(stage_name: str) -> str:
+            if stage_name.startswith("rvv"):
+                return "rvv"
+            if stage_name.startswith("cuda"):
+                return "cuda"
+            return ""
+
+        def _can_use_breakdown(stage_name: str) -> bool:
+            backend_key = _backend_key_for_stage(stage_name)
+            if not backend_key or not stage_timing_json:
+                return False
+            return _breakdown_backend_has_evidence(stage_timing_path, backend_key)
+
+        required = list(args.require_stage or ["rvv_remote", "cuda_local"])
+        missing_or_fail: list[str] = []
+        resolved_required: dict[str, tuple[str, dict[str, Any]]] = {}
+        for stage_name in required:
+            resolved_name, resolved_row = _resolve_backend_stage(stage_map, stage_name)
+            resolved_required[stage_name] = (resolved_name, resolved_row)
+            if not bool(resolved_row.get("ok")) and not _can_use_breakdown(resolved_name):
+                missing_or_fail.append(f"{stage_name}->{resolved_name}")
         checks.append(
             _check(
                 "backend_compiler.required_stage_ok",
@@ -557,18 +617,20 @@ def main() -> None:
             )
         )
         timing_failures: list[str] = []
-        timing_required_stages = {"rvv_local", "cuda_local"}
+        timing_required_stages = {"rvv_local", "rvv_remote", "cuda_local", "cuda"}
         for stage_name in required:
-            if stage_name not in timing_required_stages:
+            resolved_name, stage = resolved_required.get(stage_name, (stage_name, {}))
+            if resolved_name not in timing_required_stages:
                 continue
-            stage = stage_map.get(stage_name) or {}
             json_path = str(stage.get("json_path") or "").strip()
             if not json_path:
-                timing_failures.append(f"{stage_name}:missing_json_path")
+                if _can_use_breakdown(resolved_name):
+                    continue
+                timing_failures.append(f"{stage_name}->{resolved_name}:missing_json_path")
                 continue
             ok_timing, detail_timing = _validate_backend_timing(Path(json_path))
             if not ok_timing:
-                timing_failures.append(f"{stage_name}:{detail_timing}")
+                timing_failures.append(f"{stage_name}->{resolved_name}:{detail_timing}")
         checks.append(
             _check(
                 "backend_compiler.stage_timing_complete",
@@ -576,8 +638,6 @@ def main() -> None:
                 "backend timing fields complete" if not timing_failures else "; ".join(timing_failures),
             )
         )
-        stage_timing_row = stage_map.get("stage_timing_breakdown") or {}
-        stage_timing_json = str(stage_timing_row.get("json_path") or "").strip()
         if not stage_timing_json:
             checks.append(
                 _check(
@@ -597,16 +657,18 @@ def main() -> None:
             )
         realized_failures: list[str] = []
         for stage_name in required:
-            if stage_name not in timing_required_stages:
+            resolved_name, stage = resolved_required.get(stage_name, (stage_name, {}))
+            if resolved_name not in timing_required_stages:
                 continue
-            stage = stage_map.get(stage_name) or {}
             json_path = str(stage.get("json_path") or "").strip()
             if not json_path:
-                realized_failures.append(f"{stage_name}:missing_json_path")
+                if _can_use_breakdown(resolved_name):
+                    continue
+                realized_failures.append(f"{stage_name}->{resolved_name}:missing_json_path")
                 continue
             ok_realized, detail_realized = _validate_backend_stage_realized(Path(json_path))
             if not ok_realized:
-                realized_failures.append(f"{stage_name}:{detail_realized}")
+                realized_failures.append(f"{stage_name}->{resolved_name}:{detail_realized}")
         checks.append(
             _check(
                 "backend_compiler.pipeline_stage_realized",
