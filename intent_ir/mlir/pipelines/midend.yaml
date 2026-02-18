@@ -1,4 +1,4 @@
 passes:
+  - python:expand_macros_intent
   - python:canonicalize_intent
   - python:cse_like
-

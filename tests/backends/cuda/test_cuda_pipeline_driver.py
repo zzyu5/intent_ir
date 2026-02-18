@@ -4,6 +4,7 @@ from backends.cuda.codegen.cpp_driver import lower_intent_to_cuda_kernel_cpp
 from backends.cuda.pipeline.driver import run_cuda_pipeline
 from backends.cuda.pipeline.stages import CUDA_PIPELINE_STAGES
 from intent_ir.ir import IntentFunction
+from intent_ir.mlir import to_mlir
 
 
 def _add_intent(name: str = "cuda_pipeline_add") -> IntentFunction:
@@ -100,6 +101,17 @@ def test_run_cuda_pipeline_schedule_only_mode_marks_compile_launch_as_schedule_o
     launch_stage = next(s for s in result.stages if s.name == "launch")
     assert compile_stage.artifacts.get("compile_mode") in {"skipped_schedule_only", "skipped_missing_bindings"}
     assert launch_stage.artifacts.get("launch_mode") in {"skipped_schedule_only", "skipped_missing_bindings"}
+
+
+def test_run_cuda_pipeline_accepts_mlir_module_payload() -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_add_mlir"))
+    result = run_cuda_pipeline(mod, pipeline_mode="schedule_only")
+    assert result.ok is True
+    assert result.input_ir_kind == "mlir_module"
+    assert float(result.mlir_parse_ms) >= 0.0
+    legalize = next(s for s in result.stages if s.name == "legalize")
+    assert legalize.artifacts.get("input_ir_kind") == "mlir_module"
+    assert float(legalize.artifacts.get("mlir_parse_ms") or 0.0) >= 0.0
 
 
 def test_var_mean_codegen_signature_has_no_trailing_comma() -> None:

@@ -1,3 +1,3 @@
 passes:
+  - python:backend_legalize
   - python:attach_provider_meta
-

@@ -47,6 +47,19 @@ def test_mlir_pass_pipeline_runs(tmp_path: Path) -> None:
     assert trace_path.is_file()
 
 
+def test_mlir_midend_pipeline_includes_stats_and_macro_expand(tmp_path: Path) -> None:
+    intent = _sample_intent()
+    module = to_mlir(intent)
+    _, trace = run_pipeline(module, "midend", out_dir=tmp_path)
+    assert bool(trace.get("ok")) is True
+    names = [str(p.get("name") or "") for p in list(trace.get("passes") or [])]
+    assert "python:expand_macros_intent" in names
+    assert "python:canonicalize_intent" in names
+    assert "python:cse_like" in names
+    assert isinstance(trace.get("input_stats"), dict)
+    assert isinstance(trace.get("output_stats"), dict)
+
+
 def test_mlir_toolchain_probe_schema() -> None:
     payload = detect_mlir_toolchain()
     assert payload["schema_version"] == "intent_mlir_toolchain_probe_v1"
@@ -77,4 +90,3 @@ def test_intentir_cli_mlir_check(tmp_path: Path) -> None:
     assert p.returncode == 0, p.stderr or p.stdout
     payload = json.loads(out.read_text(encoding="utf-8"))
     assert bool(payload.get("roundtrip_ok")) is True
-

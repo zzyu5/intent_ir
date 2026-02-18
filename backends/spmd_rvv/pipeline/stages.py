@@ -33,12 +33,16 @@ class RvvPipelineResult:
     stages: list[RvvPipelineStage]
     reason_code: str = "ok"
     reason_detail: str = ""
+    input_ir_kind: str = "intent"
+    mlir_parse_ms: float = 0.0
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "ok": bool(self.ok),
             "reason_code": str(self.reason_code),
             "reason_detail": str(self.reason_detail),
+            "input_ir_kind": str(self.input_ir_kind),
+            "mlir_parse_ms": float(self.mlir_parse_ms),
             "stages": [
                 {
                     "name": s.name,
@@ -50,4 +54,3 @@ class RvvPipelineResult:
                 for s in self.stages
             ],
         }
-

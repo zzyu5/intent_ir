@@ -19,7 +19,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from pipeline.triton.providers.flaggems.registry import DEFAULT_REGISTRY_PATH
-from pipeline.triton.providers.flaggems.specs import coverage_flaggems_kernel_specs
 from pipeline.triton.providers.flaggems.workflow import (
     append_metrics_history,
     build_feature_list_payload,
@@ -133,6 +132,10 @@ def main() -> None:
     )
 
     if bool(args.freeze_baseline):
+        from pipeline.triton.providers.flaggems.specs import (  # noqa: PLC0415
+            coverage_flaggems_kernel_specs,
+        )
+
         coverage_specs = [
             str(s.name)
             for s in coverage_flaggems_kernel_specs(

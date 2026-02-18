@@ -31,12 +31,17 @@ Notes:
 ## Pass pipelines
 
 1. `upstream.yaml`: symbol/provider normalization
-2. `midend.yaml`: canonicalization + cse-like simplification
-3. `downstream_cuda.yaml`: backend-specific annotate/legalize hook point
-4. `downstream_rvv.yaml`: backend-specific annotate/legalize hook point
+2. `midend.yaml`: macro expansion + canonicalization + cse-like simplification
+3. `downstream_cuda.yaml`: backend legalize + provider/backend metadata attach
+4. `downstream_rvv.yaml`: backend legalize + provider/backend metadata attach
+
+Pass trace artifacts:
+
+1. Each pass records `before_stats` / `after_stats` (ops/tensors/outputs/symbols).
+2. Pipeline trace records `input_stats` / `output_stats`.
+3. Backend drivers propagate MLIR bridge metrics (`input_ir_kind`, `mlir_parse_ms`).
 
 ## Current limitations
 
 1. `mlir-opt` integration is optional; python passes are default during migration.
 2. The textual dialect is intentionally conservative and oriented for bridge safety.
-

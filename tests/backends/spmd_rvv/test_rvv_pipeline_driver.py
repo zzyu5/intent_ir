@@ -3,6 +3,7 @@ from __future__ import annotations
 from backends.spmd_rvv.pipeline.driver import run_rvv_pipeline
 from backends.spmd_rvv.pipeline.stages import RVV_PIPELINE_STAGES
 from intent_ir.ir import IntentFunction
+from intent_ir.mlir import to_mlir
 
 
 def _intent(op: str, *, name: str) -> IntentFunction:
@@ -96,3 +97,14 @@ def test_run_rvv_pipeline_schedule_only_mode_marks_compile_run_as_schedule_only(
     run_stage = next(s for s in result.stages if s.name == "run")
     assert compile_stage.artifacts.get("compile_mode") in {"skipped_schedule_only", "skipped_missing_bindings"}
     assert run_stage.artifacts.get("run_mode") in {"skipped_schedule_only", "skipped_missing_bindings"}
+
+
+def test_run_rvv_pipeline_accepts_mlir_module_payload() -> None:
+    mod = to_mlir(_intent("add", name="rvv_pipeline_add_mlir"))
+    result = run_rvv_pipeline(mod, pipeline_mode="schedule_only")
+    assert result.ok is True
+    assert result.input_ir_kind == "mlir_module"
+    assert float(result.mlir_parse_ms) >= 0.0
+    legalize = next(s for s in result.stages if s.name == "legalize")
+    assert legalize.artifacts.get("input_ir_kind") == "mlir_module"
+    assert float(legalize.artifacts.get("mlir_parse_ms") or 0.0) >= 0.0

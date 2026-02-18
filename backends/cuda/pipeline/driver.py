@@ -11,7 +11,7 @@ import numpy as np
 from typing import Any, Mapping
 
 from backends.cuda.runtime import CudaLaunch, compile_cuda_extension, run_cuda_kernel
-from backends.common.mlir_bridge import resolve_intent_payload
+from backends.common.mlir_bridge import resolve_intent_payload_with_meta
 from backends.common.pipeline_utils import (
     collect_intent_info,
     has_symbolic_dims,
@@ -81,7 +81,7 @@ def run_cuda_pipeline(
     shape_bindings: Mapping[str, Any] | None = None,
     pipeline_mode: str = "full",
 ) -> CudaPipelineResult:
-    intent_payload = resolve_intent_payload(intent_payload)
+    intent_payload, bridge_meta = resolve_intent_payload_with_meta(intent_payload)
     mode = str(pipeline_mode or "full").strip().lower()
     if mode not in {"full", "schedule_only"}:
         raise ValueError(f"unsupported cuda pipeline_mode: {pipeline_mode}")
@@ -107,6 +107,9 @@ def run_cuda_pipeline(
                 "tensor_count": len(tensor_shapes),
                 "ops": op_names,
                 "rewrite_counts": rewrite_counts,
+                "input_ir_kind": str(bridge_meta.source_kind),
+                "mlir_parse_ms": float(bridge_meta.mlir_parse_ms),
+                "mlir_bridge_used": bool(bridge_meta.used_mlir_bridge),
             },
         )
 
@@ -260,4 +263,11 @@ def run_cuda_pipeline(
             fail_reason = _classify_failure(fail_detail)
 
     ok = not failed and all(s.ok for s in stages)
-    return CudaPipelineResult(ok=ok, stages=stages, reason_code=("ok" if ok else fail_reason), reason_detail=fail_detail)
+    return CudaPipelineResult(
+        ok=ok,
+        stages=stages,
+        reason_code=("ok" if ok else fail_reason),
+        reason_detail=fail_detail,
+        input_ir_kind=str(bridge_meta.source_kind),
+        mlir_parse_ms=float(bridge_meta.mlir_parse_ms),
+    )

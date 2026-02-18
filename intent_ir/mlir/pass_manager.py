@@ -10,6 +10,7 @@ from typing import Any
 from .module import IntentMLIRModule
 from .passes import PASS_REGISTRY
 from .toolchain import detect_mlir_toolchain
+from .convert_to_intent import to_intent
 
 ROOT = Path(__file__).resolve().parents[2]
 PIPELINES_DIR = Path(__file__).resolve().parent / "pipelines"
@@ -24,6 +25,8 @@ class PassRecord:
     detail: str
     before_path: str = ""
     after_path: str = ""
+    before_stats: dict[str, Any] | None = None
+    after_stats: dict[str, Any] | None = None
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -34,6 +37,8 @@ class PassRecord:
             "detail": str(self.detail),
             "before_path": str(self.before_path),
             "after_path": str(self.after_path),
+            "before_stats": dict(self.before_stats or {}),
+            "after_stats": dict(self.after_stats or {}),
         }
 
 
@@ -58,11 +63,13 @@ def run_pipeline(
         t0 = time.perf_counter()
         before_path = ""
         after_path = ""
+        before_stats = _module_stats(current)
         try:
             if out is not None:
                 before_path = str(out / f"pass_{idx:03d}_{_safe(pass_name)}.before.mlir")
                 Path(before_path).write_text(current.module_text, encoding="utf-8")
             current = _run_one_pass(current, pass_name, backend=backend, toolchain=toolchain)
+            after_stats = _module_stats(current)
             if out is not None:
                 after_path = str(out / f"pass_{idx:03d}_{_safe(pass_name)}.after.mlir")
                 Path(after_path).write_text(current.module_text, encoding="utf-8")
@@ -76,10 +83,13 @@ def run_pipeline(
                     detail="ok",
                     before_path=before_path,
                     after_path=after_path,
+                    before_stats=before_stats,
+                    after_stats=after_stats,
                 )
             )
         except Exception as e:
             dt = float((time.perf_counter() - t0) * 1000.0)
+            after_stats = _module_stats(current)
             trace.append(
                 PassRecord(
                     name=str(pass_name),
@@ -89,6 +99,8 @@ def run_pipeline(
                     detail=f"{type(e).__name__}: {e}",
                     before_path=before_path,
                     after_path=after_path,
+                    before_stats=before_stats,
+                    after_stats=after_stats,
                 )
             )
             if fail_on_error:
@@ -102,6 +114,8 @@ def run_pipeline(
         "toolchain": toolchain,
         "passes": [x.to_json_dict() for x in trace],
         "ok": bool(all(x.ok for x in trace)),
+        "input_stats": _module_stats(module),
+        "output_stats": _module_stats(current),
     }
     if out is not None:
         trace_path = out / "pass_trace.json"
@@ -197,3 +211,22 @@ def _parse_yaml_pass_list(text: str) -> list[str]:
 def _safe(name: str) -> str:
     return "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in str(name))
 
+
+def _module_stats(module: IntentMLIRModule) -> dict[str, Any]:
+    stats: dict[str, Any] = {
+        "symbols": int(len(list(module.symbols or []))),
+        "dialect_version": str(module.dialect_version),
+    }
+    try:
+        intent = to_intent(module)
+        stats.update(
+            {
+                "intent_name": str(intent.name),
+                "ops": int(len(list(intent.ops or []))),
+                "tensors": int(len(dict(intent.tensors or {}))),
+                "outputs": int(len(list(intent.outputs or []))),
+            }
+        )
+    except Exception as e:
+        stats["intent_decode_error"] = f"{type(e).__name__}: {e}"
+    return stats
