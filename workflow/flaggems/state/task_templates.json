@@ -953,12 +953,12 @@
       "id": "workflow::cleanup_v1_full196_post_cleanup",
       "track": "workflow",
       "task_type": "verification",
-      "status": "pending",
-      "passes": false,
+      "status": "done",
+      "passes": true,
       "priority": 50,
       "gate_profile": "workflow",
-      "reason_code": "pending_cleanup",
-      "next_action": "rerun_full196_on_cleanup_branch",
+      "reason_code": "done",
+      "next_action": "focus_backend_compiler_wave3",
       "acceptance": [
         "full196_force_compile_passes_on_head",
         "workflow_full196_fresh_on_head",
@@ -967,7 +967,12 @@
       "depends_on": [
         "workflow::cleanup_v1_structure_convergence"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/coverage_integrity.json",
+        "artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/ci_gate.json"
+      ],
       "description": "After cleanup, rerun 7/7 coverage batches (force_compile) and write workflow evidence on cleanup branch."
     }
   ]

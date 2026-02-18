@@ -1,9 +1,9 @@
 {
   "schema_version": "flaggems_active_batch_v2",
-  "generated_at": "2026-02-18T05:34:49+00:00",
+  "generated_at": "2026-02-18T07:33:33+00:00",
   "branch": "compiler-cleanup-v1",
   "lane": "backend_compiler",
-  "batch_size": 8,
+  "batch_size": 10,
   "selection_policy": [
     "status:blocking",
     "priority",

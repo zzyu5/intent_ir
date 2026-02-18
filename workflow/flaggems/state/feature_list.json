@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_feature_list_v2",
-  "generated_at": "2026-02-18T05:40:07+00:00",
+  "generated_at": "2026-02-18T07:33:19+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
@@ -6850,10 +6850,10 @@
       "id": "workflow::cleanup_v1_full196_post_cleanup",
       "semantic_op": "",
       "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "pending_cleanup",
-      "next_action": "rerun_full196_on_cleanup_branch",
+      "status": "done",
+      "passes": true,
+      "reason_code": "done",
+      "next_action": "focus_backend_compiler_wave3",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "workflow",
@@ -6868,7 +6868,12 @@
       "depends_on": [
         "workflow::cleanup_v1_structure_convergence"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/coverage_integrity.json",
+        "artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/ci_gate.json"
+      ],
       "description": "After cleanup, rerun 7/7 coverage batches (force_compile) and write workflow evidence on cleanup branch."
     }
   ]
