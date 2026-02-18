@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-17T18:54:01+00:00",
+  "updated_at": "2026-02-18T03:41:19+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -11,54 +11,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "fa957ae fix(workflow): keep full196 fresh across state-only commits\n241a74b workflow: checkpoint CLEANUP_V1 completion\n9e775d3 workflow: mark CLEANUP_V1 complete\n3e833d7 workflow: refresh full196 evidence on HEAD\ndbe6dc2 workflow: checkpoint cleanup full196 rerun (elementwise chunk 2)\nf7da8fa fix(workflow): restore rvv probe helper and keep coverage_batches portable\n99bd90f workflow(cleanup): track compiler-cleanup-v1 status + next-focus\n1a64882 chore(cleanup): archive legacy scripts/docs and tighten registry generation\n3050a3e chore(workflow): refresh full196 force_compile evidence on HEAD (2026-02-17)\n016b976 fix(workflow): make stage timing + rvv-remote inference work for category batches\n867e620 workflow: checkpoint family-scoped converge materialization rollout\n61f2767 coverage batches: always materialize family-scoped converge outputs\n49ff5dc workflow: record matmul coverage splitcheck and keep full196 stale until 7/7 rerun\nd9be4af workflow: checkpoint cuda custom-emitter split validation evidence\n5abc148 cuda cpp_codegen: split custom kernel emitter into focused include units\n1034da7 workflow: refresh full196 aggregate after outlier rollout\n6aeaaa1 workflow: checkpoint compile outlier stage rollout\ndecdf8b backend_compiler: emit compile outlier report with cold/warm split\n4e031b3 workflow: checkpoint cache-hit instrumentation backend evidence\nd17820e cuda smoke: expose compile cache-hit metadata for stage analysis",
+  "git_log_short": "a9d1e52 refactor(cli): add unified intentir entrypoint and fix tanh coverage convergence\nbb60bed fix(workflow): make coverage batches idempotent + stamp repo provenance\n943ee25 fix(workflow): make stale coverage next_focus explicit\nfa957ae fix(workflow): keep full196 fresh across state-only commits\n241a74b workflow: checkpoint CLEANUP_V1 completion\n9e775d3 workflow: mark CLEANUP_V1 complete\n3e833d7 workflow: refresh full196 evidence on HEAD\ndbe6dc2 workflow: checkpoint cleanup full196 rerun (elementwise chunk 2)\nf7da8fa fix(workflow): restore rvv probe helper and keep coverage_batches portable\n99bd90f workflow(cleanup): track compiler-cleanup-v1 status + next-focus\n1a64882 chore(cleanup): archive legacy scripts/docs and tighten registry generation\n3050a3e chore(workflow): refresh full196 force_compile evidence on HEAD (2026-02-17)\n016b976 fix(workflow): make stage timing + rvv-remote inference work for category batches\n867e620 workflow: checkpoint family-scoped converge materialization rollout\n61f2767 coverage batches: always materialize family-scoped converge outputs\n49ff5dc workflow: record matmul coverage splitcheck and keep full196 stale until 7/7 rerun\nd9be4af workflow: checkpoint cuda custom-emitter split validation evidence\n5abc148 cuda cpp_codegen: split custom kernel emitter into focused include units\n1034da7 workflow: refresh full196 aggregate after outlier rollout\n6aeaaa1 workflow: checkpoint compile outlier stage rollout",
   "progress_tail": [
-    {
-      "ts": "2026-02-17T12:53:03+00:00",
-      "commit": "5abc1481e82b93dd45f809036b4ddb05e530baf1",
-      "lane": "backend_compiler",
-      "summary": "Split CUDA custom-kernel cpp_codegen include into focused units and validated addmv2d dual-pass on RVV remote + CUDA.",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_custom_split_addmv_v1/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_custom_split_addmv_v1/status_converged.json",
-      "next_focus": "Continue backend compiler phase4 by splitting remaining large emit include groups and rerunning impacted coverage categories before refreshing full196.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_custom_split_addmv_v1/backend_compiler_batch_summary.json",
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_custom_split_addmv_v1/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_custom_split_addmv_v1/stage_timing_breakdown.json",
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_custom_split_addmv_v1/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260217/backend_compiler_custom_split_addmv_v1",
-      "counts_by_status": {
-        "blocked_backend": 195,
-        "dual_pass": 1
-      }
-    },
-    {
-      "ts": "2026-02-17T12:59:42+00:00",
-      "commit": "d9be4affe0c481a7f2dc47d0c048a99e344d61b1",
-      "lane": "coverage",
-      "summary": "Reran impacted matmul_linear coverage category after CUDA custom-emitter split; family remains dual-pass across pipeline+RVV remote+CUDA.",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260217/coverage_matmul_splitcheck_v1/family_matmul_linear/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260217/coverage_matmul_splitcheck_v1/family_matmul_linear/status_converged.json",
-      "next_focus": "Continue rerunning remaining impacted coverage categories in batch mode, then execute 7/7 aggregate full196 force_compile refresh on current HEAD.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260217/coverage_matmul_splitcheck_v1/coverage_batch_runs.json",
-        "artifacts/flaggems_matrix/daily/20260217/coverage_matmul_splitcheck_v1/family_matmul_linear/pipeline_reports/kernel_progress.jsonl",
-        "artifacts/flaggems_matrix/daily/20260217/coverage_matmul_splitcheck_v1/family_matmul_linear/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260217/coverage_matmul_splitcheck_v1/family_matmul_linear/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260217/coverage_matmul_splitcheck_v1/family_matmul_linear",
-      "counts_by_status": {
-        "blocked_backend": 188,
-        "dual_pass": 8
-      }
-    },
     {
       "ts": "2026-02-17T13:02:36+00:00",
       "commit": "61f27676d153041049dc9a1777c5f5f65942a5a3",
@@ -184,15 +138,54 @@
       "run_ok": true,
       "run_out_dir": null,
       "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-18T03:36:33+00:00",
+      "commit": "bb60beda9483aacbf6838f7d63b447d2af02fe1f",
+      "lane": "coverage",
+      "summary": "full196 force_compile refreshed: 7/7 category batches passed; tanh canonical fix validated on rvv_remote+cuda.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260218/full196_forcecompile_refresh_v5/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260218/full196_forcecompile_refresh_v5/status_converged.json",
+      "next_focus": "Refresh workflow freshness on HEAD, then continue cleanup phases.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260218/full196_forcecompile_refresh_v5/ci_gate.json",
+        "artifacts/flaggems_matrix/daily/20260218/full196_forcecompile_refresh_v5/coverage_integrity.json",
+        "artifacts/flaggems_matrix/daily/20260218/full196_forcecompile_refresh_v5/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260218/full196_forcecompile_refresh_v5/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-18T03:41:15+00:00",
+      "commit": "a9d1e5247507d1ed4e91529725ac139c43f1a691",
+      "lane": "coverage",
+      "summary": "Merged tanh canonical fix + unified intentir CLI + tilelang/cuda script restoration.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260218/full196_forcecompile_refresh_v5/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260218/full196_forcecompile_refresh_v5/status_converged.json",
+      "next_focus": "Continue plan: script/test reduction and move workflow/nightly to unified CLI.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260218/full196_forcecompile_refresh_v5/ci_gate.json",
+        "artifacts/flaggems_matrix/daily/20260218/full196_forcecompile_refresh_v5/coverage_integrity.json",
+        "artifacts/flaggems_matrix/daily/20260218/full196_forcecompile_refresh_v5/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260218/full196_forcecompile_refresh_v5/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
     }
   ],
-  "next_focus": "Proceed backend_compiler lane: reduce cold compile outliers + continue cpp_codegen modularization; rerun impacted categories then refresh full196",
+  "next_focus": "Continue plan: script/test reduction and move workflow/nightly to unified CLI.",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
   "active_lanes": [
     "coverage"
   ],
   "next_focus_by_lane": {
-    "backend_compiler": "Continue backend compiler phase4 by splitting remaining large emit include groups and rerunning impacted coverage categories before refreshing full196.",
     "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD."
   },
   "known_risks": []
