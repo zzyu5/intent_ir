@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_feature_list_v2",
-  "generated_at": "2026-02-18T15:31:23+00:00",
+  "generated_at": "2026-02-18T16:19:32+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
@@ -16,13 +16,13 @@
       "conv_pool_interp": 9,
       "attention_sequence": 5
     },
-    "tasks_total": 237,
+    "tasks_total": 238,
     "by_track": {
       "coverage": 196,
       "ir_arch": 5,
       "backend_compiler": 28,
       "workflow": 5,
-      "mlir_migration": 3
+      "mlir_migration": 4
     }
   },
   "features": [
@@ -6923,10 +6923,10 @@
       "id": "mlir_migration::frontend_shadow_mode",
       "semantic_op": "",
       "family": "workflow",
-      "status": "in_progress",
-      "passes": false,
-      "reason_code": "pending",
-      "next_action": "backend_bridge_and_full196",
+      "status": "done",
+      "passes": true,
+      "reason_code": "ok",
+      "next_action": "backend_bridge_contract",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "mlir_migration",
@@ -6944,7 +6944,8 @@
       "evidence_paths": [
         "pipeline/triton/core.py",
         "pipeline/tilelang/core.py",
-        "pipeline/cuda/core.py"
+        "pipeline/cuda/core.py",
+        "tests/intentir/test_mlir_migration.py"
       ],
       "description": "Enable MLIR shadow mode across all frontends with pass trace and timing outputs."
     },
@@ -6952,9 +6953,9 @@
       "id": "mlir_migration::backend_bridge_contract",
       "semantic_op": "",
       "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "pending",
+      "status": "done",
+      "passes": true,
+      "reason_code": "ok",
       "next_action": "mlir_default_cutover_readiness",
       "e2e_spec": null,
       "intent_ops": [],
@@ -6974,9 +6975,40 @@
         "backends/common/mlir_bridge.py",
         "backends/cuda/pipeline/driver.py",
         "backends/spmd_rvv/pipeline/driver.py",
-        "tests/backends/test_mlir_bridge.py"
+        "tests/backends/test_mlir_bridge.py",
+        "tests/backends/cuda/test_cuda_pipeline_driver.py",
+        "tests/backends/spmd_rvv/test_rvv_pipeline_driver.py"
       ],
       "description": "Bridge MLIR modules into backend pipeline contracts before full MLIR default switch."
+    },
+    {
+      "id": "mlir_migration::default_cutover_readiness",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending",
+      "next_action": "run_full196_mlir_force_compile",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "mlir_migration",
+      "task_type": "migration_cutover",
+      "priority": 40,
+      "acceptance": [
+        "execution_ir_mlir_full196_green_on_head",
+        "workflow_freshness_includes_mlir_validated_commit",
+        "legacy_intent_path_kept_as_compat_only"
+      ],
+      "gate_profile": "mlir_migration",
+      "depends_on": [
+        "mlir_migration::backend_bridge_contract"
+      ],
+      "evidence_paths": [
+        "scripts/intentir.py",
+        "scripts/flaggems/run_coverage_batches.py",
+        "workflow/flaggems/state/current_status.json"
+      ],
+      "description": "Prepare and validate MLIR default execution cutover using full196 force_compile evidence on HEAD."
     }
   ]
 }

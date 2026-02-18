@@ -50,17 +50,12 @@
     {
       "id": "MLIR_M2",
       "target": "Frontend MLIR shadow: triton/tilelang/cuda all emit intent dialect artifacts and pass traces",
-      "status": "in_progress",
-      "todo": [
-        "verify shadow artifacts are emitted by all three frontends",
-        "attach mlir timing fields to pipeline reports",
-        "keep provider boundary clean (no flaggems special path in core)"
-      ]
+      "status": "completed"
     },
     {
       "id": "MLIR_M3",
       "target": "Backend MLIR bridge: CUDA/RVV pipeline drivers accept MLIR payload and report mlir stage metrics",
-      "status": "pending"
+      "status": "completed"
     }
   ],
   "notes": "Historical 196/196 remains reference only. Current truth is determined by recomputed full196 evidence after compiler refactors. CLEANUP_V1 completed with fresh full196 evidence on compiler-cleanup-v1. MLIR migration now runs as a dedicated workflow lane."
