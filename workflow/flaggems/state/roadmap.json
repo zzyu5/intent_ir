@@ -45,12 +45,7 @@
     {
       "id": "MLIR_M1",
       "target": "IntentIR↔MLIR dual-track bootstrap: module type, converters, pass manager, and workflow lane",
-      "status": "in_progress",
-      "todo": [
-        "stabilize conversion roundtrip contracts and failure surfaces",
-        "wire mlir migration lane into daily session workflow",
-        "track mlir toolchain availability in current_status"
-      ]
+      "status": "completed"
     },
     {
       "id": "MLIR_M2",
