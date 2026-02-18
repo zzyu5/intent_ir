@@ -85,6 +85,16 @@ def _entry_status_rank(status: str) -> int:
     return int(rank.get(str(status), 0))
 
 
+def _entry_quality(entry: dict[str, Any]) -> tuple[int, int, int, int, int]:
+    status_rank = _entry_status_rank(str(entry.get("status") or ""))
+    artifact_complete = 1 if bool(entry.get("artifact_complete")) else 0
+    determinable = 1 if bool(entry.get("determinability")) else 0
+    in_scope_alias = 1 if bool(entry.get("in_scope_kernel_alias")) else 0
+    reason_code = str(entry.get("reason_code") or "").strip()
+    reason_penalty = 0 if reason_code == "provider_report_missing" else 1
+    return (status_rank, artifact_complete, determinable, in_scope_alias, reason_penalty)
+
+
 def _counts(entries: list[dict[str, Any]]) -> dict[str, int]:
     c: Counter[str] = Counter()
     for row in list(entries or []):
@@ -145,9 +155,7 @@ def _materialize_family_outputs(
             if not sop or sop not in semantic_set:
                 continue
             prev = merged_by_semantic.get(sop)
-            if prev is None or _entry_status_rank(str(entry.get("status") or "")) >= _entry_status_rank(
-                str(prev.get("status") or "")
-            ):
+            if prev is None or _entry_quality(entry) > _entry_quality(prev):
                 merged_by_semantic[sop] = entry
 
     final_entries: list[dict[str, Any]] = []

@@ -33,6 +33,11 @@ def test_canonical_intent_templates_exist_for_blocked_kernels() -> None:
     assert any(op.op == "exp" for op in sigmoid.ops)
     assert not any(("base" in (op.attrs or {})) for op in sigmoid.ops if op.op == "exp")
 
+    tanh = canonical_flaggems_intent_for_spec("tanh2d")
+    assert tanh is not None
+    assert tanh.name == "tanh2d"
+    assert [op.op for op in tanh.ops] == ["const", "const", "mul", "exp", "sub", "add", "div"]
+
     batch_norm = canonical_flaggems_intent_for_spec("batch_norm2d")
     assert batch_norm is not None
     assert batch_norm.name == "batch_norm2d"

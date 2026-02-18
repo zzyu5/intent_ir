@@ -10,6 +10,14 @@ Always run:
 python scripts/validate_catalog.py
 ```
 
+Unified user CLI (recommended for manual runs):
+
+```bash
+python scripts/intentir.py suite --suite flaggems-full196 --help
+python scripts/intentir.py kernel --help
+python scripts/intentir.py env
+```
+
 ## Current Baseline
 
 - Registry truth source: `pipeline/triton/flaggems_registry.json`

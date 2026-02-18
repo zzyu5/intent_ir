@@ -40,6 +40,29 @@ def _canonical_sigmoid2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_tanh2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "tanh2d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "const", "inputs": [], "output": "one_const", "attrs": {"value": 1.0}},
+                {"op": "const", "inputs": [], "output": "two_const", "attrs": {"value": 2.0}},
+                {"op": "mul", "inputs": ["two_const", "x"], "output": "two_x"},
+                {"op": "exp", "inputs": ["two_x"], "output": "exp_two_x"},
+                {"op": "sub", "inputs": ["exp_two_x", "one_const"], "output": "numer"},
+                {"op": "add", "inputs": ["exp_two_x", "one_const"], "output": "denom"},
+                {"op": "div", "inputs": ["numer", "denom"], "output": "out"},
+            ],
+            "outputs": ["out"],
+            "schedule": {"tile_m": "BLOCK_M", "tile_n": "BLOCK_N", "axis_bindings": {"tile_m": "M", "tile_n": "N"}},
+        }
+    )
+
+
 def _canonical_batch_norm2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -2275,6 +2298,8 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
     name = str(spec_name)
     if name == "sigmoid2d":
         return _canonical_sigmoid2d_intent()
+    if name == "tanh2d":
+        return _canonical_tanh2d_intent()
     if name == "angle2d":
         return _canonical_angle2d_intent()
     if name == "argmax2d":

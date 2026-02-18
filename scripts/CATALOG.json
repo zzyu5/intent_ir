@@ -263,6 +263,21 @@
       "tests": ["tests/intentir/test_mapping_complexity_report.py"]
     },
     {
+      "path": "scripts/intentir.py",
+      "owner_lane": "workflow",
+      "purpose": "unified user-facing CLI (suite/kernel/env) across triton/tilelang/cuda",
+      "inputs": [
+        "scripts/flaggems/run_coverage_batches.py",
+        "scripts/flaggems/run_multibackend_matrix.py",
+        "scripts/tilelang/full_pipeline_verify.py",
+        "scripts/cuda/full_pipeline_verify.py"
+      ],
+      "outputs": ["artifacts/intentir_suite/**", "artifacts/intentir_kernel/**"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_intentir_cli.py"]
+    },
+    {
       "path": "scripts/triton/flaggems_full_pipeline_verify.py",
       "owner_lane": "coverage_integrity",
       "purpose": "flaggems provider pipeline verification entrypoint",
@@ -271,6 +286,36 @@
       "status": "active",
       "replacement": "",
       "tests": ["tests/frontends/triton/test_flaggems_full_pipeline_script.py"]
+    },
+    {
+      "path": "scripts/tilelang/full_pipeline_verify.py",
+      "owner_lane": "workflow",
+      "purpose": "TileLang frontend pipeline smoke/full runner",
+      "inputs": ["pipeline/tilelang/core.py"],
+      "outputs": ["artifacts/tilelang_full_pipeline/*.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": []
+    },
+    {
+      "path": "scripts/tilelang/export_cuda_snapshots.py",
+      "owner_lane": "workflow",
+      "purpose": "export TileLang kernels to CUDA snapshots for CUDA frontend pipeline consumption",
+      "inputs": ["frontends/tilelang/cuda_export.py"],
+      "outputs": ["kernels/cuda/ops/snapshots/*.cuda_snapshot.json", "kernels/cuda/ops/snapshots/*.cu", "kernels/cuda/ops/snapshots/*.ptx"],
+      "status": "active",
+      "replacement": "",
+      "tests": []
+    },
+    {
+      "path": "scripts/cuda/full_pipeline_verify.py",
+      "owner_lane": "workflow",
+      "purpose": "CUDA frontend pipeline smoke/full runner",
+      "inputs": ["pipeline/cuda/core.py"],
+      "outputs": ["artifacts/cuda_full_pipeline/*.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": []
     },
     {
       "path": "scripts/backend_codegen_smoke.py",

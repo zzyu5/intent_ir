@@ -27,6 +27,7 @@ _ALWAYS_CANONICAL_SPECS = frozenset(
         "logspace1d",
         "log2d",
         "log_sigmoid2d",
+        "tanh2d",
         "log_softmax2d",
         "logical_and2d",
         "logical_not2d",

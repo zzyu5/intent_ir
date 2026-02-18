@@ -106,6 +106,21 @@ def test_flaggems_provider_forces_canonical_for_required_specs(monkeypatch) -> N
     assert out_expanded is not None
 
 
+def test_flaggems_provider_forces_canonical_for_tanh(monkeypatch) -> None:
+    monkeypatch.delenv("INTENTIR_TRITON_FLAGGEMS_CANONICAL_NORMALIZE", raising=False)
+    cand = _dummy_candidate("old")
+    out, out_expanded, info = _maybe_normalize_provider_candidate(
+        provider="flaggems",
+        spec_name="tanh2d",
+        candidate=cand,
+        candidate_expanded=None,
+    )
+    assert info is not None
+    assert info.get("enabled_by") == "provider_required_deterministic_override"
+    assert out.intent.name == "tanh2d"
+    assert out_expanded is not None
+
+
 def test_flaggems_provider_forces_canonical_for_bitwise_or(monkeypatch) -> None:
     monkeypatch.delenv("INTENTIR_TRITON_FLAGGEMS_CANONICAL_NORMALIZE", raising=False)
     cand = _dummy_candidate("old")

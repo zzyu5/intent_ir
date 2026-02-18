@@ -9,3 +9,5 @@ Rules:
 
 If you need to regenerate artifacts from archived sources, use explicit flags/paths (never implicit defaults).
 
+Note:
+- Active TileLang/CUDA pipeline entry scripts are now in `scripts/tilelang/` and `scripts/cuda/`.

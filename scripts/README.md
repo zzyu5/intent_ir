@@ -1,5 +1,12 @@
 # `scripts/` Governance (Active Entrypoints Only)
 
+Primary user entrypoint:
+
+- `scripts/intentir.py`
+  - `suite`: full/category/smoke runs
+  - `kernel`: single-kernel run
+  - `env`: dependency/environment probe
+
 This repo uses `scripts/CATALOG.json` as the single source of truth for script ownership and lifecycle.
 
 Validate catalog:

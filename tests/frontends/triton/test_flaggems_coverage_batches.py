@@ -327,3 +327,92 @@ def test_materialize_family_outputs_scopes_single_chunk_semantics(tmp_path: Path
     assert entries[0]["semantic_op"] == "op1"
     assert entries[0]["status"] == "dual_pass"
     assert status_payload["counts_global"] == {"dual_pass": 1}
+
+
+def test_materialize_family_outputs_prefers_complete_chunk_evidence(tmp_path: Path) -> None:
+    from scripts.flaggems.run_coverage_batches import _materialize_family_outputs
+
+    family_out = tmp_path / "family_norm"
+    family_out.mkdir(parents=True, exist_ok=True)
+
+    chunk1_status = family_out / "chunk1_status.json"
+    chunk1_run = family_out / "chunk1_run.json"
+    chunk2_status = family_out / "chunk2_status.json"
+    chunk2_run = family_out / "chunk2_run.json"
+
+    chunk1_run.write_text(json.dumps({"ok": False}), encoding="utf-8")
+    chunk2_run.write_text(json.dumps({"ok": True}), encoding="utf-8")
+
+    chunk1_status.write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "semantic_op": "tanh",
+                        "status": "blocked_backend",
+                        "reason_code": "diff_fail",
+                        "artifact_complete": True,
+                        "determinability": True,
+                        "in_scope_kernel_alias": True,
+                        "compiler_stage": {"provider_report": "present"},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    chunk2_status.write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "semantic_op": "tanh",
+                        "status": "blocked_backend",
+                        "reason_code": "provider_report_missing",
+                        "artifact_complete": False,
+                        "determinability": True,
+                        "in_scope_kernel_alias": False,
+                        "compiler_stage": {"provider_report": "missing"},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    chunk_rows = [
+        {
+            "chunk": "chunk_001",
+            "ok": False,
+            "rc": 1,
+            "out_dir": str(family_out),
+            "run_summary_path": str(chunk1_run),
+            "status_converged_path": str(chunk1_status),
+            "kernel_count": 1,
+            "kernels": ["tanh2d"],
+        },
+        {
+            "chunk": "chunk_002",
+            "ok": True,
+            "rc": 0,
+            "out_dir": str(family_out),
+            "run_summary_path": str(chunk2_run),
+            "status_converged_path": str(chunk2_status),
+            "kernel_count": 1,
+            "kernels": ["vector_norm2d"],
+        },
+    ]
+
+    family_ok, _, status_path = _materialize_family_outputs(
+        family="norm_activation",
+        semantics=["tanh"],
+        kernels=["tanh2d", "vector_norm2d"],
+        family_out=family_out,
+        chunk_rows=chunk_rows,
+    )
+    assert family_ok is False
+    status_payload = json.loads(status_path.read_text(encoding="utf-8"))
+    entry = status_payload["entries"][0]
+    assert entry["semantic_op"] == "tanh"
+    assert entry["reason_code"] == "diff_fail"
+    assert entry["artifact_complete"] is True
