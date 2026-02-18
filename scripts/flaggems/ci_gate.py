@@ -184,6 +184,11 @@ def main() -> None:
         default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch_backend_compiler.json"),
     )
     ap.add_argument(
+        "--active-batch-workflow",
+        type=Path,
+        default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch_workflow.json"),
+    )
+    ap.add_argument(
         "--profiles",
         action="append",
         default=[],
@@ -242,6 +247,7 @@ def main() -> None:
         "coverage": coverage_active,
         "ir_arch": args.active_batch_ir_arch,
         "backend_compiler": args.active_batch_backend_compiler,
+        "workflow": args.active_batch_workflow,
     }
 
     checks: list[dict[str, Any]] = []
@@ -443,6 +449,7 @@ def main() -> None:
             "active_batch_coverage": _to_repo_rel(active_by_profile["coverage"]),
             "active_batch_ir_arch": _to_repo_rel(active_by_profile["ir_arch"]),
             "active_batch_backend_compiler": _to_repo_rel(active_by_profile["backend_compiler"]),
+            "active_batch_workflow": _to_repo_rel(active_by_profile["workflow"]),
             "run_summary": _to_repo_rel(args.run_summary),
             "status_converged": _to_repo_rel(args.status_converged),
             "profiles": profiles,

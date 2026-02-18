@@ -50,7 +50,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--lane",
-        choices=["coverage", "ir_arch", "backend_compiler"],
+        choices=["coverage", "ir_arch", "backend_compiler", "workflow"],
         default="coverage",
         help="Session lane (default: coverage).",
     )

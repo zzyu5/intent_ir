@@ -851,31 +851,35 @@
       "id": "workflow::cleanup_v1_archive",
       "track": "workflow",
       "task_type": "cleanup",
-      "status": "pending",
-      "passes": false,
+      "status": "done",
+      "passes": true,
       "priority": 10,
       "gate_profile": "workflow",
-      "reason_code": "pending_cleanup",
-      "next_action": "archive_doc_and_experiment",
+      "reason_code": "ok",
+      "next_action": "none",
       "acceptance": [
         "top_level_doc_experiment_removed",
         "archive_readme_present",
         "workflow_not_depending_on_archive"
       ],
       "depends_on": [],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "archive/README.md",
+        "artifacts/flaggems_matrix/daily/20260218/workflow_cleanup_archive_v1/catalog_validation.json",
+        "docs/ENVIRONMENT.md"
+      ],
       "description": "Move paper/experiment materials into archive/ (history-only, non-runtime)."
     },
     {
       "id": "workflow::cleanup_v1_scripts_governance",
       "track": "workflow",
       "task_type": "cleanup",
-      "status": "pending",
-      "passes": false,
+      "status": "done",
+      "passes": true,
       "priority": 20,
       "gate_profile": "workflow",
-      "reason_code": "pending_cleanup",
-      "next_action": "converge_scripts_to_catalog",
+      "reason_code": "ok",
+      "next_action": "none",
       "acceptance": [
         "catalog_active_entrypoints_only",
         "deprecated_not_called_by_workflow",
@@ -884,7 +888,12 @@
       "depends_on": [
         "workflow::cleanup_v1_archive"
       ],
-      "evidence_paths": [],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260218/workflow_cleanup_archive_v1/catalog_validation.json",
+        "scripts/CATALOG.json",
+        "scripts/README.md",
+        "scripts/validate_catalog.py"
+      ],
       "description": "Converge scripts to catalog-defined active entrypoints; archive/delete duplicates."
     },
     {

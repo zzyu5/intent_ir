@@ -322,7 +322,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--profile",
-        choices=["coverage", "ir_arch", "backend_compiler"],
+        choices=["coverage", "ir_arch", "backend_compiler", "workflow"],
         default="coverage",
         help="Gate profile to evaluate.",
     )
@@ -430,7 +430,7 @@ def main() -> None:
     active_items = [e for e in (active.get("items") or []) if isinstance(e, dict)]
     active_ops = [str(e.get("semantic_op") or "") for e in active_items if str(e.get("semantic_op") or "")]
 
-    if profile in {"ir_arch", "backend_compiler"}:
+    if profile in {"ir_arch", "backend_compiler", "workflow"}:
         reason_complete = True
     else:
         if not gate_entries and not active_ops:
@@ -640,6 +640,19 @@ def main() -> None:
                 "backend_compiler.performance_budget",
                 budget_ok,
                 budget_detail,
+            )
+        )
+    elif profile == "workflow":
+        stage_map = _stage_map(run_summary)
+        required = list(args.require_stage or [])
+        missing_or_fail = [s for s in required if not bool((stage_map.get(s) or {}).get("ok"))]
+        checks.append(
+            _check(
+                "workflow.required_stage_ok",
+                not missing_or_fail,
+                "required workflow stages passed"
+                if not missing_or_fail
+                else f"missing or failed workflow stage(s): {missing_or_fail}",
             )
         )
 

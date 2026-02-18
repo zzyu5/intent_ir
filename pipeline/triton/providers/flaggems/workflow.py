@@ -46,7 +46,7 @@ def summarize_registry(registry_payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-LANES: tuple[str, ...] = ("coverage", "ir_arch", "backend_compiler")
+LANES: tuple[str, ...] = ("coverage", "ir_arch", "backend_compiler", "workflow")
 
 
 def normalize_lane(raw: str) -> str:
@@ -616,6 +616,7 @@ def build_session_context_payload(
             "workflow/flaggems/state/active_batch_coverage.json",
             "workflow/flaggems/state/active_batch_ir_arch.json",
             "workflow/flaggems/state/active_batch_backend_compiler.json",
+            "workflow/flaggems/state/active_batch_workflow.json",
             "workflow/flaggems/state/handoff.md",
         ],
         "must_read_scripts_catalog": str(must_read_scripts_catalog),

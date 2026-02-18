@@ -87,6 +87,76 @@ def test_sync_feature_list_mixed_merges_manual_tracks(tmp_path: Path) -> None:
     assert payload["summary"]["by_track"]["ir_arch"] == 1
 
 
+def test_sync_feature_list_mixed_accepts_workflow_track(tmp_path: Path) -> None:
+    registry = tmp_path / "registry.json"
+    feature_out = tmp_path / "feature_list.json"
+    templates = tmp_path / "task_templates.json"
+    metrics = tmp_path / "metrics.jsonl"
+    baselines = tmp_path / "baselines"
+    registry.write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "semantic_op": "add",
+                        "family": "elementwise_broadcast",
+                        "status": "dual_pass",
+                        "status_reason": "runtime_dual_backend_pass",
+                        "e2e_spec": "add2d",
+                        "intent_ops": ["add"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    templates.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_task_templates_v1",
+                "tasks": [
+                    {
+                        "id": "workflow::x",
+                        "track": "workflow",
+                        "status": "pending",
+                        "passes": False,
+                        "gate_profile": "workflow",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/sync_feature_list_mixed.py",
+            "--registry",
+            str(registry),
+            "--feature-out",
+            str(feature_out),
+            "--task-templates",
+            str(templates),
+            "--metrics-history",
+            str(metrics),
+            "--baselines-dir",
+            str(baselines),
+            "--no-freeze-baseline",
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    payload = json.loads(feature_out.read_text(encoding="utf-8"))
+    assert payload["summary"]["tasks_total"] == 2
+    assert payload["summary"]["by_track"]["coverage"] == 1
+    assert payload["summary"]["by_track"]["workflow"] == 1
+    workflow_rows = [f for f in payload["features"] if f.get("track") == "workflow"]
+    assert len(workflow_rows) == 1
+    assert workflow_rows[0]["id"] == "workflow::x"
+
+
 def test_build_workflow_state_writes_current_and_context(tmp_path: Path) -> None:
     feature = tmp_path / "feature_list.json"
     progress = tmp_path / "progress_log.jsonl"

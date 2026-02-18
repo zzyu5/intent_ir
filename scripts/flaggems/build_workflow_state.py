@@ -62,7 +62,7 @@ def _parse_lane(handoff_path: Path) -> str:
         if not line.strip().startswith("- Lane:"):
             continue
         lane = line.split(":", 1)[1].strip().strip("`")
-        if lane in {"coverage", "ir_arch", "backend_compiler"}:
+        if lane in {"coverage", "ir_arch", "backend_compiler", "workflow"}:
             return lane
     return ""
 
@@ -457,6 +457,11 @@ def main() -> None:
         type=Path,
         default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch_backend_compiler.json"),
     )
+    ap.add_argument(
+        "--active-batch-workflow",
+        type=Path,
+        default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch_workflow.json"),
+    )
     ap.add_argument("--current-status-out", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "current_status.json"))
     ap.add_argument("--session-context-out", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "session_context.json"))
     ap.add_argument("--scripts-catalog", type=Path, default=(ROOT / "scripts" / "CATALOG.json"))
@@ -557,6 +562,16 @@ def main() -> None:
         )
         if not next_focus:
             next_focus = ir_arch_reason
+    if "backend_compiler" in active_lanes:
+        next_focus_by_lane.setdefault(
+            "backend_compiler",
+            "Run backend_compiler active batch and keep cpp_codegen modular split + stage contract artifacts green.",
+        )
+    if "workflow" in active_lanes:
+        next_focus_by_lane.setdefault(
+            "workflow",
+            "Execute workflow cleanup active batch, update task_templates, then resync feature list and rebuild workflow state.",
+        )
 
     current_status = build_current_status_payload(
         branch=branch,
@@ -588,6 +603,7 @@ def main() -> None:
             "coverage": _to_repo_rel(args.active_batch_coverage),
             "ir_arch": _to_repo_rel(args.active_batch_ir_arch),
             "backend_compiler": _to_repo_rel(args.active_batch_backend_compiler),
+            "workflow": _to_repo_rel(args.active_batch_workflow),
         },
     )
     session_context = build_session_context_payload(

@@ -39,6 +39,6 @@ Secrets are not committed:
 - LLM provider keys live in `intent_ir/llm_providers.local.json` (gitignored)
 - SSH password can be provided via `INTENTIR_SSH_PASSWORD` (or typed when prompted), or use `--use-key` if you configured SSH keys
 
-## Docker (optional)
+## Notes
 
-- CPU-only dev image: see `docker/README.md`
+- Runtime and workflow paths are host-native (no Docker dependency in mainline gates).

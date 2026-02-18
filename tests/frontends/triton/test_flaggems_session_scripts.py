@@ -178,3 +178,81 @@ def test_start_session_allows_empty_batch_when_opted_out(tmp_path: Path) -> None
     assert p.returncode == 0
     payload = json.loads(p.stdout)
     assert int(payload["summary"]["selected_items"]) == 0
+
+
+def test_plan_next_batch_workflow_lane_selects_pending_task(tmp_path: Path) -> None:
+    registry = tmp_path / "registry.json"
+    feature = tmp_path / "feature_list.json"
+    active = tmp_path / "active_batch_workflow.json"
+
+    registry.write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "semantic_op": "add",
+                        "family": "elementwise_broadcast",
+                        "status": "dual_pass",
+                        "status_reason": "runtime_dual_backend_pass",
+                        "e2e_spec": "add2d",
+                        "intent_ops": ["add"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    feature.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_feature_list_v2",
+                "source_registry_path": str(registry),
+                "summary": {
+                    "semantic_ops": 1,
+                    "by_status": {"dual_pass": 1},
+                    "by_family": {"elementwise_broadcast": 1},
+                    "tasks_total": 2,
+                    "by_track": {"coverage": 1, "workflow": 1},
+                },
+                "features": [
+                    {"id": "flaggems::add", "semantic_op": "add", "status": "dual_pass", "track": "coverage", "passes": True},
+                    {
+                        "id": "workflow::cleanup_v1_archive",
+                        "semantic_op": "",
+                        "status": "pending",
+                        "track": "workflow",
+                        "passes": False,
+                        "priority": 10,
+                        "depends_on": [],
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/plan_next_batch.py",
+            "--registry",
+            str(registry),
+            "--feature-list",
+            str(feature),
+            "--lane",
+            "workflow",
+            "--active-batch",
+            str(active),
+            "--batch-size",
+            "2",
+            "--no-strict-sync",
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    payload = json.loads(active.read_text(encoding="utf-8"))
+    assert payload["lane"] == "workflow"
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["id"] == "workflow::cleanup_v1_archive"

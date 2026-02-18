@@ -1,16 +1,16 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-18T05:25:14+00:00",
+  "updated_at": "2026-02-18T05:36:30+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "2ec0cdf5b23494be4d48ccf1279393a7df477fb2",
-  "mode": "maintenance",
+  "head_commit": "2ef41974c21aa201c4ae368a1f70c8da3d6790b8",
+  "mode": "mixed_development",
   "coverage_integrity_phase": "recomputed_ok",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260218/full196_after_cli_cutover_v1/run_summary.json",
   "full196_last_ok": true,
-  "full196_validated_commit": "2ec0cdf5b23494be4d48ccf1279393a7df477fb2",
+  "full196_validated_commit": "2ef41974c21aa201c4ae368a1f70c8da3d6790b8",
   "full196_validated_commit_source": "run_summary.repo.head_commit",
   "full196_commits_since_validated": 0,
-  "full196_commits_since_validated_total": 1,
+  "full196_commits_since_validated_total": 2,
   "full196_lifted_to_head": true,
   "full196_validated_mode": "force_compile",
   "full196_validated_scope": "coverage_158_kernels_to_196_semantics",
@@ -88,9 +88,14 @@
     "catalog_path": "scripts/CATALOG.json",
     "catalog_validated": true
   },
-  "active_lanes": [],
+  "active_lanes": [
+    "backend_compiler",
+    "workflow"
+  ],
   "next_focus_by_lane": {
-    "coverage": "Run ci_gate freshness checks, refresh workflow state, then continue cleanup phases."
+    "coverage": "Run ci_gate freshness checks, refresh workflow state, then continue cleanup phases.",
+    "backend_compiler": "Run backend_compiler active batch and keep cpp_codegen modular split + stage contract artifacts green.",
+    "workflow": "Execute workflow cleanup active batch, update task_templates, then resync feature list and rebuild workflow state."
   },
   "latest_artifacts": {
     "run_summary": "artifacts/flaggems_matrix/daily/20260218/full196_after_cli_cutover_v1/run_summary.json",
@@ -110,10 +115,16 @@
       "active_batch_path": "workflow/flaggems/state/active_batch_ir_arch.json"
     },
     "backend_compiler": {
-      "pending": 0,
-      "done": 28,
+      "pending": 2,
+      "done": 26,
       "total": 28,
       "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json"
+    },
+    "workflow": {
+      "pending": 3,
+      "done": 2,
+      "total": 5,
+      "active_batch_path": "workflow/flaggems/state/active_batch_workflow.json"
     }
   }
 }

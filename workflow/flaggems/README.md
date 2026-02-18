@@ -26,7 +26,7 @@ python scripts/intentir.py env
   - `state/current_status.json::full196_last_run`
   - `state/current_status.json::full196_last_ok`
   - `state/current_status.json::coverage_integrity_phase`
-- Workflow mode: mixed tracks (`coverage`, `ir_arch`, `backend_compiler`)
+- Workflow mode: mixed tracks (`coverage`, `ir_arch`, `backend_compiler`, `workflow`)
 
 ## Quick Start
 
@@ -42,6 +42,7 @@ This will:
   - `state/active_batch_coverage.json`
   - `state/active_batch_ir_arch.json`
   - `state/active_batch_backend_compiler.json`
+  - `state/active_batch_workflow.json`
 - start a lane session (`ir_arch` by default in `init.sh`)
 
 ## Session Lifecycle
@@ -162,6 +163,7 @@ python scripts/flaggems/install_systemd_nightly.py --dry-run
 - `state/active_batch_coverage.json`: active coverage lane batch.
 - `state/active_batch_ir_arch.json`: active IR architecture lane batch.
 - `state/active_batch_backend_compiler.json`: active backend compiler lane batch.
+- `state/active_batch_workflow.json`: active workflow-governance lane batch.
 - `state/coverage_batches.json`: fixed 7-family coverage batch plan.
 - `state/progress_log.jsonl`: append-only session history.
 - `state/handoff.md`: latest human-readable handoff.

@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_feature_list_v2",
-  "generated_at": "2026-02-17T06:29:29+00:00",
+  "generated_at": "2026-02-18T05:34:51+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
@@ -16,11 +16,12 @@
       "conv_pool_interp": 9,
       "attention_sequence": 5
     },
-    "tasks_total": 229,
+    "tasks_total": 234,
     "by_track": {
       "coverage": 196,
       "ir_arch": 5,
-      "backend_compiler": 28
+      "backend_compiler": 28,
+      "workflow": 5
     }
   },
   "features": [
@@ -6681,10 +6682,10 @@
       "id": "backend_compiler::cpp_codegen_modular_split_wave3_cuda",
       "semantic_op": "",
       "family": "workflow",
-      "status": "done",
-      "passes": true,
-      "reason_code": "ok",
-      "next_action": "none",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending_modular_split",
+      "next_action": "split_cuda_codegen_modules_wave3",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "backend_compiler",
@@ -6699,25 +6700,17 @@
       "depends_on": [
         "backend_compiler::cpp_codegen_modular_split_wave2_cuda"
       ],
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave3_split_v2_chunk0/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave3_split_v2_chunk0/status_converged.json",
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave3_split_v2_chunk0/batch_gate_backend_compiler.json",
-        "backends/cuda/cpp_codegen/emit_conv_kernels.inc",
-        "backends/cuda/cpp_codegen/emit_pool_sort_misc.inc",
-        "backends/cuda/cpp_codegen/emit_upsample_kernels.inc",
-        "backends/cuda/cpp_codegen/emit_conv_pool_upsample.inc"
-      ],
+      "evidence_paths": [],
       "description": "Continue CUDA cpp_codegen modular split by extracting remaining dispatch and emit blocks into dedicated modules."
     },
     {
       "id": "backend_compiler::cpp_codegen_modular_split_wave3_rvv",
       "semantic_op": "",
       "family": "workflow",
-      "status": "done",
-      "passes": true,
-      "reason_code": "ok",
-      "next_action": "none",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending_modular_split",
+      "next_action": "split_rvv_codegen_modules_wave3",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "backend_compiler",
@@ -6732,16 +6725,140 @@
       "depends_on": [
         "backend_compiler::cpp_codegen_modular_split_wave2_rvv"
       ],
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave3_split_v2_chunk0/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave3_split_v2_chunk0/status_converged.json",
-        "artifacts/flaggems_matrix/daily/20260217/backend_compiler_wave3_split_v2_chunk0/batch_gate_backend_compiler.json",
-        "backends/spmd_rvv/cpp_codegen/emit_elemwise_reduce_part1.inc",
-        "backends/spmd_rvv/cpp_codegen/emit_elemwise_reduce_part2.inc",
-        "backends/spmd_rvv/cpp_codegen/emit_elemwise_reduce_part3.inc",
-        "backends/spmd_rvv/cpp_codegen/emit_elemwise_reduce_helpers.inc"
-      ],
+      "evidence_paths": [],
       "description": "Continue RVV cpp_codegen modular split by extracting remaining dispatch and emit blocks into dedicated modules."
+    },
+    {
+      "id": "workflow::cleanup_v1_archive",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "done",
+      "passes": true,
+      "reason_code": "ok",
+      "next_action": "none",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "workflow",
+      "task_type": "cleanup",
+      "priority": 10,
+      "acceptance": [
+        "top_level_doc_experiment_removed",
+        "archive_readme_present",
+        "workflow_not_depending_on_archive"
+      ],
+      "gate_profile": "workflow",
+      "depends_on": [],
+      "evidence_paths": [
+        "archive/README.md",
+        "artifacts/flaggems_matrix/daily/20260218/workflow_cleanup_archive_v1/catalog_validation.json",
+        "docs/ENVIRONMENT.md"
+      ],
+      "description": "Move paper/experiment materials into archive/ (history-only, non-runtime)."
+    },
+    {
+      "id": "workflow::cleanup_v1_scripts_governance",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "done",
+      "passes": true,
+      "reason_code": "ok",
+      "next_action": "none",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "workflow",
+      "task_type": "cleanup",
+      "priority": 20,
+      "acceptance": [
+        "catalog_active_entrypoints_only",
+        "deprecated_not_called_by_workflow",
+        "validate_catalog_green"
+      ],
+      "gate_profile": "workflow",
+      "depends_on": [
+        "workflow::cleanup_v1_archive"
+      ],
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260218/workflow_cleanup_archive_v1/catalog_validation.json",
+        "scripts/CATALOG.json",
+        "scripts/README.md",
+        "scripts/validate_catalog.py"
+      ],
+      "description": "Converge scripts to catalog-defined active entrypoints; archive/delete duplicates."
+    },
+    {
+      "id": "workflow::cleanup_v1_tests_governance",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending_cleanup",
+      "next_action": "trim_tests_to_core_gates",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "workflow",
+      "task_type": "cleanup",
+      "priority": 30,
+      "acceptance": [
+        "pytest_fast_and_stable",
+        "workflow_gate_tests_preserved",
+        "no_paper_experiment_tests_in_main_tree"
+      ],
+      "gate_profile": "workflow",
+      "depends_on": [
+        "workflow::cleanup_v1_scripts_governance"
+      ],
+      "evidence_paths": [],
+      "description": "Trim tests to CI/gate and core correctness; remove paper/experiment evidence tests."
+    },
+    {
+      "id": "workflow::cleanup_v1_structure_convergence",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending_cleanup",
+      "next_action": "converge_repo_structure_and_docs",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "workflow",
+      "task_type": "cleanup",
+      "priority": 40,
+      "acceptance": [
+        "readme_entrypoints_match_catalog",
+        "docs_architecture_updated",
+        "archive_is_history_only"
+      ],
+      "gate_profile": "workflow",
+      "depends_on": [
+        "workflow::cleanup_v1_tests_governance"
+      ],
+      "evidence_paths": [],
+      "description": "Converge top-level structure and docs to a mature compiler layout; archive is history-only."
+    },
+    {
+      "id": "workflow::cleanup_v1_full196_post_cleanup",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending_cleanup",
+      "next_action": "rerun_full196_on_cleanup_branch",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "workflow",
+      "task_type": "verification",
+      "priority": 50,
+      "acceptance": [
+        "full196_force_compile_passes_on_head",
+        "workflow_full196_fresh_on_head",
+        "ci_gate_coverage_green"
+      ],
+      "gate_profile": "workflow",
+      "depends_on": [
+        "workflow::cleanup_v1_structure_convergence"
+      ],
+      "evidence_paths": [],
+      "description": "After cleanup, rerun 7/7 coverage batches (force_compile) and write workflow evidence on cleanup branch."
     }
   ]
 }

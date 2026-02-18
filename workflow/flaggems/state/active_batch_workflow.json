@@ -1,0 +1,47 @@
+{
+  "schema_version": "flaggems_active_batch_v2",
+  "generated_at": "2026-02-18T05:35:11+00:00",
+  "branch": "compiler-cleanup-v1",
+  "lane": "workflow",
+  "batch_size": 8,
+  "selection_policy": [
+    "status:blocking",
+    "priority",
+    "dependency"
+  ],
+  "items": [
+    {
+      "id": "workflow::cleanup_v1_tests_governance",
+      "semantic_op": "",
+      "family": "workflow",
+      "status": "pending",
+      "passes": false,
+      "reason_code": "pending_cleanup",
+      "next_action": "trim_tests_to_core_gates",
+      "e2e_spec": null,
+      "intent_ops": [],
+      "track": "workflow",
+      "task_type": "cleanup",
+      "priority": 30,
+      "acceptance": [
+        "pytest_fast_and_stable",
+        "workflow_gate_tests_preserved",
+        "no_paper_experiment_tests_in_main_tree"
+      ],
+      "gate_profile": "workflow",
+      "depends_on": [
+        "workflow::cleanup_v1_scripts_governance"
+      ],
+      "evidence_paths": [],
+      "description": "Trim tests to CI/gate and core correctness; remove paper/experiment evidence tests."
+    }
+  ],
+  "context": {
+    "feature_list_path": "workflow/flaggems/state/feature_list.json",
+    "progress_log_path": "",
+    "git_log": "",
+    "progress_tail": [],
+    "status_snapshot_path": "workflow/flaggems/state/current_status.json",
+    "session_context_path": "workflow/flaggems/state/session_context.json"
+  }
+}
