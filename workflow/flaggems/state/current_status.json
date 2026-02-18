@@ -1,18 +1,18 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-18T07:44:40+00:00",
+  "updated_at": "2026-02-18T13:07:23+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "7d69d7dc0805eb9f2ce8e08f7d5469871e25b060",
+  "head_commit": "f8919fdb39ac271876bbc5a15de8268c94da48b8",
   "mode": "maintenance",
-  "coverage_integrity_phase": "recompute_stale",
-  "full196_last_run": "artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/run_summary.json",
+  "coverage_integrity_phase": "recomputed_ok",
+  "full196_last_run": "artifacts/flaggems_matrix/daily/20260218/full196_auto_refresh_v2/run_summary.json",
   "full196_last_ok": true,
-  "full196_validated_commit": "770a0985be1b4088bab9bf78b26fccf0b8edb80f",
+  "full196_validated_commit": "f8919fdb39ac271876bbc5a15de8268c94da48b8",
   "full196_validated_commit_source": "run_summary.repo.head_commit",
-  "full196_commits_since_validated": 4,
-  "full196_commits_since_validated_total": 4,
+  "full196_commits_since_validated": 0,
+  "full196_commits_since_validated_total": 0,
   "full196_lifted_to_head": false,
-  "full196_validated_mode": "force_compile",
+  "full196_validated_mode": "auto",
   "full196_validated_scope": "coverage_158_kernels_to_196_semantics",
   "full196_validated_with_rvv_remote": true,
   "coverage_mode": "category_batches",
@@ -88,17 +88,15 @@
     "catalog_path": "scripts/CATALOG.json",
     "catalog_validated": true
   },
-  "active_lanes": [
-    "coverage"
-  ],
+  "active_lanes": [],
   "next_focus_by_lane": {
-    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
+    "coverage": "Refresh workflow freshness snapshot and continue backend compiler performance wave (stage timing deltas).",
     "backend_compiler": "Performance wave: schedule profile specialization and timing_delta thresholds.",
     "workflow": "Rerun full196 with intentir-mode=auto to validate cache-hit acceleration and compact progress output."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260218/full196_post_cleanup_v2_cleanhead/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260218/full196_auto_refresh_v2/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260218/full196_auto_refresh_v2/status_converged.json"
   },
   "lanes": {
     "coverage": {
