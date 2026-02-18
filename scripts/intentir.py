@@ -71,6 +71,7 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             str(int(args.family_kernel_chunk_size)),
             "--allow-cuda-skip" if args.allow_cuda_skip else "--no-allow-cuda-skip",
             "--run-rvv-remote" if args.run_rvv_remote else "--no-run-rvv-remote",
+            "--skip-rvv-local" if args.skip_rvv_local else "--no-skip-rvv-local",
             "--rvv-host",
             str(args.rvv_host),
             "--rvv-user",
@@ -80,6 +81,8 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             "--rvv-use-key" if args.rvv_use_key else "--no-rvv-use-key",
             "--resume" if args.resume else "--no-resume",
         )
+        if bool(args.write_registry):
+            cmd.append("--write-registry")
         for fam in list(args.family or []):
             cmd.extend(["--family", str(fam)])
         return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run))
@@ -103,6 +106,7 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             str(args.cuda_runtime_backend),
             "--allow-cuda-skip" if args.allow_cuda_skip else "--no-allow-cuda-skip",
             "--run-rvv-remote" if args.run_rvv_remote else "--no-run-rvv-remote",
+            "--skip-rvv-local" if args.skip_rvv_local else "--no-skip-rvv-local",
             "--rvv-host",
             str(args.rvv_host),
             "--rvv-user",
@@ -112,6 +116,43 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             "--rvv-use-key" if args.rvv_use_key else "--no-rvv-use-key",
             "--stream-subprocess-output" if args.stream else "--no-stream-subprocess-output",
         )
+        if bool(args.write_registry):
+            cmd.append("--write-registry")
+        for kernel in list(args.kernel or []):
+            cmd.extend(["--kernel", str(kernel)])
+        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run))
+
+    if args.suite == "flaggems-coverage-single":
+        cmd = _python_cmd(
+            "scripts/flaggems/run_multibackend_matrix.py",
+            "--suite",
+            "coverage",
+            "--out-dir",
+            str(out_root),
+            "--cases-limit",
+            str(int(args.cases_limit)),
+            "--flaggems-path",
+            str(args.flaggems_path),
+            "--intentir-mode",
+            str(args.intentir_mode),
+            "--intentir-miss-policy",
+            str(args.intentir_miss_policy),
+            "--cuda-runtime-backend",
+            str(args.cuda_runtime_backend),
+            "--allow-cuda-skip" if args.allow_cuda_skip else "--no-allow-cuda-skip",
+            "--run-rvv-remote" if args.run_rvv_remote else "--no-run-rvv-remote",
+            "--skip-rvv-local" if args.skip_rvv_local else "--no-skip-rvv-local",
+            "--rvv-host",
+            str(args.rvv_host),
+            "--rvv-user",
+            str(args.rvv_user),
+            "--rvv-port",
+            str(int(args.rvv_port)),
+            "--rvv-use-key" if args.rvv_use_key else "--no-rvv-use-key",
+            "--stream-subprocess-output" if args.stream else "--no-stream-subprocess-output",
+        )
+        if bool(args.write_registry):
+            cmd.append("--write-registry")
         for kernel in list(args.kernel or []):
             cmd.extend(["--kernel", str(kernel)])
         return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run))
@@ -240,22 +281,41 @@ def _cmd_env(_: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_tilelang_export_cuda_snapshots(args: argparse.Namespace) -> int:
+    cmd = _python_cmd(
+        "scripts/tilelang/export_cuda_snapshots.py",
+        "--out-dir",
+        str(args.out_dir),
+    )
+    if bool(args.refresh):
+        cmd.append("--refresh")
+    for kernel in list(args.kernel or []):
+        cmd.extend(["--kernel", str(kernel)])
+    return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run))
+
+
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="IntentIR unified CLI")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     suite = sub.add_parser("suite", help="Run suite-level verification")
-    suite.add_argument("--suite", choices=["flaggems-full196", "triton-smoke", "tilelang-smoke", "cuda-smoke"], required=True)
+    suite.add_argument(
+        "--suite",
+        choices=["flaggems-full196", "flaggems-coverage-single", "triton-smoke", "tilelang-smoke", "cuda-smoke"],
+        required=True,
+    )
     suite.add_argument("--out-root", default=None)
     suite.add_argument("--family", action="append", default=[])
     suite.add_argument("--kernel", action="append", default=[])
     suite.add_argument("--cases-limit", type=int, default=8)
     suite.add_argument("--family-kernel-chunk-size", type=int, default=12)
     suite.add_argument("--resume", action=argparse.BooleanOptionalAction, default=True)
+    suite.add_argument("--write-registry", action=argparse.BooleanOptionalAction, default=False)
     suite.add_argument("--flaggems-path", choices=["intentir", "original"], default="intentir")
     suite.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="force_compile")
     suite.add_argument("--intentir-miss-policy", choices=["deterministic", "strict"], default="strict")
     suite.add_argument("--run-rvv-remote", action=argparse.BooleanOptionalAction, default=True)
+    suite.add_argument("--skip-rvv-local", action=argparse.BooleanOptionalAction, default=True)
     suite.add_argument("--rvv-host", default="192.168.8.72")
     suite.add_argument("--rvv-user", default="ubuntu")
     suite.add_argument("--rvv-port", type=int, default=22)
@@ -288,6 +348,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
     env = sub.add_parser("env", help="Show environment and dependency status")
     env.set_defaults(func=_cmd_env)
+
+    tilelang = sub.add_parser("tilelang", help="TileLang helper commands")
+    tilelang_sub = tilelang.add_subparsers(dest="tilelang_cmd", required=True)
+    tilelang_export = tilelang_sub.add_parser("export-cuda-snapshots", help="Export TileLang kernels to CUDA snapshots")
+    tilelang_export.add_argument("--out-dir", default=str(ROOT / "kernels" / "cuda" / "ops" / "snapshots"))
+    tilelang_export.add_argument("--kernel", action="append", default=[])
+    tilelang_export.add_argument("--refresh", action=argparse.BooleanOptionalAction, default=False)
+    tilelang_export.add_argument("--stream", action=argparse.BooleanOptionalAction, default=True)
+    tilelang_export.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=False)
+    tilelang_export.set_defaults(func=_cmd_tilelang_export_cuda_snapshots)
 
     return ap
 

@@ -51,6 +51,37 @@ def test_intentir_kernel_triton_dry_run() -> None:
     assert "--suite smoke" in out
 
 
+def test_intentir_suite_flaggems_coverage_single_dry_run() -> None:
+    p = _run(
+        "suite",
+        "--suite",
+        "flaggems-coverage-single",
+        "--dry-run",
+        "--kernel",
+        "tanh2d",
+        "--no-run-rvv-remote",
+    )
+    assert p.returncode == 0, p.stderr
+    out = p.stdout
+    assert "scripts/flaggems/run_multibackend_matrix.py" in out
+    assert "--suite coverage" in out
+    assert "--kernel tanh2d" in out
+
+
+def test_intentir_tilelang_export_cuda_snapshots_dry_run() -> None:
+    p = _run(
+        "tilelang",
+        "export-cuda-snapshots",
+        "--dry-run",
+        "--kernel",
+        "matmul",
+    )
+    assert p.returncode == 0, p.stderr
+    out = p.stdout
+    assert "scripts/tilelang/export_cuda_snapshots.py" in out
+    assert "--kernel matmul" in out
+
+
 def test_intentir_env_smoke() -> None:
     p = _run("env")
     assert p.returncode == 0, p.stderr

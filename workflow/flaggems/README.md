@@ -85,8 +85,7 @@ Each successful backend compiler batch now emits:
 ## Matrix + CI Gate (Coverage Lane)
 
 ```bash
-python scripts/flaggems/build_coverage_batches.py
-python scripts/flaggems/run_coverage_batches.py \
+python scripts/intentir.py suite --suite flaggems-full196 \
   --out-root artifacts/flaggems_matrix/daily/<YYYYMMDD>/<run_name> \
   --flaggems-path intentir \
   --intentir-mode force_compile \
@@ -95,7 +94,9 @@ python scripts/flaggems/run_coverage_batches.py \
   --rvv-host 192.168.8.72 \
   --rvv-user ubuntu \
   --rvv-use-key \
-  --cuda-runtime-backend nvrtc
+  --cuda-runtime-backend nvrtc \
+  --family-kernel-chunk-size 12 \
+  --resume
 ```
 
 ```bash

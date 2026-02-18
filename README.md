@@ -18,8 +18,9 @@ IntentIR is a research prototype that extracts **high-level kernel intent** from
 
 - Script governance check: `python scripts/validate_catalog.py`
 - Unit tests: `pytest -q`
-- Backend codegen (no LLM, no remote): `python scripts/backend_codegen_smoke.py`
-- Triton pipeline (FlagGems provider): `python scripts/triton/flaggems_full_pipeline_verify.py --suite smoke`
+- Unified env check: `python scripts/intentir.py env`
+- Triton smoke (FlagGems provider): `python scripts/intentir.py suite --suite triton-smoke`
+- Full196 category batches: `python scripts/intentir.py suite --suite flaggems-full196 --run-rvv-remote --rvv-host 192.168.8.72 --rvv-user ubuntu --rvv-use-key`
 
 ## FlagGems Integration Status
 
@@ -27,9 +28,9 @@ IntentIR is a research prototype that extracts **high-level kernel intent** from
 - Coverage baseline: `196` semantic ops (`deterministic_forward`)
 - Current convergence: `196/196 dual_pass` (RVV + CUDA)
 
-Primary matrix runner:
+Primary runner:
 
-`python scripts/flaggems/run_multibackend_matrix.py --suite coverage --flaggems-path intentir --intentir-mode auto --run-rvv-remote --rvv-host 192.168.8.72 --rvv-user ubuntu --rvv-use-key --cuda-runtime-backend nvrtc --out-dir artifacts/flaggems_matrix/daily/<YYYYMMDD>/<run_name>`
+`python scripts/intentir.py suite --suite flaggems-full196 --flaggems-path intentir --intentir-mode force_compile --intentir-miss-policy strict --run-rvv-remote --rvv-host 192.168.8.72 --rvv-user ubuntu --rvv-use-key --cuda-runtime-backend nvrtc --out-root artifacts/flaggems_matrix/daily/<YYYYMMDD>/<run_name>`
 
 CI-style gate aggregation:
 

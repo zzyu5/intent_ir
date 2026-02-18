@@ -2,7 +2,7 @@
 Nightly maintenance runner for converged FlagGems integration.
 
 This script orchestrates:
-1) run_multibackend_matrix.py
+1) unified CLI suite run (`scripts/intentir.py`)
 2) ci_gate.py
 
 It is intended for post-coverage drift detection after reaching full dual-pass.
@@ -170,9 +170,12 @@ def main() -> None:
         else:
             build_batches_rc, build_batches_out, build_batches_err = (1, "", "catalog validation failed")
 
-        matrix_cmd: list[str] = [
+        matrix_cmd = [
             sys.executable,
-            "scripts/flaggems/run_coverage_batches.py",
+            "scripts/intentir.py",
+            "suite",
+            "--suite",
+            "flaggems-full196",
             "--out-root",
             str(out_dir),
             "--cases-limit",
@@ -183,78 +186,107 @@ def main() -> None:
             str(args.intentir_mode),
             "--intentir-miss-policy",
             miss_policy,
-            "--flaggems-opset",
-            str(args.flaggems_opset),
-            "--backend-target",
-            str(args.backend_target),
             "--rvv-host",
             str(args.rvv_host),
             "--rvv-user",
             str(args.rvv_user),
             "--rvv-port",
             str(int(args.rvv_port)),
-            "--cuda-timeout-sec",
-            str(int(args.cuda_timeout_sec)),
-            "--cuda-compile-timeout-sec",
-            str(int(args.cuda_compile_timeout_sec)),
-            "--cuda-launch-timeout-sec",
-            str(int(args.cuda_launch_timeout_sec)),
             "--cuda-runtime-backend",
             str(args.cuda_runtime_backend),
+            "--stream",
+            "--resume",
+            "--allow-cuda-skip" if bool(args.allow_cuda_skip) else "--no-allow-cuda-skip",
+            "--run-rvv-remote" if bool(args.run_rvv_remote) else "--no-run-rvv-remote",
+            "--skip-rvv-local" if bool(args.skip_rvv_local) else "--no-skip-rvv-local",
+            "--rvv-use-key" if bool(args.rvv_use_key) else "--no-rvv-use-key",
         ]
-        matrix_cmd.append("--run-rvv-remote" if bool(args.run_rvv_remote) else "--no-run-rvv-remote")
-        matrix_cmd.append("--skip-rvv-local" if bool(args.skip_rvv_local) else "--no-skip-rvv-local")
-        matrix_cmd.append("--rvv-use-key" if bool(args.rvv_use_key) else "--no-rvv-use-key")
-        matrix_cmd.append("--allow-cuda-skip" if bool(args.allow_cuda_skip) else "--no-allow-cuda-skip")
         if bool(args.write_registry):
             matrix_cmd.append("--write-registry")
-        matrix_cmd.append("--aggregate")
-        matrix_cmd.append("--stream-subprocess-output")
+        if bool(args.dry_run):
+            matrix_cmd.append("--dry-run")
     else:
         build_batches_cmd = []
         build_batches_rc, build_batches_out, build_batches_err = (0, "", "")
-        matrix_cmd = [
-            sys.executable,
-            "scripts/flaggems/run_multibackend_matrix.py",
-            "--suite",
-            str(args.suite),
-            "--cases-limit",
-            str(int(args.cases_limit)),
-            "--flaggems-path",
-            str(args.flaggems_path),
-            "--intentir-mode",
-            str(args.intentir_mode),
-            "--intentir-miss-policy",
-            miss_policy,
-            "--flaggems-opset",
-            str(args.flaggems_opset),
-            "--backend-target",
-            str(args.backend_target),
-            "--lane",
-            str(args.lane),
-            "--rvv-host",
-            str(args.rvv_host),
-            "--rvv-user",
-            str(args.rvv_user),
-            "--rvv-port",
-            str(int(args.rvv_port)),
-            "--cuda-timeout-sec",
-            str(int(args.cuda_timeout_sec)),
-            "--cuda-compile-timeout-sec",
-            str(int(args.cuda_compile_timeout_sec)),
-            "--cuda-launch-timeout-sec",
-            str(int(args.cuda_launch_timeout_sec)),
-            "--cuda-runtime-backend",
-            str(args.cuda_runtime_backend),
-            "--out-dir",
-            str(out_dir),
-        ]
-        matrix_cmd.append("--run-rvv-remote" if bool(args.run_rvv_remote) else "--no-run-rvv-remote")
-        matrix_cmd.append("--skip-rvv-local" if bool(args.skip_rvv_local) else "--no-skip-rvv-local")
-        matrix_cmd.append("--rvv-use-key" if bool(args.rvv_use_key) else "--no-rvv-use-key")
-        matrix_cmd.append("--allow-cuda-skip" if bool(args.allow_cuda_skip) else "--no-allow-cuda-skip")
-        if bool(args.write_registry):
-            matrix_cmd.append("--write-registry")
+        if str(args.suite) in {"smoke", "coverage"}:
+            mapped_suite = "triton-smoke" if str(args.suite) == "smoke" else "flaggems-coverage-single"
+            matrix_cmd = [
+                sys.executable,
+                "scripts/intentir.py",
+                "suite",
+                "--suite",
+                mapped_suite,
+                "--out-root",
+                str(out_dir),
+                "--cases-limit",
+                str(int(args.cases_limit)),
+                "--flaggems-path",
+                str(args.flaggems_path),
+                "--intentir-mode",
+                str(args.intentir_mode),
+                "--intentir-miss-policy",
+                miss_policy,
+                "--rvv-host",
+                str(args.rvv_host),
+                "--rvv-user",
+                str(args.rvv_user),
+                "--rvv-port",
+                str(int(args.rvv_port)),
+                "--cuda-runtime-backend",
+                str(args.cuda_runtime_backend),
+                "--stream",
+                "--allow-cuda-skip" if bool(args.allow_cuda_skip) else "--no-allow-cuda-skip",
+                "--run-rvv-remote" if bool(args.run_rvv_remote) else "--no-run-rvv-remote",
+                "--skip-rvv-local" if bool(args.skip_rvv_local) else "--no-skip-rvv-local",
+                "--rvv-use-key" if bool(args.rvv_use_key) else "--no-rvv-use-key",
+            ]
+            if bool(args.write_registry):
+                matrix_cmd.append("--write-registry")
+            if bool(args.dry_run):
+                matrix_cmd.append("--dry-run")
+        else:
+            matrix_cmd = [
+                sys.executable,
+                "scripts/flaggems/run_multibackend_matrix.py",
+                "--suite",
+                str(args.suite),
+                "--cases-limit",
+                str(int(args.cases_limit)),
+                "--flaggems-path",
+                str(args.flaggems_path),
+                "--intentir-mode",
+                str(args.intentir_mode),
+                "--intentir-miss-policy",
+                miss_policy,
+                "--flaggems-opset",
+                str(args.flaggems_opset),
+                "--backend-target",
+                str(args.backend_target),
+                "--lane",
+                str(args.lane),
+                "--rvv-host",
+                str(args.rvv_host),
+                "--rvv-user",
+                str(args.rvv_user),
+                "--rvv-port",
+                str(int(args.rvv_port)),
+                "--cuda-timeout-sec",
+                str(int(args.cuda_timeout_sec)),
+                "--cuda-compile-timeout-sec",
+                str(int(args.cuda_compile_timeout_sec)),
+                "--cuda-launch-timeout-sec",
+                str(int(args.cuda_launch_timeout_sec)),
+                "--cuda-runtime-backend",
+                str(args.cuda_runtime_backend),
+                "--out-dir",
+                str(out_dir),
+            ]
+            matrix_cmd.append("--run-rvv-remote" if bool(args.run_rvv_remote) else "--no-run-rvv-remote")
+            matrix_cmd.append("--skip-rvv-local" if bool(args.skip_rvv_local) else "--no-skip-rvv-local")
+            matrix_cmd.append("--rvv-use-key" if bool(args.rvv_use_key) else "--no-rvv-use-key")
+            matrix_cmd.append("--allow-cuda-skip" if bool(args.allow_cuda_skip) else "--no-allow-cuda-skip")
+            if bool(args.write_registry):
+                matrix_cmd.append("--write-registry")
 
     if catalog_rc == 0 and build_batches_rc == 0:
         matrix_rc, matrix_out, matrix_err = _run(matrix_cmd, cwd=ROOT, dry_run=bool(args.dry_run))

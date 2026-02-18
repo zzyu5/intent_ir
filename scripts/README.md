@@ -7,6 +7,16 @@ Primary user entrypoint:
   - `kernel`: single-kernel run
   - `env`: dependency/environment probe
 
+Examples:
+
+```bash
+python scripts/intentir.py suite --suite flaggems-full196 --run-rvv-remote --rvv-host 192.168.8.72 --rvv-user ubuntu --rvv-use-key
+python scripts/intentir.py suite --suite triton-smoke --kernel tanh2d
+python scripts/intentir.py kernel --frontend triton --kernel tanh2d
+python scripts/intentir.py tilelang export-cuda-snapshots --kernel matmul --refresh
+python scripts/intentir.py env
+```
+
 This repo uses `scripts/CATALOG.json` as the single source of truth for script ownership and lifecycle.
 
 Validate catalog:
