@@ -10,10 +10,15 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from intent_ir.utils.repo_state import repo_state  # noqa: E402
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -55,6 +60,9 @@ def main() -> None:
     registry = _load_json(args.registry)
     run_summary = _load_json(args.run_summary)
     status = _load_json(args.status_converged)
+    repo = dict(run_summary.get("repo") or {}) or repo_state(root=ROOT)
+    invocation = dict(run_summary.get("invocation") or {})
+    coverage = dict(run_summary.get("coverage") or {})
 
     entries = [e for e in list(status.get("entries") or []) if isinstance(e, dict)]
     semantic_total = len([e for e in list(registry.get("entries") or []) if isinstance(e, dict)])
@@ -74,6 +82,9 @@ def main() -> None:
 
     payload = {
         "schema_version": "flaggems_coverage_integrity_v1",
+        "repo": repo,
+        "invocation": invocation,
+        "coverage": coverage,
         "registry_path": str(args.registry),
         "run_summary_path": str(args.run_summary),
         "status_converged_path": str(args.status_converged),

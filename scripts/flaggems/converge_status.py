@@ -12,10 +12,15 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from intent_ir.utils.repo_state import repo_state  # noqa: E402
 
 
 def _parse_scope_values(raw_values: list[str] | None) -> tuple[str, ...]:
@@ -200,6 +205,10 @@ def main() -> None:
     ap.add_argument("--provider-report-dir", type=Path, default=(ROOT / "artifacts" / "flaggems_triton_full_pipeline"))
     ap.add_argument("--rvv-json", type=Path, default=None, help="RVV smoke JSON summary path")
     ap.add_argument("--cuda-json", type=Path, default=None, help="CUDA smoke JSON summary path")
+    ap.add_argument("--intentir-mode", type=str, default="")
+    ap.add_argument("--intentir-miss-policy", type=str, default="")
+    ap.add_argument("--rvv-remote", action=argparse.BooleanOptionalAction, default=None)
+    ap.add_argument("--cuda-runtime-backend", type=str, default="")
     ap.add_argument(
         "--scope-kernels",
         action="append",
@@ -361,6 +370,17 @@ def main() -> None:
 
     result = {
         "schema_version": "flaggems_registry_converged_v3",
+        "repo": repo_state(root=ROOT),
+        "invocation": {
+            "intentir_mode": str(args.intentir_mode),
+            "miss_policy": str(args.intentir_miss_policy),
+            "rvv_remote": (None if args.rvv_remote is None else bool(args.rvv_remote)),
+            "cuda_runtime_backend": str(args.cuda_runtime_backend),
+            "scope_enabled": bool(scope_enabled),
+            "scope_mode": scope_mode,
+            "scope_kernels": list(scope_kernels),
+            "scope_semantic_ops": list(scope_semantic_ops),
+        },
         "registry_path": str(args.registry),
         "provider_report_dir": str(args.provider_report_dir),
         "rvv_json": (str(args.rvv_json) if args.rvv_json else None),

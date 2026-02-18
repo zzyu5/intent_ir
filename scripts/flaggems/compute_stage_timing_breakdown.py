@@ -6,8 +6,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
+
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from intent_ir.utils.repo_state import repo_state  # noqa: E402
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -131,6 +139,10 @@ def main() -> None:
     ap.add_argument("--rvv-json", type=Path, required=True)
     ap.add_argument("--cuda-json", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--intentir-mode", type=str, default="")
+    ap.add_argument("--intentir-miss-policy", type=str, default="")
+    ap.add_argument("--rvv-remote", action=argparse.BooleanOptionalAction, default=None)
+    ap.add_argument("--cuda-runtime-backend", type=str, default="")
     args = ap.parse_args()
 
     rvv_payload = _load_json(args.rvv_json)
@@ -141,6 +153,13 @@ def main() -> None:
     }
     payload = {
         "schema_version": "flaggems_stage_timing_breakdown_v1",
+        "repo": repo_state(root=ROOT),
+        "invocation": {
+            "intentir_mode": str(args.intentir_mode),
+            "miss_policy": str(args.intentir_miss_policy),
+            "rvv_remote": (None if args.rvv_remote is None else bool(args.rvv_remote)),
+            "cuda_runtime_backend": str(args.cuda_runtime_backend),
+        },
         "ok": bool(backends["rvv"]["available"] and backends["cuda"]["available"]),
         "inputs": {"rvv_json": str(args.rvv_json), "cuda_json": str(args.cuda_json)},
         "backends": backends,

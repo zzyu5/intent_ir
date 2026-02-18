@@ -270,6 +270,12 @@ def _classify_full196_run(run_summary_path: Path | None) -> tuple[bool, bool | N
         return False, None, {}
     if "full_coverage_run" in coverage_stage and not bool(coverage_stage.get("full_coverage_run")):
         return False, None, {}
+    repo = dict(run_summary.get("repo") or {})
+    artifact_head_commit = str(repo.get("head_commit") or "").strip()
+    artifact_branch = str(repo.get("branch") or "").strip()
+    artifact_dirty = None
+    if "dirty" in repo:
+        artifact_dirty = bool(repo.get("dirty"))
     coverage_json = _resolve_artifact(str(coverage_stage.get("json_path") or ""))
     coverage_payload = _load_json_if_exists(coverage_json)
     coverage_ok = bool(coverage_payload.get("coverage_integrity_ok"))
@@ -292,6 +298,10 @@ def _classify_full196_run(run_summary_path: Path | None) -> tuple[bool, bool | N
         "coverage_batches_expected": run_summary.get("coverage_batches_expected"),
         "coverage_batches_completed": run_summary.get("coverage_batches_completed"),
         "coverage_batches_failed": list(run_summary.get("coverage_batches_failed") or []),
+        "artifact_head_commit": artifact_head_commit,
+        "artifact_branch": artifact_branch,
+        "artifact_dirty": artifact_dirty,
+        "artifact_repo_stamp_ok": bool(artifact_head_commit),
     }
     return True, bool(coverage_ok), metadata
 
@@ -304,10 +314,17 @@ def _latest_full196_from_progress(rows: list[dict[str, Any]]) -> dict[str, Any]:
         is_full, is_ok, metadata = _classify_full196_run(run_summary_path)
         if not is_full or run_summary_path is None:
             continue
+        artifact_head_commit = str(metadata.get("artifact_head_commit") or "").strip()
+        progress_commit = str(row.get("commit") or "").strip()
+        validated_commit = artifact_head_commit or progress_commit
+        validated_commit_source = (
+            "run_summary.repo.head_commit" if artifact_head_commit else "progress_log.commit"
+        )
         return {
             "run_summary_path": _to_repo_rel(run_summary_path),
             "last_ok": is_ok,
-            "validated_commit": str(row.get("commit") or ""),
+            "validated_commit": validated_commit,
+            "validated_commit_source": validated_commit_source,
             "validated_mode": str(metadata.get("validated_mode") or ""),
             "validated_scope": str(metadata.get("validated_scope") or ""),
             "validated_with_rvv_remote": bool(metadata.get("validated_with_rvv_remote")),
@@ -316,11 +333,13 @@ def _latest_full196_from_progress(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "coverage_batches_expected": metadata.get("coverage_batches_expected"),
             "coverage_batches_completed": metadata.get("coverage_batches_completed"),
             "coverage_batches_failed": list(metadata.get("coverage_batches_failed") or []),
+            "artifact_repo_stamp_ok": bool(metadata.get("artifact_repo_stamp_ok")),
         }
     return {
         "run_summary_path": "",
         "last_ok": None,
         "validated_commit": "",
+        "validated_commit_source": "",
         "validated_mode": "",
         "validated_scope": "",
         "validated_with_rvv_remote": None,
@@ -329,6 +348,7 @@ def _latest_full196_from_progress(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "coverage_batches_expected": None,
         "coverage_batches_completed": None,
         "coverage_batches_failed": [],
+        "artifact_repo_stamp_ok": False,
     }
 
 
@@ -453,6 +473,8 @@ def main() -> None:
     full196_run_summary = str(full196_info.get("run_summary_path") or "")
     full196_last_ok = full196_info.get("last_ok")
     full196_validated_commit = str(full196_info.get("validated_commit") or "")
+    full196_validated_commit_source = str(full196_info.get("validated_commit_source") or "")
+    artifact_repo_stamp_ok = bool(full196_info.get("artifact_repo_stamp_ok"))
     full196_validated_mode = str(full196_info.get("validated_mode") or "")
     full196_validated_scope = str(full196_info.get("validated_scope") or "")
     full196_validated_with_rvv_remote = full196_info.get("validated_with_rvv_remote")
@@ -471,7 +493,6 @@ def main() -> None:
             coverage_batches_expected = None
 
     validated_commit_state = "missing"
-    full196_validated_commit_source = str(full196_validated_commit or "")
     full196_commits_since_validated_total: int | None = None
     full196_lifted_to_head = False
     if full196_validated_commit:
@@ -482,7 +503,7 @@ def main() -> None:
         else:
             validated_commit_state = "reachable"
     full196_commits_since_validated = None
-    if validated_commit_state == "reachable":
+    if validated_commit_state == "reachable" and (not full196_run_summary or artifact_repo_stamp_ok):
         full196_commits_since_validated_total = _commits_since_validated(full196_validated_commit, head_commit)
         full196_commits_since_validated = full196_commits_since_validated_total
         # If only workflow state files changed since the last validated full196 evidence,
@@ -498,6 +519,9 @@ def main() -> None:
                 validated_commit_state = "stale"
         else:
             validated_commit_state = "fresh"
+    elif full196_run_summary and not artifact_repo_stamp_ok:
+        # full196 evidence without embedded repo provenance is not trustworthy for "fresh on HEAD".
+        validated_commit_state = "unverifiable"
     git_log_short = read_git_log(cwd=ROOT, lines=int(args.git_log_lines))
     next_focus = _parse_next_focus(args.handoff) or str(latest.get("next_focus") or "")
     active_lanes = _active_lanes(feature_payload)
@@ -512,11 +536,13 @@ def main() -> None:
         coverage_integrity_phase = "recompute_pending"
     elif validated_commit_state == "invalid":
         coverage_integrity_phase = "stale_or_invalid"
+    elif validated_commit_state == "unverifiable":
+        coverage_integrity_phase = "stale_or_unverifiable"
     elif validated_commit_state == "stale":
         coverage_integrity_phase = "recompute_stale"
     else:
         coverage_integrity_phase = "recomputed_ok" if bool(full196_last_ok) else "recomputed_failed"
-    if validated_commit_state in {"invalid", "stale"}:
+    if validated_commit_state in {"invalid", "stale", "unverifiable"}:
         active_lanes = sorted(set(list(active_lanes) + ["coverage"]))
         # When full196 evidence is stale/invalid, make coverage re-validation the primary focus
         # regardless of any previous lane hints stored in progress/handoff.

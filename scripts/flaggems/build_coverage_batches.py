@@ -89,8 +89,9 @@ def _build_batches(registry_payload: dict[str, Any]) -> dict[str, Any]:
     batches: list[dict[str, Any]] = []
     for family in family_order:
         row = by_family.get(family) or {"semantic_ops": [], "kernels": []}
-        semantics = list(row.get("semantic_ops") or [])
-        kernels = list(row.get("kernels") or [])
+        # Sort for determinism (avoid dirty state when registry ordering changes subtly).
+        semantics = sorted([str(x) for x in (row.get("semantic_ops") or []) if str(x).strip()])
+        kernels = sorted([str(x) for x in (row.get("kernels") or []) if str(x).strip()])
         batches.append(
             {
                 "family": str(family),
@@ -102,13 +103,15 @@ def _build_batches(registry_payload: dict[str, Any]) -> dict[str, Any]:
         )
 
     if unknown_family_bucket["semantic_ops"]:
+        unknown_semantics = sorted([str(x) for x in unknown_family_bucket["semantic_ops"] if str(x).strip()])
+        unknown_kernels = sorted([str(x) for x in unknown_family_bucket["kernels"] if str(x).strip()])
         batches.append(
             {
                 "family": "unknown",
-                "semantic_ops": list(unknown_family_bucket["semantic_ops"]),
-                "kernels": list(unknown_family_bucket["kernels"]),
-                "semantic_count": int(len(unknown_family_bucket["semantic_ops"])),
-                "kernel_count": int(len(unknown_family_bucket["kernels"])),
+                "semantic_ops": unknown_semantics,
+                "kernels": unknown_kernels,
+                "semantic_count": int(len(unknown_semantics)),
+                "kernel_count": int(len(unknown_kernels)),
             }
         )
 
@@ -143,6 +146,12 @@ def _repo_rel(path: Path) -> str:
         return str(path)
 
 
+def _strip_generated_at(payload: dict[str, Any]) -> dict[str, Any]:
+    out = dict(payload)
+    out.pop("generated_at", None)
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -160,6 +169,26 @@ def main() -> None:
     registry_payload = _load_json(args.registry)
     payload = _build_batches(registry_payload)
     payload["source_registry_path"] = _repo_rel(args.registry)
+
+    # Idempotence: do not rewrite repo-tracked state if content is unchanged.
+    #
+    # This avoids "dirty git status" when a user runs the batch builder but the
+    # registry hasn't actually changed.
+    existing_payload: dict[str, Any] | None = None
+    if args.out.is_file():
+        try:
+            existing_payload = _load_json(args.out)
+        except Exception:
+            existing_payload = None
+    if isinstance(existing_payload, dict) and _strip_generated_at(existing_payload) == _strip_generated_at(payload):
+        out_path = args.out
+        summary = dict(payload.get("summary") or {})
+        print(
+            "Coverage batches unchanged: "
+            f"{out_path} (families={summary.get('families_total')}, "
+            f"semantic_ops={summary.get('semantic_ops_total')}, kernels={summary.get('kernels_total')})"
+        )
+        return
 
     out_path = _dump_json(args.out, payload)
     summary = dict(payload.get("summary") or {})

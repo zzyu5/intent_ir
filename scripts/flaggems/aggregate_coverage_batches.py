@@ -9,7 +9,14 @@ import json
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from intent_ir.utils.repo_state import repo_state  # noqa: E402
 
 
 def _utc_now_iso() -> str:
@@ -382,6 +389,10 @@ def main() -> None:
     ap.add_argument("--out-coverage-integrity", type=Path, default=None)
     ap.add_argument("--require-dual-pass-total", type=int, default=196)
     ap.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="force_compile")
+    ap.add_argument("--intentir-miss-policy", choices=["deterministic", "strict"], default="strict")
+    ap.add_argument("--run-rvv-remote", action=argparse.BooleanOptionalAction, default=True)
+    ap.add_argument("--cuda-runtime-backend", choices=["auto", "nvcc", "nvrtc"], default="nvrtc")
+    ap.add_argument("--family-kernel-chunk-size", type=int, default=12)
     args = ap.parse_args()
 
     coverage_batches = _load_json(args.coverage_batches)
@@ -540,11 +551,30 @@ def main() -> None:
     stage_timing_payload, stage_timing_ok = _aggregate_stage_timing(stage_timing_paths)
     if (not stage_timing_ok) and backend_json_pairs:
         stage_timing_payload, stage_timing_ok = _aggregate_stage_timing_from_backend_pairs(backend_json_pairs)
+    stage_timing_payload["repo"] = repo_state(root=ROOT)
+    stage_timing_payload["invocation"] = {
+        "intentir_mode": str(args.intentir_mode),
+        "miss_policy": str(args.intentir_miss_policy),
+        "rvv_remote": bool(args.run_rvv_remote),
+        "cuda_runtime_backend": str(args.cuda_runtime_backend),
+    }
     _dump_json(out_stage_timing, stage_timing_payload)
 
     status_payload = {
         "schema_version": "flaggems_status_converged_v3",
         "generated_at": _utc_now_iso(),
+        "repo": repo_state(root=ROOT),
+        "invocation": {
+            "intentir_mode": str(args.intentir_mode),
+            "miss_policy": str(args.intentir_miss_policy),
+            "rvv_remote": bool(args.run_rvv_remote),
+            "cuda_runtime_backend": str(args.cuda_runtime_backend),
+        },
+        "coverage": {
+            "mode": "category_batches",
+            "batches_expected": categories_expected,
+            "chunk_size": int(args.family_kernel_chunk_size),
+        },
         "scope_enabled": False,
         "entries": final_entries,
         "counts_global": counts_global,
@@ -564,6 +594,18 @@ def main() -> None:
     coverage_payload = {
         "schema_version": "flaggems_coverage_integrity_v2",
         "generated_at": _utc_now_iso(),
+        "repo": repo_state(root=ROOT),
+        "invocation": {
+            "intentir_mode": str(args.intentir_mode),
+            "miss_policy": str(args.intentir_miss_policy),
+            "rvv_remote": bool(args.run_rvv_remote),
+            "cuda_runtime_backend": str(args.cuda_runtime_backend),
+        },
+        "coverage": {
+            "mode": "category_batches",
+            "batches_expected": categories_expected,
+            "chunk_size": int(args.family_kernel_chunk_size),
+        },
         "coverage_integrity_ok": bool(coverage_integrity_ok),
         "reason_code": str(coverage_reason),
         "coverage_mode": "category_batches",
@@ -585,6 +627,18 @@ def main() -> None:
         "ok": bool(coverage_integrity_ok),
         "suite": "coverage",
         "requested_suite": "coverage",
+        "repo": repo_state(root=ROOT),
+        "invocation": {
+            "intentir_mode": str(args.intentir_mode),
+            "miss_policy": str(args.intentir_miss_policy),
+            "rvv_remote": bool(args.run_rvv_remote),
+            "cuda_runtime_backend": str(args.cuda_runtime_backend),
+        },
+        "coverage": {
+            "mode": "category_batches",
+            "batches_expected": categories_expected,
+            "chunk_size": int(args.family_kernel_chunk_size),
+        },
         "kernel_filter": [],
         "scope_kernels": expected_kernels,
         "coverage_mode": "category_batches",

@@ -528,7 +528,14 @@ def main() -> None:
             str(out_root),
             "--intentir-mode",
             str(args.intentir_mode),
+            "--intentir-miss-policy",
+            str(args.intentir_miss_policy),
+            "--cuda-runtime-backend",
+            str(args.cuda_runtime_backend),
+            "--family-kernel-chunk-size",
+            str(int(args.family_kernel_chunk_size)),
         ]
+        aggregate_cmd.append("--run-rvv-remote" if bool(args.run_rvv_remote) else "--no-run-rvv-remote")
         print("[coverage-batches] aggregate full196 evidence", flush=True)
         aggregate_rc, _, _ = _run(
             aggregate_cmd,

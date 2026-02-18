@@ -23,6 +23,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from intent_ir.utils.repo_state import repo_state  # noqa: E402
+
 
 def _run(cmd: list[str], *, cwd: Path, stream_output: bool = False) -> tuple[int, str, str]:
     if not bool(stream_output):
@@ -526,7 +528,14 @@ def main() -> None:
             str(cuda_json),
             "--out",
             str(stage_timing_breakdown),
+            "--intentir-mode",
+            str(args.intentir_mode),
+            "--intentir-miss-policy",
+            str(miss_policy),
+            "--cuda-runtime-backend",
+            str(args.cuda_runtime_backend),
         ]
+        cmd.append("--rvv-remote" if bool(args.run_rvv_remote) else "--no-rvv-remote")
         print("[matrix] stage=stage_timing_breakdown", flush=True)
         rc, out, err = _run(cmd, cwd=ROOT, stream_output=bool(args.stream_subprocess_output))
         _record("stage_timing_breakdown", rc, out, err, extra={"cmd": cmd, "json_path": str(stage_timing_breakdown)})
@@ -550,7 +559,14 @@ def main() -> None:
         str(pipeline_out_dir),
         "--out",
         str(converged),
+        "--intentir-mode",
+        str(args.intentir_mode),
+        "--intentir-miss-policy",
+        str(miss_policy),
+        "--cuda-runtime-backend",
+        str(args.cuda_runtime_backend),
     ]
+    cmd.append("--rvv-remote" if bool(args.run_rvv_remote) else "--no-rvv-remote")
     if rvv_remote_json.is_file():
         cmd += ["--rvv-json", str(rvv_remote_json)]
     elif rvv_json.is_file():
@@ -588,6 +604,7 @@ def main() -> None:
         # with stages seen so far to satisfy recompute input contract.
         tmp_summary = {
             "ok": all(bool(r.get("ok")) for r in stage_results),
+            "repo": repo_state(root=ROOT),
             "stages": stage_results,
         }
         (out_dir / "run_summary.json").write_text(json.dumps(tmp_summary, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -610,6 +627,13 @@ def main() -> None:
     ok = all(bool(r.get("ok")) for r in stage_results)
     summary = {
         "ok": bool(ok),
+        "repo": repo_state(root=ROOT),
+        "invocation": {
+            "intentir_mode": str(args.intentir_mode),
+            "miss_policy": str(miss_policy),
+            "rvv_remote": bool(args.run_rvv_remote),
+            "cuda_runtime_backend": str(args.cuda_runtime_backend),
+        },
         "lane": str(args.lane),
         "requested_suite": str(args.suite),
         "suite": str(effective_suite),

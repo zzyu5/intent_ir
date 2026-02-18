@@ -45,6 +45,9 @@ def _validate_coverage_fresh_on_head(current_status_path: Path) -> tuple[bool, s
     if not current_status_path.is_file():
         return False, f"missing current_status: {current_status_path}"
     payload = load_json(current_status_path)
+    phase = str(payload.get("coverage_integrity_phase") or "").strip()
+    if phase == "stale_or_unverifiable":
+        return False, "full196 evidence unverifiable (missing repo provenance in artifacts); rerun full196 on HEAD"
     validated_commit = str(payload.get("full196_validated_commit") or "").strip()
     full196_last_ok = bool(payload.get("full196_last_ok"))
     commits_since = payload.get("full196_commits_since_validated")

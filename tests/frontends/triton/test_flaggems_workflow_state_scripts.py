@@ -266,6 +266,7 @@ def test_build_workflow_state_prefers_latest_full196_run_over_latest_partial(tmp
             {
                 "ok": True,
                 "suite": "coverage",
+                "repo": {"head_commit": head_commit, "branch": "test", "dirty": False},
                 "kernel_filter": [],
                 "scope_kernels": ["add2d"],
                 "stages": [
@@ -380,6 +381,7 @@ def test_build_workflow_state_accepts_full196_with_resolved_kernel_filter(tmp_pa
             {
                 "ok": False,
                 "suite": "coverage",
+                "repo": {"head_commit": head_commit, "branch": "test", "dirty": False},
                 "kernel_filter": ["abs2d", "add2d"],
                 "scope_kernels": ["abs2d", "add2d"],
                 "stages": [
@@ -472,6 +474,7 @@ def test_build_workflow_state_prefers_coverage_integrity_over_run_ok(tmp_path: P
             {
                 "ok": False,
                 "suite": "coverage",
+                "repo": {"head_commit": head_commit, "branch": "test", "dirty": False},
                 "kernel_filter": ["abs2d", "add2d"],
                 "scope_kernels": ["abs2d", "add2d"],
                 "stages": [
@@ -562,6 +565,7 @@ def test_build_workflow_state_marks_stale_or_invalid_for_unreachable_validated_c
             {
                 "ok": True,
                 "suite": "coverage",
+                "repo": {"head_commit": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "branch": "test", "dirty": False},
                 "kernel_filter": [],
                 "scope_kernels": ["abs2d"],
                 "stages": [
