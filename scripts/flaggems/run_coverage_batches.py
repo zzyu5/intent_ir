@@ -15,6 +15,11 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 
+try:  # Optional dependency; plain progress remains available without tqdm.
+    from tqdm import tqdm  # type: ignore
+except Exception:  # pragma: no cover
+    tqdm = None
+
 
 def _utc_date_tag() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d")
@@ -48,6 +53,11 @@ def _run(cmd: list[str], *, stream_output: bool, dry_run: bool) -> tuple[int, st
         print(line, end="", flush=True)
     rc = int(proc.wait())
     return rc, "".join(merged), ""
+
+
+def _write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(str(text), encoding="utf-8")
 
 
 def _normalize_family_list(raw: list[str]) -> list[str]:
@@ -240,10 +250,16 @@ def main() -> None:
     ap.add_argument("--suite", choices=["coverage"], default="coverage")
     ap.add_argument("--cases-limit", type=int, default=8)
     ap.add_argument("--flaggems-path", choices=["original", "intentir"], default="intentir")
-    ap.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="force_compile")
+    ap.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="auto")
     ap.add_argument("--intentir-miss-policy", choices=["deterministic", "strict"], default="strict")
     ap.add_argument("--flaggems-opset", choices=["deterministic_forward"], default="deterministic_forward")
     ap.add_argument("--backend-target", choices=["rvv", "cuda_h100", "cuda_5090d"], default="rvv")
+    ap.add_argument(
+        "--seed-cache-dir",
+        type=Path,
+        default=(ROOT / "artifacts" / "flaggems_seed_cache"),
+        help="Stable seed cache shared across runs (default: artifacts/flaggems_seed_cache).",
+    )
     ap.add_argument("--run-rvv-remote", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument(
         "--skip-rvv-local",
@@ -267,7 +283,13 @@ def main() -> None:
         help="Split each family into chunks with at most N kernels (default: 12, <=0 disables).",
     )
     ap.add_argument("--write-registry", action=argparse.BooleanOptionalAction, default=False)
-    ap.add_argument("--stream-subprocess-output", action=argparse.BooleanOptionalAction, default=True)
+    ap.add_argument("--stream-subprocess-output", action=argparse.BooleanOptionalAction, default=False)
+    ap.add_argument(
+        "--progress-style",
+        choices=["tqdm", "plain", "none"],
+        default="tqdm",
+        help="Chunk progress style. `tqdm` falls back to plain when tqdm is unavailable.",
+    )
     ap.add_argument("--aggregate", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
@@ -293,13 +315,45 @@ def main() -> None:
 
     out_root = Path(args.out_root)
     out_root.mkdir(parents=True, exist_ok=True)
+    seed_cache_dir = Path(args.seed_cache_dir)
+    seed_cache_dir.mkdir(parents=True, exist_ok=True)
+
+    progress_style = str(args.progress_style)
+    if progress_style == "tqdm" and tqdm is None:
+        print("[coverage-batches] tqdm unavailable; falling back to plain progress output", flush=True)
+        progress_style = "plain"
 
     family_rows: list[dict[str, Any]] = []
+    family_plans: list[dict[str, Any]] = []
     total_families = len(families)
-    for idx, family in enumerate(families, start=1):
+    total_chunks = 0
+    for family in families:
         batch = by_family[family]
         kernels = [str(k).strip() for k in list(batch.get("kernels") or []) if str(k).strip()]
         semantics = [str(s).strip() for s in list(batch.get("semantic_ops") or []) if str(s).strip()]
+        chunks = _chunk_kernels(kernels, int(args.family_kernel_chunk_size)) if kernels else []
+        total_chunks += int(len(chunks))
+        family_plans.append(
+            {
+                "family": family,
+                "batch": batch,
+                "kernels": kernels,
+                "semantics": semantics,
+                "chunks": chunks,
+            }
+        )
+
+    progress_bar = None
+    if progress_style == "tqdm":
+        progress_bar = tqdm(total=int(total_chunks), desc="full196", unit="chunk", dynamic_ncols=True)
+
+    chunk_done = 0
+    chunk_failures: list[dict[str, Any]] = []
+    for idx, plan in enumerate(family_plans, start=1):
+        family = str(plan["family"])
+        kernels = list(plan["kernels"])
+        semantics = list(plan["semantics"])
+        chunks = list(plan["chunks"])
         if not kernels:
             family_rows.append(
                 {
@@ -318,8 +372,6 @@ def main() -> None:
 
         family_out = _family_dir(out_root, family)
         family_out.mkdir(parents=True, exist_ok=True)
-        family_seed_cache_dir = out_root / "seed_cache"
-        family_seed_cache_dir.mkdir(parents=True, exist_ok=True)
         run_summary_path = family_out / "run_summary.json"
         status_path = family_out / "status_converged.json"
 
@@ -331,6 +383,15 @@ def main() -> None:
                 resume_ok = False
             if resume_ok:
                 print(f"[{idx}/{total_families}] SKIP family={family} (resume hit)", flush=True)
+                chunk_done += int(len(chunks))
+                if progress_bar is not None:
+                    progress_bar.set_postfix_str(f"{family} resume")
+                    progress_bar.update(int(len(chunks)))
+                elif progress_style == "plain":
+                    print(
+                        f"[progress] chunks {chunk_done}/{total_chunks} family={family} status=RESUME",
+                        flush=True,
+                    )
                 family_rows.append(
                     {
                         "family": family,
@@ -347,7 +408,6 @@ def main() -> None:
                 )
                 continue
 
-        chunks = _chunk_kernels(kernels, int(args.family_kernel_chunk_size))
         chunk_enabled = bool(len(chunks) > 1)
         print(
             f"[{idx}/{total_families}] RUN family={family} kernels={len(kernels)} semantics={len(semantics)} "
@@ -390,10 +450,20 @@ def main() -> None:
                             "run_summary_path": str(chunk_run_summary),
                             "status_converged_path": str(chunk_status),
                             "pipeline_out_dir": str(chunk_pipeline_out),
-                            "seed_cache_dir": str(family_seed_cache_dir),
+                            "seed_cache_dir": str(seed_cache_dir),
                             "skipped": True,
                         }
                     )
+                    chunk_done += 1
+                    if progress_bar is not None:
+                        progress_bar.set_postfix_str(f"{family} {chunk_idx}/{len(chunks)} resume")
+                        progress_bar.update(1)
+                    elif progress_style == "plain":
+                        print(
+                            f"[progress] chunks {chunk_done}/{total_chunks} family={family} "
+                            f"chunk={chunk_idx}/{len(chunks)} status=RESUME",
+                            flush=True,
+                        )
                     continue
 
             cmd = [
@@ -434,7 +504,7 @@ def main() -> None:
                 "--pipeline-out-dir",
                 str(chunk_pipeline_out),
                 "--seed-cache-dir",
-                str(family_seed_cache_dir),
+                str(seed_cache_dir),
             ]
             cmd.append("--skip-rvv-local" if bool(args.skip_rvv_local) else "--no-skip-rvv-local")
             cmd.append("--run-rvv-remote" if bool(args.run_rvv_remote) else "--no-run-rvv-remote")
@@ -450,26 +520,59 @@ def main() -> None:
                 flush=True,
             )
             rc, out, err = _run(cmd, stream_output=bool(args.stream_subprocess_output), dry_run=bool(args.dry_run))
+            chunk_log_dir = chunk_out / "logs"
+            stdout_path = chunk_log_dir / "matrix.stdout.log"
+            stderr_path = chunk_log_dir / "matrix.stderr.log"
+            if str(out):
+                _write_text(stdout_path, str(out))
+            if str(err):
+                _write_text(stderr_path, str(err))
+            chunk_ok = int(rc) == 0
             chunk_rows.append(
                 {
                     "family": family,
                     "chunk": chunk_name,
                     "chunk_index": int(chunk_idx),
-                    "ok": int(rc) == 0,
+                    "ok": bool(chunk_ok),
                     "rc": int(rc),
                     "kernel_count": int(len(chunk_kernels)),
                     "kernels": list(chunk_kernels),
                     "out_dir": str(chunk_out),
                     "run_summary_path": str(chunk_run_summary),
                     "status_converged_path": str(chunk_status),
-                    "stdout": str(out).strip(),
-                    "stderr": str(err).strip(),
+                    "stdout_path": str(stdout_path) if str(out) else "",
+                    "stderr_path": str(stderr_path) if str(err) else "",
                     "skipped": False,
                     "cmd": cmd,
                     "pipeline_out_dir": str(chunk_pipeline_out),
-                    "seed_cache_dir": str(family_seed_cache_dir),
+                    "seed_cache_dir": str(seed_cache_dir),
                 }
             )
+            chunk_done += 1
+            if progress_bar is not None:
+                progress_bar.set_postfix_str(f"{family} {chunk_idx}/{len(chunks)} {'ok' if chunk_ok else 'fail'}")
+                progress_bar.update(1)
+            elif progress_style == "plain":
+                print(
+                    f"[progress] chunks {chunk_done}/{total_chunks} family={family} "
+                    f"chunk={chunk_idx}/{len(chunks)} status={'OK' if chunk_ok else 'FAIL'}",
+                    flush=True,
+                )
+            if not chunk_ok:
+                chunk_failures.append(
+                    {
+                        "family": family,
+                        "chunk": chunk_name,
+                        "chunk_index": int(chunk_idx),
+                        "kernel_count": int(len(chunk_kernels)),
+                        "kernels": list(chunk_kernels),
+                        "rc": int(rc),
+                        "run_summary_path": str(chunk_run_summary),
+                        "status_converged_path": str(chunk_status),
+                        "stdout_path": str(stdout_path) if str(out) else "",
+                        "stderr_path": str(stderr_path) if str(err) else "",
+                    }
+                )
 
         # Always materialize a family-level summary/status from chunk outputs.
         # This keeps family runs scoped to the selected semantics even when
@@ -504,7 +607,7 @@ def main() -> None:
                 "status_converged_path": str(status_path),
                 "chunks": chunk_rows,
                 "skipped": bool(len(chunk_rows) > 0 and all(bool(r.get("skipped")) for r in chunk_rows)),
-                "seed_cache_dir": str(family_seed_cache_dir),
+                "seed_cache_dir": str(seed_cache_dir),
             }
         )
         print(
@@ -513,17 +616,34 @@ def main() -> None:
             flush=True,
         )
 
+    if progress_bar is not None:
+        progress_bar.close()
+
+    failures_path = out_root / "errors.json"
+    failure_payload = {
+        "schema_version": "flaggems_coverage_batch_errors_v1",
+        "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "error_count": int(len(chunk_failures)),
+        "errors": list(chunk_failures),
+    }
+    failures_path.write_text(json.dumps(failure_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
     runs_payload = {
         "schema_version": "flaggems_coverage_batch_runs_v1",
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "coverage_batches_path": str(args.coverage_batches),
         "out_root": str(out_root),
+        "seed_cache_dir": str(seed_cache_dir),
         "families": family_rows,
+        "errors_path": str(failures_path),
+        "error_count": int(len(chunk_failures)),
         "ok": bool(all(bool(r.get("ok")) for r in family_rows)),
     }
     runs_summary_path = out_root / "coverage_batch_runs.json"
     runs_summary_path.write_text(json.dumps(runs_payload, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"Coverage batch runs written: {runs_summary_path}", flush=True)
+    if int(len(chunk_failures)) > 0:
+        print(f"Coverage batch errors written: {failures_path} (count={len(chunk_failures)})", flush=True)
 
     aggregate_rc = 0
     if bool(args.aggregate) and (not bool(args.dry_run)):

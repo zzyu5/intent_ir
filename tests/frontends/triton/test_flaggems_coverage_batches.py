@@ -149,6 +149,7 @@ def test_aggregate_coverage_batches_passes_on_complete_two_family_fixture(tmp_pa
 def test_run_coverage_batches_dry_run_uses_family_pipeline_dirs(tmp_path: Path) -> None:
     coverage_batches = tmp_path / "coverage_batches.json"
     out_root = tmp_path / "runs"
+    seed_cache_dir = tmp_path / "seed_cache_shared"
     coverage_batches.write_text(
         json.dumps(
             {
@@ -182,6 +183,8 @@ def test_run_coverage_batches_dry_run_uses_family_pipeline_dirs(tmp_path: Path) 
             str(coverage_batches),
             "--out-root",
             str(out_root),
+            "--seed-cache-dir",
+            str(seed_cache_dir),
             "--dry-run",
             "--no-resume",
             "--no-run-rvv-remote",
@@ -195,7 +198,7 @@ def test_run_coverage_batches_dry_run_uses_family_pipeline_dirs(tmp_path: Path) 
 
     runs_payload = json.loads((out_root / "coverage_batch_runs.json").read_text(encoding="utf-8"))
     assert runs_payload["ok"] is True
-    seed_cache_dir = str(out_root / "seed_cache")
+    seed_cache_dir_s = str(seed_cache_dir)
     rows = {str(row["family"]): row for row in runs_payload["families"]}
     assert set(rows) == {"f1", "f2"}
     for family in ("f1", "f2"):
@@ -206,13 +209,13 @@ def test_run_coverage_batches_dry_run_uses_family_pipeline_dirs(tmp_path: Path) 
         assert len(chunks) == 1
         chunk = chunks[0]
         assert chunk["pipeline_out_dir"] == expected_pipeline_dir
-        assert chunk["seed_cache_dir"] == seed_cache_dir
+        assert chunk["seed_cache_dir"] == seed_cache_dir_s
         cmd = list(chunk["cmd"])
         assert "--pipeline-out-dir" in cmd
         assert "--seed-cache-dir" in cmd
         assert "--skip-rvv-local" in cmd
         assert expected_pipeline_dir in cmd
-        assert seed_cache_dir in cmd
+        assert seed_cache_dir_s in cmd
 
     # Dry-run intentionally skips aggregation.
     assert not (out_root / "run_summary.json").exists()

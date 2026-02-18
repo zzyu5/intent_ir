@@ -69,6 +69,11 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             str(args.cuda_runtime_backend),
             "--family-kernel-chunk-size",
             str(int(args.family_kernel_chunk_size)),
+            "--progress-style",
+            str(args.progress_style),
+            "--stream-subprocess-output"
+            if bool(args.stream_subprocess_detail)
+            else "--no-stream-subprocess-output",
             "--allow-cuda-skip" if args.allow_cuda_skip else "--no-allow-cuda-skip",
             "--run-rvv-remote" if args.run_rvv_remote else "--no-run-rvv-remote",
             "--skip-rvv-local" if args.skip_rvv_local else "--no-skip-rvv-local",
@@ -309,10 +314,17 @@ def _build_parser() -> argparse.ArgumentParser:
     suite.add_argument("--kernel", action="append", default=[])
     suite.add_argument("--cases-limit", type=int, default=8)
     suite.add_argument("--family-kernel-chunk-size", type=int, default=12)
+    suite.add_argument("--progress-style", choices=["tqdm", "plain", "none"], default="tqdm")
+    suite.add_argument(
+        "--stream-subprocess-detail",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Forward verbose per-kernel backend logs from internal matrix runners (default: false).",
+    )
     suite.add_argument("--resume", action=argparse.BooleanOptionalAction, default=True)
     suite.add_argument("--write-registry", action=argparse.BooleanOptionalAction, default=False)
     suite.add_argument("--flaggems-path", choices=["intentir", "original"], default="intentir")
-    suite.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="force_compile")
+    suite.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="auto")
     suite.add_argument("--intentir-miss-policy", choices=["deterministic", "strict"], default="strict")
     suite.add_argument("--run-rvv-remote", action=argparse.BooleanOptionalAction, default=True)
     suite.add_argument("--skip-rvv-local", action=argparse.BooleanOptionalAction, default=True)
@@ -333,7 +345,7 @@ def _build_parser() -> argparse.ArgumentParser:
     kernel.add_argument("--out-dir", default=None)
     kernel.add_argument("--cases-limit", type=int, default=8)
     kernel.add_argument("--flaggems-path", choices=["intentir", "original"], default="intentir")
-    kernel.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="force_compile")
+    kernel.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="auto")
     kernel.add_argument("--intentir-miss-policy", choices=["deterministic", "strict"], default="strict")
     kernel.add_argument("--run-rvv-remote", action=argparse.BooleanOptionalAction, default=True)
     kernel.add_argument("--rvv-host", default="192.168.8.72")
