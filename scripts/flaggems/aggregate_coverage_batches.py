@@ -168,6 +168,87 @@ def _empty_backend_timing() -> dict[str, Any]:
     }
 
 
+def _empty_mlir_timing() -> dict[str, Any]:
+    return {
+        "available": False,
+        "kernel_count": 0,
+        "totals_ms": {
+            "mlir_parse_ms": 0.0,
+            "mlir_pass_ms": 0.0,
+            "mlir_lower_ms": 0.0,
+            "mlir_total_ms": 0.0,
+        },
+        "avg_ms": {
+            "mlir_parse_ms": 0.0,
+            "mlir_pass_ms": 0.0,
+            "mlir_lower_ms": 0.0,
+            "mlir_total_ms": 0.0,
+        },
+        "stage_share_pct": {
+            "mlir_parse_ms": 0.0,
+            "mlir_pass_ms": 0.0,
+            "mlir_lower_ms": 0.0,
+        },
+        "pass_count_totals": {"upstream": 0, "midend": 0, "downstream": 0},
+        "missing_mlir_rows": [],
+        "source_dirs": [],
+    }
+
+
+def _merge_mlir_timing(dst: dict[str, Any], src: dict[str, Any]) -> None:
+    if not bool(src.get("available")):
+        return
+    dst["available"] = True
+    dst["kernel_count"] = int(dst.get("kernel_count") or 0) + int(src.get("kernel_count") or 0)
+    dst_totals = dict(dst.get("totals_ms") or {})
+    src_totals = dict(src.get("totals_ms") or {})
+    for key in ("mlir_parse_ms", "mlir_pass_ms", "mlir_lower_ms", "mlir_total_ms"):
+        dst_totals[key] = _safe_float(dst_totals.get(key)) + _safe_float(src_totals.get(key))
+    dst["totals_ms"] = dst_totals
+    dst_pass = dict(dst.get("pass_count_totals") or {})
+    src_pass = dict(src.get("pass_count_totals") or {})
+    for key in ("upstream", "midend", "downstream"):
+        dst_pass[key] = int(dst_pass.get(key, 0)) + int(src_pass.get(key, 0))
+    dst["pass_count_totals"] = dst_pass
+    missing = [str(x) for x in list(src.get("missing_mlir_rows") or []) if str(x).strip()]
+    if missing:
+        dst_missing = [str(x) for x in list(dst.get("missing_mlir_rows") or []) if str(x).strip()]
+        dst["missing_mlir_rows"] = sorted(set(dst_missing + missing))
+    src_dir = str(src.get("source_dir") or "").strip()
+    if src_dir:
+        src_dirs = [str(x) for x in list(dst.get("source_dirs") or []) if str(x).strip()]
+        if src_dir not in src_dirs:
+            src_dirs.append(src_dir)
+        dst["source_dirs"] = src_dirs
+
+
+def _finalize_mlir_timing(section: dict[str, Any]) -> None:
+    kernel_count = int(section.get("kernel_count") or 0)
+    totals = dict(section.get("totals_ms") or {})
+    parse_ms = _safe_float(totals.get("mlir_parse_ms"))
+    pass_ms = _safe_float(totals.get("mlir_pass_ms"))
+    lower_ms = _safe_float(totals.get("mlir_lower_ms"))
+    total_ms = _safe_float(totals.get("mlir_total_ms"))
+    if total_ms <= 0.0:
+        total_ms = parse_ms + pass_ms + lower_ms
+        totals["mlir_total_ms"] = float(total_ms)
+        section["totals_ms"] = totals
+    if kernel_count > 0:
+        section["avg_ms"] = {
+            "mlir_parse_ms": parse_ms / float(kernel_count),
+            "mlir_pass_ms": pass_ms / float(kernel_count),
+            "mlir_lower_ms": lower_ms / float(kernel_count),
+            "mlir_total_ms": total_ms / float(kernel_count),
+        }
+    denom = parse_ms + pass_ms + lower_ms
+    if denom > 0:
+        section["stage_share_pct"] = {
+            "mlir_parse_ms": parse_ms / denom * 100.0,
+            "mlir_pass_ms": pass_ms / denom * 100.0,
+            "mlir_lower_ms": lower_ms / denom * 100.0,
+        }
+
+
 def _summarize_backend_results(payload: dict[str, Any]) -> dict[str, Any]:
     rows = [r for r in list(payload.get("results") or []) if isinstance(r, dict)]
     if not rows:
@@ -243,6 +324,7 @@ def _aggregate_stage_timing(paths: list[Path]) -> tuple[dict[str, Any], bool]:
         unique_paths.append(p)
 
     backends = {"rvv": _empty_backend_timing(), "cuda": _empty_backend_timing()}
+    mlir = _empty_mlir_timing()
     for p in unique_paths:
         payload = _load_json(p)
         if str(payload.get("schema_version") or "") != "flaggems_stage_timing_breakdown_v1":
@@ -263,9 +345,13 @@ def _aggregate_stage_timing(paths: list[Path]) -> tuple[dict[str, Any], bool]:
                 dst_totals[key] = _safe_float(dst_totals.get(key)) + _safe_float(src_totals.get(key))
             dst["totals_ms"] = dst_totals
             _merge_reason_counts(dst.setdefault("reason_code_counts", {}), dict(src.get("reason_code_counts") or {}))
+        src_mlir = payload.get("mlir")
+        if isinstance(src_mlir, dict):
+            _merge_mlir_timing(mlir, src_mlir)
 
     for backend_name in ("rvv", "cuda"):
         _finalize_backend_timing(backends[backend_name])
+    _finalize_mlir_timing(mlir)
 
     combined_totals = {"lower_ms": 0.0, "compile_ms": 0.0, "launch_ms": 0.0, "total_ms": 0.0}
     kernel_total = 0
@@ -301,6 +387,7 @@ def _aggregate_stage_timing(paths: list[Path]) -> tuple[dict[str, Any], bool]:
         ),
         "inputs": {"sources": [str(p) for p in unique_paths]},
         "backends": backends,
+        "mlir": mlir,
         "combined": {
             "kernel_count_total": int(kernel_total),
             "totals_ms": combined_totals,
@@ -326,6 +413,7 @@ def _aggregate_stage_timing_from_backend_pairs(pairs: list[dict[str, Path]]) -> 
         unique_pairs.append({"rvv_json": rvv, "cuda_json": cuda})
 
     backends = {"rvv": _empty_backend_timing(), "cuda": _empty_backend_timing()}
+    mlir = _empty_mlir_timing()
     for row in unique_pairs:
         rvv_payload = _load_json(row["rvv_json"])
         cuda_payload = _load_json(row["cuda_json"])
@@ -371,6 +459,7 @@ def _aggregate_stage_timing_from_backend_pairs(pairs: list[dict[str, Path]]) -> 
         ),
         "inputs": {"sources": [{"rvv_json": str(r["rvv_json"]), "cuda_json": str(r["cuda_json"])} for r in unique_pairs]},
         "backends": backends,
+        "mlir": mlir,
         "combined": {
             "kernel_count_total": int(kernel_total),
             "totals_ms": combined_totals,

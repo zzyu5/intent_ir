@@ -419,3 +419,154 @@ def test_materialize_family_outputs_prefers_complete_chunk_evidence(tmp_path: Pa
     assert entry["semantic_op"] == "tanh"
     assert entry["reason_code"] == "diff_fail"
     assert entry["artifact_complete"] is True
+
+
+def test_compute_stage_timing_breakdown_includes_mlir_metrics(tmp_path: Path) -> None:
+    rvv_json = tmp_path / "rvv.json"
+    cuda_json = tmp_path / "cuda.json"
+    reports = tmp_path / "pipeline_reports"
+    out = tmp_path / "stage_timing_breakdown.json"
+    rvv_json.write_text(
+        json.dumps({"results": [{"kernel": "k1", "reason_code": "ok", "lower_ms": 1.0, "compile_ms": 2.0, "launch_ms": 3.0, "total_ms": 6.0}]}),
+        encoding="utf-8",
+    )
+    cuda_json.write_text(
+        json.dumps({"results": [{"kernel": "k1", "reason_code": "ok", "lower_ms": 1.5, "compile_ms": 2.5, "launch_ms": 3.5, "total_ms": 7.5}]}),
+        encoding="utf-8",
+    )
+    reports.mkdir(parents=True, exist_ok=True)
+    for kernel, parse_ms, pass_ms, lower_ms in [("k1", 1.0, 10.0, 4.0), ("k2", 2.0, 11.0, 5.0)]:
+        (reports / f"{kernel}.json").write_text(
+            json.dumps(
+                {
+                    "mlir": {
+                        "mlir_parse_ms": parse_ms,
+                        "mlir_pass_ms": pass_ms,
+                        "mlir_lower_ms": lower_ms,
+                        "upstream": {"passes": [{"name": "p0"}]},
+                        "midend": {"passes": [{"name": "p1"}, {"name": "p2"}]},
+                        "downstream": {"passes": [{"name": "p3"}]},
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/compute_stage_timing_breakdown.py",
+            "--rvv-json",
+            str(rvv_json),
+            "--cuda-json",
+            str(cuda_json),
+            "--pipeline-reports-dir",
+            str(reports),
+            "--kernel",
+            "k1",
+            "--kernel",
+            "k2",
+            "--out",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == "flaggems_stage_timing_breakdown_v1"
+    assert payload["mlir"]["available"] is True
+    assert payload["mlir"]["kernel_count"] == 2
+    assert payload["mlir"]["totals_ms"]["mlir_parse_ms"] == 3.0
+    assert payload["mlir"]["totals_ms"]["mlir_pass_ms"] == 21.0
+    assert payload["mlir"]["totals_ms"]["mlir_lower_ms"] == 9.0
+    assert payload["mlir"]["totals_ms"]["mlir_total_ms"] == 33.0
+
+
+def test_aggregate_coverage_batches_merges_mlir_stage_timing(tmp_path: Path) -> None:
+    coverage_batches = tmp_path / "coverage_batches.json"
+    runs_root = tmp_path / "runs"
+    runs_root.mkdir(parents=True, exist_ok=True)
+    coverage_batches.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_coverage_batches_v1",
+                "family_order": ["f1", "f2"],
+                "batches": [
+                    {"family": "f1", "semantic_ops": ["op1"], "kernels": ["k1"], "semantic_count": 1, "kernel_count": 1},
+                    {"family": "f2", "semantic_ops": ["op2"], "kernels": ["k2"], "semantic_count": 1, "kernel_count": 1},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    for family, op, kernel, parse_ms, pass_ms, lower_ms in [
+        ("f1", "op1", "k1", 1.0, 10.0, 4.0),
+        ("f2", "op2", "k2", 2.0, 11.0, 5.0),
+    ]:
+        d = runs_root / f"family_{family}"
+        d.mkdir(parents=True, exist_ok=True)
+        stage_json = d / "stage_timing_breakdown.json"
+        stage_json.write_text(
+            json.dumps(
+                {
+                    "schema_version": "flaggems_stage_timing_breakdown_v1",
+                    "backends": {
+                        "rvv": {"available": True, "kernel_count": 1, "totals_ms": {"lower_ms": 1.0, "compile_ms": 2.0, "launch_ms": 3.0, "total_ms": 6.0}},
+                        "cuda": {"available": True, "kernel_count": 1, "totals_ms": {"lower_ms": 1.5, "compile_ms": 2.5, "launch_ms": 3.5, "total_ms": 7.5}},
+                    },
+                    "mlir": {
+                        "available": True,
+                        "kernel_count": 1,
+                        "totals_ms": {
+                            "mlir_parse_ms": parse_ms,
+                            "mlir_pass_ms": pass_ms,
+                            "mlir_lower_ms": lower_ms,
+                            "mlir_total_ms": parse_ms + pass_ms + lower_ms,
+                        },
+                        "pass_count_totals": {"upstream": 1, "midend": 2, "downstream": 1},
+                        "missing_mlir_rows": [],
+                        "source_dir": str(d / "pipeline_reports"),
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (d / "run_summary.json").write_text(
+            json.dumps(
+                {
+                    "ok": True,
+                    "scope_kernels": [kernel],
+                    "stages": [{"stage": "stage_timing_breakdown", "ok": True, "json_path": str(stage_json)}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (d / "status_converged.json").write_text(
+            json.dumps({"entries": [{"semantic_op": op, "status": "dual_pass", "reason_code": "ok"}]}),
+            encoding="utf-8",
+        )
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/aggregate_coverage_batches.py",
+            "--coverage-batches",
+            str(coverage_batches),
+            "--runs-root",
+            str(runs_root),
+            "--require-dual-pass-total",
+            "2",
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    stage_payload = json.loads((runs_root / "stage_timing_breakdown.json").read_text(encoding="utf-8"))
+    assert stage_payload["mlir"]["available"] is True
+    assert stage_payload["mlir"]["kernel_count"] == 2
+    assert stage_payload["mlir"]["totals_ms"]["mlir_parse_ms"] == 3.0
+    assert stage_payload["mlir"]["totals_ms"]["mlir_pass_ms"] == 21.0
+    assert stage_payload["mlir"]["totals_ms"]["mlir_lower_ms"] == 9.0
+    assert stage_payload["mlir"]["totals_ms"]["mlir_total_ms"] == 33.0

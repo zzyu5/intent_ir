@@ -604,6 +604,8 @@ def main() -> None:
             str(rvv_json),
             "--cuda-json",
             str(cuda_json),
+            "--pipeline-reports-dir",
+            str(pipeline_out_dir),
             "--out",
             str(stage_timing_breakdown),
             "--intentir-mode",
@@ -613,6 +615,8 @@ def main() -> None:
             "--cuda-runtime-backend",
             str(args.cuda_runtime_backend),
         ]
+        for k in kernel_filter:
+            cmd += ["--kernel", str(k)]
         cmd.append("--rvv-remote" if bool(args.run_rvv_remote) else "--no-rvv-remote")
         print("[matrix] stage=stage_timing_breakdown", flush=True)
         rc, out, err = _run(cmd, cwd=ROOT, stream_output=bool(args.stream_subprocess_output))

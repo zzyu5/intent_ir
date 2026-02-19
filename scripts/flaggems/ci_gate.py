@@ -29,6 +29,13 @@ def _check(name: str, ok: bool, detail: str) -> dict[str, Any]:
     return {"name": str(name), "ok": bool(ok), "detail": str(detail)}
 
 
+def _safe_float(val: Any) -> float:
+    try:
+        return float(val)
+    except Exception:
+        return 0.0
+
+
 def _git_head_commit() -> str:
     p = subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -144,7 +151,7 @@ def _is_full_coverage_run(run_summary: dict[str, Any]) -> bool:
     return True
 
 
-def _validate_stage_timing_breakdown(path: Path) -> tuple[bool, str]:
+def _validate_stage_timing_breakdown(path: Path, *, require_mlir: bool = False) -> tuple[bool, str]:
     if not path.is_file():
         return False, f"missing stage_timing_breakdown json: {path}"
     payload = load_json(path)
@@ -175,6 +182,18 @@ def _validate_stage_timing_breakdown(path: Path) -> tuple[bool, str]:
             failures.append(f"{backend}:total_ms_nonpositive")
     if failures:
         return False, "; ".join(failures)
+    if bool(require_mlir):
+        mlir = payload.get("mlir")
+        if not isinstance(mlir, dict):
+            return False, "mlir section missing in stage_timing_breakdown"
+        if not bool(mlir.get("available")):
+            return False, "mlir section not available in stage_timing_breakdown"
+        totals = mlir.get("totals_ms")
+        if not isinstance(totals, dict):
+            return False, "mlir.totals_ms missing in stage_timing_breakdown"
+        total_ms = _safe_float(totals.get("mlir_total_ms"))
+        if total_ms <= 0.0:
+            return False, "mlir_total_ms nonpositive in stage_timing_breakdown"
     return True, "stage_timing_breakdown present with positive totals for rvv/cuda"
 
 
@@ -356,7 +375,11 @@ def main() -> None:
                 stage_path = Path(stage_path_raw)
                 if not stage_path.is_absolute():
                     stage_path = ROOT / stage_path
-                stage_ok, stage_detail = _validate_stage_timing_breakdown(stage_path)
+                execution_ir = str(run_summary_payload.get("execution_ir") or "").strip().lower()
+                stage_ok, stage_detail = _validate_stage_timing_breakdown(
+                    stage_path,
+                    require_mlir=(execution_ir == "mlir"),
+                )
                 checks.append(
                     _check(
                         "run_summary.stage_timing_breakdown_full196",

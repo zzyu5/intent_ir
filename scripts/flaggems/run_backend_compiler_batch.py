@@ -588,9 +588,13 @@ def main() -> None:
             str(Path(args.out_dir) / "rvv_local.json"),
             "--cuda-json",
             str(Path(args.out_dir) / "cuda_local.json"),
+            "--pipeline-reports-dir",
+            str(Path(args.out_dir) / "pipeline_reports"),
             "--out",
             str(stage_timing_breakdown),
         ]
+        for k in selected_kernels:
+            breakdown_cmd += ["--kernel", str(k)]
         rc_breakdown, _out_breakdown, err_breakdown = _run(
             breakdown_cmd,
             dry_run=False,
