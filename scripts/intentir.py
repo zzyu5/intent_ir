@@ -49,8 +49,7 @@ def _python_cmd(script: str, *extra: str) -> list[str]:
 
 
 def _execution_ir_default() -> str:
-    mode = str(os.getenv("INTENTIR_EXECUTION_IR", "mlir")).strip().lower()
-    return mode if mode in {"intent", "mlir"} else "mlir"
+    return "mlir"
 
 
 def _cmd_suite(args: argparse.Namespace) -> int:
@@ -400,7 +399,7 @@ def _build_parser() -> argparse.ArgumentParser:
     suite.add_argument("--family", action="append", default=[])
     suite.add_argument("--kernel", action="append", default=[])
     suite.add_argument("--cases-limit", type=int, default=8)
-    suite.add_argument("--execution-ir", choices=["intent", "mlir"], default=_execution_ir_default())
+    suite.add_argument("--execution-ir", choices=["mlir"], default=_execution_ir_default())
     suite.add_argument("--family-kernel-chunk-size", type=int, default=12)
     suite.add_argument(
         "--pipeline-timeout-sec",
@@ -444,7 +443,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0,
         help="Pipeline stage timeout (seconds) for matrix runners; 0 disables.",
     )
-    kernel.add_argument("--execution-ir", choices=["intent", "mlir"], default=_execution_ir_default())
+    kernel.add_argument("--execution-ir", choices=["mlir"], default=_execution_ir_default())
     kernel.add_argument("--flaggems-path", choices=["intentir", "original"], default="intentir")
     kernel.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="auto")
     kernel.add_argument("--intentir-miss-policy", choices=["deterministic", "strict"], default="strict")
