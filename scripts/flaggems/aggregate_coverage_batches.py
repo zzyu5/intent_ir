@@ -8,6 +8,7 @@ import argparse
 import json
 from collections import Counter
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 import sys
 from typing import Any
@@ -389,6 +390,11 @@ def main() -> None:
     ap.add_argument("--out-coverage-integrity", type=Path, default=None)
     ap.add_argument("--require-dual-pass-total", type=int, default=196)
     ap.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="force_compile")
+    ap.add_argument(
+        "--execution-ir",
+        choices=["intent", "mlir"],
+        default=(str(os.getenv("INTENTIR_EXECUTION_IR", "mlir")).strip().lower() or "mlir"),
+    )
     ap.add_argument("--intentir-miss-policy", choices=["deterministic", "strict"], default="strict")
     ap.add_argument("--run-rvv-remote", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--cuda-runtime-backend", choices=["auto", "nvcc", "nvrtc"], default="nvrtc")
@@ -555,6 +561,7 @@ def main() -> None:
     stage_timing_payload["invocation"] = {
         "intentir_mode": str(args.intentir_mode),
         "miss_policy": str(args.intentir_miss_policy),
+        "execution_ir": str(args.execution_ir),
         "rvv_remote": bool(args.run_rvv_remote),
         "cuda_runtime_backend": str(args.cuda_runtime_backend),
     }
@@ -567,6 +574,7 @@ def main() -> None:
         "invocation": {
             "intentir_mode": str(args.intentir_mode),
             "miss_policy": str(args.intentir_miss_policy),
+            "execution_ir": str(args.execution_ir),
             "rvv_remote": bool(args.run_rvv_remote),
             "cuda_runtime_backend": str(args.cuda_runtime_backend),
         },
@@ -598,6 +606,7 @@ def main() -> None:
         "invocation": {
             "intentir_mode": str(args.intentir_mode),
             "miss_policy": str(args.intentir_miss_policy),
+            "execution_ir": str(args.execution_ir),
             "rvv_remote": bool(args.run_rvv_remote),
             "cuda_runtime_backend": str(args.cuda_runtime_backend),
         },
@@ -631,6 +640,7 @@ def main() -> None:
         "invocation": {
             "intentir_mode": str(args.intentir_mode),
             "miss_policy": str(args.intentir_miss_policy),
+            "execution_ir": str(args.execution_ir),
             "rvv_remote": bool(args.run_rvv_remote),
             "cuda_runtime_backend": str(args.cuda_runtime_backend),
         },
@@ -647,6 +657,7 @@ def main() -> None:
         "coverage_batches_completed": categories_completed,
         "coverage_batches_failed": categories_failed,
         "intentir_mode": str(args.intentir_mode),
+        "execution_ir": str(args.execution_ir),
         "stages": [
             {
                 "stage": "coverage_categories",

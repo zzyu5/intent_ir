@@ -71,6 +71,27 @@ def _validate_coverage_fresh_on_head(current_status_path: Path) -> tuple[bool, s
     return True, "full196 evidence is fresh on HEAD"
 
 
+def _validate_mlir_fresh_on_head(current_status_path: Path) -> tuple[bool, str]:
+    if not current_status_path.is_file():
+        return False, f"missing current_status: {current_status_path}"
+    status = _load_json(current_status_path)
+    validated_commit = str(status.get("mlir_full196_validated_commit") or "").strip()
+    full196_last_ok = bool(status.get("full196_last_ok"))
+    execution_ir = str(status.get("full196_validated_execution_ir") or "").strip().lower()
+    if not validated_commit:
+        return False, "current_status.mlir_full196_validated_commit is empty"
+    if not full196_last_ok:
+        return False, "current_status.full196_last_ok is not true"
+    if execution_ir and execution_ir != "mlir":
+        return False, f"full196_validated_execution_ir={execution_ir!r} (expected 'mlir')"
+    head = _git_head_commit()
+    if not head:
+        return False, "failed to resolve git HEAD for mlir freshness check"
+    if validated_commit != head:
+        return False, f"mlir full196 evidence stale: validated_commit={validated_commit} head={head}"
+    return True, "mlir full196 evidence is fresh on HEAD"
+
+
 def _default_active_batch(profile: str) -> Path:
     if profile == "coverage":
         return ROOT / "workflow" / "flaggems" / "state" / "active_batch_coverage.json"
@@ -383,6 +404,12 @@ def main() -> None:
         help="Require full196 evidence to be validated on current HEAD.",
     )
     ap.add_argument(
+        "--require-mlir-fresh-on-head",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Require MLIR full196 evidence to be validated on current HEAD.",
+    )
+    ap.add_argument(
         "--require-stage",
         action="append",
         default=[],
@@ -438,7 +465,8 @@ def main() -> None:
     checks: list[dict[str, Any]] = []
     for p in (active_batch, args.run_summary, args.status_converged, args.progress_log, args.handoff):
         checks.append(_check(f"exists::{_to_repo_rel(p)}", p.is_file(), "file exists" if p.is_file() else "missing file"))
-    if bool(args.require_coverage_fresh_on_head):
+    require_mlir_fresh = bool(args.require_mlir_fresh_on_head) or profile == "mlir_migration"
+    if bool(args.require_coverage_fresh_on_head) or require_mlir_fresh:
         checks.append(
             _check(
                 f"exists::{_to_repo_rel(args.current_status)}",
@@ -747,6 +775,9 @@ def main() -> None:
     if bool(args.require_coverage_fresh_on_head):
         fresh_ok, fresh_detail = _validate_coverage_fresh_on_head(args.current_status)
         checks.append(_check("coverage_fresh_on_head", fresh_ok, fresh_detail))
+    if require_mlir_fresh:
+        mlir_ok, mlir_detail = _validate_mlir_fresh_on_head(args.current_status)
+        checks.append(_check("mlir_fresh_on_head", mlir_ok, mlir_detail))
 
     ok = all(bool(c.get("ok")) for c in checks)
     payload = {

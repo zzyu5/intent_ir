@@ -1,18 +1,19 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-18T16:20:27+00:00",
+  "updated_at": "2026-02-19T01:48:47+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "69bb2e2e8fddcc6eaef286a8df503514c3195ce7",
-  "mode": "mixed_development",
-  "coverage_integrity_phase": "recompute_stale",
-  "full196_last_run": "artifacts/flaggems_matrix/daily/20260218/full196_auto_refresh_v2/run_summary.json",
+  "head_commit": "02bc177f3866445ee71fd7e07905e7ac8163b04d",
+  "mode": "maintenance",
+  "coverage_integrity_phase": "recomputed_ok",
+  "full196_last_run": "artifacts/flaggems_matrix/daily/20260218/full196_mlir_force_compile_head_v2/run_summary.json",
   "full196_last_ok": true,
-  "full196_validated_commit": "f8919fdb39ac271876bbc5a15de8268c94da48b8",
+  "full196_validated_commit": "02bc177f3866445ee71fd7e07905e7ac8163b04d",
   "full196_validated_commit_source": "run_summary.repo.head_commit",
-  "full196_commits_since_validated": 7,
-  "full196_commits_since_validated_total": 7,
+  "full196_commits_since_validated": 0,
+  "full196_commits_since_validated_total": 0,
   "full196_lifted_to_head": false,
-  "full196_validated_mode": "auto",
+  "full196_validated_mode": "force_compile",
+  "full196_validated_execution_ir": "mlir",
   "full196_validated_scope": "coverage_158_kernels_to_196_semantics",
   "full196_validated_with_rvv_remote": true,
   "coverage_mode": "category_batches",
@@ -20,10 +21,10 @@
   "coverage_batches_completed": 7,
   "coverage_batches_failed": [],
   "full196_evidence_kind": "batch_aggregate",
-  "mlir_migration_phase": "in_progress",
-  "mlir_default_enabled": false,
+  "mlir_migration_phase": "default_mlir",
+  "mlir_default_enabled": true,
   "mlir_toolchain_ok": false,
-  "mlir_full196_validated_commit": "",
+  "mlir_full196_validated_commit": "02bc177f3866445ee71fd7e07905e7ac8163b04d",
   "coverage": {
     "semantic_ops": 196,
     "dual_pass": 196,
@@ -92,19 +93,16 @@
     "catalog_path": "scripts/CATALOG.json",
     "catalog_validated": true
   },
-  "active_lanes": [
-    "coverage",
-    "mlir_migration"
-  ],
+  "active_lanes": [],
   "next_focus_by_lane": {
-    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
     "backend_compiler": "Performance wave: schedule profile specialization and timing_delta thresholds.",
-    "workflow": "continue plan P4/P5: cpp_codegen modular split and backend performance-wave artifacts",
-    "mlir_migration": "Execute full196 with --execution-ir mlir (force_compile) and write mlir_full196_validated_commit on HEAD."
+    "workflow": "Continue backend_compiler wave (cpp modular split + perf artifacts) while keeping MLIR full196 freshness on HEAD.",
+    "coverage": "Refresh workflow freshness snapshot and continue backend compiler performance wave (stage timing deltas).",
+    "mlir_migration": "Refresh workflow freshness + mlir gate evidence, then continue mlir default-cutover readiness."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260218/full196_auto_refresh_v2/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260218/full196_auto_refresh_v2/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/smoke_mlir_default_v1/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/smoke_mlir_default_v1/status_converged.json"
   },
   "lanes": {
     "coverage": {
@@ -132,8 +130,8 @@
       "active_batch_path": "workflow/flaggems/state/active_batch_workflow.json"
     },
     "mlir_migration": {
-      "pending": 1,
-      "done": 3,
+      "pending": 0,
+      "done": 4,
       "total": 4,
       "active_batch_path": "workflow/flaggems/state/active_batch_mlir_migration.json"
     }

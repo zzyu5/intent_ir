@@ -1678,7 +1678,7 @@ def run_pipeline_for_spec(
     # MLIR shadow artifacts (dual-track migration; does not change execution path).
     report["mlir"] = {
         "enabled": bool(str(os.getenv("INTENTIR_MLIR_SHADOW", "1")).strip().lower() in {"1", "true", "yes", "on"}),
-        "execution_ir": str(os.getenv("INTENTIR_EXECUTION_IR", "intent")).strip().lower(),
+        "execution_ir": str(os.getenv("INTENTIR_EXECUTION_IR", "mlir")).strip().lower(),
         "toolchain": detect_mlir_toolchain(),
     }
     try:

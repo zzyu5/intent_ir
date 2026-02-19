@@ -7,8 +7,10 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 import json
+import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -29,14 +31,36 @@ def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _run(cmd: list[str], *, stream_output: bool, dry_run: bool) -> tuple[int, str, str]:
+def _run(
+    cmd: list[str],
+    *,
+    stream_output: bool,
+    dry_run: bool,
+    heartbeat_label: str = "",
+    heartbeat_sec: int = 30,
+) -> tuple[int, str, str]:
     if bool(dry_run):
         print(f"[dry-run] {' '.join(cmd)}", flush=True)
         return 0, "(dry-run)", ""
 
     if not bool(stream_output):
-        p = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
-        return int(p.returncode), str(p.stdout or ""), str(p.stderr or "")
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        next_beat = time.monotonic() + max(5, int(heartbeat_sec))
+        while True:
+            rc = proc.poll()
+            if rc is not None:
+                out, err = proc.communicate()
+                return int(rc), str(out or ""), str(err or "")
+            if heartbeat_label and time.monotonic() >= next_beat:
+                print(f"[progress] {heartbeat_label} status=RUNNING", flush=True)
+                next_beat = time.monotonic() + max(5, int(heartbeat_sec))
+            time.sleep(1.0)
 
     proc = subprocess.Popen(
         cmd,
@@ -53,6 +77,15 @@ def _run(cmd: list[str], *, stream_output: bool, dry_run: bool) -> tuple[int, st
         print(line, end="", flush=True)
     rc = int(proc.wait())
     return rc, "".join(merged), ""
+
+
+def _with_env_prefix(cmd: list[str], env_map: dict[str, str] | None) -> list[str]:
+    if not env_map:
+        return list(cmd)
+    pairs = [f"{k}={v}" for k, v in sorted(env_map.items()) if str(k).strip() and str(v).strip()]
+    if not pairs:
+        return list(cmd)
+    return ["env", *pairs, *list(cmd)]
 
 
 def _write_text(path: Path, text: str) -> None:
@@ -249,6 +282,12 @@ def main() -> None:
     ap.add_argument("--resume", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--suite", choices=["coverage"], default="coverage")
     ap.add_argument("--cases-limit", type=int, default=8)
+    ap.add_argument(
+        "--execution-ir",
+        choices=["intent", "mlir"],
+        default=(str(os.getenv("INTENTIR_EXECUTION_IR", "mlir")).strip().lower() or "mlir"),
+        help="Execution IR mode propagated to matrix sub-runs (default: env INTENTIR_EXECUTION_IR or mlir).",
+    )
     ap.add_argument("--flaggems-path", choices=["original", "intentir"], default="intentir")
     ap.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="auto")
     ap.add_argument("--intentir-miss-policy", choices=["deterministic", "strict"], default="strict")
@@ -286,13 +325,18 @@ def main() -> None:
     ap.add_argument("--stream-subprocess-output", action=argparse.BooleanOptionalAction, default=False)
     ap.add_argument(
         "--progress-style",
-        choices=["tqdm", "plain", "none"],
-        default="tqdm",
-        help="Chunk progress style. `tqdm` falls back to plain when tqdm is unavailable.",
+        choices=["auto", "tqdm", "plain", "none"],
+        default="auto",
+        help=(
+            "Chunk progress style. `auto` selects `tqdm` on interactive terminals, "
+            "otherwise `plain`."
+        ),
     )
     ap.add_argument("--aggregate", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+    if str(args.execution_ir) not in {"intent", "mlir"}:
+        raise SystemExit(f"unsupported --execution-ir={args.execution_ir!r}")
 
     payload = _load_json(args.coverage_batches)
     family_order = [str(x).strip() for x in list(payload.get("family_order") or []) if str(x).strip()]
@@ -318,10 +362,19 @@ def main() -> None:
     seed_cache_dir = Path(args.seed_cache_dir)
     seed_cache_dir.mkdir(parents=True, exist_ok=True)
 
-    progress_style = str(args.progress_style)
+    requested_progress_style = str(args.progress_style).strip().lower()
+    progress_style = requested_progress_style
+    if progress_style == "auto":
+        progress_style = "tqdm" if (sys.stdout.isatty() and tqdm is not None) else "plain"
     if progress_style == "tqdm" and tqdm is None:
         print("[coverage-batches] tqdm unavailable; falling back to plain progress output", flush=True)
         progress_style = "plain"
+    print(
+        "[coverage-batches] progress-style "
+        f"requested={requested_progress_style} selected={progress_style} "
+        f"stdout_tty={sys.stdout.isatty()} tqdm_available={tqdm is not None}",
+        flush=True,
+    )
 
     family_rows: list[dict[str, Any]] = []
     family_plans: list[dict[str, Any]] = []
@@ -455,15 +508,15 @@ def main() -> None:
                         }
                     )
                     chunk_done += 1
-                    if progress_bar is not None:
-                        progress_bar.set_postfix_str(f"{family} {chunk_idx}/{len(chunks)} resume")
-                        progress_bar.update(1)
-                    elif progress_style == "plain":
-                        print(
-                            f"[progress] chunks {chunk_done}/{total_chunks} family={family} "
-                            f"chunk={chunk_idx}/{len(chunks)} status=RESUME",
-                            flush=True,
-                        )
+                if progress_bar is not None:
+                    progress_bar.set_postfix_str(f"{family} {chunk_idx}/{len(chunks)} resume")
+                    progress_bar.update(1)
+                if progress_style in {"plain", "tqdm"}:
+                    print(
+                        f"[progress] chunks {chunk_done}/{total_chunks} family={family} "
+                        f"chunk={chunk_idx}/{len(chunks)} status=RESUME",
+                        flush=True,
+                    )
                     continue
 
             cmd = [
@@ -514,12 +567,22 @@ def main() -> None:
                 cmd.append("--write-registry")
             for kernel in chunk_kernels:
                 cmd += ["--kernel", str(kernel)]
+            cmd_run = _with_env_prefix(cmd, {"INTENTIR_EXECUTION_IR": str(args.execution_ir)})
 
             print(
                 f"  - chunk {chunk_idx}/{len(chunks)} family={family} kernels={len(chunk_kernels)}",
                 flush=True,
             )
-            rc, out, err = _run(cmd, stream_output=bool(args.stream_subprocess_output), dry_run=bool(args.dry_run))
+            rc, out, err = _run(
+                cmd_run,
+                stream_output=bool(args.stream_subprocess_output),
+                dry_run=bool(args.dry_run),
+                heartbeat_label=(
+                    f"chunks {chunk_done + 1}/{total_chunks} family={family} "
+                    f"chunk={chunk_idx}/{len(chunks)}"
+                ),
+                heartbeat_sec=30,
+            )
             chunk_log_dir = chunk_out / "logs"
             stdout_path = chunk_log_dir / "matrix.stdout.log"
             stderr_path = chunk_log_dir / "matrix.stderr.log"
@@ -543,16 +606,17 @@ def main() -> None:
                     "stdout_path": str(stdout_path) if str(out) else "",
                     "stderr_path": str(stderr_path) if str(err) else "",
                     "skipped": False,
-                    "cmd": cmd,
+                    "cmd": cmd_run,
                     "pipeline_out_dir": str(chunk_pipeline_out),
                     "seed_cache_dir": str(seed_cache_dir),
+                    "execution_ir": str(args.execution_ir),
                 }
             )
             chunk_done += 1
             if progress_bar is not None:
                 progress_bar.set_postfix_str(f"{family} {chunk_idx}/{len(chunks)} {'ok' if chunk_ok else 'fail'}")
                 progress_bar.update(1)
-            elif progress_style == "plain":
+            if progress_style in {"plain", "tqdm"}:
                 print(
                     f"[progress] chunks {chunk_done}/{total_chunks} family={family} "
                     f"chunk={chunk_idx}/{len(chunks)} status={'OK' if chunk_ok else 'FAIL'}",
@@ -608,6 +672,7 @@ def main() -> None:
                 "chunks": chunk_rows,
                 "skipped": bool(len(chunk_rows) > 0 and all(bool(r.get("skipped")) for r in chunk_rows)),
                 "seed_cache_dir": str(seed_cache_dir),
+                "execution_ir": str(args.execution_ir),
             }
         )
         print(
@@ -634,6 +699,7 @@ def main() -> None:
         "coverage_batches_path": str(args.coverage_batches),
         "out_root": str(out_root),
         "seed_cache_dir": str(seed_cache_dir),
+        "execution_ir": str(args.execution_ir),
         "families": family_rows,
         "errors_path": str(failures_path),
         "error_count": int(len(chunk_failures)),
@@ -658,6 +724,8 @@ def main() -> None:
             str(args.intentir_mode),
             "--intentir-miss-policy",
             str(args.intentir_miss_policy),
+            "--execution-ir",
+            str(args.execution_ir),
             "--cuda-runtime-backend",
             str(args.cuda_runtime_backend),
             "--family-kernel-chunk-size",

@@ -82,9 +82,10 @@ def test_sync_feature_list_mixed_merges_manual_tracks(tmp_path: Path) -> None:
     assert p.returncode == 0, p.stderr
     payload = json.loads(feature_out.read_text(encoding="utf-8"))
     assert payload["schema_version"] == "flaggems_feature_list_v2"
-    assert payload["summary"]["tasks_total"] == 2
+    assert payload["summary"]["tasks_total"] == 3
     assert payload["summary"]["by_track"]["coverage"] == 1
     assert payload["summary"]["by_track"]["ir_arch"] == 1
+    assert payload["summary"]["by_track"]["mlir_migration"] == 1
 
 
 def test_sync_feature_list_mixed_accepts_workflow_track(tmp_path: Path) -> None:
@@ -149,9 +150,10 @@ def test_sync_feature_list_mixed_accepts_workflow_track(tmp_path: Path) -> None:
     )
     assert p.returncode == 0, p.stderr
     payload = json.loads(feature_out.read_text(encoding="utf-8"))
-    assert payload["summary"]["tasks_total"] == 2
+    assert payload["summary"]["tasks_total"] == 3
     assert payload["summary"]["by_track"]["coverage"] == 1
     assert payload["summary"]["by_track"]["workflow"] == 1
+    assert payload["summary"]["by_track"]["mlir_migration"] == 1
     workflow_rows = [f for f in payload["features"] if f.get("track") == "workflow"]
     assert len(workflow_rows) == 1
     assert workflow_rows[0]["id"] == "workflow::x"
@@ -225,6 +227,7 @@ def test_build_workflow_state_writes_current_and_context(tmp_path: Path) -> None
     assert "full196_validated_commit" in status_payload
     assert "full196_commits_since_validated" in status_payload
     assert "full196_validated_mode" in status_payload
+    assert "full196_validated_execution_ir" in status_payload
     assert "full196_validated_scope" in status_payload
     assert "full196_validated_with_rvv_remote" in status_payload
     assert "coverage_mode" in status_payload
@@ -411,6 +414,7 @@ def test_build_workflow_state_prefers_latest_full196_run_over_latest_partial(tmp
     assert status_payload["full196_commits_since_validated"] == 0
     assert status_payload["full196_validated_scope"] == "coverage_158_kernels_to_196_semantics"
     assert status_payload["full196_validated_mode"] == ""
+    assert status_payload["full196_validated_execution_ir"] == "intent"
     assert status_payload["full196_validated_with_rvv_remote"] is False
     assert status_payload["coverage_mode"] == "single_run"
     assert status_payload["full196_evidence_kind"] == "single_run"

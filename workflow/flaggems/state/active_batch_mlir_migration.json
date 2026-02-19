@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_active_batch_v2",
-  "generated_at": "2026-02-18T16:19:38+00:00",
+  "generated_at": "2026-02-19T01:44:23+00:00",
   "branch": "compiler-cleanup-v1",
   "lane": "mlir_migration",
   "batch_size": 3,
@@ -9,37 +9,7 @@
     "priority",
     "dependency"
   ],
-  "items": [
-    {
-      "id": "mlir_migration::default_cutover_readiness",
-      "semantic_op": "",
-      "family": "workflow",
-      "status": "pending",
-      "passes": false,
-      "reason_code": "pending",
-      "next_action": "run_full196_mlir_force_compile",
-      "e2e_spec": null,
-      "intent_ops": [],
-      "track": "mlir_migration",
-      "task_type": "migration_cutover",
-      "priority": 40,
-      "acceptance": [
-        "execution_ir_mlir_full196_green_on_head",
-        "workflow_freshness_includes_mlir_validated_commit",
-        "legacy_intent_path_kept_as_compat_only"
-      ],
-      "gate_profile": "mlir_migration",
-      "depends_on": [
-        "mlir_migration::backend_bridge_contract"
-      ],
-      "evidence_paths": [
-        "scripts/intentir.py",
-        "scripts/flaggems/run_coverage_batches.py",
-        "workflow/flaggems/state/current_status.json"
-      ],
-      "description": "Prepare and validate MLIR default execution cutover using full196 force_compile evidence on HEAD."
-    }
-  ],
+  "items": [],
   "context": {
     "feature_list_path": "workflow/flaggems/state/feature_list.json",
     "progress_log_path": "",

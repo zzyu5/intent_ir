@@ -499,6 +499,7 @@ def build_current_status_payload(
     full196_commits_since_validated_total: int | None = None,
     full196_lifted_to_head: bool = False,
     full196_validated_mode: str = "",
+    full196_validated_execution_ir: str = "",
     full196_validated_scope: str = "",
     full196_validated_with_rvv_remote: bool | None = None,
     coverage_mode: str = "single_run",
@@ -555,6 +556,7 @@ def build_current_status_payload(
         ),
         "full196_lifted_to_head": bool(full196_lifted_to_head),
         "full196_validated_mode": str(full196_validated_mode or ""),
+        "full196_validated_execution_ir": str(full196_validated_execution_ir or ""),
         "full196_validated_scope": str(full196_validated_scope or ""),
         "full196_validated_with_rvv_remote": (
             None

@@ -2678,7 +2678,7 @@ def run_pipeline_for_spec(
 
     report["mlir"] = {
         "enabled": str(os.getenv("INTENTIR_MLIR_SHADOW", "1")).strip().lower() not in {"0", "false", "no", "off"},
-        "execution_ir": str(os.getenv("INTENTIR_EXECUTION_IR", "intent")).strip().lower(),
+        "execution_ir": str(os.getenv("INTENTIR_EXECUTION_IR", "mlir")).strip().lower(),
         "toolchain": detect_mlir_toolchain(),
     }
     try:

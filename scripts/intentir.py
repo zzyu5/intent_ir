@@ -48,6 +48,11 @@ def _python_cmd(script: str, *extra: str) -> list[str]:
     return [sys.executable, script, *extra]
 
 
+def _execution_ir_default() -> str:
+    mode = str(os.getenv("INTENTIR_EXECUTION_IR", "mlir")).strip().lower()
+    return mode if mode in {"intent", "mlir"} else "mlir"
+
+
 def _cmd_suite(args: argparse.Namespace) -> int:
     out_root = Path(args.out_root) if args.out_root else (ROOT / "artifacts" / "intentir_suite")
     out_root.mkdir(parents=True, exist_ok=True)
@@ -68,6 +73,8 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             str(out_root),
             "--cases-limit",
             str(int(args.cases_limit)),
+            "--execution-ir",
+            str(args.execution_ir),
             "--flaggems-path",
             str(args.flaggems_path),
             "--intentir-mode",
@@ -293,7 +300,7 @@ def _cmd_env(_: argparse.Namespace) -> int:
         print(f"cuda_probe_error: {e}")
     print(f"rvv_default_host: {os.getenv('INTENTIR_RVV_HOST', '192.168.8.72')}")
     print(f"rvv_default_user: {os.getenv('INTENTIR_RVV_USER', 'ubuntu')}")
-    print(f"intentir.execution_ir: {os.getenv('INTENTIR_EXECUTION_IR', 'intent')}")
+    print(f"intentir.execution_ir: {os.getenv('INTENTIR_EXECUTION_IR', 'mlir')}")
     return 0
 
 
@@ -376,9 +383,9 @@ def _build_parser() -> argparse.ArgumentParser:
     suite.add_argument("--family", action="append", default=[])
     suite.add_argument("--kernel", action="append", default=[])
     suite.add_argument("--cases-limit", type=int, default=8)
-    suite.add_argument("--execution-ir", choices=["intent", "mlir"], default="intent")
+    suite.add_argument("--execution-ir", choices=["intent", "mlir"], default=_execution_ir_default())
     suite.add_argument("--family-kernel-chunk-size", type=int, default=12)
-    suite.add_argument("--progress-style", choices=["tqdm", "plain", "none"], default="tqdm")
+    suite.add_argument("--progress-style", choices=["auto", "tqdm", "plain", "none"], default="auto")
     suite.add_argument(
         "--stream-subprocess-detail",
         action=argparse.BooleanOptionalAction,
@@ -408,7 +415,7 @@ def _build_parser() -> argparse.ArgumentParser:
     kernel.add_argument("--kernel", required=True)
     kernel.add_argument("--out-dir", default=None)
     kernel.add_argument("--cases-limit", type=int, default=8)
-    kernel.add_argument("--execution-ir", choices=["intent", "mlir"], default="intent")
+    kernel.add_argument("--execution-ir", choices=["intent", "mlir"], default=_execution_ir_default())
     kernel.add_argument("--flaggems-path", choices=["intentir", "original"], default="intentir")
     kernel.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="auto")
     kernel.add_argument("--intentir-miss-policy", choices=["deterministic", "strict"], default="strict")

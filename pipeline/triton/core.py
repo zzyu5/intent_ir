@@ -186,8 +186,8 @@ def _mlir_shadow_mode_enabled() -> bool:
 
 
 def _execution_ir_mode() -> str:
-    mode = str(os.getenv("INTENTIR_EXECUTION_IR", "intent")).strip().lower()
-    return mode if mode in {"intent", "mlir"} else "intent"
+    mode = str(os.getenv("INTENTIR_EXECUTION_IR", "mlir")).strip().lower()
+    return mode if mode in {"intent", "mlir"} else "mlir"
 
 
 def _downstream_pipeline_name(backend_target: str | None) -> str | None:

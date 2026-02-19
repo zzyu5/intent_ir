@@ -57,6 +57,11 @@ def _with_env_prefix(cmd: list[str], env_map: dict[str, str] | None) -> list[str
     return ["env", *pairs, *list(cmd)]
 
 
+def _execution_ir_mode() -> str:
+    mode = str(os.getenv("INTENTIR_EXECUTION_IR", "mlir")).strip().lower()
+    return mode if mode in {"intent", "mlir"} else "mlir"
+
+
 def _load_active_semantic_ops(active_batch_path: Path) -> list[str]:
     if not active_batch_path.is_file():
         return []
@@ -275,6 +280,7 @@ def main() -> None:
     ap.add_argument("--write-registry", action="store_true")
     args = ap.parse_args()
     miss_policy = str(args.intentir_miss_policy)
+    execution_ir = _execution_ir_mode()
     if str(args.flaggems_path) == "original" and str(args.intentir_mode) != "auto":
         raise SystemExit("--intentir-mode is only valid when --flaggems-path=intentir")
 
@@ -633,6 +639,7 @@ def main() -> None:
             "miss_policy": str(miss_policy),
             "rvv_remote": bool(args.run_rvv_remote),
             "cuda_runtime_backend": str(args.cuda_runtime_backend),
+            "execution_ir": str(execution_ir),
         },
         "lane": str(args.lane),
         "requested_suite": str(args.suite),
@@ -642,6 +649,7 @@ def main() -> None:
         "missing_provider_reports": list(missing_provider_reports),
         "flaggems_path": str(args.flaggems_path),
         "intentir_mode": str(args.intentir_mode),
+        "execution_ir": str(execution_ir),
         "flaggems_opset": str(args.flaggems_opset),
         "backend_target": str(args.backend_target),
         "cuda_timeout_sec": int(args.cuda_timeout_sec),

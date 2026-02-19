@@ -99,6 +99,27 @@ def _validate_coverage_categories_complete(current_status_path: Path) -> tuple[b
     return True, f"coverage categories complete: {completed_i}/{expected_i}"
 
 
+def _validate_mlir_fresh_on_head(current_status_path: Path) -> tuple[bool, str]:
+    if not current_status_path.is_file():
+        return False, f"missing current_status: {current_status_path}"
+    payload = load_json(current_status_path)
+    validated_commit = str(payload.get("mlir_full196_validated_commit") or "").strip()
+    full196_last_ok = bool(payload.get("full196_last_ok"))
+    execution_ir = str(payload.get("full196_validated_execution_ir") or "").strip().lower()
+    if not validated_commit:
+        return False, "current_status.mlir_full196_validated_commit is empty"
+    if not full196_last_ok:
+        return False, "current_status.full196_last_ok is not true"
+    if execution_ir and execution_ir != "mlir":
+        return False, f"full196_validated_execution_ir={execution_ir!r} (expected 'mlir')"
+    head = _git_head_commit()
+    if not head:
+        return False, "failed to resolve git HEAD for mlir freshness check"
+    if validated_commit != head:
+        return False, f"mlir full196 evidence stale: validated_commit={validated_commit} head={head}"
+    return True, "mlir full196 evidence is fresh on HEAD"
+
+
 def _stage_map(run_summary: dict[str, Any]) -> dict[str, dict[str, Any]]:
     rows = [r for r in list(run_summary.get("stages") or []) if isinstance(r, dict)]
     out: dict[str, dict[str, Any]] = {}
@@ -216,6 +237,12 @@ def main() -> None:
         help="Require full196 evidence to come from completed category aggregate coverage.",
     )
     ap.add_argument(
+        "--require-mlir-fresh-on-head",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require mlir full196 evidence to be fresh on HEAD when mlir_migration profile is evaluated.",
+    )
+    ap.add_argument(
         "--max-total-regression-pct",
         type=float,
         default=8.0,
@@ -307,6 +334,9 @@ def main() -> None:
     if bool(args.require_coverage_categories_complete):
         categories_ok, categories_detail = _validate_coverage_categories_complete(args.current_status)
         checks.append(_check("coverage_categories_complete", categories_ok, categories_detail))
+    if bool(args.require_mlir_fresh_on_head) and ("mlir_migration" in profiles):
+        mlir_ok, mlir_detail = _validate_mlir_fresh_on_head(args.current_status)
+        checks.append(_check("mlir_fresh_on_head", mlir_ok, mlir_detail))
 
     run_summary_payload: dict[str, Any] = {}
     if args.run_summary.is_file():
@@ -406,6 +436,10 @@ def main() -> None:
             cmd.append("--require-coverage-fresh-on-head")
         else:
             cmd.append("--no-require-coverage-fresh-on-head")
+        if bool(args.require_mlir_fresh_on_head) and profile == "mlir_migration":
+            cmd.append("--require-mlir-fresh-on-head")
+        else:
+            cmd.append("--no-require-mlir-fresh-on-head")
         if profile == "coverage" and bool(args.require_coverage_categories_complete):
             is_batch_aggregate = str(run_summary_payload.get("full196_evidence_kind") or "") == "batch_aggregate"
             if is_batch_aggregate and _is_full_coverage_run(run_summary_payload):
