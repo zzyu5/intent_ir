@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-19T07:22:27+00:00",
+  "updated_at": "2026-02-19T07:23:11+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,7 +13,7 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "eea2ab4 mlir: enrich stage timing aggregates and compact chunk progress\n0f4ea91 workflow: record mlir timing propagation session and refresh status\nf862ade mlir: propagate stage timing metrics through breakdown and gates\n9f4d4a8 chore(workflow): refresh state after mlir workflow/progress commit\ncb43afc feat(workflow): compact chunk progress and strengthen full196 provenance\naac773a chore(workflow): refresh state after mlir-default cutover commit\nebd64e6 feat(mlir): validate full196 on HEAD and cut default execution_ir to mlir\n02bc177 chore(workflow): advance mlir migration milestones and set default-cutover readiness batch\n846a219 feat(mlir): deepen pass pipelines and propagate mlir bridge metrics into backend stages\n69bb2e2 chore(workflow): advance mlir_migration lane status and handoff after ir-arch mlir source guards\nd7592a6 feat(ir-arch): support mlir-manifest inputs for primitive/macro/complexity quality guards\n66e7e39 chore(workflow): add mlir_migration lane tasks and refresh session state snapshots\n3b6d7b8 feat(mlir): add dual-track intent dialect module, pass pipelines, and frontend shadow integration\n78f78f9 chore(workflow): refresh state after cleanup commit\n502c4cc refactor(cleanup): remove docker artifacts and tighten gpu dependency docs\n087c923 chore(workflow): refresh full196 auto evidence on current HEAD\nf8919fd fix(cuda): repair var_mean2d signature and document test catalog\nedd3bec chore(workflow): log coverage-runner optimization session\n7d69d7d feat(cli): add chunk progress + stable seed cache for coverage runs\nd3f361c chore(workflow): refresh status after post-validation commits",
+  "git_log_short": "c1d99ee workflow: record mlir timing progress and mark full196 stale on new head\neea2ab4 mlir: enrich stage timing aggregates and compact chunk progress\n0f4ea91 workflow: record mlir timing propagation session and refresh status\nf862ade mlir: propagate stage timing metrics through breakdown and gates\n9f4d4a8 chore(workflow): refresh state after mlir workflow/progress commit\ncb43afc feat(workflow): compact chunk progress and strengthen full196 provenance\naac773a chore(workflow): refresh state after mlir-default cutover commit\nebd64e6 feat(mlir): validate full196 on HEAD and cut default execution_ir to mlir\n02bc177 chore(workflow): advance mlir migration milestones and set default-cutover readiness batch\n846a219 feat(mlir): deepen pass pipelines and propagate mlir bridge metrics into backend stages\n69bb2e2 chore(workflow): advance mlir_migration lane status and handoff after ir-arch mlir source guards\nd7592a6 feat(ir-arch): support mlir-manifest inputs for primitive/macro/complexity quality guards\n66e7e39 chore(workflow): add mlir_migration lane tasks and refresh session state snapshots\n3b6d7b8 feat(mlir): add dual-track intent dialect module, pass pipelines, and frontend shadow integration\n78f78f9 chore(workflow): refresh state after cleanup commit\n502c4cc refactor(cleanup): remove docker artifacts and tighten gpu dependency docs\n087c923 chore(workflow): refresh full196 auto evidence on current HEAD\nf8919fd fix(cuda): repair var_mean2d signature and document test catalog\nedd3bec chore(workflow): log coverage-runner optimization session\n7d69d7d feat(cli): add chunk progress + stable seed cache for coverage runs",
   "progress_tail": [
     {
       "ts": "2026-02-19T03:34:12+00:00",
@@ -193,13 +193,10 @@
   ],
   "next_focus": "Continue MLIR phase3/4 with backend C++ modular split and keep batch/full196 cadence.",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
-  "active_lanes": [
-    "coverage"
-  ],
+  "active_lanes": [],
   "next_focus_by_lane": {
     "mlir_migration": "Continue MLIR phase3/4 with backend C++ modular split and keep batch/full196 cadence.",
-    "workflow": "Continue MLIR phase3/4 refactor (pass pipeline + backend modularization) with batch regression cadence.",
-    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD."
+    "workflow": "Continue MLIR phase3/4 refactor (pass pipeline + backend modularization) with batch regression cadence."
   },
   "known_risks": []
 }
