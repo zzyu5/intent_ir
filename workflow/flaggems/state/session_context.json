@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-19T21:08:40+00:00",
+  "updated_at": "2026-02-19T21:10:16+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,32 +13,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "bfe6527 workflow: record mlir toolchain provisioning progress and refresh state\ncf4ddcf mlir: add no-sudo local toolchain provisioning and auto-discovery\n08909c7 workflow: refresh state after mlir-only batch/llvm artifact cutover\n10269ac mlir: enforce mlir-only batch path and add llvm artifact completeness stage\n9f22367 mlir: harden toolchain discovery and enforce mlir-only execution-ir in unified cli\naace53c workflow: record full196 head-refresh run and mlir bridge hard-cut session\n774617b mlir: hard-cut backend drivers to mlir payloads and remove bridge module\n9546016 workflow: record mlir core artifact cutover session and refresh state\n8990246 mlir: switch frontend core artifact writes to intent dialect text and refresh full196 workflow state\n923c8fb workflow: refresh status after category batch reruns\n4b3810d workflow: record attention_sequence batch evidence and stale full196\n9e8abd7 workflow: refresh state after mlir contract guard tests\n62f51ac test: guard cuda/rvv pipeline drivers against mlir bridge regressions\n4510b70 workflow: refresh status after mlir backend contract cutover\nffd673f mlir: cut rvv/cuda pipelines to backend contract direct path\n5eaf6d0 mlir: enforce toolchain/gate contracts and add translate pass support\ne39b5c3 workflow: refresh full196 mlir evidence freshness on current head\nc1d99ee workflow: record mlir timing progress and mark full196 stale on new head\neea2ab4 mlir: enrich stage timing aggregates and compact chunk progress\n0f4ea91 workflow: record mlir timing propagation session and refresh status",
+  "git_log_short": "6420886 workflow: refresh state snapshots after mlir provisioning commits\nbfe6527 workflow: record mlir toolchain provisioning progress and refresh state\ncf4ddcf mlir: add no-sudo local toolchain provisioning and auto-discovery\n08909c7 workflow: refresh state after mlir-only batch/llvm artifact cutover\n10269ac mlir: enforce mlir-only batch path and add llvm artifact completeness stage\n9f22367 mlir: harden toolchain discovery and enforce mlir-only execution-ir in unified cli\naace53c workflow: record full196 head-refresh run and mlir bridge hard-cut session\n774617b mlir: hard-cut backend drivers to mlir payloads and remove bridge module\n9546016 workflow: record mlir core artifact cutover session and refresh state\n8990246 mlir: switch frontend core artifact writes to intent dialect text and refresh full196 workflow state\n923c8fb workflow: refresh status after category batch reruns\n4b3810d workflow: record attention_sequence batch evidence and stale full196\n9e8abd7 workflow: refresh state after mlir contract guard tests\n62f51ac test: guard cuda/rvv pipeline drivers against mlir bridge regressions\n4510b70 workflow: refresh status after mlir backend contract cutover\nffd673f mlir: cut rvv/cuda pipelines to backend contract direct path\n5eaf6d0 mlir: enforce toolchain/gate contracts and add translate pass support\ne39b5c3 workflow: refresh full196 mlir evidence freshness on current head\nc1d99ee workflow: record mlir timing progress and mark full196 stale on new head\neea2ab4 mlir: enrich stage timing aggregates and compact chunk progress",
   "progress_tail": [
-    {
-      "ts": "2026-02-19T07:22:03+00:00",
-      "commit": "0f4ea91f20199457f5b762e89ecceae6c6150b02",
-      "lane": "mlir_migration",
-      "summary": "Extended MLIR stage timing to aggregate per-pipeline/per-pass timing and propagated through coverage aggregate; compact chunk-only progress mode added for long full196 runs.",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_mlir_migration.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260219/full196_mlir_force_compile_head_v5/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260219/full196_mlir_force_compile_head_v5/status_converged.json",
-      "next_focus": "Continue MLIR phase3/4 with backend C++ modular split and keep batch/full196 cadence.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260219/full196_mlir_force_compile_head_v5/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260219/full196_mlir_force_compile_head_v5/stage_timing_breakdown.json",
-        "artifacts/flaggems_matrix/daily/20260219/full196_mlir_force_compile_head_v5/status_converged.json",
-        "scripts/flaggems/aggregate_coverage_batches.py",
-        "scripts/flaggems/compute_stage_timing_breakdown.py",
-        "scripts/flaggems/run_coverage_batches.py",
-        "tests/frontends/triton/test_flaggems_coverage_batches.py",
-        "tests/frontends/triton/test_intentir_cli.py"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
     {
       "ts": "2026-02-19T18:46:20+00:00",
       "commit": "923c8fb12e0b9829866900d2959d92775f5108b7",
@@ -191,15 +167,36 @@
       "counts_by_status": {
         "blocked_backend": 196
       }
+    },
+    {
+      "ts": "2026-02-19T21:10:10+00:00",
+      "commit": "6420886b4a1ce2dc42b93b9efaa8119579fd01bb",
+      "lane": "mlir_migration",
+      "summary": "Made optional mlir-opt/mlir-translate passes fail-soft; keep pipeline green with explicit skip reasons for LLVM chain.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_mlir_migration.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260220/matrix_mlir_llvm_stage_smoke_v3/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260220/matrix_mlir_llvm_stage_smoke_v3/status_converged.json",
+      "next_focus": "Implement real intent dialect lowering pass to LLVM-compatible MLIR for non-skip llvm_emit_ok.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260220/matrix_mlir_llvm_stage_smoke_v3/pipeline_reports/add2d.json",
+        "artifacts/flaggems_matrix/daily/20260220/matrix_mlir_llvm_stage_smoke_v3/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260220/matrix_mlir_llvm_stage_smoke_v3/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260220/matrix_mlir_llvm_stage_smoke_v3",
+      "counts_by_status": {
+        "blocked_backend": 196
+      }
     }
   ],
-  "next_focus": "Run category-batch coverage on HEAD and refresh full196 evidence chain using MLIR-only path.",
+  "next_focus": "Implement real intent dialect lowering pass to LLVM-compatible MLIR for non-skip llvm_emit_ok.",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
   "active_lanes": [
     "coverage"
   ],
   "next_focus_by_lane": {
-    "mlir_migration": "Run category-batch coverage on HEAD and refresh full196 evidence chain using MLIR-only path.",
+    "mlir_migration": "Implement real intent dialect lowering pass to LLVM-compatible MLIR for non-skip llvm_emit_ok.",
     "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD."
   },
   "known_risks": []
