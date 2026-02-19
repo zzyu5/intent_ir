@@ -26,7 +26,7 @@ def _add_intent(name: str = "cuda_pipeline_add") -> IntentFunction:
 
 
 def test_run_cuda_pipeline_reports_stage_artifacts_for_valid_intent() -> None:
-    result = run_cuda_pipeline(_add_intent())
+    result = run_cuda_pipeline(to_mlir(_add_intent()))
     assert result.ok is True
     assert result.reason_code == "ok"
     assert [s.name for s in result.stages] == list(CUDA_PIPELINE_STAGES)
@@ -60,7 +60,7 @@ def test_run_cuda_pipeline_marks_schedule_rewrite_aware_for_transform_heavy_inte
             "schedule": {"tile_n": 256, "parallel_axes": ["M", "N"]},
         }
     )
-    result = run_cuda_pipeline(intent)
+    result = run_cuda_pipeline(to_mlir(intent))
     assert result.ok is True
     schedule = next(s for s in result.stages if s.name == "schedule")
     assert schedule.artifacts.get("rewrite_aware") is True
@@ -81,7 +81,7 @@ def test_run_cuda_pipeline_matmul_conv_profile_exported() -> None:
             "schedule": {"tile_m": 32, "tile_n": 64, "tile_k": 16, "parallel_axes": ["M", "N"]},
         }
     )
-    result = run_cuda_pipeline(intent)
+    result = run_cuda_pipeline(to_mlir(intent))
     assert result.ok is True
     schedule = next(s for s in result.stages if s.name == "schedule")
     assert schedule.artifacts.get("op_family") == "matmul_conv"
@@ -95,8 +95,15 @@ def test_run_cuda_pipeline_rejects_invalid_payload() -> None:
     assert any((not s.ok) for s in result.stages)
 
 
+def test_run_cuda_pipeline_rejects_legacy_intent_payload() -> None:
+    result = run_cuda_pipeline(_add_intent())
+    assert result.ok is False
+    assert result.reason_code == "invalid_intent"
+    assert any((not s.ok) for s in result.stages)
+
+
 def test_run_cuda_pipeline_schedule_only_mode_marks_compile_launch_as_schedule_only() -> None:
-    result = run_cuda_pipeline(_add_intent(), pipeline_mode="schedule_only")
+    result = run_cuda_pipeline(to_mlir(_add_intent()), pipeline_mode="schedule_only")
     assert result.ok is True
     compile_stage = next(s for s in result.stages if s.name == "compile")
     launch_stage = next(s for s in result.stages if s.name == "launch")

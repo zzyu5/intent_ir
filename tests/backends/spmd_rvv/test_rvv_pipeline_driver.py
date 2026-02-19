@@ -26,7 +26,7 @@ def _intent(op: str, *, name: str) -> IntentFunction:
 
 
 def test_run_rvv_pipeline_reports_stage_artifacts_for_supported_intent() -> None:
-    result = run_rvv_pipeline(_intent("add", name="rvv_pipeline_add"))
+    result = run_rvv_pipeline(to_mlir(_intent("add", name="rvv_pipeline_add")))
     assert result.ok is True
     assert result.reason_code == "ok"
     assert [s.name for s in result.stages] == list(RVV_PIPELINE_STAGES)
@@ -57,7 +57,7 @@ def test_run_rvv_pipeline_marks_schedule_rewrite_aware_for_transform_heavy_inten
             "schedule": {"tile_n": 128, "parallel_axes": ["M", "N"]},
         }
     )
-    result = run_rvv_pipeline(intent)
+    result = run_rvv_pipeline(to_mlir(intent))
     assert result.ok is True
     schedule = next(s for s in result.stages if s.name == "schedule")
     assert schedule.artifacts.get("rewrite_aware") is True
@@ -78,7 +78,7 @@ def test_run_rvv_pipeline_matmul_conv_profile_exported() -> None:
             "schedule": {"tile_m": 32, "tile_n": 64, "tile_k": 16, "parallel_axes": ["M", "N"]},
         }
     )
-    result = run_rvv_pipeline(intent)
+    result = run_rvv_pipeline(to_mlir(intent))
     assert result.ok is True
     schedule = next(s for s in result.stages if s.name == "schedule")
     assert schedule.artifacts.get("op_family") == "matmul_conv"
@@ -86,14 +86,24 @@ def test_run_rvv_pipeline_matmul_conv_profile_exported() -> None:
 
 
 def test_run_rvv_pipeline_flags_unsupported_ops() -> None:
-    result = run_rvv_pipeline(_intent("weight_norm_interface", name="rvv_pipeline_unsupported"))
+    result = run_rvv_pipeline(to_mlir(_intent("weight_norm_interface", name="rvv_pipeline_unsupported")))
     assert result.ok is False
     assert result.reason_code == "lowering_missing_op"
     assert any((not s.ok) for s in result.stages)
 
 
+def test_run_rvv_pipeline_rejects_legacy_intent_payload() -> None:
+    result = run_rvv_pipeline(_intent("add", name="rvv_pipeline_legacy_intent"))
+    assert result.ok is False
+    assert result.reason_code == "invalid_intent"
+    assert any((not s.ok) for s in result.stages)
+
+
 def test_run_rvv_pipeline_schedule_only_mode_marks_compile_run_as_schedule_only() -> None:
-    result = run_rvv_pipeline(_intent("add", name="rvv_pipeline_add_schedule_only"), pipeline_mode="schedule_only")
+    result = run_rvv_pipeline(
+        to_mlir(_intent("add", name="rvv_pipeline_add_schedule_only")),
+        pipeline_mode="schedule_only",
+    )
     assert result.ok is True
     compile_stage = next(s for s in result.stages if s.name == "compile")
     run_stage = next(s for s in result.stages if s.name == "run")

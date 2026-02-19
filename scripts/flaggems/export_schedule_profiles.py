@@ -18,6 +18,7 @@ if str(ROOT) not in sys.path:
 from backends.cuda.pipeline.driver import run_cuda_pipeline
 from backends.spmd_rvv.pipeline.driver import run_rvv_pipeline
 from intent_ir.ir import IntentFunction
+from intent_ir.mlir import to_mlir
 
 
 def _build_intent(family: str, *, backend_tag: str) -> IntentFunction:
@@ -117,7 +118,8 @@ def main() -> None:
             backend_profiles: dict[str, Any] = {}
             for family in families:
                 intent = _build_intent(family, backend_tag=backend_name)
-                result = runner(intent, pipeline_mode="schedule_only")
+                module = to_mlir(intent)
+                result = runner(module, pipeline_mode="schedule_only")
                 stage = _schedule_stage(result)
                 if not bool(getattr(result, "ok", False)) or not stage:
                     payload["missing"].append({"backend": backend_name, "family": family, "reason": "missing_schedule_stage"})

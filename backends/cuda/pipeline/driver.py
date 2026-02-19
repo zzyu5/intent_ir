@@ -24,9 +24,8 @@ from backends.common.pipeline_utils import (
     run_stage,
     schedule_overrides_from_env,
 )
-from intent_ir.ir import IntentFunction
 from intent_ir.mlir.module import IntentMLIRModule
-from intent_ir.mlir.passes.emit_cuda_contract import build_cuda_contract, build_cuda_contract_from_intent
+from intent_ir.mlir.passes.emit_cuda_contract import build_cuda_contract
 
 from .stages import CUDA_PIPELINE_STAGES, CudaPipelineResult, CudaPipelineStage
 
@@ -107,11 +106,8 @@ def _resolve_cuda_contract(
         module = IntentMLIRModule(module_text=str(payload))
         contract = build_cuda_contract(module, source_kind="mlir_text")
         source_kind = "mlir_text"
-    elif isinstance(payload, IntentFunction):
-        contract = build_cuda_contract_from_intent(payload, source_kind="intent")
-        source_kind = "intent"
     else:
-        raise ValueError("invalid intent/mlir payload for cuda pipeline")
+        raise ValueError("invalid mlir payload for cuda pipeline")
 
     if bindings:
         reason_context = dict(contract.reason_context or {})

@@ -27,9 +27,8 @@ from backends.common.pipeline_utils import (
     run_stage,
     schedule_overrides_from_env,
 )
-from intent_ir.ir import IntentFunction
 from intent_ir.mlir.module import IntentMLIRModule
-from intent_ir.mlir.passes.emit_rvv_contract import build_rvv_contract, build_rvv_contract_from_intent
+from intent_ir.mlir.passes.emit_rvv_contract import build_rvv_contract
 
 from ..opset import SPMD_RVV_SUPPORTED_OPS
 from .stages import RVV_PIPELINE_STAGES, RvvPipelineResult, RvvPipelineStage
@@ -139,11 +138,8 @@ def _resolve_rvv_contract(
         module = IntentMLIRModule(module_text=str(payload))
         contract = build_rvv_contract(module, source_kind="mlir_text")
         source_kind = "mlir_text"
-    elif isinstance(payload, IntentFunction):
-        contract = build_rvv_contract_from_intent(payload, source_kind="intent")
-        source_kind = "intent"
     else:
-        raise ValueError("invalid intent/mlir payload for rvv pipeline")
+        raise ValueError("invalid mlir payload for rvv pipeline")
 
     if bindings:
         reason_context = dict(contract.reason_context or {})
