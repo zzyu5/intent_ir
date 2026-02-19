@@ -158,11 +158,18 @@ def _run_one_pass(
                 kind="mlir-opt",
                 detail="skipped_optional_tool_unavailable:mlir-opt",
             )
-        return PassExecutionResult(
-            module=_run_mlir_opt_pass(module, pass_arg=pass_arg, tool=tool),
-            kind="mlir-opt",
-            detail="ok",
-        )
+        try:
+            return PassExecutionResult(
+                module=_run_mlir_opt_pass(module, pass_arg=pass_arg, tool=tool),
+                kind="mlir-opt",
+                detail="ok",
+            )
+        except Exception as e:
+            return PassExecutionResult(
+                module=module,
+                kind="mlir-opt",
+                detail=f"skipped_optional_pass_failed:mlir-opt:{type(e).__name__}:{e}",
+            )
     if name.startswith("mlir-opt:"):
         pass_arg = name.split(":", 1)[1].strip()
         tool = _tool_path(toolchain, "mlir-opt")
@@ -182,11 +189,18 @@ def _run_one_pass(
                 kind="mlir-translate",
                 detail="skipped_optional_tool_unavailable:mlir-translate",
             )
-        return PassExecutionResult(
-            module=_run_mlir_translate_pass(module, pass_arg=pass_arg, tool=tool),
-            kind="mlir-translate",
-            detail="ok",
-        )
+        try:
+            return PassExecutionResult(
+                module=_run_mlir_translate_pass(module, pass_arg=pass_arg, tool=tool),
+                kind="mlir-translate",
+                detail="ok",
+            )
+        except Exception as e:
+            return PassExecutionResult(
+                module=module,
+                kind="mlir-translate",
+                detail=f"skipped_optional_pass_failed:mlir-translate:{type(e).__name__}:{e}",
+            )
     if name.startswith("mlir-translate:"):
         pass_arg = name.split(":", 1)[1].strip()
         tool = _tool_path(toolchain, "mlir-translate")
