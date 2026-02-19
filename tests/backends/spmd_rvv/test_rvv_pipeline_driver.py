@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from backends.common.mlir_contract import MlirBackendContract
 from backends.spmd_rvv.pipeline.driver import run_rvv_pipeline
 from backends.spmd_rvv.pipeline.stages import RVV_PIPELINE_STAGES
 from intent_ir.ir import IntentFunction
 from intent_ir.mlir import to_mlir
+from intent_ir.mlir.passes.emit_rvv_contract import build_rvv_contract
 
 
 def _intent(op: str, *, name: str) -> IntentFunction:
@@ -105,6 +107,31 @@ def test_run_rvv_pipeline_accepts_mlir_module_payload() -> None:
     assert result.ok is True
     assert result.input_ir_kind == "mlir_module"
     assert float(result.mlir_parse_ms) >= 0.0
+    assert result.mlir_backend_contract_used is True
     legalize = next(s for s in result.stages if s.name == "legalize")
     assert legalize.artifacts.get("input_ir_kind") == "mlir_module"
     assert float(legalize.artifacts.get("mlir_parse_ms") or 0.0) >= 0.0
+    assert legalize.artifacts.get("mlir_backend_contract_used") is True
+
+
+def test_run_rvv_pipeline_accepts_mlir_backend_contract_payload() -> None:
+    mod = to_mlir(_intent("add", name="rvv_pipeline_contract"))
+    contract = build_rvv_contract(mod, source_kind="mlir_module")
+    result = run_rvv_pipeline(contract, pipeline_mode="schedule_only")
+    assert result.ok is True
+    assert result.input_ir_kind == "mlir_contract"
+    assert result.mlir_backend_contract_used is True
+    legalize = next(s for s in result.stages if s.name == "legalize")
+    assert legalize.artifacts.get("mlir_backend_contract_used") is True
+    assert legalize.artifacts.get("contract_backend") == "rvv"
+
+
+def test_run_rvv_pipeline_accepts_contract_json_mapping() -> None:
+    mod = to_mlir(_intent("add", name="rvv_pipeline_contract_json"))
+    contract = build_rvv_contract(mod, source_kind="mlir_module")
+    payload = contract.to_json_dict()
+    result = run_rvv_pipeline(payload, pipeline_mode="schedule_only")
+    assert result.ok is True
+    assert result.input_ir_kind == "mlir_contract"
+    assert result.mlir_backend_contract_used is True
+    assert isinstance(MlirBackendContract.from_json_dict(payload), MlirBackendContract)

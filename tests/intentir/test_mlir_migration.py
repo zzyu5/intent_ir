@@ -7,6 +7,8 @@ from pathlib import Path
 
 from intent_ir.ir import IntentFunction
 from intent_ir.mlir import detect_mlir_toolchain, run_pipeline, to_intent, to_mlir
+from intent_ir.mlir.passes.emit_cuda_contract import build_cuda_contract
+from intent_ir.mlir.passes.emit_rvv_contract import build_rvv_contract
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -77,6 +79,28 @@ def test_mlir_optional_external_passes_do_not_fail_without_toolchain(tmp_path: P
     names = [str(p.get("name") or "") for p in list(trace.get("passes") or [])]
     assert "mlir-opt?:canonicalize" in names
     assert "mlir-translate?:mlir-to-llvmir" in names
+
+
+def test_mlir_cuda_contract_emitter_builds_contract() -> None:
+    intent = _sample_intent()
+    module = to_mlir(intent)
+    contract = build_cuda_contract(module)
+    payload = contract.to_json_dict()
+    assert payload["backend"] == "cuda"
+    assert payload["kernel_name"] == "add2d"
+    assert payload["schema_version"] == "intent_mlir_backend_contract_v1"
+    assert isinstance(payload.get("intent_json"), dict)
+
+
+def test_mlir_rvv_contract_emitter_builds_contract() -> None:
+    intent = _sample_intent()
+    module = to_mlir(intent)
+    contract = build_rvv_contract(module)
+    payload = contract.to_json_dict()
+    assert payload["backend"] == "rvv"
+    assert payload["kernel_name"] == "add2d"
+    assert payload["schema_version"] == "intent_mlir_backend_contract_v1"
+    assert isinstance(payload.get("intent_json"), dict)
 
 
 def test_intentir_cli_mlir_check(tmp_path: Path) -> None:

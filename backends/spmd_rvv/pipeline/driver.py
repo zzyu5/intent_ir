@@ -7,6 +7,8 @@ legalize -> shape_infer -> schedule -> emit_cpp -> compile -> run.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from time import perf_counter
 import numpy as np
 import shutil
 import subprocess
@@ -14,9 +16,8 @@ import tempfile
 from pathlib import Path
 from typing import Any, Mapping
 
-from backends.common.mlir_bridge import resolve_intent_payload_with_meta
+from backends.common.mlir_contract import MlirBackendContract
 from backends.common.pipeline_utils import (
-    collect_intent_info,
     has_symbolic_dims,
     legalize_rewrite_counts,
     normalize_bindings,
@@ -26,6 +27,10 @@ from backends.common.pipeline_utils import (
     run_stage,
     schedule_overrides_from_env,
 )
+from intent_ir.ir import IntentFunction
+from intent_ir.mlir.module import IntentMLIRModule
+from intent_ir.mlir.passes.emit_rvv_contract import build_rvv_contract, build_rvv_contract_from_intent
+
 from ..opset import SPMD_RVV_SUPPORTED_OPS
 from .stages import RVV_PIPELINE_STAGES, RvvPipelineResult, RvvPipelineStage
 
@@ -62,50 +67,28 @@ def _write_bin(path: Path, arr: np.ndarray, dtype: str) -> None:
     path.write_bytes(raw)
 
 
-def _collect_external_inputs(intent_payload: Any) -> list[str]:
-    produced = {str(getattr(op, "output", "")) for op in list(getattr(intent_payload, "ops", []) or []) if str(getattr(op, "output", ""))}
-    used: list[str] = []
-    for op in list(getattr(intent_payload, "ops", []) or []):
-        for inp in list(getattr(op, "inputs", []) or []):
-            s = str(inp)
-            if s and s not in produced:
-                used.append(s)
-    seen: set[str] = set()
-    out: list[str] = []
-    for n in used:
-        if n in seen:
-            continue
-        seen.add(n)
-        out.append(n)
-    return out
-
-
-def _build_dummy_io_files(*, intent_payload: Any, bindings: Mapping[str, Any], out_dir: Path) -> tuple[int, int]:
-    tensors = getattr(intent_payload, "tensors", {})
-    if not isinstance(tensors, Mapping):
-        tensors = {}
-    external_inputs = _collect_external_inputs(intent_payload)
-    outputs = [str(x) for x in list(getattr(intent_payload, "outputs", []) or [])]
+def _build_dummy_io_files(*, contract: MlirBackendContract, bindings: Mapping[str, Any], out_dir: Path) -> tuple[int, int]:
+    io_spec = contract.io_spec if isinstance(contract.io_spec, Mapping) else {}
+    tensors = io_spec.get("tensors") if isinstance(io_spec.get("tensors"), Mapping) else {}
+    outputs = [str(x) for x in list(io_spec.get("outputs") or [])]
+    output_set = set(outputs)
     in_count = 0
     out_count = 0
-    for name in external_inputs:
-        t = tensors.get(name)
-        if t is None:
+    for name, spec in tensors.items():
+        if not isinstance(spec, Mapping):
             continue
-        dtype = str(getattr(t, "dtype", "f32"))
-        shape = tuple(max(1, resolve_dim_int(d, bindings)) for d in list(getattr(t, "shape", []) or []))
-        arr = np.array(1, dtype=np_dtype(dtype)) if len(shape) == 0 else np.zeros(shape, dtype=np_dtype(dtype))
-        _write_bin(out_dir / f"{name}.bin", arr, dtype)
-        in_count += 1
-    for name in outputs:
-        t = tensors.get(name)
-        if t is None:
-            continue
-        dtype = str(getattr(t, "dtype", "f32"))
-        shape = tuple(max(1, resolve_dim_int(d, bindings)) for d in list(getattr(t, "shape", []) or []))
-        arr = np.array(0, dtype=np_dtype(dtype)) if len(shape) == 0 else np.zeros(shape, dtype=np_dtype(dtype))
-        _write_bin(out_dir / f"{name}_ref.bin", arr, dtype)
-        out_count += 1
+        n = str(name)
+        dtype = str(spec.get("dtype") or "f32")
+        shape_spec = list(spec.get("shape") or [])
+        shape = tuple(max(1, resolve_dim_int(d, bindings)) for d in shape_spec)
+        if n in output_set:
+            arr = np.array(0, dtype=np_dtype(dtype)) if len(shape) == 0 else np.zeros(shape, dtype=np_dtype(dtype))
+            _write_bin(out_dir / f"{n}_ref.bin", arr, dtype)
+            out_count += 1
+        else:
+            arr = np.array(1, dtype=np_dtype(dtype)) if len(shape) == 0 else np.zeros(shape, dtype=np_dtype(dtype))
+            _write_bin(out_dir / f"{n}.bin", arr, dtype)
+            in_count += 1
     return in_count, out_count
 
 
@@ -128,24 +111,113 @@ def _compile_local_rvv_program(*, workdir: Path) -> subprocess.CompletedProcess[
     return subprocess.run(compile_cmd, cwd=workdir, capture_output=True, text=True)
 
 
+@dataclass(frozen=True)
+class _InputMeta:
+    source_kind: str
+    mlir_parse_ms: float
+    mlir_backend_contract_used: bool
+
+
+def _resolve_rvv_contract(
+    payload: Any,
+    *,
+    shape_bindings: Mapping[str, Any] | None = None,
+) -> tuple[MlirBackendContract, _InputMeta]:
+    t0 = perf_counter()
+    bindings = normalize_bindings(shape_bindings)
+
+    if isinstance(payload, MlirBackendContract):
+        contract = payload
+        source_kind = "mlir_contract"
+    elif isinstance(payload, Mapping) and str(payload.get("schema_version") or "") == "intent_mlir_backend_contract_v1":
+        contract = MlirBackendContract.from_json_dict(dict(payload))
+        source_kind = "mlir_contract"
+    elif isinstance(payload, IntentMLIRModule):
+        contract = build_rvv_contract(payload, source_kind="mlir_module")
+        source_kind = "mlir_module"
+    elif isinstance(payload, str):
+        module = IntentMLIRModule(module_text=str(payload))
+        contract = build_rvv_contract(module, source_kind="mlir_text")
+        source_kind = "mlir_text"
+    elif isinstance(payload, IntentFunction):
+        contract = build_rvv_contract_from_intent(payload, source_kind="intent")
+        source_kind = "intent"
+    else:
+        raise ValueError("invalid intent/mlir payload for rvv pipeline")
+
+    if bindings:
+        reason_context = dict(contract.reason_context or {})
+        reason_context["shape_bindings"] = dict(bindings)
+        contract.reason_context = reason_context
+
+    dt_ms = float((perf_counter() - t0) * 1000.0)
+    return contract, _InputMeta(source_kind=source_kind, mlir_parse_ms=dt_ms, mlir_backend_contract_used=True)
+
+
+def _contract_ops(contract: MlirBackendContract) -> list[str]:
+    return [str(x) for x in list(contract.op_names or []) if str(x).strip()]
+
+
+def _contract_tensor_shapes(contract: MlirBackendContract) -> dict[str, list[Any]]:
+    out: dict[str, list[Any]] = {}
+    for k, v in dict(contract.tensor_shapes or {}).items():
+        if isinstance(v, list):
+            out[str(k)] = list(v)
+    return out
+
+
 def run_rvv_pipeline(
     intent_payload: Any,
     *,
     shape_bindings: Mapping[str, Any] | None = None,
     pipeline_mode: str = "full",
 ) -> RvvPipelineResult:
-    intent_payload, bridge_meta = resolve_intent_payload_with_meta(intent_payload)
+    try:
+        contract, input_meta = _resolve_rvv_contract(intent_payload, shape_bindings=shape_bindings)
+    except Exception as e:
+        detail = str(e)
+        fail_stage = RvvPipelineStage(
+            name="legalize",
+            ok=False,
+            ms=0.0,
+            detail=detail,
+            artifacts={"input_ir_kind": "unknown"},
+        )
+        stages = [fail_stage]
+        for stage_name in RVV_PIPELINE_STAGES[1:]:
+            stages.append(
+                RvvPipelineStage(
+                    name=stage_name,
+                    ok=False,
+                    ms=0.0,
+                    detail="skipped_after_failure",
+                    artifacts={"skipped": True},
+                )
+            )
+        return RvvPipelineResult(
+            ok=False,
+            stages=stages,
+            reason_code=_classify_failure(detail),
+            reason_detail=detail,
+            input_ir_kind="unknown",
+            mlir_parse_ms=0.0,
+            mlir_backend_contract_used=False,
+        )
+
     mode = str(pipeline_mode or "full").strip().lower()
     if mode not in {"full", "schedule_only"}:
         raise ValueError(f"unsupported rvv pipeline_mode: {pipeline_mode}")
-    name, op_names, tensor_shapes, schedule_info = collect_intent_info(intent_payload)
+    name = str(contract.kernel_name or "intent")
+    op_names = _contract_ops(contract)
+    tensor_shapes = _contract_tensor_shapes(contract)
+    schedule_info = dict(contract.schedule or {})
     stages: list[RvvPipelineStage] = []
     rewrite_counts = legalize_rewrite_counts(op_names)
     family = op_family(op_names)
-    bindings = normalize_bindings(shape_bindings)
+    bindings = normalize_bindings(shape_bindings or contract.reason_context.get("shape_bindings") or {})
     symbolic_dims_present = has_symbolic_dims(tensor_shapes)
     can_execute = bool(bindings) or (not symbolic_dims_present)
-    state: dict[str, Any] = {"bindings": dict(bindings)}
+    state: dict[str, Any] = {"bindings": dict(bindings), "contract": contract}
 
     def _legalize() -> tuple[str, dict[str, Any]]:
         if not op_names:
@@ -156,16 +228,17 @@ def run_rvv_pipeline(
         if unsupported:
             raise ValueError(f"unsupported ops for rvv pipeline: {unsupported}")
         return (
-            "validated rvv intent payload",
+            "validated rvv mlir backend contract",
             {
                 "intent_name": name,
                 "op_count": len(op_names),
                 "tensor_count": len(tensor_shapes),
                 "ops": op_names,
                 "rewrite_counts": rewrite_counts,
-                "input_ir_kind": str(bridge_meta.source_kind),
-                "mlir_parse_ms": float(bridge_meta.mlir_parse_ms),
-                "mlir_bridge_used": bool(bridge_meta.used_mlir_bridge),
+                "input_ir_kind": str(input_meta.source_kind),
+                "mlir_parse_ms": float(input_meta.mlir_parse_ms),
+                "mlir_backend_contract_used": bool(input_meta.mlir_backend_contract_used),
+                "contract_backend": str(contract.backend or "rvv"),
             },
         )
 
@@ -217,7 +290,12 @@ def run_rvv_pipeline(
             return ("emit skipped: missing bindings", {"emit_backend": "cpp", "emit_mode": "skipped_missing_bindings"})
         from backends.spmd_rvv.codegen.cpp_driver import lower_intent_to_c_with_files_cpp  # noqa: PLC0415
 
-        src = lower_intent_to_c_with_files_cpp(intent_payload, shape_bindings=bindings, atol=1e-3, rtol=1e-3, mode="verify")
+        intent_json = contract.intent_json
+        if not isinstance(intent_json, dict):
+            raise ValueError("mlir backend contract missing intent_json for rvv emission")
+        intent_obj = IntentFunction.from_json_dict(intent_json)
+        src = lower_intent_to_c_with_files_cpp(intent_obj, shape_bindings=bindings, atol=1e-3, rtol=1e-3, mode="verify")
+        state["intent"] = intent_obj
         state["c_src"] = str(src)
         return (
             "emitted standalone C via RVV C++ codegen",
@@ -266,7 +344,7 @@ def run_rvv_pipeline(
         td = state.get("tmp_dir")
         if not isinstance(td, Path):
             raise ValueError("compile stage artifacts missing workdir")
-        in_count, out_count = _build_dummy_io_files(intent_payload=intent_payload, bindings=bindings, out_dir=td)
+        in_count, out_count = _build_dummy_io_files(contract=contract, bindings=bindings, out_dir=td)
         rp = subprocess.run([str(td / "run")], cwd=td, capture_output=True, text=True)
         if int(rp.returncode) != 0:
             raise RuntimeError(f"rvv local run failed rc={rp.returncode}: {rp.stderr or rp.stdout}")
@@ -323,6 +401,7 @@ def run_rvv_pipeline(
         stages=stages,
         reason_code=("ok" if ok else fail_reason),
         reason_detail=fail_detail,
-        input_ir_kind=str(bridge_meta.source_kind),
-        mlir_parse_ms=float(bridge_meta.mlir_parse_ms),
+        input_ir_kind=str(input_meta.source_kind),
+        mlir_parse_ms=float(input_meta.mlir_parse_ms),
+        mlir_backend_contract_used=bool(input_meta.mlir_backend_contract_used),
     )

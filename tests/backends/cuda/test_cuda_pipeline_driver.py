@@ -5,6 +5,7 @@ from backends.cuda.pipeline.driver import run_cuda_pipeline
 from backends.cuda.pipeline.stages import CUDA_PIPELINE_STAGES
 from intent_ir.ir import IntentFunction
 from intent_ir.mlir import to_mlir
+from intent_ir.mlir.passes.emit_cuda_contract import build_cuda_contract
 
 
 def _add_intent(name: str = "cuda_pipeline_add") -> IntentFunction:
@@ -109,9 +110,31 @@ def test_run_cuda_pipeline_accepts_mlir_module_payload() -> None:
     assert result.ok is True
     assert result.input_ir_kind == "mlir_module"
     assert float(result.mlir_parse_ms) >= 0.0
+    assert result.mlir_backend_contract_used is True
     legalize = next(s for s in result.stages if s.name == "legalize")
     assert legalize.artifacts.get("input_ir_kind") == "mlir_module"
     assert float(legalize.artifacts.get("mlir_parse_ms") or 0.0) >= 0.0
+
+
+def test_run_cuda_pipeline_accepts_mlir_backend_contract_payload() -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_add_contract"))
+    contract = build_cuda_contract(mod)
+    result = run_cuda_pipeline(contract, pipeline_mode="schedule_only")
+    assert result.ok is True
+    assert result.input_ir_kind == "mlir_contract"
+    assert result.mlir_backend_contract_used is True
+    legalize = next(s for s in result.stages if s.name == "legalize")
+    assert legalize.artifacts.get("mlir_backend_contract_used") is True
+    assert legalize.artifacts.get("contract_backend") == "cuda"
+
+
+def test_run_cuda_pipeline_accepts_contract_json_mapping() -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_add_contract_json"))
+    contract = build_cuda_contract(mod)
+    payload: dict[str, object] = dict(contract.to_json_dict())
+    result = run_cuda_pipeline(payload, pipeline_mode="schedule_only")
+    assert result.ok is True
+    assert result.input_ir_kind == "mlir_contract"
 
 
 def test_var_mean_codegen_signature_has_no_trailing_comma() -> None:

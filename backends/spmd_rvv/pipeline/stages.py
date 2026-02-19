@@ -35,6 +35,7 @@ class RvvPipelineResult:
     reason_detail: str = ""
     input_ir_kind: str = "intent"
     mlir_parse_ms: float = 0.0
+    mlir_backend_contract_used: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -43,6 +44,7 @@ class RvvPipelineResult:
             "reason_detail": str(self.reason_detail),
             "input_ir_kind": str(self.input_ir_kind),
             "mlir_parse_ms": float(self.mlir_parse_ms),
+            "mlir_backend_contract_used": bool(self.mlir_backend_contract_used),
             "stages": [
                 {
                     "name": s.name,

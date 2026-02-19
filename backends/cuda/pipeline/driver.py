@@ -1,19 +1,20 @@
 """
 CUDA compiler pipeline driver.
 
-This driver now models a pure-compiler lifecycle:
+Pure-compiler lifecycle:
 legalize -> shape_infer -> schedule -> emit -> compile -> launch.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from time import perf_counter
 import numpy as np
 from typing import Any, Mapping
 
+from backends.common.mlir_contract import MlirBackendContract
 from backends.cuda.runtime import CudaLaunch, compile_cuda_extension, run_cuda_kernel
-from backends.common.mlir_bridge import resolve_intent_payload_with_meta
 from backends.common.pipeline_utils import (
-    collect_intent_info,
     has_symbolic_dims,
     legalize_rewrite_counts,
     normalize_bindings,
@@ -23,6 +24,9 @@ from backends.common.pipeline_utils import (
     run_stage,
     schedule_overrides_from_env,
 )
+from intent_ir.ir import IntentFunction
+from intent_ir.mlir.module import IntentMLIRModule
+from intent_ir.mlir.passes.emit_cuda_contract import build_cuda_contract, build_cuda_contract_from_intent
 
 from .stages import CUDA_PIPELINE_STAGES, CudaPipelineResult, CudaPipelineStage
 
@@ -75,24 +79,113 @@ def _build_dummy_inputs(*, io_spec: Mapping[str, Any], output_names: list[str], 
     return inputs
 
 
+@dataclass(frozen=True)
+class _InputMeta:
+    source_kind: str
+    mlir_parse_ms: float
+    mlir_backend_contract_used: bool
+
+
+def _resolve_cuda_contract(
+    payload: Any,
+    *,
+    shape_bindings: Mapping[str, Any] | None = None,
+) -> tuple[MlirBackendContract, _InputMeta]:
+    t0 = perf_counter()
+    bindings = normalize_bindings(shape_bindings)
+
+    if isinstance(payload, MlirBackendContract):
+        contract = payload
+        source_kind = "mlir_contract"
+    elif isinstance(payload, Mapping) and str(payload.get("schema_version") or "") == "intent_mlir_backend_contract_v1":
+        contract = MlirBackendContract.from_json_dict(dict(payload))
+        source_kind = "mlir_contract"
+    elif isinstance(payload, IntentMLIRModule):
+        contract = build_cuda_contract(payload, source_kind="mlir_module")
+        source_kind = "mlir_module"
+    elif isinstance(payload, str):
+        module = IntentMLIRModule(module_text=str(payload))
+        contract = build_cuda_contract(module, source_kind="mlir_text")
+        source_kind = "mlir_text"
+    elif isinstance(payload, IntentFunction):
+        contract = build_cuda_contract_from_intent(payload, source_kind="intent")
+        source_kind = "intent"
+    else:
+        raise ValueError("invalid intent/mlir payload for cuda pipeline")
+
+    if bindings:
+        reason_context = dict(contract.reason_context or {})
+        reason_context["shape_bindings"] = dict(bindings)
+        contract.reason_context = reason_context
+
+    dt_ms = float((perf_counter() - t0) * 1000.0)
+    return contract, _InputMeta(source_kind=source_kind, mlir_parse_ms=dt_ms, mlir_backend_contract_used=True)
+
+
+def _contract_ops(contract: MlirBackendContract) -> list[str]:
+    return [str(x) for x in list(contract.op_names or []) if str(x).strip()]
+
+
+def _contract_tensor_shapes(contract: MlirBackendContract) -> dict[str, list[Any]]:
+    out: dict[str, list[Any]] = {}
+    for k, v in dict(contract.tensor_shapes or {}).items():
+        if isinstance(v, list):
+            out[str(k)] = list(v)
+    return out
+
+
 def run_cuda_pipeline(
     intent_payload: Any,
     *,
     shape_bindings: Mapping[str, Any] | None = None,
     pipeline_mode: str = "full",
 ) -> CudaPipelineResult:
-    intent_payload, bridge_meta = resolve_intent_payload_with_meta(intent_payload)
+    try:
+        contract, input_meta = _resolve_cuda_contract(intent_payload, shape_bindings=shape_bindings)
+    except Exception as e:
+        detail = str(e)
+        fail_stage = CudaPipelineStage(
+            name="legalize",
+            ok=False,
+            ms=0.0,
+            detail=detail,
+            artifacts={"input_ir_kind": "unknown"},
+        )
+        stages = [fail_stage]
+        for stage_name in CUDA_PIPELINE_STAGES[1:]:
+            stages.append(
+                CudaPipelineStage(
+                    name=stage_name,
+                    ok=False,
+                    ms=0.0,
+                    detail="skipped_after_failure",
+                    artifacts={"skipped": True},
+                )
+            )
+        return CudaPipelineResult(
+            ok=False,
+            stages=stages,
+            reason_code=_classify_failure(detail),
+            reason_detail=detail,
+            input_ir_kind="unknown",
+            mlir_parse_ms=0.0,
+            mlir_backend_contract_used=False,
+        )
     mode = str(pipeline_mode or "full").strip().lower()
     if mode not in {"full", "schedule_only"}:
         raise ValueError(f"unsupported cuda pipeline_mode: {pipeline_mode}")
-    name, op_names, tensor_shapes, schedule_info = collect_intent_info(intent_payload)
+
+    name = str(contract.kernel_name or "intent")
+    op_names = _contract_ops(contract)
+    tensor_shapes = _contract_tensor_shapes(contract)
+    schedule_info = dict(contract.schedule or {})
     stages: list[CudaPipelineStage] = []
     rewrite_counts = legalize_rewrite_counts(op_names)
     family = op_family(op_names)
-    bindings = normalize_bindings(shape_bindings)
+    bindings = normalize_bindings(shape_bindings or contract.reason_context.get("shape_bindings") or {})
     symbolic_dims_present = has_symbolic_dims(tensor_shapes)
     can_execute = bool(bindings) or (not symbolic_dims_present)
-    state: dict[str, Any] = {"bindings": dict(bindings)}
+    state: dict[str, Any] = {"bindings": dict(bindings), "contract": contract}
 
     def _legalize() -> tuple[str, dict[str, Any]]:
         if not op_names:
@@ -100,16 +193,17 @@ def run_cuda_pipeline(
         if not tensor_shapes:
             raise ValueError("invalid intent: empty tensors")
         return (
-            "validated intent payload",
+            "validated mlir backend contract",
             {
                 "intent_name": name,
                 "op_count": len(op_names),
                 "tensor_count": len(tensor_shapes),
                 "ops": op_names,
                 "rewrite_counts": rewrite_counts,
-                "input_ir_kind": str(bridge_meta.source_kind),
-                "mlir_parse_ms": float(bridge_meta.mlir_parse_ms),
-                "mlir_bridge_used": bool(bridge_meta.used_mlir_bridge),
+                "input_ir_kind": str(input_meta.source_kind),
+                "mlir_parse_ms": float(input_meta.mlir_parse_ms),
+                "mlir_backend_contract_used": bool(input_meta.mlir_backend_contract_used),
+                "contract_backend": str(contract.backend or "cuda"),
             },
         )
 
@@ -164,7 +258,10 @@ def run_cuda_pipeline(
             )
         from backends.cuda.codegen.cpp_driver import lower_intent_to_cuda_kernel_cpp  # noqa: PLC0415
 
-        lowered = lower_intent_to_cuda_kernel_cpp(intent_payload, bindings=bindings)
+        intent_json = contract.intent_json
+        if not isinstance(intent_json, dict):
+            raise ValueError("mlir backend contract missing intent_json for cuda emission")
+        lowered = lower_intent_to_cuda_kernel_cpp(IntentFunction.from_json_dict(intent_json), bindings=bindings)
         state["lowered"] = dict(lowered)
         state["launch"] = _parse_launch(lowered.get("launch") if isinstance(lowered.get("launch"), Mapping) else {})
         kernel_name = str(lowered.get("kernel_name") or name)
@@ -182,6 +279,7 @@ def run_cuda_pipeline(
                 "kernel_name": kernel_name,
                 "cuda_src_bytes": len(state["cuda_src"]),
                 "output_count": len(output_names),
+                "mlir_backend_contract_used": True,
             },
         )
 
@@ -268,6 +366,7 @@ def run_cuda_pipeline(
         stages=stages,
         reason_code=("ok" if ok else fail_reason),
         reason_detail=fail_detail,
-        input_ir_kind=str(bridge_meta.source_kind),
-        mlir_parse_ms=float(bridge_meta.mlir_parse_ms),
+        input_ir_kind=str(input_meta.source_kind),
+        mlir_parse_ms=float(input_meta.mlir_parse_ms),
+        mlir_backend_contract_used=bool(input_meta.mlir_backend_contract_used),
     )
