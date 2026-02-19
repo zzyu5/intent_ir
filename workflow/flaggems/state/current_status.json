@@ -1,16 +1,16 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-19T16:43:08+00:00",
+  "updated_at": "2026-02-19T16:56:41+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "e39b5c34a030ea3da74e9f732098cc12c7072d89",
+  "head_commit": "ffd673fa6be4c67bf87f0637320a62aeac745682",
   "mode": "maintenance",
-  "coverage_integrity_phase": "recomputed_ok",
+  "coverage_integrity_phase": "recompute_stale",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260219/full196_mlir_force_compile_head_v5/run_summary.json",
   "full196_last_ok": true,
   "full196_validated_commit": "e39b5c34a030ea3da74e9f732098cc12c7072d89",
   "full196_validated_commit_source": "run_summary.repo.head_commit",
-  "full196_commits_since_validated": 0,
-  "full196_commits_since_validated_total": 0,
+  "full196_commits_since_validated": 2,
+  "full196_commits_since_validated_total": 2,
   "full196_lifted_to_head": false,
   "full196_validated_mode": "force_compile",
   "full196_validated_execution_ir": "mlir",
@@ -29,9 +29,9 @@
   "mlir_cutover_level": "blocked_toolchain",
   "mlir_default_enabled": true,
   "mlir_toolchain_ok": false,
-  "mlir_backend_contract_ready": false,
+  "mlir_backend_contract_ready": true,
   "mlir_llvm_chain_ok": true,
-  "mlir_full196_validated_commit": "e39b5c34a030ea3da74e9f732098cc12c7072d89",
+  "mlir_full196_validated_commit": "",
   "coverage": {
     "semantic_ops": 196,
     "dual_pass": 196,
@@ -101,11 +101,13 @@
     "catalog_validated": true
   },
   "active_lanes": [
+    "coverage",
     "mlir_migration"
   ],
   "next_focus_by_lane": {
     "mlir_migration": "Continue MLIR phase3/4 with backend C++ modular split and keep batch/full196 cadence.",
-    "workflow": "Continue MLIR phase3/4 refactor (pass pipeline + backend modularization) with batch regression cadence."
+    "workflow": "Continue MLIR phase3/4 refactor (pass pipeline + backend modularization) with batch regression cadence.",
+    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD."
   },
   "latest_artifacts": {
     "run_summary": "artifacts/flaggems_matrix/daily/20260219/full196_mlir_force_compile_head_v5/run_summary.json",
