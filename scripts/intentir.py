@@ -372,6 +372,27 @@ def _cmd_mlir_pass(args: argparse.Namespace) -> int:
     return 0 if bool(trace.get("ok")) else 1
 
 
+def _cmd_mlir_provision_toolchain(args: argparse.Namespace) -> int:
+    cmd = _python_cmd(
+        "scripts/intentir/provision_mlir_toolchain.py",
+        "--version",
+        str(int(args.version)),
+    )
+    if args.prefix is not None:
+        cmd.extend(["--prefix", str(args.prefix)])
+    if args.toolchain_root is not None:
+        cmd.extend(["--toolchain-root", str(args.toolchain_root)])
+    if args.current_link is not None:
+        cmd.extend(["--current-link", str(args.current_link)])
+    if args.env_file is not None:
+        cmd.extend(["--env-file", str(args.env_file)])
+    cmd.append("--force" if bool(args.force) else "--no-force")
+    cmd.append("--use-current-link" if bool(args.use_current_link) else "--no-use-current-link")
+    if args.out is not None:
+        cmd.extend(["--out", str(args.out)])
+    return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run))
+
+
 def _cmd_tilelang_export_cuda_snapshots(args: argparse.Namespace) -> int:
     cmd = _python_cmd(
         "scripts/tilelang/export_cuda_snapshots.py",
@@ -490,6 +511,22 @@ def _build_parser() -> argparse.ArgumentParser:
     mlir_pass.add_argument("--out-dir", default=None, help="Output directory for module + pass trace")
     mlir_pass.add_argument("--fail-on-error", action=argparse.BooleanOptionalAction, default=False)
     mlir_pass.set_defaults(func=_cmd_mlir_pass)
+
+    mlir_provision = mlir_sub.add_parser(
+        "provision-toolchain",
+        help="Provision repository-local MLIR toolchain (apt download + extract, no sudo required)",
+    )
+    mlir_provision.add_argument("--version", type=int, default=14)
+    mlir_provision.add_argument("--prefix", default=None)
+    mlir_provision.add_argument("--toolchain-root", default=None)
+    mlir_provision.add_argument("--current-link", default=None)
+    mlir_provision.add_argument("--env-file", default=None)
+    mlir_provision.add_argument("--force", action=argparse.BooleanOptionalAction, default=False)
+    mlir_provision.add_argument("--use-current-link", action=argparse.BooleanOptionalAction, default=True)
+    mlir_provision.add_argument("--out", default=None)
+    mlir_provision.add_argument("--stream", action=argparse.BooleanOptionalAction, default=True)
+    mlir_provision.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=False)
+    mlir_provision.set_defaults(func=_cmd_mlir_provision_toolchain)
 
     return ap
 

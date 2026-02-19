@@ -14,6 +14,7 @@ python scripts/intentir.py suite --suite flaggems-full196 --progress-style chunk
 python scripts/intentir.py suite --suite triton-smoke --kernel tanh2d
 python scripts/intentir.py kernel --frontend triton --kernel tanh2d
 python scripts/intentir.py tilelang export-cuda-snapshots --kernel matmul --refresh
+python scripts/intentir.py mlir provision-toolchain --version 14 --force
 python scripts/intentir.py env
 ```
 
@@ -50,6 +51,7 @@ python scripts/validate_catalog.py
 - `scripts/intentir/check_macro_composition.py`: macro composition guard.
 - `scripts/intentir/report_mapping_complexity.py`: family-level mapping complexity report.
 - IR guards support both `--registry` and `--mlir-manifest` sources so migration quality can run on intent-dialect MLIR artifacts directly.
+- `scripts/intentir/provision_mlir_toolchain.py`: local MLIR toolchain bootstrap (no sudo).
 - `scripts/flaggems/run_ir_arch_batch.py`: run ir_arch lane batch.
 
 ## Active Backend Compiler Entrypoints

@@ -8,6 +8,8 @@ from typing import Any
 
 
 _LLVM_VERSIONS = (19, 18, 17, 16, 15, 14, 13)
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_DEFAULT_TOOLCHAIN_ROOT = _REPO_ROOT / "artifacts" / "toolchains"
 
 
 def _llvm_bindirs() -> list[Path]:
@@ -35,6 +37,39 @@ def _llvm_bindirs() -> list[Path]:
     return out
 
 
+def _intentir_local_bindirs() -> list[Path]:
+    """
+    Probe repository-local toolchain locations so MLIR tools can be used
+    without system-wide installation.
+    """
+    roots: list[Path] = []
+    env_root = str(os.getenv("INTENTIR_MLIR_TOOLCHAIN_ROOT", "")).strip()
+    if env_root:
+        roots.append(Path(env_root))
+    roots.append(_DEFAULT_TOOLCHAIN_ROOT / "mlir-current")
+    roots.extend(sorted(_DEFAULT_TOOLCHAIN_ROOT.glob("mlir-*")))
+
+    out: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        if not root.exists():
+            continue
+        candidates: list[Path] = []
+        candidates.append(root / "bin")
+        candidates.append(root / "usr" / "bin")
+        candidates.extend(sorted((root / "usr" / "lib").glob("llvm-*/bin")))
+        candidates.extend(sorted((root / "lib").glob("llvm-*/bin")))
+        for p in candidates:
+            if not p.is_dir():
+                continue
+            key = str(p.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(p.resolve())
+    return out
+
+
 def _candidate_names(base: str, env_var: str) -> list[str]:
     out: list[str] = []
     env_val = str(os.getenv(env_var, "") or "").strip()
@@ -55,7 +90,7 @@ def _candidate_names(base: str, env_var: str) -> list[str]:
 
 def _probe_tool(base: str, *, env_var: str) -> dict[str, Any]:
     candidates = _candidate_names(base, env_var)
-    extra_bindirs = _llvm_bindirs()
+    extra_bindirs = _llvm_bindirs() + _intentir_local_bindirs()
     checked: list[str] = []
     chosen_path = ""
     chosen_name = ""
@@ -137,6 +172,10 @@ def detect_mlir_toolchain() -> dict[str, Any]:
             "llvm-as": "INTENTIR_LLVM_AS",
             "opt": "INTENTIR_LLVM_OPT",
         },
+        "local_toolchain_roots": [
+            str(_DEFAULT_TOOLCHAIN_ROOT / "mlir-current"),
+            str(_DEFAULT_TOOLCHAIN_ROOT / "mlir-*"),
+        ],
         "install_hint": (
             ""
             if len(missing_required) == 0
@@ -144,7 +183,8 @@ def detect_mlir_toolchain() -> dict[str, Any]:
                 "Missing required MLIR/LLVM tools: "
                 + ", ".join(missing_required)
                 + ". Install toolchain packages or set INTENTIR_MLIR_OPT / INTENTIR_MLIR_TRANSLATE / "
-                + "INTENTIR_LLVM_AS / INTENTIR_LLVM_OPT to executable paths."
+                + "INTENTIR_LLVM_AS / INTENTIR_LLVM_OPT to executable paths. "
+                + "You can also run `python scripts/intentir.py mlir provision-toolchain --version 14 --force`."
             )
         ),
         "tools": tools,

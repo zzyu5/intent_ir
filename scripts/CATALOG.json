@@ -263,6 +263,16 @@
       "tests": ["tests/intentir/test_mapping_complexity_report.py"]
     },
     {
+      "path": "scripts/intentir/provision_mlir_toolchain.py",
+      "owner_lane": "mlir_migration",
+      "purpose": "provision repository-local MLIR toolchain (apt download + extract) without sudo",
+      "inputs": ["apt package index", "dpkg-deb"],
+      "outputs": ["artifacts/toolchains/mlir-*/", "artifacts/toolchains/mlir-current", "artifacts/toolchains/mlir-current/env.sh"],
+      "status": "active",
+      "replacement": "",
+      "tests": []
+    },
+    {
       "path": "scripts/intentir/source_loader.py",
       "owner_lane": "ir_arch_quality",
       "purpose": "shared source adapter for registry/mlir-manifest inputs in IR quality guards",
