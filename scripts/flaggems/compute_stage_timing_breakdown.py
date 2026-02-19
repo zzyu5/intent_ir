@@ -156,6 +156,10 @@ def _pipeline_kernel_report_paths(pipeline_reports_dir: Path, *, kernels: list[s
 
 
 def _summarize_mlir(pipeline_reports_dir: Path, *, kernels: list[str]) -> dict[str, Any]:
+    pass_ms_totals_by_pipeline = {"upstream": 0.0, "midend": 0.0, "downstream": 0.0}
+    pass_ms_totals_by_name: dict[str, float] = {}
+    pass_count_by_name: dict[str, int] = {}
+
     report_paths = _pipeline_kernel_report_paths(pipeline_reports_dir, kernels=kernels)
     if not report_paths:
         return {
@@ -165,6 +169,10 @@ def _summarize_mlir(pipeline_reports_dir: Path, *, kernels: list[str]) -> dict[s
             "avg_ms": {"mlir_parse_ms": 0.0, "mlir_pass_ms": 0.0, "mlir_lower_ms": 0.0, "mlir_total_ms": 0.0},
             "stage_share_pct": {"mlir_parse_ms": 0.0, "mlir_pass_ms": 0.0, "mlir_lower_ms": 0.0},
             "pass_count_totals": {"upstream": 0, "midend": 0, "downstream": 0},
+            "pass_ms_totals_by_pipeline": pass_ms_totals_by_pipeline,
+            "pass_ms_totals_by_name": pass_ms_totals_by_name,
+            "pass_count_by_name": pass_count_by_name,
+            "top_passes_by_ms": [],
             "missing_mlir_rows": [],
             "source_dir": str(pipeline_reports_dir),
         }
@@ -188,7 +196,14 @@ def _summarize_mlir(pipeline_reports_dir: Path, *, kernels: list[str]) -> dict[s
         for key in ("upstream", "midend", "downstream"):
             trace = row.get(key)
             if isinstance(trace, dict):
-                pass_count_totals[key] += int(len(list(trace.get("passes") or [])))
+                passes = [p for p in list(trace.get("passes") or []) if isinstance(p, dict)]
+                pass_count_totals[key] += int(len(passes))
+                for pass_row in passes:
+                    name = str(pass_row.get("name") or "").strip() or "<unnamed>"
+                    ms = _safe_float(pass_row.get("ms"))
+                    pass_ms_totals_by_pipeline[key] = _safe_float(pass_ms_totals_by_pipeline.get(key)) + ms
+                    pass_ms_totals_by_name[name] = _safe_float(pass_ms_totals_by_name.get(name)) + ms
+                    pass_count_by_name[name] = int(pass_count_by_name.get(name, 0)) + 1
         counted += 1
 
     if counted <= 0:
@@ -199,6 +214,10 @@ def _summarize_mlir(pipeline_reports_dir: Path, *, kernels: list[str]) -> dict[s
             "avg_ms": {"mlir_parse_ms": 0.0, "mlir_pass_ms": 0.0, "mlir_lower_ms": 0.0, "mlir_total_ms": 0.0},
             "stage_share_pct": {"mlir_parse_ms": 0.0, "mlir_pass_ms": 0.0, "mlir_lower_ms": 0.0},
             "pass_count_totals": pass_count_totals,
+            "pass_ms_totals_by_pipeline": pass_ms_totals_by_pipeline,
+            "pass_ms_totals_by_name": pass_ms_totals_by_name,
+            "pass_count_by_name": pass_count_by_name,
+            "top_passes_by_ms": [],
             "missing_mlir_rows": missing_mlir_rows,
             "source_dir": str(pipeline_reports_dir),
         }
@@ -217,6 +236,20 @@ def _summarize_mlir(pipeline_reports_dir: Path, *, kernels: list[str]) -> dict[s
             "mlir_pass_ms": totals["mlir_pass_ms"] / share_denom * 100.0,
             "mlir_lower_ms": totals["mlir_lower_ms"] / share_denom * 100.0,
         }
+    top_passes = [
+        {
+            "name": str(name),
+            "total_ms": _safe_float(total_ms),
+            "count": int(pass_count_by_name.get(name, 0)),
+            "avg_ms": (
+                _safe_float(total_ms) / float(int(pass_count_by_name.get(name, 0)))
+                if int(pass_count_by_name.get(name, 0)) > 0
+                else 0.0
+            ),
+        }
+        for name, total_ms in pass_ms_totals_by_name.items()
+    ]
+    top_passes.sort(key=lambda x: (-_safe_float(x.get("total_ms")), str(x.get("name"))))
     return {
         "available": True,
         "kernel_count": int(counted),
@@ -224,6 +257,10 @@ def _summarize_mlir(pipeline_reports_dir: Path, *, kernels: list[str]) -> dict[s
         "avg_ms": avg,
         "stage_share_pct": stage_share,
         "pass_count_totals": pass_count_totals,
+        "pass_ms_totals_by_pipeline": pass_ms_totals_by_pipeline,
+        "pass_ms_totals_by_name": dict(sorted(pass_ms_totals_by_name.items(), key=lambda kv: kv[0])),
+        "pass_count_by_name": dict(sorted(pass_count_by_name.items(), key=lambda kv: kv[0])),
+        "top_passes_by_ms": top_passes[:20],
         "missing_mlir_rows": missing_mlir_rows,
         "source_dir": str(pipeline_reports_dir),
     }

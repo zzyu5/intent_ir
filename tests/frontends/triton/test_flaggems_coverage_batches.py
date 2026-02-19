@@ -279,6 +279,57 @@ def test_run_coverage_batches_dry_run_supports_family_chunking(tmp_path: Path) -
     assert chunk1_cmd.count("--kernel") == 1
 
 
+def test_run_coverage_batches_chunk_progress_is_compact(tmp_path: Path) -> None:
+    coverage_batches = tmp_path / "coverage_batches.json"
+    out_root = tmp_path / "runs"
+    coverage_batches.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_coverage_batches_v1",
+                "family_order": ["f1"],
+                "batches": [
+                    {
+                        "family": "f1",
+                        "semantic_ops": ["op1"],
+                        "kernels": ["k1", "k2", "k3"],
+                        "semantic_count": 1,
+                        "kernel_count": 3,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/run_coverage_batches.py",
+            "--coverage-batches",
+            str(coverage_batches),
+            "--out-root",
+            str(out_root),
+            "--family-kernel-chunk-size",
+            "2",
+            "--progress-style",
+            "chunk",
+            "--dry-run",
+            "--no-resume",
+            "--run-rvv-remote",
+            "--skip-rvv-local",
+            "--allow-cuda-skip",
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    out = str(p.stdout or "")
+    assert "[chunk] 1/2 status=OK" in out
+    assert "[chunk] 2/2 status=OK" in out
+    assert "RUN family=" not in out
+    assert "DONE family=" not in out
+
+
 def test_materialize_family_outputs_scopes_single_chunk_semantics(tmp_path: Path) -> None:
     from scripts.flaggems.run_coverage_batches import _materialize_family_outputs
 
@@ -435,7 +486,30 @@ def test_compute_stage_timing_breakdown_includes_mlir_metrics(tmp_path: Path) ->
         encoding="utf-8",
     )
     reports.mkdir(parents=True, exist_ok=True)
-    for kernel, parse_ms, pass_ms, lower_ms in [("k1", 1.0, 10.0, 4.0), ("k2", 2.0, 11.0, 5.0)]:
+    for kernel, parse_ms, pass_ms, lower_ms, passes in [
+        (
+            "k1",
+            1.0,
+            10.0,
+            4.0,
+            {
+                "upstream": [{"name": "p0", "ms": 2.0}],
+                "midend": [{"name": "p1", "ms": 3.0}, {"name": "p2", "ms": 4.0}],
+                "downstream": [{"name": "p3", "ms": 1.0}],
+            },
+        ),
+        (
+            "k2",
+            2.0,
+            11.0,
+            5.0,
+            {
+                "upstream": [{"name": "p0", "ms": 1.5}],
+                "midend": [{"name": "p1", "ms": 2.5}, {"name": "p2", "ms": 1.0}],
+                "downstream": [{"name": "p4", "ms": 5.0}],
+            },
+        ),
+    ]:
         (reports / f"{kernel}.json").write_text(
             json.dumps(
                 {
@@ -443,9 +517,9 @@ def test_compute_stage_timing_breakdown_includes_mlir_metrics(tmp_path: Path) ->
                         "mlir_parse_ms": parse_ms,
                         "mlir_pass_ms": pass_ms,
                         "mlir_lower_ms": lower_ms,
-                        "upstream": {"passes": [{"name": "p0"}]},
-                        "midend": {"passes": [{"name": "p1"}, {"name": "p2"}]},
-                        "downstream": {"passes": [{"name": "p3"}]},
+                        "upstream": {"passes": list(passes["upstream"])},
+                        "midend": {"passes": list(passes["midend"])},
+                        "downstream": {"passes": list(passes["downstream"])},
                     }
                 }
             ),
@@ -481,6 +555,13 @@ def test_compute_stage_timing_breakdown_includes_mlir_metrics(tmp_path: Path) ->
     assert payload["mlir"]["totals_ms"]["mlir_pass_ms"] == 21.0
     assert payload["mlir"]["totals_ms"]["mlir_lower_ms"] == 9.0
     assert payload["mlir"]["totals_ms"]["mlir_total_ms"] == 33.0
+    assert payload["mlir"]["pass_ms_totals_by_pipeline"]["upstream"] == 3.5
+    assert payload["mlir"]["pass_ms_totals_by_pipeline"]["midend"] == 10.5
+    assert payload["mlir"]["pass_ms_totals_by_pipeline"]["downstream"] == 6.0
+    assert payload["mlir"]["pass_ms_totals_by_name"]["p1"] == 5.5
+    assert payload["mlir"]["pass_count_by_name"]["p0"] == 2
+    assert payload["mlir"]["top_passes_by_ms"][0]["name"] == "p1"
+    assert payload["mlir"]["top_passes_by_ms"][0]["total_ms"] == 5.5
 
 
 def test_aggregate_coverage_batches_merges_mlir_stage_timing(tmp_path: Path) -> None:
@@ -500,9 +581,29 @@ def test_aggregate_coverage_batches_merges_mlir_stage_timing(tmp_path: Path) -> 
         ),
         encoding="utf-8",
     )
-    for family, op, kernel, parse_ms, pass_ms, lower_ms in [
-        ("f1", "op1", "k1", 1.0, 10.0, 4.0),
-        ("f2", "op2", "k2", 2.0, 11.0, 5.0),
+    for family, op, kernel, parse_ms, pass_ms, lower_ms, pass_ms_by_pipeline, pass_ms_by_name, pass_count_by_name in [
+        (
+            "f1",
+            "op1",
+            "k1",
+            1.0,
+            10.0,
+            4.0,
+            {"upstream": 2.0, "midend": 7.0, "downstream": 1.0},
+            {"p0": 2.0, "p1": 3.0, "p2": 4.0, "p3": 1.0},
+            {"p0": 1, "p1": 1, "p2": 1, "p3": 1},
+        ),
+        (
+            "f2",
+            "op2",
+            "k2",
+            2.0,
+            11.0,
+            5.0,
+            {"upstream": 1.5, "midend": 3.5, "downstream": 6.0},
+            {"p0": 1.5, "p1": 2.5, "p2": 1.0, "p4": 5.0},
+            {"p0": 1, "p1": 1, "p2": 1, "p4": 1},
+        ),
     ]:
         d = runs_root / f"family_{family}"
         d.mkdir(parents=True, exist_ok=True)
@@ -525,6 +626,10 @@ def test_aggregate_coverage_batches_merges_mlir_stage_timing(tmp_path: Path) -> 
                             "mlir_total_ms": parse_ms + pass_ms + lower_ms,
                         },
                         "pass_count_totals": {"upstream": 1, "midend": 2, "downstream": 1},
+                        "pass_ms_totals_by_pipeline": dict(pass_ms_by_pipeline),
+                        "pass_ms_totals_by_name": dict(pass_ms_by_name),
+                        "pass_count_by_name": dict(pass_count_by_name),
+                        "top_passes_by_ms": [],
                         "missing_mlir_rows": [],
                         "source_dir": str(d / "pipeline_reports"),
                     },
@@ -570,3 +675,113 @@ def test_aggregate_coverage_batches_merges_mlir_stage_timing(tmp_path: Path) -> 
     assert stage_payload["mlir"]["totals_ms"]["mlir_pass_ms"] == 21.0
     assert stage_payload["mlir"]["totals_ms"]["mlir_lower_ms"] == 9.0
     assert stage_payload["mlir"]["totals_ms"]["mlir_total_ms"] == 33.0
+    assert stage_payload["mlir"]["pass_ms_totals_by_pipeline"]["upstream"] == 3.5
+    assert stage_payload["mlir"]["pass_ms_totals_by_pipeline"]["midend"] == 10.5
+    assert stage_payload["mlir"]["pass_ms_totals_by_pipeline"]["downstream"] == 7.0
+    assert stage_payload["mlir"]["pass_ms_totals_by_name"]["p1"] == 5.5
+    assert stage_payload["mlir"]["pass_count_by_name"]["p0"] == 2
+
+
+def test_aggregate_coverage_batches_fallback_merges_mlir_from_pipeline_reports(tmp_path: Path) -> None:
+    coverage_batches = tmp_path / "coverage_batches.json"
+    runs_root = tmp_path / "runs"
+    runs_root.mkdir(parents=True, exist_ok=True)
+    coverage_batches.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_coverage_batches_v1",
+                "family_order": ["f1"],
+                "batches": [
+                    {"family": "f1", "semantic_ops": ["op1"], "kernels": ["k1"], "semantic_count": 1, "kernel_count": 1},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    family_dir = runs_root / "family_f1"
+    family_dir.mkdir(parents=True, exist_ok=True)
+    chunk_dir = family_dir / "chunk_001"
+    chunk_dir.mkdir(parents=True, exist_ok=True)
+    pipeline_reports = chunk_dir / "pipeline_reports"
+    pipeline_reports.mkdir(parents=True, exist_ok=True)
+
+    # No stage_timing_breakdown in chunk run summary -> aggregate should fall back
+    # to rvv/cuda json pairs and still collect mlir timing from pipeline_reports.
+    (chunk_dir / "run_summary.json").write_text(
+        json.dumps({"ok": True, "stages": []}),
+        encoding="utf-8",
+    )
+    (chunk_dir / "status_converged.json").write_text(
+        json.dumps({"entries": [{"semantic_op": "op1", "status": "dual_pass", "reason_code": "ok"}]}),
+        encoding="utf-8",
+    )
+    (chunk_dir / "rvv_remote.json").write_text(
+        json.dumps({"results": [{"kernel": "k1", "reason_code": "ok", "lower_ms": 1.0, "compile_ms": 2.0, "launch_ms": 3.0, "total_ms": 6.0}]}),
+        encoding="utf-8",
+    )
+    (chunk_dir / "cuda_local.json").write_text(
+        json.dumps({"results": [{"kernel": "k1", "reason_code": "ok", "lower_ms": 1.5, "compile_ms": 2.5, "launch_ms": 3.5, "total_ms": 7.5}]}),
+        encoding="utf-8",
+    )
+    (pipeline_reports / "k1.json").write_text(
+        json.dumps(
+            {
+                "mlir": {
+                    "mlir_parse_ms": 1.0,
+                    "mlir_pass_ms": 10.0,
+                    "mlir_lower_ms": 4.0,
+                    "upstream": {"passes": [{"name": "p0"}]},
+                    "midend": {"passes": [{"name": "p1"}, {"name": "p2"}]},
+                    "downstream": {"passes": [{"name": "p3"}]},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    (family_dir / "run_summary.json").write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "chunk_runs": [
+                    {
+                        "chunk": "chunk_001",
+                        "ok": True,
+                        "rc": 0,
+                        "out_dir": str(chunk_dir),
+                        "run_summary_path": str(chunk_dir / "run_summary.json"),
+                        "status_converged_path": str(chunk_dir / "status_converged.json"),
+                        "kernel_count": 1,
+                        "kernels": ["k1"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (family_dir / "status_converged.json").write_text(
+        json.dumps({"entries": [{"semantic_op": "op1", "status": "dual_pass", "reason_code": "ok"}]}),
+        encoding="utf-8",
+    )
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/aggregate_coverage_batches.py",
+            "--coverage-batches",
+            str(coverage_batches),
+            "--runs-root",
+            str(runs_root),
+            "--require-dual-pass-total",
+            "1",
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    stage_payload = json.loads((runs_root / "stage_timing_breakdown.json").read_text(encoding="utf-8"))
+    assert stage_payload["mlir"]["available"] is True
+    assert stage_payload["mlir"]["kernel_count"] == 1
+    assert stage_payload["mlir"]["totals_ms"]["mlir_total_ms"] == 15.0

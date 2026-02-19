@@ -398,6 +398,7 @@ def main() -> None:
     if progress_style == "tqdm" and tqdm is None:
         print("[coverage-batches] tqdm unavailable; falling back to compact chunk progress", flush=True)
         progress_style = "chunk"
+    compact_chunk = progress_style == "chunk"
     print(
         "[coverage-batches] progress-style "
         f"requested={requested_progress_style} selected={progress_style} "
@@ -449,7 +450,8 @@ def main() -> None:
                     "skipped": False,
                 }
             )
-            print(f"[{idx}/{total_families}] family={family} has no kernels; mark failed", flush=True)
+            if not compact_chunk:
+                print(f"[{idx}/{total_families}] family={family} has no kernels; mark failed", flush=True)
             continue
 
         family_out = _family_dir(out_root, family)
@@ -464,7 +466,8 @@ def main() -> None:
             except Exception:
                 resume_ok = False
             if resume_ok:
-                print(f"[{idx}/{total_families}] SKIP family={family} (resume hit)", flush=True)
+                if not compact_chunk:
+                    print(f"[{idx}/{total_families}] SKIP family={family} (resume hit)", flush=True)
                 chunk_done += int(len(chunks))
                 if progress_bar is not None:
                     progress_bar.set_postfix_str(f"{family} resume")
@@ -495,11 +498,12 @@ def main() -> None:
                 continue
 
         chunk_enabled = bool(len(chunks) > 1)
-        print(
-            f"[{idx}/{total_families}] RUN family={family} kernels={len(kernels)} semantics={len(semantics)} "
-            f"chunks={len(chunks)} chunk_size={int(args.family_kernel_chunk_size)}",
-            flush=True,
-        )
+        if not compact_chunk:
+            print(
+                f"[{idx}/{total_families}] RUN family={family} kernels={len(kernels)} semantics={len(semantics)} "
+                f"chunks={len(chunks)} chunk_size={int(args.family_kernel_chunk_size)}",
+                flush=True,
+            )
 
         chunk_rows: list[dict[str, Any]] = []
         for chunk_idx, chunk_kernels in enumerate(chunks, start=1):
@@ -517,11 +521,12 @@ def main() -> None:
                 except Exception:
                     chunk_resume_ok = False
                 if chunk_resume_ok:
-                    print(
-                        f"[{idx}/{total_families}] SKIP family={family} {chunk_name} "
-                        f"(resume hit kernels={len(chunk_kernels)})",
-                        flush=True,
-                    )
+                    if not compact_chunk:
+                        print(
+                            f"[{idx}/{total_families}] SKIP family={family} {chunk_name} "
+                            f"(resume hit kernels={len(chunk_kernels)})",
+                            flush=True,
+                        )
                     chunk_rows.append(
                         {
                             "family": family,
@@ -617,13 +622,11 @@ def main() -> None:
                 stream_output=bool(args.stream_subprocess_output),
                 dry_run=bool(args.dry_run),
                 heartbeat_label=(
-                    (
-                        f"chunk {chunk_done + 1}/{total_chunks}"
-                        if progress_style == "chunk"
-                        else (
-                            f"chunks {chunk_done + 1}/{total_chunks} family={family} "
-                            f"chunk={chunk_idx}/{len(chunks)}"
-                        )
+                    ""
+                    if compact_chunk
+                    else (
+                        f"chunks {chunk_done + 1}/{total_chunks} family={family} "
+                        f"chunk={chunk_idx}/{len(chunks)}"
                     )
                 ),
                 heartbeat_sec=30,
@@ -723,11 +726,12 @@ def main() -> None:
                 "execution_ir": str(args.execution_ir),
             }
         )
-        print(
-            f"[{idx}/{total_families}] DONE family={family} ok={family_ok} "
-            f"chunks={len(chunks)} run_summary={run_summary_path}",
-            flush=True,
-        )
+        if not compact_chunk:
+            print(
+                f"[{idx}/{total_families}] DONE family={family} ok={family_ok} "
+                f"chunks={len(chunks)} run_summary={run_summary_path}",
+                flush=True,
+            )
 
     if progress_bar is not None:
         progress_bar.close()

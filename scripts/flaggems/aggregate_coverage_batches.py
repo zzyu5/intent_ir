@@ -134,13 +134,21 @@ def _collect_backend_json_pairs(run_summary_payload: dict[str, Any], *, run_summ
             rvv = out_dir / "rvv_remote.json"
             cuda = out_dir / "cuda_local.json"
             if rvv.is_file() and cuda.is_file():
-                out.append({"rvv_json": rvv, "cuda_json": cuda})
+                row: dict[str, Path] = {"rvv_json": rvv, "cuda_json": cuda}
+                pipeline_reports_dir = out_dir / "pipeline_reports"
+                if pipeline_reports_dir.is_dir():
+                    row["pipeline_reports_dir"] = pipeline_reports_dir
+                out.append(row)
         return out
     out_dir = run_summary_path.parent
     rvv = out_dir / "rvv_remote.json"
     cuda = out_dir / "cuda_local.json"
     if rvv.is_file() and cuda.is_file():
-        out.append({"rvv_json": rvv, "cuda_json": cuda})
+        row: dict[str, Path] = {"rvv_json": rvv, "cuda_json": cuda}
+        pipeline_reports_dir = out_dir / "pipeline_reports"
+        if pipeline_reports_dir.is_dir():
+            row["pipeline_reports_dir"] = pipeline_reports_dir
+        out.append(row)
     return out
 
 
@@ -190,9 +198,78 @@ def _empty_mlir_timing() -> dict[str, Any]:
             "mlir_lower_ms": 0.0,
         },
         "pass_count_totals": {"upstream": 0, "midend": 0, "downstream": 0},
+        "pass_ms_totals_by_pipeline": {"upstream": 0.0, "midend": 0.0, "downstream": 0.0},
+        "pass_ms_totals_by_name": {},
+        "pass_count_by_name": {},
+        "top_passes_by_ms": [],
         "missing_mlir_rows": [],
         "source_dirs": [],
     }
+
+
+def _pipeline_kernel_reports(pipeline_reports_dir: Path) -> list[Path]:
+    if not pipeline_reports_dir.is_dir():
+        return []
+    out: list[Path] = []
+    for p in sorted(pipeline_reports_dir.glob("*.json")):
+        stem = str(p.stem)
+        if "." in stem:
+            continue
+        out.append(p)
+    return out
+
+
+def _summarize_mlir_reports_dir(pipeline_reports_dir: Path) -> dict[str, Any]:
+    reports = _pipeline_kernel_reports(pipeline_reports_dir)
+    if not reports:
+        return _empty_mlir_timing()
+    out = _empty_mlir_timing()
+    out["source_dir"] = str(pipeline_reports_dir)
+    totals = dict(out.get("totals_ms") or {})
+    pass_counts = dict(out.get("pass_count_totals") or {})
+    pass_ms_totals_by_pipeline = dict(out.get("pass_ms_totals_by_pipeline") or {})
+    pass_ms_totals_by_name = dict(out.get("pass_ms_totals_by_name") or {})
+    pass_count_by_name = dict(out.get("pass_count_by_name") or {})
+    missing: list[str] = []
+    counted = 0
+    for p in reports:
+        payload = _load_json(p)
+        row = payload.get("mlir")
+        if not isinstance(row, dict):
+            missing.append(str(p.name))
+            continue
+        parse_ms = _safe_float(row.get("mlir_parse_ms"))
+        pass_ms = _safe_float(row.get("mlir_pass_ms"))
+        lower_ms = _safe_float(row.get("mlir_lower_ms"))
+        totals["mlir_parse_ms"] = _safe_float(totals.get("mlir_parse_ms")) + parse_ms
+        totals["mlir_pass_ms"] = _safe_float(totals.get("mlir_pass_ms")) + pass_ms
+        totals["mlir_lower_ms"] = _safe_float(totals.get("mlir_lower_ms")) + lower_ms
+        totals["mlir_total_ms"] = _safe_float(totals.get("mlir_total_ms")) + parse_ms + pass_ms + lower_ms
+        for key in ("upstream", "midend", "downstream"):
+            sec = row.get(key)
+            if isinstance(sec, dict):
+                passes = [p for p in list(sec.get("passes") or []) if isinstance(p, dict)]
+                pass_counts[key] = int(pass_counts.get(key, 0)) + int(len(passes))
+                for pass_row in passes:
+                    name = str(pass_row.get("name") or "").strip() or "<unnamed>"
+                    ms = _safe_float(pass_row.get("ms"))
+                    pass_ms_totals_by_pipeline[key] = _safe_float(pass_ms_totals_by_pipeline.get(key)) + ms
+                    pass_ms_totals_by_name[name] = _safe_float(pass_ms_totals_by_name.get(name)) + ms
+                    pass_count_by_name[name] = int(pass_count_by_name.get(name, 0)) + 1
+        counted += 1
+    if counted <= 0:
+        out["missing_mlir_rows"] = missing
+        return out
+    out["available"] = True
+    out["kernel_count"] = int(counted)
+    out["totals_ms"] = totals
+    out["pass_count_totals"] = pass_counts
+    out["pass_ms_totals_by_pipeline"] = pass_ms_totals_by_pipeline
+    out["pass_ms_totals_by_name"] = pass_ms_totals_by_name
+    out["pass_count_by_name"] = pass_count_by_name
+    out["missing_mlir_rows"] = missing
+    _finalize_mlir_timing(out)
+    return out
 
 
 def _merge_mlir_timing(dst: dict[str, Any], src: dict[str, Any]) -> None:
@@ -210,6 +287,27 @@ def _merge_mlir_timing(dst: dict[str, Any], src: dict[str, Any]) -> None:
     for key in ("upstream", "midend", "downstream"):
         dst_pass[key] = int(dst_pass.get(key, 0)) + int(src_pass.get(key, 0))
     dst["pass_count_totals"] = dst_pass
+    dst_pass_ms_pipeline = dict(dst.get("pass_ms_totals_by_pipeline") or {})
+    src_pass_ms_pipeline = dict(src.get("pass_ms_totals_by_pipeline") or {})
+    for key in ("upstream", "midend", "downstream"):
+        dst_pass_ms_pipeline[key] = _safe_float(dst_pass_ms_pipeline.get(key)) + _safe_float(src_pass_ms_pipeline.get(key))
+    dst["pass_ms_totals_by_pipeline"] = dst_pass_ms_pipeline
+    dst_pass_ms_name = dict(dst.get("pass_ms_totals_by_name") or {})
+    src_pass_ms_name = dict(src.get("pass_ms_totals_by_name") or {})
+    for key, value in src_pass_ms_name.items():
+        name = str(key).strip()
+        if not name:
+            continue
+        dst_pass_ms_name[name] = _safe_float(dst_pass_ms_name.get(name)) + _safe_float(value)
+    dst["pass_ms_totals_by_name"] = dst_pass_ms_name
+    dst_pass_count_name = dict(dst.get("pass_count_by_name") or {})
+    src_pass_count_name = dict(src.get("pass_count_by_name") or {})
+    for key, value in src_pass_count_name.items():
+        name = str(key).strip()
+        if not name:
+            continue
+        dst_pass_count_name[name] = int(dst_pass_count_name.get(name, 0)) + int(value or 0)
+    dst["pass_count_by_name"] = dst_pass_count_name
     missing = [str(x) for x in list(src.get("missing_mlir_rows") or []) if str(x).strip()]
     if missing:
         dst_missing = [str(x) for x in list(dst.get("missing_mlir_rows") or []) if str(x).strip()]
@@ -247,6 +345,32 @@ def _finalize_mlir_timing(section: dict[str, Any]) -> None:
             "mlir_pass_ms": pass_ms / denom * 100.0,
             "mlir_lower_ms": lower_ms / denom * 100.0,
         }
+    pass_ms_totals_by_name = dict(section.get("pass_ms_totals_by_name") or {})
+    pass_count_by_name = dict(section.get("pass_count_by_name") or {})
+    section["pass_ms_totals_by_name"] = dict(sorted(pass_ms_totals_by_name.items(), key=lambda kv: kv[0]))
+    section["pass_count_by_name"] = {
+        str(k): int(v)
+        for k, v in sorted(pass_count_by_name.items(), key=lambda kv: str(kv[0]))
+        if str(k).strip()
+    }
+    section["pass_ms_totals_by_pipeline"] = {
+        "upstream": _safe_float((section.get("pass_ms_totals_by_pipeline") or {}).get("upstream")),
+        "midend": _safe_float((section.get("pass_ms_totals_by_pipeline") or {}).get("midend")),
+        "downstream": _safe_float((section.get("pass_ms_totals_by_pipeline") or {}).get("downstream")),
+    }
+    ranked = []
+    for name, total_ms in section["pass_ms_totals_by_name"].items():
+        cnt = int(section["pass_count_by_name"].get(name, 0))
+        ranked.append(
+            {
+                "name": str(name),
+                "total_ms": _safe_float(total_ms),
+                "count": int(cnt),
+                "avg_ms": (_safe_float(total_ms) / float(cnt)) if cnt > 0 else 0.0,
+            }
+        )
+    ranked.sort(key=lambda x: (-_safe_float(x.get("total_ms")), str(x.get("name"))))
+    section["top_passes_by_ms"] = ranked[:20]
 
 
 def _summarize_backend_results(payload: dict[str, Any]) -> dict[str, Any]:
@@ -400,17 +524,21 @@ def _aggregate_stage_timing(paths: list[Path]) -> tuple[dict[str, Any], bool]:
 
 def _aggregate_stage_timing_from_backend_pairs(pairs: list[dict[str, Path]]) -> tuple[dict[str, Any], bool]:
     unique_pairs: list[dict[str, Path]] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
     for row in pairs:
         rvv = row.get("rvv_json")
         cuda = row.get("cuda_json")
         if rvv is None or cuda is None:
             continue
-        key = (str(rvv), str(cuda))
+        pipeline_reports_dir = row.get("pipeline_reports_dir")
+        key = (str(rvv), str(cuda), str(pipeline_reports_dir or ""))
         if key in seen:
             continue
         seen.add(key)
-        unique_pairs.append({"rvv_json": rvv, "cuda_json": cuda})
+        dedup_row: dict[str, Path] = {"rvv_json": rvv, "cuda_json": cuda}
+        if isinstance(pipeline_reports_dir, Path):
+            dedup_row["pipeline_reports_dir"] = pipeline_reports_dir
+        unique_pairs.append(dedup_row)
 
     backends = {"rvv": _empty_backend_timing(), "cuda": _empty_backend_timing()}
     mlir = _empty_mlir_timing()
@@ -421,9 +549,13 @@ def _aggregate_stage_timing_from_backend_pairs(pairs: list[dict[str, Path]]) -> 
         cuda_sec = _summarize_backend_results(cuda_payload)
         _merge_backend_timing(backends["rvv"], rvv_sec)
         _merge_backend_timing(backends["cuda"], cuda_sec)
+        pipeline_reports_dir = row.get("pipeline_reports_dir")
+        if isinstance(pipeline_reports_dir, Path):
+            _merge_mlir_timing(mlir, _summarize_mlir_reports_dir(pipeline_reports_dir))
 
     for backend_name in ("rvv", "cuda"):
         _finalize_backend_timing(backends[backend_name])
+    _finalize_mlir_timing(mlir)
 
     combined_totals = {"lower_ms": 0.0, "compile_ms": 0.0, "launch_ms": 0.0, "total_ms": 0.0}
     kernel_total = 0
@@ -457,7 +589,16 @@ def _aggregate_stage_timing_from_backend_pairs(pairs: list[dict[str, Path]]) -> 
             and _safe_float(backends["rvv"]["totals_ms"].get("total_ms")) > 0.0
             and _safe_float(backends["cuda"]["totals_ms"].get("total_ms")) > 0.0
         ),
-        "inputs": {"sources": [{"rvv_json": str(r["rvv_json"]), "cuda_json": str(r["cuda_json"])} for r in unique_pairs]},
+        "inputs": {
+            "sources": [
+                {
+                    "rvv_json": str(r["rvv_json"]),
+                    "cuda_json": str(r["cuda_json"]),
+                    "pipeline_reports_dir": str(r.get("pipeline_reports_dir") or ""),
+                }
+                for r in unique_pairs
+            ]
+        },
         "backends": backends,
         "mlir": mlir,
         "combined": {
