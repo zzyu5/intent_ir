@@ -1,13 +1,13 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-19T18:56:52+00:00",
+  "updated_at": "2026-02-19T20:44:06+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "8990246af27198736ef26563334e3f8d1c0480a8",
+  "head_commit": "774617b252b5369e16040913091e256f1318aa31",
   "mode": "maintenance",
   "coverage_integrity_phase": "recompute_stale",
-  "full196_last_run": "artifacts/flaggems_matrix/daily/20260220/mlir_contract_cutover_attention_v1/run_summary.json",
+  "full196_last_run": "artifacts/flaggems_matrix/daily/20260220/full196_mlir_head_refresh_v1/run_summary.json",
   "full196_last_ok": true,
-  "full196_validated_commit": "923c8fb12e0b9829866900d2959d92775f5108b7",
+  "full196_validated_commit": "95460169a4b043cc3a6d01413dc3593945100e33",
   "full196_validated_commit_source": "run_summary.repo.head_commit",
   "full196_commits_since_validated": 1,
   "full196_commits_since_validated_total": 1,
@@ -21,7 +21,7 @@
   "coverage_batches_completed": 7,
   "coverage_batches_failed": [],
   "full196_evidence_kind": "batch_aggregate",
-  "full196_last_run_repo_head_commit": "923c8fb12e0b9829866900d2959d92775f5108b7",
+  "full196_last_run_repo_head_commit": "95460169a4b043cc3a6d01413dc3593945100e33",
   "full196_last_run_repo_branch": "compiler-cleanup-v1",
   "full196_last_run_dirty": false,
   "full196_artifact_repo_stamp_ok": true,
@@ -105,13 +105,13 @@
     "mlir_migration"
   ],
   "next_focus_by_lane": {
+    "mlir_migration": "Continue MLIR phase3/4 framework path: enforce mlir_toolchain gate and advance backend modular split, then revalidate full196 on HEAD.",
     "workflow": "Continue MLIR phase3/4 refactor (pass pipeline + backend modularization) with batch regression cadence.",
-    "mlir_migration": "Continue MLIR phase3/4: remove remaining printer_mlir_like dependencies and advance backend modular split while using category-batch regression.",
     "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260220/mlir_contract_cutover_attention_v1/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260220/mlir_contract_cutover_attention_v1/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260220/full196_mlir_head_refresh_v1/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260220/full196_mlir_head_refresh_v1/status_converged.json"
   },
   "lanes": {
     "coverage": {
