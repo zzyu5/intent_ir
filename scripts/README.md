@@ -10,7 +10,7 @@ Primary user entrypoint:
 Examples:
 
 ```bash
-python scripts/intentir.py suite --suite flaggems-full196 --progress-style plain --run-rvv-remote --rvv-host 192.168.8.72 --rvv-user ubuntu --rvv-use-key
+python scripts/intentir.py suite --suite flaggems-full196 --progress-style chunk --pipeline-timeout-sec 1800 --run-rvv-remote --rvv-host 192.168.8.72 --rvv-user ubuntu --rvv-use-key
 python scripts/intentir.py suite --suite triton-smoke --kernel tanh2d
 python scripts/intentir.py kernel --frontend triton --kernel tanh2d
 python scripts/intentir.py tilelang export-cuda-snapshots --kernel matmul --refresh

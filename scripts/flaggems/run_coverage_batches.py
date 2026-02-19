@@ -116,6 +116,29 @@ def _chunk_kernels(kernels: list[str], chunk_size: int) -> list[list[str]]:
     return out
 
 
+def _emit_chunk_progress(
+    *,
+    style: str,
+    done: int,
+    total: int,
+    family: str,
+    chunk_idx: int,
+    chunk_total: int,
+    status: str,
+) -> None:
+    mode = str(style).strip().lower()
+    if mode == "none":
+        return
+    if mode == "chunk":
+        # Compact mode for long runs: only show global chunk progress.
+        print(f"[chunk] {done}/{total} status={status}", flush=True)
+        return
+    print(
+        f"[progress] chunks {done}/{total} family={family} chunk={chunk_idx}/{chunk_total} status={status}",
+        flush=True,
+    )
+
+
 def _entry_status_rank(status: str) -> int:
     rank = {
         "dual_pass": 6,
@@ -314,6 +337,12 @@ def main() -> None:
     ap.add_argument("--cuda-timeout-sec", type=int, default=120)
     ap.add_argument("--cuda-compile-timeout-sec", type=int, default=120)
     ap.add_argument("--cuda-launch-timeout-sec", type=int, default=120)
+    ap.add_argument(
+        "--pipeline-timeout-sec",
+        type=int,
+        default=0,
+        help="Per-chunk pipeline timeout in seconds (passed to run_multibackend_matrix; 0 disables).",
+    )
     ap.add_argument("--cuda-runtime-backend", choices=["auto", "nvcc", "nvrtc"], default="nvrtc")
     ap.add_argument(
         "--family-kernel-chunk-size",
@@ -325,11 +354,11 @@ def main() -> None:
     ap.add_argument("--stream-subprocess-output", action=argparse.BooleanOptionalAction, default=False)
     ap.add_argument(
         "--progress-style",
-        choices=["auto", "tqdm", "plain", "none"],
+        choices=["auto", "tqdm", "plain", "chunk", "none"],
         default="auto",
         help=(
             "Chunk progress style. `auto` selects `tqdm` on interactive terminals, "
-            "otherwise `plain`."
+            "otherwise compact `chunk` mode."
         ),
     )
     ap.add_argument("--aggregate", action=argparse.BooleanOptionalAction, default=True)
@@ -365,10 +394,10 @@ def main() -> None:
     requested_progress_style = str(args.progress_style).strip().lower()
     progress_style = requested_progress_style
     if progress_style == "auto":
-        progress_style = "tqdm" if (sys.stdout.isatty() and tqdm is not None) else "plain"
+        progress_style = "tqdm" if (sys.stdout.isatty() and tqdm is not None) else "chunk"
     if progress_style == "tqdm" and tqdm is None:
-        print("[coverage-batches] tqdm unavailable; falling back to plain progress output", flush=True)
-        progress_style = "plain"
+        print("[coverage-batches] tqdm unavailable; falling back to compact chunk progress", flush=True)
+        progress_style = "chunk"
     print(
         "[coverage-batches] progress-style "
         f"requested={requested_progress_style} selected={progress_style} "
@@ -440,9 +469,13 @@ def main() -> None:
                 if progress_bar is not None:
                     progress_bar.set_postfix_str(f"{family} resume")
                     progress_bar.update(int(len(chunks)))
-                elif progress_style == "plain":
+                elif progress_style in {"plain", "chunk"}:
                     print(
-                        f"[progress] chunks {chunk_done}/{total_chunks} family={family} status=RESUME",
+                        (
+                            f"[chunk] {chunk_done}/{total_chunks} status=RESUME"
+                            if progress_style == "chunk"
+                            else f"[progress] chunks {chunk_done}/{total_chunks} family={family} status=RESUME"
+                        ),
                         flush=True,
                     )
                 family_rows.append(
@@ -511,13 +544,16 @@ def main() -> None:
                 if progress_bar is not None:
                     progress_bar.set_postfix_str(f"{family} {chunk_idx}/{len(chunks)} resume")
                     progress_bar.update(1)
-                if progress_style in {"plain", "tqdm"}:
-                    print(
-                        f"[progress] chunks {chunk_done}/{total_chunks} family={family} "
-                        f"chunk={chunk_idx}/{len(chunks)} status=RESUME",
-                        flush=True,
-                    )
-                    continue
+                _emit_chunk_progress(
+                    style=progress_style,
+                    done=int(chunk_done),
+                    total=int(total_chunks),
+                    family=family,
+                    chunk_idx=int(chunk_idx),
+                    chunk_total=int(len(chunks)),
+                    status="RESUME",
+                )
+                continue
 
             cmd = [
                 sys.executable,
@@ -550,6 +586,8 @@ def main() -> None:
                 str(int(args.cuda_compile_timeout_sec)),
                 "--cuda-launch-timeout-sec",
                 str(int(args.cuda_launch_timeout_sec)),
+                "--pipeline-timeout-sec",
+                str(int(args.pipeline_timeout_sec)),
                 "--cuda-runtime-backend",
                 str(args.cuda_runtime_backend),
                 "--out-dir",
@@ -569,10 +607,11 @@ def main() -> None:
                 cmd += ["--kernel", str(kernel)]
             cmd_run = _with_env_prefix(cmd, {"INTENTIR_EXECUTION_IR": str(args.execution_ir)})
 
-            print(
-                f"  - chunk {chunk_idx}/{len(chunks)} family={family} kernels={len(chunk_kernels)}",
-                flush=True,
-            )
+            if progress_style != "chunk":
+                print(
+                    f"  - chunk {chunk_idx}/{len(chunks)} family={family} kernels={len(chunk_kernels)}",
+                    flush=True,
+                )
             rc, out, err = _run(
                 cmd_run,
                 stream_output=bool(args.stream_subprocess_output),
@@ -616,12 +655,15 @@ def main() -> None:
             if progress_bar is not None:
                 progress_bar.set_postfix_str(f"{family} {chunk_idx}/{len(chunks)} {'ok' if chunk_ok else 'fail'}")
                 progress_bar.update(1)
-            if progress_style in {"plain", "tqdm"}:
-                print(
-                    f"[progress] chunks {chunk_done}/{total_chunks} family={family} "
-                    f"chunk={chunk_idx}/{len(chunks)} status={'OK' if chunk_ok else 'FAIL'}",
-                    flush=True,
-                )
+            _emit_chunk_progress(
+                style=progress_style,
+                done=int(chunk_done),
+                total=int(total_chunks),
+                family=family,
+                chunk_idx=int(chunk_idx),
+                chunk_total=int(len(chunks)),
+                status=("OK" if chunk_ok else "FAIL"),
+            )
             if not chunk_ok:
                 chunk_failures.append(
                     {

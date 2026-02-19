@@ -48,6 +48,63 @@ def _run(cmd: list[str], *, cwd: Path, stream_output: bool = False) -> tuple[int
     return rc, "".join(merged), ""
 
 
+def _run_with_timeout(
+    cmd: list[str],
+    *,
+    cwd: Path,
+    stream_output: bool = False,
+    timeout_sec: int | None = None,
+) -> tuple[int, str, str, bool]:
+    timeout = None
+    if timeout_sec is not None and int(timeout_sec) > 0:
+        timeout = int(timeout_sec)
+    if timeout is None:
+        rc, out, err = _run(cmd, cwd=cwd, stream_output=stream_output)
+        return rc, out, err, False
+
+    try:
+        if bool(stream_output):
+            # Timeout-aware mode uses subprocess.run so we can enforce deadline.
+            # Keep output visible by replaying captured streams.
+            p = subprocess.run(
+                cmd,
+                cwd=str(cwd),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            out = str(p.stdout or "")
+            err = str(p.stderr or "")
+            if out:
+                print(out, end="", flush=True)
+            if err:
+                print(err, end="", file=sys.stderr, flush=True)
+            return int(p.returncode), out, err, False
+
+        p = subprocess.run(
+            cmd,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        return int(p.returncode), str(p.stdout or ""), str(p.stderr or ""), False
+    except subprocess.TimeoutExpired as e:
+        out = str(e.stdout or "")
+        err = str(e.stderr or "")
+        timeout_msg = f"stage timeout after {timeout}s"
+        if out:
+            print(out, end="", flush=True)
+        print(f"[matrix] {timeout_msg}: {' '.join(str(x) for x in cmd)}", file=sys.stderr, flush=True)
+        if err:
+            print(err, end="", file=sys.stderr, flush=True)
+        if err:
+            err = f"{err.rstrip()}\n{timeout_msg}\n"
+        else:
+            err = f"{timeout_msg}\n"
+        return 124, out, err, True
+
+
 def _with_env_prefix(cmd: list[str], env_map: dict[str, str] | None) -> list[str]:
     if not env_map:
         return list(cmd)
@@ -259,6 +316,12 @@ def main() -> None:
         help="CUDA launch-stage timeout passed to cuda_backend_smoke.py.",
     )
     ap.add_argument(
+        "--pipeline-timeout-sec",
+        type=int,
+        default=0,
+        help="Timeout (seconds) for the pipeline stage (0 disables timeout).",
+    )
+    ap.add_argument(
         "--cuda-runtime-backend",
         choices=["auto", "nvcc", "nvrtc"],
         default="auto",
@@ -369,8 +432,17 @@ def main() -> None:
         for k in kernel_filter:
             cmd += ["--kernel", str(k)]
         print(f"[matrix] stage=pipeline kernels={len(kernel_filter) if kernel_filter else len(scoped_kernels)}", flush=True)
-        rc, out, err = _run(cmd, cwd=ROOT, stream_output=bool(args.stream_subprocess_output))
-        _record("pipeline", rc, out, err, extra={"cmd": cmd})
+        rc, out, err, timed_out = _run_with_timeout(
+            cmd,
+            cwd=ROOT,
+            stream_output=bool(args.stream_subprocess_output),
+            timeout_sec=int(args.pipeline_timeout_sec),
+        )
+        pipeline_extra = {"cmd": cmd}
+        if bool(timed_out):
+            pipeline_extra["reason_code"] = "pipeline_timeout"
+            pipeline_extra["timeout_sec"] = int(args.pipeline_timeout_sec)
+        _record("pipeline", rc, out, err, extra=pipeline_extra)
 
     missing_provider_reports = _collect_missing_provider_reports(pipeline_out_dir, scoped_kernels)
     if missing_provider_reports:
@@ -640,6 +712,7 @@ def main() -> None:
             "rvv_remote": bool(args.run_rvv_remote),
             "cuda_runtime_backend": str(args.cuda_runtime_backend),
             "execution_ir": str(execution_ir),
+            "pipeline_timeout_sec": int(args.pipeline_timeout_sec),
         },
         "lane": str(args.lane),
         "requested_suite": str(args.suite),
@@ -664,6 +737,7 @@ def main() -> None:
             else int(args.cuda_timeout_sec)
         ),
         "cuda_runtime_backend": str(args.cuda_runtime_backend),
+        "pipeline_timeout_sec": int(args.pipeline_timeout_sec),
         "intentir_miss_policy": miss_policy,
         "schedule_profile_tag": profile_tag,
         "rvv_schedule_overrides": dict(rvv_env),

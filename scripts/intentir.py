@@ -81,6 +81,8 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             str(args.intentir_mode),
             "--intentir-miss-policy",
             str(args.intentir_miss_policy),
+            "--pipeline-timeout-sec",
+            str(int(args.pipeline_timeout_sec)),
             "--cuda-runtime-backend",
             str(args.cuda_runtime_backend),
             "--family-kernel-chunk-size",
@@ -123,6 +125,8 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             str(args.intentir_mode),
             "--intentir-miss-policy",
             str(args.intentir_miss_policy),
+            "--pipeline-timeout-sec",
+            str(int(args.pipeline_timeout_sec)),
             "--cuda-runtime-backend",
             str(args.cuda_runtime_backend),
             "--allow-cuda-skip" if args.allow_cuda_skip else "--no-allow-cuda-skip",
@@ -158,6 +162,8 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             str(args.intentir_mode),
             "--intentir-miss-policy",
             str(args.intentir_miss_policy),
+            "--pipeline-timeout-sec",
+            str(int(args.pipeline_timeout_sec)),
             "--cuda-runtime-backend",
             str(args.cuda_runtime_backend),
             "--allow-cuda-skip" if args.allow_cuda_skip else "--no-allow-cuda-skip",
@@ -228,6 +234,8 @@ def _cmd_kernel(args: argparse.Namespace) -> int:
             str(args.intentir_mode),
             "--intentir-miss-policy",
             str(args.intentir_miss_policy),
+            "--pipeline-timeout-sec",
+            str(int(args.pipeline_timeout_sec)),
             "--cuda-runtime-backend",
             str(args.cuda_runtime_backend),
             "--allow-cuda-skip" if args.allow_cuda_skip else "--no-allow-cuda-skip",
@@ -385,7 +393,13 @@ def _build_parser() -> argparse.ArgumentParser:
     suite.add_argument("--cases-limit", type=int, default=8)
     suite.add_argument("--execution-ir", choices=["intent", "mlir"], default=_execution_ir_default())
     suite.add_argument("--family-kernel-chunk-size", type=int, default=12)
-    suite.add_argument("--progress-style", choices=["auto", "tqdm", "plain", "none"], default="auto")
+    suite.add_argument(
+        "--pipeline-timeout-sec",
+        type=int,
+        default=0,
+        help="Pipeline stage timeout (seconds) for matrix runners; 0 disables.",
+    )
+    suite.add_argument("--progress-style", choices=["auto", "tqdm", "plain", "chunk", "none"], default="auto")
     suite.add_argument(
         "--stream-subprocess-detail",
         action=argparse.BooleanOptionalAction,
@@ -415,6 +429,12 @@ def _build_parser() -> argparse.ArgumentParser:
     kernel.add_argument("--kernel", required=True)
     kernel.add_argument("--out-dir", default=None)
     kernel.add_argument("--cases-limit", type=int, default=8)
+    kernel.add_argument(
+        "--pipeline-timeout-sec",
+        type=int,
+        default=0,
+        help="Pipeline stage timeout (seconds) for matrix runners; 0 disables.",
+    )
     kernel.add_argument("--execution-ir", choices=["intent", "mlir"], default=_execution_ir_default())
     kernel.add_argument("--flaggems-path", choices=["intentir", "original"], default="intentir")
     kernel.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="auto")

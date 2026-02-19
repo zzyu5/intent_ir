@@ -91,7 +91,8 @@ python scripts/intentir.py suite --suite flaggems-full196 \
   --flaggems-path intentir \
   --intentir-mode force_compile \
   --intentir-miss-policy strict \
-  --progress-style plain \
+  --progress-style chunk \
+  --pipeline-timeout-sec 1800 \
   --run-rvv-remote \
   --rvv-host 192.168.8.72 \
   --rvv-user ubuntu \

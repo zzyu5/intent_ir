@@ -344,6 +344,9 @@ def _latest_full196_from_progress(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "coverage_batches_completed": metadata.get("coverage_batches_completed"),
             "coverage_batches_failed": list(metadata.get("coverage_batches_failed") or []),
             "artifact_repo_stamp_ok": bool(metadata.get("artifact_repo_stamp_ok")),
+            "artifact_head_commit": str(metadata.get("artifact_head_commit") or ""),
+            "artifact_branch": str(metadata.get("artifact_branch") or ""),
+            "artifact_dirty": metadata.get("artifact_dirty"),
         }
     return {
         "run_summary_path": "",
@@ -360,6 +363,9 @@ def _latest_full196_from_progress(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "coverage_batches_completed": None,
         "coverage_batches_failed": [],
         "artifact_repo_stamp_ok": False,
+        "artifact_head_commit": "",
+        "artifact_branch": "",
+        "artifact_dirty": None,
     }
 
 
@@ -505,6 +511,9 @@ def main() -> None:
     coverage_batches_expected = _as_int_or_none(full196_info.get("coverage_batches_expected"))
     coverage_batches_completed = _as_int_or_none(full196_info.get("coverage_batches_completed"))
     coverage_batches_failed = [str(x) for x in list(full196_info.get("coverage_batches_failed") or []) if str(x).strip()]
+    full196_last_run_repo_head_commit = str(full196_info.get("artifact_head_commit") or "")
+    full196_last_run_repo_branch = str(full196_info.get("artifact_branch") or "")
+    full196_last_run_dirty = full196_info.get("artifact_dirty")
     branch = _git(["git", "branch", "--show-current"]) or "unknown"
     head_commit = _git(["git", "rev-parse", "HEAD"]) or "unknown"
     coverage_batches_payload = load_json(args.coverage_batches) if args.coverage_batches.is_file() else {}
@@ -635,6 +644,10 @@ def main() -> None:
         coverage_batches_completed=coverage_batches_completed,
         coverage_batches_failed=coverage_batches_failed,
         full196_evidence_kind=full196_evidence_kind,
+        full196_last_run_repo_head_commit=full196_last_run_repo_head_commit,
+        full196_last_run_repo_branch=full196_last_run_repo_branch,
+        full196_last_run_dirty=full196_last_run_dirty,
+        full196_artifact_repo_stamp_ok=bool(artifact_repo_stamp_ok),
         mlir_migration_phase=mlir_phase,
         mlir_default_enabled=bool(mlir_default_enabled),
         mlir_toolchain_ok=bool(mlir_tc.get("ok")),

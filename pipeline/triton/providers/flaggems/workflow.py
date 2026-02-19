@@ -507,6 +507,10 @@ def build_current_status_payload(
     coverage_batches_completed: int | None = None,
     coverage_batches_failed: list[str] | None = None,
     full196_evidence_kind: str = "single_run",
+    full196_last_run_repo_head_commit: str = "",
+    full196_last_run_repo_branch: str = "",
+    full196_last_run_dirty: bool | None = None,
+    full196_artifact_repo_stamp_ok: bool | None = None,
     mlir_migration_phase: str = "",
     mlir_default_enabled: bool | None = None,
     mlir_toolchain_ok: bool | None = None,
@@ -572,6 +576,12 @@ def build_current_status_payload(
         ),
         "coverage_batches_failed": [str(x) for x in list(coverage_batches_failed or []) if str(x).strip()],
         "full196_evidence_kind": str(full196_evidence_kind or "single_run"),
+        "full196_last_run_repo_head_commit": str(full196_last_run_repo_head_commit or ""),
+        "full196_last_run_repo_branch": str(full196_last_run_repo_branch or ""),
+        "full196_last_run_dirty": (None if full196_last_run_dirty is None else bool(full196_last_run_dirty)),
+        "full196_artifact_repo_stamp_ok": (
+            None if full196_artifact_repo_stamp_ok is None else bool(full196_artifact_repo_stamp_ok)
+        ),
         "mlir_migration_phase": str(mlir_migration_phase or ""),
         "mlir_default_enabled": (None if mlir_default_enabled is None else bool(mlir_default_enabled)),
         "mlir_toolchain_ok": (None if mlir_toolchain_ok is None else bool(mlir_toolchain_ok)),
