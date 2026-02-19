@@ -256,6 +256,58 @@ def _infer_rvv_from_stage_timing_breakdown(run_summary: dict[str, Any]) -> bool 
     return bool(total_ms > 0.0)
 
 
+def _mlir_backend_contract_ready() -> bool:
+    """
+    Backend contract is considered ready only when CUDA/RVV pipeline drivers no
+    longer import the bridge resolver as their execution-path input contract.
+    """
+    driver_paths = [
+        ROOT / "backends" / "cuda" / "pipeline" / "driver.py",
+        ROOT / "backends" / "spmd_rvv" / "pipeline" / "driver.py",
+    ]
+    needle = "resolve_intent_payload_with_meta"
+    for path in driver_paths:
+        if not path.is_file():
+            return False
+        text = path.read_text(encoding="utf-8")
+        if needle in text:
+            return False
+    return True
+
+
+def _mlir_llvm_chain_ok(run_summary_path: Path | None) -> bool:
+    """
+    Return true only if run summary contains explicit LLVM-chain evidence.
+    """
+    run_summary = _load_json_if_exists(run_summary_path)
+    if not run_summary:
+        return False
+    if bool(run_summary.get("mlir_llvm_chain_ok")):
+        return True
+    stages = [s for s in list(run_summary.get("stages") or []) if isinstance(s, dict)]
+    stage_map = {str(s.get("stage") or ""): s for s in stages}
+    llvm_stage = stage_map.get("mlir_llvm_artifacts") or stage_map.get("llvm_emit")
+    if isinstance(llvm_stage, dict) and bool(llvm_stage.get("ok")):
+        return True
+    stage_timing = stage_map.get("stage_timing_breakdown") or {}
+    stage_timing_json = _resolve_artifact(str(stage_timing.get("json_path") or ""))
+    payload = _load_json_if_exists(stage_timing_json)
+    if not payload:
+        return False
+    mlir = payload.get("mlir")
+    if not isinstance(mlir, dict):
+        return False
+    if not bool(mlir.get("available")):
+        return False
+    totals = mlir.get("totals_ms")
+    if not isinstance(totals, dict):
+        return False
+    try:
+        return float(totals.get("mlir_total_ms") or 0.0) > 0.0
+    except Exception:
+        return False
+
+
 def _classify_full196_run(run_summary_path: Path | None) -> tuple[bool, bool | None, dict[str, Any]]:
     run_summary = _load_json_if_exists(run_summary_path)
     if not run_summary:
@@ -605,12 +657,38 @@ def main() -> None:
         )
 
     mlir_tc = detect_mlir_toolchain()
+    mlir_toolchain_ok = bool(mlir_tc.get("ok"))
     mlir_default_enabled = str(os.getenv("INTENTIR_EXECUTION_IR", "mlir")).strip().lower() == "mlir"
     mlir_phase = "shadow_mode"
     if mlir_default_enabled:
         mlir_phase = "default_mlir"
     elif "mlir_migration" in active_lanes:
         mlir_phase = "in_progress"
+    if not mlir_toolchain_ok:
+        mlir_phase = "blocked_toolchain"
+
+    mlir_backend_contract_ready = _mlir_backend_contract_ready()
+    full196_summary_path = _resolve_artifact(full196_run_summary)
+    mlir_llvm_chain_ok = _mlir_llvm_chain_ok(full196_summary_path)
+
+    if not mlir_toolchain_ok:
+        mlir_cutover_level = "blocked_toolchain"
+    elif not mlir_backend_contract_ready:
+        mlir_cutover_level = "bridge_mode"
+    elif not mlir_llvm_chain_ok:
+        mlir_cutover_level = "blocked_llvm_chain"
+    elif mlir_default_enabled:
+        mlir_cutover_level = "mlir_primary"
+    else:
+        mlir_cutover_level = "shadow_mode"
+
+    if mlir_cutover_level != "mlir_primary":
+        active_lanes = sorted(set(list(active_lanes) + ["mlir_migration"]))
+        next_focus_by_lane.setdefault(
+            "mlir_migration",
+            "Enable MLIR cutover prerequisites (toolchain + backend contract + LLVM artifact chain).",
+        )
+
     mlir_validated_commit = (
         head_commit
         if (
@@ -649,8 +727,11 @@ def main() -> None:
         full196_last_run_dirty=full196_last_run_dirty,
         full196_artifact_repo_stamp_ok=bool(artifact_repo_stamp_ok),
         mlir_migration_phase=mlir_phase,
+        mlir_cutover_level=mlir_cutover_level,
         mlir_default_enabled=bool(mlir_default_enabled),
-        mlir_toolchain_ok=bool(mlir_tc.get("ok")),
+        mlir_toolchain_ok=bool(mlir_toolchain_ok),
+        mlir_backend_contract_ready=bool(mlir_backend_contract_ready),
+        mlir_llvm_chain_ok=bool(mlir_llvm_chain_ok),
         mlir_full196_validated_commit=mlir_validated_commit,
         catalog_path=_to_repo_rel(args.scripts_catalog),
         catalog_validated=catalog_exists,

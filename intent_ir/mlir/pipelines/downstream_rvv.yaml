@@ -1,3 +1,4 @@
 passes:
   - python:backend_legalize
+  - mlir-opt?:canonicalize
   - python:attach_provider_meta

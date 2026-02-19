@@ -478,6 +478,10 @@ def _run_ci_gate_mlir(
                 "suite": "coverage",
                 "full_coverage_run": True,
                 "full196_evidence_kind": "batch_aggregate",
+                "execution_ir": "mlir",
+                "stages": [
+                    {"stage": "mlir_llvm_artifacts", "ok": True},
+                ],
             }
         ),
         encoding="utf-8",
@@ -504,6 +508,8 @@ def _run_ci_gate_mlir(
                 "coverage_batches_completed": 7,
                 "coverage_batches_failed": [],
                 "mlir_full196_validated_commit": str(mlir_commit),
+                "mlir_toolchain_ok": True,
+                "mlir_cutover_level": "phase3_ready",
             }
         ),
         encoding="utf-8",
@@ -550,6 +556,48 @@ def test_ci_gate_mlir_profile_passes_when_mlir_fresh_on_head(tmp_path: Path) -> 
 def test_ci_gate_mlir_profile_fails_when_mlir_commit_stale(tmp_path: Path) -> None:
     p = _run_ci_gate_mlir(tmp_path, mlir_commit="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", validated_execution_ir="mlir")
     assert p.returncode != 0
+
+
+def test_ci_gate_mlir_profile_fails_when_toolchain_not_ready(tmp_path: Path) -> None:
+    p = _run_ci_gate_mlir(tmp_path, mlir_commit=_head_commit(), validated_execution_ir="mlir")
+    assert p.returncode == 0, p.stderr
+    current_status = tmp_path / "current_status.json"
+    payload = json.loads(current_status.read_text(encoding="utf-8"))
+    payload["mlir_toolchain_ok"] = False
+    payload["mlir_cutover_level"] = "blocked_toolchain"
+    current_status.write_text(json.dumps(payload), encoding="utf-8")
+    p2 = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/ci_gate.py",
+            "--registry",
+            str(tmp_path / "registry.json"),
+            "--feature-list",
+            str(tmp_path / "feature_list.json"),
+            "--active-batch-coverage",
+            str(tmp_path / "active_batch_cov.json"),
+            "--active-batch-mlir-migration",
+            str(tmp_path / "active_batch_mlir.json"),
+            "--profiles",
+            "mlir_migration",
+            "--run-summary",
+            str(tmp_path / "run_summary.json"),
+            "--status-converged",
+            str(tmp_path / "status_converged.json"),
+            "--current-status",
+            str(current_status),
+            "--progress-log",
+            str(tmp_path / "progress_log.jsonl"),
+            "--handoff",
+            str(tmp_path / "handoff.md"),
+            "--out",
+            str(tmp_path / "ci_gate_mlir_blocked.json"),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p2.returncode != 0
 
 
 def test_ci_gate_coverage_requires_mlir_stage_timing_when_execution_ir_mlir(tmp_path: Path) -> None:

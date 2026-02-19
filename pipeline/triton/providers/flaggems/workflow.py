@@ -512,8 +512,11 @@ def build_current_status_payload(
     full196_last_run_dirty: bool | None = None,
     full196_artifact_repo_stamp_ok: bool | None = None,
     mlir_migration_phase: str = "",
+    mlir_cutover_level: str = "",
     mlir_default_enabled: bool | None = None,
     mlir_toolchain_ok: bool | None = None,
+    mlir_backend_contract_ready: bool | None = None,
+    mlir_llvm_chain_ok: bool | None = None,
     mlir_full196_validated_commit: str = "",
     catalog_path: str = "scripts/CATALOG.json",
     catalog_validated: bool = False,
@@ -583,8 +586,13 @@ def build_current_status_payload(
             None if full196_artifact_repo_stamp_ok is None else bool(full196_artifact_repo_stamp_ok)
         ),
         "mlir_migration_phase": str(mlir_migration_phase or ""),
+        "mlir_cutover_level": str(mlir_cutover_level or ""),
         "mlir_default_enabled": (None if mlir_default_enabled is None else bool(mlir_default_enabled)),
         "mlir_toolchain_ok": (None if mlir_toolchain_ok is None else bool(mlir_toolchain_ok)),
+        "mlir_backend_contract_ready": (
+            None if mlir_backend_contract_ready is None else bool(mlir_backend_contract_ready)
+        ),
+        "mlir_llvm_chain_ok": (None if mlir_llvm_chain_ok is None else bool(mlir_llvm_chain_ok)),
         "mlir_full196_validated_commit": str(mlir_full196_validated_commit or ""),
         "coverage": {
             "semantic_ops": semantic_ops,

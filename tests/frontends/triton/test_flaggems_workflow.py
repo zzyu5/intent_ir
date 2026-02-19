@@ -214,6 +214,9 @@ def test_current_status_and_session_context_builders() -> None:
     assert current["mlir_migration_phase"] == "shadow_mode"
     assert current["mlir_default_enabled"] is False
     assert current["mlir_toolchain_ok"] is False
+    assert "mlir_cutover_level" in current
+    assert "mlir_backend_contract_ready" in current
+    assert "mlir_llvm_chain_ok" in current
 
     ctx = build_session_context_payload(
         git_log_short="a\nb",

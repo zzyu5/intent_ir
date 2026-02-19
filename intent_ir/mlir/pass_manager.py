@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 import time
 from dataclasses import dataclass
@@ -42,6 +43,13 @@ class PassRecord:
         }
 
 
+@dataclass
+class PassExecutionResult:
+    module: IntentMLIRModule
+    kind: str
+    detail: str
+
+
 def run_pipeline(
     module: IntentMLIRModule,
     pipeline_name: str,
@@ -68,7 +76,8 @@ def run_pipeline(
             if out is not None:
                 before_path = str(out / f"pass_{idx:03d}_{_safe(pass_name)}.before.mlir")
                 Path(before_path).write_text(current.module_text, encoding="utf-8")
-            current = _run_one_pass(current, pass_name, backend=backend, toolchain=toolchain)
+            exec_result = _run_one_pass(current, pass_name, backend=backend, toolchain=toolchain)
+            current = exec_result.module
             after_stats = _module_stats(current)
             if out is not None:
                 after_path = str(out / f"pass_{idx:03d}_{_safe(pass_name)}.after.mlir")
@@ -77,10 +86,10 @@ def run_pipeline(
             trace.append(
                 PassRecord(
                     name=str(pass_name),
-                    kind=("mlir-opt" if str(pass_name).startswith("mlir-opt:") else "python"),
+                    kind=str(exec_result.kind),
                     ok=True,
                     ms=dt,
-                    detail="ok",
+                    detail=str(exec_result.detail),
                     before_path=before_path,
                     after_path=after_path,
                     before_stats=before_stats,
@@ -93,7 +102,7 @@ def run_pipeline(
             trace.append(
                 PassRecord(
                     name=str(pass_name),
-                    kind=("mlir-opt" if str(pass_name).startswith("mlir-opt:") else "python"),
+                    kind=_pass_kind(str(pass_name)),
                     ok=False,
                     ms=dt,
                     detail=f"{type(e).__name__}: {e}",
@@ -130,34 +139,84 @@ def _run_one_pass(
     *,
     backend: str | None,
     toolchain: dict[str, Any],
-) -> IntentMLIRModule:
+) -> PassExecutionResult:
     name = str(pass_name).strip()
     if not name:
-        return module
+        return PassExecutionResult(module=module, kind="python", detail="skipped_empty")
     if name.startswith("python:"):
         key = name.split(":", 1)[1].strip()
         fn = PASS_REGISTRY.get(key)
         if fn is None:
             raise ValueError(f"unknown python pass: {key}")
-        return fn(module, backend=backend)
+        return PassExecutionResult(module=fn(module, backend=backend), kind="python", detail="ok")
+    if name.startswith("mlir-opt?:"):
+        pass_arg = name.split(":", 1)[1].strip()
+        tool = _tool_path(toolchain, "mlir-opt")
+        if not tool:
+            return PassExecutionResult(
+                module=module,
+                kind="mlir-opt",
+                detail="skipped_optional_tool_unavailable:mlir-opt",
+            )
+        return PassExecutionResult(
+            module=_run_mlir_opt_pass(module, pass_arg=pass_arg, tool=tool),
+            kind="mlir-opt",
+            detail="ok",
+        )
     if name.startswith("mlir-opt:"):
         pass_arg = name.split(":", 1)[1].strip()
-        return _run_mlir_opt_pass(module, pass_arg=pass_arg, toolchain=toolchain)
+        tool = _tool_path(toolchain, "mlir-opt")
+        if not tool:
+            raise RuntimeError("mlir-opt unavailable")
+        return PassExecutionResult(
+            module=_run_mlir_opt_pass(module, pass_arg=pass_arg, tool=tool),
+            kind="mlir-opt",
+            detail="ok",
+        )
+    if name.startswith("mlir-translate?:"):
+        pass_arg = name.split(":", 1)[1].strip()
+        tool = _tool_path(toolchain, "mlir-translate")
+        if not tool:
+            return PassExecutionResult(
+                module=module,
+                kind="mlir-translate",
+                detail="skipped_optional_tool_unavailable:mlir-translate",
+            )
+        return PassExecutionResult(
+            module=_run_mlir_translate_pass(module, pass_arg=pass_arg, tool=tool),
+            kind="mlir-translate",
+            detail="ok",
+        )
+    if name.startswith("mlir-translate:"):
+        pass_arg = name.split(":", 1)[1].strip()
+        tool = _tool_path(toolchain, "mlir-translate")
+        if not tool:
+            raise RuntimeError("mlir-translate unavailable")
+        return PassExecutionResult(
+            module=_run_mlir_translate_pass(module, pass_arg=pass_arg, tool=tool),
+            kind="mlir-translate",
+            detail="ok",
+        )
     raise ValueError(f"unsupported pass selector: {name}")
 
 
-def _run_mlir_opt_pass(module: IntentMLIRModule, *, pass_arg: str, toolchain: dict[str, Any]) -> IntentMLIRModule:
-    tool = (((toolchain.get("tools") or {}).get("mlir-opt") or {}).get("path") or "").strip()
-    if not tool:
-        raise RuntimeError("mlir-opt unavailable")
+def _tool_path(toolchain: dict[str, Any], name: str) -> str:
+    return str((((toolchain.get("tools") or {}).get(name) or {}).get("path") or "")).strip()
+
+
+def _run_mlir_opt_pass(module: IntentMLIRModule, *, pass_arg: str, tool: str) -> IntentMLIRModule:
+    arg_tokens = [x for x in shlex.split(str(pass_arg or "").strip()) if str(x).strip()]
+    if not arg_tokens:
+        raise RuntimeError("mlir-opt pass selector missing pass argument")
+    cli_args = [x if str(x).startswith("-") else f"--{x}" for x in arg_tokens]
     p = subprocess.run(
-        [tool, f"--{pass_arg}"],
+        [tool, *cli_args],
         input=str(module.module_text),
         capture_output=True,
         text=True,
     )
     if p.returncode != 0:
-        raise RuntimeError(f"mlir-opt failed: {p.stderr or p.stdout}")
+        raise RuntimeError(f"mlir-opt failed ({' '.join(cli_args)}): {p.stderr or p.stdout}")
     out = IntentMLIRModule(
         module_text=str(p.stdout or ""),
         dialect_version=str(module.dialect_version),
@@ -167,6 +226,31 @@ def _run_mlir_opt_pass(module: IntentMLIRModule, *, pass_arg: str, toolchain: di
         intent_json=(dict(module.intent_json) if isinstance(module.intent_json, dict) else None),
     )
     out.meta["last_mlir_opt_pass"] = str(pass_arg)
+    return out
+
+
+def _run_mlir_translate_pass(module: IntentMLIRModule, *, pass_arg: str, tool: str) -> IntentMLIRModule:
+    arg_tokens = [x for x in shlex.split(str(pass_arg or "").strip()) if str(x).strip()]
+    if not arg_tokens:
+        raise RuntimeError("mlir-translate selector missing argument")
+    cli_args = [x if str(x).startswith("-") else f"--{x}" for x in arg_tokens]
+    p = subprocess.run(
+        [tool, *cli_args],
+        input=str(module.module_text),
+        capture_output=True,
+        text=True,
+    )
+    if p.returncode != 0:
+        raise RuntimeError(f"mlir-translate failed ({' '.join(cli_args)}): {p.stderr or p.stdout}")
+    out = IntentMLIRModule(
+        module_text=str(p.stdout or ""),
+        dialect_version=str(module.dialect_version),
+        provenance=dict(module.provenance or {}),
+        symbols=list(module.symbols or []),
+        meta=dict(module.meta or {}),
+        intent_json=(dict(module.intent_json) if isinstance(module.intent_json, dict) else None),
+    )
+    out.meta["last_mlir_translate"] = str(pass_arg)
     return out
 
 
@@ -230,3 +314,12 @@ def _module_stats(module: IntentMLIRModule) -> dict[str, Any]:
     except Exception as e:
         stats["intent_decode_error"] = f"{type(e).__name__}: {e}"
     return stats
+
+
+def _pass_kind(pass_name: str) -> str:
+    name = str(pass_name).strip()
+    if name.startswith("mlir-opt"):
+        return "mlir-opt"
+    if name.startswith("mlir-translate"):
+        return "mlir-translate"
+    return "python"

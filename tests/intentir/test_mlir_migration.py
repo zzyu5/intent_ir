@@ -65,6 +65,18 @@ def test_mlir_toolchain_probe_schema() -> None:
     assert payload["schema_version"] == "intent_mlir_toolchain_probe_v1"
     assert "tools" in payload
     assert "mlir-opt" in payload["tools"]
+    assert "llvm-as" in payload["tools"]
+    assert "opt" in payload["tools"]
+
+
+def test_mlir_optional_external_passes_do_not_fail_without_toolchain(tmp_path: Path) -> None:
+    intent = _sample_intent()
+    module = to_mlir(intent)
+    _, trace = run_pipeline(module, "downstream_cuda_llvm", backend="cuda", out_dir=tmp_path)
+    assert bool(trace.get("ok")) is True
+    names = [str(p.get("name") or "") for p in list(trace.get("passes") or [])]
+    assert "mlir-opt?:canonicalize" in names
+    assert "mlir-translate?:mlir-to-llvmir" in names
 
 
 def test_intentir_cli_mlir_check(tmp_path: Path) -> None:

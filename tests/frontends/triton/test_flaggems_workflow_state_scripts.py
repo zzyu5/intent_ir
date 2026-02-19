@@ -235,6 +235,9 @@ def test_build_workflow_state_writes_current_and_context(tmp_path: Path) -> None
     assert "coverage_batches_completed" in status_payload
     assert "coverage_batches_failed" in status_payload
     assert "full196_evidence_kind" in status_payload
+    assert "mlir_cutover_level" in status_payload
+    assert "mlir_backend_contract_ready" in status_payload
+    assert "mlir_llvm_chain_ok" in status_payload
     assert status_payload["script_governance"]["catalog_path"].endswith("scripts/CATALOG.json")
     assert context_payload["schema_version"] == "flaggems_session_context_v1"
     assert context_payload["next_focus"] == "focus-y"

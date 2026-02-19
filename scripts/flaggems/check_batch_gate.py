@@ -92,6 +92,53 @@ def _validate_mlir_fresh_on_head(current_status_path: Path) -> tuple[bool, str]:
     return True, "mlir full196 evidence is fresh on HEAD"
 
 
+def _validate_mlir_toolchain_required(current_status_path: Path) -> tuple[bool, str]:
+    if not current_status_path.is_file():
+        return False, f"missing current_status: {current_status_path}"
+    status = _load_json(current_status_path)
+    toolchain_ok = status.get("mlir_toolchain_ok")
+    if toolchain_ok is not True:
+        return False, "current_status.mlir_toolchain_ok is not true"
+    cutover = str(status.get("mlir_cutover_level") or "").strip()
+    if cutover == "blocked_toolchain":
+        return False, "mlir_cutover_level=blocked_toolchain"
+    return True, "MLIR toolchain requirement satisfied"
+
+
+def _validate_mlir_llvm_artifact_complete(run_summary: dict[str, Any]) -> tuple[bool, str]:
+    if not isinstance(run_summary, dict) or not run_summary:
+        return False, "run_summary missing for MLIR LLVM artifact check"
+    execution_ir = str(
+        run_summary.get("execution_ir")
+        or (run_summary.get("invocation") or {}).get("execution_ir")
+        or ""
+    ).strip().lower()
+    if execution_ir and execution_ir != "mlir":
+        return True, f"skipped: execution_ir={execution_ir!r}"
+    if bool(run_summary.get("mlir_llvm_artifact_complete")):
+        return True, "run_summary.mlir_llvm_artifact_complete=true"
+    llvm_ir_path = str(run_summary.get("llvm_ir_path") or "").strip()
+    if llvm_ir_path:
+        p = Path(llvm_ir_path)
+        if not p.is_absolute():
+            p = ROOT / p
+        if p.is_file():
+            return True, f"llvm_ir_path exists: {p}"
+    stage_map = _stage_map(run_summary)
+    for stage_name in ("mlir_llvm_artifacts", "llvm_emit"):
+        stage = stage_map.get(stage_name) or {}
+        if bool(stage.get("ok")):
+            stage_json = str(stage.get("json_path") or "").strip()
+            if not stage_json:
+                return True, f"{stage_name} stage ok"
+            p = Path(stage_json)
+            if not p.is_absolute():
+                p = ROOT / p
+            if p.is_file():
+                return True, f"{stage_name} stage artifact exists"
+    return False, "missing LLVM artifact evidence (llvm_ir_path/mlir_llvm_artifacts/llvm_emit)"
+
+
 def _default_active_batch(profile: str) -> Path:
     if profile == "coverage":
         return ROOT / "workflow" / "flaggems" / "state" / "active_batch_coverage.json"
@@ -410,6 +457,18 @@ def main() -> None:
         help="Require MLIR full196 evidence to be validated on current HEAD.",
     )
     ap.add_argument(
+        "--require-mlir-toolchain-required",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Require current_status.mlir_toolchain_ok=true (and cutover not blocked_toolchain).",
+    )
+    ap.add_argument(
+        "--require-mlir-llvm-artifact-complete",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Require LLVM artifact evidence for MLIR migration runs.",
+    )
+    ap.add_argument(
         "--require-stage",
         action="append",
         default=[],
@@ -466,7 +525,9 @@ def main() -> None:
     for p in (active_batch, args.run_summary, args.status_converged, args.progress_log, args.handoff):
         checks.append(_check(f"exists::{_to_repo_rel(p)}", p.is_file(), "file exists" if p.is_file() else "missing file"))
     require_mlir_fresh = bool(args.require_mlir_fresh_on_head) or profile == "mlir_migration"
-    if bool(args.require_coverage_fresh_on_head) or require_mlir_fresh:
+    require_mlir_toolchain = bool(args.require_mlir_toolchain_required) or profile == "mlir_migration"
+    require_mlir_llvm_artifact = bool(args.require_mlir_llvm_artifact_complete) or profile == "mlir_migration"
+    if bool(args.require_coverage_fresh_on_head) or require_mlir_fresh or require_mlir_toolchain:
         checks.append(
             _check(
                 f"exists::{_to_repo_rel(args.current_status)}",
@@ -778,6 +839,12 @@ def main() -> None:
     if require_mlir_fresh:
         mlir_ok, mlir_detail = _validate_mlir_fresh_on_head(args.current_status)
         checks.append(_check("mlir_fresh_on_head", mlir_ok, mlir_detail))
+    if require_mlir_toolchain:
+        tc_ok, tc_detail = _validate_mlir_toolchain_required(args.current_status)
+        checks.append(_check("mlir_toolchain_required", tc_ok, tc_detail))
+    if require_mlir_llvm_artifact:
+        llvm_ok, llvm_detail = _validate_mlir_llvm_artifact_complete(run_summary)
+        checks.append(_check("mlir_llvm_artifact_complete", llvm_ok, llvm_detail))
 
     ok = all(bool(c.get("ok")) for c in checks)
     payload = {

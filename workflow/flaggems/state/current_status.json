@@ -1,13 +1,13 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-19T07:23:11+00:00",
+  "updated_at": "2026-02-19T16:43:08+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "c1d99ee622e35bf331026911fcb5e676786d8b16",
+  "head_commit": "e39b5c34a030ea3da74e9f732098cc12c7072d89",
   "mode": "maintenance",
   "coverage_integrity_phase": "recomputed_ok",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260219/full196_mlir_force_compile_head_v5/run_summary.json",
   "full196_last_ok": true,
-  "full196_validated_commit": "c1d99ee622e35bf331026911fcb5e676786d8b16",
+  "full196_validated_commit": "e39b5c34a030ea3da74e9f732098cc12c7072d89",
   "full196_validated_commit_source": "run_summary.repo.head_commit",
   "full196_commits_since_validated": 0,
   "full196_commits_since_validated_total": 0,
@@ -21,14 +21,17 @@
   "coverage_batches_completed": 7,
   "coverage_batches_failed": [],
   "full196_evidence_kind": "batch_aggregate",
-  "full196_last_run_repo_head_commit": "c1d99ee622e35bf331026911fcb5e676786d8b16",
+  "full196_last_run_repo_head_commit": "e39b5c34a030ea3da74e9f732098cc12c7072d89",
   "full196_last_run_repo_branch": "compiler-cleanup-v1",
   "full196_last_run_dirty": false,
   "full196_artifact_repo_stamp_ok": true,
-  "mlir_migration_phase": "default_mlir",
+  "mlir_migration_phase": "blocked_toolchain",
+  "mlir_cutover_level": "blocked_toolchain",
   "mlir_default_enabled": true,
   "mlir_toolchain_ok": false,
-  "mlir_full196_validated_commit": "c1d99ee622e35bf331026911fcb5e676786d8b16",
+  "mlir_backend_contract_ready": false,
+  "mlir_llvm_chain_ok": true,
+  "mlir_full196_validated_commit": "e39b5c34a030ea3da74e9f732098cc12c7072d89",
   "coverage": {
     "semantic_ops": 196,
     "dual_pass": 196,
@@ -97,7 +100,9 @@
     "catalog_path": "scripts/CATALOG.json",
     "catalog_validated": true
   },
-  "active_lanes": [],
+  "active_lanes": [
+    "mlir_migration"
+  ],
   "next_focus_by_lane": {
     "mlir_migration": "Continue MLIR phase3/4 with backend C++ modular split and keep batch/full196 cadence.",
     "workflow": "Continue MLIR phase3/4 refactor (pass pipeline + backend modularization) with batch regression cadence."

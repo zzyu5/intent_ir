@@ -316,7 +316,16 @@ def _cmd_mlir_check(args: argparse.Namespace) -> int:
     from intent_ir.mlir import detect_mlir_toolchain, to_mlir, to_intent  # noqa: PLC0415
     from intent_ir.ir import IntentFunction  # noqa: PLC0415
 
-    report: dict[str, object] = {"toolchain": detect_mlir_toolchain()}
+    toolchain = detect_mlir_toolchain()
+    missing = [str(x) for x in list(toolchain.get("missing_required_tools") or []) if str(x).strip()]
+    report: dict[str, object] = {"toolchain": toolchain}
+    report["toolchain_required_ok"] = bool(toolchain.get("ok"))
+    report["toolchain_required_missing"] = missing
+    if missing:
+        report["toolchain_install_hint"] = (
+            "Install MLIR/LLVM tools so these binaries are on PATH: "
+            + ", ".join(missing)
+        )
     if args.intent_json is not None:
         payload = json.loads(Path(args.intent_json).read_text(encoding="utf-8"))
         if "intent" in payload and isinstance(payload.get("intent"), dict):
@@ -473,7 +482,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     mlir_pass = mlir_sub.add_parser("pass", help="Run MLIR pipeline on one intent payload")
     mlir_pass.add_argument("--intent-json", required=True, help="Path to intent JSON (or report with `intent` field)")
-    mlir_pass.add_argument("--pipeline", required=True, choices=["upstream", "midend", "downstream_cuda", "downstream_rvv"])
+    mlir_pass.add_argument(
+        "--pipeline",
+        required=True,
+        choices=["upstream", "midend", "downstream_cuda", "downstream_rvv", "downstream_cuda_llvm"],
+    )
     mlir_pass.add_argument("--backend", default=None, help="Optional backend hint (cuda/rvv)")
     mlir_pass.add_argument("--out-dir", default=None, help="Output directory for module + pass trace")
     mlir_pass.add_argument("--fail-on-error", action=argparse.BooleanOptionalAction, default=False)

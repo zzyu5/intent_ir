@@ -22,12 +22,23 @@ def _probe_tool(name: str) -> dict[str, Any]:
 def detect_mlir_toolchain() -> dict[str, Any]:
     mlir_opt = _probe_tool("mlir-opt")
     mlir_translate = _probe_tool("mlir-translate")
+    llvm_as = _probe_tool("llvm-as")
+    llvm_opt = _probe_tool("opt")
+    tools = {
+        "mlir-opt": mlir_opt,
+        "mlir-translate": mlir_translate,
+        "llvm-as": llvm_as,
+        "opt": llvm_opt,
+    }
+    required_tools = ("mlir-opt", "mlir-translate", "llvm-as", "opt")
+    missing_required = [name for name in required_tools if not bool((tools.get(name) or {}).get("available"))]
     return {
         "schema_version": "intent_mlir_toolchain_probe_v1",
-        "ok": bool(mlir_opt.get("available") and mlir_translate.get("available")),
-        "tools": {
-            "mlir-opt": mlir_opt,
-            "mlir-translate": mlir_translate,
-        },
+        # `ok` is the hard requirement used by migration gates.
+        "ok": bool(len(missing_required) == 0),
+        # Keep an explicit transitional signal for old two-tool checks.
+        "mlir_core_ok": bool(mlir_opt.get("available") and mlir_translate.get("available")),
+        "required_tools": list(required_tools),
+        "missing_required_tools": list(missing_required),
+        "tools": tools,
     }
-
