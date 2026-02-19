@@ -116,7 +116,13 @@ def _with_env_prefix(cmd: list[str], env_map: dict[str, str] | None) -> list[str
 
 def _execution_ir_mode() -> str:
     mode = str(os.getenv("INTENTIR_EXECUTION_IR", "mlir")).strip().lower()
-    return mode if mode in {"intent", "mlir"} else "mlir"
+    if mode and mode != "mlir":
+        print(
+            f"[matrix] ignore INTENTIR_EXECUTION_IR={mode!r}; MLIR-only execution path is enforced",
+            file=sys.stderr,
+            flush=True,
+        )
+    return "mlir"
 
 
 def _load_active_semantic_ops(active_batch_path: Path) -> list[str]:
@@ -164,6 +170,121 @@ def _collect_missing_provider_reports(provider_report_dir: Path, kernels: list[s
         if not report_path.is_file():
             missing.append(str(kernel))
     return missing
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _resolve_report_path(path_raw: str, *, default_dir: Path) -> Path:
+    p = Path(str(path_raw).strip())
+    if not p.is_absolute():
+        p = default_dir / p
+    return p
+
+
+def _collect_mlir_llvm_artifacts(
+    *,
+    provider_report_dir: Path,
+    kernels: list[str],
+    out_path: Path,
+) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    artifact_complete = True
+    ok_kernels = 0
+    missing_reports: list[str] = []
+
+    for kernel in list(kernels):
+        row: dict[str, Any] = {
+            "kernel": str(kernel),
+            "ok": False,
+            "reason_code": "",
+            "reason_detail": "",
+            "llvm_ir_path": "",
+        }
+        report_path = provider_report_dir / f"{kernel}.json"
+        if not report_path.is_file():
+            row["reason_code"] = "provider_report_missing"
+            row["reason_detail"] = f"missing pipeline report: {report_path}"
+            artifact_complete = False
+            missing_reports.append(str(kernel))
+            rows.append(row)
+            continue
+
+        payload = _load_json(report_path)
+        mlir = payload.get("mlir")
+        if not isinstance(mlir, dict):
+            row["reason_code"] = "mlir_report_missing"
+            row["reason_detail"] = f"report lacks mlir section: {report_path}"
+            artifact_complete = False
+            rows.append(row)
+            continue
+
+        llvm_emit_ok = bool(mlir.get("llvm_emit_ok"))
+        llvm_path_raw = str(mlir.get("llvm_ir_path") or "").strip()
+        llvm_skip_reason = str(mlir.get("llvm_skip_reason") or "").strip()
+        if not llvm_skip_reason:
+            trace = mlir.get("downstream_cuda_llvm")
+            if isinstance(trace, dict):
+                passes = [p for p in list(trace.get("passes") or []) if isinstance(p, dict)]
+                translate_rows = [p for p in passes if str(p.get("name") or "").startswith("mlir-translate")]
+                if translate_rows:
+                    last = dict(translate_rows[-1])
+                    last_detail = str(last.get("detail") or "").strip()
+                    if str(last_detail).startswith("skipped_optional_tool_unavailable:"):
+                        llvm_skip_reason = str(last_detail)
+                    elif not bool(last.get("ok")):
+                        llvm_skip_reason = (
+                            f"mlir_translate_failed:{last_detail}"
+                            if last_detail
+                            else "mlir_translate_failed"
+                        )
+
+        llvm_path = Path()
+        llvm_path_exists = False
+        if llvm_path_raw:
+            llvm_path = _resolve_report_path(llvm_path_raw, default_dir=ROOT)
+            llvm_path_exists = llvm_path.is_file()
+
+        if llvm_emit_ok and llvm_path_exists:
+            row["ok"] = True
+            row["reason_code"] = "ok"
+            row["reason_detail"] = "llvm artifact present"
+            row["llvm_ir_path"] = str(llvm_path)
+            ok_kernels += 1
+        elif llvm_emit_ok and (not llvm_path_exists):
+            row["reason_code"] = "llvm_artifact_missing"
+            row["reason_detail"] = f"llvm_emit_ok=true but llvm_ir_path missing: {llvm_path_raw}"
+            artifact_complete = False
+        elif llvm_skip_reason:
+            row["reason_code"] = "llvm_emit_skipped"
+            row["reason_detail"] = str(llvm_skip_reason)
+            artifact_complete = False
+        else:
+            row["reason_code"] = "llvm_emit_not_recorded"
+            row["reason_detail"] = "mlir report has no llvm_emit evidence"
+            artifact_complete = False
+        rows.append(row)
+
+    payload = {
+        "schema_version": "flaggems_mlir_llvm_artifacts_v1",
+        "repo": repo_state(root=ROOT),
+        "provider_report_dir": str(provider_report_dir),
+        "kernel_count_expected": int(len(list(kernels))),
+        "kernel_count_checked": int(len(rows)),
+        "kernel_count_ok": int(ok_kernels),
+        "artifact_complete": bool(artifact_complete),
+        "missing_provider_reports": list(missing_reports),
+        "entries": rows,
+    }
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return payload
 
 
 def _resolve_suite_and_kernel_filter(
@@ -466,6 +587,56 @@ def main() -> None:
             extra={"provider_report_dir": str(pipeline_out_dir)},
         )
 
+    mlir_llvm_artifacts = out_dir / "mlir_llvm_artifacts.json"
+    if not missing_provider_reports:
+        llvm_payload = _collect_mlir_llvm_artifacts(
+            provider_report_dir=pipeline_out_dir,
+            kernels=scoped_kernels,
+            out_path=mlir_llvm_artifacts,
+        )
+        llvm_complete = bool(llvm_payload.get("artifact_complete"))
+        _record(
+            "mlir_llvm_artifacts",
+            0,
+            (
+                f"llvm artifacts {'complete' if llvm_complete else 'incomplete'} "
+                f"for {int(llvm_payload.get('kernel_count_checked') or 0)} kernel(s)"
+            ),
+            "",
+            extra={
+                "json_path": str(mlir_llvm_artifacts),
+                "artifact_complete": bool(llvm_complete),
+                "kernel_count_ok": int(llvm_payload.get("kernel_count_ok") or 0),
+                "kernel_count_expected": int(llvm_payload.get("kernel_count_expected") or 0),
+                "reason_code": ("ok" if llvm_complete else "llvm_artifacts_incomplete"),
+            },
+        )
+    else:
+        llvm_payload = {
+            "schema_version": "flaggems_mlir_llvm_artifacts_v1",
+            "repo": repo_state(root=ROOT),
+            "provider_report_dir": str(pipeline_out_dir),
+            "kernel_count_expected": int(len(scoped_kernels)),
+            "kernel_count_checked": 0,
+            "kernel_count_ok": 0,
+            "artifact_complete": False,
+            "missing_provider_reports": list(missing_provider_reports),
+            "entries": [],
+        }
+        mlir_llvm_artifacts.write_text(json.dumps(llvm_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        llvm_complete = False
+        _record(
+            "mlir_llvm_artifacts",
+            0,
+            "llvm artifact check skipped: provider reports missing",
+            "",
+            extra={
+                "json_path": str(mlir_llvm_artifacts),
+                "artifact_complete": False,
+                "reason_code": "skipped_missing_provider_reports",
+            },
+        )
+
     rvv_json = out_dir / "rvv_local.json"
     if not bool(args.skip_rvv) and (not bool(args.skip_rvv_local)) and not missing_provider_reports:
         cmd = [
@@ -750,6 +921,9 @@ def main() -> None:
         "pipeline_out_dir": str(pipeline_out_dir),
         "active_batch_path": str(active_batch_path),
         "skip_rvv_local": bool(args.skip_rvv_local),
+        "mlir_llvm_artifact_complete": bool(llvm_complete),
+        "mlir_llvm_chain_ok": bool(llvm_complete),
+        "mlir_llvm_artifacts_path": str(mlir_llvm_artifacts),
         "stages": stage_results,
         "out_dir": str(out_dir),
     }

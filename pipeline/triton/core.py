@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -191,7 +192,13 @@ def _mlir_shadow_mode_enabled() -> bool:
 
 def _execution_ir_mode() -> str:
     mode = str(os.getenv("INTENTIR_EXECUTION_IR", "mlir")).strip().lower()
-    return mode if mode in {"intent", "mlir"} else "mlir"
+    if mode and mode != "mlir":
+        print(
+            f"[triton-core] ignore INTENTIR_EXECUTION_IR={mode!r}; MLIR-only execution path is enforced",
+            file=sys.stderr,
+            flush=True,
+        )
+    return "mlir"
 
 
 def _downstream_pipeline_name(backend_target: str | None) -> str | None:
@@ -239,8 +246,13 @@ def _emit_mlir_shadow_artifacts(
         mlir_report["mlir_parse_ms"] = 0.0
         mlir_report["mlir_pass_ms"] = float(up_ms + mid_ms)
         mlir_report["mlir_lower_ms"] = 0.0
+        mlir_report["llvm_emit_ok"] = False
+        mlir_report["llvm_emit_ms"] = 0.0
+        mlir_report["llvm_ir_path"] = ""
+        mlir_report["llvm_skip_reason"] = ""
 
         down = _downstream_pipeline_name(backend_target)
+        lower_ms_total = 0.0
         if down is not None:
             down_mod, down_trace = run_mlir_pipeline(
                 mid_mod,
@@ -253,9 +265,58 @@ def _emit_mlir_shadow_artifacts(
             mlir_report["downstream"] = dict(down_trace)
             mlir_report["downstream_module_path"] = str(down_path)
             down_ms = sum(float(p.get("ms") or 0.0) for p in list(down_trace.get("passes") or []))
-            mlir_report["mlir_lower_ms"] = float(down_ms)
+            lower_ms_total += float(down_ms)
         else:
             mlir_report["downstream"] = {"ok": True, "skipped": True, "reason": "backend_target_not_set"}
+
+        try:
+            llvm_mod, llvm_trace = run_mlir_pipeline(
+                mid_mod,
+                "downstream_cuda_llvm",
+                backend="cuda",
+                out_dir=(out_dir / "mlir_downstream_cuda_llvm"),
+            )
+            llvm_stage_path = out_dir / f"{spec_name}.intentir.intentdialect.downstream_cuda_llvm.mlir"
+            llvm_stage_path.write_text(llvm_mod.module_text, encoding="utf-8")
+            mlir_report["downstream_cuda_llvm"] = dict(llvm_trace)
+            mlir_report["downstream_cuda_llvm_module_path"] = str(llvm_stage_path)
+
+            llvm_passes = [p for p in list(llvm_trace.get("passes") or []) if isinstance(p, dict)]
+            llvm_translate = [p for p in llvm_passes if str(p.get("name") or "").startswith("mlir-translate")]
+            llvm_emit_ms = sum(float(p.get("ms") or 0.0) for p in llvm_translate)
+            mlir_report["llvm_emit_ms"] = float(llvm_emit_ms)
+            lower_ms_total += sum(float(p.get("ms") or 0.0) for p in llvm_passes)
+
+            llvm_emit_ok = False
+            llvm_skip_reason = "mlir_translate_not_executed"
+            if llvm_translate:
+                last_translate = dict(llvm_translate[-1])
+                detail = str(last_translate.get("detail") or "").strip()
+                if bool(last_translate.get("ok")) and detail == "ok":
+                    llvm_emit_ok = True
+                    llvm_skip_reason = ""
+                elif detail:
+                    llvm_skip_reason = detail
+            if llvm_emit_ok:
+                llvm_ir_path = out_dir / f"{spec_name}.intentir.intentdialect.downstream_cuda_llvm.ll"
+                llvm_ir_path.write_text(llvm_mod.module_text, encoding="utf-8")
+                mlir_report["llvm_emit_ok"] = True
+                mlir_report["llvm_ir_path"] = str(llvm_ir_path)
+                mlir_report["llvm_skip_reason"] = ""
+            else:
+                mlir_report["llvm_emit_ok"] = False
+                mlir_report["llvm_ir_path"] = ""
+                mlir_report["llvm_skip_reason"] = str(llvm_skip_reason)
+        except Exception as e:
+            mlir_report["downstream_cuda_llvm"] = {
+                "ok": False,
+                "error": f"{type(e).__name__}: {e}",
+            }
+            mlir_report["llvm_emit_ok"] = False
+            mlir_report["llvm_ir_path"] = ""
+            mlir_report["llvm_skip_reason"] = f"downstream_cuda_llvm_error:{type(e).__name__}"
+
+        mlir_report["mlir_lower_ms"] = float(lower_ms_total)
 
         report["mlir"] = mlir_report
     except Exception as e:

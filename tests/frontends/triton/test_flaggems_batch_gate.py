@@ -383,7 +383,9 @@ def test_check_batch_gate_mlir_profile_requires_mlir_fresh_on_head(tmp_path: Pat
         encoding="utf-8",
     )
     run_summary.write_text(
-        json.dumps({"ok": True, "execution_ir": "mlir", "stages": [{"stage": "mlir_llvm_artifacts", "ok": True}]}),
+        json.dumps(
+            {"ok": True, "execution_ir": "mlir", "stages": [{"stage": "mlir_llvm_artifacts", "ok": True, "artifact_complete": True}]}
+        ),
         encoding="utf-8",
     )
     status_converged.write_text(json.dumps({"entries": []}), encoding="utf-8")
@@ -448,7 +450,9 @@ def test_check_batch_gate_mlir_profile_fails_when_validated_execution_ir_not_mli
         encoding="utf-8",
     )
     run_summary.write_text(
-        json.dumps({"ok": True, "execution_ir": "mlir", "stages": [{"stage": "mlir_llvm_artifacts", "ok": True}]}),
+        json.dumps(
+            {"ok": True, "execution_ir": "mlir", "stages": [{"stage": "mlir_llvm_artifacts", "ok": True, "artifact_complete": True}]}
+        ),
         encoding="utf-8",
     )
     status_converged.write_text(json.dumps({"entries": []}), encoding="utf-8")
@@ -513,7 +517,9 @@ def test_check_batch_gate_mlir_profile_fails_when_toolchain_not_ready(tmp_path: 
         encoding="utf-8",
     )
     run_summary.write_text(
-        json.dumps({"ok": True, "execution_ir": "mlir", "stages": [{"stage": "mlir_llvm_artifacts", "ok": True}]}),
+        json.dumps(
+            {"ok": True, "execution_ir": "mlir", "stages": [{"stage": "mlir_llvm_artifacts", "ok": True, "artifact_complete": True}]}
+        ),
         encoding="utf-8",
     )
     status_converged.write_text(json.dumps({"entries": []}), encoding="utf-8")

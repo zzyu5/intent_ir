@@ -480,7 +480,7 @@ def _run_ci_gate_mlir(
                 "full196_evidence_kind": "batch_aggregate",
                 "execution_ir": "mlir",
                 "stages": [
-                    {"stage": "mlir_llvm_artifacts", "ok": True},
+                    {"stage": "mlir_llvm_artifacts", "ok": True, "artifact_complete": True},
                 ],
             }
         ),

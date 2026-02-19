@@ -2681,7 +2681,7 @@ def run_pipeline_for_spec(
 
     report["mlir"] = {
         "enabled": str(os.getenv("INTENTIR_MLIR_SHADOW", "1")).strip().lower() not in {"0", "false", "no", "off"},
-        "execution_ir": str(os.getenv("INTENTIR_EXECUTION_IR", "mlir")).strip().lower(),
+        "execution_ir": "mlir",
         "toolchain": detect_mlir_toolchain(),
     }
     try:
@@ -2715,9 +2715,61 @@ def run_pipeline_for_spec(
                 down_path.write_text(down_mod.module_text, encoding="utf-8")
                 report["mlir"]["downstream"] = dict(down_trace)
                 report["mlir"]["downstream_module_path"] = str(down_path)
+                lower_ms_total = float(sum(float(p.get("ms") or 0.0) for p in list(down_trace.get("passes") or [])))
             else:
                 down_trace = {"ok": True, "skipped": True, "reason": "backend_target_not_set"}
                 report["mlir"]["downstream"] = dict(down_trace)
+                lower_ms_total = 0.0
+            report["mlir"]["llvm_emit_ok"] = False
+            report["mlir"]["llvm_emit_ms"] = 0.0
+            report["mlir"]["llvm_ir_path"] = ""
+            report["mlir"]["llvm_skip_reason"] = ""
+            try:
+                llvm_mod, llvm_trace = run_mlir_pipeline(
+                    mid_mod,
+                    "downstream_cuda_llvm",
+                    backend="cuda",
+                    out_dir=(out_dir / "mlir_downstream_cuda_llvm"),
+                )
+                llvm_stage_path = out_dir / f"{spec.name}.intentir.intentdialect.downstream_cuda_llvm.mlir"
+                llvm_stage_path.write_text(llvm_mod.module_text, encoding="utf-8")
+                report["mlir"]["downstream_cuda_llvm"] = dict(llvm_trace)
+                report["mlir"]["downstream_cuda_llvm_module_path"] = str(llvm_stage_path)
+
+                llvm_passes = [p for p in list(llvm_trace.get("passes") or []) if isinstance(p, dict)]
+                llvm_translate = [p for p in llvm_passes if str(p.get("name") or "").startswith("mlir-translate")]
+                llvm_emit_ms = sum(float(p.get("ms") or 0.0) for p in llvm_translate)
+                report["mlir"]["llvm_emit_ms"] = float(llvm_emit_ms)
+                lower_ms_total += float(sum(float(p.get("ms") or 0.0) for p in llvm_passes))
+
+                llvm_emit_ok = False
+                llvm_skip_reason = "mlir_translate_not_executed"
+                if llvm_translate:
+                    last_translate = dict(llvm_translate[-1])
+                    detail = str(last_translate.get("detail") or "").strip()
+                    if bool(last_translate.get("ok")) and detail == "ok":
+                        llvm_emit_ok = True
+                        llvm_skip_reason = ""
+                    elif detail:
+                        llvm_skip_reason = detail
+                if llvm_emit_ok:
+                    llvm_ir_path = out_dir / f"{spec.name}.intentir.intentdialect.downstream_cuda_llvm.ll"
+                    llvm_ir_path.write_text(llvm_mod.module_text, encoding="utf-8")
+                    report["mlir"]["llvm_emit_ok"] = True
+                    report["mlir"]["llvm_ir_path"] = str(llvm_ir_path)
+                    report["mlir"]["llvm_skip_reason"] = ""
+                else:
+                    report["mlir"]["llvm_emit_ok"] = False
+                    report["mlir"]["llvm_ir_path"] = ""
+                    report["mlir"]["llvm_skip_reason"] = str(llvm_skip_reason)
+            except Exception as e:
+                report["mlir"]["downstream_cuda_llvm"] = {
+                    "ok": False,
+                    "error": f"{type(e).__name__}: {e}",
+                }
+                report["mlir"]["llvm_emit_ok"] = False
+                report["mlir"]["llvm_ir_path"] = ""
+                report["mlir"]["llvm_skip_reason"] = f"downstream_cuda_llvm_error:{type(e).__name__}"
             t3 = time.perf_counter()
             report["mlir"]["module_path"] = str(mod_path)
             report["mlir"]["midend_module_path"] = str(mid_path)
@@ -2725,7 +2777,7 @@ def run_pipeline_for_spec(
             report["mlir"]["midend"] = dict(mid_trace)
             report["mlir"]["mlir_parse_ms"] = float(max(0.0, (t1 - t0) * 1000.0))
             report["mlir"]["mlir_pass_ms"] = float(max(0.0, (t2 - t1) * 1000.0))
-            report["mlir"]["mlir_lower_ms"] = float(max(0.0, (t3 - t2) * 1000.0))
+            report["mlir"]["mlir_lower_ms"] = float(max(0.0, lower_ms_total))
     except Exception as e:
         report["mlir"]["ok"] = False
         report["mlir"]["error"] = f"{type(e).__name__}: {e}"

@@ -335,10 +335,10 @@ def _classify_full196_run(run_summary_path: Path | None) -> tuple[bool, bool | N
     coverage_ok = bool(coverage_payload.get("coverage_integrity_ok"))
     invocation = dict(run_summary.get("invocation") or {})
     validated_execution_ir = str(
-        invocation.get("execution_ir") or run_summary.get("execution_ir") or "intent"
+        invocation.get("execution_ir") or run_summary.get("execution_ir") or "mlir"
     ).strip().lower()
-    if validated_execution_ir not in {"intent", "mlir"}:
-        validated_execution_ir = "intent"
+    if validated_execution_ir != "mlir":
+        validated_execution_ir = "mlir"
     stage_map = {str(s.get("stage") or ""): s for s in stages}
     rvv_remote_ok = bool((stage_map.get("rvv_remote") or {}).get("ok"))
     if not rvv_remote_ok and str(run_summary.get("coverage_mode") or "") == "category_batches":
@@ -387,7 +387,7 @@ def _latest_full196_from_progress(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "validated_commit": validated_commit,
             "validated_commit_source": validated_commit_source,
             "validated_mode": str(metadata.get("validated_mode") or ""),
-            "validated_execution_ir": str(metadata.get("validated_execution_ir") or "intent"),
+            "validated_execution_ir": str(metadata.get("validated_execution_ir") or "mlir"),
             "validated_scope": str(metadata.get("validated_scope") or ""),
             "validated_with_rvv_remote": bool(metadata.get("validated_with_rvv_remote")),
             "coverage_mode": str(metadata.get("coverage_mode") or "single_run"),
@@ -406,7 +406,7 @@ def _latest_full196_from_progress(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "validated_commit": "",
         "validated_commit_source": "",
         "validated_mode": "",
-        "validated_execution_ir": "intent",
+        "validated_execution_ir": "mlir",
         "validated_scope": "",
         "validated_with_rvv_remote": None,
         "coverage_mode": "single_run",
@@ -555,7 +555,7 @@ def main() -> None:
     full196_validated_commit_source = str(full196_info.get("validated_commit_source") or "")
     artifact_repo_stamp_ok = bool(full196_info.get("artifact_repo_stamp_ok"))
     full196_validated_mode = str(full196_info.get("validated_mode") or "")
-    full196_validated_execution_ir = str(full196_info.get("validated_execution_ir") or "intent")
+    full196_validated_execution_ir = str(full196_info.get("validated_execution_ir") or "mlir")
     full196_validated_scope = str(full196_info.get("validated_scope") or "")
     full196_validated_with_rvv_remote = full196_info.get("validated_with_rvv_remote")
     coverage_mode = str(full196_info.get("coverage_mode") or "single_run")

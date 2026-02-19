@@ -622,8 +622,8 @@ def main() -> None:
     ap.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="force_compile")
     ap.add_argument(
         "--execution-ir",
-        choices=["intent", "mlir"],
-        default=(str(os.getenv("INTENTIR_EXECUTION_IR", "mlir")).strip().lower() or "mlir"),
+        choices=["mlir"],
+        default="mlir",
     )
     ap.add_argument("--intentir-miss-policy", choices=["deterministic", "strict"], default="strict")
     ap.add_argument("--run-rvv-remote", action=argparse.BooleanOptionalAction, default=True)
@@ -862,6 +862,34 @@ def main() -> None:
     }
     _dump_json(out_coverage, coverage_payload)
 
+    mlir_llvm_completed = 0
+    mlir_llvm_expected = 0
+    mlir_llvm_artifact_complete = True
+    mlir_llvm_missing_families: list[str] = []
+    for row in list(family_rows):
+        if not isinstance(row, dict):
+            continue
+        family = str(row.get("family") or "")
+        run_summary_path_raw = str(row.get("run_summary_path") or "").strip()
+        run_summary_path = (
+            _resolve_json_path(run_summary_path_raw, anchor=out_run_summary) if run_summary_path_raw else None
+        )
+        if run_summary_path is None or (not run_summary_path.is_file()):
+            mlir_llvm_artifact_complete = False
+            if family:
+                mlir_llvm_missing_families.append(family)
+            continue
+        mlir_llvm_expected += 1
+        family_summary = _load_json(run_summary_path)
+        if bool(family_summary.get("mlir_llvm_artifact_complete")):
+            mlir_llvm_completed += 1
+        else:
+            mlir_llvm_artifact_complete = False
+            if family:
+                mlir_llvm_missing_families.append(family)
+    if mlir_llvm_expected <= 0:
+        mlir_llvm_artifact_complete = False
+
     run_summary_payload = {
         "ok": bool(coverage_integrity_ok),
         "suite": "coverage",
@@ -888,6 +916,11 @@ def main() -> None:
         "coverage_batches_failed": categories_failed,
         "intentir_mode": str(args.intentir_mode),
         "execution_ir": str(args.execution_ir),
+        "mlir_llvm_artifact_complete": bool(mlir_llvm_artifact_complete),
+        "mlir_llvm_chain_ok": bool(mlir_llvm_artifact_complete),
+        "mlir_llvm_artifact_families_expected": int(mlir_llvm_expected),
+        "mlir_llvm_artifact_families_completed": int(mlir_llvm_completed),
+        "mlir_llvm_artifact_families_missing": list(sorted(set(mlir_llvm_missing_families))),
         "stages": [
             {
                 "stage": "coverage_categories",
@@ -910,6 +943,14 @@ def main() -> None:
                 "ok": bool(stage_timing_ok),
                 "reason_code": ("ok" if stage_timing_ok else "stage_timing_breakdown_missing_or_invalid"),
                 "json_path": str(out_stage_timing),
+            },
+            {
+                "stage": "mlir_llvm_artifacts",
+                "ok": bool(mlir_llvm_artifact_complete),
+                "reason_code": ("ok" if mlir_llvm_artifact_complete else "llvm_artifacts_incomplete"),
+                "families_expected": int(mlir_llvm_expected),
+                "families_completed": int(mlir_llvm_completed),
+                "families_missing": list(sorted(set(mlir_llvm_missing_families))),
             },
         ],
         "family_runs": family_rows,

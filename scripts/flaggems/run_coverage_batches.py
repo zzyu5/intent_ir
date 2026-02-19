@@ -307,9 +307,9 @@ def main() -> None:
     ap.add_argument("--cases-limit", type=int, default=8)
     ap.add_argument(
         "--execution-ir",
-        choices=["intent", "mlir"],
-        default=(str(os.getenv("INTENTIR_EXECUTION_IR", "mlir")).strip().lower() or "mlir"),
-        help="Execution IR mode propagated to matrix sub-runs (default: env INTENTIR_EXECUTION_IR or mlir).",
+        choices=["mlir"],
+        default="mlir",
+        help="Execution IR mode propagated to matrix sub-runs (MLIR-only).",
     )
     ap.add_argument("--flaggems-path", choices=["original", "intentir"], default="intentir")
     ap.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="auto")
@@ -364,8 +364,8 @@ def main() -> None:
     ap.add_argument("--aggregate", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
-    if str(args.execution_ir) not in {"intent", "mlir"}:
-        raise SystemExit(f"unsupported --execution-ir={args.execution_ir!r}")
+    if str(args.execution_ir) != "mlir":
+        raise SystemExit(f"unsupported --execution-ir={args.execution_ir!r}; only 'mlir' is allowed")
 
     payload = _load_json(args.coverage_batches)
     family_order = [str(x).strip() for x in list(payload.get("family_order") or []) if str(x).strip()]

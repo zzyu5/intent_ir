@@ -125,17 +125,33 @@ def _validate_mlir_llvm_artifact_complete(run_summary: dict[str, Any]) -> tuple[
         if p.is_file():
             return True, f"llvm_ir_path exists: {p}"
     stage_map = _stage_map(run_summary)
-    for stage_name in ("mlir_llvm_artifacts", "llvm_emit"):
-        stage = stage_map.get(stage_name) or {}
-        if bool(stage.get("ok")):
-            stage_json = str(stage.get("json_path") or "").strip()
-            if not stage_json:
-                return True, f"{stage_name} stage ok"
+    stage = stage_map.get("mlir_llvm_artifacts") or {}
+    if isinstance(stage, dict) and stage:
+        artifact_complete = stage.get("artifact_complete")
+        if artifact_complete is not None and not bool(artifact_complete):
+            return False, "mlir_llvm_artifacts stage reports artifact_complete=false"
+        stage_json = str(stage.get("json_path") or "").strip()
+        if stage_json:
             p = Path(stage_json)
             if not p.is_absolute():
                 p = ROOT / p
             if p.is_file():
-                return True, f"{stage_name} stage artifact exists"
+                payload = _load_json(p)
+                if bool(payload.get("artifact_complete")):
+                    return True, f"mlir_llvm_artifacts complete: {p}"
+                return False, f"mlir_llvm_artifacts incomplete: {p}"
+        if bool(artifact_complete):
+            return True, "mlir_llvm_artifacts stage marked complete"
+    llvm_emit_stage = stage_map.get("llvm_emit") or {}
+    if isinstance(llvm_emit_stage, dict) and bool(llvm_emit_stage.get("ok")):
+        stage_json = str(llvm_emit_stage.get("json_path") or "").strip()
+        if not stage_json:
+            return True, "llvm_emit stage ok"
+        p = Path(stage_json)
+        if not p.is_absolute():
+            p = ROOT / p
+        if p.is_file():
+            return True, f"llvm_emit stage artifact exists: {p}"
     return False, "missing LLVM artifact evidence (llvm_ir_path/mlir_llvm_artifacts/llvm_emit)"
 
 
