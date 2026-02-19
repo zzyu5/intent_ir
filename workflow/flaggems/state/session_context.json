@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-19T03:39:06+00:00",
+  "updated_at": "2026-02-19T03:39:52+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,29 +13,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "aac773a chore(workflow): refresh state after mlir-default cutover commit\nebd64e6 feat(mlir): validate full196 on HEAD and cut default execution_ir to mlir\n02bc177 chore(workflow): advance mlir migration milestones and set default-cutover readiness batch\n846a219 feat(mlir): deepen pass pipelines and propagate mlir bridge metrics into backend stages\n69bb2e2 chore(workflow): advance mlir_migration lane status and handoff after ir-arch mlir source guards\nd7592a6 feat(ir-arch): support mlir-manifest inputs for primitive/macro/complexity quality guards\n66e7e39 chore(workflow): add mlir_migration lane tasks and refresh session state snapshots\n3b6d7b8 feat(mlir): add dual-track intent dialect module, pass pipelines, and frontend shadow integration\n78f78f9 chore(workflow): refresh state after cleanup commit\n502c4cc refactor(cleanup): remove docker artifacts and tighten gpu dependency docs\n087c923 chore(workflow): refresh full196 auto evidence on current HEAD\nf8919fd fix(cuda): repair var_mean2d signature and document test catalog\nedd3bec chore(workflow): log coverage-runner optimization session\n7d69d7d feat(cli): add chunk progress + stable seed cache for coverage runs\nd3f361c chore(workflow): refresh status after post-validation commits\n04a715c fix(workflow): treat rvv_remote as backend evidence and close wave3 backlog\n0ede08f chore(workflow): record full196 post-cleanup evidence and advance lanes\n770a098 refactor(cleanup): slim test gate set and advance workflow cleanup lanes\n87c5f09 refactor(workflow): add workflow lane + remove docker + advance cleanup state\n2ef4197 chore(workflow): align current status with latest full196 evidence",
+  "git_log_short": "cb43afc feat(workflow): compact chunk progress and strengthen full196 provenance\naac773a chore(workflow): refresh state after mlir-default cutover commit\nebd64e6 feat(mlir): validate full196 on HEAD and cut default execution_ir to mlir\n02bc177 chore(workflow): advance mlir migration milestones and set default-cutover readiness batch\n846a219 feat(mlir): deepen pass pipelines and propagate mlir bridge metrics into backend stages\n69bb2e2 chore(workflow): advance mlir_migration lane status and handoff after ir-arch mlir source guards\nd7592a6 feat(ir-arch): support mlir-manifest inputs for primitive/macro/complexity quality guards\n66e7e39 chore(workflow): add mlir_migration lane tasks and refresh session state snapshots\n3b6d7b8 feat(mlir): add dual-track intent dialect module, pass pipelines, and frontend shadow integration\n78f78f9 chore(workflow): refresh state after cleanup commit\n502c4cc refactor(cleanup): remove docker artifacts and tighten gpu dependency docs\n087c923 chore(workflow): refresh full196 auto evidence on current HEAD\nf8919fd fix(cuda): repair var_mean2d signature and document test catalog\nedd3bec chore(workflow): log coverage-runner optimization session\n7d69d7d feat(cli): add chunk progress + stable seed cache for coverage runs\nd3f361c chore(workflow): refresh status after post-validation commits\n04a715c fix(workflow): treat rvv_remote as backend evidence and close wave3 backlog\n0ede08f chore(workflow): record full196 post-cleanup evidence and advance lanes\n770a098 refactor(cleanup): slim test gate set and advance workflow cleanup lanes\n87c5f09 refactor(workflow): add workflow lane + remove docker + advance cleanup state",
   "progress_tail": [
-    {
-      "ts": "2026-02-18T13:07:23+00:00",
-      "commit": "f8919fdb39ac271876bbc5a15de8268c94da48b8",
-      "lane": "coverage",
-      "summary": "full196 auto refresh v2 complete: 7/7 categories, dual_pass=196 on current HEAD",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260218/full196_auto_refresh_v2/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260218/full196_auto_refresh_v2/status_converged.json",
-      "next_focus": "Refresh workflow freshness snapshot and continue backend compiler performance wave (stage timing deltas).",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260218/full196_auto_refresh_v2/coverage_batch_runs.json",
-        "artifacts/flaggems_matrix/daily/20260218/full196_auto_refresh_v2/coverage_integrity.json",
-        "artifacts/flaggems_matrix/daily/20260218/full196_auto_refresh_v2/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260218/full196_auto_refresh_v2/stage_timing_breakdown.json",
-        "artifacts/flaggems_matrix/daily/20260218/full196_auto_refresh_v2/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
     {
       "ts": "2026-02-18T13:42:16+00:00",
       "commit": "087c9234a8a9ef08df4353feee74fe2f0afcf581",
@@ -200,15 +179,36 @@
       "run_ok": true,
       "run_out_dir": null,
       "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-19T03:39:47+00:00",
+      "commit": "cb43afc816f18bf4ac2f0210f1a0a42cd4296a3d",
+      "lane": "workflow",
+      "summary": "Committed chunk-progress/provenance improvements; workflow freshness intentionally stale by 1 commit and coverage lane re-activated.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_workflow.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260219/full196_mlir_force_compile_head_v3/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260219/full196_mlir_force_compile_head_v3/status_converged.json",
+      "next_focus": "Run full196 MLIR force_compile category aggregate on new HEAD (cb43afc) to restore fresh_on_head, then continue MLIR pass/backend modularization.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260219/full196_mlir_force_compile_head_v3/ci_gate.json",
+        "artifacts/flaggems_matrix/daily/20260219/full196_mlir_force_compile_head_v3/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260219/full196_mlir_force_compile_head_v3/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
     }
   ],
-  "next_focus": "Continue MLIR migration phase3/4: deepen pass trace integration and backend compiler modularization with batch regression.",
+  "next_focus": "Run full196 MLIR force_compile category aggregate on new HEAD (cb43afc) to restore fresh_on_head, then continue MLIR pass/backend modularization.",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
-  "active_lanes": [],
+  "active_lanes": [
+    "coverage"
+  ],
   "next_focus_by_lane": {
-    "coverage": "Refresh workflow freshness snapshot and continue backend compiler performance wave (stage timing deltas).",
-    "workflow": "Continue MLIR migration phase3/4: deepen pass trace integration and backend compiler modularization with batch regression.",
-    "mlir_migration": "Refresh workflow freshness on HEAD, then continue Phase3/4 MLIR pass + backend compiler modularization."
+    "workflow": "Run full196 MLIR force_compile category aggregate on new HEAD (cb43afc) to restore fresh_on_head, then continue MLIR pass/backend modularization.",
+    "mlir_migration": "Refresh workflow freshness on HEAD, then continue Phase3/4 MLIR pass + backend compiler modularization.",
+    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD."
   },
   "known_risks": []
 }

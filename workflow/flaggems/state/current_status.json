@@ -1,16 +1,16 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-19T03:39:06+00:00",
+  "updated_at": "2026-02-19T03:39:52+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "aac773a65ac370b89fe006ab4ef9d4d0aeeb4713",
+  "head_commit": "cb43afc816f18bf4ac2f0210f1a0a42cd4296a3d",
   "mode": "maintenance",
-  "coverage_integrity_phase": "recomputed_ok",
+  "coverage_integrity_phase": "recompute_stale",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260219/full196_mlir_force_compile_head_v3/run_summary.json",
   "full196_last_ok": true,
   "full196_validated_commit": "aac773a65ac370b89fe006ab4ef9d4d0aeeb4713",
   "full196_validated_commit_source": "run_summary.repo.head_commit",
-  "full196_commits_since_validated": 0,
-  "full196_commits_since_validated_total": 0,
+  "full196_commits_since_validated": 1,
+  "full196_commits_since_validated_total": 1,
   "full196_lifted_to_head": false,
   "full196_validated_mode": "force_compile",
   "full196_validated_execution_ir": "mlir",
@@ -28,7 +28,7 @@
   "mlir_migration_phase": "default_mlir",
   "mlir_default_enabled": true,
   "mlir_toolchain_ok": false,
-  "mlir_full196_validated_commit": "aac773a65ac370b89fe006ab4ef9d4d0aeeb4713",
+  "mlir_full196_validated_commit": "",
   "coverage": {
     "semantic_ops": 196,
     "dual_pass": 196,
@@ -97,11 +97,13 @@
     "catalog_path": "scripts/CATALOG.json",
     "catalog_validated": true
   },
-  "active_lanes": [],
+  "active_lanes": [
+    "coverage"
+  ],
   "next_focus_by_lane": {
-    "coverage": "Refresh workflow freshness snapshot and continue backend compiler performance wave (stage timing deltas).",
-    "workflow": "Continue MLIR migration phase3/4: deepen pass trace integration and backend compiler modularization with batch regression.",
-    "mlir_migration": "Refresh workflow freshness on HEAD, then continue Phase3/4 MLIR pass + backend compiler modularization."
+    "workflow": "Run full196 MLIR force_compile category aggregate on new HEAD (cb43afc) to restore fresh_on_head, then continue MLIR pass/backend modularization.",
+    "mlir_migration": "Refresh workflow freshness on HEAD, then continue Phase3/4 MLIR pass + backend compiler modularization.",
+    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD."
   },
   "latest_artifacts": {
     "run_summary": "artifacts/flaggems_matrix/daily/20260219/full196_mlir_force_compile_head_v3/run_summary.json",
