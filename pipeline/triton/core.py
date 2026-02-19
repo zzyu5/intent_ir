@@ -24,7 +24,6 @@ from frontends.triton.dump import find_latest_ttir, prepare_dump_and_cache_dirs
 from intent_ir.llm import LLMIntentHub
 from intent_ir.macros import expand_macros, enrich_intent_macros
 from intent_ir.parser import CandidateIntent
-from intent_ir.ir.printer_mlir_like import print_mlir_like
 from intent_ir.ir.repair import materialize_missing_op_output_tensors
 from intent_ir.mlir import detect_mlir_toolchain, run_pipeline as run_mlir_pipeline, to_mlir
 from frontends.common.static_validate import static_validate
@@ -66,6 +65,11 @@ class KernelSpec:
     stage_c_max_cases: Optional[int] = None
     enable_mutation_kill: bool = True
     mutation_bounded_max_cases: Optional[int] = None
+
+
+def _intent_to_mlir_text(intent: IntentFunction) -> str:
+    return to_mlir(intent).module_text
+
 
 def _backend_capability_preflight(intent, *, backend_target: str | None) -> Dict[str, object]:
     if backend_target is None:
@@ -2767,10 +2771,10 @@ def run_pipeline_for_spec(
         cache_used = True
         report["intent_seed"]["used"] = True
         report["intent_seed"]["source"] = "cache"
-        (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
+        (out_dir / f"{spec.name}.intentir.mlir").write_text(_intent_to_mlir_text(cand.intent), encoding="utf-8")
         if cand_expanded is not None:
             (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(
-                print_mlir_like(cand_expanded.intent), encoding="utf-8"
+                _intent_to_mlir_text(cand_expanded.intent), encoding="utf-8"
             )
     elif seed_policy == "force_cache":
         if not allow_deterministic_fallback:
@@ -2795,7 +2799,7 @@ def run_pipeline_for_spec(
             "reason": "set INTENTIR_TRITON_UPSAMPLE_USE_LLM=1 to force LLM",
         }
         enrich_intent_macros(cand.intent)
-        mlir_txt = print_mlir_like(cand.intent)
+        mlir_txt = _intent_to_mlir_text(cand.intent)
         (out_dir / f"{spec.name}.intentir.mlir").write_text(mlir_txt, encoding="utf-8")
         (out_dir / f"{spec.name}.intentir.fallback.mlir").write_text(mlir_txt, encoding="utf-8")
         expanded_intent = expand_macros(cand.intent)
@@ -2806,7 +2810,7 @@ def run_pipeline_for_spec(
             raw_json={"fallback": True},
             llm_trace={},
         )
-        exp_txt = print_mlir_like(expanded_intent)
+        exp_txt = _intent_to_mlir_text(expanded_intent)
         (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
         (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
     elif cand is None and spec.name == "_attn_fwd" and seed_policy != "force_llm" and not use_llm_for_attn:
@@ -2818,7 +2822,7 @@ def run_pipeline_for_spec(
             "reason": "set INTENTIR_TRITON_ATTN_USE_LLM=1 to force LLM",
         }
         enrich_intent_macros(cand.intent)
-        mlir_txt = print_mlir_like(cand.intent)
+        mlir_txt = _intent_to_mlir_text(cand.intent)
         (out_dir / f"{spec.name}.intentir.mlir").write_text(mlir_txt, encoding="utf-8")
         (out_dir / f"{spec.name}.intentir.fallback.mlir").write_text(mlir_txt, encoding="utf-8")
         expanded_intent = expand_macros(cand.intent)
@@ -2829,7 +2833,7 @@ def run_pipeline_for_spec(
             raw_json={"fallback": True},
             llm_trace={},
         )
-        exp_txt = print_mlir_like(expanded_intent)
+        exp_txt = _intent_to_mlir_text(expanded_intent)
         (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
         (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
     elif cand is None:
@@ -2841,7 +2845,7 @@ def run_pipeline_for_spec(
                     report["llm_trace"] = dict(cand.llm_trace)
                     _ensure_schedule(cand.intent, kernel_name=spec.name, triton_src=src)
                     enrich_intent_macros(cand.intent)
-                    intent_mlir = print_mlir_like(cand.intent)
+                    intent_mlir = _intent_to_mlir_text(cand.intent)
                     (out_dir / f"{spec.name}.intentir.mlir").write_text(intent_mlir, encoding="utf-8")
                     expanded_intent = expand_macros(cand.intent)
                     cand_expanded = CandidateIntent(
@@ -2851,7 +2855,7 @@ def run_pipeline_for_spec(
                         raw_json=dict(cand.raw_json),
                         llm_trace=dict(cand.llm_trace),
                     )
-                    (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_intent), encoding="utf-8")
+                    (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(_intent_to_mlir_text(expanded_intent), encoding="utf-8")
                     break
                 except Exception as e:
                     feedback = [f"Previous failure: {e}"]
@@ -2867,7 +2871,7 @@ def run_pipeline_for_spec(
             cand = CandidateIntent(intent=fb_intent, problem_params={}, schedule_params={}, raw_json={"fallback": True}, llm_trace={})
             report["llm_fallback"] = {"used": True, "kind": "macro_deterministic", "reason": "; ".join(feedback) if feedback else "LLM failed"}
             enrich_intent_macros(cand.intent)
-            mlir_txt = print_mlir_like(cand.intent)
+            mlir_txt = _intent_to_mlir_text(cand.intent)
             (out_dir / f"{spec.name}.intentir.mlir").write_text(mlir_txt, encoding="utf-8")
             (out_dir / f"{spec.name}.intentir.fallback.mlir").write_text(mlir_txt, encoding="utf-8")
             expanded_intent = expand_macros(cand.intent)
@@ -2878,7 +2882,7 @@ def run_pipeline_for_spec(
                 raw_json={"fallback": True},
                 llm_trace={},
             )
-            exp_txt = print_mlir_like(expanded_intent)
+            exp_txt = _intent_to_mlir_text(expanded_intent)
             (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
             (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
         else:
@@ -2905,7 +2909,7 @@ def run_pipeline_for_spec(
                 "reason": "; ".join(feedback) if feedback else "LLM failed",
             }
             enrich_intent_macros(cand.intent)
-            mlir_txt = print_mlir_like(cand.intent)
+            mlir_txt = _intent_to_mlir_text(cand.intent)
             (out_dir / f"{spec.name}.intentir.mlir").write_text(mlir_txt, encoding="utf-8")
             (out_dir / f"{spec.name}.intentir.fallback.mlir").write_text(mlir_txt, encoding="utf-8")
             expanded_intent = expand_macros(cand.intent)
@@ -2916,7 +2920,7 @@ def run_pipeline_for_spec(
                 raw_json={"fallback": True},
                 llm_trace={},
             )
-            exp_txt = print_mlir_like(expanded_intent)
+            exp_txt = _intent_to_mlir_text(expanded_intent)
             (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
             (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
     # Ensure schedule is attached even if the LLM emits only partial schedule fields.
@@ -2927,10 +2931,10 @@ def run_pipeline_for_spec(
     )
     if norm_info is not None:
         report["provider_intent_normalization"] = dict(norm_info)
-        (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
+        (out_dir / f"{spec.name}.intentir.mlir").write_text(_intent_to_mlir_text(cand.intent), encoding="utf-8")
         if cand_expanded is not None:
             (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(
-                print_mlir_like(cand_expanded.intent), encoding="utf-8"
+                _intent_to_mlir_text(cand_expanded.intent), encoding="utf-8"
             )
     _ensure_schedule(cand.intent, kernel_name=spec.name, triton_src=src)
     _attach_access_witness_meta(cand.intent, cert_v2=cert_v2, canonical_shapes=dict(spec.canonical_shapes))
@@ -3011,7 +3015,7 @@ def run_pipeline_for_spec(
                     capability_state=(str(provider_capability_state) if provider_capability_state is not None else None),
                     backend_target=backend_target,
                 )
-                (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
+                (out_dir / f"{spec.name}.intentir.mlir").write_text(_intent_to_mlir_text(cand.intent), encoding="utf-8")
                 _ensure_schedule(cand_expanded.intent, kernel_name=spec.name, triton_src=src)
                 _attach_access_witness_meta(cand_expanded.intent, cert_v2=cert_v2, canonical_shapes=dict(spec.canonical_shapes))
                 provider_plugin.annotate_intent_meta(
@@ -3021,7 +3025,7 @@ def run_pipeline_for_spec(
                     backend_target=backend_target,
                 )
                 (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(
-                    print_mlir_like(cand_expanded.intent), encoding="utf-8"
+                    _intent_to_mlir_text(cand_expanded.intent), encoding="utf-8"
                 )
                 report["provider_meta_validation"] = provider_plugin.validate_intent_meta(cand.intent)
                 _materialize_missing_tensors_for_report(cand.intent, report, phase="stage6_repair")
@@ -3166,7 +3170,7 @@ def run_pipeline_for_spec(
                     capability_state=(str(provider_capability_state) if provider_capability_state is not None else None),
                     backend_target=backend_target,
                 )
-                (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand_fix.intent), encoding="utf-8")
+                (out_dir / f"{spec.name}.intentir.mlir").write_text(_intent_to_mlir_text(cand_fix.intent), encoding="utf-8")
                 if cand_fix_expanded is None:
                     expanded_fix = expand_macros(cand_fix.intent)
                     cand_fix_expanded = CandidateIntent(
@@ -3186,7 +3190,7 @@ def run_pipeline_for_spec(
                     capability_state=(str(provider_capability_state) if provider_capability_state is not None else None),
                     backend_target=backend_target,
                 )
-                (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_fix), encoding="utf-8")
+                (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(_intent_to_mlir_text(expanded_fix), encoding="utf-8")
                 report["provider_meta_validation"] = provider_plugin.validate_intent_meta(cand_fix.intent)
                 _materialize_missing_tensors_for_report(cand_fix.intent, report, phase="stage7_repair")
                 _materialize_missing_tensors_for_report(expanded_fix, report, phase="stage7_repair_expanded")
@@ -3340,10 +3344,10 @@ def run_pipeline_for_spec(
                         )
                     report["intent"] = cand.intent.to_json_dict()
                     report["intent_expanded"] = (cand_expanded.intent.to_json_dict() if cand_expanded is not None else None)
-                    (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
+                    (out_dir / f"{spec.name}.intentir.mlir").write_text(_intent_to_mlir_text(cand.intent), encoding="utf-8")
                     if cand_expanded is not None:
                         (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(
-                            print_mlir_like(cand_expanded.intent),
+                            _intent_to_mlir_text(cand_expanded.intent),
                             encoding="utf-8",
                         )
         except Exception as e:

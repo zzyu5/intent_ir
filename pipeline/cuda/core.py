@@ -28,7 +28,6 @@ from intent_ir.macros import expand_macros, enrich_intent_macros
 from intent_ir.mlir import detect_mlir_toolchain, run_pipeline as run_mlir_pipeline, to_mlir
 from intent_ir.parser import CandidateIntent
 from intent_ir.ir import ScheduleSketch
-from intent_ir.ir.printer_mlir_like import print_mlir_like
 from pipeline import registry as pipeline_registry
 from pipeline.interfaces import FrontendConstraints
 from verify.diff_runner import run_diff
@@ -51,6 +50,10 @@ _LLM_HUB = LLMIntentHub()
 # pipeline must not import TileLang or parse TIR.
 _CUDA_SNAPSHOT_DIR = ROOT / "kernels" / "cuda" / "ops" / "snapshots"
 _CUDA_SNAPSHOT_META_SUFFIX = ".cuda_snapshot.json"
+
+
+def _intent_to_mlir_text(intent: Any) -> str:
+    return to_mlir(intent).module_text
 
 
 def _eval_int_expr(expr: str, bindings: Dict[str, int]) -> int:
@@ -1290,7 +1293,7 @@ def run_pipeline_for_spec(
     if cand.llm_trace:
         report["llm_trace"] = dict(cand.llm_trace or {})
 
-    (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
+    (out_dir / f"{spec.name}.intentir.mlir").write_text(_intent_to_mlir_text(cand.intent), encoding="utf-8")
     report["intent"] = cand.intent.to_json_dict()
 
     cand_expanded: CandidateIntent | None = None
@@ -1304,7 +1307,7 @@ def run_pipeline_for_spec(
             llm_trace=dict(cand.llm_trace),
         )
         _ensure_schedule_cuda(cand_expanded.intent, spec=spec)
-        (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_intent), encoding="utf-8")
+        (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(_intent_to_mlir_text(expanded_intent), encoding="utf-8")
         report["intent_expanded"] = expanded_intent.to_json_dict()
     except Exception as e:
         report["intent_expanded"] = None
@@ -1326,7 +1329,7 @@ def run_pipeline_for_spec(
             _ensure_schedule_cuda(cand_fix.intent, spec=spec)
             report["llm_trace"] = dict(cand_fix.llm_trace or {})
             cand = cand_fix
-            (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
+            (out_dir / f"{spec.name}.intentir.mlir").write_text(_intent_to_mlir_text(cand.intent), encoding="utf-8")
             report["intent"] = cand.intent.to_json_dict()
             expanded_fix = expand_macros(cand.intent)
             cand_expanded = CandidateIntent(
@@ -1337,7 +1340,7 @@ def run_pipeline_for_spec(
                 llm_trace=dict(cand.llm_trace),
             )
             _ensure_schedule_cuda(cand_expanded.intent, spec=spec)
-            (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_fix), encoding="utf-8")
+            (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(_intent_to_mlir_text(expanded_fix), encoding="utf-8")
             report["intent_expanded"] = expanded_fix.to_json_dict()
             sv = static_validate((cand_expanded.intent if cand_expanded is not None else cand.intent), cert_v2)
             report["static_validation"] = {
@@ -1496,7 +1499,7 @@ def run_pipeline_for_spec(
             _ensure_schedule_cuda(cand_fix.intent, spec=spec)
             report["llm_trace"] = dict(cand_fix.llm_trace or {})
             cand = cand_fix
-            (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
+            (out_dir / f"{spec.name}.intentir.mlir").write_text(_intent_to_mlir_text(cand.intent), encoding="utf-8")
             report["intent"] = cand.intent.to_json_dict()
 
             expanded_fix = expand_macros(cand.intent)
@@ -1508,7 +1511,7 @@ def run_pipeline_for_spec(
                 llm_trace=dict(cand.llm_trace),
             )
             _ensure_schedule_cuda(cand_expanded.intent, spec=spec)
-            (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_fix), encoding="utf-8")
+            (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(_intent_to_mlir_text(expanded_fix), encoding="utf-8")
             report["intent_expanded"] = expanded_fix.to_json_dict()
 
             sv2 = static_validate(cand_expanded.intent, cert_v2)
@@ -1562,8 +1565,8 @@ def run_pipeline_for_spec(
             fb_intent = _group_norm_fallback_intent()
             _ensure_schedule_cuda(fb_intent, spec=spec)
             fb_exp = expand_macros(fb_intent)
-            (out_dir / f"{spec.name}.intentir.fallback.mlir").write_text(print_mlir_like(fb_intent), encoding="utf-8")
-            (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(print_mlir_like(fb_exp), encoding="utf-8")
+            (out_dir / f"{spec.name}.intentir.fallback.mlir").write_text(_intent_to_mlir_text(fb_intent), encoding="utf-8")
+            (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(_intent_to_mlir_text(fb_exp), encoding="utf-8")
 
             sv_fb = static_validate(fb_exp, cert_v2)
             report["static_validation_fallback"] = {

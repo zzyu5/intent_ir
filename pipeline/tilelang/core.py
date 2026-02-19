@@ -31,7 +31,6 @@ from intent_ir.macros import expand_macros, enrich_intent_macros
 from intent_ir.mlir import detect_mlir_toolchain, run_pipeline as run_mlir_pipeline, to_mlir
 from intent_ir.parser import CandidateIntent
 from intent_ir.ir import Dim, IntentFunction, Op, ScheduleSketch, TensorLayout, TensorType
-from intent_ir.ir.printer_mlir_like import print_mlir_like
 
 from frontends.common.static_validate import static_validate
 from frontends.tilelang.runtime import infer_written_global_buffers, run_tilelang_kernel_io
@@ -97,6 +96,10 @@ class KernelSpec:
     # reference for diff/remote. Some kernels keep PrimFunc as "evidence only"
     # (e.g., upsample macro) and should use the numpy/PyTorch reference instead.
     runtime_ref_ok: bool = True
+
+
+def _intent_to_mlir_text(intent: IntentFunction) -> str:
+    return to_mlir(intent).module_text
 
 
 def _rm_layout() -> TensorLayout:
@@ -2282,7 +2285,7 @@ def run_pipeline_for_spec(
         intent = spec.intent_builder()
         cand = CandidateIntent(intent=intent, llm_trace={"provider": "tilelang_deterministic"})
 
-    (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
+    (out_dir / f"{spec.name}.intentir.mlir").write_text(_intent_to_mlir_text(cand.intent), encoding="utf-8")
     report["intent"] = cand.intent.to_json_dict()
 
     cand_expanded: CandidateIntent | None = None
@@ -2297,7 +2300,7 @@ def run_pipeline_for_spec(
         )
         _ensure_schedule_tilelang(cand_expanded.intent, spec)
         _ensure_interface_symbols_and_roles_tilelang(cand_expanded.intent, spec)
-        (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_intent), encoding="utf-8")
+        (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(_intent_to_mlir_text(expanded_intent), encoding="utf-8")
         report["intent_expanded"] = expanded_intent.to_json_dict()
     except Exception as e:
         report["intent_expanded"] = None
@@ -2319,7 +2322,7 @@ def run_pipeline_for_spec(
             _ensure_interface_symbols_and_roles_tilelang(cand_fix.intent, spec)
             report["llm_trace"] = dict(cand_fix.llm_trace or {})
             cand = cand_fix
-            (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
+            (out_dir / f"{spec.name}.intentir.mlir").write_text(_intent_to_mlir_text(cand.intent), encoding="utf-8")
             report["intent"] = cand.intent.to_json_dict()
             expanded_fix = expand_macros(cand.intent)
             cand_expanded = CandidateIntent(
@@ -2331,7 +2334,7 @@ def run_pipeline_for_spec(
             )
             _ensure_schedule_tilelang(cand_expanded.intent, spec)
             _ensure_interface_symbols_and_roles_tilelang(cand_expanded.intent, spec)
-            (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_fix), encoding="utf-8")
+            (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(_intent_to_mlir_text(expanded_fix), encoding="utf-8")
             report["intent_expanded"] = expanded_fix.to_json_dict()
             sv = static_validate((cand_expanded.intent if cand_expanded is not None else cand.intent), cert_v2)
             report["static_validation"] = {
@@ -2490,7 +2493,7 @@ def run_pipeline_for_spec(
                 _ensure_schedule_tilelang(cand_fix.intent, spec)
                 report["llm_trace"] = dict(cand_fix.llm_trace or {})
                 cand = cand_fix
-                (out_dir / f"{spec.name}.intentir.mlir").write_text(print_mlir_like(cand.intent), encoding="utf-8")
+                (out_dir / f"{spec.name}.intentir.mlir").write_text(_intent_to_mlir_text(cand.intent), encoding="utf-8")
                 report["intent"] = cand.intent.to_json_dict()
 
                 expanded_fix = expand_macros(cand.intent)
@@ -2502,7 +2505,7 @@ def run_pipeline_for_spec(
                     llm_trace=dict(cand.llm_trace),
                 )
                 _ensure_schedule_tilelang(cand_expanded.intent, spec)
-                (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(print_mlir_like(expanded_fix), encoding="utf-8")
+                (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(_intent_to_mlir_text(expanded_fix), encoding="utf-8")
                 report["intent_expanded"] = expanded_fix.to_json_dict()
                 cand_for_run = cand_expanded
 
