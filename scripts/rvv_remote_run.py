@@ -46,7 +46,7 @@ from backends.spmd_rvv.analysis.tuning import (
 )
 from backends.spmd_rvv.baseline_freeze_tile import freeze_tile_schedule
 from intent_ir.ir import IntentFunction, ScheduleSketch
-from intent_ir.macros import expand_macros
+from intent_ir.macros import expand_macros_json
 from verify.gen_cases import TestCase
 from verify.tolerances import infer_tolerances
 
@@ -429,12 +429,10 @@ def run_remote(
         )
     _log(f"[{frontend}:{kernel}] load artifact: {report_path}")
     report = json.loads(report_path.read_text())
-    intent_macro = IntentFunction.from_json_dict(report["intent"])
     intent_expanded_json = report.get("intent_expanded")
-    if isinstance(intent_expanded_json, dict):
-        intent = IntentFunction.from_json_dict(intent_expanded_json)
-    else:
-        intent = expand_macros(intent_macro)
+    if not isinstance(intent_expanded_json, dict):
+        intent_expanded_json = expand_macros_json(dict(report["intent"]))
+    intent = IntentFunction.from_json_dict(intent_expanded_json)
 
     def _coerce_schedule(obj: ScheduleSketch | dict) -> ScheduleSketch:
         if isinstance(obj, ScheduleSketch):

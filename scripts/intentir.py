@@ -373,9 +373,7 @@ def _cmd_mlir_check(args: argparse.Namespace) -> int:
             + ", ".join(missing)
         )
     if args.intent_json is not None:
-        payload = json.loads(Path(args.intent_json).read_text(encoding="utf-8"))
-        if "intent" in payload and isinstance(payload.get("intent"), dict):
-            payload = payload["intent"]
+        payload = _load_intent_payload(Path(args.intent_json))
         intent = IntentFunction.from_json_dict(payload)
         module = to_mlir(intent)
         _ = to_intent(module)
@@ -395,9 +393,7 @@ def _cmd_mlir_pass(args: argparse.Namespace) -> int:
     from intent_ir.mlir import run_pipeline, to_mlir  # noqa: PLC0415
     from intent_ir.ir import IntentFunction  # noqa: PLC0415
 
-    payload = json.loads(Path(args.intent_json).read_text(encoding="utf-8"))
-    if "intent" in payload and isinstance(payload.get("intent"), dict):
-        payload = payload["intent"]
+    payload = _load_intent_payload(Path(args.intent_json))
     intent = IntentFunction.from_json_dict(payload)
     module = to_mlir(intent)
     out_dir = Path(args.out_dir) if args.out_dir else (ROOT / "artifacts" / "intentir_mlir_pass")
@@ -417,6 +413,100 @@ def _cmd_mlir_pass(args: argparse.Namespace) -> int:
     print(f"[intentir] mlir module: {out_mlir}")
     print(f"[intentir] pass trace: {out_trace}")
     return 0 if bool(trace.get("ok")) else 1
+
+
+def _load_intent_payload(path: Path) -> dict:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if "intent" in payload and isinstance(payload.get("intent"), dict):
+        payload = payload["intent"]
+    if not isinstance(payload, dict):
+        raise ValueError(f"invalid intent payload at {path}: expected JSON object")
+    return payload
+
+
+def _cmd_mlir_emit_llvm(args: argparse.Namespace) -> int:
+    from intent_ir.mlir import detect_mlir_toolchain, run_pipeline, to_mlir  # noqa: PLC0415
+    from intent_ir.ir import IntentFunction  # noqa: PLC0415
+
+    payload = _load_intent_payload(Path(args.intent_json))
+    intent = IntentFunction.from_json_dict(payload)
+    out_dir = Path(args.out_dir) if args.out_dir else (ROOT / "artifacts" / "intentir_mlir_emit_llvm")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    backend = str(args.backend)
+    pipeline = "downstream_cuda_llvm" if backend == "cuda" else "downstream_rvv_llvm"
+    module = to_mlir(intent)
+    upstream_mod, upstream_trace = run_pipeline(
+        module,
+        "upstream",
+        backend=backend,
+        out_dir=(out_dir / "upstream"),
+        fail_on_error=bool(args.fail_on_error),
+    )
+    midend_mod, midend_trace = run_pipeline(
+        upstream_mod,
+        "midend",
+        backend=backend,
+        out_dir=(out_dir / "midend"),
+        fail_on_error=bool(args.fail_on_error),
+    )
+    downstream_mod, downstream_trace = run_pipeline(
+        midend_mod,
+        pipeline,
+        backend=backend,
+        out_dir=(out_dir / pipeline),
+        fail_on_error=bool(args.fail_on_error),
+    )
+    llvm_ir_path = out_dir / f"{intent.name}.intentdialect.{pipeline}.ll"
+    llvm_ir_path.write_text(str(downstream_mod.module_text or ""), encoding="utf-8")
+
+    toolchain = detect_mlir_toolchain()
+    tools = dict(toolchain.get("tools") or {})
+    llvm_as_tool = str((tools.get("llvm-as") or {}).get("path") or "").strip()
+    llvm_bc_path = out_dir / f"{intent.name}.intentdialect.{pipeline}.bc"
+    llvm_bc_ok = False
+    llvm_bc_detail = ""
+    if bool(args.emit_bc):
+        if not llvm_as_tool:
+            llvm_bc_detail = "llvm-as unavailable"
+        else:
+            p = subprocess.run(
+                [llvm_as_tool, str(llvm_ir_path), "-o", str(llvm_bc_path)],
+                cwd=str(ROOT),
+                capture_output=True,
+                text=True,
+            )
+            llvm_bc_ok = bool(p.returncode == 0 and llvm_bc_path.is_file())
+            llvm_bc_detail = (str(p.stderr or p.stdout).strip() if p.returncode != 0 else "ok")
+    else:
+        llvm_bc_detail = "disabled_by_flag"
+
+    trace_ok = bool(upstream_trace.get("ok")) and bool(midend_trace.get("ok")) and bool(downstream_trace.get("ok"))
+    ok = bool(trace_ok and (not bool(args.emit_bc) or llvm_bc_ok))
+    report: dict[str, object] = {
+        "schema_version": "intentir_mlir_emit_llvm_v1",
+        "ok": bool(ok),
+        "backend": str(backend),
+        "pipeline": str(pipeline),
+        "intent_name": str(intent.name),
+        "toolchain": toolchain,
+        "llvm_ir_path": str(llvm_ir_path),
+        "llvm_emit_ok": bool(trace_ok),
+        "llvm_bc_path": (str(llvm_bc_path) if bool(llvm_bc_ok) else ""),
+        "llvm_bc_ok": bool(llvm_bc_ok),
+        "llvm_bc_detail": str(llvm_bc_detail),
+        "upstream_trace_path": str((upstream_trace.get("pass_trace_path") or "")),
+        "midend_trace_path": str((midend_trace.get("pass_trace_path") or "")),
+        "downstream_trace_path": str((downstream_trace.get("pass_trace_path") or "")),
+    }
+    summary_path = Path(args.out) if args.out else (out_dir / "llvm_emit_summary.json")
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"[intentir] llvm ir: {llvm_ir_path}")
+    print(f"[intentir] summary: {summary_path}")
+    if bool(args.emit_bc):
+        print(f"[intentir] llvm bc: {llvm_bc_path if llvm_bc_ok else '(failed)'}")
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0 if bool(ok) else 1
 
 
 def _cmd_mlir_provision_toolchain(args: argparse.Namespace) -> int:
@@ -593,6 +683,15 @@ def _build_parser() -> argparse.ArgumentParser:
     mlir_pass.add_argument("--out-dir", default=None, help="Output directory for module + pass trace")
     mlir_pass.add_argument("--fail-on-error", action=argparse.BooleanOptionalAction, default=False)
     mlir_pass.set_defaults(func=_cmd_mlir_pass)
+
+    mlir_emit = mlir_sub.add_parser("emit-llvm", help="Emit LLVM IR (.ll) and optional bitcode (.bc)")
+    mlir_emit.add_argument("--intent-json", required=True, help="Path to intent JSON (or report with `intent` field)")
+    mlir_emit.add_argument("--backend", choices=["cuda", "rvv"], default="cuda")
+    mlir_emit.add_argument("--out-dir", default=None, help="Output directory for LLVM artifacts")
+    mlir_emit.add_argument("--emit-bc", action=argparse.BooleanOptionalAction, default=True)
+    mlir_emit.add_argument("--fail-on-error", action=argparse.BooleanOptionalAction, default=False)
+    mlir_emit.add_argument("--out", default=None, help="Optional summary JSON path")
+    mlir_emit.set_defaults(func=_cmd_mlir_emit_llvm)
 
     mlir_provision = mlir_sub.add_parser(
         "provision-toolchain",

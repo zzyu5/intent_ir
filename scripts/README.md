@@ -15,6 +15,7 @@ python scripts/intentir.py suite --suite triton-smoke --kernel tanh2d
 python scripts/intentir.py kernel --frontend triton --kernel tanh2d
 python scripts/intentir.py tilelang export-cuda-snapshots --kernel matmul --refresh
 python scripts/intentir.py mlir provision-toolchain --version 14 --force
+python scripts/intentir.py mlir emit-llvm --intent-json artifacts/flaggems_triton_full_pipeline/tanh2d.json --backend cuda --no-emit-bc
 python scripts/intentir.py env
 ```
 

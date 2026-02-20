@@ -146,3 +146,11 @@ def test_intentir_env_smoke() -> None:
     out = p.stdout
     assert "repo_root:" in out
     assert "python:" in out
+
+
+def test_intentir_mlir_emit_llvm_help() -> None:
+    p = _run("mlir", "emit-llvm", "--help")
+    assert p.returncode == 0, p.stderr
+    out = p.stdout
+    assert "--intent-json" in out
+    assert "--backend {cuda,rvv}" in out

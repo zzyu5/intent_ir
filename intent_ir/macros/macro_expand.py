@@ -15,7 +15,7 @@ Extensibility:
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from ..ir.ir_types import IntentFunction, TensorType
 from .macro_lowering.common import LoweringBuilder
@@ -44,4 +44,17 @@ def expand_macros(intent: IntentFunction) -> IntentFunction:
     return expanded
 
 
-__all__ = ["expand_macros"]
+def expand_macros_json(intent_json: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    JSON-level macro expansion helper used by pipeline/runtime tooling.
+
+    This keeps script callers on payload-level data flow and avoids ad-hoc
+    IntentFunction reconstruction in each script.
+    """
+    if not isinstance(intent_json, dict):
+        raise TypeError("intent_json must be an object")
+    intent = IntentFunction.from_json_dict(dict(intent_json))
+    return expand_macros(intent).to_json_dict()
+
+
+__all__ = ["expand_macros", "expand_macros_json"]

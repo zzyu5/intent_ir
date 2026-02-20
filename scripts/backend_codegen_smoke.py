@@ -34,7 +34,7 @@ from backends.spmd_rvv.codegen.cpp_driver import lower_intent_json_to_c_with_fil
 from backends.spmd_rvv.analysis.device_query import load_profile  # noqa: E402
 from backends.spmd_rvv.analysis.tuning import TuningRequest, parse_constraints, parse_locks, select_schedule  # noqa: E402
 from intent_ir.ir import IntentFunction  # noqa: E402
-from intent_ir.macros import expand_macros  # noqa: E402
+from intent_ir.macros import expand_macros_json  # noqa: E402
 from verify.diff_runner import _with_io_aliases as _with_io_aliases_for_diff  # noqa: E402
 
 
@@ -110,11 +110,10 @@ def _artifact_dir_for_frontend(frontend: str, *, triton_provider: str = "native"
 
 
 def _load_intent(report: dict) -> IntentFunction:
-    intent_macro = IntentFunction.from_json_dict(report["intent"])
     intent_expanded_json = report.get("intent_expanded")
-    if isinstance(intent_expanded_json, dict):
-        return IntentFunction.from_json_dict(intent_expanded_json)
-    return expand_macros(intent_macro)
+    if not isinstance(intent_expanded_json, dict):
+        intent_expanded_json = expand_macros_json(dict(report["intent"]))
+    return IntentFunction.from_json_dict(intent_expanded_json)
 
 
 def _external_inputs(intent: IntentFunction) -> tuple[list[str], list[str]]:
