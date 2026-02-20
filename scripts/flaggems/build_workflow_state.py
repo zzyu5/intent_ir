@@ -668,6 +668,11 @@ def main() -> None:
     branch = _git(["git", "branch", "--show-current"]) or "unknown"
     head_commit = _git(["git", "rev-parse", "HEAD"]) or "unknown"
     coverage_batches_payload = load_json(args.coverage_batches) if args.coverage_batches.is_file() else {}
+    gpu_perf_categories_expected_full = None
+    try:
+        gpu_perf_categories_expected_full = int(len(list(coverage_batches_payload.get("family_order") or [])))
+    except Exception:
+        gpu_perf_categories_expected_full = None
     if coverage_batches_expected is None:
         try:
             coverage_batches_expected = int(len(list(coverage_batches_payload.get("family_order") or [])))
@@ -730,6 +735,17 @@ def main() -> None:
         gpu_perf_phase = "recomputed_ok" if bool(gpu_perf_last_ok) else "recomputed_failed"
     else:
         gpu_perf_phase = "recompute_pending"
+    gpu_perf_scope_full = None
+    if gpu_perf_last_run:
+        if gpu_perf_categories_expected_full is None:
+            gpu_perf_scope_full = None
+        else:
+            gpu_perf_scope_full = (
+                gpu_perf_categories_expected is not None
+                and int(gpu_perf_categories_expected) == int(gpu_perf_categories_expected_full)
+            )
+        if gpu_perf_scope_full is False and gpu_perf_phase == "recomputed_ok":
+            gpu_perf_phase = "recompute_stale"
 
     git_log_short = read_git_log(cwd=ROOT, lines=int(args.git_log_lines))
     next_focus = _parse_next_focus(args.handoff) or str(latest.get("next_focus") or "")
@@ -877,6 +893,8 @@ def main() -> None:
         gpu_perf_categories_expected=gpu_perf_categories_expected,
         gpu_perf_categories_completed=gpu_perf_categories_completed,
         gpu_perf_categories_failed=gpu_perf_categories_failed,
+        gpu_perf_categories_expected_full=gpu_perf_categories_expected_full,
+        gpu_perf_scope_full=gpu_perf_scope_full,
         catalog_path=_to_repo_rel(args.scripts_catalog),
         catalog_validated=catalog_exists,
         active_lanes=active_lanes,

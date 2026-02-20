@@ -184,14 +184,28 @@ def _validate_gpu_perf_categories_complete(current_status_path: Path) -> tuple[b
     if not current_status_path.is_file():
         return False, f"missing current_status: {current_status_path}"
     status = _load_json(current_status_path)
+    scope_full = status.get("gpu_perf_scope_full")
+    expected_full = status.get("gpu_perf_categories_expected_full")
     expected = status.get("gpu_perf_categories_expected")
     completed = status.get("gpu_perf_categories_completed")
     failed = [str(x) for x in list(status.get("gpu_perf_categories_failed") or []) if str(x).strip()]
+    if scope_full is False:
+        return False, "gpu perf categories are from partial family run (gpu_perf_scope_full=false)"
     try:
         expected_i = int(expected)
         completed_i = int(completed)
     except Exception:
         return False, "gpu perf category counters missing/invalid in current_status"
+    if expected_full is not None:
+        try:
+            expected_full_i = int(expected_full)
+        except Exception:
+            return False, f"invalid gpu_perf_categories_expected_full={expected_full}"
+        if expected_i != expected_full_i:
+            return False, (
+                "gpu perf categories expected does not cover full family set: "
+                f"expected={expected_i} full_expected={expected_full_i}"
+            )
     if expected_i <= 0:
         return False, f"gpu_perf_categories_expected={expected_i} (expected >0)"
     if completed_i != expected_i:
