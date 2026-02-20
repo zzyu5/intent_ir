@@ -1,11 +1,11 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-19T21:10:10+00:00
-- Commit: `6420886b4a1ce2dc42b93b9efaa8119579fd01bb`
-- Lane: `mlir_migration`
-- Summary: Made optional mlir-opt/mlir-translate passes fail-soft; keep pipeline green with explicit skip reasons for LLVM chain.
+- Timestamp: 2026-02-20T16:24:00+00:00
+- Commit: `8616eb370bceea494aa0f1b5f220491c5796539a`
+- Lane: `backend_compiler`
+- Summary: Validated chunk progress file on real gpu-perf family run (reduction 2/2).
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/flaggems_matrix/daily/20260220/matrix_mlir_llvm_stage_smoke_v3/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260220/matrix_mlir_llvm_stage_smoke_v3/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260220/matrix_mlir_llvm_stage_smoke_v3/pipeline_reports/add2d.json, artifacts/flaggems_matrix/daily/20260220/matrix_mlir_llvm_stage_smoke_v3/run_summary.json, artifacts/flaggems_matrix/daily/20260220/matrix_mlir_llvm_stage_smoke_v3/status_converged.json
-- Next Focus: Implement real intent dialect lowering pass to LLVM-compatible MLIR for non-skip llvm_emit_ok.
+- Run Summary: `artifacts/flaggems_matrix/daily/20260220/gpu_perf_progress_sanity_v1/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260220/gpu_perf_progress_sanity_v1/status_converged.json`
+- Evidence Paths: artifacts/flaggems_matrix/daily/20260220/gpu_perf_progress_sanity_v1/chunk_progress.json, artifacts/flaggems_matrix/daily/20260220/gpu_perf_progress_sanity_v1/gpu_perf_graph.json, artifacts/flaggems_matrix/daily/20260220/gpu_perf_progress_sanity_v1/run_summary.json, artifacts/flaggems_matrix/daily/20260220/gpu_perf_progress_sanity_v1/status_converged.json
+- Next Focus: Continue MLIR migration lane while keeping gpu_perf category reruns on touched families/chunks.

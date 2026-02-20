@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-20T16:22:20+00:00",
+  "updated_at": "2026-02-20T16:26:05+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,30 +13,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "e491e99 feat(perf): stabilize gpu perf gate and add chunk progress artifacts\na84e391 fix(nightly): keep suite=all default gate profile compatible\nf548a85 feat(nightly): wire gpu perf graph suite into nightly workflow\n6d670f7 feat(perf-gate): add gpu graph benchmark profile with workflow freshness\n820b59b workflow: record optional-pass fail-soft migration step\n41452e9 mlir: make optional external passes fail-soft with explicit skip reasons\n6420886 workflow: refresh state snapshots after mlir provisioning commits\nbfe6527 workflow: record mlir toolchain provisioning progress and refresh state\ncf4ddcf mlir: add no-sudo local toolchain provisioning and auto-discovery\n08909c7 workflow: refresh state after mlir-only batch/llvm artifact cutover\n10269ac mlir: enforce mlir-only batch path and add llvm artifact completeness stage\n9f22367 mlir: harden toolchain discovery and enforce mlir-only execution-ir in unified cli\naace53c workflow: record full196 head-refresh run and mlir bridge hard-cut session\n774617b mlir: hard-cut backend drivers to mlir payloads and remove bridge module\n9546016 workflow: record mlir core artifact cutover session and refresh state\n8990246 mlir: switch frontend core artifact writes to intent dialect text and refresh full196 workflow state\n923c8fb workflow: refresh status after category batch reruns\n4b3810d workflow: record attention_sequence batch evidence and stale full196\n9e8abd7 workflow: refresh state after mlir contract guard tests\n62f51ac test: guard cuda/rvv pipeline drivers against mlir bridge regressions",
+  "git_log_short": "8616eb3 workflow: refresh gpu perf state and session snapshots\ne491e99 feat(perf): stabilize gpu perf gate and add chunk progress artifacts\na84e391 fix(nightly): keep suite=all default gate profile compatible\nf548a85 feat(nightly): wire gpu perf graph suite into nightly workflow\n6d670f7 feat(perf-gate): add gpu graph benchmark profile with workflow freshness\n820b59b workflow: record optional-pass fail-soft migration step\n41452e9 mlir: make optional external passes fail-soft with explicit skip reasons\n6420886 workflow: refresh state snapshots after mlir provisioning commits\nbfe6527 workflow: record mlir toolchain provisioning progress and refresh state\ncf4ddcf mlir: add no-sudo local toolchain provisioning and auto-discovery\n08909c7 workflow: refresh state after mlir-only batch/llvm artifact cutover\n10269ac mlir: enforce mlir-only batch path and add llvm artifact completeness stage\n9f22367 mlir: harden toolchain discovery and enforce mlir-only execution-ir in unified cli\naace53c workflow: record full196 head-refresh run and mlir bridge hard-cut session\n774617b mlir: hard-cut backend drivers to mlir payloads and remove bridge module\n9546016 workflow: record mlir core artifact cutover session and refresh state\n8990246 mlir: switch frontend core artifact writes to intent dialect text and refresh full196 workflow state\n923c8fb workflow: refresh status after category batch reruns\n4b3810d workflow: record attention_sequence batch evidence and stale full196\n9e8abd7 workflow: refresh state after mlir contract guard tests",
   "progress_tail": [
-    {
-      "ts": "2026-02-19T21:08:00+00:00",
-      "commit": "08909c745bc50ff371b39e1c1fd6e56400defc3c",
-      "lane": "mlir_migration",
-      "summary": "Provisioned local MLIR toolchain (no-sudo) and wired MLIR toolchain auto-discovery + unified CLI subcommand.",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_mlir_migration.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260220/matrix_mlir_llvm_stage_smoke_v2/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260220/matrix_mlir_llvm_stage_smoke_v2/status_converged.json",
-      "next_focus": "Run category-batch coverage on HEAD and refresh full196 evidence chain using MLIR-only path.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260220/matrix_mlir_llvm_stage_smoke_v2/mlir_llvm_artifacts.json",
-        "artifacts/flaggems_matrix/daily/20260220/matrix_mlir_llvm_stage_smoke_v2/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260220/matrix_mlir_llvm_stage_smoke_v2/status_converged.json",
-        "artifacts/flaggems_matrix/daily/20260220/mlir_toolchain_provision_v1.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260220/matrix_mlir_llvm_stage_smoke_v2",
-      "counts_by_status": {
-        "blocked_backend": 196
-      }
-    },
     {
       "ts": "2026-02-19T21:10:10+00:00",
       "commit": "6420886b4a1ce2dc42b93b9efaa8119579fd01bb",
@@ -171,9 +149,29 @@
         "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v7/ci_gate.json",
         "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v7/nightly_maintenance_summary.json"
       ]
+    },
+    {
+      "ts": "2026-02-20T16:24:00+00:00",
+      "commit": "8616eb370bceea494aa0f1b5f220491c5796539a",
+      "lane": "backend_compiler",
+      "summary": "Validated chunk progress file on real gpu-perf family run (reduction 2/2).",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260220/gpu_perf_progress_sanity_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260220/gpu_perf_progress_sanity_v1/status_converged.json",
+      "next_focus": "Continue MLIR migration lane while keeping gpu_perf category reruns on touched families/chunks.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260220/gpu_perf_progress_sanity_v1/chunk_progress.json",
+        "artifacts/flaggems_matrix/daily/20260220/gpu_perf_progress_sanity_v1/gpu_perf_graph.json",
+        "artifacts/flaggems_matrix/daily/20260220/gpu_perf_progress_sanity_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260220/gpu_perf_progress_sanity_v1/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
     }
   ],
-  "next_focus": "Implement real intent dialect lowering pass to LLVM-compatible MLIR for non-skip llvm_emit_ok.",
+  "next_focus": "Continue MLIR migration lane while keeping gpu_perf category reruns on touched families/chunks.",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
   "active_lanes": [
     "backend_compiler",
@@ -181,7 +179,7 @@
   ],
   "next_focus_by_lane": {
     "mlir_migration": "Implement real intent dialect lowering pass to LLVM-compatible MLIR for non-skip llvm_emit_ok.",
-    "backend_compiler": "Refresh failed gpu perf families/chunks and rerun nightly aggregate.",
+    "backend_compiler": "Continue MLIR migration lane while keeping gpu_perf category reruns on touched families/chunks.",
     "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD."
   },
   "known_risks": [

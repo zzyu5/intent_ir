@@ -1,16 +1,16 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-20T16:22:20+00:00",
+  "updated_at": "2026-02-20T16:26:05+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "e491e99e677654c05a72bfb1f09569544b426bb3",
+  "head_commit": "8616eb370bceea494aa0f1b5f220491c5796539a",
   "mode": "maintenance",
   "coverage_integrity_phase": "recompute_stale",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260220/full196_mlir_head_refresh_v1/run_summary.json",
   "full196_last_ok": true,
   "full196_validated_commit": "95460169a4b043cc3a6d01413dc3593945100e33",
   "full196_validated_commit_source": "run_summary.repo.head_commit",
-  "full196_commits_since_validated": 14,
-  "full196_commits_since_validated_total": 14,
+  "full196_commits_since_validated": 15,
+  "full196_commits_since_validated_total": 15,
   "full196_lifted_to_head": false,
   "full196_validated_mode": "force_compile",
   "full196_validated_execution_ir": "mlir",
@@ -33,27 +33,29 @@
   "mlir_llvm_chain_ok": true,
   "mlir_full196_validated_commit": "",
   "gpu_perf_phase": "recompute_stale",
-  "gpu_perf_last_run": "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v7/run_summary.json",
+  "gpu_perf_last_run": "artifacts/flaggems_matrix/daily/20260220/gpu_perf_progress_sanity_v1/run_summary.json",
   "gpu_perf_last_ok": true,
-  "gpu_perf_validated_commit": "a84e391003d021d2bf09bb30cd0c2c414add289c",
-  "gpu_perf_commits_since_validated": 1,
+  "gpu_perf_validated_commit": "8616eb370bceea494aa0f1b5f220491c5796539a",
+  "gpu_perf_commits_since_validated": 0,
   "gpu_perf_mode": "graph_only",
   "gpu_perf_threshold": 0.8,
   "gpu_perf_devices": [
     {
       "gpu_name": "NVIDIA GeForce RTX 4080 SUPER",
-      "kernel_total": 159,
-      "kernel_measured": 5,
-      "kernel_pass": 5,
+      "kernel_total": 17,
+      "kernel_measured": 3,
+      "kernel_pass": 3,
       "kernel_fail": 0,
       "ok": true,
-      "min_ratio": 0.9009177199878432
+      "min_ratio": 0.9065406503842066
     }
   ],
   "gpu_perf_failures_by_family": {},
-  "gpu_perf_categories_expected": 7,
-  "gpu_perf_categories_completed": 7,
+  "gpu_perf_categories_expected": 1,
+  "gpu_perf_categories_completed": 1,
   "gpu_perf_categories_failed": [],
+  "gpu_perf_categories_expected_full": 7,
+  "gpu_perf_scope_full": false,
   "coverage": {
     "semantic_ops": 196,
     "dual_pass": 196,
@@ -128,12 +130,12 @@
   ],
   "next_focus_by_lane": {
     "mlir_migration": "Implement real intent dialect lowering pass to LLVM-compatible MLIR for non-skip llvm_emit_ok.",
-    "backend_compiler": "Refresh failed gpu perf families/chunks and rerun nightly aggregate.",
+    "backend_compiler": "Continue MLIR migration lane while keeping gpu_perf category reruns on touched families/chunks.",
     "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v7/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v7/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260220/gpu_perf_progress_sanity_v1/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260220/gpu_perf_progress_sanity_v1/status_converged.json"
   },
   "lanes": {
     "coverage": {
