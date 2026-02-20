@@ -1,11 +1,11 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-20T23:40:54+00:00
-- Commit: `dc1fd43`
+- Timestamp: 2026-02-20T23:46:15+00:00
+- Commit: `3c13ca4`
 - Lane: `mlir_migration`
-- Summary: switch cuda/rvv backend pipeline emit stages to contract-json codegen entrypoints and remove direct IntentFunction bridge in drivers
+- Summary: migrate cuda/rvv smoke+perf scripts to JSON codegen entrypoints while preserving compatibility wrappers
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/flaggems_matrix/daily/20260221/matrix_contract_json_smoke_v1/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260221/matrix_contract_json_smoke_v1/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260221/matrix_contract_json_smoke_v1/run_summary.json, artifacts/flaggems_matrix/daily/20260221/matrix_contract_json_smoke_v1/status_converged.json, tests/backends/cuda/test_cuda_pipeline_driver.py, tests/backends/test_mlir_contract_cutover.py
-- Next Focus: continue MLIR hard-cut by removing remaining IntentFunction-only backend entrypoints and then refresh 7/7 full196 freshness
+- Run Summary: `artifacts/flaggems_matrix/daily/20260221/matrix_contract_json_smoke_v2/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260221/matrix_contract_json_smoke_v2/status_converged.json`
+- Evidence Paths: artifacts/flaggems_matrix/daily/20260221/cuda_backend_smoke_jsonentry_v1.json, artifacts/flaggems_matrix/daily/20260221/matrix_contract_json_smoke_v2/run_summary.json, artifacts/flaggems_matrix/daily/20260221/matrix_contract_json_smoke_v2/status_converged.json, artifacts/flaggems_matrix/daily/20260221/rvv_backend_codegen_smoke_jsonentry_v1.json, tests/backends/test_mlir_contract_cutover.py, tests/test_backend_codegen_smoke_timings.py
+- Next Focus: remove remaining IntentFunction-only lowering calls in runtime tooling and then refresh full196 freshness on HEAD
