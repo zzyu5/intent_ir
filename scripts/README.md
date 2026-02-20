@@ -58,6 +58,7 @@ python scripts/validate_catalog.py
 
 - `scripts/backend_codegen_smoke.py`: RVV local smoke from pipeline artifacts.
 - `scripts/cuda_backend_smoke.py`: CUDA local smoke from pipeline artifacts.
+- `scripts/flaggems/run_gpu_perf_graph.py`: Triton native vs IntentIR CUDA Graph perf runner (family/chunk/resume).
 - `scripts/rvv_remote_suite.py`: remote RVV suite execution.
 - `scripts/rvv_remote_run.py`: single-kernel remote RVV run.
 - `scripts/flaggems/run_backend_compiler_batch.py`: backend compiler lane batch runner.

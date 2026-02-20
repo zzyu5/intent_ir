@@ -22,9 +22,30 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from pipeline.triton.providers.flaggems.workflow import append_progress_log, utc_now_iso  # noqa: E402
+
 
 def _utc_date_tag() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d")
+
+
+def _to_repo_rel(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(ROOT))
+    except Exception:
+        return str(path)
+
+
+def _git_head_commit() -> str:
+    p = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    if p.returncode != 0:
+        return "unknown"
+    return str(p.stdout or "").strip() or "unknown"
 
 
 def _run(cmd: list[str], *, cwd: Path, dry_run: bool) -> tuple[int, str, str]:
@@ -36,7 +57,7 @@ def _run(cmd: list[str], *, cwd: Path, dry_run: bool) -> tuple[int, str, str]:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--suite", choices=["smoke", "coverage", "all"], default="coverage")
+    ap.add_argument("--suite", choices=["smoke", "coverage", "gpu_perf", "all"], default="coverage")
     ap.add_argument(
         "--coverage-mode",
         choices=["single_run", "category_batches"],
@@ -116,6 +137,34 @@ def main() -> None:
         default=False,
         help="Pass --write-registry to matrix run (default: false).",
     )
+    ap.add_argument(
+        "--gpu-perf-threshold",
+        type=float,
+        default=0.80,
+        help="GPU perf gate threshold for --suite gpu_perf (default: 0.80).",
+    )
+    ap.add_argument("--perf-warmup", type=int, default=20)
+    ap.add_argument("--perf-iters", type=int, default=200)
+    ap.add_argument("--perf-repeats", type=int, default=5)
+    ap.add_argument("--progress-style", choices=["auto", "tqdm", "plain", "chunk", "none"], default="chunk")
+    ap.add_argument("--family-kernel-chunk-size", type=int, default=12)
+    ap.add_argument(
+        "--gpu-perf-family",
+        action="append",
+        default=[],
+        help="Optional family filter for --suite gpu_perf (repeatable).",
+    )
+    ap.add_argument(
+        "--progress-log",
+        type=Path,
+        default=(ROOT / "workflow" / "flaggems" / "state" / "progress_log.jsonl"),
+    )
+    ap.add_argument(
+        "--append-progress",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Append nightly result to workflow progress log (default: true).",
+    )
     ap.add_argument("--out-root", type=Path, default=(ROOT / "artifacts" / "flaggems_matrix" / "daily"))
     ap.add_argument("--date-tag", default=_utc_date_tag())
     ap.add_argument("--run-name", default="nightly_maintenance")
@@ -157,8 +206,9 @@ def main() -> None:
         and str(args.lane) == "coverage"
         and str(args.coverage_mode) == "category_batches"
     )
+    use_gpu_perf = bool(str(args.suite) == "gpu_perf")
 
-    if use_category_batches:
+    if use_category_batches or use_gpu_perf:
         build_batches_cmd: list[str] = [
             sys.executable,
             "scripts/flaggems/build_coverage_batches.py",
@@ -170,41 +220,77 @@ def main() -> None:
         else:
             build_batches_rc, build_batches_out, build_batches_err = (1, "", "catalog validation failed")
 
-        matrix_cmd = [
-            sys.executable,
-            "scripts/intentir.py",
-            "suite",
-            "--suite",
-            "flaggems-full196",
-            "--out-root",
-            str(out_dir),
-            "--cases-limit",
-            str(int(args.cases_limit)),
-            "--flaggems-path",
-            str(args.flaggems_path),
-            "--intentir-mode",
-            str(args.intentir_mode),
-            "--intentir-miss-policy",
-            miss_policy,
-            "--rvv-host",
-            str(args.rvv_host),
-            "--rvv-user",
-            str(args.rvv_user),
-            "--rvv-port",
-            str(int(args.rvv_port)),
-            "--cuda-runtime-backend",
-            str(args.cuda_runtime_backend),
-            "--stream",
-            "--resume",
-            "--allow-cuda-skip" if bool(args.allow_cuda_skip) else "--no-allow-cuda-skip",
-            "--run-rvv-remote" if bool(args.run_rvv_remote) else "--no-run-rvv-remote",
-            "--skip-rvv-local" if bool(args.skip_rvv_local) else "--no-skip-rvv-local",
-            "--rvv-use-key" if bool(args.rvv_use_key) else "--no-rvv-use-key",
-        ]
-        if bool(args.write_registry):
-            matrix_cmd.append("--write-registry")
-        if bool(args.dry_run):
-            matrix_cmd.append("--dry-run")
+        if use_category_batches:
+            matrix_cmd = [
+                sys.executable,
+                "scripts/intentir.py",
+                "suite",
+                "--suite",
+                "flaggems-full196",
+                "--out-root",
+                str(out_dir),
+                "--cases-limit",
+                str(int(args.cases_limit)),
+                "--flaggems-path",
+                str(args.flaggems_path),
+                "--intentir-mode",
+                str(args.intentir_mode),
+                "--intentir-miss-policy",
+                miss_policy,
+                "--rvv-host",
+                str(args.rvv_host),
+                "--rvv-user",
+                str(args.rvv_user),
+                "--rvv-port",
+                str(int(args.rvv_port)),
+                "--cuda-runtime-backend",
+                str(args.cuda_runtime_backend),
+                "--family-kernel-chunk-size",
+                str(int(args.family_kernel_chunk_size)),
+                "--progress-style",
+                str(args.progress_style),
+                "--stream",
+                "--resume",
+                "--allow-cuda-skip" if bool(args.allow_cuda_skip) else "--no-allow-cuda-skip",
+                "--run-rvv-remote" if bool(args.run_rvv_remote) else "--no-run-rvv-remote",
+                "--skip-rvv-local" if bool(args.skip_rvv_local) else "--no-skip-rvv-local",
+                "--rvv-use-key" if bool(args.rvv_use_key) else "--no-rvv-use-key",
+            ]
+            if bool(args.write_registry):
+                matrix_cmd.append("--write-registry")
+            if bool(args.dry_run):
+                matrix_cmd.append("--dry-run")
+        else:
+            matrix_cmd = [
+                sys.executable,
+                "scripts/intentir.py",
+                "suite",
+                "--suite",
+                "gpu-perf-graph",
+                "--out-root",
+                str(out_dir),
+                "--gpu-perf-threshold",
+                str(float(args.gpu_perf_threshold)),
+                "--perf-warmup",
+                str(int(args.perf_warmup)),
+                "--perf-iters",
+                str(int(args.perf_iters)),
+                "--perf-repeats",
+                str(int(args.perf_repeats)),
+                "--family-kernel-chunk-size",
+                str(int(args.family_kernel_chunk_size)),
+                "--progress-style",
+                str(args.progress_style),
+                "--cuda-runtime-backend",
+                str(args.cuda_runtime_backend),
+                "--stream",
+                "--resume",
+            ]
+            for fam in list(args.gpu_perf_family or []):
+                if str(fam).strip():
+                    matrix_cmd += ["--family", str(fam).strip()]
+            if bool(args.dry_run):
+                matrix_cmd.append("--dry-run")
     else:
         build_batches_cmd = []
         build_batches_rc, build_batches_out, build_batches_err = (0, "", "")
@@ -316,9 +402,22 @@ def main() -> None:
     ]
     profiles_raw = list(args.ci_profiles or [])
     if not profiles_raw:
-        profiles_raw = ["coverage"]
+        if str(args.suite) == "gpu_perf":
+            profiles_raw = ["gpu_perf"]
+        elif str(args.suite) == "all":
+            profiles_raw = ["coverage,gpu_perf"]
+        else:
+            profiles_raw = ["coverage"]
+    profiles_flat: list[str] = []
+    for raw in profiles_raw:
+        for token in str(raw).split(","):
+            prof = str(token).strip()
+            if prof and prof not in profiles_flat:
+                profiles_flat.append(prof)
     for raw in profiles_raw:
         ci_cmd += ["--profiles", str(raw)]
+    if "coverage" not in profiles_flat:
+        ci_cmd += ["--no-require-coverage-fresh-on-head", "--no-require-coverage-categories-complete"]
 
     ci_rc = 0
     ci_out = ""
@@ -330,7 +429,7 @@ def main() -> None:
     recompute_skipped = False
     if matrix_rc == 0:
         ci_rc, ci_out, ci_err = _run(ci_cmd, cwd=ROOT, dry_run=bool(args.dry_run))
-        if bool(args.recompute_coverage_integrity):
+        if bool(args.recompute_coverage_integrity) and ("coverage" in profiles_flat):
             recompute_cmd = [
                 sys.executable,
                 "scripts/flaggems/recompute_coverage_integrity.py",
@@ -404,6 +503,60 @@ def main() -> None:
     }
     summary_path = out_dir / "nightly_maintenance_summary.json"
     summary_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    progress_rc = 0
+    progress_err = ""
+    if bool(args.append_progress) and (not bool(args.dry_run)):
+        try:
+            lane = "backend_compiler" if str(args.suite) == "gpu_perf" else str(args.lane)
+            entry: dict[str, Any] = {
+                "ts": utc_now_iso(),
+                "commit": _git_head_commit(),
+                "lane": lane,
+                "summary": f"nightly suite={args.suite} matrix_rc={matrix_rc} ci_rc={ci_rc}",
+                "batch_ops": [],
+                "active_batch_path": f"workflow/flaggems/state/active_batch_{lane}.json",
+                "run_summary_path": _to_repo_rel(run_summary_path),
+                "status_converged_path": _to_repo_rel(status_converged_path),
+                "next_focus": (
+                    "Refresh failed gpu perf families/chunks and rerun nightly aggregate."
+                    if str(args.suite) == "gpu_perf"
+                    else "Continue nightly drift checks and keep gates green."
+                ),
+                "run_ok": bool(payload.get("ok")),
+                "run_out_dir": _to_repo_rel(out_dir),
+                "evidence_paths": [
+                    _to_repo_rel(run_summary_path),
+                    _to_repo_rel(status_converged_path),
+                    _to_repo_rel(ci_gate_path),
+                    _to_repo_rel(summary_path),
+                ],
+            }
+            append_progress_log(progress_log_path=args.progress_log, entry=entry)
+            payload["results"]["progress_log"] = {
+                "rc": 0,
+                "path": _to_repo_rel(args.progress_log),
+            }
+            payload["commands"]["progress_log"] = ["append_progress_log", _to_repo_rel(args.progress_log)]
+            summary_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception as e:  # noqa: BLE001
+            progress_rc = 1
+            progress_err = f"{type(e).__name__}: {e}"
+            payload["results"]["progress_log"] = {
+                "rc": 1,
+                "path": _to_repo_rel(args.progress_log),
+                "stderr": progress_err,
+            }
+            payload["ok"] = False
+            summary_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    else:
+        payload["results"]["progress_log"] = {
+            "rc": 0,
+            "skipped": bool(args.dry_run) or (not bool(args.append_progress)),
+            "path": _to_repo_rel(args.progress_log),
+        }
+        summary_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
     workflow_state_cmd = [
         sys.executable,
         "scripts/flaggems/build_workflow_state.py",
@@ -419,7 +572,7 @@ def main() -> None:
             "stderr": str(workflow_state_err).strip(),
         }
         payload["commands"]["workflow_state"] = workflow_state_cmd
-        payload["ok"] = bool(payload.get("ok")) and bool(workflow_state_rc == 0)
+        payload["ok"] = bool(payload.get("ok")) and bool(workflow_state_rc == 0) and bool(progress_rc == 0)
         summary_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"Nightly maintenance summary written: {summary_path}")
     raise SystemExit(0 if bool(payload.get("ok")) else 1)

@@ -124,6 +124,21 @@ python scripts/flaggems/nightly_maintenance.py \
   --cuda-runtime-backend nvrtc
 ```
 
+GPU perf nightly (CUDA Graph, Triton-native 대비 ratio gate):
+
+```bash
+python scripts/flaggems/nightly_maintenance.py \
+  --suite gpu_perf \
+  --ci-profiles gpu_perf \
+  --gpu-perf-threshold 0.80 \
+  --perf-warmup 20 \
+  --perf-iters 200 \
+  --perf-repeats 5 \
+  --family-kernel-chunk-size 12 \
+  --progress-style chunk \
+  --cuda-runtime-backend nvrtc
+```
+
 Use `--dry-run` to inspect composed commands without executing.
 
 Scheduler wrapper:
@@ -144,6 +159,13 @@ Environment overrides:
 - `FLAGGEMS_NIGHTLY_MAX_REGRESSION_RATIO`
 - `FLAGGEMS_NIGHTLY_LANE`
 - `FLAGGEMS_NIGHTLY_CI_PROFILES` (comma-separated)
+- `FLAGGEMS_NIGHTLY_GPU_PERF_THRESHOLD` (default `0.80`)
+- `FLAGGEMS_NIGHTLY_PERF_WARMUP` (default `20`)
+- `FLAGGEMS_NIGHTLY_PERF_ITERS` (default `200`)
+- `FLAGGEMS_NIGHTLY_PERF_REPEATS` (default `5`)
+- `FLAGGEMS_NIGHTLY_FAMILY_KERNEL_CHUNK_SIZE` (default `12`)
+- `FLAGGEMS_NIGHTLY_PROGRESS_STYLE` (`chunk|plain|tqdm|none`)
+- `FLAGGEMS_NIGHTLY_GPU_PERF_FAMILIES` (comma-separated family filter for `--suite gpu_perf`)
 - `FLAGGEMS_NIGHTLY_RUN_RVV_REMOTE` (`1|0`)
 - `FLAGGEMS_NIGHTLY_RVV_USE_KEY` (`1|0`)
 - `FLAGGEMS_NIGHTLY_ALLOW_CUDA_SKIP` (`1|0`)

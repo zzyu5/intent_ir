@@ -22,6 +22,13 @@ MAX_REGRESSION_RATIO="${FLAGGEMS_NIGHTLY_MAX_REGRESSION_RATIO:-0.5}"
 LANE="${FLAGGEMS_NIGHTLY_LANE:-coverage}"
 CI_PROFILES="${FLAGGEMS_NIGHTLY_CI_PROFILES:-coverage}"
 COVERAGE_MODE="${FLAGGEMS_NIGHTLY_COVERAGE_MODE:-category_batches}"
+GPU_PERF_THRESHOLD="${FLAGGEMS_NIGHTLY_GPU_PERF_THRESHOLD:-0.80}"
+PERF_WARMUP="${FLAGGEMS_NIGHTLY_PERF_WARMUP:-20}"
+PERF_ITERS="${FLAGGEMS_NIGHTLY_PERF_ITERS:-200}"
+PERF_REPEATS="${FLAGGEMS_NIGHTLY_PERF_REPEATS:-5}"
+FAMILY_KERNEL_CHUNK_SIZE="${FLAGGEMS_NIGHTLY_FAMILY_KERNEL_CHUNK_SIZE:-12}"
+PROGRESS_STYLE="${FLAGGEMS_NIGHTLY_PROGRESS_STYLE:-chunk}"
+GPU_PERF_FAMILIES="${FLAGGEMS_NIGHTLY_GPU_PERF_FAMILIES:-}"
 
 RUN_RVV_REMOTE="${FLAGGEMS_NIGHTLY_RUN_RVV_REMOTE:-1}"
 RVV_USE_KEY="${FLAGGEMS_NIGHTLY_RVV_USE_KEY:-1}"
@@ -57,6 +64,12 @@ CMD=(
   --max-regression-ratio "$MAX_REGRESSION_RATIO"
   --coverage-mode "$COVERAGE_MODE"
   --lane "$LANE"
+  --gpu-perf-threshold "$GPU_PERF_THRESHOLD"
+  --perf-warmup "$PERF_WARMUP"
+  --perf-iters "$PERF_ITERS"
+  --perf-repeats "$PERF_REPEATS"
+  --family-kernel-chunk-size "$FAMILY_KERNEL_CHUNK_SIZE"
+  --progress-style "$PROGRESS_STYLE"
 )
 
 if [[ "$RUN_RVV_REMOTE" == "1" ]]; then
@@ -84,6 +97,12 @@ fi
 for profile in ${CI_PROFILES//,/ }; do
   if [[ -n "${profile}" ]]; then
     CMD+=(--ci-profiles "$profile")
+  fi
+done
+
+for family in ${GPU_PERF_FAMILIES//,/ }; do
+  if [[ -n "${family}" ]]; then
+    CMD+=(--gpu-perf-family "$family")
   fi
 done
 
