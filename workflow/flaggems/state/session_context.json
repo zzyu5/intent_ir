@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-20T16:53:41+00:00",
+  "updated_at": "2026-02-20T17:19:27+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,27 +13,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "c771bb6 workflow: record mlir llvm smoke evidence and refresh session state\n081dc07 feat(mlir): make llvm artifact chain pass with intent->llvm text bridge\n979ebe6 workflow: refresh status after gpu-perf freshness-lift update\n3fcc84f fix(workflow): lift gpu-perf freshness on state-only commits\n35bff80 workflow: refresh gpu perf 7-7 aggregate evidence and chunk progress session\nb2eedcf workflow: record gpu-perf reduction run and mark full-scope perf stale\n45e98a5 fix(workflow): prevent partial gpu-perf runs from marking full-scope fresh\n8616eb3 workflow: refresh gpu perf state and session snapshots\ne491e99 feat(perf): stabilize gpu perf gate and add chunk progress artifacts\na84e391 fix(nightly): keep suite=all default gate profile compatible\nf548a85 feat(nightly): wire gpu perf graph suite into nightly workflow\n6d670f7 feat(perf-gate): add gpu graph benchmark profile with workflow freshness\n820b59b workflow: record optional-pass fail-soft migration step\n41452e9 mlir: make optional external passes fail-soft with explicit skip reasons\n6420886 workflow: refresh state snapshots after mlir provisioning commits\nbfe6527 workflow: record mlir toolchain provisioning progress and refresh state\ncf4ddcf mlir: add no-sudo local toolchain provisioning and auto-discovery\n08909c7 workflow: refresh state after mlir-only batch/llvm artifact cutover\n10269ac mlir: enforce mlir-only batch path and add llvm artifact completeness stage\n9f22367 mlir: harden toolchain discovery and enforce mlir-only execution-ir in unified cli",
+  "git_log_short": "4e4d1dd feat(matrix): support partial-family runs and rvv remote timeouts\n116ffbc workflow: log reduction chunked mlir coverage evidence\nc771bb6 workflow: record mlir llvm smoke evidence and refresh session state\n081dc07 feat(mlir): make llvm artifact chain pass with intent->llvm text bridge\n979ebe6 workflow: refresh status after gpu-perf freshness-lift update\n3fcc84f fix(workflow): lift gpu-perf freshness on state-only commits\n35bff80 workflow: refresh gpu perf 7-7 aggregate evidence and chunk progress session\nb2eedcf workflow: record gpu-perf reduction run and mark full-scope perf stale\n45e98a5 fix(workflow): prevent partial gpu-perf runs from marking full-scope fresh\n8616eb3 workflow: refresh gpu perf state and session snapshots\ne491e99 feat(perf): stabilize gpu perf gate and add chunk progress artifacts\na84e391 fix(nightly): keep suite=all default gate profile compatible\nf548a85 feat(nightly): wire gpu perf graph suite into nightly workflow\n6d670f7 feat(perf-gate): add gpu graph benchmark profile with workflow freshness\n820b59b workflow: record optional-pass fail-soft migration step\n41452e9 mlir: make optional external passes fail-soft with explicit skip reasons\n6420886 workflow: refresh state snapshots after mlir provisioning commits\nbfe6527 workflow: record mlir toolchain provisioning progress and refresh state\ncf4ddcf mlir: add no-sudo local toolchain provisioning and auto-discovery\n08909c7 workflow: refresh state after mlir-only batch/llvm artifact cutover",
   "progress_tail": [
-    {
-      "ts": "2026-02-20T16:08:31+00:00",
-      "commit": "a84e391003d021d2bf09bb30cd0c2c414add289c",
-      "lane": "backend_compiler",
-      "summary": "nightly suite=gpu_perf matrix_rc=1 ci_rc=0",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v4/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v4/status_converged.json",
-      "next_focus": "Refresh failed gpu perf families/chunks and rerun nightly aggregate.",
-      "run_ok": false,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v4",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v4/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v4/status_converged.json",
-        "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v4/ci_gate.json",
-        "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v4/nightly_maintenance_summary.json"
-      ]
-    },
     {
       "ts": "2026-02-20T16:09:36+00:00",
       "commit": "a84e391003d021d2bf09bb30cd0c2c414add289c",
@@ -176,9 +157,29 @@
         "blocked_backend": 188,
         "cuda_only": 8
       }
+    },
+    {
+      "ts": "2026-02-20T17:19:22+00:00",
+      "commit": "4e4d1dd201efed384c6cb6d5ce155af5f1d04c04",
+      "lane": "coverage",
+      "summary": "attention_sequence family passed with rvv_remote+cuda_local under MLIR force_compile; dual_pass=5/5.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260220/full196_attention_mlir_remote_v1/family_attention_sequence/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260220/full196_attention_mlir_remote_v1/family_attention_sequence/status_converged.json",
+      "next_focus": "Continue family-by-family remote chunk runs; fix reduction chunk_001 timeout tail and then run 7/7 aggregate.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260220/full196_attention_mlir_remote_v1/chunk_progress.json",
+        "artifacts/flaggems_matrix/daily/20260220/full196_attention_mlir_remote_v1/coverage_batch_runs.json",
+        "artifacts/flaggems_matrix/daily/20260220/full196_attention_mlir_remote_v1/family_attention_sequence/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260220/full196_attention_mlir_remote_v1/family_attention_sequence/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
     }
   ],
-  "next_focus": "Roll same MLIR LLVM-complete chunk flow to remaining families and then run 7/7 aggregate freshness on HEAD.",
+  "next_focus": "Continue family-by-family remote chunk runs; fix reduction chunk_001 timeout tail and then run 7/7 aggregate.",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
   "active_lanes": [
     "backend_compiler",
