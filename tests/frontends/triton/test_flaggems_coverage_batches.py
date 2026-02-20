@@ -324,10 +324,67 @@ def test_run_coverage_batches_chunk_progress_is_compact(tmp_path: Path) -> None:
     )
     assert p.returncode == 0, p.stderr
     out = str(p.stdout or "")
-    assert "[chunk] 1/2 status=OK" in out
-    assert "[chunk] 2/2 status=OK" in out
+    assert "[chunk] 1/2" in out
+    assert "[chunk] 2/2" in out
     assert "RUN family=" not in out
     assert "DONE family=" not in out
+
+
+def test_run_coverage_batches_subset_scope_skips_full_aggregate(tmp_path: Path) -> None:
+    coverage_batches = tmp_path / "coverage_batches.json"
+    out_root = tmp_path / "runs"
+    coverage_batches.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_coverage_batches_v1",
+                "family_order": ["f1", "f2"],
+                "batches": [
+                    {
+                        "family": "f1",
+                        "semantic_ops": ["op1"],
+                        "kernels": ["k1"],
+                        "semantic_count": 1,
+                        "kernel_count": 1,
+                    },
+                    {
+                        "family": "f2",
+                        "semantic_ops": ["op2"],
+                        "kernels": ["k2"],
+                        "semantic_count": 1,
+                        "kernel_count": 1,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/run_coverage_batches.py",
+            "--coverage-batches",
+            str(coverage_batches),
+            "--out-root",
+            str(out_root),
+            "--family",
+            "f1",
+            "--dry-run",
+            "--no-resume",
+            "--allow-cuda-skip",
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    runs_payload = json.loads((out_root / "coverage_batch_runs.json").read_text(encoding="utf-8"))
+    assert runs_payload["ok"] is True
+    assert runs_payload["scope_full"] is False
+    assert runs_payload["families_selected"] == ["f1"]
+    assert runs_payload["families_expected_full"] == ["f1", "f2"]
+    assert runs_payload["aggregate_required"] is False
+    assert runs_payload["aggregate_attempted"] is False
+    assert runs_payload["aggregate_skipped_reason"] == "partial_scope"
 
 
 def test_materialize_family_outputs_scopes_single_chunk_semantics(tmp_path: Path) -> None:

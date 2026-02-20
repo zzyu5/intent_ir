@@ -407,6 +407,12 @@ def main() -> None:
     ap.add_argument("--rvv-user", default=os.getenv("INTENTIR_RVV_USER", "ubuntu"))
     ap.add_argument("--rvv-port", type=int, default=22)
     ap.add_argument(
+        "--rvv-remote-timeout-sec",
+        type=int,
+        default=600,
+        help="Timeout (seconds) for rvv_remote stage (0 disables timeout).",
+    )
+    ap.add_argument(
         "--rvv-use-key",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -703,13 +709,22 @@ def main() -> None:
             cmd += ["--kernel", str(k)]
         cmd_run = _with_env_prefix(cmd, rvv_env)
         print("[matrix] stage=rvv_remote", flush=True)
-        rc, out, err = _run(cmd_run, cwd=ROOT, stream_output=bool(args.stream_subprocess_output))
+        rc, out, err, timed_out = _run_with_timeout(
+            cmd_run,
+            cwd=ROOT,
+            stream_output=bool(args.stream_subprocess_output),
+            timeout_sec=int(args.rvv_remote_timeout_sec),
+        )
+        rvv_extra = {"cmd": cmd_run, "json_path": str(rvv_remote_json), "env_overrides": dict(rvv_env)}
+        if bool(timed_out):
+            rvv_extra["reason_code"] = "rvv_remote_timeout"
+            rvv_extra["timeout_sec"] = int(args.rvv_remote_timeout_sec)
         _record(
             "rvv_remote",
             rc,
             out,
             err,
-            extra={"cmd": cmd_run, "json_path": str(rvv_remote_json), "env_overrides": dict(rvv_env)},
+            extra=rvv_extra,
         )
 
     cuda_json = out_dir / "cuda_local.json"
@@ -888,6 +903,7 @@ def main() -> None:
             "cuda_runtime_backend": str(args.cuda_runtime_backend),
             "execution_ir": str(execution_ir),
             "pipeline_timeout_sec": int(args.pipeline_timeout_sec),
+            "rvv_remote_timeout_sec": int(args.rvv_remote_timeout_sec),
         },
         "lane": str(args.lane),
         "requested_suite": str(args.suite),
@@ -913,6 +929,7 @@ def main() -> None:
         ),
         "cuda_runtime_backend": str(args.cuda_runtime_backend),
         "pipeline_timeout_sec": int(args.pipeline_timeout_sec),
+        "rvv_remote_timeout_sec": int(args.rvv_remote_timeout_sec),
         "intentir_miss_policy": miss_policy,
         "schedule_profile_tag": profile_tag,
         "rvv_schedule_overrides": dict(rvv_env),

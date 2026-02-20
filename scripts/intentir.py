@@ -103,6 +103,8 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             str(args.rvv_user),
             "--rvv-port",
             str(int(args.rvv_port)),
+            "--rvv-remote-timeout-sec",
+            str(int(args.rvv_remote_timeout_sec)),
             "--rvv-use-key" if args.rvv_use_key else "--no-rvv-use-key",
             "--resume" if args.resume else "--no-resume",
         )
@@ -176,6 +178,8 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             str(args.rvv_user),
             "--rvv-port",
             str(int(args.rvv_port)),
+            "--rvv-remote-timeout-sec",
+            str(int(args.rvv_remote_timeout_sec)),
             "--rvv-use-key" if args.rvv_use_key else "--no-rvv-use-key",
             "--stream-subprocess-output" if args.stream else "--no-stream-subprocess-output",
         )
@@ -213,6 +217,8 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             str(args.rvv_user),
             "--rvv-port",
             str(int(args.rvv_port)),
+            "--rvv-remote-timeout-sec",
+            str(int(args.rvv_remote_timeout_sec)),
             "--rvv-use-key" if args.rvv_use_key else "--no-rvv-use-key",
             "--stream-subprocess-output" if args.stream else "--no-stream-subprocess-output",
         )
@@ -284,6 +290,8 @@ def _cmd_kernel(args: argparse.Namespace) -> int:
             str(args.rvv_user),
             "--rvv-port",
             str(int(args.rvv_port)),
+            "--rvv-remote-timeout-sec",
+            str(int(args.rvv_remote_timeout_sec)),
             "--rvv-use-key" if args.rvv_use_key else "--no-rvv-use-key",
             "--stream-subprocess-output" if args.stream else "--no-stream-subprocess-output",
         )
@@ -500,6 +508,12 @@ def _build_parser() -> argparse.ArgumentParser:
     suite.add_argument("--rvv-host", default="192.168.8.72")
     suite.add_argument("--rvv-user", default="ubuntu")
     suite.add_argument("--rvv-port", type=int, default=22)
+    suite.add_argument(
+        "--rvv-remote-timeout-sec",
+        type=int,
+        default=600,
+        help="Timeout (seconds) for rvv_remote stage in matrix runs (0 disables).",
+    )
     suite.add_argument("--rvv-use-key", action=argparse.BooleanOptionalAction, default=True)
     suite.add_argument("--allow-cuda-skip", action=argparse.BooleanOptionalAction, default=True)
     suite.add_argument("--cuda-runtime-backend", choices=["auto", "nvcc", "nvrtc"], default="nvrtc")
@@ -527,6 +541,12 @@ def _build_parser() -> argparse.ArgumentParser:
     kernel.add_argument("--rvv-host", default="192.168.8.72")
     kernel.add_argument("--rvv-user", default="ubuntu")
     kernel.add_argument("--rvv-port", type=int, default=22)
+    kernel.add_argument(
+        "--rvv-remote-timeout-sec",
+        type=int,
+        default=600,
+        help="Timeout (seconds) for rvv_remote stage in matrix runs (0 disables).",
+    )
     kernel.add_argument("--rvv-use-key", action=argparse.BooleanOptionalAction, default=True)
     kernel.add_argument("--allow-cuda-skip", action=argparse.BooleanOptionalAction, default=True)
     kernel.add_argument("--cuda-runtime-backend", choices=["auto", "nvcc", "nvrtc"], default="nvrtc")

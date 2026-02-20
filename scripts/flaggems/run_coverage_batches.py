@@ -370,6 +370,12 @@ def main() -> None:
     ap.add_argument("--rvv-host", default="192.168.8.72")
     ap.add_argument("--rvv-user", default="ubuntu")
     ap.add_argument("--rvv-port", type=int, default=22)
+    ap.add_argument(
+        "--rvv-remote-timeout-sec",
+        type=int,
+        default=600,
+        help="Timeout (seconds) for rvv_remote stage in each chunk run (0 disables).",
+    )
     ap.add_argument("--rvv-use-key", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--allow-cuda-skip", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--cuda-timeout-sec", type=int, default=120)
@@ -419,16 +425,18 @@ def main() -> None:
         if isinstance(b, dict) and str(b.get("family") or "").strip()
     }
     requested_families = _normalize_family_list(list(args.family or []))
+    full_scope_families = [f for f in family_order if f in by_family]
     if requested_families:
         families = requested_families
     else:
-        families = [f for f in family_order if f in by_family]
+        families = list(full_scope_families)
     if not families:
         raise SystemExit("no coverage families selected")
 
     unknown = [f for f in families if f not in by_family]
     if unknown:
         raise SystemExit(f"unknown family name(s): {', '.join(unknown)}")
+    scope_full = bool(len(families) == len(full_scope_families) and set(families) == set(full_scope_families))
 
     out_root = Path(args.out_root)
     out_root.mkdir(parents=True, exist_ok=True)
@@ -667,6 +675,8 @@ def main() -> None:
                 str(args.rvv_user),
                 "--rvv-port",
                 str(int(args.rvv_port)),
+                "--rvv-remote-timeout-sec",
+                str(int(args.rvv_remote_timeout_sec)),
                 "--cuda-timeout-sec",
                 str(int(args.cuda_timeout_sec)),
                 "--cuda-compile-timeout-sec",
@@ -846,6 +856,10 @@ def main() -> None:
         "out_root": str(out_root),
         "seed_cache_dir": str(seed_cache_dir),
         "execution_ir": str(args.execution_ir),
+        "rvv_remote_timeout_sec": int(args.rvv_remote_timeout_sec),
+        "families_selected": list(families),
+        "families_expected_full": list(full_scope_families),
+        "scope_full": bool(scope_full),
         "families": family_rows,
         "errors_path": str(failures_path),
         "error_count": int(len(chunk_failures)),
@@ -858,7 +872,11 @@ def main() -> None:
         print(f"Coverage batch errors written: {failures_path} (count={len(chunk_failures)})", flush=True)
 
     aggregate_rc = 0
-    if bool(args.aggregate) and (not bool(args.dry_run)):
+    aggregate_attempted = False
+    aggregate_skipped_reason = ""
+    aggregate_required = bool(args.aggregate and (not args.dry_run) and scope_full)
+    if bool(args.aggregate) and (not bool(args.dry_run)) and bool(scope_full):
+        aggregate_attempted = True
         aggregate_cmd = [
             sys.executable,
             "scripts/flaggems/aggregate_coverage_batches.py",
@@ -884,8 +902,24 @@ def main() -> None:
             stream_output=bool(args.stream_subprocess_output),
             dry_run=False,
         )
+    elif bool(args.aggregate) and (not bool(scope_full)):
+        aggregate_skipped_reason = "partial_scope"
+        print(
+            "[coverage-batches] skip full196 aggregate: selected families do not cover full scope",
+            flush=True,
+        )
+    elif bool(args.aggregate) and bool(args.dry_run):
+        aggregate_skipped_reason = "dry_run"
+    else:
+        aggregate_skipped_reason = "disabled"
 
-    ok = bool(runs_payload["ok"]) and bool(aggregate_rc == 0)
+    runs_payload["aggregate_attempted"] = bool(aggregate_attempted)
+    runs_payload["aggregate_required"] = bool(aggregate_required)
+    runs_payload["aggregate_rc"] = int(aggregate_rc)
+    runs_payload["aggregate_skipped_reason"] = str(aggregate_skipped_reason)
+    runs_summary_path.write_text(json.dumps(runs_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    ok = bool(runs_payload["ok"]) and (bool(aggregate_rc == 0) if bool(aggregate_required) else True)
     _write_chunk_progress_file(
         path=progress_file,
         done=int(chunk_done),
