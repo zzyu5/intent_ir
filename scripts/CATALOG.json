@@ -93,6 +93,16 @@
       "tests": ["tests/frontends/triton/test_flaggems_coverage_batches.py"]
     },
     {
+      "path": "scripts/flaggems/run_gpu_perf_graph.py",
+      "owner_lane": "backend_compiler_rewrite",
+      "purpose": "run Triton-native vs IntentIR-CUDA graph performance by family/chunk and aggregate per-device ratios",
+      "inputs": ["workflow/flaggems/state/coverage_batches.json", "artifacts/flaggems_triton_full_pipeline/*.json"],
+      "outputs": ["artifacts/flaggems_matrix/**/gpu_perf_graph.json", "artifacts/flaggems_matrix/**/stage_timing_breakdown.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_intentir_cli.py", "tests/frontends/triton/test_flaggems_batch_gate.py", "tests/frontends/triton/test_flaggems_ci_gate.py"]
+    },
+    {
       "path": "scripts/flaggems/aggregate_coverage_batches.py",
       "owner_lane": "coverage_integrity",
       "purpose": "aggregate category runs into full196 run_summary/status evidence",

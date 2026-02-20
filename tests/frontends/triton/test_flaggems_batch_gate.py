@@ -1298,3 +1298,183 @@ def test_check_batch_gate_backend_profile_allows_single_outlier_by_default_ratio
         text=True,
     )
     assert p.returncode == 0, p.stderr
+
+
+def test_check_batch_gate_gpu_perf_profile_passes(tmp_path: Path) -> None:
+    active = tmp_path / "active_batch_gpu_perf.json"
+    run_summary = tmp_path / "run_summary_gpu_perf.json"
+    status_converged = tmp_path / "status_converged_gpu_perf.json"
+    progress = tmp_path / "progress_log_gpu_perf.jsonl"
+    handoff = tmp_path / "handoff_gpu_perf.md"
+    current_status = tmp_path / "current_status_gpu_perf.json"
+    gpu_perf = tmp_path / "gpu_perf_graph.json"
+    out = tmp_path / "batch_gate_gpu_perf.json"
+    head = _head_commit()
+
+    active.write_text(json.dumps({"schema_version": "flaggems_active_batch_v2", "lane": "coverage", "items": []}), encoding="utf-8")
+    gpu_perf.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_gpu_perf_graph_v1",
+                "mode": "graph_only",
+                "coverage_batches_expected": 7,
+                "coverage_batches_completed": 7,
+                "coverage_batches_failed": [],
+                "devices": [{"gpu_name": "GPU0", "ok": True}],
+                "entries": [
+                    {
+                        "kernel": "add2d",
+                        "family": "elementwise_broadcast",
+                        "count_in_denominator": True,
+                        "ratio": 0.91,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    run_summary.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "stages": [{"stage": "gpu_perf_graph", "ok": True, "json_path": str(gpu_perf)}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    status_converged.write_text(json.dumps({"entries": []}), encoding="utf-8")
+    progress.write_text(
+        json.dumps({"run_summary_path": str(run_summary), "status_converged_path": str(status_converged)}) + "\n",
+        encoding="utf-8",
+    )
+    handoff.write_text("# FlagGems Session Handoff\n- Next Focus: perf\n", encoding="utf-8")
+    current_status.write_text(
+        json.dumps(
+            {
+                "gpu_perf_phase": "recomputed_ok",
+                "gpu_perf_validated_commit": head,
+                "gpu_perf_commits_since_validated": 0,
+                "gpu_perf_categories_expected": 7,
+                "gpu_perf_categories_completed": 7,
+                "gpu_perf_categories_failed": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/check_batch_gate.py",
+            "--profile",
+            "gpu_perf",
+            "--active-batch",
+            str(active),
+            "--run-summary",
+            str(run_summary),
+            "--status-converged",
+            str(status_converged),
+            "--progress-log",
+            str(progress),
+            "--handoff",
+            str(handoff),
+            "--current-status",
+            str(current_status),
+            "--out",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+
+
+def test_check_batch_gate_gpu_perf_profile_fails_when_ratio_below_threshold(tmp_path: Path) -> None:
+    active = tmp_path / "active_batch_gpu_perf.json"
+    run_summary = tmp_path / "run_summary_gpu_perf.json"
+    status_converged = tmp_path / "status_converged_gpu_perf.json"
+    progress = tmp_path / "progress_log_gpu_perf.jsonl"
+    handoff = tmp_path / "handoff_gpu_perf.md"
+    current_status = tmp_path / "current_status_gpu_perf.json"
+    gpu_perf = tmp_path / "gpu_perf_graph.json"
+    out = tmp_path / "batch_gate_gpu_perf.json"
+    head = _head_commit()
+
+    active.write_text(json.dumps({"schema_version": "flaggems_active_batch_v2", "lane": "coverage", "items": []}), encoding="utf-8")
+    gpu_perf.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_gpu_perf_graph_v1",
+                "mode": "graph_only",
+                "coverage_batches_expected": 7,
+                "coverage_batches_completed": 7,
+                "coverage_batches_failed": [],
+                "devices": [{"gpu_name": "GPU0", "ok": False}],
+                "entries": [
+                    {
+                        "kernel": "add2d",
+                        "family": "elementwise_broadcast",
+                        "count_in_denominator": True,
+                        "ratio": 0.73,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    run_summary.write_text(
+        json.dumps(
+            {
+                "ok": False,
+                "stages": [{"stage": "gpu_perf_graph", "ok": False, "json_path": str(gpu_perf)}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    status_converged.write_text(json.dumps({"entries": []}), encoding="utf-8")
+    progress.write_text(
+        json.dumps({"run_summary_path": str(run_summary), "status_converged_path": str(status_converged)}) + "\n",
+        encoding="utf-8",
+    )
+    handoff.write_text("# FlagGems Session Handoff\n- Next Focus: perf\n", encoding="utf-8")
+    current_status.write_text(
+        json.dumps(
+            {
+                "gpu_perf_phase": "recomputed_failed",
+                "gpu_perf_validated_commit": head,
+                "gpu_perf_commits_since_validated": 0,
+                "gpu_perf_categories_expected": 7,
+                "gpu_perf_categories_completed": 7,
+                "gpu_perf_categories_failed": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/check_batch_gate.py",
+            "--profile",
+            "gpu_perf",
+            "--active-batch",
+            str(active),
+            "--run-summary",
+            str(run_summary),
+            "--status-converged",
+            str(status_converged),
+            "--progress-log",
+            str(progress),
+            "--handoff",
+            str(handoff),
+            "--current-status",
+            str(current_status),
+            "--out",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode != 0

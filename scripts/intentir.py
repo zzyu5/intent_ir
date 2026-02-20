@@ -109,6 +109,40 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             cmd.extend(["--family", str(fam)])
         return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
 
+    if args.suite == "gpu-perf-graph":
+        rc = _run(
+            _python_cmd("scripts/flaggems/build_coverage_batches.py"),
+            stream=bool(args.stream),
+            dry_run=bool(args.dry_run),
+            env_overrides=env_overrides,
+        )
+        if rc != 0:
+            return rc
+        cmd = _python_cmd(
+            "scripts/flaggems/run_gpu_perf_graph.py",
+            "--out-root",
+            str(out_root),
+            "--family-kernel-chunk-size",
+            str(int(args.family_kernel_chunk_size)),
+            "--threshold",
+            str(float(args.gpu_perf_threshold)),
+            "--warmup",
+            str(int(args.perf_warmup)),
+            "--iters",
+            str(int(args.perf_iters)),
+            "--repeats",
+            str(int(args.perf_repeats)),
+            "--cuda-runtime-backend",
+            str(args.cuda_runtime_backend),
+            "--progress-style",
+            str(args.progress_style),
+            "--resume" if args.resume else "--no-resume",
+            "--stream" if args.stream else "--no-stream",
+        )
+        for fam in list(args.family or []):
+            cmd.extend(["--family", str(fam)])
+        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
+
     if args.suite == "triton-smoke":
         cmd = _python_cmd(
             "scripts/flaggems/run_multibackend_matrix.py",
@@ -413,7 +447,14 @@ def _build_parser() -> argparse.ArgumentParser:
     suite = sub.add_parser("suite", help="Run suite-level verification")
     suite.add_argument(
         "--suite",
-        choices=["flaggems-full196", "flaggems-coverage-single", "triton-smoke", "tilelang-smoke", "cuda-smoke"],
+        choices=[
+            "flaggems-full196",
+            "gpu-perf-graph",
+            "flaggems-coverage-single",
+            "triton-smoke",
+            "tilelang-smoke",
+            "cuda-smoke",
+        ],
         required=True,
     )
     suite.add_argument("--out-root", default=None)
@@ -422,6 +463,10 @@ def _build_parser() -> argparse.ArgumentParser:
     suite.add_argument("--cases-limit", type=int, default=8)
     suite.add_argument("--execution-ir", choices=["mlir"], default=_execution_ir_default())
     suite.add_argument("--family-kernel-chunk-size", type=int, default=12)
+    suite.add_argument("--gpu-perf-threshold", type=float, default=0.80)
+    suite.add_argument("--perf-warmup", type=int, default=20)
+    suite.add_argument("--perf-iters", type=int, default=200)
+    suite.add_argument("--perf-repeats", type=int, default=5)
     suite.add_argument(
         "--pipeline-timeout-sec",
         type=int,

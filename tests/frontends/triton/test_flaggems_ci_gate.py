@@ -722,3 +722,166 @@ def test_ci_gate_coverage_requires_mlir_stage_timing_when_execution_ir_mlir(tmp_
         text=True,
     )
     assert p.returncode != 0
+
+
+def _run_ci_gate_gpu_perf(
+    tmp_path: Path,
+    *,
+    fresh_on_head: bool,
+    per_device_ok: bool,
+    ratio: float,
+) -> subprocess.CompletedProcess[str]:
+    registry = tmp_path / "registry.json"
+    feature = tmp_path / "feature_list.json"
+    active_cov = tmp_path / "active_batch_cov.json"
+    active_gpu = tmp_path / "active_batch_gpu_perf.json"
+    run_summary = tmp_path / "run_summary_gpu_perf.json"
+    status_converged = tmp_path / "status_converged_gpu_perf.json"
+    progress = tmp_path / "progress_log_gpu_perf.jsonl"
+    handoff = tmp_path / "handoff_gpu_perf.md"
+    current_status = tmp_path / "current_status_gpu_perf.json"
+    gpu_perf_json = tmp_path / "gpu_perf_graph.json"
+    out = tmp_path / "ci_gate_gpu_perf.json"
+    head = _head_commit()
+    validated_commit = head if fresh_on_head else "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    validated_phase = "recomputed_ok" if fresh_on_head else "recompute_stale"
+    validated_commits_since = 0 if fresh_on_head else 5
+
+    registry_payload = {
+        "entries": [
+            {
+                "semantic_op": "add",
+                "family": "elementwise_broadcast",
+                "status": "dual_pass",
+                "status_reason": "runtime_dual_backend_pass",
+                "e2e_spec": "add2d",
+                "intent_ops": ["add"],
+            }
+        ]
+    }
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    feature_payload = build_feature_list_payload(
+        registry_payload=registry_payload,
+        source_registry_path=str(registry),
+    )
+    feature.write_text(json.dumps(feature_payload), encoding="utf-8")
+    active_cov.write_text(
+        json.dumps({"schema_version": "flaggems_active_batch_v2", "lane": "coverage", "items": []}),
+        encoding="utf-8",
+    )
+    active_gpu.write_text(
+        json.dumps({"schema_version": "flaggems_active_batch_v2", "lane": "coverage", "items": []}),
+        encoding="utf-8",
+    )
+    gpu_perf_json.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_gpu_perf_graph_v1",
+                "mode": "graph_only",
+                "threshold": 0.80,
+                "coverage_batches_expected": 7,
+                "coverage_batches_completed": 7,
+                "coverage_batches_failed": [],
+                "devices": [{"gpu_name": "NVIDIA H100", "ok": bool(per_device_ok)}],
+                "entries": [
+                    {
+                        "kernel": "add2d",
+                        "family": "elementwise_broadcast",
+                        "count_in_denominator": True,
+                        "ratio": float(ratio),
+                        "ok": bool(per_device_ok and ratio >= 0.80),
+                        "reason_code": "ok" if bool(per_device_ok and ratio >= 0.80) else "gpu_perf_below_threshold",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    run_summary.write_text(
+        json.dumps(
+            {
+                "ok": bool(fresh_on_head and per_device_ok and ratio >= 0.80),
+                "suite": "gpu_perf_graph",
+                "stages": [
+                    {"stage": "gpu_perf_graph", "ok": bool(per_device_ok and ratio >= 0.80), "json_path": str(gpu_perf_json)}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    status_converged.write_text(
+        json.dumps(
+            {"entries": [{"semantic_op": "add", "status": "dual_pass", "reason_code": "runtime_dual_backend_pass"}]}
+        ),
+        encoding="utf-8",
+    )
+    progress.write_text(
+        json.dumps({"run_summary_path": str(run_summary), "status_converged_path": str(status_converged)}) + "\n",
+        encoding="utf-8",
+    )
+    handoff.write_text("# FlagGems Session Handoff\n- Next Focus: gpu perf\n", encoding="utf-8")
+    current_status.write_text(
+        json.dumps(
+            {
+                "full196_validated_commit": head,
+                "full196_last_ok": True,
+                "full196_commits_since_validated": 0,
+                "coverage_mode": "category_batches",
+                "full196_evidence_kind": "batch_aggregate",
+                "coverage_batches_expected": 7,
+                "coverage_batches_completed": 7,
+                "coverage_batches_failed": [],
+                "gpu_perf_phase": validated_phase,
+                "gpu_perf_validated_commit": validated_commit,
+                "gpu_perf_commits_since_validated": validated_commits_since,
+                "gpu_perf_categories_expected": 7,
+                "gpu_perf_categories_completed": 7,
+                "gpu_perf_categories_failed": [],
+                "gpu_perf_devices": [{"gpu_name": "NVIDIA H100", "ok": bool(per_device_ok)}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/ci_gate.py",
+            "--registry",
+            str(registry),
+            "--feature-list",
+            str(feature),
+            "--active-batch-coverage",
+            str(active_cov),
+            "--active-batch-gpu-perf",
+            str(active_gpu),
+            "--profiles",
+            "gpu_perf",
+            "--run-summary",
+            str(run_summary),
+            "--status-converged",
+            str(status_converged),
+            "--current-status",
+            str(current_status),
+            "--progress-log",
+            str(progress),
+            "--handoff",
+            str(handoff),
+            "--gpu-perf-threshold",
+            "0.80",
+            "--out",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_ci_gate_gpu_perf_profile_passes_when_fresh_and_above_threshold(tmp_path: Path) -> None:
+    p = _run_ci_gate_gpu_perf(tmp_path, fresh_on_head=True, per_device_ok=True, ratio=0.92)
+    assert p.returncode == 0, p.stderr
+
+
+def test_ci_gate_gpu_perf_profile_fails_when_stale_or_under_threshold(tmp_path: Path) -> None:
+    p = _run_ci_gate_gpu_perf(tmp_path, fresh_on_head=False, per_device_ok=False, ratio=0.70)
+    assert p.returncode != 0

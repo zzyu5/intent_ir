@@ -105,6 +105,27 @@ def test_intentir_suite_flaggems_coverage_single_dry_run() -> None:
     assert "--kernel tanh2d" in out
 
 
+def test_intentir_suite_gpu_perf_graph_dry_run() -> None:
+    p = _run(
+        "suite",
+        "--suite",
+        "gpu-perf-graph",
+        "--dry-run",
+        "--family",
+        "reduction",
+        "--gpu-perf-threshold",
+        "0.8",
+        "--progress-style",
+        "chunk",
+    )
+    assert p.returncode == 0, p.stderr
+    out = p.stdout
+    assert "scripts/flaggems/build_coverage_batches.py" in out
+    assert "scripts/flaggems/run_gpu_perf_graph.py" in out
+    assert "--family reduction" in out
+    assert "--threshold 0.8" in out
+
+
 def test_intentir_tilelang_export_cuda_snapshots_dry_run() -> None:
     p = _run(
         "tilelang",

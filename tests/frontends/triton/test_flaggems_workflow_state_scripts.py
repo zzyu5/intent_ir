@@ -238,6 +238,17 @@ def test_build_workflow_state_writes_current_and_context(tmp_path: Path) -> None
     assert "mlir_cutover_level" in status_payload
     assert "mlir_backend_contract_ready" in status_payload
     assert "mlir_llvm_chain_ok" in status_payload
+    assert "gpu_perf_phase" in status_payload
+    assert "gpu_perf_last_run" in status_payload
+    assert "gpu_perf_validated_commit" in status_payload
+    assert "gpu_perf_commits_since_validated" in status_payload
+    assert "gpu_perf_mode" in status_payload
+    assert "gpu_perf_threshold" in status_payload
+    assert "gpu_perf_devices" in status_payload
+    assert "gpu_perf_failures_by_family" in status_payload
+    assert "gpu_perf_categories_expected" in status_payload
+    assert "gpu_perf_categories_completed" in status_payload
+    assert "gpu_perf_categories_failed" in status_payload
     assert status_payload["script_governance"]["catalog_path"].endswith("scripts/CATALOG.json")
     assert context_payload["schema_version"] == "flaggems_session_context_v1"
     assert context_payload["next_focus"] == "focus-y"
@@ -417,7 +428,7 @@ def test_build_workflow_state_prefers_latest_full196_run_over_latest_partial(tmp
     assert status_payload["full196_commits_since_validated"] == 0
     assert status_payload["full196_validated_scope"] == "coverage_158_kernels_to_196_semantics"
     assert status_payload["full196_validated_mode"] == ""
-    assert status_payload["full196_validated_execution_ir"] == "intent"
+    assert status_payload["full196_validated_execution_ir"] == "mlir"
     assert status_payload["full196_validated_with_rvv_remote"] is False
     assert status_payload["coverage_mode"] == "single_run"
     assert status_payload["full196_evidence_kind"] == "single_run"

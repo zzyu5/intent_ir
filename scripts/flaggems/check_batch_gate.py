@@ -155,8 +155,105 @@ def _validate_mlir_llvm_artifact_complete(run_summary: dict[str, Any]) -> tuple[
     return False, "missing LLVM artifact evidence (llvm_ir_path/mlir_llvm_artifacts/llvm_emit)"
 
 
+def _validate_gpu_perf_fresh_on_head(current_status_path: Path) -> tuple[bool, str]:
+    if not current_status_path.is_file():
+        return False, f"missing current_status: {current_status_path}"
+    status = _load_json(current_status_path)
+    validated_commit = str(status.get("gpu_perf_validated_commit") or "").strip()
+    commits_since = status.get("gpu_perf_commits_since_validated")
+    phase = str(status.get("gpu_perf_phase") or "").strip()
+    if phase in {"stale_or_invalid", "recompute_stale"}:
+        return False, f"gpu perf phase stale: {phase}"
+    if not validated_commit:
+        return False, "current_status.gpu_perf_validated_commit is empty"
+    head = _git_head_commit()
+    if not head:
+        return False, "failed to resolve git HEAD for gpu perf freshness check"
+    if validated_commit != head:
+        return False, f"gpu perf evidence stale: validated_commit={validated_commit} head={head}"
+    if commits_since is not None:
+        try:
+            if int(commits_since) != 0:
+                return False, f"gpu_perf_commits_since_validated={commits_since} (expected 0)"
+        except Exception:
+            return False, f"invalid gpu_perf_commits_since_validated={commits_since}"
+    return True, "gpu perf evidence is fresh on HEAD"
+
+
+def _validate_gpu_perf_categories_complete(current_status_path: Path) -> tuple[bool, str]:
+    if not current_status_path.is_file():
+        return False, f"missing current_status: {current_status_path}"
+    status = _load_json(current_status_path)
+    expected = status.get("gpu_perf_categories_expected")
+    completed = status.get("gpu_perf_categories_completed")
+    failed = [str(x) for x in list(status.get("gpu_perf_categories_failed") or []) if str(x).strip()]
+    try:
+        expected_i = int(expected)
+        completed_i = int(completed)
+    except Exception:
+        return False, "gpu perf category counters missing/invalid in current_status"
+    if expected_i <= 0:
+        return False, f"gpu_perf_categories_expected={expected_i} (expected >0)"
+    if completed_i != expected_i:
+        return False, f"gpu perf categories incomplete: {completed_i}/{expected_i}"
+    if failed:
+        return False, f"gpu perf categories failed: {failed}"
+    return True, f"gpu perf categories complete: {completed_i}/{expected_i}"
+
+
+def _validate_gpu_perf_json(
+    gpu_perf_path: Path,
+    *,
+    threshold: float,
+    require_categories_complete: bool,
+) -> tuple[bool, str]:
+    if not gpu_perf_path.is_file():
+        return False, f"missing gpu_perf_graph json: {gpu_perf_path}"
+    payload = _load_json(gpu_perf_path)
+    schema = str(payload.get("schema_version") or "")
+    if schema != "flaggems_gpu_perf_graph_v1":
+        return False, f"unexpected gpu_perf schema: {schema}"
+    if str(payload.get("mode") or "") != "graph_only":
+        return False, f"unexpected gpu perf mode: {payload.get('mode')!r}"
+    if require_categories_complete:
+        expected = payload.get("coverage_batches_expected")
+        completed = payload.get("coverage_batches_completed")
+        failed = [str(x) for x in list(payload.get("coverage_batches_failed") or []) if str(x).strip()]
+        try:
+            expected_i = int(expected)
+            completed_i = int(completed)
+        except Exception:
+            return False, "gpu perf category counters missing/invalid in payload"
+        if expected_i <= 0:
+            return False, f"gpu perf coverage_batches_expected={expected_i} (expected >0)"
+        if completed_i != expected_i:
+            return False, f"gpu perf categories incomplete: {completed_i}/{expected_i}"
+        if failed:
+            return False, f"gpu perf categories failed: {failed}"
+    devices = [d for d in list(payload.get("devices") or []) if isinstance(d, dict)]
+    if not devices:
+        return False, "gpu perf payload has no devices[] entries"
+    failing_devices = [str(d.get("gpu_name") or "unknown") for d in devices if not bool(d.get("ok"))]
+    if failing_devices:
+        return False, f"gpu perf per-device gate failed: {failing_devices}"
+    entries = [e for e in list(payload.get("entries") or []) if isinstance(e, dict)]
+    measured = [e for e in entries if bool(e.get("count_in_denominator"))]
+    if not measured:
+        return False, "gpu perf payload has zero measured kernels"
+    bad = [
+        str(e.get("kernel") or "unknown")
+        for e in measured
+        if (not isinstance(e.get("ratio"), (int, float))) or float(e.get("ratio")) < float(threshold)
+    ]
+    if bad:
+        return False, f"gpu perf ratio below threshold {float(threshold):.2f}: {bad[:8]}"
+    return True, "gpu perf payload passes threshold/per-device checks"
+
+
 def _default_active_batch(profile: str) -> Path:
     if profile == "coverage":
+        return ROOT / "workflow" / "flaggems" / "state" / "active_batch_coverage.json"
+    if profile == "gpu_perf":
         return ROOT / "workflow" / "flaggems" / "state" / "active_batch_coverage.json"
     if profile == "mlir_migration":
         return ROOT / "workflow" / "flaggems" / "state" / "active_batch_mlir_migration.json"
@@ -445,7 +542,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--profile",
-        choices=["coverage", "ir_arch", "backend_compiler", "workflow", "mlir_migration"],
+        choices=["coverage", "gpu_perf", "ir_arch", "backend_compiler", "workflow", "mlir_migration"],
         default="coverage",
         help="Gate profile to evaluate.",
     )
@@ -465,6 +562,30 @@ def main() -> None:
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Require full196 evidence to be validated on current HEAD.",
+    )
+    ap.add_argument(
+        "--require-gpu-perf-fresh-on-head",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Require gpu perf evidence to be validated on current HEAD.",
+    )
+    ap.add_argument(
+        "--require-gpu-perf-categories-complete",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Require gpu perf categories to be completed in current_status and payload.",
+    )
+    ap.add_argument(
+        "--gpu-perf-threshold",
+        type=float,
+        default=0.80,
+        help="Minimum qps ratio threshold for gpu_perf profile (default: 0.80).",
+    )
+    ap.add_argument(
+        "--gpu-perf-json",
+        type=Path,
+        default=None,
+        help="Optional explicit gpu_perf_graph.json path (otherwise inferred from run_summary stage).",
     )
     ap.add_argument(
         "--require-mlir-fresh-on-head",
@@ -543,7 +664,15 @@ def main() -> None:
     require_mlir_fresh = bool(args.require_mlir_fresh_on_head) or profile == "mlir_migration"
     require_mlir_toolchain = bool(args.require_mlir_toolchain_required) or profile == "mlir_migration"
     require_mlir_llvm_artifact = bool(args.require_mlir_llvm_artifact_complete) or profile == "mlir_migration"
-    if bool(args.require_coverage_fresh_on_head) or require_mlir_fresh or require_mlir_toolchain:
+    require_gpu_perf_fresh = bool(args.require_gpu_perf_fresh_on_head) or profile == "gpu_perf"
+    require_gpu_perf_categories = bool(args.require_gpu_perf_categories_complete) or profile == "gpu_perf"
+    if (
+        bool(args.require_coverage_fresh_on_head)
+        or require_mlir_fresh
+        or require_mlir_toolchain
+        or require_gpu_perf_fresh
+        or require_gpu_perf_categories
+    ):
         checks.append(
             _check(
                 f"exists::{_to_repo_rel(args.current_status)}",
@@ -574,7 +703,7 @@ def main() -> None:
     active_items = [e for e in (active.get("items") or []) if isinstance(e, dict)]
     active_ops = [str(e.get("semantic_op") or "") for e in active_items if str(e.get("semantic_op") or "")]
 
-    if profile in {"ir_arch", "backend_compiler", "workflow", "mlir_migration"}:
+    if profile in {"gpu_perf", "ir_arch", "backend_compiler", "workflow", "mlir_migration"}:
         reason_complete = True
     else:
         if not gate_entries and not active_ops:
@@ -654,6 +783,33 @@ def main() -> None:
                     "all active ops are dual_pass" if not non_dual else f"non dual_pass active ops: {non_dual}",
                 )
             )
+    elif profile == "gpu_perf":
+        stage_map = _stage_map(run_summary)
+        perf_stage = stage_map.get("gpu_perf_graph") or {}
+        stage_path_raw = str(perf_stage.get("json_path") or "").strip()
+        perf_path = args.gpu_perf_json
+        if perf_path is None:
+            perf_path = Path(stage_path_raw) if stage_path_raw else Path()
+        if perf_path and (not perf_path.is_absolute()):
+            perf_path = ROOT / perf_path
+        checks.append(
+            _check(
+                "gpu_perf.stage_present",
+                bool(perf_stage),
+                "gpu_perf_graph stage found in run_summary"
+                if bool(perf_stage)
+                else "missing gpu_perf_graph stage in run_summary",
+            )
+        )
+        if perf_path:
+            perf_ok, perf_detail = _validate_gpu_perf_json(
+                Path(perf_path),
+                threshold=float(args.gpu_perf_threshold),
+                require_categories_complete=bool(require_gpu_perf_categories),
+            )
+        else:
+            perf_ok, perf_detail = (False, "gpu perf json path is not provided and cannot be inferred")
+        checks.append(_check("gpu_perf.payload_ok", perf_ok, perf_detail))
     elif profile == "ir_arch":
         stage_map = _stage_map(run_summary)
         required = list(
@@ -852,6 +1008,12 @@ def main() -> None:
     if bool(args.require_coverage_fresh_on_head):
         fresh_ok, fresh_detail = _validate_coverage_fresh_on_head(args.current_status)
         checks.append(_check("coverage_fresh_on_head", fresh_ok, fresh_detail))
+    if require_gpu_perf_fresh:
+        gpu_fresh_ok, gpu_fresh_detail = _validate_gpu_perf_fresh_on_head(args.current_status)
+        checks.append(_check("gpu_perf_fresh_on_head", gpu_fresh_ok, gpu_fresh_detail))
+    if require_gpu_perf_categories:
+        gpu_cat_ok, gpu_cat_detail = _validate_gpu_perf_categories_complete(args.current_status)
+        checks.append(_check("gpu_perf_categories_complete", gpu_cat_ok, gpu_cat_detail))
     if require_mlir_fresh:
         mlir_ok, mlir_detail = _validate_mlir_fresh_on_head(args.current_status)
         checks.append(_check("mlir_fresh_on_head", mlir_ok, mlir_detail))

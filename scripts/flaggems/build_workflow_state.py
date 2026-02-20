@@ -367,6 +367,44 @@ def _classify_full196_run(run_summary_path: Path | None) -> tuple[bool, bool | N
     return True, bool(coverage_ok), metadata
 
 
+def _classify_gpu_perf_run(run_summary_path: Path | None) -> tuple[bool, bool | None, dict[str, Any]]:
+    run_summary = _load_json_if_exists(run_summary_path)
+    if not run_summary:
+        return False, None, {}
+    if str(run_summary.get("suite") or "").strip() != "gpu_perf_graph":
+        return False, None, {}
+
+    stages = [s for s in list(run_summary.get("stages") or []) if isinstance(s, dict)]
+    stage_map = {str(s.get("stage") or ""): s for s in stages}
+    perf_stage = stage_map.get("gpu_perf_graph") or {}
+    perf_json = _resolve_artifact(str(perf_stage.get("json_path") or run_summary.get("gpu_perf_graph_path") or ""))
+    perf_payload = _load_json_if_exists(perf_json)
+    if not perf_payload:
+        return False, None, {}
+
+    repo = dict(run_summary.get("repo") or {})
+    artifact_head_commit = str(repo.get("head_commit") or "").strip()
+    artifact_branch = str(repo.get("branch") or "").strip()
+    artifact_dirty = None
+    if "dirty" in repo:
+        artifact_dirty = bool(repo.get("dirty"))
+
+    metadata = {
+        "validated_mode": str(perf_payload.get("mode") or run_summary.get("gpu_perf_mode") or ""),
+        "threshold": float(perf_payload.get("threshold") or run_summary.get("gpu_perf_threshold") or 0.80),
+        "devices": [d for d in list(perf_payload.get("devices") or []) if isinstance(d, dict)],
+        "failures_by_family": dict(perf_payload.get("failures_by_family") or {}),
+        "categories_expected": perf_payload.get("coverage_batches_expected"),
+        "categories_completed": perf_payload.get("coverage_batches_completed"),
+        "categories_failed": list(perf_payload.get("coverage_batches_failed") or []),
+        "artifact_head_commit": artifact_head_commit,
+        "artifact_branch": artifact_branch,
+        "artifact_dirty": artifact_dirty,
+        "artifact_repo_stamp_ok": bool(artifact_head_commit),
+    }
+    return True, bool(perf_payload.get("ok")), metadata
+
+
 def _latest_full196_from_progress(rows: list[dict[str, Any]]) -> dict[str, Any]:
     for row in reversed(rows):
         if not isinstance(row, dict):
@@ -414,6 +452,56 @@ def _latest_full196_from_progress(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "coverage_batches_expected": None,
         "coverage_batches_completed": None,
         "coverage_batches_failed": [],
+        "artifact_repo_stamp_ok": False,
+        "artifact_head_commit": "",
+        "artifact_branch": "",
+        "artifact_dirty": None,
+    }
+
+
+def _latest_gpu_perf_from_progress(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    for row in reversed(rows):
+        if not isinstance(row, dict):
+            continue
+        run_summary_path = _resolve_artifact(str(row.get("run_summary_path") or ""))
+        is_perf, is_ok, metadata = _classify_gpu_perf_run(run_summary_path)
+        if not is_perf or run_summary_path is None:
+            continue
+        artifact_head_commit = str(metadata.get("artifact_head_commit") or "").strip()
+        progress_commit = str(row.get("commit") or "").strip()
+        validated_commit = artifact_head_commit or progress_commit
+        validated_commit_source = (
+            "run_summary.repo.head_commit" if artifact_head_commit else "progress_log.commit"
+        )
+        return {
+            "run_summary_path": _to_repo_rel(run_summary_path),
+            "last_ok": is_ok,
+            "validated_commit": validated_commit,
+            "validated_commit_source": validated_commit_source,
+            "validated_mode": str(metadata.get("validated_mode") or ""),
+            "threshold": float(metadata.get("threshold") or 0.80),
+            "devices": [d for d in list(metadata.get("devices") or []) if isinstance(d, dict)],
+            "failures_by_family": dict(metadata.get("failures_by_family") or {}),
+            "categories_expected": metadata.get("categories_expected"),
+            "categories_completed": metadata.get("categories_completed"),
+            "categories_failed": list(metadata.get("categories_failed") or []),
+            "artifact_repo_stamp_ok": bool(metadata.get("artifact_repo_stamp_ok")),
+            "artifact_head_commit": str(metadata.get("artifact_head_commit") or ""),
+            "artifact_branch": str(metadata.get("artifact_branch") or ""),
+            "artifact_dirty": metadata.get("artifact_dirty"),
+        }
+    return {
+        "run_summary_path": "",
+        "last_ok": None,
+        "validated_commit": "",
+        "validated_commit_source": "",
+        "validated_mode": "graph_only",
+        "threshold": 0.80,
+        "devices": [],
+        "failures_by_family": {},
+        "categories_expected": None,
+        "categories_completed": None,
+        "categories_failed": [],
         "artifact_repo_stamp_ok": False,
         "artifact_head_commit": "",
         "artifact_branch": "",
@@ -566,6 +654,17 @@ def main() -> None:
     full196_last_run_repo_head_commit = str(full196_info.get("artifact_head_commit") or "")
     full196_last_run_repo_branch = str(full196_info.get("artifact_branch") or "")
     full196_last_run_dirty = full196_info.get("artifact_dirty")
+    gpu_perf_info = _latest_gpu_perf_from_progress(progress_rows)
+    gpu_perf_last_run = str(gpu_perf_info.get("run_summary_path") or "")
+    gpu_perf_last_ok = gpu_perf_info.get("last_ok")
+    gpu_perf_validated_commit = str(gpu_perf_info.get("validated_commit") or "")
+    gpu_perf_mode = str(gpu_perf_info.get("validated_mode") or "graph_only")
+    gpu_perf_threshold = float(gpu_perf_info.get("threshold") or 0.80)
+    gpu_perf_devices = [d for d in list(gpu_perf_info.get("devices") or []) if isinstance(d, dict)]
+    gpu_perf_failures_by_family = dict(gpu_perf_info.get("failures_by_family") or {})
+    gpu_perf_categories_expected = _as_int_or_none(gpu_perf_info.get("categories_expected"))
+    gpu_perf_categories_completed = _as_int_or_none(gpu_perf_info.get("categories_completed"))
+    gpu_perf_categories_failed = [str(x) for x in list(gpu_perf_info.get("categories_failed") or []) if str(x).strip()]
     branch = _git(["git", "branch", "--show-current"]) or "unknown"
     head_commit = _git(["git", "rev-parse", "HEAD"]) or "unknown"
     coverage_batches_payload = load_json(args.coverage_batches) if args.coverage_batches.is_file() else {}
@@ -605,6 +704,33 @@ def main() -> None:
     elif full196_run_summary and not artifact_repo_stamp_ok:
         # full196 evidence without embedded repo provenance is not trustworthy for "fresh on HEAD".
         validated_commit_state = "unverifiable"
+
+    gpu_perf_validated_state = "missing"
+    if gpu_perf_validated_commit:
+        if not _commit_exists(gpu_perf_validated_commit):
+            gpu_perf_validated_state = "invalid"
+        elif not _is_ancestor(gpu_perf_validated_commit, head_commit):
+            gpu_perf_validated_state = "invalid"
+        else:
+            gpu_perf_validated_state = "reachable"
+    gpu_perf_commits_since_validated = None
+    if gpu_perf_validated_state == "reachable":
+        gpu_perf_commits_since_validated = _commits_since_validated(gpu_perf_validated_commit, head_commit)
+        if gpu_perf_commits_since_validated is not None and int(gpu_perf_commits_since_validated) > 0:
+            gpu_perf_validated_state = "stale"
+        else:
+            gpu_perf_validated_state = "fresh"
+    if not gpu_perf_last_run:
+        gpu_perf_phase = "recompute_pending"
+    elif gpu_perf_validated_state == "invalid":
+        gpu_perf_phase = "stale_or_invalid"
+    elif gpu_perf_validated_state == "stale":
+        gpu_perf_phase = "recompute_stale"
+    elif gpu_perf_validated_state == "fresh":
+        gpu_perf_phase = "recomputed_ok" if bool(gpu_perf_last_ok) else "recomputed_failed"
+    else:
+        gpu_perf_phase = "recompute_pending"
+
     git_log_short = read_git_log(cwd=ROOT, lines=int(args.git_log_lines))
     next_focus = _parse_next_focus(args.handoff) or str(latest.get("next_focus") or "")
     active_lanes = _active_lanes(feature_payload)
@@ -631,6 +757,12 @@ def main() -> None:
         # regardless of any previous lane hints stored in progress/handoff.
         next_focus_by_lane["coverage"] = (
             "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD."
+        )
+    if gpu_perf_phase in {"recompute_pending", "stale_or_invalid", "recompute_stale"}:
+        active_lanes = sorted(set(list(active_lanes) + ["backend_compiler"]))
+        next_focus_by_lane.setdefault(
+            "backend_compiler",
+            "Run gpu-perf-graph by family/chunk, then refresh gpu perf freshness on HEAD.",
         )
     if need_ir_arch_lane:
         active_lanes = sorted(set(list(active_lanes) + ["ir_arch"]))
@@ -733,6 +865,18 @@ def main() -> None:
         mlir_backend_contract_ready=bool(mlir_backend_contract_ready),
         mlir_llvm_chain_ok=bool(mlir_llvm_chain_ok),
         mlir_full196_validated_commit=mlir_validated_commit,
+        gpu_perf_phase=gpu_perf_phase,
+        gpu_perf_last_run=gpu_perf_last_run,
+        gpu_perf_last_ok=gpu_perf_last_ok,
+        gpu_perf_validated_commit=gpu_perf_validated_commit,
+        gpu_perf_commits_since_validated=gpu_perf_commits_since_validated,
+        gpu_perf_mode=gpu_perf_mode,
+        gpu_perf_threshold=gpu_perf_threshold,
+        gpu_perf_devices=gpu_perf_devices,
+        gpu_perf_failures_by_family=gpu_perf_failures_by_family,
+        gpu_perf_categories_expected=gpu_perf_categories_expected,
+        gpu_perf_categories_completed=gpu_perf_categories_completed,
+        gpu_perf_categories_failed=gpu_perf_categories_failed,
         catalog_path=_to_repo_rel(args.scripts_catalog),
         catalog_validated=catalog_exists,
         active_lanes=active_lanes,

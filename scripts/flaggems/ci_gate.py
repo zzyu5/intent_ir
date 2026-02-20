@@ -106,6 +106,65 @@ def _validate_coverage_categories_complete(current_status_path: Path) -> tuple[b
     return True, f"coverage categories complete: {completed_i}/{expected_i}"
 
 
+def _validate_gpu_perf_fresh_on_head(current_status_path: Path) -> tuple[bool, str]:
+    if not current_status_path.is_file():
+        return False, f"missing current_status: {current_status_path}"
+    payload = load_json(current_status_path)
+    validated_commit = str(payload.get("gpu_perf_validated_commit") or "").strip()
+    commits_since = payload.get("gpu_perf_commits_since_validated")
+    phase = str(payload.get("gpu_perf_phase") or "").strip()
+    if phase in {"stale_or_invalid", "recompute_stale"}:
+        return False, f"gpu perf phase stale: {phase}"
+    if not validated_commit:
+        return False, "current_status.gpu_perf_validated_commit is empty"
+    head = _git_head_commit()
+    if not head:
+        return False, "failed to resolve git HEAD for gpu perf freshness check"
+    if validated_commit != head:
+        return False, f"gpu perf evidence stale: validated_commit={validated_commit} head={head}"
+    if commits_since is not None:
+        try:
+            if int(commits_since) != 0:
+                return False, f"gpu_perf_commits_since_validated={commits_since} (expected 0)"
+        except Exception:
+            return False, f"invalid gpu_perf_commits_since_validated={commits_since}"
+    return True, "gpu perf evidence is fresh on HEAD"
+
+
+def _validate_gpu_perf_categories_complete(current_status_path: Path) -> tuple[bool, str]:
+    if not current_status_path.is_file():
+        return False, f"missing current_status: {current_status_path}"
+    payload = load_json(current_status_path)
+    expected = payload.get("gpu_perf_categories_expected")
+    completed = payload.get("gpu_perf_categories_completed")
+    failed = [str(x) for x in list(payload.get("gpu_perf_categories_failed") or []) if str(x).strip()]
+    try:
+        expected_i = int(expected)
+        completed_i = int(completed)
+    except Exception:
+        return False, "gpu perf category counters missing/invalid in current_status"
+    if expected_i <= 0:
+        return False, f"gpu_perf_categories_expected={expected_i} (expected >0)"
+    if completed_i != expected_i:
+        return False, f"gpu perf categories incomplete: {completed_i}/{expected_i}"
+    if failed:
+        return False, f"gpu perf categories failed: {failed}"
+    return True, f"gpu perf categories complete: {completed_i}/{expected_i}"
+
+
+def _validate_gpu_perf_per_device_ok(current_status_path: Path) -> tuple[bool, str]:
+    if not current_status_path.is_file():
+        return False, f"missing current_status: {current_status_path}"
+    payload = load_json(current_status_path)
+    devices = [d for d in list(payload.get("gpu_perf_devices") or []) if isinstance(d, dict)]
+    if not devices:
+        return False, "current_status.gpu_perf_devices is empty"
+    failing = [str(d.get("gpu_name") or "unknown") for d in devices if not bool(d.get("ok"))]
+    if failing:
+        return False, f"gpu perf per-device failures: {failing}"
+    return True, "gpu perf per-device status is healthy"
+
+
 def _validate_mlir_fresh_on_head(current_status_path: Path) -> tuple[bool, str]:
     if not current_status_path.is_file():
         return False, f"missing current_status: {current_status_path}"
@@ -277,6 +336,11 @@ def main() -> None:
         default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch_coverage.json"),
     )
     ap.add_argument(
+        "--active-batch-gpu-perf",
+        type=Path,
+        default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch_coverage.json"),
+    )
+    ap.add_argument(
         "--active-batch-ir-arch",
         type=Path,
         default=(ROOT / "workflow" / "flaggems" / "state" / "active_batch_ir_arch.json"),
@@ -317,6 +381,30 @@ def main() -> None:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Require full196 evidence to come from completed category aggregate coverage.",
+    )
+    ap.add_argument(
+        "--require-gpu-perf-fresh-on-head",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require gpu perf evidence to be validated on current HEAD when gpu_perf profile is evaluated.",
+    )
+    ap.add_argument(
+        "--require-gpu-perf-categories-complete",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require gpu perf category aggregate completion in current_status when gpu_perf profile is evaluated.",
+    )
+    ap.add_argument(
+        "--require-gpu-perf-per-device-ok",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require gpu perf per-device status to be all-ok when gpu_perf profile is evaluated.",
+    )
+    ap.add_argument(
+        "--gpu-perf-threshold",
+        type=float,
+        default=0.80,
+        help="Pass-through gpu perf ratio threshold for check_batch_gate (default: 0.80).",
     )
     ap.add_argument(
         "--require-mlir-fresh-on-head",
@@ -371,6 +459,7 @@ def main() -> None:
     coverage_active = args.active_batch_coverage
     active_by_profile: dict[str, Path] = {
         "coverage": coverage_active,
+        "gpu_perf": args.active_batch_gpu_perf,
         "ir_arch": args.active_batch_ir_arch,
         "backend_compiler": args.active_batch_backend_compiler,
         "workflow": args.active_batch_workflow,
@@ -385,6 +474,9 @@ def main() -> None:
     if (
         bool(args.require_coverage_fresh_on_head)
         or bool(args.require_coverage_categories_complete)
+        or (bool(args.require_gpu_perf_fresh_on_head) and ("gpu_perf" in profiles))
+        or (bool(args.require_gpu_perf_categories_complete) and ("gpu_perf" in profiles))
+        or (bool(args.require_gpu_perf_per_device_ok) and ("gpu_perf" in profiles))
         or (bool(args.require_mlir_fresh_on_head) and ("mlir_migration" in profiles))
         or (bool(args.require_mlir_toolchain_required) and ("mlir_migration" in profiles))
     ):
@@ -400,7 +492,7 @@ def main() -> None:
         if p is None:
             checks.append(_check(f"active_batch::{profile}", False, "unsupported profile"))
             continue
-        if profile == "coverage":
+        if profile in {"coverage", "gpu_perf"}:
             checks.append(_check(f"exists::active_batch::{profile}", p.is_file(), "file exists" if p.is_file() else "missing file"))
         else:
             checks.append(
@@ -433,6 +525,15 @@ def main() -> None:
     if bool(args.require_coverage_categories_complete):
         categories_ok, categories_detail = _validate_coverage_categories_complete(args.current_status)
         checks.append(_check("coverage_categories_complete", categories_ok, categories_detail))
+    if bool(args.require_gpu_perf_fresh_on_head) and ("gpu_perf" in profiles):
+        gpu_fresh_ok, gpu_fresh_detail = _validate_gpu_perf_fresh_on_head(args.current_status)
+        checks.append(_check("gpu_perf_fresh_on_head", gpu_fresh_ok, gpu_fresh_detail))
+    if bool(args.require_gpu_perf_categories_complete) and ("gpu_perf" in profiles):
+        gpu_cat_ok, gpu_cat_detail = _validate_gpu_perf_categories_complete(args.current_status)
+        checks.append(_check("gpu_perf_categories_complete", gpu_cat_ok, gpu_cat_detail))
+    if bool(args.require_gpu_perf_per_device_ok) and ("gpu_perf" in profiles):
+        gpu_dev_ok, gpu_dev_detail = _validate_gpu_perf_per_device_ok(args.current_status)
+        checks.append(_check("gpu_perf_per_device_ok", gpu_dev_ok, gpu_dev_detail))
     if bool(args.require_mlir_fresh_on_head) and ("mlir_migration" in profiles):
         mlir_ok, mlir_detail = _validate_mlir_fresh_on_head(args.current_status)
         checks.append(_check("mlir_fresh_on_head", mlir_ok, mlir_detail))
@@ -511,9 +612,9 @@ def main() -> None:
         if active_path.is_file():
             payload = load_json(active_path)
             items = [e for e in list(payload.get("items") or []) if isinstance(e, dict)]
-            if profile != "coverage" and not items:
+            if profile not in {"coverage", "gpu_perf"} and not items:
                 run_gate = False
-        if not active_path.is_file() and profile != "coverage":
+        if not active_path.is_file() and profile not in {"coverage", "gpu_perf"}:
             run_gate = False
         if not run_gate:
             checks.append(_check(f"batch_gate::{profile}", True, "skipped (no active items for profile)"))
@@ -545,6 +646,14 @@ def main() -> None:
             cmd.append("--require-coverage-fresh-on-head")
         else:
             cmd.append("--no-require-coverage-fresh-on-head")
+        if bool(args.require_gpu_perf_fresh_on_head) and profile == "gpu_perf":
+            cmd.append("--require-gpu-perf-fresh-on-head")
+        else:
+            cmd.append("--no-require-gpu-perf-fresh-on-head")
+        if bool(args.require_gpu_perf_categories_complete) and profile == "gpu_perf":
+            cmd.append("--require-gpu-perf-categories-complete")
+        else:
+            cmd.append("--no-require-gpu-perf-categories-complete")
         if bool(args.require_mlir_fresh_on_head) and profile == "mlir_migration":
             cmd.append("--require-mlir-fresh-on-head")
         else:
@@ -565,6 +674,11 @@ def main() -> None:
                 cmd.append("--no-require-all-categories-complete")
         else:
             cmd.append("--no-require-all-categories-complete")
+        if profile == "gpu_perf":
+            cmd += [
+                "--gpu-perf-threshold",
+                str(float(args.gpu_perf_threshold)),
+            ]
         if profile == "backend_compiler":
             cmd += [
                 "--max-total-regression-pct",
@@ -604,6 +718,7 @@ def main() -> None:
             "registry": _to_repo_rel(args.registry),
             "feature_list": _to_repo_rel(args.feature_list),
             "active_batch_coverage": _to_repo_rel(active_by_profile["coverage"]),
+            "active_batch_gpu_perf": _to_repo_rel(active_by_profile["gpu_perf"]),
             "active_batch_ir_arch": _to_repo_rel(active_by_profile["ir_arch"]),
             "active_batch_backend_compiler": _to_repo_rel(active_by_profile["backend_compiler"]),
             "active_batch_workflow": _to_repo_rel(active_by_profile["workflow"]),

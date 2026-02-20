@@ -518,6 +518,18 @@ def build_current_status_payload(
     mlir_backend_contract_ready: bool | None = None,
     mlir_llvm_chain_ok: bool | None = None,
     mlir_full196_validated_commit: str = "",
+    gpu_perf_phase: str = "",
+    gpu_perf_last_run: str = "",
+    gpu_perf_last_ok: bool | None = None,
+    gpu_perf_validated_commit: str = "",
+    gpu_perf_commits_since_validated: int | None = None,
+    gpu_perf_mode: str = "",
+    gpu_perf_threshold: float | None = None,
+    gpu_perf_devices: list[dict[str, Any]] | None = None,
+    gpu_perf_failures_by_family: Mapping[str, Any] | None = None,
+    gpu_perf_categories_expected: int | None = None,
+    gpu_perf_categories_completed: int | None = None,
+    gpu_perf_categories_failed: list[str] | None = None,
     catalog_path: str = "scripts/CATALOG.json",
     catalog_validated: bool = False,
     active_lanes: list[str] | None = None,
@@ -594,6 +606,29 @@ def build_current_status_payload(
         ),
         "mlir_llvm_chain_ok": (None if mlir_llvm_chain_ok is None else bool(mlir_llvm_chain_ok)),
         "mlir_full196_validated_commit": str(mlir_full196_validated_commit or ""),
+        "gpu_perf_phase": str(gpu_perf_phase or ""),
+        "gpu_perf_last_run": str(gpu_perf_last_run or ""),
+        "gpu_perf_last_ok": (None if gpu_perf_last_ok is None else bool(gpu_perf_last_ok)),
+        "gpu_perf_validated_commit": str(gpu_perf_validated_commit or ""),
+        "gpu_perf_commits_since_validated": (
+            None if gpu_perf_commits_since_validated is None else int(gpu_perf_commits_since_validated)
+        ),
+        "gpu_perf_mode": str(gpu_perf_mode or ""),
+        "gpu_perf_threshold": (None if gpu_perf_threshold is None else float(gpu_perf_threshold)),
+        "gpu_perf_devices": list(gpu_perf_devices or []),
+        "gpu_perf_failures_by_family": {
+            str(k): [str(x) for x in list(v or []) if str(x).strip()]
+            for k, v in dict(gpu_perf_failures_by_family or {}).items()
+        },
+        "gpu_perf_categories_expected": (
+            None if gpu_perf_categories_expected is None else int(gpu_perf_categories_expected)
+        ),
+        "gpu_perf_categories_completed": (
+            None if gpu_perf_categories_completed is None else int(gpu_perf_categories_completed)
+        ),
+        "gpu_perf_categories_failed": [
+            str(x) for x in list(gpu_perf_categories_failed or []) if str(x).strip()
+        ],
         "coverage": {
             "semantic_ops": semantic_ops,
             "dual_pass": dual_pass,
