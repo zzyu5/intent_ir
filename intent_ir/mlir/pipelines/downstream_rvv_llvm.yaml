@@ -1,0 +1,8 @@
+passes:
+  - python:backend_legalize
+  - mlir-opt?:canonicalize
+  - python:attach_provider_meta
+  - mlir-translate?:mlir-to-llvmir
+  - python:ensure_llvm_ir_text
+  - "llvm-as?:"
+  - "opt?:-O2"

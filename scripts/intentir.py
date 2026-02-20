@@ -580,7 +580,14 @@ def _build_parser() -> argparse.ArgumentParser:
     mlir_pass.add_argument(
         "--pipeline",
         required=True,
-        choices=["upstream", "midend", "downstream_cuda", "downstream_rvv", "downstream_cuda_llvm"],
+        choices=[
+            "upstream",
+            "midend",
+            "downstream_cuda",
+            "downstream_rvv",
+            "downstream_cuda_llvm",
+            "downstream_rvv_llvm",
+        ],
     )
     mlir_pass.add_argument("--backend", default=None, help="Optional backend hint (cuda/rvv)")
     mlir_pass.add_argument("--out-dir", default=None, help="Output directory for module + pass trace")

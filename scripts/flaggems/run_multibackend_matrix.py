@@ -228,8 +228,19 @@ def _collect_mlir_llvm_artifacts(
         llvm_emit_ok = bool(mlir.get("llvm_emit_ok"))
         llvm_path_raw = str(mlir.get("llvm_ir_path") or "").strip()
         llvm_skip_reason = str(mlir.get("llvm_skip_reason") or "").strip()
+        llvm_pipeline = str(mlir.get("llvm_pipeline") or "").strip()
+        row["llvm_pipeline"] = str(llvm_pipeline)
         if not llvm_skip_reason:
-            trace = mlir.get("downstream_cuda_llvm")
+            trace = None
+            trace_keys = [str(llvm_pipeline)] if str(llvm_pipeline).strip() else []
+            trace_keys += ["downstream_cuda_llvm", "downstream_rvv_llvm"]
+            for trace_key in trace_keys:
+                candidate = mlir.get(str(trace_key))
+                if isinstance(candidate, dict):
+                    trace = candidate
+                    if not str(llvm_pipeline).strip():
+                        row["llvm_pipeline"] = str(trace_key)
+                    break
             if isinstance(trace, dict):
                 passes = [p for p in list(trace.get("passes") or []) if isinstance(p, dict)]
                 translate_rows = [p for p in passes if str(p.get("name") or "").startswith("mlir-translate")]

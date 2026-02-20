@@ -212,6 +212,17 @@ def _downstream_pipeline_name(backend_target: str | None) -> str | None:
     return None
 
 
+def _downstream_llvm_pipeline(backend_target: str | None) -> tuple[str | None, str | None]:
+    target = str(backend_target or "").strip().lower()
+    if not target:
+        return None, None
+    if target.startswith("cuda"):
+        return "downstream_cuda_llvm", "cuda"
+    if target.startswith("rvv"):
+        return "downstream_rvv_llvm", "rvv"
+    return None, None
+
+
 def _emit_mlir_shadow_artifacts(
     *,
     spec_name: str,
@@ -246,6 +257,8 @@ def _emit_mlir_shadow_artifacts(
         mlir_report["mlir_parse_ms"] = 0.0
         mlir_report["mlir_pass_ms"] = float(up_ms + mid_ms)
         mlir_report["mlir_lower_ms"] = 0.0
+        mlir_report["llvm_pipeline"] = ""
+        mlir_report["llvm_backend"] = ""
         mlir_report["llvm_emit_ok"] = False
         mlir_report["llvm_emit_ms"] = 0.0
         mlir_report["llvm_ir_path"] = ""
@@ -269,99 +282,107 @@ def _emit_mlir_shadow_artifacts(
         else:
             mlir_report["downstream"] = {"ok": True, "skipped": True, "reason": "backend_target_not_set"}
 
-        try:
-            llvm_mod, llvm_trace = run_mlir_pipeline(
-                mid_mod,
-                "downstream_cuda_llvm",
-                backend="cuda",
-                out_dir=(out_dir / "mlir_downstream_cuda_llvm"),
-            )
-            llvm_stage_path = out_dir / f"{spec_name}.intentir.intentdialect.downstream_cuda_llvm.mlir"
-            llvm_stage_path.write_text(llvm_mod.module_text, encoding="utf-8")
-            mlir_report["downstream_cuda_llvm"] = dict(llvm_trace)
-            mlir_report["downstream_cuda_llvm_module_path"] = str(llvm_stage_path)
-
-            llvm_passes = [p for p in list(llvm_trace.get("passes") or []) if isinstance(p, dict)]
-            llvm_translate = [p for p in llvm_passes if str(p.get("name") or "").startswith("mlir-translate")]
-            llvm_ensure_rows = [
-                p for p in llvm_passes if str(p.get("name") or "").startswith("python:ensure_llvm_ir_text")
-            ]
-            llvm_as_rows = [p for p in llvm_passes if str(p.get("name") or "").startswith("llvm-as")]
-            llvm_opt_rows = [p for p in llvm_passes if str(p.get("name") or "").startswith("opt")]
-            llvm_emit_ms = sum(
-                float(p.get("ms") or 0.0) for p in [*llvm_translate, *llvm_as_rows, *llvm_opt_rows]
-            )
-            mlir_report["llvm_emit_ms"] = float(llvm_emit_ms)
-            lower_ms_total += sum(float(p.get("ms") or 0.0) for p in llvm_passes)
-
-            translate_ok = False
-            translate_reason = "mlir_translate_not_executed"
-            if llvm_translate:
-                last_translate = dict(llvm_translate[-1])
-                translate_detail = str(last_translate.get("detail") or "").strip()
-                translate_ok = bool(last_translate.get("ok")) and translate_detail == "ok"
-                if not translate_ok:
-                    translate_reason = translate_detail or "mlir_translate_not_ok"
-
-            ensure_ok = False
-            ensure_reason = ""
-            if llvm_ensure_rows:
-                last_ensure = dict(llvm_ensure_rows[-1])
-                ensure_detail = str(last_ensure.get("detail") or "").strip()
-                ensure_ok = bool(last_ensure.get("ok")) and ensure_detail == "ok"
-                if not ensure_ok:
-                    ensure_reason = ensure_detail or "ensure_llvm_ir_text_not_ok"
-
-            llvm_as_ok = True
-            llvm_as_reason = ""
-            if llvm_as_rows:
-                last_llvm_as = dict(llvm_as_rows[-1])
-                llvm_as_detail = str(last_llvm_as.get("detail") or "").strip()
-                llvm_as_ok = bool(last_llvm_as.get("ok")) and llvm_as_detail == "ok"
-                if not llvm_as_ok:
-                    llvm_as_reason = llvm_as_detail or "llvm_as_not_ok"
-
-            llvm_opt_ok = True
-            llvm_opt_reason = ""
-            if llvm_opt_rows:
-                last_llvm_opt = dict(llvm_opt_rows[-1])
-                llvm_opt_detail = str(last_llvm_opt.get("detail") or "").strip()
-                llvm_opt_ok = bool(last_llvm_opt.get("ok")) and llvm_opt_detail == "ok"
-                if not llvm_opt_ok:
-                    llvm_opt_reason = llvm_opt_detail or "llvm_opt_not_ok"
-
-            llvm_text_ready = bool(translate_ok or ensure_ok)
-            llvm_emit_ok = bool(llvm_text_ready and llvm_as_ok and llvm_opt_ok)
-            llvm_skip_reason = ""
-            if not llvm_emit_ok:
-                if not llvm_text_ready:
-                    llvm_skip_reason = ensure_reason or translate_reason or "llvm_text_not_ready"
-                elif not llvm_as_ok:
-                    llvm_skip_reason = llvm_as_reason or "llvm_as_not_ok"
-                elif not llvm_opt_ok:
-                    llvm_skip_reason = llvm_opt_reason or "llvm_opt_not_ok"
-            elif (not translate_ok) and ensure_ok:
-                mlir_report["llvm_skip_reason"] = "llvm_text_synthesized_from_intent"
-
-            if llvm_emit_ok:
-                llvm_ir_path = out_dir / f"{spec_name}.intentir.intentdialect.downstream_cuda_llvm.ll"
-                llvm_ir_path.write_text(llvm_mod.module_text, encoding="utf-8")
-                mlir_report["llvm_emit_ok"] = True
-                mlir_report["llvm_ir_path"] = str(llvm_ir_path)
-                if str(mlir_report.get("llvm_skip_reason") or "").strip() != "llvm_text_synthesized_from_intent":
-                    mlir_report["llvm_skip_reason"] = ""
-            else:
-                mlir_report["llvm_emit_ok"] = False
-                mlir_report["llvm_ir_path"] = ""
-                mlir_report["llvm_skip_reason"] = str(llvm_skip_reason)
-        except Exception as e:
-            mlir_report["downstream_cuda_llvm"] = {
-                "ok": False,
-                "error": f"{type(e).__name__}: {e}",
-            }
+        llvm_pipeline, llvm_backend = _downstream_llvm_pipeline(backend_target)
+        if llvm_pipeline is None:
             mlir_report["llvm_emit_ok"] = False
             mlir_report["llvm_ir_path"] = ""
-            mlir_report["llvm_skip_reason"] = f"downstream_cuda_llvm_error:{type(e).__name__}"
+            mlir_report["llvm_skip_reason"] = "llvm_pipeline_not_configured"
+        else:
+            mlir_report["llvm_pipeline"] = str(llvm_pipeline)
+            mlir_report["llvm_backend"] = str(llvm_backend or "")
+            try:
+                llvm_mod, llvm_trace = run_mlir_pipeline(
+                    mid_mod,
+                    str(llvm_pipeline),
+                    backend=str(llvm_backend or ""),
+                    out_dir=(out_dir / f"mlir_{llvm_pipeline}"),
+                )
+                llvm_stage_path = out_dir / f"{spec_name}.intentir.intentdialect.{llvm_pipeline}.mlir"
+                llvm_stage_path.write_text(llvm_mod.module_text, encoding="utf-8")
+                mlir_report[str(llvm_pipeline)] = dict(llvm_trace)
+                mlir_report[f"{llvm_pipeline}_module_path"] = str(llvm_stage_path)
+
+                llvm_passes = [p for p in list(llvm_trace.get("passes") or []) if isinstance(p, dict)]
+                llvm_translate = [p for p in llvm_passes if str(p.get("name") or "").startswith("mlir-translate")]
+                llvm_ensure_rows = [
+                    p for p in llvm_passes if str(p.get("name") or "").startswith("python:ensure_llvm_ir_text")
+                ]
+                llvm_as_rows = [p for p in llvm_passes if str(p.get("name") or "").startswith("llvm-as")]
+                llvm_opt_rows = [p for p in llvm_passes if str(p.get("name") or "").startswith("opt")]
+                llvm_emit_ms = sum(
+                    float(p.get("ms") or 0.0) for p in [*llvm_translate, *llvm_as_rows, *llvm_opt_rows]
+                )
+                mlir_report["llvm_emit_ms"] = float(llvm_emit_ms)
+                lower_ms_total += sum(float(p.get("ms") or 0.0) for p in llvm_passes)
+
+                translate_ok = False
+                translate_reason = "mlir_translate_not_executed"
+                if llvm_translate:
+                    last_translate = dict(llvm_translate[-1])
+                    translate_detail = str(last_translate.get("detail") or "").strip()
+                    translate_ok = bool(last_translate.get("ok")) and translate_detail == "ok"
+                    if not translate_ok:
+                        translate_reason = translate_detail or "mlir_translate_not_ok"
+
+                ensure_ok = False
+                ensure_reason = ""
+                if llvm_ensure_rows:
+                    last_ensure = dict(llvm_ensure_rows[-1])
+                    ensure_detail = str(last_ensure.get("detail") or "").strip()
+                    ensure_ok = bool(last_ensure.get("ok")) and ensure_detail == "ok"
+                    if not ensure_ok:
+                        ensure_reason = ensure_detail or "ensure_llvm_ir_text_not_ok"
+
+                llvm_as_ok = True
+                llvm_as_reason = ""
+                if llvm_as_rows:
+                    last_llvm_as = dict(llvm_as_rows[-1])
+                    llvm_as_detail = str(last_llvm_as.get("detail") or "").strip()
+                    llvm_as_ok = bool(last_llvm_as.get("ok")) and llvm_as_detail == "ok"
+                    if not llvm_as_ok:
+                        llvm_as_reason = llvm_as_detail or "llvm_as_not_ok"
+
+                llvm_opt_ok = True
+                llvm_opt_reason = ""
+                if llvm_opt_rows:
+                    last_llvm_opt = dict(llvm_opt_rows[-1])
+                    llvm_opt_detail = str(last_llvm_opt.get("detail") or "").strip()
+                    llvm_opt_ok = bool(last_llvm_opt.get("ok")) and llvm_opt_detail == "ok"
+                    if not llvm_opt_ok:
+                        llvm_opt_reason = llvm_opt_detail or "llvm_opt_not_ok"
+
+                llvm_text_ready = bool(translate_ok or ensure_ok)
+                llvm_emit_ok = bool(llvm_text_ready and llvm_as_ok and llvm_opt_ok)
+                llvm_skip_reason = ""
+                if not llvm_emit_ok:
+                    if not llvm_text_ready:
+                        llvm_skip_reason = ensure_reason or translate_reason or "llvm_text_not_ready"
+                    elif not llvm_as_ok:
+                        llvm_skip_reason = llvm_as_reason or "llvm_as_not_ok"
+                    elif not llvm_opt_ok:
+                        llvm_skip_reason = llvm_opt_reason or "llvm_opt_not_ok"
+                elif (not translate_ok) and ensure_ok:
+                    mlir_report["llvm_skip_reason"] = "llvm_text_synthesized_from_intent"
+
+                if llvm_emit_ok:
+                    llvm_ir_path = out_dir / f"{spec_name}.intentir.intentdialect.{llvm_pipeline}.ll"
+                    llvm_ir_path.write_text(llvm_mod.module_text, encoding="utf-8")
+                    mlir_report["llvm_emit_ok"] = True
+                    mlir_report["llvm_ir_path"] = str(llvm_ir_path)
+                    if str(mlir_report.get("llvm_skip_reason") or "").strip() != "llvm_text_synthesized_from_intent":
+                        mlir_report["llvm_skip_reason"] = ""
+                else:
+                    mlir_report["llvm_emit_ok"] = False
+                    mlir_report["llvm_ir_path"] = ""
+                    mlir_report["llvm_skip_reason"] = str(llvm_skip_reason)
+            except Exception as e:
+                mlir_report[str(llvm_pipeline)] = {
+                    "ok": False,
+                    "error": f"{type(e).__name__}: {e}",
+                }
+                mlir_report["llvm_emit_ok"] = False
+                mlir_report["llvm_ir_path"] = ""
+                mlir_report["llvm_skip_reason"] = f"{llvm_pipeline}_error:{type(e).__name__}"
 
         mlir_report["mlir_lower_ms"] = float(lower_ms_total)
 
