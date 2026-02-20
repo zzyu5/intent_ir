@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backends.spmd_rvv.codegen.cpp_driver import lower_intent_to_c_with_files  # noqa: E402
+from backends.spmd_rvv.codegen.cpp_driver import lower_intent_json_to_c_with_files_cpp as _lower_intent_json_to_c_with_files_cpp  # noqa: E402
 from backends.spmd_rvv.analysis.device_query import load_profile  # noqa: E402
 from backends.spmd_rvv.analysis.tuning import TuningRequest, parse_constraints, parse_locks, select_schedule  # noqa: E402
 from intent_ir.ir import IntentFunction  # noqa: E402
@@ -46,6 +46,35 @@ DEFAULT_KERNELS = [
     "layer_norm_persistent",
     "upsample_bicubic2d_aa",
 ]
+
+
+def lower_intent_to_c_with_files(
+    intent_or_json: Any,
+    *,
+    shape_bindings: dict[str, Any],
+    atol: float = 1e-3,
+    rtol: float = 1e-3,
+    mode: str = "verify",
+) -> str:
+    """
+    Compatibility wrapper for RVV codegen entry.
+
+    Accepts either IntentFunction or intent JSON and lowers through the
+    contract-oriented JSON entrypoint.
+    """
+    if isinstance(intent_or_json, dict):
+        payload = dict(intent_or_json)
+    elif hasattr(intent_or_json, "to_json_dict"):
+        payload = dict(intent_or_json.to_json_dict())
+    else:
+        raise TypeError("intent_or_json must be IntentFunction or intent JSON")
+    return _lower_intent_json_to_c_with_files_cpp(
+        payload,
+        shape_bindings=shape_bindings,
+        atol=float(atol),
+        rtol=float(rtol),
+        mode=str(mode),
+    )
 
 def _default_kernels_for(
     *,
@@ -366,7 +395,12 @@ def run_one(
     td = Path(tmp_ctx.name)
     try:
         t_lower = perf_counter()
-        c_src = lower_intent_to_c_with_files(intent_codegen, shape_bindings=bindings, atol=float(atol), rtol=float(rtol))
+        c_src = lower_intent_to_c_with_files(
+            intent_codegen,
+            shape_bindings=bindings,
+            atol=float(atol),
+            rtol=float(rtol),
+        )
         lower_ms = (perf_counter() - t_lower) * 1000.0
         declared_dtypes = _extract_buffer_declared_dtypes(c_src)
 

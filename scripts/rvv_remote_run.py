@@ -34,7 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backends.spmd_rvv.codegen.cpp_driver import lower_intent_to_c_with_files
+from backends.spmd_rvv.codegen.cpp_driver import lower_intent_json_to_c_with_files_cpp as _lower_intent_json_to_c_with_files_cpp
 from backends.spmd_rvv.analysis.device_query import load_profile, query_remote_device
 from backends.spmd_rvv.analysis.tuning import (
     ScheduleCandidate,
@@ -52,6 +52,35 @@ from verify.tolerances import infer_tolerances
 
 DEFAULT_RVV_HOST = os.getenv("INTENTIR_RVV_HOST", "192.168.8.72")
 DEFAULT_RVV_USER = os.getenv("INTENTIR_RVV_USER", "ubuntu")
+
+
+def lower_intent_to_c_with_files(
+    intent_or_json: Any,
+    *,
+    shape_bindings: dict[str, Any],
+    atol: float = 1e-3,
+    rtol: float = 1e-3,
+    mode: str = "verify",
+) -> str:
+    """
+    Compatibility wrapper for RVV remote codegen.
+
+    Accepts either IntentFunction or intent JSON and lowers through the
+    contract-oriented JSON entrypoint.
+    """
+    if isinstance(intent_or_json, dict):
+        payload = dict(intent_or_json)
+    elif hasattr(intent_or_json, "to_json_dict"):
+        payload = dict(intent_or_json.to_json_dict())
+    else:
+        raise TypeError("intent_or_json must be IntentFunction or intent JSON")
+    return _lower_intent_json_to_c_with_files_cpp(
+        payload,
+        shape_bindings=shape_bindings,
+        atol=float(atol),
+        rtol=float(rtol),
+        mode=str(mode),
+    )
 
 
 def _normalize_io_name(name: str) -> str:

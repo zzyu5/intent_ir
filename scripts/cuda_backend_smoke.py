@@ -33,7 +33,7 @@ if str(ROOT) not in sys.path:
 from backends.cuda.codegen.cpp_driver import (  # noqa: E402
     CudaLoweringError,
     ensure_cpp_codegen_ext_loaded,
-    lower_intent_to_cuda_kernel,
+    lower_intent_json_to_cuda_kernel,
 )
 from backends.cuda.runtime import (  # noqa: E402
     CudaRuntimeError,
@@ -377,7 +377,7 @@ def _run_compile_stage(
     t_all = time.perf_counter()
     ctx = _prepare_kernel_context(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
     t_lower = time.perf_counter()
-    lowered = lower_intent_to_cuda_kernel(ctx["intent"], shape_bindings=ctx["bindings"])
+    lowered = lower_intent_json_to_cuda_kernel(ctx["intent"].to_json_dict(), shape_bindings=ctx["bindings"])
     lower_ms = (time.perf_counter() - t_lower) * 1000.0
     cache_info = cuda_extension_cache_info(
         kernel_name=lowered.kernel_name,
@@ -418,7 +418,7 @@ def _run_launch_stage(
     ctx = _prepare_kernel_context(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
 
     t_lower = time.perf_counter()
-    lowered = lower_intent_to_cuda_kernel(ctx["intent"], shape_bindings=ctx["bindings"])
+    lowered = lower_intent_json_to_cuda_kernel(ctx["intent"].to_json_dict(), shape_bindings=ctx["bindings"])
     lower_ms = (time.perf_counter() - t_lower) * 1000.0
     cache_info = cuda_extension_cache_info(
         kernel_name=lowered.kernel_name,

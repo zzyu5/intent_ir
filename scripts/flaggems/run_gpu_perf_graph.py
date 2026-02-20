@@ -36,7 +36,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backends.cuda.codegen.cpp_driver import CudaLoweringError, lower_intent_to_cuda_kernel
+from backends.cuda.codegen.cpp_driver import CudaLoweringError, lower_intent_json_to_cuda_kernel
 from backends.cuda.runtime import compile_cuda_extension
 from intent_ir.utils.repo_state import repo_state
 from pipeline.triton.core import coverage_kernel_specs
@@ -320,7 +320,7 @@ def _build_intentir_launch_fn(
         triton_provider="flaggems",
         artifact_dir=artifact_dir,
     )
-    lowered = lower_intent_to_cuda_kernel(ctx["intent"], shape_bindings=ctx["bindings"])
+    lowered = lower_intent_json_to_cuda_kernel(ctx["intent"].to_json_dict(), shape_bindings=ctx["bindings"])
     t_compile0 = time.perf_counter()
     mod = compile_cuda_extension(
         kernel_name=lowered.kernel_name,

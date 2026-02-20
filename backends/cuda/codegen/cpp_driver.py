@@ -274,11 +274,49 @@ def lower_intent_to_cuda_kernel(
     )
 
 
+def lower_intent_json_to_cuda_kernel(
+    intent_json: Mapping[str, Any],
+    *,
+    shape_bindings: Mapping[str, Any],
+) -> CudaLoweredKernel:
+    """
+    Lower IntentIR JSON directly to a typed CUDA lowered kernel payload.
+
+    This keeps MLIR/contract-driven call sites free from IntentFunction rebuilds.
+    """
+    payload = dict(intent_json or {})
+    name = str(payload.get("name") or "intent")
+    try:
+        j = lower_intent_json_to_cuda_kernel_cpp(payload, bindings=_normalize_bindings(shape_bindings))
+    except Exception as exc:
+        raise CudaLoweringError(str(exc)) from exc
+    launch_j = j.get("launch") if isinstance(j.get("launch"), dict) else {}
+    grid = launch_j.get("grid")
+    block = launch_j.get("block")
+    shared_mem = launch_j.get("shared_mem", 0)
+    if not (isinstance(grid, list) and len(grid) == 3 and isinstance(block, list) and len(block) == 3):
+        raise CudaLoweringError("cuda cpp codegen returned invalid launch config")
+    launch = CudaLaunch(
+        grid=(int(grid[0]), int(grid[1]), int(grid[2])),
+        block=(int(block[0]), int(block[1]), int(block[2])),
+        shared_mem=int(shared_mem),
+    )
+    return CudaLoweredKernel(
+        kernel_name=str(j.get("kernel_name") or name),
+        cuda_src=str(j.get("cuda_src") or ""),
+        io_spec=j.get("io_spec") if isinstance(j.get("io_spec"), dict) else {},
+        launch=launch,
+        output_names=[str(x) for x in (j.get("output_names") or [])],
+        bindings=j.get("bindings") if isinstance(j.get("bindings"), dict) else {},
+    )
+
+
 __all__ = [
     "ensure_cpp_codegen_built",
     "ensure_cpp_codegen_ext_loaded",
     "lower_intent_to_cuda_kernel_cpp",
     "lower_intent_json_to_cuda_kernel_cpp",
+    "lower_intent_json_to_cuda_kernel",
     "CudaLoweringError",
     "CudaLoweredKernel",
     "lower_intent_to_cuda_kernel",
