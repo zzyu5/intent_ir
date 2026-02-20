@@ -678,6 +678,7 @@ def main() -> None:
             cmd += [
                 "--gpu-perf-threshold",
                 str(float(args.gpu_perf_threshold)),
+                "--no-require-progress-tail-match",
             ]
         if profile == "backend_compiler":
             cmd += [

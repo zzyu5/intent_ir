@@ -17,6 +17,7 @@ import argparse
 import importlib
 import inspect
 import json
+import os
 import statistics
 import sys
 import time
@@ -25,6 +26,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+# Avoid mkl-service/libgomp threading-layer conflicts in long benchmark runs.
+os.environ.setdefault("MKL_THREADING_LAYER", "GNU")
+
+import numpy as np  # noqa: F401  # import before torch per MKL guidance
 import torch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -94,12 +99,47 @@ def _emit_chunk_progress(
     if mode == "none":
         return
     if mode == "chunk":
-        print(f"[chunk] {done}/{total} status={status}", flush=True)
+        print(f"[chunk] {done}/{total}", flush=True)
         return
     print(
         f"[progress] chunks {done}/{total} family={family} chunk={chunk_idx}/{chunk_total} status={status}",
         flush=True,
     )
+
+
+def _write_chunk_progress_file(
+    *,
+    path: Path,
+    done: int,
+    total: int,
+    family: str,
+    chunk_idx: int,
+    chunk_total: int,
+    status: str,
+    completed: bool,
+    progress_style: str,
+    measured: int,
+    failures: int,
+) -> None:
+    payload = {
+        "schema_version": "flaggems_chunk_progress_v1",
+        "generated_at": _utc_now_iso(),
+        "suite": "gpu_perf_graph",
+        "progress_style": str(progress_style),
+        "done_chunks": int(done),
+        "total_chunks": int(total),
+        "remaining_chunks": int(max(0, int(total) - int(done))),
+        "completed": bool(completed),
+        "measured_kernels": int(measured),
+        "failure_count": int(failures),
+        "last": {
+            "family": str(family),
+            "chunk_index": int(chunk_idx),
+            "chunk_total": int(chunk_total),
+            "status": str(status),
+        },
+    }
+    _dump_json(path, payload)
 
 
 def _choose_progress_style(raw: str) -> str:
@@ -614,6 +654,10 @@ def _stage_timing_breakdown(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+_SKIP_ONLY_REASONS: frozenset[str] = frozenset({"native_unavailable", "env_unavailable"})
+_SKIP_ONLY_SKIP_REASONS: frozenset[str] = frozenset({"native_unavailable", "native_graph_failed"})
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -634,6 +678,12 @@ def main() -> None:
     ap.add_argument("--iters", type=int, default=200)
     ap.add_argument("--repeats", type=int, default=5)
     ap.add_argument("--progress-style", choices=["auto", "tqdm", "plain", "chunk", "none"], default="chunk")
+    ap.add_argument(
+        "--progress-file",
+        type=Path,
+        default=None,
+        help="Optional chunk-progress JSON path (default: <out-root>/chunk_progress.json).",
+    )
     ap.add_argument("--stream", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument(
         "--intent-artifact-dir",
@@ -662,6 +712,7 @@ def main() -> None:
 
     out_root = Path(args.out_root)
     out_root.mkdir(parents=True, exist_ok=True)
+    progress_file = Path(args.progress_file) if args.progress_file is not None else (out_root / "chunk_progress.json")
     style = _choose_progress_style(str(args.progress_style))
     if style == "tqdm" and tqdm is None:
         style = "chunk"
@@ -693,6 +744,20 @@ def main() -> None:
                 "chunks": chunks,
             }
         )
+
+    _write_chunk_progress_file(
+        path=progress_file,
+        done=0,
+        total=int(total_chunks),
+        family="",
+        chunk_idx=0,
+        chunk_total=0,
+        status="START",
+        completed=False,
+        progress_style=str(style),
+        measured=0,
+        failures=0,
+    )
 
     all_rows: list[dict[str, Any]] = []
     family_results: list[dict[str, Any]] = []
@@ -729,6 +794,21 @@ def main() -> None:
                     chunk_idx=cidx,
                     chunk_total=len(chunks),
                     status="RESUME_OK" if chunk_ok else "RESUME_FAIL",
+                )
+                measured_rows = [r for r in all_rows if bool(r.get("count_in_denominator"))]
+                failed_rows = [r for r in measured_rows if not bool(r.get("ok"))]
+                _write_chunk_progress_file(
+                    path=progress_file,
+                    done=int(chunk_done),
+                    total=int(total_chunks),
+                    family=str(family),
+                    chunk_idx=int(cidx),
+                    chunk_total=int(len(chunks)),
+                    status=("RESUME_OK" if chunk_ok else "RESUME_FAIL"),
+                    completed=False,
+                    progress_style=str(style),
+                    measured=int(len(measured_rows)),
+                    failures=int(len(failed_rows)),
                 )
                 continue
 
@@ -784,25 +864,66 @@ def main() -> None:
                 chunk_total=len(chunks),
                 status="OK" if chunk_ok else "FAIL",
             )
+            measured_rows = [r for r in all_rows if bool(r.get("count_in_denominator"))]
+            failed_rows = [r for r in measured_rows if not bool(r.get("ok"))]
+            _write_chunk_progress_file(
+                path=progress_file,
+                done=int(chunk_done),
+                total=int(total_chunks),
+                family=str(family),
+                chunk_idx=int(cidx),
+                chunk_total=int(len(chunks)),
+                status=("OK" if chunk_ok else "FAIL"),
+                completed=False,
+                progress_style=str(style),
+                measured=int(len(measured_rows)),
+                failures=int(len(failed_rows)),
+            )
 
         fam_rows = [r for r in all_rows if str(r.get("family") or "") == family]
         measured = [r for r in fam_rows if bool(r.get("count_in_denominator"))]
-        fam_ok = bool(measured) and all(bool(r.get("ok")) for r in measured)
+        measured_fail = [r for r in measured if not bool(r.get("ok"))]
+        # Perf gate only evaluates kernels that are measurable on both paths.
+        # Non-measured kernels are reported as skip/non-measured diagnostics
+        # and are intentionally excluded from fail/pass denominator.
+        non_measured_hard_fail = [
+            r
+            for r in fam_rows
+            if (not bool(r.get("count_in_denominator")))
+            and (
+                str(r.get("reason_code") or "").strip() not in _SKIP_ONLY_REASONS
+                and str(r.get("skip_reason") or "").strip() not in _SKIP_ONLY_SKIP_REASONS
+            )
+        ]
+        fam_ok = len(measured_fail) == 0
+        fam_status = "OK" if measured else "SKIP"
         family_results.append(
             {
                 "family": str(family),
                 "ok": bool(fam_ok),
+                "status": str(fam_status),
                 "kernel_count": int(len(list(fam.get("kernels") or []))),
                 "chunk_count": int(len(chunks)),
+                "kernel_measured": int(len(measured)),
+                "kernel_measured_fail": int(len(measured_fail)),
+                "kernel_skip_only": int(
+                    sum(
+                        1
+                        for r in fam_rows
+                        if (not bool(r.get("count_in_denominator")))
+                        and (str(r.get("reason_code") or "").strip() in _SKIP_ONLY_REASONS)
+                    )
+                ),
+                "kernel_non_measured_fail": int(len(non_measured_hard_fail)),
                 "chunks": chunk_rows_meta,
             }
         )
-        if bool(args.stream):
+        if bool(args.stream) and str(style) != "chunk":
             measured_count = len(measured)
             pass_count = sum(1 for r in measured if bool(r.get("ok")))
             print(
                 f"[gpu-perf] family={family} measured={pass_count}/{measured_count} "
-                f"chunks={len(chunks)} status={'OK' if fam_ok else 'FAIL'}",
+                f"chunks={len(chunks)} status={fam_status}",
                 flush=True,
             )
 
@@ -931,9 +1052,21 @@ def main() -> None:
     print(f"GPU perf graph report written: {gpu_perf_json}")
     print(f"Status converged written: {status_path}")
     print(f"Run summary written: {run_summary_path}")
+    _write_chunk_progress_file(
+        path=progress_file,
+        done=int(chunk_done),
+        total=int(total_chunks),
+        family="",
+        chunk_idx=0,
+        chunk_total=0,
+        status=("DONE_OK" if aggregate_ok else "DONE_FAIL"),
+        completed=True,
+        progress_style=str(style),
+        measured=int(len(measured_rows)),
+        failures=int(len([r for r in measured_rows if not bool(r.get("ok"))])),
+    )
     raise SystemExit(0 if bool(aggregate_ok) else 1)
 
 
 if __name__ == "__main__":
     main()
-

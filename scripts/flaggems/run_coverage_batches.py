@@ -31,6 +31,11 @@ def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _dump_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
 def _run(
     cmd: list[str],
     *,
@@ -131,12 +136,45 @@ def _emit_chunk_progress(
         return
     if mode == "chunk":
         # Compact mode for long runs: only show global chunk progress.
-        print(f"[chunk] {done}/{total} status={status}", flush=True)
+        print(f"[chunk] {done}/{total}", flush=True)
         return
     print(
         f"[progress] chunks {done}/{total} family={family} chunk={chunk_idx}/{chunk_total} status={status}",
         flush=True,
     )
+
+
+def _write_chunk_progress_file(
+    *,
+    path: Path,
+    done: int,
+    total: int,
+    family: str,
+    chunk_idx: int,
+    chunk_total: int,
+    status: str,
+    completed: bool,
+    failures: int,
+    progress_style: str,
+) -> None:
+    payload = {
+        "schema_version": "flaggems_chunk_progress_v1",
+        "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "suite": "coverage_batches",
+        "progress_style": str(progress_style),
+        "done_chunks": int(done),
+        "total_chunks": int(total),
+        "remaining_chunks": int(max(0, int(total) - int(done))),
+        "completed": bool(completed),
+        "failure_count": int(failures),
+        "last": {
+            "family": str(family),
+            "chunk_index": int(chunk_idx),
+            "chunk_total": int(chunk_total),
+            "status": str(status),
+        },
+    }
+    _dump_json(path, payload)
 
 
 def _entry_status_rank(status: str) -> int:
@@ -353,6 +391,12 @@ def main() -> None:
     ap.add_argument("--write-registry", action=argparse.BooleanOptionalAction, default=False)
     ap.add_argument("--stream-subprocess-output", action=argparse.BooleanOptionalAction, default=False)
     ap.add_argument(
+        "--progress-file",
+        type=Path,
+        default=None,
+        help="Optional chunk-progress JSON path (default: <out-root>/chunk_progress.json).",
+    )
+    ap.add_argument(
         "--progress-style",
         choices=["auto", "tqdm", "plain", "chunk", "none"],
         default="auto",
@@ -388,6 +432,7 @@ def main() -> None:
 
     out_root = Path(args.out_root)
     out_root.mkdir(parents=True, exist_ok=True)
+    progress_file = Path(args.progress_file) if args.progress_file is not None else (out_root / "chunk_progress.json")
     seed_cache_dir = Path(args.seed_cache_dir)
     seed_cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -425,6 +470,19 @@ def main() -> None:
                 "chunks": chunks,
             }
         )
+
+    _write_chunk_progress_file(
+        path=progress_file,
+        done=0,
+        total=int(total_chunks),
+        family="",
+        chunk_idx=0,
+        chunk_total=0,
+        status="START",
+        completed=False,
+        failures=0,
+        progress_style=str(progress_style),
+    )
 
     progress_bar = None
     if progress_style == "tqdm":
@@ -475,12 +533,24 @@ def main() -> None:
                 elif progress_style in {"plain", "chunk"}:
                     print(
                         (
-                            f"[chunk] {chunk_done}/{total_chunks} status=RESUME"
+                            f"[chunk] {chunk_done}/{total_chunks}"
                             if progress_style == "chunk"
                             else f"[progress] chunks {chunk_done}/{total_chunks} family={family} status=RESUME"
                         ),
                         flush=True,
                     )
+                _write_chunk_progress_file(
+                    path=progress_file,
+                    done=int(chunk_done),
+                    total=int(total_chunks),
+                    family=str(family),
+                    chunk_idx=0,
+                    chunk_total=int(len(chunks)),
+                    status="RESUME",
+                    completed=False,
+                    failures=int(len(chunk_failures)),
+                    progress_style=str(progress_style),
+                )
                 family_rows.append(
                     {
                         "family": family,
@@ -557,6 +627,18 @@ def main() -> None:
                     chunk_idx=int(chunk_idx),
                     chunk_total=int(len(chunks)),
                     status="RESUME",
+                )
+                _write_chunk_progress_file(
+                    path=progress_file,
+                    done=int(chunk_done),
+                    total=int(total_chunks),
+                    family=str(family),
+                    chunk_idx=int(chunk_idx),
+                    chunk_total=int(len(chunks)),
+                    status="RESUME",
+                    completed=False,
+                    failures=int(len(chunk_failures)),
+                    progress_style=str(progress_style),
                 )
                 continue
 
@@ -688,6 +770,18 @@ def main() -> None:
                         "stderr_path": str(stderr_path) if str(err) else "",
                     }
                 )
+            _write_chunk_progress_file(
+                path=progress_file,
+                done=int(chunk_done),
+                total=int(total_chunks),
+                family=str(family),
+                chunk_idx=int(chunk_idx),
+                chunk_total=int(len(chunks)),
+                status=("OK" if chunk_ok else "FAIL"),
+                completed=False,
+                failures=int(len(chunk_failures)),
+                progress_style=str(progress_style),
+            )
 
         # Always materialize a family-level summary/status from chunk outputs.
         # This keeps family runs scoped to the selected semantics even when
@@ -792,6 +886,18 @@ def main() -> None:
         )
 
     ok = bool(runs_payload["ok"]) and bool(aggregate_rc == 0)
+    _write_chunk_progress_file(
+        path=progress_file,
+        done=int(chunk_done),
+        total=int(total_chunks),
+        family="",
+        chunk_idx=0,
+        chunk_total=0,
+        status=("DONE_OK" if ok else "DONE_FAIL"),
+        completed=True,
+        failures=int(len(chunk_failures)),
+        progress_style=str(progress_style),
+    )
     raise SystemExit(0 if ok else 1)
 
 

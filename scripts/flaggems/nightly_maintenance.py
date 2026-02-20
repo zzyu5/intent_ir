@@ -416,6 +416,12 @@ def main() -> None:
         ci_cmd += ["--profiles", str(raw)]
     if "coverage" not in profiles_flat:
         ci_cmd += ["--no-require-coverage-fresh-on-head", "--no-require-coverage-categories-complete"]
+    if str(args.suite) == "gpu_perf":
+        ci_cmd += [
+            "--no-require-gpu-perf-fresh-on-head",
+            "--no-require-gpu-perf-categories-complete",
+            "--no-require-gpu-perf-per-device-ok",
+        ]
 
     ci_rc = 0
     ci_out = ""

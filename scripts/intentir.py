@@ -56,6 +56,7 @@ def _cmd_suite(args: argparse.Namespace) -> int:
     out_root = Path(args.out_root) if args.out_root else (ROOT / "artifacts" / "intentir_suite")
     out_root.mkdir(parents=True, exist_ok=True)
     env_overrides = {"INTENTIR_EXECUTION_IR": str(args.execution_ir)}
+    progress_file = Path(args.progress_file) if args.progress_file else (out_root / "chunk_progress.json")
 
     if args.suite == "flaggems-full196":
         rc = _run(
@@ -88,6 +89,8 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             str(int(args.family_kernel_chunk_size)),
             "--progress-style",
             str(args.progress_style),
+            "--progress-file",
+            str(progress_file),
             "--stream-subprocess-output"
             if bool(args.stream_subprocess_detail)
             else "--no-stream-subprocess-output",
@@ -136,6 +139,8 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             str(args.cuda_runtime_backend),
             "--progress-style",
             str(args.progress_style),
+            "--progress-file",
+            str(progress_file),
             "--resume" if args.resume else "--no-resume",
             "--stream" if args.stream else "--no-stream",
         )
@@ -479,6 +484,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Forward verbose per-kernel backend logs from internal matrix runners (default: false).",
+    )
+    suite.add_argument(
+        "--progress-file",
+        default=None,
+        help="Optional chunk-progress JSON path (default: <out-root>/chunk_progress.json).",
     )
     suite.add_argument("--resume", action=argparse.BooleanOptionalAction, default=True)
     suite.add_argument("--write-registry", action=argparse.BooleanOptionalAction, default=False)

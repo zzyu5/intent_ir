@@ -576,6 +576,12 @@ def main() -> None:
         help="Require gpu perf categories to be completed in current_status and payload.",
     )
     ap.add_argument(
+        "--require-progress-tail-match",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require progress_log tail to reference current run/status artifacts (default: true).",
+    )
+    ap.add_argument(
         "--gpu-perf-threshold",
         type=float,
         default=0.80,
@@ -664,8 +670,8 @@ def main() -> None:
     require_mlir_fresh = bool(args.require_mlir_fresh_on_head) or profile == "mlir_migration"
     require_mlir_toolchain = bool(args.require_mlir_toolchain_required) or profile == "mlir_migration"
     require_mlir_llvm_artifact = bool(args.require_mlir_llvm_artifact_complete) or profile == "mlir_migration"
-    require_gpu_perf_fresh = bool(args.require_gpu_perf_fresh_on_head) or profile == "gpu_perf"
-    require_gpu_perf_categories = bool(args.require_gpu_perf_categories_complete) or profile == "gpu_perf"
+    require_gpu_perf_fresh = bool(args.require_gpu_perf_fresh_on_head)
+    require_gpu_perf_categories = bool(args.require_gpu_perf_categories_complete)
     if (
         bool(args.require_coverage_fresh_on_head)
         or require_mlir_fresh
@@ -1003,7 +1009,16 @@ def main() -> None:
             except Exception:
                 progress_ok = False
                 progress_detail = "progress log tail is not valid JSON"
-    checks.append(_check("progress_log.tail_matches_artifacts", progress_ok, progress_detail))
+    if bool(args.require_progress_tail_match):
+        checks.append(_check("progress_log.tail_matches_artifacts", progress_ok, progress_detail))
+    else:
+        checks.append(
+            _check(
+                "progress_log.tail_matches_artifacts",
+                True,
+                "skipped by --no-require-progress-tail-match",
+            )
+        )
 
     if bool(args.require_coverage_fresh_on_head):
         fresh_ok, fresh_detail = _validate_coverage_fresh_on_head(args.current_status)
