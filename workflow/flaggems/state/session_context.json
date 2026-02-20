@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-20T17:25:44+00:00",
+  "updated_at": "2026-02-20T17:46:56+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,46 +13,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "c807b40 workflow: record attention_sequence remote dual-pass evidence\n4e4d1dd feat(matrix): support partial-family runs and rvv remote timeouts\n116ffbc workflow: log reduction chunked mlir coverage evidence\nc771bb6 workflow: record mlir llvm smoke evidence and refresh session state\n081dc07 feat(mlir): make llvm artifact chain pass with intent->llvm text bridge\n979ebe6 workflow: refresh status after gpu-perf freshness-lift update\n3fcc84f fix(workflow): lift gpu-perf freshness on state-only commits\n35bff80 workflow: refresh gpu perf 7-7 aggregate evidence and chunk progress session\nb2eedcf workflow: record gpu-perf reduction run and mark full-scope perf stale\n45e98a5 fix(workflow): prevent partial gpu-perf runs from marking full-scope fresh\n8616eb3 workflow: refresh gpu perf state and session snapshots\ne491e99 feat(perf): stabilize gpu perf gate and add chunk progress artifacts\na84e391 fix(nightly): keep suite=all default gate profile compatible\nf548a85 feat(nightly): wire gpu perf graph suite into nightly workflow\n6d670f7 feat(perf-gate): add gpu graph benchmark profile with workflow freshness\n820b59b workflow: record optional-pass fail-soft migration step\n41452e9 mlir: make optional external passes fail-soft with explicit skip reasons\n6420886 workflow: refresh state snapshots after mlir provisioning commits\nbfe6527 workflow: record mlir toolchain provisioning progress and refresh state\ncf4ddcf mlir: add no-sudo local toolchain provisioning and auto-discovery",
+  "git_log_short": "66150ab workflow: record matmul_linear remote dual-pass evidence\nc807b40 workflow: record attention_sequence remote dual-pass evidence\n4e4d1dd feat(matrix): support partial-family runs and rvv remote timeouts\n116ffbc workflow: log reduction chunked mlir coverage evidence\nc771bb6 workflow: record mlir llvm smoke evidence and refresh session state\n081dc07 feat(mlir): make llvm artifact chain pass with intent->llvm text bridge\n979ebe6 workflow: refresh status after gpu-perf freshness-lift update\n3fcc84f fix(workflow): lift gpu-perf freshness on state-only commits\n35bff80 workflow: refresh gpu perf 7-7 aggregate evidence and chunk progress session\nb2eedcf workflow: record gpu-perf reduction run and mark full-scope perf stale\n45e98a5 fix(workflow): prevent partial gpu-perf runs from marking full-scope fresh\n8616eb3 workflow: refresh gpu perf state and session snapshots\ne491e99 feat(perf): stabilize gpu perf gate and add chunk progress artifacts\na84e391 fix(nightly): keep suite=all default gate profile compatible\nf548a85 feat(nightly): wire gpu perf graph suite into nightly workflow\n6d670f7 feat(perf-gate): add gpu graph benchmark profile with workflow freshness\n820b59b workflow: record optional-pass fail-soft migration step\n41452e9 mlir: make optional external passes fail-soft with explicit skip reasons\n6420886 workflow: refresh state snapshots after mlir provisioning commits\nbfe6527 workflow: record mlir toolchain provisioning progress and refresh state",
   "progress_tail": [
-    {
-      "ts": "2026-02-20T16:13:13+00:00",
-      "commit": "a84e391003d021d2bf09bb30cd0c2c414add289c",
-      "lane": "backend_compiler",
-      "summary": "nightly suite=gpu_perf matrix_rc=0 ci_rc=1",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v6/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v6/status_converged.json",
-      "next_focus": "Refresh failed gpu perf families/chunks and rerun nightly aggregate.",
-      "run_ok": false,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v6",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v6/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v6/status_converged.json",
-        "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v6/ci_gate.json",
-        "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v6/nightly_maintenance_summary.json"
-      ]
-    },
-    {
-      "ts": "2026-02-20T16:14:56+00:00",
-      "commit": "a84e391003d021d2bf09bb30cd0c2c414add289c",
-      "lane": "backend_compiler",
-      "summary": "nightly suite=gpu_perf matrix_rc=0 ci_rc=0",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v7/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v7/status_converged.json",
-      "next_focus": "Refresh failed gpu perf families/chunks and rerun nightly aggregate.",
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v7",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v7/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v7/status_converged.json",
-        "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v7/ci_gate.json",
-        "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v7/nightly_maintenance_summary.json"
-      ]
-    },
     {
       "ts": "2026-02-20T16:24:00+00:00",
       "commit": "8616eb370bceea494aa0f1b5f220491c5796539a",
@@ -178,9 +140,49 @@
       "run_ok": true,
       "run_out_dir": null,
       "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-20T17:37:40+00:00",
+      "commit": "66150ab552d5f5c086ac28925316f844feebe8f4",
+      "lane": "coverage",
+      "summary": "index_scatter_gather family passed with rvv_remote+cuda_local under MLIR force_compile; dual_pass=14/14.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260220/full196_index_mlir_remote_v1/family_index_scatter_gather/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260220/full196_index_mlir_remote_v1/family_index_scatter_gather/status_converged.json",
+      "next_focus": "Run norm_activation and conv_pool_interp families with remote evidence, then schedule 7/7 aggregate run.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260220/full196_index_mlir_remote_v1/chunk_progress.json",
+        "artifacts/flaggems_matrix/daily/20260220/full196_index_mlir_remote_v1/coverage_batch_runs.json",
+        "artifacts/flaggems_matrix/daily/20260220/full196_index_mlir_remote_v1/family_index_scatter_gather/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260220/full196_index_mlir_remote_v1/family_index_scatter_gather/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-20T17:46:50+00:00",
+      "commit": "66150ab552d5f5c086ac28925316f844feebe8f4",
+      "lane": "coverage",
+      "summary": "norm_activation family passed with rvv_remote+cuda_local under MLIR force_compile; dual_pass=15/15.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260220/full196_norm_mlir_remote_v1/family_norm_activation/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260220/full196_norm_mlir_remote_v1/family_norm_activation/status_converged.json",
+      "next_focus": "Run conv_pool_interp and fix reduction chunk_001 timeout tail, then run 7/7 full aggregate on HEAD.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260220/full196_norm_mlir_remote_v1/chunk_progress.json",
+        "artifacts/flaggems_matrix/daily/20260220/full196_norm_mlir_remote_v1/coverage_batch_runs.json",
+        "artifacts/flaggems_matrix/daily/20260220/full196_norm_mlir_remote_v1/family_norm_activation/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260220/full196_norm_mlir_remote_v1/family_norm_activation/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
     }
   ],
-  "next_focus": "Continue remote runs for remaining families and then execute full 7/7 aggregate freshness on HEAD.",
+  "next_focus": "Run conv_pool_interp and fix reduction chunk_001 timeout tail, then run 7/7 full aggregate on HEAD.",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
   "active_lanes": [
     "backend_compiler",
@@ -191,7 +193,5 @@
     "mlir_migration": "Roll same MLIR LLVM-complete chunk flow to remaining families and then run 7/7 aggregate freshness on HEAD.",
     "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD."
   },
-  "known_risks": [
-    "nightly suite=gpu_perf matrix_rc=0 ci_rc=1"
-  ]
+  "known_risks": []
 }
