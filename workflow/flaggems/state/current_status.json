@@ -1,16 +1,16 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-20T17:19:27+00:00",
+  "updated_at": "2026-02-20T17:25:44+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "4e4d1dd201efed384c6cb6d5ce155af5f1d04c04",
+  "head_commit": "c807b4037aba43639055a8248b33339d72a8e95d",
   "mode": "maintenance",
   "coverage_integrity_phase": "recompute_stale",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260220/full196_mlir_head_refresh_v1/run_summary.json",
   "full196_last_ok": true,
   "full196_validated_commit": "95460169a4b043cc3a6d01413dc3593945100e33",
   "full196_validated_commit_source": "run_summary.repo.head_commit",
-  "full196_commits_since_validated": 24,
-  "full196_commits_since_validated_total": 24,
+  "full196_commits_since_validated": 25,
+  "full196_commits_since_validated_total": 25,
   "full196_lifted_to_head": false,
   "full196_validated_mode": "force_compile",
   "full196_validated_execution_ir": "mlir",
@@ -36,7 +36,7 @@
   "gpu_perf_last_run": "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v7/run_summary.json",
   "gpu_perf_last_ok": true,
   "gpu_perf_validated_commit": "b2eedcf7061bfa93664c833f9c7c7a3c8d66c8a1",
-  "gpu_perf_commits_since_validated": 7,
+  "gpu_perf_commits_since_validated": 8,
   "gpu_perf_mode": "graph_only",
   "gpu_perf_threshold": 0.8,
   "gpu_perf_devices": [
@@ -135,8 +135,8 @@
     "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260220/full196_attention_mlir_remote_v1/family_attention_sequence/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260220/full196_attention_mlir_remote_v1/family_attention_sequence/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260220/full196_matmul_mlir_remote_v1/family_matmul_linear/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260220/full196_matmul_mlir_remote_v1/family_matmul_linear/status_converged.json"
   },
   "lanes": {
     "coverage": {
