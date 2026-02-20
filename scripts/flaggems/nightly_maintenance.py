@@ -404,8 +404,6 @@ def main() -> None:
     if not profiles_raw:
         if str(args.suite) == "gpu_perf":
             profiles_raw = ["gpu_perf"]
-        elif str(args.suite) == "all":
-            profiles_raw = ["coverage,gpu_perf"]
         else:
             profiles_raw = ["coverage"]
     profiles_flat: list[str] = []
