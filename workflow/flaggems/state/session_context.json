@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-20T23:46:22+00:00",
+  "updated_at": "2026-02-20T23:53:30+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,28 +13,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "3c13ca4 refactor(backend): switch smoke/perf scripts to json codegen entrypoints\na969f25 workflow: log backend contract-json cutover progress\ndc1fd43 feat(mlir): consume backend contracts without IntentFunction bridge\nfee4e1e workflow: track frontend cli backend-target routing progress\n5f9c80c feat(cli): expose backend-target in tilelang/cuda pipeline runners\nd47e155 workflow: record tilelang/cuda mlir backend-target routing progress\nf5685f9 feat(mlir): route tilelang/cuda llvm pipeline by backend target\n2754af3 workflow: record rvv llvm pipeline migration evidence\n72d89c1 feat(mlir): add rvv llvm pipeline and backend-target llvm routing\n3e271f0 workflow: lift coverage and gpu-perf freshness to current HEAD\n4fe8689 workflow: refresh full196 and gpu-perf freshness on HEAD\n66de1e1 workflow: refresh full196 head evidence after 7/7 chunked rerun\n5422318 workflow: record index and norm family remote dual-pass evidence\n66150ab workflow: record matmul_linear remote dual-pass evidence\nc807b40 workflow: record attention_sequence remote dual-pass evidence\n4e4d1dd feat(matrix): support partial-family runs and rvv remote timeouts\n116ffbc workflow: log reduction chunked mlir coverage evidence\nc771bb6 workflow: record mlir llvm smoke evidence and refresh session state\n081dc07 feat(mlir): make llvm artifact chain pass with intent->llvm text bridge\n979ebe6 workflow: refresh status after gpu-perf freshness-lift update",
+  "git_log_short": "3b083e3 feat(mlir): add emit-llvm cli and json-level macro expansion helpers\n7a4f96c workflow: record json codegen entrypoint migration progress\n3c13ca4 refactor(backend): switch smoke/perf scripts to json codegen entrypoints\na969f25 workflow: log backend contract-json cutover progress\ndc1fd43 feat(mlir): consume backend contracts without IntentFunction bridge\nfee4e1e workflow: track frontend cli backend-target routing progress\n5f9c80c feat(cli): expose backend-target in tilelang/cuda pipeline runners\nd47e155 workflow: record tilelang/cuda mlir backend-target routing progress\nf5685f9 feat(mlir): route tilelang/cuda llvm pipeline by backend target\n2754af3 workflow: record rvv llvm pipeline migration evidence\n72d89c1 feat(mlir): add rvv llvm pipeline and backend-target llvm routing\n3e271f0 workflow: lift coverage and gpu-perf freshness to current HEAD\n4fe8689 workflow: refresh full196 and gpu-perf freshness on HEAD\n66de1e1 workflow: refresh full196 head evidence after 7/7 chunked rerun\n5422318 workflow: record index and norm family remote dual-pass evidence\n66150ab workflow: record matmul_linear remote dual-pass evidence\nc807b40 workflow: record attention_sequence remote dual-pass evidence\n4e4d1dd feat(matrix): support partial-family runs and rvv remote timeouts\n116ffbc workflow: log reduction chunked mlir coverage evidence\nc771bb6 workflow: record mlir llvm smoke evidence and refresh session state",
   "progress_tail": [
-    {
-      "ts": "2026-02-20T17:57:00+00:00",
-      "commit": "54223182e9ef69b4649a87652c9450db6b0e1034",
-      "lane": "coverage",
-      "summary": "conv_pool_interp family passed with rvv_remote+cuda_local under MLIR force_compile; dual_pass=9/9.",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260220/full196_conv_mlir_remote_v1/family_conv_pool_interp/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260220/full196_conv_mlir_remote_v1/family_conv_pool_interp/status_converged.json",
-      "next_focus": "Finish reduction tail with higher remote timeout, then schedule 7/7 aggregate full196 run on HEAD.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260220/full196_conv_mlir_remote_v1/chunk_progress.json",
-        "artifacts/flaggems_matrix/daily/20260220/full196_conv_mlir_remote_v1/coverage_batch_runs.json",
-        "artifacts/flaggems_matrix/daily/20260220/full196_conv_mlir_remote_v1/family_conv_pool_interp/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260220/full196_conv_mlir_remote_v1/family_conv_pool_interp/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
     {
       "ts": "2026-02-20T19:50:35+00:00",
       "commit": "54223182e9ef69b4649a87652c9450db6b0e1034",
@@ -195,9 +175,35 @@
         "blocked_backend": 195,
         "cuda_only": 1
       }
+    },
+    {
+      "ts": "2026-02-20T23:53:30+00:00",
+      "commit": "3b083e3",
+      "lane": "mlir_migration",
+      "summary": "add intentir mlir emit-llvm command and migrate macro expansion callers to json-level helper",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_mlir_migration.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260221/mlir_emitllvm_jsonmacro_smoke_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260221/mlir_emitllvm_jsonmacro_smoke_v1/status_converged.json",
+      "next_focus": "continue mlir hard-cut by removing remaining IntentFunction-only loading in runtime tools and keep category-batch regressions green",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260221/mlir_emitllvm_jsonmacro_smoke_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260221/mlir_emitllvm_jsonmacro_smoke_v1/status_converged.json",
+        "intent_ir/macros/macro_expand.py",
+        "scripts/backend_codegen_smoke.py",
+        "scripts/cuda_backend_smoke.py",
+        "scripts/intentir.py",
+        "scripts/rvv_remote_run.py"
+      ],
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260221/mlir_emitllvm_jsonmacro_smoke_v1",
+      "counts_by_status": {
+        "blocked_backend": 195,
+        "cuda_only": 1
+      }
     }
   ],
-  "next_focus": "remove remaining IntentFunction-only lowering calls in runtime tooling and then refresh full196 freshness on HEAD",
+  "next_focus": "continue mlir hard-cut by removing remaining IntentFunction-only loading in runtime tools and keep category-batch regressions green",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
   "active_lanes": [
     "backend_compiler",
@@ -206,7 +212,7 @@
   "next_focus_by_lane": {
     "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
     "backend_compiler": "continue mlir backend/compiler mainline; rerun perf on impacted families after backend changes",
-    "mlir_migration": "remove remaining IntentFunction-only lowering calls in runtime tooling and then refresh full196 freshness on HEAD"
+    "mlir_migration": "continue mlir hard-cut by removing remaining IntentFunction-only loading in runtime tools and keep category-batch regressions green"
   },
   "known_risks": []
 }

@@ -1,11 +1,11 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-20T23:46:15+00:00
-- Commit: `3c13ca4`
+- Timestamp: 2026-02-20T23:53:30+00:00
+- Commit: `3b083e3`
 - Lane: `mlir_migration`
-- Summary: migrate cuda/rvv smoke+perf scripts to JSON codegen entrypoints while preserving compatibility wrappers
+- Summary: add intentir mlir emit-llvm command and migrate macro expansion callers to json-level helper
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/flaggems_matrix/daily/20260221/matrix_contract_json_smoke_v2/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260221/matrix_contract_json_smoke_v2/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260221/cuda_backend_smoke_jsonentry_v1.json, artifacts/flaggems_matrix/daily/20260221/matrix_contract_json_smoke_v2/run_summary.json, artifacts/flaggems_matrix/daily/20260221/matrix_contract_json_smoke_v2/status_converged.json, artifacts/flaggems_matrix/daily/20260221/rvv_backend_codegen_smoke_jsonentry_v1.json, tests/backends/test_mlir_contract_cutover.py, tests/test_backend_codegen_smoke_timings.py
-- Next Focus: remove remaining IntentFunction-only lowering calls in runtime tooling and then refresh full196 freshness on HEAD
+- Run Summary: `artifacts/flaggems_matrix/daily/20260221/mlir_emitllvm_jsonmacro_smoke_v1/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260221/mlir_emitllvm_jsonmacro_smoke_v1/status_converged.json`
+- Evidence Paths: artifacts/flaggems_matrix/daily/20260221/mlir_emitllvm_jsonmacro_smoke_v1/run_summary.json, artifacts/flaggems_matrix/daily/20260221/mlir_emitllvm_jsonmacro_smoke_v1/status_converged.json, intent_ir/macros/macro_expand.py, scripts/backend_codegen_smoke.py, scripts/cuda_backend_smoke.py, scripts/intentir.py, scripts/rvv_remote_run.py
+- Next Focus: continue mlir hard-cut by removing remaining IntentFunction-only loading in runtime tools and keep category-batch regressions green
