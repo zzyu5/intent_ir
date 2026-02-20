@@ -9,6 +9,7 @@ from intent_ir.ir import IntentFunction
 from intent_ir.mlir import detect_mlir_toolchain, run_pipeline, to_intent, to_mlir
 from intent_ir.mlir.passes.emit_cuda_contract import build_cuda_contract
 from intent_ir.mlir.passes.emit_rvv_contract import build_rvv_contract
+from intent_ir.mlir.passes.ensure_llvm_ir_text import ensure_llvm_ir_text
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -79,6 +80,19 @@ def test_mlir_optional_external_passes_do_not_fail_without_toolchain(tmp_path: P
     names = [str(p.get("name") or "") for p in list(trace.get("passes") or [])]
     assert "mlir-opt?:canonicalize" in names
     assert "mlir-translate?:mlir-to-llvmir" in names
+    assert "python:ensure_llvm_ir_text" in names
+    assert "llvm-as?:" in names
+    assert "opt?:-O2" in names
+
+
+def test_ensure_llvm_ir_text_emits_stub_and_keeps_intent_json() -> None:
+    module = to_mlir(_sample_intent())
+    out = ensure_llvm_ir_text(module, backend="cuda")
+    assert "define void @add2d()" in str(out.module_text)
+    assert str((out.meta or {}).get("llvm_text_origin")) == "intent_stub"
+    assert str((out.meta or {}).get("llvm_stub_backend")) == "cuda"
+    back = to_intent(out)
+    assert back.name == "add2d"
 
 
 def test_mlir_cuda_contract_emitter_builds_contract() -> None:

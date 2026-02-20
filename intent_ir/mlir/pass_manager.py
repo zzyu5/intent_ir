@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shlex
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -211,6 +212,68 @@ def _run_one_pass(
             kind="mlir-translate",
             detail="ok",
         )
+    if name.startswith("llvm-as?:"):
+        pass_arg = name.split(":", 1)[1].strip()
+        tool = _tool_path(toolchain, "llvm-as")
+        if not tool:
+            return PassExecutionResult(
+                module=module,
+                kind="llvm-as",
+                detail="skipped_optional_tool_unavailable:llvm-as",
+            )
+        try:
+            return PassExecutionResult(
+                module=_run_llvm_as_pass(module, pass_arg=pass_arg, tool=tool),
+                kind="llvm-as",
+                detail="ok",
+            )
+        except Exception as e:
+            return PassExecutionResult(
+                module=module,
+                kind="llvm-as",
+                detail=f"skipped_optional_pass_failed:llvm-as:{type(e).__name__}:{e}",
+            )
+    if name.startswith("llvm-as:"):
+        pass_arg = name.split(":", 1)[1].strip()
+        tool = _tool_path(toolchain, "llvm-as")
+        if not tool:
+            raise RuntimeError("llvm-as unavailable")
+        return PassExecutionResult(
+            module=_run_llvm_as_pass(module, pass_arg=pass_arg, tool=tool),
+            kind="llvm-as",
+            detail="ok",
+        )
+    if name.startswith("opt?:"):
+        pass_arg = name.split(":", 1)[1].strip()
+        tool = _tool_path(toolchain, "opt")
+        if not tool:
+            return PassExecutionResult(
+                module=module,
+                kind="opt",
+                detail="skipped_optional_tool_unavailable:opt",
+            )
+        try:
+            return PassExecutionResult(
+                module=_run_llvm_opt_pass(module, pass_arg=pass_arg, tool=tool),
+                kind="opt",
+                detail="ok",
+            )
+        except Exception as e:
+            return PassExecutionResult(
+                module=module,
+                kind="opt",
+                detail=f"skipped_optional_pass_failed:opt:{type(e).__name__}:{e}",
+            )
+    if name.startswith("opt:"):
+        pass_arg = name.split(":", 1)[1].strip()
+        tool = _tool_path(toolchain, "opt")
+        if not tool:
+            raise RuntimeError("opt unavailable")
+        return PassExecutionResult(
+            module=_run_llvm_opt_pass(module, pass_arg=pass_arg, tool=tool),
+            kind="opt",
+            detail="ok",
+        )
     raise ValueError(f"unsupported pass selector: {name}")
 
 
@@ -265,6 +328,72 @@ def _run_mlir_translate_pass(module: IntentMLIRModule, *, pass_arg: str, tool: s
         intent_json=(dict(module.intent_json) if isinstance(module.intent_json, dict) else None),
     )
     out.meta["last_mlir_translate"] = str(pass_arg)
+    return out
+
+
+def _run_llvm_as_pass(module: IntentMLIRModule, *, pass_arg: str, tool: str) -> IntentMLIRModule:
+    arg_tokens = [x for x in shlex.split(str(pass_arg or "").strip()) if str(x).strip()]
+    with tempfile.TemporaryDirectory(prefix="intentir_llvm_as_") as td:
+        in_path = Path(td) / "input.ll"
+        out_path = Path(td) / "output.bc"
+        in_path.write_text(str(module.module_text or ""), encoding="utf-8")
+        p = subprocess.run(
+            [tool, str(in_path), *arg_tokens, "-o", str(out_path)],
+            capture_output=True,
+            text=True,
+        )
+        if p.returncode != 0:
+            raise RuntimeError(f"llvm-as failed: {p.stderr or p.stdout}")
+        if not out_path.is_file():
+            raise RuntimeError("llvm-as did not produce output bitcode")
+    out = IntentMLIRModule(
+        module_text=str(module.module_text or ""),
+        dialect_version=str(module.dialect_version),
+        provenance=dict(module.provenance or {}),
+        symbols=list(module.symbols or []),
+        meta=dict(module.meta or {}),
+        intent_json=(dict(module.intent_json) if isinstance(module.intent_json, dict) else None),
+    )
+    out.meta["last_llvm_as"] = str(pass_arg)
+    return out
+
+
+def _run_llvm_opt_pass(module: IntentMLIRModule, *, pass_arg: str, tool: str) -> IntentMLIRModule:
+    arg_tokens = [x for x in shlex.split(str(pass_arg or "").strip()) if str(x).strip()]
+    # Keep output textual so the resulting module can be archived as `.ll`.
+    if "-S" not in arg_tokens:
+        arg_tokens = ["-S", *arg_tokens]
+    # Avoid redirecting output away from stdout.
+    scrubbed: list[str] = []
+    skip_next = False
+    for tok in arg_tokens:
+        if skip_next:
+            skip_next = False
+            continue
+        if tok in {"-o", "--output"}:
+            skip_next = True
+            continue
+        scrubbed.append(tok)
+    p = subprocess.run(
+        [tool, *scrubbed],
+        input=str(module.module_text or ""),
+        capture_output=True,
+        text=True,
+    )
+    if p.returncode != 0:
+        raise RuntimeError(f"opt failed ({' '.join(scrubbed)}): {p.stderr or p.stdout}")
+    out_text = str(p.stdout or "").strip()
+    if not out_text:
+        raise RuntimeError("opt produced empty textual output")
+    out = IntentMLIRModule(
+        module_text=str(p.stdout or ""),
+        dialect_version=str(module.dialect_version),
+        provenance=dict(module.provenance or {}),
+        symbols=list(module.symbols or []),
+        meta=dict(module.meta or {}),
+        intent_json=(dict(module.intent_json) if isinstance(module.intent_json, dict) else None),
+    )
+    out.meta["last_llvm_opt"] = str(pass_arg)
     return out
 
 
@@ -336,4 +465,8 @@ def _pass_kind(pass_name: str) -> str:
         return "mlir-opt"
     if name.startswith("mlir-translate"):
         return "mlir-translate"
+    if name.startswith("llvm-as"):
+        return "llvm-as"
+    if name.startswith("opt"):
+        return "opt"
     return "python"
