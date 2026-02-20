@@ -252,12 +252,12 @@ def run_cuda_pipeline(
                 "emit skipped: missing concrete shape bindings for symbolic dims",
                 {"emit_backend": "cpp_pybind", "emit_mode": "skipped_missing_bindings"},
             )
-        from backends.cuda.codegen.cpp_driver import lower_intent_to_cuda_kernel_cpp  # noqa: PLC0415
+        from backends.cuda.codegen.cpp_driver import lower_intent_json_to_cuda_kernel_cpp  # noqa: PLC0415
 
         intent_json = contract.intent_json
         if not isinstance(intent_json, dict):
             raise ValueError("mlir backend contract missing intent_json for cuda emission")
-        lowered = lower_intent_to_cuda_kernel_cpp(IntentFunction.from_json_dict(intent_json), bindings=bindings)
+        lowered = lower_intent_json_to_cuda_kernel_cpp(intent_json, bindings=bindings)
         state["lowered"] = dict(lowered)
         state["launch"] = _parse_launch(lowered.get("launch") if isinstance(lowered.get("launch"), Mapping) else {})
         kernel_name = str(lowered.get("kernel_name") or name)

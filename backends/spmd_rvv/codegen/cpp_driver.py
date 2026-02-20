@@ -69,6 +69,30 @@ def lower_intent_to_c_with_files_cpp(
     The generated C reads `<tensor>.bin` inputs, computes outputs, compares
     against `<output>_ref.bin`, and prints PASS/FAIL.
     """
+    return lower_intent_json_to_c_with_files_cpp(
+        intent.to_json_dict(),
+        shape_bindings=shape_bindings,
+        atol=atol,
+        rtol=rtol,
+        mode=mode,
+        build_type=build_type,
+    )
+
+
+def lower_intent_json_to_c_with_files_cpp(
+    intent_json: Mapping[str, Any],
+    *,
+    shape_bindings: Mapping[str, Any],
+    atol: float = 1e-3,
+    rtol: float = 1e-3,
+    mode: str = "verify",
+    build_type: str = "Release",
+) -> str:
+    """
+    Lower IntentIR JSON payload to standalone C via the RVV C++ codegen tool.
+
+    This is the MLIR-backend-contract entrypoint used by compiler pipelines.
+    """
     bin_path = ensure_cpp_codegen_built(build_type=build_type)
 
     # The C++ tool expects a plain JSON mapping {symbol: int}.
@@ -79,13 +103,11 @@ def lower_intent_to_c_with_files_cpp(
         except Exception:
             continue
 
-    intent_json = intent.to_json_dict()
-
     with tempfile.TemporaryDirectory(prefix="intentir_cpp_codegen_") as td:
         td_path = Path(td)
         intent_path = td_path / "intent.json"
         shapes_path = td_path / "shapes.json"
-        intent_path.write_text(json.dumps(intent_json, indent=2))
+        intent_path.write_text(json.dumps(dict(intent_json or {}), indent=2))
         shapes_path.write_text(json.dumps(shapes, indent=2))
 
         cmd = [
@@ -128,4 +150,9 @@ def lower_intent_to_c_with_files(
     )
 
 
-__all__ = ["ensure_cpp_codegen_built", "lower_intent_to_c_with_files_cpp", "lower_intent_to_c_with_files"]
+__all__ = [
+    "ensure_cpp_codegen_built",
+    "lower_intent_to_c_with_files_cpp",
+    "lower_intent_json_to_c_with_files_cpp",
+    "lower_intent_to_c_with_files",
+]

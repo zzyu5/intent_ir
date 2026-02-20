@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from backends.cuda.codegen.cpp_driver import lower_intent_to_cuda_kernel_cpp
+from backends.cuda.codegen.cpp_driver import lower_intent_json_to_cuda_kernel_cpp, lower_intent_to_cuda_kernel_cpp
 from backends.cuda.pipeline.driver import run_cuda_pipeline
 from backends.cuda.pipeline.stages import CUDA_PIPELINE_STAGES
 from intent_ir.ir import IntentFunction
@@ -164,3 +164,11 @@ def test_var_mean_codegen_signature_has_no_trailing_comma() -> None:
     src = str(lowered.get("cuda_src") or "")
     assert "float* __restrict__ out,\n)" not in src
     assert "float* __restrict__ out\n)" in src
+
+
+def test_lower_intent_json_to_cuda_kernel_cpp_accepts_json_payload() -> None:
+    intent = _add_intent("cuda_pipeline_json_lower")
+    lowered = lower_intent_json_to_cuda_kernel_cpp(intent.to_json_dict(), bindings={"M": 4, "N": 64})
+    assert isinstance(lowered, dict)
+    assert str(lowered.get("kernel_name") or "").strip()
+    assert isinstance(lowered.get("io_spec"), dict)

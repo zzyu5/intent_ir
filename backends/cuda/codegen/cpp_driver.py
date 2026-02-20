@@ -183,11 +183,29 @@ def lower_intent_to_cuda_kernel_cpp(
     Returns a plain JSON-like dict with keys compatible with `CudaLoweredKernel`:
       - kernel_name, cuda_src, io_spec, launch, output_names, bindings
     """
+    return lower_intent_json_to_cuda_kernel_cpp(
+        intent.to_json_dict(),
+        bindings=bindings,
+        build_type=build_type,
+    )
+
+
+def lower_intent_json_to_cuda_kernel_cpp(
+    intent_json: Mapping[str, Any],
+    *,
+    bindings: Mapping[str, Any],
+    build_type: str = "Release",
+) -> Dict[str, Any]:
+    """
+    Lower IntentIR JSON payload directly through the C++ pybind backend.
+
+    This is the MLIR-backend-contract entrypoint used by compiler pipelines.
+    """
     del build_type  # Reserved for future ABI/version routing.
-    intent_json = intent.to_json_dict()
+    payload = dict(intent_json or {})
     bindings_json = dict(bindings)
     mod = ensure_cpp_codegen_ext_loaded(verbose=False)
-    out_s = mod.lower_from_json_str(json.dumps(intent_json), json.dumps(bindings_json))
+    out_s = mod.lower_from_json_str(json.dumps(payload), json.dumps(bindings_json))
     j = json.loads(str(out_s))
     if not isinstance(j, dict):
         raise RuntimeError("cuda cpp codegen ext: output must be a JSON object")
@@ -260,6 +278,7 @@ __all__ = [
     "ensure_cpp_codegen_built",
     "ensure_cpp_codegen_ext_loaded",
     "lower_intent_to_cuda_kernel_cpp",
+    "lower_intent_json_to_cuda_kernel_cpp",
     "CudaLoweringError",
     "CudaLoweredKernel",
     "lower_intent_to_cuda_kernel",

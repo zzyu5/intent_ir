@@ -284,14 +284,12 @@ def run_rvv_pipeline(
     def _emit_cpp() -> tuple[str, dict[str, Any]]:
         if not can_execute:
             return ("emit skipped: missing bindings", {"emit_backend": "cpp", "emit_mode": "skipped_missing_bindings"})
-        from backends.spmd_rvv.codegen.cpp_driver import lower_intent_to_c_with_files_cpp  # noqa: PLC0415
+        from backends.spmd_rvv.codegen.cpp_driver import lower_intent_json_to_c_with_files_cpp  # noqa: PLC0415
 
         intent_json = contract.intent_json
         if not isinstance(intent_json, dict):
             raise ValueError("mlir backend contract missing intent_json for rvv emission")
-        intent_obj = IntentFunction.from_json_dict(intent_json)
-        src = lower_intent_to_c_with_files_cpp(intent_obj, shape_bindings=bindings, atol=1e-3, rtol=1e-3, mode="verify")
-        state["intent"] = intent_obj
+        src = lower_intent_json_to_c_with_files_cpp(intent_json, shape_bindings=bindings, atol=1e-3, rtol=1e-3, mode="verify")
         state["c_src"] = str(src)
         return (
             "emitted standalone C via RVV C++ codegen",

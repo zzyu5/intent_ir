@@ -11,9 +11,11 @@ def test_cuda_pipeline_driver_does_not_use_mlir_bridge() -> None:
     src = _read("backends/cuda/pipeline/driver.py")
     assert "mlir_bridge" not in src
     assert "resolve_intent_payload_with_meta" not in src
+    assert "IntentFunction.from_json_dict" not in src
 
 
 def test_rvv_pipeline_driver_does_not_use_mlir_bridge() -> None:
     src = _read("backends/spmd_rvv/pipeline/driver.py")
     assert "mlir_bridge" not in src
     assert "resolve_intent_payload_with_meta" not in src
+    assert "IntentFunction.from_json_dict" not in src
