@@ -1,16 +1,16 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-20T17:46:56+00:00",
+  "updated_at": "2026-02-20T19:50:42+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "66150ab552d5f5c086ac28925316f844feebe8f4",
+  "head_commit": "54223182e9ef69b4649a87652c9450db6b0e1034",
   "mode": "maintenance",
-  "coverage_integrity_phase": "recompute_stale",
-  "full196_last_run": "artifacts/flaggems_matrix/daily/20260220/full196_mlir_head_refresh_v1/run_summary.json",
+  "coverage_integrity_phase": "recomputed_ok",
+  "full196_last_run": "artifacts/flaggems_matrix/daily/20260220/full196_head_refresh_v2/run_summary.json",
   "full196_last_ok": true,
-  "full196_validated_commit": "95460169a4b043cc3a6d01413dc3593945100e33",
+  "full196_validated_commit": "54223182e9ef69b4649a87652c9450db6b0e1034",
   "full196_validated_commit_source": "run_summary.repo.head_commit",
-  "full196_commits_since_validated": 26,
-  "full196_commits_since_validated_total": 26,
+  "full196_commits_since_validated": 0,
+  "full196_commits_since_validated_total": 0,
   "full196_lifted_to_head": false,
   "full196_validated_mode": "force_compile",
   "full196_validated_execution_ir": "mlir",
@@ -21,9 +21,9 @@
   "coverage_batches_completed": 7,
   "coverage_batches_failed": [],
   "full196_evidence_kind": "batch_aggregate",
-  "full196_last_run_repo_head_commit": "95460169a4b043cc3a6d01413dc3593945100e33",
+  "full196_last_run_repo_head_commit": "54223182e9ef69b4649a87652c9450db6b0e1034",
   "full196_last_run_repo_branch": "compiler-cleanup-v1",
-  "full196_last_run_dirty": false,
+  "full196_last_run_dirty": true,
   "full196_artifact_repo_stamp_ok": true,
   "mlir_migration_phase": "default_mlir",
   "mlir_cutover_level": "mlir_primary",
@@ -31,12 +31,12 @@
   "mlir_toolchain_ok": true,
   "mlir_backend_contract_ready": true,
   "mlir_llvm_chain_ok": true,
-  "mlir_full196_validated_commit": "",
+  "mlir_full196_validated_commit": "54223182e9ef69b4649a87652c9450db6b0e1034",
   "gpu_perf_phase": "recompute_stale",
   "gpu_perf_last_run": "artifacts/flaggems_matrix/daily/20260220/nightly_gpu_perf_full_v7/run_summary.json",
   "gpu_perf_last_ok": true,
   "gpu_perf_validated_commit": "b2eedcf7061bfa93664c833f9c7c7a3c8d66c8a1",
-  "gpu_perf_commits_since_validated": 9,
+  "gpu_perf_commits_since_validated": 10,
   "gpu_perf_mode": "graph_only",
   "gpu_perf_threshold": 0.8,
   "gpu_perf_devices": [
@@ -126,17 +126,16 @@
     "catalog_validated": true
   },
   "active_lanes": [
-    "backend_compiler",
-    "coverage"
+    "backend_compiler"
   ],
   "next_focus_by_lane": {
-    "backend_compiler": "Continue MLIR migration core/backend work; rerun affected gpu perf families when touching CUDA path.",
     "mlir_migration": "Roll same MLIR LLVM-complete chunk flow to remaining families and then run 7/7 aggregate freshness on HEAD.",
-    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD."
+    "coverage": "refresh ci_gate/workflow freshness and continue mlir/backend mainline work",
+    "backend_compiler": "Run gpu-perf-graph by family/chunk, then refresh gpu perf freshness on HEAD."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260220/full196_norm_mlir_remote_v1/family_norm_activation/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260220/full196_norm_mlir_remote_v1/family_norm_activation/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260220/full196_head_refresh_v2/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260220/full196_head_refresh_v2/status_converged.json"
   },
   "lanes": {
     "coverage": {
