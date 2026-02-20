@@ -532,6 +532,7 @@ def build_current_status_payload(
     gpu_perf_categories_failed: list[str] | None = None,
     gpu_perf_categories_expected_full: int | None = None,
     gpu_perf_scope_full: bool | None = None,
+    gpu_perf_lifted_to_head: bool | None = None,
     catalog_path: str = "scripts/CATALOG.json",
     catalog_validated: bool = False,
     active_lanes: list[str] | None = None,
@@ -635,6 +636,7 @@ def build_current_status_payload(
             None if gpu_perf_categories_expected_full is None else int(gpu_perf_categories_expected_full)
         ),
         "gpu_perf_scope_full": (None if gpu_perf_scope_full is None else bool(gpu_perf_scope_full)),
+        "gpu_perf_lifted_to_head": (None if gpu_perf_lifted_to_head is None else bool(gpu_perf_lifted_to_head)),
         "coverage": {
             "semantic_ops": semantic_ops,
             "dual_pass": dual_pass,

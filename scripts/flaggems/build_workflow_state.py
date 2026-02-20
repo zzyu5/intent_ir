@@ -711,6 +711,7 @@ def main() -> None:
         validated_commit_state = "unverifiable"
 
     gpu_perf_validated_state = "missing"
+    gpu_perf_lifted_to_head = False
     if gpu_perf_validated_commit:
         if not _commit_exists(gpu_perf_validated_commit):
             gpu_perf_validated_state = "invalid"
@@ -722,7 +723,14 @@ def main() -> None:
     if gpu_perf_validated_state == "reachable":
         gpu_perf_commits_since_validated = _commits_since_validated(gpu_perf_validated_commit, head_commit)
         if gpu_perf_commits_since_validated is not None and int(gpu_perf_commits_since_validated) > 0:
-            gpu_perf_validated_state = "stale"
+            changed_paths = _changed_paths_between(gpu_perf_validated_commit, head_commit)
+            if _is_state_only_change(changed_paths):
+                gpu_perf_lifted_to_head = True
+                gpu_perf_validated_commit = head_commit
+                gpu_perf_commits_since_validated = 0
+                gpu_perf_validated_state = "fresh"
+            else:
+                gpu_perf_validated_state = "stale"
         else:
             gpu_perf_validated_state = "fresh"
     if not gpu_perf_last_run:
@@ -895,6 +903,7 @@ def main() -> None:
         gpu_perf_categories_failed=gpu_perf_categories_failed,
         gpu_perf_categories_expected_full=gpu_perf_categories_expected_full,
         gpu_perf_scope_full=gpu_perf_scope_full,
+        gpu_perf_lifted_to_head=gpu_perf_lifted_to_head,
         catalog_path=_to_repo_rel(args.scripts_catalog),
         catalog_validated=catalog_exists,
         active_lanes=active_lanes,
