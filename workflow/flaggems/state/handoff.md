@@ -1,11 +1,11 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-21T20:40:47+00:00
-- Commit: `74520a04227ba0951085241a6d1a215c1d727608`
+- Timestamp: 2026-02-21T21:07:35+00:00
+- Commit: `fca87977c309aa7140fb5d49303acb9352ab62dc`
 - Lane: `coverage`
-- Summary: Validated matmul_linear family after CUDA lowering fixes; 1/1 chunk passed on RVV remote + CUDA.
+- Summary: Fixed CUDA compact var_mean contract lowering and restored reduction family chunk pass on rvv_remote+cuda.
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_matmul_linear_v3_remote/family_matmul_linear/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_matmul_linear_v3_remote/family_matmul_linear/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_elementwise_broadcast_v2_remote/coverage_batch_runs.json, artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_matmul_linear_v3_remote/coverage_batch_runs.json, artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_matmul_linear_v3_remote/family_matmul_linear/run_summary.json, artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_matmul_linear_v3_remote/family_matmul_linear/status_converged.json
-- Next Focus: Proceed with next impacted family (reduction/norm_activation) and fix first concrete backend blocker encountered.
+- Run Summary: `artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_reduction_v2_remote/family_reduction/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_reduction_v2_remote/family_reduction/status_converged.json`
+- Evidence Paths: artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_reduction_v2_remote/coverage_batch_runs.json, artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_reduction_v2_remote/family_reduction/run_summary.json, artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_reduction_v2_remote/family_reduction/status_converged.json, artifacts/flaggems_matrix/daily/20260222/fix_reduction_chunk2_var_mean_v2/run_summary.json
+- Next Focus: Continue impacted family runs and fix next concrete backend blocker; then aggregate full196 on HEAD.
