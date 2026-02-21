@@ -30,6 +30,11 @@
       intent.ops[7].op == "div" && intent.ops[8].op == "identity") {
     return emit_var_mean2d_f32(intent, bindings_json);
   }
+  if (intent.ops.size() == 9 && intent.ops[0].op == "const" && intent.ops[1].op == "reduce_sum" && intent.ops[2].op == "mul" &&
+      intent.ops[3].op == "reduce_sum" && intent.ops[4].op == "sub" && intent.ops[5].op == "div" && intent.ops[6].op == "mul" &&
+      intent.ops[7].op == "sub" && intent.ops[8].op == "identity") {
+    return emit_var_mean2d_f32(intent, bindings_json);
+  }
   {
     bool vector_norm_like = false;
     if (intent.ops.size() == 3) {

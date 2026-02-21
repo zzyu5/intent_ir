@@ -832,8 +832,12 @@ json emit_var_mean2d_f32(const Intent& intent, const json& bindings) {
       (intent.ops.size() == 9 && intent.ops[0].op == "const" && intent.ops[1].op == "reduce_sum" && intent.ops[2].op == "broadcast_in_dim" &&
        intent.ops[3].op == "sub" && intent.ops[4].op == "mul" && intent.ops[5].op == "reduce_sum" && intent.ops[6].op == "sub" &&
        intent.ops[7].op == "div" && intent.ops[8].op == "identity");
-  if (!std_mul_pattern && !expanded_pattern) {
-    fail("var_mean lowering expects std->mul or expanded reduce_sum->...->div->identity pattern");
+  const bool compact_moment_pattern =
+      (intent.ops.size() == 9 && intent.ops[0].op == "const" && intent.ops[1].op == "reduce_sum" && intent.ops[2].op == "mul" &&
+       intent.ops[3].op == "reduce_sum" && intent.ops[4].op == "sub" && intent.ops[5].op == "div" && intent.ops[6].op == "mul" &&
+       intent.ops[7].op == "sub" && intent.ops[8].op == "identity");
+  if (!std_mul_pattern && !expanded_pattern && !compact_moment_pattern) {
+    fail("var_mean lowering expects std->mul, expanded pattern, or compact-moment pattern");
   }
 
   std::string inp;
@@ -853,7 +857,7 @@ json emit_var_mean2d_f32(const Intent& intent, const json& bindings) {
     inp = std_op.inputs[0];
     out_var = mul_op.output;
     correction = std_op.attrs.value("correction", static_cast<int64_t>(1));
-  } else {
+  } else if (expanded_pattern) {
     const Op& red_mean = intent.ops[1];
     const Op& bcast_mean = intent.ops[2];
     const Op& sub_center = intent.ops[3];
@@ -884,6 +888,48 @@ json emit_var_mean2d_f32(const Intent& intent, const json& bindings) {
     if (id_mean.inputs.size() != 1 || id_mean.inputs[0] != red_mean.output) fail("var_mean expanded: mean identity wiring mismatch");
 
     out_var = div_var.output;
+    out_mean = id_mean.output;
+    has_mean_output = true;
+
+    correction_tensor = sub_denom.inputs[1];
+    auto c_it = intent.tensors.find(correction_tensor);
+    if (c_it != intent.tensors.end()) {
+      correction_dtype = c_it->second.dtype;
+    }
+  } else {
+    const Op& red_mean = intent.ops[1];
+    const Op& mul_sq = intent.ops[2];
+    const Op& red_sq = intent.ops[3];
+    const Op& sub_denom = intent.ops[4];
+    const Op& div_second_moment = intent.ops[5];
+    const Op& mul_mean_sq = intent.ops[6];
+    const Op& sub_var = intent.ops[7];
+    const Op& id_mean = intent.ops[8];
+
+    if (red_mean.inputs.size() != 1) fail("var_mean compact: reduce_sum(mean) expects 1 input");
+    if (!_reduce_axis_is_1(red_mean.attrs)) fail("var_mean compact: reduce_sum(mean) expects axis=1");
+    inp = red_mean.inputs[0];
+    if (mul_sq.inputs.size() != 2 || mul_sq.inputs[0] != inp || mul_sq.inputs[1] != inp) {
+      fail("var_mean compact: squared-input mul wiring mismatch");
+    }
+    if (red_sq.inputs.size() != 1 || red_sq.inputs[0] != mul_sq.output || !_reduce_axis_is_1(red_sq.attrs)) {
+      fail("var_mean compact: reduce_sum(squared) wiring/axis mismatch");
+    }
+    if (sub_denom.inputs.size() != 2 || sub_denom.inputs[0] != intent.ops[0].output) {
+      fail("var_mean compact: denominator sub wiring mismatch");
+    }
+    if (div_second_moment.inputs.size() != 2 || div_second_moment.inputs[0] != red_sq.output || div_second_moment.inputs[1] != sub_denom.output) {
+      fail("var_mean compact: div wiring mismatch");
+    }
+    if (mul_mean_sq.inputs.size() != 2 || mul_mean_sq.inputs[0] != red_mean.output || mul_mean_sq.inputs[1] != red_mean.output) {
+      fail("var_mean compact: mean-square mul wiring mismatch");
+    }
+    if (sub_var.inputs.size() != 2 || sub_var.inputs[0] != div_second_moment.output || sub_var.inputs[1] != mul_mean_sq.output) {
+      fail("var_mean compact: final variance sub wiring mismatch");
+    }
+    if (id_mean.inputs.size() != 1 || id_mean.inputs[0] != red_mean.output) fail("var_mean compact: mean identity wiring mismatch");
+
+    out_var = sub_var.output;
     out_mean = id_mean.output;
     has_mean_output = true;
 
