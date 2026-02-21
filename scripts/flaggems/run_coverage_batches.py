@@ -384,8 +384,8 @@ def main() -> None:
     ap.add_argument(
         "--pipeline-timeout-sec",
         type=int,
-        default=0,
-        help="Per-chunk pipeline timeout in seconds (passed to run_multibackend_matrix; 0 disables).",
+        default=1800,
+        help="Per-chunk pipeline timeout in seconds (passed to run_multibackend_matrix; default: 1800, 0 disables).",
     )
     ap.add_argument("--cuda-runtime-backend", choices=["auto", "nvcc", "nvrtc"], default="nvrtc")
     ap.add_argument(
