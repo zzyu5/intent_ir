@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-21T21:17:14+00:00",
+  "updated_at": "2026-02-21T21:26:25+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,28 +13,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "c28b467 chore(workflow): record reduction family recovery after var_mean cuda fix\nfca8797 fix(cuda): support compact 9-op var_mean MLIR contract lowering\n10096df chore(workflow): record matmul_linear family pass and refresh coverage state\n74520a0 chore(workflow): record elementwise_broadcast 9/9 chunk pass after cuda backend fixes\n3809e87 fix(cuda): accept 10-op per_token_group_quant_fp8 MLIR contract\nba236ba fix(cuda): support 4-op isin lowering from MLIR contracts\na09fb38 fix(cuda): support 9-op addmv contracts and stabilize chunk/remote matrix flow\n1cbb1eb workflow: capture cuda contract-first e2e validation on head\ne405906 workflow: log cuda contract-first validation and refresh coverage state\nb9c0c29 fix(cuda): prefer cuda contracts and accept identity-form dot dispatch\n9bbd55a workflow: record matmul_linear dual-pass recovery and refresh state\n0dc6062 fix(cuda): align matmul-linear lowering with MLIR contract op forms\n387a8d4 workflow: record norm family backend fixes and refreshed coverage evidence\n4fa8db2 fix(backends): resolve norm family broadcast/pattern gaps for rvv+cuda\na17e3ea workflow: record gpu-perf native baseline expansion and cuda norm dispatch fixes\nf6d2451 feat(cuda-perf): expand native baseline coverage and relax norm dispatch patterns\n0640852 workflow: record cuda lowering fixes and reduction dual-pass rerun\nc450202 fix(cuda): unblock allclose/log_softmax lowering and add chunk heartbeat progress\n98abf07 workflow: record coverage chunk rerun fix session and refresh state\nf38163a fix(mlir): resolve report paths contract-first and correct coverage chunk resume flow",
+  "git_log_short": "2e5b77c fix(coverage): default per-chunk pipeline timeout to avoid indefinite hangs\n85e301c chore(workflow): record norm_activation family chunk pass and refreshed coverage state\nc28b467 chore(workflow): record reduction family recovery after var_mean cuda fix\nfca8797 fix(cuda): support compact 9-op var_mean MLIR contract lowering\n10096df chore(workflow): record matmul_linear family pass and refresh coverage state\n74520a0 chore(workflow): record elementwise_broadcast 9/9 chunk pass after cuda backend fixes\n3809e87 fix(cuda): accept 10-op per_token_group_quant_fp8 MLIR contract\nba236ba fix(cuda): support 4-op isin lowering from MLIR contracts\na09fb38 fix(cuda): support 9-op addmv contracts and stabilize chunk/remote matrix flow\n1cbb1eb workflow: capture cuda contract-first e2e validation on head\ne405906 workflow: log cuda contract-first validation and refresh coverage state\nb9c0c29 fix(cuda): prefer cuda contracts and accept identity-form dot dispatch\n9bbd55a workflow: record matmul_linear dual-pass recovery and refresh state\n0dc6062 fix(cuda): align matmul-linear lowering with MLIR contract op forms\n387a8d4 workflow: record norm family backend fixes and refreshed coverage evidence\n4fa8db2 fix(backends): resolve norm family broadcast/pattern gaps for rvv+cuda\na17e3ea workflow: record gpu-perf native baseline expansion and cuda norm dispatch fixes\nf6d2451 feat(cuda-perf): expand native baseline coverage and relax norm dispatch patterns\n0640852 workflow: record cuda lowering fixes and reduction dual-pass rerun\nc450202 fix(cuda): unblock allclose/log_softmax lowering and add chunk heartbeat progress",
   "progress_tail": [
-    {
-      "ts": "2026-02-21T18:45:07+00:00",
-      "commit": "387a8d4ce087d4b6eaafe9076e720fb85947cd6f",
-      "lane": "coverage",
-      "summary": "Fix CUDA matmul_linear dispatch for MLIR contracts; addmm2d/dot1d/vdot1d restored to dual-pass.",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_matmul_linear_v2_remote/family_matmul_linear/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_matmul_linear_v2_remote/family_matmul_linear/status_converged.json",
-      "next_focus": "Continue 7-family coverage batches + MLIR backend contract cutover phases.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_matmul_linear_v2_remote/coverage_batch_runs.json",
-        "artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_matmul_linear_v2_remote/family_matmul_linear/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_matmul_linear_v2_remote/family_matmul_linear/status_converged.json",
-        "artifacts/flaggems_matrix/daily/20260222/fix_matmul_linear_cuda_dispatch_v1/run_summary.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
     {
       "ts": "2026-02-21T18:45:35+00:00",
       "commit": "0dc60621a87c0e6bdb559e3f9a6370485cd6b1c4",
@@ -180,9 +160,29 @@
       "run_ok": true,
       "run_out_dir": null,
       "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-21T21:26:20+00:00",
+      "commit": "2e5b77c0ae77ba0d0ca5fd28a664ab0f40226137",
+      "lane": "coverage",
+      "summary": "Completed index_scatter_gather family pass on rvv_remote+cuda and enabled default chunk pipeline timeout guard.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_index_scatter_gather_v2_remote/family_index_scatter_gather/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_index_scatter_gather_v2_remote/family_index_scatter_gather/status_converged.json",
+      "next_focus": "Run remaining families and aggregate 7/7 full196 freshness on HEAD.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_index_scatter_gather_v2_remote/coverage_batch_runs.json",
+        "artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_index_scatter_gather_v2_remote/family_index_scatter_gather/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_index_scatter_gather_v2_remote/family_index_scatter_gather/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_norm_activation_v5_remote/coverage_batch_runs.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
     }
   ],
-  "next_focus": "Run remaining impacted families and then aggregate full196 on HEAD with force_compile.",
+  "next_focus": "Run remaining families and aggregate 7/7 full196 freshness on HEAD.",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
   "active_lanes": [
     "backend_compiler",
