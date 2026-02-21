@@ -8,6 +8,23 @@ json emit_softmax_2d_last_f32(const Intent& intent, const json& bindings) {
       emit_log_output = true;
     }
   }
+  if (!emit_log_output && !intent.ops.empty()) {
+    const auto& last_op = intent.ops.back();
+    if (last_op.op == "log" && last_op.output == out_name && last_op.inputs.size() == 1) {
+      const std::string log_src = last_op.inputs[0];
+      bool log_src_is_softmax_out = false;
+      bool has_reduce_max = false;
+      bool has_reduce_sum = false;
+      bool has_exp = false;
+      for (const auto& op : intent.ops) {
+        if (op.op == "reduce_max") has_reduce_max = true;
+        if (op.op == "reduce_sum") has_reduce_sum = true;
+        if (op.op == "exp") has_exp = true;
+        if ((op.op == "div" || op.op == "softmax") && op.output == log_src) log_src_is_softmax_out = true;
+      }
+      if (log_src_is_softmax_out && has_reduce_max && has_reduce_sum && has_exp) emit_log_output = true;
+    }
+  }
 
   std::string in_name;
   for (const auto& op : intent.ops) {
@@ -1612,4 +1629,3 @@ json emit_cumextrema1d_f32(const Intent& intent, const json& bindings, bool is_m
   out["bindings"] = out_bindings;
   return out;
 }
-

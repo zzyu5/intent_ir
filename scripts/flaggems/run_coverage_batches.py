@@ -714,11 +714,13 @@ def main() -> None:
                 stream_output=bool(args.stream_subprocess_output),
                 dry_run=bool(args.dry_run),
                 heartbeat_label=(
-                    ""
-                    if compact_chunk
-                    else (
-                        f"chunks {chunk_done + 1}/{total_chunks} family={family} "
-                        f"chunk={chunk_idx}/{len(chunks)}"
+                    (
+                        f"chunk {chunk_done + 1}/{total_chunks}"
+                        if compact_chunk
+                        else (
+                            f"chunks {chunk_done + 1}/{total_chunks} family={family} "
+                            f"chunk={chunk_idx}/{len(chunks)}"
+                        )
                     )
                 ),
                 heartbeat_sec=30,

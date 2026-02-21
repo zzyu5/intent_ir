@@ -1,7 +1,11 @@
 json emit_allclose2d_f32_bool(const Intent& intent, const json& bindings) {
   if (intent.ops.size() != 9) fail("allclose lowering expects 9-op pattern");
-  static const std::vector<std::string> kOps = {"sub", "abs", "abs", "mul", "add", "le", "not", "reduce_any", "not"};
+  static const std::vector<std::string> kOps = {"sub", "abs", "abs", "mul", "add", "", "not", "reduce_any", "not"};
   for (size_t i = 0; i < kOps.size(); ++i) {
+    if (i == 5) {
+      if (intent.ops[i].op != "le" && intent.ops[i].op != "ge") fail("allclose lowering pattern mismatch");
+      continue;
+    }
     if (intent.ops[i].op != kOps[i]) fail("allclose lowering pattern mismatch");
   }
 

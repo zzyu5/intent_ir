@@ -33,10 +33,14 @@
       intent.ops[3].op == "div" && intent.ops[4].op == "broadcast_in_dim" && intent.ops[5].op == "mul") {
     return emit_weight_norm2d_f32(intent, bindings_json);
   }
-  if (intent.ops.size() == 9 && intent.ops[0].op == "sub" && intent.ops[1].op == "abs" && intent.ops[2].op == "abs" && intent.ops[3].op == "mul" &&
-      intent.ops[4].op == "add" && intent.ops[5].op == "le" && intent.ops[6].op == "not" && intent.ops[7].op == "reduce_any" &&
-      intent.ops[8].op == "not") {
-    return emit_allclose2d_f32_bool(intent, bindings_json);
+  {
+    bool allclose_like = false;
+    if (intent.ops.size() == 9) {
+      allclose_like = (intent.ops[0].op == "sub" && intent.ops[1].op == "abs" && intent.ops[2].op == "abs" && intent.ops[3].op == "mul" &&
+                       intent.ops[4].op == "add" && (intent.ops[5].op == "le" || intent.ops[5].op == "ge") && intent.ops[6].op == "not" &&
+                       intent.ops[7].op == "reduce_any" && intent.ops[8].op == "not");
+    }
+    if (allclose_like) return emit_allclose2d_f32_bool(intent, bindings_json);
   }
   if (intent.ops.size() == 4 && intent.ops[0].op == "cast" && intent.ops[1].op == "cast" && intent.ops[2].op == "mul" &&
       intent.ops[3].op == "reduce_sum") {
