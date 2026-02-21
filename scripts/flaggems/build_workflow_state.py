@@ -826,6 +826,11 @@ def main() -> None:
     mlir_backend_contract_ready = _mlir_backend_contract_ready()
     full196_summary_path = _resolve_artifact(full196_run_summary)
     mlir_llvm_chain_ok = _mlir_llvm_chain_ok(full196_summary_path)
+    mlir_fresh_on_head = bool(
+        validated_commit_state == "fresh"
+        and bool(full196_last_ok)
+        and str(full196_validated_execution_ir) == "mlir"
+    )
 
     if not mlir_toolchain_ok:
         mlir_cutover_level = "blocked_toolchain"
@@ -833,6 +838,8 @@ def main() -> None:
         mlir_cutover_level = "bridge_mode"
     elif not mlir_llvm_chain_ok:
         mlir_cutover_level = "blocked_llvm_chain"
+    elif not mlir_fresh_on_head:
+        mlir_cutover_level = "stale_validation"
     elif mlir_default_enabled:
         mlir_cutover_level = "mlir_primary"
     else:
@@ -847,11 +854,7 @@ def main() -> None:
 
     mlir_validated_commit = (
         head_commit
-        if (
-            validated_commit_state == "fresh"
-            and bool(full196_last_ok)
-            and str(full196_validated_execution_ir) == "mlir"
-        )
+        if mlir_fresh_on_head
         else ""
     )
 
