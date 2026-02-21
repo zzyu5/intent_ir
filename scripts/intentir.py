@@ -576,7 +576,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0,
         help="Pipeline stage timeout (seconds) for matrix runners; 0 disables.",
     )
-    suite.add_argument("--progress-style", choices=["auto", "tqdm", "plain", "chunk", "none"], default="auto")
+    suite.add_argument("--progress-style", choices=["auto", "tqdm", "plain", "chunk", "none"], default="chunk")
     suite.add_argument(
         "--stream-subprocess-detail",
         action=argparse.BooleanOptionalAction,

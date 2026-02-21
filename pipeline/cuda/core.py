@@ -30,6 +30,7 @@ from intent_ir.parser import CandidateIntent
 from intent_ir.ir import ScheduleSketch
 from pipeline import registry as pipeline_registry
 from pipeline.interfaces import FrontendConstraints
+from pipeline.mlir_contract_artifacts import emit_backend_contract_artifacts
 from verify.diff_runner import run_diff
 from verify.gen_cases import TestCase, generate_cases_split
 from verify.metamorphic import run_bounded_exhaustive, run_metamorphic_suite
@@ -1736,6 +1737,7 @@ def run_pipeline_for_spec(
                 down_backend = "cuda"
             elif down_name == "downstream_rvv":
                 down_backend = "rvv"
+            down_mod = None
             if down_name is not None:
                 down_mod, down_trace = run_mlir_pipeline(
                     mid_mod,
@@ -1752,6 +1754,15 @@ def run_pipeline_for_spec(
                 down_trace = {"ok": True, "skipped": True, "reason": "backend_target_not_set"}
                 report["mlir"]["downstream"] = dict(down_trace)
                 lower_ms_total = 0.0
+
+            emit_backend_contract_artifacts(
+                spec_name=str(spec.name),
+                out_dir=out_dir,
+                midend_module=mid_mod,
+                mlir_report=report["mlir"],
+                downstream_name=str(down_name) if down_name is not None else None,
+                downstream_module=down_mod,
+            )
             report["mlir"]["llvm_pipeline"] = ""
             report["mlir"]["llvm_backend"] = ""
             report["mlir"]["llvm_emit_ok"] = False

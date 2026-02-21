@@ -415,6 +415,44 @@ def _mlir_report_paths(report: dict, *, artifact_root: Path) -> list[Path]:
     return out
 
 
+def _contract_report_paths(report: dict, *, artifact_root: Path) -> list[Path]:
+    mlir = report.get("mlir")
+    if not isinstance(mlir, dict):
+        return []
+    preferred = [
+        "downstream_rvv_contract_path",
+        "downstream_contract_path",
+        "midend_rvv_contract_path",
+        "downstream_cuda_contract_path",
+        "midend_cuda_contract_path",
+    ]
+    out: list[Path] = []
+    seen: set[str] = set()
+    for key in preferred:
+        if key in seen:
+            continue
+        seen.add(key)
+        p = _resolve_report_path(mlir.get(key), artifact_root=artifact_root)
+        if p is not None and p not in out:
+            out.append(p)
+    return out
+
+
+def _intent_from_contract_path(path: Path) -> IntentFunction | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if str(payload.get("schema_version") or "") != "intent_mlir_backend_contract_v1":
+        return None
+    intent_json = payload.get("intent_json")
+    if not isinstance(intent_json, dict):
+        return None
+    return IntentFunction.from_json_dict(intent_json)
+
+
 def run_remote(
     kernel: str,
     frontend: str,
@@ -464,10 +502,22 @@ def run_remote(
         )
     _log(f"[{frontend}:{kernel}] load artifact: {report_path}")
     report = json.loads(report_path.read_text())
+    contract_artifact_path = ""
     mlir_artifact_path = ""
     intent_macro: IntentFunction | None = None
     intent: IntentFunction | None = None
+    for contract_path in _contract_report_paths(report, artifact_root=artifact_root):
+        parsed = _intent_from_contract_path(contract_path)
+        if parsed is None:
+            continue
+        intent_macro = parsed
+        intent = parsed
+        contract_artifact_path = str(contract_path)
+        _log(f"[{frontend}:{kernel}] contract artifact selected: {contract_artifact_path}")
+        break
     for mlir_path in _mlir_report_paths(report, artifact_root=artifact_root):
+        if intent is not None:
+            break
         try:
             parsed = to_intent(mlir_path.read_text(encoding="utf-8"))
             intent_macro = parsed
@@ -479,7 +529,10 @@ def run_remote(
             continue
     if intent is None:
         if bool(require_mlir_artifacts):
-            raise RuntimeError(f"mlir_artifact_missing: no readable MLIR module path in report: {report_path}")
+            raise RuntimeError(
+                "mlir_artifact_missing: no readable MLIR contract/module path in report: "
+                f"{report_path}"
+            )
         intent_macro_json = report.get("intent")
         if not isinstance(intent_macro_json, dict):
             raise ValueError(f"invalid artifact intent payload: {report_path}")
@@ -1259,6 +1312,8 @@ def run_remote(
         "triton_provider": (str(triton_provider) if frontend == "triton" else None),
         "artifact_dir": str(artifact_dir),
         "require_mlir_artifacts": bool(require_mlir_artifacts),
+        "contract_artifact_used": bool(contract_artifact_path),
+        "contract_artifact_path": str(contract_artifact_path),
         "mlir_artifact_used": bool(mlir_artifact_path),
         "mlir_artifact_path": str(mlir_artifact_path),
         "backend": backend_used,

@@ -405,7 +405,7 @@ def main() -> None:
     ap.add_argument(
         "--progress-style",
         choices=["auto", "tqdm", "plain", "chunk", "none"],
-        default="auto",
+        default="chunk",
         help=(
             "Chunk progress style. `auto` selects `tqdm` on interactive terminals, "
             "otherwise compact `chunk` mode."

@@ -42,6 +42,7 @@ from verify.mutation import run_mutation_kill
 from verify.tolerances import infer_tolerances
 from pipeline.triton.execution_policy import ExecutionPathPolicy, make_policy_from_legacy_flags
 from pipeline.triton.providers import get_provider_plugin
+from pipeline.mlir_contract_artifacts import emit_backend_contract_artifacts
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -266,6 +267,7 @@ def _emit_mlir_shadow_artifacts(
 
         down = _downstream_pipeline_name(backend_target)
         lower_ms_total = 0.0
+        down_mod = None
         if down is not None:
             down_mod, down_trace = run_mlir_pipeline(
                 mid_mod,
@@ -281,6 +283,15 @@ def _emit_mlir_shadow_artifacts(
             lower_ms_total += float(down_ms)
         else:
             mlir_report["downstream"] = {"ok": True, "skipped": True, "reason": "backend_target_not_set"}
+
+        emit_backend_contract_artifacts(
+            spec_name=str(spec_name),
+            out_dir=out_dir,
+            midend_module=mid_mod,
+            mlir_report=mlir_report,
+            downstream_name=str(down) if down is not None else None,
+            downstream_module=down_mod,
+        )
 
         llvm_pipeline, llvm_backend = _downstream_llvm_pipeline(backend_target)
         if llvm_pipeline is None:
