@@ -26,8 +26,15 @@
       intent.ops[7].op == "div" && intent.ops[8].op == "identity") {
     return emit_var_mean2d_f32(intent, bindings_json);
   }
-  if (intent.ops.size() == 3 && intent.ops[0].op == "mul" && intent.ops[1].op == "reduce_sum" && intent.ops[2].op == "sqrt") {
-    return emit_vector_norm2d_f32(intent, bindings_json);
+  {
+    bool vector_norm_like = false;
+    if (intent.ops.size() == 3) {
+      vector_norm_like = (intent.ops[0].op == "mul" && intent.ops[1].op == "reduce_sum" && intent.ops[2].op == "sqrt");
+    } else if (intent.ops.size() == 6) {
+      vector_norm_like = (intent.ops[0].op == "abs" && intent.ops[1].op == "mul" && intent.ops[2].op == "reduce_sum" &&
+                          intent.ops[3].op == "rsqrt" && intent.ops[4].op == "const" && intent.ops[5].op == "div");
+    }
+    if (vector_norm_like) return emit_vector_norm2d_f32(intent, bindings_json);
   }
   if (intent.ops.size() == 6 && intent.ops[0].op == "mul" && intent.ops[1].op == "reduce_sum" && intent.ops[2].op == "sqrt" &&
       intent.ops[3].op == "div" && intent.ops[4].op == "broadcast_in_dim" && intent.ops[5].op == "mul") {
@@ -59,7 +66,8 @@
     }
     if (bn_like) return emit_batch_norm2d_training_f32(intent, bindings_json);
   }
-  if (intent.ops.size() == 26 && intent.outputs.size() == 3 && intent.outputs[0] == "Y" && intent.outputs[1] == "Mean" && intent.outputs[2] == "Rstd") {
+  if (intent.ops.size() >= 25 && intent.ops.size() <= 26 && intent.outputs.size() == 3 && intent.outputs[0] == "Y" && intent.outputs[1] == "Mean" &&
+      intent.outputs[2] == "Rstd") {
     return emit_group_norm_kernel_f32(intent, bindings_json);
   }
   if (intent.outputs.size() == 2 && intent.outputs[0] == "out" && intent.outputs[1] == "INV_RMS") {
@@ -71,7 +79,7 @@
     }
     if (has_reduce_sum && has_rsqrt) return emit_rms_norm2d_f32(intent, bindings_json);
   }
-  if (intent.ops.size() == 19 && intent.outputs.size() == 3 && intent.outputs[0] == "out_ptr" && intent.outputs[1] == "out_mean_ptr" &&
+  if (intent.ops.size() >= 17 && intent.ops.size() <= 21 && intent.outputs.size() == 3 && intent.outputs[0] == "out_ptr" && intent.outputs[1] == "out_mean_ptr" &&
       intent.outputs[2] == "out_rstd_ptr") {
     return emit_layer_norm_persistent_f32(intent, bindings_json);
   }
@@ -82,7 +90,12 @@
       if (o == "Mean") hasMean = true;
       if (o == "Rstd") hasRstd = true;
     }
-    if (hasY && hasMean && hasRstd) return emit_layernorm_2d_f32(intent, bindings_json);
+    bool rank2_x = false;
+    auto x_it = intent.tensors.find("X");
+    if (x_it != intent.tensors.end()) {
+      rank2_x = (x_it->second.shape.size() == 2);
+    }
+    if (hasY && hasMean && hasRstd && rank2_x) return emit_layernorm_2d_f32(intent, bindings_json);
   }
   {
     bool diag_like = false;

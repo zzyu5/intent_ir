@@ -223,8 +223,23 @@ def _bench_graph(
 
 
 def _coverage_spec_map() -> dict[str, Any]:
-    specs = coverage_kernel_specs()
-    return {str(s.name): s for s in specs}
+    out: dict[str, Any] = {}
+    # Tier-1 native baseline: existing Triton coverage specs.
+    for s in coverage_kernel_specs():
+        out[str(s.name)] = {"spec": s, "source": "triton_native"}
+    # Tier-2 native baseline: FlagGems Triton ops modules as fallback.
+    # This significantly expands measurable kernels beyond the legacy 38-spec set.
+    try:
+        from pipeline.triton.providers.flaggems.specs import coverage_flaggems_kernel_specs  # noqa: PLC0415
+
+        for s in coverage_flaggems_kernel_specs(flaggems_opset="deterministic_forward", backend_target="rvv"):
+            key = str(s.name)
+            if key not in out:
+                out[key] = {"spec": s, "source": "flaggems_native"}
+    except Exception:
+        # Keep perf runner usable even when flag_gems is unavailable.
+        pass
+    return out
 
 
 def _kernel_name_variants(raw: str) -> list[str]:
@@ -313,9 +328,17 @@ def _build_native_launch_fn(
     spec_map: dict[str, Any],
     device: str,
 ) -> tuple[Callable[[], None], str, dict[str, Any]]:
-    spec = spec_map.get(str(kernel))
+    spec_entry = spec_map.get(str(kernel))
+    if spec_entry is None:
+        raise RuntimeError(f"no native coverage spec for kernel={kernel}")
+    if isinstance(spec_entry, dict):
+        spec = spec_entry.get("spec")
+        source = str(spec_entry.get("source") or "unknown")
+    else:
+        spec = spec_entry
+        source = "triton_native"
     if spec is None:
-        raise RuntimeError(f"no native triton coverage spec for kernel={kernel}")
+        raise RuntimeError(f"invalid native spec entry for kernel={kernel}")
 
     module = importlib.import_module(str(spec.module))
     callee = _select_native_callable(module, str(kernel))
@@ -445,7 +468,7 @@ def _build_native_launch_fn(
     def _run() -> None:
         _ = callee(**kwargs)
 
-    return _run, str(getattr(module, "__name__", "")), {"arg_count": len(kwargs)}
+    return _run, str(getattr(module, "__name__", "")), {"arg_count": len(kwargs), "spec_source": source}
 
 
 def _build_intentir_launch_fn(
@@ -549,7 +572,8 @@ def _reason_code_from_exception(exc: Exception, *, native: bool) -> str:
         return "artifact_missing"
     if isinstance(exc, RuntimeError) and "cuda graph capture failed" in msg.lower():
         return "graph_capture_fail"
-    if isinstance(exc, RuntimeError) and "no native triton coverage spec" in msg.lower():
+    low = msg.lower()
+    if isinstance(exc, RuntimeError) and ("no native triton coverage spec" in low or "no native coverage spec" in low):
         return "native_unavailable"
     if isinstance(exc, RuntimeError) and "no native callable found" in msg.lower():
         return "native_unavailable"
@@ -642,6 +666,7 @@ def _bench_kernel(
             device=device,
         )
         row["native_module"] = str(native_module)
+        row["native_spec_source"] = str(native_meta.get("spec_source") or "unknown")
         row["compile_ms_native"] = float(native_meta.get("compile_ms", 0.0))
     except Exception as e:  # noqa: BLE001
         row["reason_code"] = _reason_code_from_exception(e, native=True)
@@ -670,30 +695,47 @@ def _bench_kernel(
     ratio = float(qps_intentir / qps_native) if qps_native > 0.0 else 0.0
     native_latency_ms = float(native_bench["latency_ms"])
     intent_latency_ms = float(intent_bench["latency_ms"])
-    # Extremely small graph replay times can make ratios unstable. We only
-    # drop them from denominator when they would otherwise fail the threshold.
+    # Extremely small graph replay times can make ratios unstable. Before
+    # skipping, re-measure with higher iters to improve timer resolution.
     if ratio < float(threshold) and max(native_latency_ms, intent_latency_ms) < 0.01:
-        row.update(
-            {
-                "qps_native": float(qps_native),
-                "qps_intentir": float(qps_intentir),
-                "ratio": float(ratio),
-                "latency_native_ms": native_latency_ms,
-                "latency_intentir_ms": intent_latency_ms,
-                "capture_ms_native": float(native_bench["capture_ms"]),
-                "capture_ms_intentir": float(intent_bench["capture_ms"]),
-                "replay_ms_native": float(native_bench["replay_ms"]),
-                "replay_ms_intentir": float(intent_bench["replay_ms"]),
-                "reason_code": "measurement_unreliable",
-                "reason_detail": (
-                    f"max_latency_ms={max(native_latency_ms, intent_latency_ms):.6f} below_min=0.010000"
-                ),
-                "skip_reason": "below_timer_resolution",
-                "count_in_denominator": False,
-                "ok": False,
-            }
-        )
-        return row
+        boosted_iters = max(int(iters) * 10, 2000)
+        if boosted_iters != int(iters):
+            try:
+                native_bench_boost = _bench_graph(native_fn, warmup=max(1, int(warmup)), iters=boosted_iters, repeats=max(2, int(repeats)))
+                intent_bench_boost = _bench_graph(intent_fn, warmup=max(1, int(warmup)), iters=boosted_iters, repeats=max(2, int(repeats)))
+                qps_native = float(native_bench_boost["qps"])
+                qps_intentir = float(intent_bench_boost["qps"])
+                ratio = float(qps_intentir / qps_native) if qps_native > 0.0 else 0.0
+                native_latency_ms = float(native_bench_boost["latency_ms"])
+                intent_latency_ms = float(intent_bench_boost["latency_ms"])
+                native_bench = native_bench_boost
+                intent_bench = intent_bench_boost
+                row["retimed_iters"] = int(boosted_iters)
+            except Exception:
+                # Keep original measurements and fall through to skip decision.
+                pass
+        if ratio < float(threshold) and max(native_latency_ms, intent_latency_ms) < 0.01:
+            row.update(
+                {
+                    "qps_native": float(qps_native),
+                    "qps_intentir": float(qps_intentir),
+                    "ratio": float(ratio),
+                    "latency_native_ms": native_latency_ms,
+                    "latency_intentir_ms": intent_latency_ms,
+                    "capture_ms_native": float(native_bench["capture_ms"]),
+                    "capture_ms_intentir": float(intent_bench["capture_ms"]),
+                    "replay_ms_native": float(native_bench["replay_ms"]),
+                    "replay_ms_intentir": float(intent_bench["replay_ms"]),
+                    "reason_code": "measurement_unreliable",
+                    "reason_detail": (
+                        f"max_latency_ms={max(native_latency_ms, intent_latency_ms):.6f} below_min=0.010000"
+                    ),
+                    "skip_reason": "below_timer_resolution",
+                    "count_in_denominator": False,
+                    "ok": False,
+                }
+            )
+            return row
     row.update(
         {
             "qps_native": float(qps_native),

@@ -1004,25 +1004,57 @@ json emit_var_mean2d_f32(const Intent& intent, const json& bindings) {
 }
 
 json emit_vector_norm2d_f32(const Intent& intent, const json& bindings) {
-  if (intent.ops.size() != 3 || intent.ops[0].op != "mul" || intent.ops[1].op != "reduce_sum" || intent.ops[2].op != "sqrt") {
-    fail("vector_norm lowering expects mul->reduce_sum->sqrt");
+  bool classic = (intent.ops.size() == 3 && intent.ops[0].op == "mul" && intent.ops[1].op == "reduce_sum" && intent.ops[2].op == "sqrt");
+  bool expanded = (intent.ops.size() == 6 && intent.ops[0].op == "abs" && intent.ops[1].op == "mul" && intent.ops[2].op == "reduce_sum" &&
+                   intent.ops[3].op == "rsqrt" && intent.ops[4].op == "const" && intent.ops[5].op == "div");
+  if (!classic && !expanded) fail("vector_norm lowering expects classic or expanded pattern");
+  const Op* mul = nullptr;
+  const Op* red = nullptr;
+  std::string inp;
+  std::string out_name;
+  if (classic) {
+    const Op& mul_op = intent.ops[0];
+    const Op& red_op = intent.ops[1];
+    const Op& sqr = intent.ops[2];
+    if (mul_op.inputs.size() != 2 || red_op.inputs.size() != 1 || sqr.inputs.size() != 1) fail("vector_norm arity mismatch");
+    if (!(mul_op.inputs[0] == mul_op.inputs[1])) fail("vector_norm expects mul(inp,inp)");
+    if (red_op.inputs[0] != mul_op.output || sqr.inputs[0] != red_op.output) fail("vector_norm wiring mismatch");
+    mul = &mul_op;
+    red = &red_op;
+    inp = mul_op.inputs[0];
+    out_name = sqr.output;
+  } else {
+    const Op& abs_op = intent.ops[0];
+    const Op& mul_op = intent.ops[1];
+    const Op& red_op = intent.ops[2];
+    const Op& rsqrt_op = intent.ops[3];
+    const Op& one_op = intent.ops[4];
+    const Op& div_op = intent.ops[5];
+    if (abs_op.inputs.size() != 1 || mul_op.inputs.size() != 2 || red_op.inputs.size() != 1 || rsqrt_op.inputs.size() != 1 || div_op.inputs.size() != 2) {
+      fail("vector_norm expanded arity mismatch");
+    }
+    if (!(mul_op.inputs[0] == abs_op.output && mul_op.inputs[1] == abs_op.output)) fail("vector_norm expanded expects mul(abs(inp),abs(inp))");
+    if (red_op.inputs[0] != mul_op.output || rsqrt_op.inputs[0] != red_op.output) fail("vector_norm expanded wiring mismatch");
+    bool div_ok = ((div_op.inputs[0] == one_op.output && div_op.inputs[1] == rsqrt_op.output) ||
+                   (div_op.inputs[1] == one_op.output && div_op.inputs[0] == rsqrt_op.output));
+    if (!div_ok) fail("vector_norm expanded expects div(1, rsqrt(sum))");
+    mul = &mul_op;
+    red = &red_op;
+    inp = abs_op.inputs[0];
+    out_name = div_op.output;
   }
-  const Op& mul = intent.ops[0];
-  const Op& red = intent.ops[1];
-  const Op& sqr = intent.ops[2];
-  if (mul.inputs.size() != 2 || red.inputs.size() != 1 || sqr.inputs.size() != 1) fail("vector_norm arity mismatch");
-  if (!(mul.inputs[0] == mul.inputs[1])) fail("vector_norm expects mul(inp,inp)");
-  if (red.inputs[0] != mul.output || sqr.inputs[0] != red.output) fail("vector_norm wiring mismatch");
-  if (!_reduce_axis_is_1(red.attrs)) fail("vector_norm currently supports axis=1 only");
-  const std::string inp = mul.inputs[0];
-  const std::string out_name = sqr.output;
+  if (mul == nullptr || red == nullptr) fail("vector_norm internal lowering state invalid");
+  if (!_reduce_axis_is_1(red->attrs)) fail("vector_norm currently supports axis=1 only");
   auto i_it = intent.tensors.find(inp);
   auto o_it = intent.tensors.find(out_name);
   if (i_it == intent.tensors.end() || o_it == intent.tensors.end()) fail("vector_norm missing tensors");
   if (i_it->second.dtype != "f32" || o_it->second.dtype != "f32") fail("vector_norm supports f32 only");
   auto i_shape = resolve_shape_required(i_it->second, bindings, "vector_norm.inp");
   auto o_shape = resolve_shape_required(o_it->second, bindings, "vector_norm.out");
-  if (i_shape.size() != 2 || o_shape.size() != 1 || o_shape[0] != i_shape[0]) fail("vector_norm shape mismatch");
+  bool out_ok = false;
+  if (i_shape.size() == 2 && o_shape.size() == 1 && o_shape[0] == i_shape[0]) out_ok = true;
+  if (i_shape.size() == 2 && o_shape.size() == 2 && o_shape[0] == i_shape[0] && o_shape[1] == 1) out_ok = true;
+  if (!out_ok) fail("vector_norm shape mismatch");
   const int64_t M = i_shape[0];
   const int64_t N = i_shape[1];
 

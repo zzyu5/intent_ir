@@ -320,7 +320,7 @@ json emit_glu2d_f32(const Intent& intent, const json& bindings) {
 }
 
 json emit_group_norm_kernel_f32(const Intent& intent, const json& bindings) {
-  if (intent.ops.size() != 26) fail("group_norm lowering expects 26-op expanded pattern");
+  if (intent.ops.size() < 25 || intent.ops.size() > 26) fail("group_norm lowering expects 25/26-op expanded pattern");
   const std::string X = "X";
   const std::string W = "W";
   const std::string B = "B";
@@ -745,7 +745,7 @@ json emit_masked_select2d_f32(const Intent& intent, const json& bindings) {
 }
 
 json emit_layer_norm_persistent_f32(const Intent& intent, const json& bindings) {
-  if (intent.ops.size() != 19) fail("layer_norm_persistent lowering expects 19-op pattern");
+  if (intent.ops.size() < 17 || intent.ops.size() > 21) fail("layer_norm_persistent lowering expects 17~21-op pattern");
   const std::string X = "in_ptr";
   const std::string W = "weight_ptr";
   const std::string B = "bias_ptr";
@@ -1181,4 +1181,3 @@ json emit_polar2d_f32(const Intent& intent, const json& bindings) {
   out["bindings"] = out_bindings;
   return out;
 }
-
