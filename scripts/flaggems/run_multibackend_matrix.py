@@ -482,6 +482,7 @@ def main() -> None:
     args = ap.parse_args()
     miss_policy = str(args.intentir_miss_policy)
     execution_ir = _execution_ir_mode()
+    require_mlir_artifacts = str(execution_ir) == "mlir"
     if str(args.flaggems_path) == "original" and str(args.intentir_mode) != "auto":
         raise SystemExit("--intentir-mode is only valid when --flaggems-path=intentir")
 
@@ -669,6 +670,7 @@ def main() -> None:
             "rvv",
             "--artifact-dir",
             str(pipeline_out_dir),
+            "--require-mlir-artifacts" if bool(require_mlir_artifacts) else "--no-require-mlir-artifacts",
             "--json",
             "--out",
             str(rvv_json),
@@ -771,6 +773,7 @@ def main() -> None:
             str(int(cuda_launch_timeout_sec)),
             "--runtime-backend",
             str(args.cuda_runtime_backend),
+            "--require-mlir-artifacts" if bool(require_mlir_artifacts) else "--no-require-mlir-artifacts",
             "--json",
             "--out",
             str(cuda_json),
@@ -913,6 +916,7 @@ def main() -> None:
             "rvv_remote": bool(args.run_rvv_remote),
             "cuda_runtime_backend": str(args.cuda_runtime_backend),
             "execution_ir": str(execution_ir),
+            "require_mlir_artifacts": bool(require_mlir_artifacts),
             "pipeline_timeout_sec": int(args.pipeline_timeout_sec),
             "rvv_remote_timeout_sec": int(args.rvv_remote_timeout_sec),
         },
@@ -925,6 +929,7 @@ def main() -> None:
         "flaggems_path": str(args.flaggems_path),
         "intentir_mode": str(args.intentir_mode),
         "execution_ir": str(execution_ir),
+        "require_mlir_artifacts": bool(require_mlir_artifacts),
         "flaggems_opset": str(args.flaggems_opset),
         "backend_target": str(args.backend_target),
         "cuda_timeout_sec": int(args.cuda_timeout_sec),

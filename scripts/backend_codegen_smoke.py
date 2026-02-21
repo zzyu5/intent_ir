@@ -143,12 +143,19 @@ def _mlir_report_paths(report: dict, *, artifact_root: Path) -> list[Path]:
     return out
 
 
-def _load_intent(report: dict, *, artifact_root: Path) -> IntentFunction:
+def _load_intent(
+    report: dict,
+    *,
+    artifact_root: Path,
+    require_mlir_artifacts: bool = False,
+) -> IntentFunction:
     for mlir_path in _mlir_report_paths(report, artifact_root=artifact_root):
         try:
             return to_intent(mlir_path.read_text(encoding="utf-8"))
         except Exception:
             continue
+    if bool(require_mlir_artifacts):
+        raise RuntimeError("mlir_artifact_missing: no readable MLIR module path in report")
     intent_expanded_json = report.get("intent_expanded")
     if not isinstance(intent_expanded_json, dict):
         intent_expanded_json = expand_macros_json(dict(report["intent"]))
@@ -333,6 +340,7 @@ def run_one(
     frontend: str = "triton",
     triton_provider: str = "native",
     artifact_dir: str | None = None,
+    require_mlir_artifacts: bool = False,
     keep_tmp: bool = False,
     tune_request: TuningRequest | None = None,
     tune_profile: str | None = None,
@@ -351,7 +359,11 @@ def run_one(
         raise FileNotFoundError(f"missing baseline npz: {baseline_npz_path}")
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    intent = _load_intent(report, artifact_root=artifact_root)
+    intent = _load_intent(
+        report,
+        artifact_root=artifact_root,
+        require_mlir_artifacts=bool(require_mlir_artifacts),
+    )
     cert_v2 = report.get("certificate_v2") or {}
     tile_hints: list[int] = []
     try:
@@ -562,6 +574,12 @@ def main() -> None:
         help="Capability target passed to FlagGems spec registry when selecting defaults.",
     )
     ap.add_argument("--artifact-dir", default=None, help="Override artifact report directory.")
+    ap.add_argument(
+        "--require-mlir-artifacts",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Require MLIR artifacts in reports and forbid fallback to legacy intent JSON.",
+    )
     ap.add_argument("--keep-tmp", action="store_true", help="keep generated C + binaries in a temp dir")
     ap.add_argument("--tune-mode", choices=["auto", "guided", "locked"], default=None)
     ap.add_argument("--lock", action="append", default=[], help="repeatable; e.g. --lock tile_n=128")
@@ -606,16 +624,21 @@ def main() -> None:
                 frontend=str(args.frontend),
                 triton_provider=str(args.triton_provider),
                 artifact_dir=(str(args.artifact_dir) if args.artifact_dir else None),
+                require_mlir_artifacts=bool(args.require_mlir_artifacts),
                 keep_tmp=bool(args.keep_tmp),
                 tune_request=tune_req,
                 tune_profile=str(args.profile) if args.profile else None,
             )
         except Exception as e:
+            reason = "runtime_fail"
+            msg = str(e).lower()
+            if "mlir_artifact_missing" in msg:
+                reason = "artifact_missing"
             r = {
                 "kernel": str(k),
                 "ok": False,
                 "rc": 1,
-                "reason_code": "runtime_fail",
+                "reason_code": str(reason),
                 "stdout": "",
                 "stderr": f"{type(e).__name__}: {e}",
                 "error": {"type": type(e).__name__, "message": str(e)},
@@ -652,6 +675,7 @@ def main() -> None:
         "flaggems_opset": str(args.flaggems_opset),
         "backend_target": str(args.backend_target),
         "artifact_dir": (str(args.artifact_dir) if args.artifact_dir else None),
+        "require_mlir_artifacts": bool(args.require_mlir_artifacts),
         "kernels": list(kernels),
         "results": results,
         "ok": bool(ok_all),

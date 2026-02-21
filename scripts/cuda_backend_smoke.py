@@ -128,12 +128,19 @@ def _mlir_report_paths(report: dict, *, artifact_root: Path) -> list[Path]:
     return out
 
 
-def _load_intent(report: dict, *, artifact_root: Path) -> IntentFunction:
+def _load_intent(
+    report: dict,
+    *,
+    artifact_root: Path,
+    require_mlir_artifacts: bool = False,
+) -> IntentFunction:
     for mlir_path in _mlir_report_paths(report, artifact_root=artifact_root):
         try:
             return to_intent(mlir_path.read_text(encoding="utf-8"))
         except Exception:
             continue
+    if bool(require_mlir_artifacts):
+        raise RuntimeError("mlir_artifact_missing: no readable MLIR module path in report")
     intent_expanded_json = report.get("intent_expanded")
     if not isinstance(intent_expanded_json, dict):
         intent_expanded_json = expand_macros_json(dict(report["intent"]))
@@ -317,6 +324,7 @@ def _prepare_kernel_context(
     frontend: str,
     triton_provider: str,
     artifact_dir: str | None,
+    require_mlir_artifacts: bool = False,
 ) -> dict[str, Any]:
     artifact_rel = _artifact_dir_for_frontend(frontend, triton_provider=str(triton_provider))
     artifact_root = (Path(artifact_dir) if artifact_dir else (ROOT / "artifacts" / artifact_rel)).resolve()
@@ -328,7 +336,11 @@ def _prepare_kernel_context(
         raise FileNotFoundError(f"missing baseline npz: {baseline_npz_path}")
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    intent = _load_intent(report, artifact_root=artifact_root)
+    intent = _load_intent(
+        report,
+        artifact_root=artifact_root,
+        require_mlir_artifacts=bool(require_mlir_artifacts),
+    )
     baseline = dict(np.load(baseline_npz_path, allow_pickle=False))
     baseline = _with_io_aliases_for_diff(intent, baseline)
     external_inputs, outputs = _external_inputs(intent)
@@ -412,9 +424,16 @@ def _run_compile_stage(
     frontend: str,
     triton_provider: str,
     artifact_dir: str | None,
+    require_mlir_artifacts: bool = False,
 ) -> dict[str, Any]:
     t_all = time.perf_counter()
-    ctx = _prepare_kernel_context(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
+    ctx = _prepare_kernel_context(
+        kernel,
+        frontend=frontend,
+        triton_provider=triton_provider,
+        artifact_dir=artifact_dir,
+        require_mlir_artifacts=bool(require_mlir_artifacts),
+    )
     t_lower = time.perf_counter()
     lowered = lower_intent_json_to_cuda_kernel(ctx["intent"].to_json_dict(), shape_bindings=ctx["bindings"])
     lower_ms = (time.perf_counter() - t_lower) * 1000.0
@@ -452,9 +471,16 @@ def _run_launch_stage(
     frontend: str,
     triton_provider: str,
     artifact_dir: str | None,
+    require_mlir_artifacts: bool = False,
 ) -> dict[str, Any]:
     t_all = time.perf_counter()
-    ctx = _prepare_kernel_context(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
+    ctx = _prepare_kernel_context(
+        kernel,
+        frontend=frontend,
+        triton_provider=triton_provider,
+        artifact_dir=artifact_dir,
+        require_mlir_artifacts=bool(require_mlir_artifacts),
+    )
 
     t_lower = time.perf_counter()
     lowered = lower_intent_json_to_cuda_kernel(ctx["intent"].to_json_dict(), shape_bindings=ctx["bindings"])
@@ -533,10 +559,23 @@ def run_one(
     frontend: str = "triton",
     triton_provider: str = "native",
     artifact_dir: str | None = None,
+    require_mlir_artifacts: bool = False,
 ) -> dict:
     # Compatibility helper for ad-hoc invocations.
-    _ = _run_compile_stage(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
-    return _run_launch_stage(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
+    _ = _run_compile_stage(
+        kernel,
+        frontend=frontend,
+        triton_provider=triton_provider,
+        artifact_dir=artifact_dir,
+        require_mlir_artifacts=bool(require_mlir_artifacts),
+    )
+    return _run_launch_stage(
+        kernel,
+        frontend=frontend,
+        triton_provider=triton_provider,
+        artifact_dir=artifact_dir,
+        require_mlir_artifacts=bool(require_mlir_artifacts),
+    )
 
 
 def _reason_code_for_exception(e: Exception) -> str:
@@ -550,6 +589,8 @@ def _reason_code_for_exception(e: Exception) -> str:
     if isinstance(e, FileNotFoundError):
         return "artifact_missing"
     if isinstance(e, RuntimeError):
+        if "mlir_artifact_missing" in str(e).lower():
+            return "artifact_missing"
         if "nvrtc_unavailable" in str(e).lower():
             return "env_unavailable"
         return "runtime_fail"
@@ -564,12 +605,19 @@ def _cuda_compile_worker(
     frontend: str,
     triton_provider: str,
     artifact_dir: str | None,
+    require_mlir_artifacts: bool,
     runtime_backend: str,
 ) -> None:
     try:
         _set_codegen_mode_env()
         _set_runtime_backend_env(runtime_backend)
-        res = _run_compile_stage(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
+        res = _run_compile_stage(
+            kernel,
+            frontend=frontend,
+            triton_provider=triton_provider,
+            artifact_dir=artifact_dir,
+            require_mlir_artifacts=bool(require_mlir_artifacts),
+        )
         queue.put({"ok": True, "result": res})
     except Exception as ex:  # noqa: BLE001
         queue.put(
@@ -590,12 +638,19 @@ def _cuda_launch_worker(
     frontend: str,
     triton_provider: str,
     artifact_dir: str | None,
+    require_mlir_artifacts: bool,
     runtime_backend: str,
 ) -> None:
     try:
         _set_codegen_mode_env()
         _set_runtime_backend_env(runtime_backend)
-        res = _run_launch_stage(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
+        res = _run_launch_stage(
+            kernel,
+            frontend=frontend,
+            triton_provider=triton_provider,
+            artifact_dir=artifact_dir,
+            require_mlir_artifacts=bool(require_mlir_artifacts),
+        )
         queue.put({"ok": True, "result": res})
     except Exception as ex:  # noqa: BLE001
         queue.put(
@@ -664,6 +719,7 @@ def _cuda_stage_worker_loop(
     frontend: str,
     triton_provider: str,
     artifact_dir: str | None,
+    require_mlir_artifacts: bool,
     runtime_backend: str,
 ) -> None:
     # Compile worker prewarm: pay pybind extension load once per worker process
@@ -701,9 +757,21 @@ def _cuda_stage_worker_loop(
             _set_codegen_mode_env()
             _set_runtime_backend_env(runtime_backend)
             if stage == "compile":
-                res = _run_compile_stage(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
+                res = _run_compile_stage(
+                    kernel,
+                    frontend=frontend,
+                    triton_provider=triton_provider,
+                    artifact_dir=artifact_dir,
+                    require_mlir_artifacts=bool(require_mlir_artifacts),
+                )
             elif stage == "launch":
-                res = _run_launch_stage(kernel, frontend=frontend, triton_provider=triton_provider, artifact_dir=artifact_dir)
+                res = _run_launch_stage(
+                    kernel,
+                    frontend=frontend,
+                    triton_provider=triton_provider,
+                    artifact_dir=artifact_dir,
+                    require_mlir_artifacts=bool(require_mlir_artifacts),
+                )
             else:
                 raise ValueError(f"unsupported worker stage: {stage}")
             out_q.put({"task_id": task_id, "ok": True, "result": res})
@@ -728,6 +796,7 @@ def _get_or_start_persistent_worker(
     frontend: str,
     triton_provider: str,
     artifact_dir: str | None,
+    require_mlir_artifacts: bool,
     runtime_backend: str,
 ) -> dict[str, Any]:
     cfg = {
@@ -735,6 +804,7 @@ def _get_or_start_persistent_worker(
         "frontend": str(frontend),
         "triton_provider": str(triton_provider),
         "artifact_dir": (str(artifact_dir) if artifact_dir else ""),
+        "require_mlir_artifacts": bool(require_mlir_artifacts),
         "runtime_backend": str(runtime_backend),
     }
     existing = _PERSISTENT_WORKERS.get(stage)
@@ -763,6 +833,7 @@ def _get_or_start_persistent_worker(
             "frontend": str(frontend),
             "triton_provider": str(triton_provider),
             "artifact_dir": (str(artifact_dir) if artifact_dir else None),
+            "require_mlir_artifacts": bool(require_mlir_artifacts),
             "runtime_backend": str(runtime_backend),
         },
     )
@@ -779,6 +850,7 @@ def _run_worker_with_timeout(
     frontend: str,
     triton_provider: str,
     artifact_dir: str | None,
+    require_mlir_artifacts: bool,
     runtime_backend: str,
     timeout_sec: int,
     stage: str,
@@ -793,6 +865,7 @@ def _run_worker_with_timeout(
             frontend=frontend,
             triton_provider=triton_provider,
             artifact_dir=artifact_dir,
+            require_mlir_artifacts=bool(require_mlir_artifacts),
             runtime_backend=runtime_backend,
         )
         _PERSISTENT_TASK_SEQ += 1
@@ -843,6 +916,7 @@ def _run_worker_with_timeout(
             str(frontend),
             str(triton_provider),
             artifact_dir,
+            bool(require_mlir_artifacts),
             str(runtime_backend),
         ),
     )
@@ -877,6 +951,7 @@ def _run_one_with_stage_timeouts(
     frontend: str,
     triton_provider: str,
     artifact_dir: str | None,
+    require_mlir_artifacts: bool,
     compile_timeout_sec: int,
     launch_timeout_sec: int,
     runtime_backend: str,
@@ -887,6 +962,7 @@ def _run_one_with_stage_timeouts(
         frontend=frontend,
         triton_provider=triton_provider,
         artifact_dir=artifact_dir,
+        require_mlir_artifacts=bool(require_mlir_artifacts),
         runtime_backend=runtime_backend,
         timeout_sec=int(compile_timeout_sec),
         stage="compile",
@@ -914,6 +990,7 @@ def _run_one_with_stage_timeouts(
         frontend=frontend,
         triton_provider=triton_provider,
         artifact_dir=artifact_dir,
+        require_mlir_artifacts=bool(require_mlir_artifacts),
         runtime_backend=runtime_backend,
         timeout_sec=int(launch_timeout_sec),
         stage="launch",
@@ -977,6 +1054,7 @@ def _probe_timeout_runtime_detail(
         frontend=frontend,
         triton_provider=triton_provider,
         artifact_dir=artifact_dir,
+        require_mlir_artifacts=True,
         compile_timeout_sec=max(1, min(int(compile_timeout_sec), 30)),
         launch_timeout_sec=max(1, min(int(launch_timeout_sec), 30)),
         runtime_backend=runtime_backend,
@@ -1056,6 +1134,12 @@ def main() -> None:
         help="When timeout happens under auto mode, run a short py-codegen probe and attach runtime_detail.",
     )
     ap.add_argument("--artifact-dir", default=None, help="Override artifact report directory.")
+    ap.add_argument(
+        "--require-mlir-artifacts",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Require MLIR artifacts in reports and forbid fallback to legacy intent JSON.",
+    )
     ap.add_argument("--allow-skip", action="store_true", help="exit 0 with ok=false when CUDA environment is unavailable")
     ap.add_argument(
         "--progress",
@@ -1090,6 +1174,7 @@ def main() -> None:
             "flaggems_opset": str(args.flaggems_opset),
             "backend_target": str(args.backend_target),
             "artifact_dir": (str(args.artifact_dir) if args.artifact_dir else None),
+            "require_mlir_artifacts": bool(args.require_mlir_artifacts),
             "runtime_backend": str(runtime_backend),
             "timeout_sec": int(args.timeout_sec),
             "compile_timeout_sec": int(compile_timeout_sec),
@@ -1122,6 +1207,7 @@ def main() -> None:
                 frontend=str(args.frontend),
                 triton_provider=str(args.triton_provider),
                 artifact_dir=(str(args.artifact_dir) if args.artifact_dir else None),
+                require_mlir_artifacts=bool(args.require_mlir_artifacts),
                 compile_timeout_sec=int(compile_timeout_sec),
                 launch_timeout_sec=int(launch_timeout_sec),
                 runtime_backend=runtime_backend,
@@ -1194,6 +1280,7 @@ def main() -> None:
         "flaggems_opset": str(args.flaggems_opset),
         "backend_target": str(args.backend_target),
         "artifact_dir": (str(args.artifact_dir) if args.artifact_dir else None),
+        "require_mlir_artifacts": bool(args.require_mlir_artifacts),
         "runtime_backend": str(runtime_backend),
         "timeout_sec": int(args.timeout_sec),
         "compile_timeout_sec": int(compile_timeout_sec),
