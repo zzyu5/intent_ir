@@ -1,16 +1,16 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-21T18:50:04+00:00",
+  "updated_at": "2026-02-21T18:50:34+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "b9c0c2943ca5b0ec55242c2900eef3fc18d30bd3",
+  "head_commit": "e4059063a455be068ee770da4d087af315cd1425",
   "mode": "maintenance",
   "coverage_integrity_phase": "recompute_stale",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260221/full196_mlir_forcecompile_head_refresh_v3/run_summary.json",
   "full196_last_ok": true,
   "full196_validated_commit": "fb110cf4626fc03628ca4dfbdae9eee46db57b7c",
   "full196_validated_commit_source": "run_summary.repo.head_commit",
-  "full196_commits_since_validated": 24,
-  "full196_commits_since_validated_total": 24,
+  "full196_commits_since_validated": 25,
+  "full196_commits_since_validated_total": 25,
   "full196_lifted_to_head": false,
   "full196_validated_mode": "force_compile",
   "full196_validated_execution_ir": "mlir",
@@ -36,7 +36,7 @@
   "gpu_perf_last_run": "artifacts/flaggems_matrix/daily/20260222/gpu_perf_norm_activation_specsource_v2/run_summary.json",
   "gpu_perf_last_ok": true,
   "gpu_perf_validated_commit": "0640852c49002340cb10b278e472fd39ba7ec157",
-  "gpu_perf_commits_since_validated": 7,
+  "gpu_perf_commits_since_validated": 8,
   "gpu_perf_mode": "graph_only",
   "gpu_perf_threshold": 0.8,
   "gpu_perf_devices": [
@@ -136,8 +136,8 @@
     "backend_compiler": "Address RVV group_norm_kernel broadcast mismatch and continue full-family gpu-perf measurable expansion."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_matmul_linear_v2_remote/family_matmul_linear/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_matmul_linear_v2_remote/family_matmul_linear/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260222/fix_matmul_linear_cuda_contract_first_v2/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260222/fix_matmul_linear_cuda_contract_first_v2/status_converged.json"
   },
   "lanes": {
     "coverage": {
