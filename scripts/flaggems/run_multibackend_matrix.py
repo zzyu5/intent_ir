@@ -715,6 +715,7 @@ def main() -> None:
             str(int(args.rvv_port)),
             "--out",
             str(rvv_remote_json),
+            "--require-mlir-artifacts" if bool(require_mlir_artifacts) else "--no-require-mlir-artifacts",
         ]
         if bool(args.rvv_use_key):
             cmd.append("--use-key")

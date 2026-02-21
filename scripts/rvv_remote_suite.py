@@ -184,6 +184,12 @@ def main() -> None:
     )
     ap.add_argument("--artifact-dir", default=None, help="Override artifact report directory.")
     ap.add_argument(
+        "--require-mlir-artifacts",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Require MLIR artifacts in reports and forbid fallback to legacy intent JSON.",
+    )
+    ap.add_argument(
         "--host",
         default=DEFAULT_RVV_HOST,
         help=f"RVV host (default: {DEFAULT_RVV_HOST}; env: INTENTIR_RVV_HOST)",
@@ -298,6 +304,11 @@ def main() -> None:
                 cmd += ["--triton-provider", str(args.triton_provider)]
             if args.artifact_dir:
                 cmd += ["--artifact-dir", str(args.artifact_dir)]
+            cmd += [
+                "--require-mlir-artifacts"
+                if bool(args.require_mlir_artifacts)
+                else "--no-require-mlir-artifacts"
+            ]
             if args.profile_ops:
                 cmd.append("--profile-ops")
             if args.tune_debug:
@@ -331,6 +342,7 @@ def main() -> None:
         "port": int(args.port),
         "frontends": frontends,
         "triton_provider": (str(args.triton_provider) if "triton" in frontends else None),
+        "require_mlir_artifacts": bool(args.require_mlir_artifacts),
         "kernels": kernels_union,
         "kernels_by_frontend": kernels_by_frontend,
         "tuning": {

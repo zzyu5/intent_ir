@@ -47,6 +47,7 @@ from backends.spmd_rvv.analysis.tuning import (
 from backends.spmd_rvv.baseline_freeze_tile import freeze_tile_schedule
 from intent_ir.ir import IntentFunction, ScheduleSketch
 from intent_ir.macros import expand_macros_json
+from intent_ir.mlir.convert_to_intent import to_intent
 from verify.gen_cases import TestCase
 from verify.tolerances import infer_tolerances
 
@@ -381,6 +382,39 @@ def _artifact_dir_for_frontend(frontend: str, *, triton_provider: str = "native"
     raise ValueError(f"unsupported frontend: {frontend}")
 
 
+def _resolve_report_path(raw: object, *, artifact_root: Path) -> Path | None:
+    p = Path(str(raw or "").strip())
+    if not str(p):
+        return None
+    if p.is_absolute():
+        return p if p.is_file() else None
+    rel = (artifact_root / p).resolve()
+    if rel.is_file():
+        return rel
+    return None
+
+
+def _mlir_report_paths(report: dict, *, artifact_root: Path) -> list[Path]:
+    mlir = report.get("mlir")
+    if not isinstance(mlir, dict):
+        return []
+    out: list[Path] = []
+    preferred: list[str] = []
+    for key in sorted(mlir.keys()):
+        if key.startswith("downstream_") and key.endswith("_module_path"):
+            preferred.append(str(key))
+    preferred += ["downstream_module_path", "midend_module_path", "module_path"]
+    seen: set[str] = set()
+    for key in preferred:
+        if key in seen:
+            continue
+        seen.add(key)
+        p = _resolve_report_path(mlir.get(key), artifact_root=artifact_root)
+        if p is not None and p not in out:
+            out.append(p)
+    return out
+
+
 def run_remote(
     kernel: str,
     frontend: str,
@@ -407,6 +441,7 @@ def run_remote(
     log: Callable[[str], None] | None = None,
     triton_provider: str = "native",
     artifact_dir: str | None = None,
+    require_mlir_artifacts: bool = False,
 ):
     def _log(msg: str) -> None:
         if log is None:
@@ -429,14 +464,32 @@ def run_remote(
         )
     _log(f"[{frontend}:{kernel}] load artifact: {report_path}")
     report = json.loads(report_path.read_text())
-    intent_macro_json = report.get("intent")
-    if not isinstance(intent_macro_json, dict):
-        raise ValueError(f"invalid artifact intent payload: {report_path}")
-    intent_macro = IntentFunction.from_json_dict(intent_macro_json)
-    intent_expanded_json = report.get("intent_expanded")
-    if not isinstance(intent_expanded_json, dict):
-        intent_expanded_json = expand_macros_json(dict(intent_macro_json))
-    intent = IntentFunction.from_json_dict(intent_expanded_json)
+    mlir_artifact_path = ""
+    intent_macro: IntentFunction | None = None
+    intent: IntentFunction | None = None
+    for mlir_path in _mlir_report_paths(report, artifact_root=artifact_root):
+        try:
+            parsed = to_intent(mlir_path.read_text(encoding="utf-8"))
+            intent_macro = parsed
+            intent = parsed
+            mlir_artifact_path = str(mlir_path)
+            _log(f"[{frontend}:{kernel}] mlir artifact selected: {mlir_artifact_path}")
+            break
+        except Exception:
+            continue
+    if intent is None:
+        if bool(require_mlir_artifacts):
+            raise RuntimeError(f"mlir_artifact_missing: no readable MLIR module path in report: {report_path}")
+        intent_macro_json = report.get("intent")
+        if not isinstance(intent_macro_json, dict):
+            raise ValueError(f"invalid artifact intent payload: {report_path}")
+        intent_macro = IntentFunction.from_json_dict(intent_macro_json)
+        intent_expanded_json = report.get("intent_expanded")
+        if not isinstance(intent_expanded_json, dict):
+            intent_expanded_json = expand_macros_json(dict(intent_macro_json))
+        intent = IntentFunction.from_json_dict(intent_expanded_json)
+    assert intent is not None
+    assert intent_macro is not None
 
     def _coerce_schedule(obj: ScheduleSketch | dict) -> ScheduleSketch:
         if isinstance(obj, ScheduleSketch):
@@ -1205,6 +1258,9 @@ def run_remote(
         "frontend": str(frontend),
         "triton_provider": (str(triton_provider) if frontend == "triton" else None),
         "artifact_dir": str(artifact_dir),
+        "require_mlir_artifacts": bool(require_mlir_artifacts),
+        "mlir_artifact_used": bool(mlir_artifact_path),
+        "mlir_artifact_path": str(mlir_artifact_path),
         "backend": backend_used,
         "omp_threads": int(omp_threads),
         "omp": chosen.get("omp"),
@@ -1245,6 +1301,12 @@ def main():
         help="Triton artifact provider (default: native)",
     )
     ap.add_argument("--artifact-dir", default=None, help="Override artifact report directory.")
+    ap.add_argument(
+        "--require-mlir-artifacts",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Require MLIR artifacts in reports and forbid fallback to legacy intent JSON.",
+    )
     ap.add_argument(
         "--host",
         default=DEFAULT_RVV_HOST,
@@ -1350,6 +1412,7 @@ def main():
         log=_log,
         triton_provider=str(args.triton_provider),
         artifact_dir=(str(args.artifact_dir) if args.artifact_dir else None),
+        require_mlir_artifacts=bool(args.require_mlir_artifacts),
     )
     if args.json:
         print(json.dumps(res, indent=2, ensure_ascii=False))
