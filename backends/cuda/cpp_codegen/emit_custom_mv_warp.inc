@@ -103,8 +103,54 @@ json emit_addmv_f32(const Intent& intent, const json& bindings) {
     if (!has_binary_inputs(add_out, mul_alpha.output, mul_beta.output)) fail("addmv lowering expects add(mul_alpha, mul_beta)");
     if (cast_Out.inputs[0] != add_out.output) fail("addmv lowering expects cast(add_out) as final output");
     Out = cast_Out.output;
+  } else if (intent.ops.size() == 9) {
+    const Op& cast_A = intent.ops[0];
+    const Op& cast_B = intent.ops[1];
+    const Op& mul_AB = intent.ops[2];
+    const Op& reduce_mv = intent.ops[3];
+    const Op& mul_alpha = intent.ops[4];
+    const Op& cast_Inp = intent.ops[5];
+    const Op& mul_beta = intent.ops[6];
+    const Op& add_out = intent.ops[7];
+    const Op& cast_Out = intent.ops[8];
+
+    const bool cast_a_ok = (cast_A.op == "cast" || cast_A.op == "identity");
+    const bool cast_b_ok = (cast_B.op == "cast" || cast_B.op == "identity");
+    const bool cast_inp_ok = (cast_Inp.op == "cast" || cast_Inp.op == "identity");
+    const bool cast_out_ok = (cast_Out.op == "cast" || cast_Out.op == "identity");
+    if (!cast_a_ok || !cast_b_ok || mul_AB.op != "mul" || reduce_mv.op != "reduce_sum" || mul_alpha.op != "mul" || !cast_inp_ok ||
+        mul_beta.op != "mul" || add_out.op != "add" || !cast_out_ok) {
+      fail("addmv lowering pattern mismatch for identity/cast+reduce form");
+    }
+    if (cast_A.inputs.size() != 1 || cast_B.inputs.size() != 1 || mul_AB.inputs.size() != 2 || reduce_mv.inputs.size() != 1 ||
+        mul_alpha.inputs.size() != 2 || cast_Inp.inputs.size() != 1 || mul_beta.inputs.size() != 2 || add_out.inputs.size() != 2 ||
+        cast_Out.inputs.size() != 1) {
+      fail("addmv lowering: invalid arity in identity/cast+reduce form");
+    }
+
+    A = cast_A.inputs[0];
+    B = cast_B.inputs[0];
+    Inp = cast_Inp.inputs[0];
+
+    if (!has_binary_inputs(mul_AB, cast_A.output, cast_B.output)) fail("addmv lowering expects mul(cast_or_id(A), cast_or_id(B))");
+    if (reduce_mv.inputs[0] != mul_AB.output) fail("addmv lowering expects reduce_sum(mul_AB)");
+    if (mul_alpha.inputs[0] == reduce_mv.output)
+      alpha_name = mul_alpha.inputs[1];
+    else if (mul_alpha.inputs[1] == reduce_mv.output)
+      alpha_name = mul_alpha.inputs[0];
+    else
+      fail("addmv lowering expects mul(reduce_mv, alpha)");
+    if (mul_beta.inputs[0] == cast_Inp.output)
+      beta_name = mul_beta.inputs[1];
+    else if (mul_beta.inputs[1] == cast_Inp.output)
+      beta_name = mul_beta.inputs[0];
+    else
+      fail("addmv lowering expects mul(cast_or_id(inp), beta)");
+    if (!has_binary_inputs(add_out, mul_alpha.output, mul_beta.output)) fail("addmv lowering expects add(mul_alpha, mul_beta)");
+    if (cast_Out.inputs[0] != add_out.output) fail("addmv lowering expects cast_or_id(add_out) as final output");
+    Out = cast_Out.output;
   } else {
-    fail("addmv lowering expects either 4-op or 10-op canonical pattern");
+    fail("addmv lowering expects either 4-op, 9-op, or 10-op canonical pattern");
   }
 
   auto A_it = intent.tensors.find(A);
@@ -521,4 +567,3 @@ json emit_warp(const Intent& intent, const json& bindings) {
   out["bindings"] = bindings;
   return out;
 }
-

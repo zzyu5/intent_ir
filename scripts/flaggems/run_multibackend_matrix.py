@@ -797,12 +797,13 @@ def main() -> None:
         )
 
     stage_timing_breakdown = out_dir / "stage_timing_breakdown.json"
-    if rvv_json.is_file() and cuda_json.is_file():
+    rvv_timing_json = rvv_remote_json if rvv_remote_json.is_file() else rvv_json
+    if rvv_timing_json.is_file() and cuda_json.is_file():
         cmd = [
             sys.executable,
             "scripts/flaggems/compute_stage_timing_breakdown.py",
             "--rvv-json",
-            str(rvv_json),
+            str(rvv_timing_json),
             "--cuda-json",
             str(cuda_json),
             "--pipeline-reports-dir",
@@ -826,11 +827,13 @@ def main() -> None:
         _record(
             "stage_timing_breakdown",
             0,
-            "stage timing breakdown skipped (rvv/cuda json not both present)",
+            "stage timing breakdown skipped (rvv_remote/rvv_local + cuda json not both present)",
             "",
             extra={
                 "reason_code": "skipped_missing_backend_json",
                 "json_path": str(stage_timing_breakdown),
+                "rvv_json_used": str(rvv_timing_json),
+                "cuda_json_used": str(cuda_json),
             },
         )
 
