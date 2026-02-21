@@ -1,11 +1,11 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-21T18:07:50+00:00
-- Commit: `4fa8db2742b0c29732101f2e70ed264f63dc304f`
+- Timestamp: 2026-02-21T18:45:35+00:00
+- Commit: `0dc60621a87c0e6bdb559e3f9a6370485cd6b1c4`
 - Lane: `coverage`
-- Summary: Norm family backend gaps closed: group_norm RVV broadcast fixed; batch_norm2d/weight_norm2d CUDA lowering now pass
+- Summary: Matmul_linear family now fully dual-pass on current HEAD after CUDA contract-form lowering fix.
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_norm_activation_v4_remote/family_norm_activation/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_norm_activation_v4_remote/family_norm_activation/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_norm_activation_v4_remote/coverage_batch_runs.json, artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_norm_activation_v4_remote/family_norm_activation/run_summary.json, artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_norm_activation_v4_remote/family_norm_activation/status_converged.json, artifacts/flaggems_matrix/daily/20260222/fix_norm_bn_weight_dual_v1/run_summary.json, artifacts/flaggems_matrix/daily/20260222/fix_norm_dispatch_dual_v2/run_summary.json
-- Next Focus: Continue impacted-family chunk regressions and aggregate into full coverage freshness run
+- Run Summary: `artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_matmul_linear_v2_remote/family_matmul_linear/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_matmul_linear_v2_remote/family_matmul_linear/status_converged.json`
+- Evidence Paths: artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_matmul_linear_v2_remote/coverage_batch_runs.json, artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_matmul_linear_v2_remote/family_matmul_linear/run_summary.json, artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_matmul_linear_v2_remote/family_matmul_linear/status_converged.json, artifacts/flaggems_matrix/daily/20260222/fix_matmul_linear_cuda_dispatch_v1/run_summary.json
+- Next Focus: Proceed with remaining family batches and MLIR cutover Phase 3/4 backend contract hardening.
