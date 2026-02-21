@@ -43,6 +43,7 @@ from backends.cuda.runtime import (  # noqa: E402
 )
 from intent_ir.ir import IntentFunction  # noqa: E402
 from intent_ir.macros import expand_macros_json  # noqa: E402
+from intent_ir.mlir.convert_to_intent import to_intent  # noqa: E402
 from verify.diff_runner import _with_io_aliases as _with_io_aliases_for_diff  # noqa: E402
 
 
@@ -93,7 +94,46 @@ def _artifact_dir_for_frontend(frontend: str, *, triton_provider: str = "native"
     raise ValueError(f"unsupported frontend: {frontend}")
 
 
-def _load_intent(report: dict) -> IntentFunction:
+def _resolve_report_path(raw: object, *, artifact_root: Path) -> Path | None:
+    p = Path(str(raw or "").strip())
+    if not str(p):
+        return None
+    if p.is_absolute():
+        return p if p.is_file() else None
+    rel = (artifact_root / p).resolve()
+    if rel.is_file():
+        return rel
+    return None
+
+
+def _mlir_report_paths(report: dict, *, artifact_root: Path) -> list[Path]:
+    mlir = report.get("mlir")
+    if not isinstance(mlir, dict):
+        return []
+    out: list[Path] = []
+    # Prefer downstream contracts first, then midend/module.
+    preferred: list[str] = []
+    for key in sorted(mlir.keys()):
+        if key.startswith("downstream_") and key.endswith("_module_path"):
+            preferred.append(str(key))
+    preferred += ["downstream_module_path", "midend_module_path", "module_path"]
+    seen: set[str] = set()
+    for key in preferred:
+        if key in seen:
+            continue
+        seen.add(key)
+        p = _resolve_report_path(mlir.get(key), artifact_root=artifact_root)
+        if p is not None and p not in out:
+            out.append(p)
+    return out
+
+
+def _load_intent(report: dict, *, artifact_root: Path) -> IntentFunction:
+    for mlir_path in _mlir_report_paths(report, artifact_root=artifact_root):
+        try:
+            return to_intent(mlir_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
     intent_expanded_json = report.get("intent_expanded")
     if not isinstance(intent_expanded_json, dict):
         intent_expanded_json = expand_macros_json(dict(report["intent"]))
@@ -288,7 +328,7 @@ def _prepare_kernel_context(
         raise FileNotFoundError(f"missing baseline npz: {baseline_npz_path}")
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    intent = _load_intent(report)
+    intent = _load_intent(report, artifact_root=artifact_root)
     baseline = dict(np.load(baseline_npz_path, allow_pickle=False))
     baseline = _with_io_aliases_for_diff(intent, baseline)
     external_inputs, outputs = _external_inputs(intent)
