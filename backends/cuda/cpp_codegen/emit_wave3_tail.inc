@@ -81,7 +81,7 @@ json emit_allclose2d_f32_bool(const Intent& intent, const json& bindings) {
 }
 
 json emit_batch_norm2d_training_f32(const Intent& intent, const json& bindings) {
-  if (intent.ops.size() != 25) fail("batch_norm lowering expects 25-op expanded pattern");
+  if (intent.ops.size() < 25 || intent.ops.size() > 27) fail("batch_norm lowering expects 25~27-op expanded pattern");
   const std::string input = "input";
   const std::string weight = "weight";
   const std::string bias = "bias";
@@ -1105,29 +1105,31 @@ json emit_vector_norm2d_f32(const Intent& intent, const json& bindings) {
 }
 
 json emit_weight_norm2d_f32(const Intent& intent, const json& bindings) {
-  if (intent.ops.size() != 6 || intent.ops[0].op != "mul" || intent.ops[1].op != "reduce_sum" || intent.ops[2].op != "sqrt" ||
-      intent.ops[3].op != "div" || intent.ops[4].op != "broadcast_in_dim" || intent.ops[5].op != "mul") {
-    fail("weight_norm lowering expects mul->reduce_sum->sqrt->div->broadcast->mul");
-  }
+  const bool with_broadcast = (intent.ops.size() == 6 && intent.ops[0].op == "mul" && intent.ops[1].op == "reduce_sum" && intent.ops[2].op == "sqrt" &&
+                               intent.ops[3].op == "div" && intent.ops[4].op == "broadcast_in_dim" && intent.ops[5].op == "mul");
+  const bool compact = (intent.ops.size() == 5 && intent.ops[0].op == "mul" && intent.ops[1].op == "reduce_sum" && intent.ops[2].op == "sqrt" &&
+                        intent.ops[3].op == "div" && intent.ops[4].op == "mul");
+  if (!with_broadcast && !compact) fail("weight_norm lowering expects 5/6-op expanded pattern");
   const Op& vv = intent.ops[0];
   const Op& red = intent.ops[1];
   const Op& sqr = intent.ops[2];
   const Op& div = intent.ops[3];
-  const Op& bcast = intent.ops[4];
-  const Op& mul = intent.ops[5];
-  if (vv.inputs.size() != 2 || red.inputs.size() != 1 || sqr.inputs.size() != 1 || div.inputs.size() != 2 || bcast.inputs.size() != 1 ||
-      mul.inputs.size() != 2) {
+  const Op* bcast = with_broadcast ? &intent.ops[4] : nullptr;
+  const Op& mul = with_broadcast ? intent.ops[5] : intent.ops[4];
+  if (vv.inputs.size() != 2 || red.inputs.size() != 1 || sqr.inputs.size() != 1 || div.inputs.size() != 2 || mul.inputs.size() != 2) {
     fail("weight_norm arity mismatch");
   }
+  if (bcast && bcast->inputs.size() != 1) fail("weight_norm arity mismatch");
   if (!(vv.inputs[0] == vv.inputs[1])) fail("weight_norm expects vv = mul(v,v)");
   if (red.inputs[0] != vv.output || sqr.inputs[0] != red.output) fail("weight_norm reduce/sqrt wiring mismatch");
   if (!_reduce_axis_is_1(red.attrs)) fail("weight_norm currently supports axis=1 only");
   const std::string v = vv.inputs[0];
   const std::string g = (div.inputs[0] == sqr.output) ? div.inputs[1] : ((div.inputs[1] == sqr.output) ? div.inputs[0] : std::string());
   if (g.empty()) fail("weight_norm expects div(g,norm)");
-  if (bcast.inputs[0] != div.output) fail("weight_norm expects broadcast(scale)");
-  if (!((mul.inputs[0] == v && mul.inputs[1] == bcast.output) || (mul.inputs[1] == v && mul.inputs[0] == bcast.output))) {
-    fail("weight_norm expects mul(v, scale_bc)");
+  const std::string scale_name = bcast ? bcast->output : div.output;
+  if (bcast && bcast->inputs[0] != div.output) fail("weight_norm expects broadcast(scale)");
+  if (!((mul.inputs[0] == v && mul.inputs[1] == scale_name) || (mul.inputs[1] == v && mul.inputs[0] == scale_name))) {
+    fail("weight_norm expects mul(v, scale)");
   }
   const std::string out_name = mul.output;
   auto v_it = intent.tensors.find(v);

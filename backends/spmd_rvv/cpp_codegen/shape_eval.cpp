@@ -50,11 +50,87 @@ std::optional<int> match_axis_1d_to_tensor(const Intent& intent, const std::unor
   return std::nullopt;
 }
 
+std::optional<std::vector<int>> match_axes_to_tensor(const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings,
+                                                     const std::string& name, const std::string& tensor_name, int tensor_rank) {
+  auto sit = intent.tensors.find(name);
+  auto tit = intent.tensors.find(tensor_name);
+  if (sit == intent.tensors.end() || tit == intent.tensors.end()) return std::nullopt;
+  const auto& sshape = sit->second.shape;
+  const auto& tshape = tit->second.shape;
+  const int sr = static_cast<int>(sshape.size());
+  if (sr <= 0 || sr >= tensor_rank || static_cast<int>(tshape.size()) != tensor_rank) return std::nullopt;
+
+  std::vector<int> axes;
+  axes.reserve(static_cast<size_t>(sr));
+  std::vector<int> used(static_cast<size_t>(tensor_rank), 0);
+  bool matched_by_symbol = true;
+
+  for (int i = 0; i < sr; ++i) {
+    const json& stok = sshape[static_cast<size_t>(i)];
+    if (!(stok.is_string() && !is_digits(stok.get<std::string>()))) {
+      matched_by_symbol = false;
+      break;
+    }
+    const std::string sym = stok.get<std::string>();
+    std::vector<int> hits;
+    for (int ax = 0; ax < tensor_rank; ++ax) {
+      if (used[static_cast<size_t>(ax)] == 1) continue;
+      if (tshape[static_cast<size_t>(ax)].is_string() && tshape[static_cast<size_t>(ax)].get<std::string>() == sym) {
+        hits.push_back(ax);
+      }
+    }
+    if (hits.size() != 1) {
+      matched_by_symbol = false;
+      break;
+    }
+    axes.push_back(hits[0]);
+    used[static_cast<size_t>(hits[0])] = 1;
+  }
+
+  auto strictly_increasing = [](const std::vector<int>& v) -> bool {
+    for (size_t i = 1; i < v.size(); ++i) {
+      if (v[i] <= v[i - 1]) return false;
+    }
+    return true;
+  };
+
+  if (matched_by_symbol && static_cast<int>(axes.size()) == sr && strictly_increasing(axes)) return axes;
+
+  axes.clear();
+  std::fill(used.begin(), used.end(), 0);
+  for (int i = 0; i < sr; ++i) {
+    auto sval = resolve_dim_token(sshape[static_cast<size_t>(i)], bindings);
+    if (!sval) return std::nullopt;
+    std::vector<int> hits;
+    for (int ax = 0; ax < tensor_rank; ++ax) {
+      if (used[static_cast<size_t>(ax)] == 1) continue;
+      auto tval = resolve_dim_token(tshape[static_cast<size_t>(ax)], bindings);
+      if (tval && *tval == *sval) hits.push_back(ax);
+    }
+    if (hits.size() != 1) return std::nullopt;
+    axes.push_back(hits[0]);
+    used[static_cast<size_t>(hits[0])] = 1;
+  }
+  if (strictly_increasing(axes)) return axes;
+  return std::nullopt;
+}
+
 std::vector<int64_t> pad_for_broadcast(const Intent& intent, const std::unordered_map<std::string, int64_t>& bindings,
                                        const std::string& name, const std::vector<int64_t>& shape,
                                        const std::string& other_name, const std::vector<int64_t>& other_shape, int out_rank) {
   std::vector<int64_t> padded(out_rank, 1);
   for (int i = 0; i < static_cast<int>(shape.size()); ++i) padded[out_rank - static_cast<int>(shape.size()) + i] = shape[i];
+
+  if (static_cast<int>(shape.size()) >= 2 && static_cast<int>(shape.size()) < out_rank && static_cast<int>(other_shape.size()) == out_rank) {
+    if (auto axes = match_axes_to_tensor(intent, bindings, name, other_name, out_rank)) {
+      std::vector<int64_t> named(out_rank, 1);
+      for (int i = 0; i < static_cast<int>(shape.size()); ++i) {
+        const int ax = (*axes)[static_cast<size_t>(i)];
+        if (ax >= 0 && ax < out_rank) named[ax] = shape[static_cast<size_t>(i)];
+      }
+      return named;
+    }
+  }
 
   if (static_cast<int>(shape.size()) == 1 && out_rank >= 2 && static_cast<int>(other_shape.size()) == out_rank) {
     if (auto ax = match_axis_1d_to_tensor(intent, bindings, name, other_name, out_rank)) {

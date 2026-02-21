@@ -36,9 +36,16 @@
     }
     if (vector_norm_like) return emit_vector_norm2d_f32(intent, bindings_json);
   }
-  if (intent.ops.size() == 6 && intent.ops[0].op == "mul" && intent.ops[1].op == "reduce_sum" && intent.ops[2].op == "sqrt" &&
-      intent.ops[3].op == "div" && intent.ops[4].op == "broadcast_in_dim" && intent.ops[5].op == "mul") {
-    return emit_weight_norm2d_f32(intent, bindings_json);
+  {
+    bool weight_norm_like = false;
+    if (intent.ops.size() == 6) {
+      weight_norm_like = (intent.ops[0].op == "mul" && intent.ops[1].op == "reduce_sum" && intent.ops[2].op == "sqrt" && intent.ops[3].op == "div" &&
+                          intent.ops[4].op == "broadcast_in_dim" && intent.ops[5].op == "mul");
+    } else if (intent.ops.size() == 5) {
+      weight_norm_like =
+          (intent.ops[0].op == "mul" && intent.ops[1].op == "reduce_sum" && intent.ops[2].op == "sqrt" && intent.ops[3].op == "div" && intent.ops[4].op == "mul");
+    }
+    if (weight_norm_like) return emit_weight_norm2d_f32(intent, bindings_json);
   }
   {
     bool allclose_like = false;
@@ -53,16 +60,22 @@
       intent.ops[3].op == "reduce_sum") {
     return emit_dot1d_f32(intent, bindings_json);
   }
-  if (intent.ops.size() == 25) {
-    bool bn_like = true;
-    static const std::vector<std::string> kBatchNormOps = {
-        "const", "reduce_sum", "div", "broadcast_in_dim", "sub", "mul", "reduce_sum", "div", "add", "rsqrt", "broadcast_in_dim", "mul", "broadcast_in_dim",
-        "mul", "broadcast_in_dim", "add", "sub", "mul", "mul", "add", "div", "mul", "mul", "mul", "add"};
-    for (size_t i = 0; i < kBatchNormOps.size(); ++i) {
-      if (intent.ops[i].op != kBatchNormOps[i]) {
-        bn_like = false;
-        break;
+  {
+    bool bn_like = false;
+    if (intent.outputs.size() == 5) {
+      bool has_output_1 = false;
+      bool has_mean = false;
+      bool has_inv_std = false;
+      bool has_running_mean_out = false;
+      bool has_running_var_out = false;
+      for (const auto& out : intent.outputs) {
+        if (out == "output_1") has_output_1 = true;
+        if (out == "mean") has_mean = true;
+        if (out == "inv_std") has_inv_std = true;
+        if (out == "running_mean_out") has_running_mean_out = true;
+        if (out == "running_var_out") has_running_var_out = true;
       }
+      bn_like = has_output_1 && has_mean && has_inv_std && has_running_mean_out && has_running_var_out;
     }
     if (bn_like) return emit_batch_norm2d_training_f32(intent, bindings_json);
   }
