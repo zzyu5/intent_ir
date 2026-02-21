@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-21T17:07:27+00:00",
+  "updated_at": "2026-02-21T17:25:30+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,30 +13,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "f38163a fix(mlir): resolve report paths contract-first and correct coverage chunk resume flow\nb38ca77 workflow: align state snapshot with latest head\n237de9d workflow: record mlir contract-first cutover session and refresh state\n8639ee3 feat(mlir): emit backend contract artifacts and switch smoke/remote loaders to contract-first\ncc50dce workflow: align current status snapshot with latest head\n5064fb0 workflow: record mlir-remote cutover session evidence and refresh state\n93eb330 workflow: refresh state after rvv remote mlir-artifact cutover\ne13edee feat(mlir): enforce mlir artifacts across rvv remote path and matrix orchestration\n12b1a4b workflow: align head freshness snapshot after mlir smoke cutover\n4b28799 workflow: refresh status after mlir-smoke enforcement changes\n56b5168 feat(mlir): enforce mlir-artifact backend smoke path in matrix runs\n8047ae2 workflow: mark coverage and gpu-perf freshness stale on new head\n0bed8e1 refactor(smoke): prefer mlir artifact contracts over legacy intent json\n6dcb2ea feat(workflow): refresh full196+gpu-perf evidence and harden mlir llvm gate for batch aggregates\nfb110cf fix(rvv-remote): restore intent_macro in alias/freeze paths after json macro refactor\n106df15 workflow: record stale_validation cutover state and smoke evidence\nc608ad4 workflow: mark mlir cutover stale when full196 evidence is not fresh on HEAD\n5463c0b workflow: record mlir emit-llvm and json macro expansion migration\n3b083e3 feat(mlir): add emit-llvm cli and json-level macro expansion helpers\n7a4f96c workflow: record json codegen entrypoint migration progress",
+  "git_log_short": "c450202 fix(cuda): unblock allclose/log_softmax lowering and add chunk heartbeat progress\n98abf07 workflow: record coverage chunk rerun fix session and refresh state\nf38163a fix(mlir): resolve report paths contract-first and correct coverage chunk resume flow\nb38ca77 workflow: align state snapshot with latest head\n237de9d workflow: record mlir contract-first cutover session and refresh state\n8639ee3 feat(mlir): emit backend contract artifacts and switch smoke/remote loaders to contract-first\ncc50dce workflow: align current status snapshot with latest head\n5064fb0 workflow: record mlir-remote cutover session evidence and refresh state\n93eb330 workflow: refresh state after rvv remote mlir-artifact cutover\ne13edee feat(mlir): enforce mlir artifacts across rvv remote path and matrix orchestration\n12b1a4b workflow: align head freshness snapshot after mlir smoke cutover\n4b28799 workflow: refresh status after mlir-smoke enforcement changes\n56b5168 feat(mlir): enforce mlir-artifact backend smoke path in matrix runs\n8047ae2 workflow: mark coverage and gpu-perf freshness stale on new head\n0bed8e1 refactor(smoke): prefer mlir artifact contracts over legacy intent json\n6dcb2ea feat(workflow): refresh full196+gpu-perf evidence and harden mlir llvm gate for batch aggregates\nfb110cf fix(rvv-remote): restore intent_macro in alias/freeze paths after json macro refactor\n106df15 workflow: record stale_validation cutover state and smoke evidence\nc608ad4 workflow: mark mlir cutover stale when full196 evidence is not fresh on HEAD\n5463c0b workflow: record mlir emit-llvm and json macro expansion migration",
   "progress_tail": [
-    {
-      "ts": "2026-02-21T00:01:32+00:00",
-      "commit": "c608ad4",
-      "lane": "workflow",
-      "summary": "harden workflow freshness: mlir cutover now reports stale_validation until full196 MLIR evidence is fresh on HEAD",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_workflow.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260221/workflow_mlir_stale_gate_smoke_v1/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260221/workflow_mlir_stale_gate_smoke_v1/status_converged.json",
-      "next_focus": "run category-batch full196 on HEAD to clear stale_validation and then continue mlir hard-cut runtime cleanup",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260221/workflow_mlir_stale_gate_smoke_v1/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260221/workflow_mlir_stale_gate_smoke_v1/status_converged.json",
-        "scripts/flaggems/build_workflow_state.py"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260221/workflow_mlir_stale_gate_smoke_v1",
-      "counts_by_status": {
-        "blocked_backend": 195,
-        "cuda_only": 1
-      }
-    },
     {
       "ts": "2026-02-21T02:16:47+00:00",
       "commit": "fb110cf4626fc03628ca4dfbdae9eee46db57b7c",
@@ -190,9 +168,29 @@
       "run_ok": false,
       "run_out_dir": null,
       "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-21T17:25:25+00:00",
+      "commit": "c450202",
+      "lane": "coverage",
+      "summary": "Fixed CUDA allclose/log_softmax lowering and reran reduction family (2 chunks) to dual-pass.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_reduction_v3_remote/family_reduction/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_reduction_v3_remote/family_reduction/status_converged.json",
+      "next_focus": "Continue phase mainline: rerun affected families with rvv_remote and keep MLIR/cutover tasks moving.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_reduction_v3_remote/coverage_batch_runs.json",
+        "artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_reduction_v3_remote/family_reduction/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260222/coverage_chunk_progress_reduction_v3_remote/family_reduction/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260222/fix_allclose_logsoftmax_dual_v1/run_summary.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
     }
   ],
-  "next_focus": "Address remaining reduction chunk blockers (allclose2d lowering_missing_op, log_softmax2d diff_fail) then refresh impacted family batches.",
+  "next_focus": "Continue phase mainline: rerun affected families with rvv_remote and keep MLIR/cutover tasks moving.",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
   "active_lanes": [
     "backend_compiler",
@@ -200,9 +198,9 @@
     "mlir_migration"
   ],
   "next_focus_by_lane": {
-    "workflow": "continue backend compiler modularization/perf optimization with measurable-kernel expansion",
     "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
     "backend_compiler": "expand measurable kernel set for gpu perf while preserving >=0.80 ratio",
+    "workflow": "continue backend compiler modularization/perf optimization with measurable-kernel expansion",
     "mlir_migration": "Run impacted family/chunk batches to refresh coverage/perf freshness on HEAD with new contract artifacts."
   },
   "known_risks": [
