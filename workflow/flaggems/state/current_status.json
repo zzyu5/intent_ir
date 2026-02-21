@@ -1,16 +1,16 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-20T23:53:30+00:00",
+  "updated_at": "2026-02-21T00:01:33+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "3b083e355ee825411d4005849ab8a617815859e6",
+  "head_commit": "c608ad40eb0f54c001fa5c45062bc90ff9aa7ea0",
   "mode": "maintenance",
   "coverage_integrity_phase": "recompute_stale",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260220/full196_head_refresh_v2/run_summary.json",
   "full196_last_ok": true,
   "full196_validated_commit": "54223182e9ef69b4649a87652c9450db6b0e1034",
   "full196_validated_commit_source": "run_summary.repo.head_commit",
-  "full196_commits_since_validated": 14,
-  "full196_commits_since_validated_total": 14,
+  "full196_commits_since_validated": 16,
+  "full196_commits_since_validated_total": 16,
   "full196_lifted_to_head": false,
   "full196_validated_mode": "force_compile",
   "full196_validated_execution_ir": "mlir",
@@ -26,7 +26,7 @@
   "full196_last_run_dirty": true,
   "full196_artifact_repo_stamp_ok": true,
   "mlir_migration_phase": "default_mlir",
-  "mlir_cutover_level": "mlir_primary",
+  "mlir_cutover_level": "stale_validation",
   "mlir_default_enabled": true,
   "mlir_toolchain_ok": true,
   "mlir_backend_contract_ready": true,
@@ -36,7 +36,7 @@
   "gpu_perf_last_run": "artifacts/flaggems_matrix/daily/20260221/gpu_perf_head_refresh_v1/run_summary.json",
   "gpu_perf_last_ok": true,
   "gpu_perf_validated_commit": "66de1e1a6b07fd4dba678eb6d63a4d6d53bc3695",
-  "gpu_perf_commits_since_validated": 13,
+  "gpu_perf_commits_since_validated": 15,
   "gpu_perf_mode": "graph_only",
   "gpu_perf_threshold": 0.8,
   "gpu_perf_devices": [
@@ -127,16 +127,18 @@
   },
   "active_lanes": [
     "backend_compiler",
-    "coverage"
+    "coverage",
+    "mlir_migration"
   ],
   "next_focus_by_lane": {
-    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
     "backend_compiler": "continue mlir backend/compiler mainline; rerun perf on impacted families after backend changes",
-    "mlir_migration": "continue mlir hard-cut by removing remaining IntentFunction-only loading in runtime tools and keep category-batch regressions green"
+    "mlir_migration": "continue mlir hard-cut by removing remaining IntentFunction-only loading in runtime tools and keep category-batch regressions green",
+    "workflow": "run category-batch full196 on HEAD to clear stale_validation and then continue mlir hard-cut runtime cleanup",
+    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260221/mlir_emitllvm_jsonmacro_smoke_v1/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260221/mlir_emitllvm_jsonmacro_smoke_v1/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260221/workflow_mlir_stale_gate_smoke_v1/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260221/workflow_mlir_stale_gate_smoke_v1/status_converged.json"
   },
   "lanes": {
     "coverage": {
