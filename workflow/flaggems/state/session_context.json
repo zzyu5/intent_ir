@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-21T02:33:00+00:00",
+  "updated_at": "2026-02-21T15:02:16+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,7 +13,7 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "fb110cf fix(rvv-remote): restore intent_macro in alias/freeze paths after json macro refactor\n106df15 workflow: record stale_validation cutover state and smoke evidence\nc608ad4 workflow: mark mlir cutover stale when full196 evidence is not fresh on HEAD\n5463c0b workflow: record mlir emit-llvm and json macro expansion migration\n3b083e3 feat(mlir): add emit-llvm cli and json-level macro expansion helpers\n7a4f96c workflow: record json codegen entrypoint migration progress\n3c13ca4 refactor(backend): switch smoke/perf scripts to json codegen entrypoints\na969f25 workflow: log backend contract-json cutover progress\ndc1fd43 feat(mlir): consume backend contracts without IntentFunction bridge\nfee4e1e workflow: track frontend cli backend-target routing progress\n5f9c80c feat(cli): expose backend-target in tilelang/cuda pipeline runners\nd47e155 workflow: record tilelang/cuda mlir backend-target routing progress\nf5685f9 feat(mlir): route tilelang/cuda llvm pipeline by backend target\n2754af3 workflow: record rvv llvm pipeline migration evidence\n72d89c1 feat(mlir): add rvv llvm pipeline and backend-target llvm routing\n3e271f0 workflow: lift coverage and gpu-perf freshness to current HEAD\n4fe8689 workflow: refresh full196 and gpu-perf freshness on HEAD\n66de1e1 workflow: refresh full196 head evidence after 7/7 chunked rerun\n5422318 workflow: record index and norm family remote dual-pass evidence\n66150ab workflow: record matmul_linear remote dual-pass evidence",
+  "git_log_short": "0bed8e1 refactor(smoke): prefer mlir artifact contracts over legacy intent json\n6dcb2ea feat(workflow): refresh full196+gpu-perf evidence and harden mlir llvm gate for batch aggregates\nfb110cf fix(rvv-remote): restore intent_macro in alias/freeze paths after json macro refactor\n106df15 workflow: record stale_validation cutover state and smoke evidence\nc608ad4 workflow: mark mlir cutover stale when full196 evidence is not fresh on HEAD\n5463c0b workflow: record mlir emit-llvm and json macro expansion migration\n3b083e3 feat(mlir): add emit-llvm cli and json-level macro expansion helpers\n7a4f96c workflow: record json codegen entrypoint migration progress\n3c13ca4 refactor(backend): switch smoke/perf scripts to json codegen entrypoints\na969f25 workflow: log backend contract-json cutover progress\ndc1fd43 feat(mlir): consume backend contracts without IntentFunction bridge\nfee4e1e workflow: track frontend cli backend-target routing progress\n5f9c80c feat(cli): expose backend-target in tilelang/cuda pipeline runners\nd47e155 workflow: record tilelang/cuda mlir backend-target routing progress\nf5685f9 feat(mlir): route tilelang/cuda llvm pipeline by backend target\n2754af3 workflow: record rvv llvm pipeline migration evidence\n72d89c1 feat(mlir): add rvv llvm pipeline and backend-target llvm routing\n3e271f0 workflow: lift coverage and gpu-perf freshness to current HEAD\n4fe8689 workflow: refresh full196 and gpu-perf freshness on HEAD\n66de1e1 workflow: refresh full196 head evidence after 7/7 chunked rerun",
   "progress_tail": [
     {
       "ts": "2026-02-20T23:40:54+00:00",
@@ -195,11 +195,15 @@
   ],
   "next_focus": "continue backend compiler modularization/perf optimization with measurable-kernel expansion",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
-  "active_lanes": [],
+  "active_lanes": [
+    "backend_compiler",
+    "coverage",
+    "mlir_migration"
+  ],
   "next_focus_by_lane": {
     "mlir_migration": "continue mlir hard-cut by removing remaining IntentFunction-only loading in runtime tools and keep category-batch regressions green",
     "workflow": "continue backend compiler modularization/perf optimization with measurable-kernel expansion",
-    "coverage": "continue mlir_migration phase work after freshness gate green",
+    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
     "backend_compiler": "expand measurable kernel set for gpu perf while preserving >=0.80 ratio"
   },
   "known_risks": []
