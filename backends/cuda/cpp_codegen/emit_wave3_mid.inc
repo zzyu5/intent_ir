@@ -1152,19 +1152,31 @@ json emit_bmm3d_f32(const Intent& intent, const json& bindings) {
 }
 
 json emit_addmm2d_f32(const Intent& intent, const json& bindings) {
-  if (intent.ops.size() != 5) fail("addmm lowering expects 5 ops (matmul,mul,mul,add,cast)");
+  if (intent.ops.size() != 4 && intent.ops.size() != 5) {
+    fail("addmm lowering expects 4 or 5 ops (matmul,mul,mul,add[,cast|identity])");
+  }
   const Op& mm = intent.ops[0];
   const Op& mul_mm = intent.ops[1];
   const Op& mul_bias = intent.ops[2];
   const Op& add = intent.ops[3];
-  const Op& cast = intent.ops[4];
-  if (mm.op != "matmul" || mul_mm.op != "mul" || mul_bias.op != "mul" || add.op != "add" || cast.op != "cast") {
+  const Op* tail = (intent.ops.size() == 5) ? &intent.ops[4] : nullptr;
+  if (mm.op != "matmul" || mul_mm.op != "mul" || mul_bias.op != "mul" || add.op != "add") {
     fail("addmm lowering pattern mismatch");
   }
-  if (mm.inputs.size() != 2 || mul_mm.inputs.size() != 2 || mul_bias.inputs.size() != 2 || add.inputs.size() != 2 || cast.inputs.size() != 1) {
+  if (mm.inputs.size() != 2 || mul_mm.inputs.size() != 2 || mul_bias.inputs.size() != 2 || add.inputs.size() != 2) {
     fail("addmm lowering: invalid arity");
   }
-  if (cast.attrs.value("to", std::string("f32")) != "f32") fail("addmm lowering expects cast(to=f32)");
+  if (tail != nullptr) {
+    if (tail->inputs.size() != 1) fail("addmm lowering: tail op expects single input");
+    if (tail->op == "cast") {
+      if (tail->attrs.value("to", std::string("f32")) != "f32") fail("addmm lowering expects cast(to=f32)");
+      if (tail->inputs[0] != add.output) fail("addmm lowering expects cast(add_out)");
+    } else if (tail->op == "identity") {
+      if (tail->inputs[0] != add.output) fail("addmm lowering expects identity(add_out)");
+    } else {
+      fail("addmm lowering: unsupported tail op (expected cast|identity)");
+    }
+  }
 
   const std::string A = mm.inputs[0];
   const std::string B = mm.inputs[1];
@@ -1204,12 +1216,12 @@ json emit_addmm2d_f32(const Intent& intent, const json& bindings) {
   if (!((add.inputs[0] == scaled_mm && add.inputs[1] == scaled_bias) || (add.inputs[0] == scaled_bias && add.inputs[1] == scaled_mm))) {
     fail("addmm lowering expects add(scaled_matmul, scaled_bias)");
   }
-  if (cast.inputs[0] != add.output) fail("addmm lowering expects cast(add_out)");
+  const std::string out_name = (tail != nullptr) ? tail->output : add.output;
 
   auto a_it = intent.tensors.find(A);
   auto b_it = intent.tensors.find(B);
   auto bias_it = intent.tensors.find(bias_name);
-  auto out_it = intent.tensors.find(cast.output);
+  auto out_it = intent.tensors.find(out_name);
   if (a_it == intent.tensors.end() || b_it == intent.tensors.end() || bias_it == intent.tensors.end() || out_it == intent.tensors.end()) {
     fail("addmm lowering missing tensors");
   }
@@ -1236,7 +1248,7 @@ json emit_addmm2d_f32(const Intent& intent, const json& bindings) {
   if ((block_x % 32) != 0) block_x = ((block_x + 31) / 32) * 32;
   const int64_t total = M * N;
   const int64_t grid_x = (total + block_x - 1) / block_x;
-  const std::string O = cast.output;
+  const std::string O = out_name;
 
   std::ostringstream cuda_ss;
   CodeWriter w(cuda_ss);
@@ -1423,28 +1435,40 @@ json emit_baddbmm3d_f32(const Intent& intent, const json& bindings) {
 }
 
 json emit_dot1d_f32(const Intent& intent, const json& bindings) {
-  if (intent.ops.size() != 4) fail("dot lowering expects cast,cast,mul,reduce_sum pattern");
-  if (intent.ops[0].op != "cast" || intent.ops[1].op != "cast" || intent.ops[2].op != "mul" || intent.ops[3].op != "reduce_sum") {
-    fail("dot lowering pattern mismatch");
+  const Op* mul = nullptr;
+  const Op* red = nullptr;
+  std::string X;
+  std::string Y;
+  if (intent.ops.size() == 2) {
+    if (intent.ops[0].op != "mul" || intent.ops[1].op != "reduce_sum") fail("dot lowering pattern mismatch");
+    mul = &intent.ops[0];
+    red = &intent.ops[1];
+    if (mul->inputs.size() != 2 || red->inputs.size() != 1) fail("dot lowering arity mismatch");
+    X = mul->inputs[0];
+    Y = mul->inputs[1];
+  } else if (intent.ops.size() == 4) {
+    const Op& p0 = intent.ops[0];
+    const Op& p1 = intent.ops[1];
+    mul = &intent.ops[2];
+    red = &intent.ops[3];
+    const bool ok_pre = ((p0.op == "cast" || p0.op == "identity") && (p1.op == "cast" || p1.op == "identity"));
+    if (!ok_pre || mul->op != "mul" || red->op != "reduce_sum") fail("dot lowering pattern mismatch");
+    if (p0.inputs.size() != 1 || p1.inputs.size() != 1 || mul->inputs.size() != 2 || red->inputs.size() != 1) {
+      fail("dot lowering arity mismatch");
+    }
+    if (p0.op == "cast" && p0.attrs.value("to", std::string("f32")) != "f32") fail("dot lowering expects cast(to=f32)");
+    if (p1.op == "cast" && p1.attrs.value("to", std::string("f32")) != "f32") fail("dot lowering expects cast(to=f32)");
+    if (!((mul->inputs[0] == p0.output && mul->inputs[1] == p1.output) || (mul->inputs[1] == p0.output && mul->inputs[0] == p1.output))) {
+      fail("dot lowering expects mul(pre_x, pre_y)");
+    }
+    X = p0.inputs[0];
+    Y = p1.inputs[0];
+  } else {
+    fail("dot lowering expects mul+reduce_sum or cast/identity+mul+reduce_sum pattern");
   }
-  const Op& cast_x = intent.ops[0];
-  const Op& cast_y = intent.ops[1];
-  const Op& mul = intent.ops[2];
-  const Op& red = intent.ops[3];
-  if (cast_x.inputs.size() != 1 || cast_y.inputs.size() != 1 || mul.inputs.size() != 2 || red.inputs.size() != 1) {
-    fail("dot lowering arity mismatch");
-  }
-  if (cast_x.attrs.value("to", std::string("f32")) != "f32" || cast_y.attrs.value("to", std::string("f32")) != "f32") {
-    fail("dot lowering expects cast(to=f32)");
-  }
-  if (!((mul.inputs[0] == cast_x.output && mul.inputs[1] == cast_y.output) || (mul.inputs[1] == cast_x.output && mul.inputs[0] == cast_y.output))) {
-    fail("dot lowering expects mul(cast_x, cast_y)");
-  }
-  if (red.inputs[0] != mul.output) fail("dot lowering expects reduce_sum(mul)");
+  if (red->inputs[0] != mul->output) fail("dot lowering expects reduce_sum(mul)");
 
-  const std::string X = cast_x.inputs[0];
-  const std::string Y = cast_y.inputs[0];
-  const std::string OUT = red.output;
+  const std::string OUT = red->output;
   auto x_it = intent.tensors.find(X);
   auto y_it = intent.tensors.find(Y);
   auto o_it = intent.tensors.find(OUT);

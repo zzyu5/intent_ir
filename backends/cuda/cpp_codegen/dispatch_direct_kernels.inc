@@ -1,6 +1,11 @@
   if (intent.ops.size() == 4 && intent.ops[0].op == "matmul" && intent.ops[1].op == "mul" && intent.ops[2].op == "mul" && intent.ops[3].op == "add") {
+    auto a_it = intent.tensors.find(intent.ops[0].inputs[0]);
     auto b_it = intent.tensors.find(intent.ops[0].inputs[1]);
     if (b_it != intent.tensors.end() && b_it->second.shape.size() == 1) return emit_addmv_f32(intent, bindings_json);
+    if (a_it != intent.tensors.end() && b_it != intent.tensors.end()) {
+      if (a_it->second.shape.size() == 2 && b_it->second.shape.size() == 2) return emit_addmm2d_f32(intent, bindings_json);
+      if (a_it->second.shape.size() == 3 && b_it->second.shape.size() == 3) return emit_baddbmm3d_f32(intent, bindings_json);
+    }
     return emit_baddbmm3d_f32(intent, bindings_json);
   }
   if (intent.ops.size() == 10 && intent.ops[0].op == "cast" && intent.ops[1].op == "cast" && intent.ops[2].op == "broadcast_in_dim" &&
@@ -8,8 +13,8 @@
       intent.ops[7].op == "mul" && intent.ops[8].op == "add" && intent.ops[9].op == "cast") {
     return emit_addmv_f32(intent, bindings_json);
   }
-  if (intent.ops.size() == 5 && intent.ops[0].op == "matmul" && intent.ops[1].op == "mul" && intent.ops[2].op == "mul" &&
-      intent.ops[3].op == "add" && intent.ops[4].op == "cast") {
+  if (intent.ops.size() == 5 && intent.ops[0].op == "matmul" && intent.ops[1].op == "mul" && intent.ops[2].op == "mul" && intent.ops[3].op == "add" &&
+      (intent.ops[4].op == "cast" || intent.ops[4].op == "identity")) {
     return emit_addmm2d_f32(intent, bindings_json);
   }
   if (intent.ops.size() == 1 && intent.ops[0].op == "matmul") {
@@ -130,6 +135,7 @@
   if (intent.ops.size() == 1 && intent.ops[0].op == "upsample_nearest1d") return emit_upsample_nearest1d_ncl_f32(intent, bindings_json);
   if (intent.ops.size() == 1 && intent.ops[0].op == "upsample_nearest2d") return emit_upsample_nearest2d_nchw_f32(intent, bindings_json);
   if (intent.ops.size() == 1 && intent.ops[0].op == "cumsum") return emit_cumsum2d_axis1_f32(intent, bindings_json);
+  if (intent.ops.size() == 2 && intent.ops[0].op == "mul" && intent.ops[1].op == "reduce_sum") return emit_dot1d_f32(intent, bindings_json);
   if (intent.ops.size() == 4 && intent.ops[0].op == "iota" && intent.ops[1].op == "identity" && intent.ops[2].op == "cumsum" &&
       intent.ops[3].op == "identity") {
     const Op& id_in = intent.ops[1];
