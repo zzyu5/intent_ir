@@ -1,11 +1,11 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-21T16:51:50+00:00
-- Commit: `93eb3304c05a50674b796e60c173d1c22968e3e1`
+- Timestamp: 2026-02-21T17:01:48+00:00
+- Commit: `8639ee3`
 - Lane: `mlir_migration`
-- Summary: Enforced MLIR-artifact requirement on RVV remote execution path and matrix orchestration.
+- Summary: Emit MLIR backend contract artifacts in core and switch smoke/rvv-remote loaders to contract-first path.
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/flaggems_matrix/daily/20260221/matrix_rvv_remote_mlir_require_add2d_v1/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260221/matrix_rvv_remote_mlir_require_add2d_v1/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260221/matrix_rvv_remote_mlir_require_add2d_v1/run_summary.json, artifacts/flaggems_matrix/daily/20260221/matrix_rvv_remote_mlir_require_add2d_v1/status_converged.json, scripts/flaggems/run_multibackend_matrix.py, scripts/rvv_remote_run.py, scripts/rvv_remote_suite.py
-- Next Focus: Run impacted family/chunk batches and re-validate coverage/perf freshness on HEAD.
+- Run Summary: `artifacts/flaggems_matrix/daily/20260222/mlir_contract_artifact_smoke_add2d_v1/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260222/mlir_contract_artifact_smoke_add2d_v1/status_converged.json`
+- Evidence Paths: artifacts/flaggems_matrix/daily/20260222/mlir_contract_artifact_smoke_add2d_v1/run_summary.json, artifacts/flaggems_matrix/daily/20260222/mlir_contract_artifact_smoke_add2d_v1/status_converged.json, pipeline/mlir_contract_artifacts.py, scripts/backend_codegen_smoke.py, scripts/cuda_backend_smoke.py, scripts/rvv_remote_run.py
+- Next Focus: Run impacted family/chunk batches to refresh coverage/perf freshness on HEAD with new contract artifacts.
