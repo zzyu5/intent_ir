@@ -173,10 +173,13 @@
     if (mse_loss_like) return emit_mse_loss2d_f32(intent, bindings_json);
   }
   {
-    bool per_token_group_quant_fp8_like = (intent.ops.size() == 11 && intent.ops[0].op == "reshape" && intent.ops[1].op == "abs" &&
-                                           intent.ops[2].op == "reduce_max" && intent.ops[3].op == "max" && intent.ops[4].op == "div" &&
-                                           intent.ops[5].op == "reshape" && intent.ops[6].op == "broadcast_in_dim" && intent.ops[7].op == "div" &&
-                                           intent.ops[8].op == "max" && intent.ops[9].op == "min" && intent.ops[10].op == "reshape");
+    bool per_token_group_quant_fp8_like =
+        (intent.ops.size() == 11 && intent.ops[0].op == "reshape" && intent.ops[1].op == "abs" && intent.ops[2].op == "reduce_max" &&
+         intent.ops[3].op == "max" && intent.ops[4].op == "div" && intent.ops[5].op == "reshape" && intent.ops[6].op == "broadcast_in_dim" &&
+         intent.ops[7].op == "div" && intent.ops[8].op == "max" && intent.ops[9].op == "min" && intent.ops[10].op == "reshape") ||
+        (intent.ops.size() == 10 && intent.ops[0].op == "reshape" && intent.ops[1].op == "abs" && intent.ops[2].op == "reduce_max" &&
+         intent.ops[3].op == "max" && intent.ops[4].op == "div" && intent.ops[5].op == "reshape" && intent.ops[6].op == "div" &&
+         intent.ops[7].op == "max" && intent.ops[8].op == "min" && intent.ops[9].op == "reshape");
     if (per_token_group_quant_fp8_like) return emit_per_token_group_quant_fp8_2d_f32(intent, bindings_json);
   }
   {

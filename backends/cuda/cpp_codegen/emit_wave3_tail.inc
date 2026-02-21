@@ -1398,23 +1398,47 @@ json emit_upsample_bicubic2d_aa_f32(const Intent& intent, const json& bindings) 
 }
 
 json emit_per_token_group_quant_fp8_2d_f32(const Intent& intent, const json& bindings) {
-  if (intent.ops.size() != 11) fail("per_token_group_quant_fp8 lowering expects 11-op pattern");
-  static const std::vector<std::string> kOps = {
-      "reshape", "abs", "reduce_max", "max", "div", "reshape", "broadcast_in_dim", "div", "max", "min", "reshape"};
-  for (size_t i = 0; i < kOps.size(); ++i) {
-    if (intent.ops[i].op != kOps[i]) fail("per_token_group_quant_fp8 lowering pattern mismatch");
+  const bool is_11 = (intent.ops.size() == 11);
+  const bool is_10 = (intent.ops.size() == 10);
+  if (!is_11 && !is_10) fail("per_token_group_quant_fp8 lowering expects 10-op or 11-op pattern");
+  if (is_11) {
+    static const std::vector<std::string> kOps = {
+        "reshape", "abs", "reduce_max", "max", "div", "reshape", "broadcast_in_dim", "div", "max", "min", "reshape"};
+    for (size_t i = 0; i < kOps.size(); ++i) {
+      if (intent.ops[i].op != kOps[i]) fail("per_token_group_quant_fp8 lowering 11-op pattern mismatch");
+    }
+  } else {
+    static const std::vector<std::string> kOps = {"reshape", "abs", "reduce_max", "max", "div", "reshape", "div", "max", "min", "reshape"};
+    for (size_t i = 0; i < kOps.size(); ++i) {
+      if (intent.ops[i].op != kOps[i]) fail("per_token_group_quant_fp8 lowering 10-op pattern mismatch");
+    }
   }
   const Op& reshape0 = intent.ops[0];
   const Op& clamp_eps = intent.ops[3];
   const Op& scale_div = intent.ops[4];
   const Op& scale_reshape = intent.ops[5];
-  const Op& clamp_min = intent.ops[8];
-  const Op& clamp_max = intent.ops[9];
-  const Op& out_reshape = intent.ops[10];
+  const Op& quant_div = intent.ops[is_11 ? 7 : 6];
+  const Op& clamp_min = intent.ops[is_11 ? 8 : 7];
+  const Op& clamp_max = intent.ops[is_11 ? 9 : 8];
+  const Op& out_reshape = intent.ops[is_11 ? 10 : 9];
 
   if (reshape0.inputs.size() != 1) fail("per_token_group_quant_fp8 reshape input mismatch");
-  if (clamp_eps.inputs.size() != 2 || scale_div.inputs.size() != 2 || clamp_min.inputs.size() != 2 || clamp_max.inputs.size() != 2) {
+  if (clamp_eps.inputs.size() != 2 || scale_div.inputs.size() != 2 || quant_div.inputs.size() != 2 || clamp_min.inputs.size() != 2 ||
+      clamp_max.inputs.size() != 2) {
     fail("per_token_group_quant_fp8 scalar inputs mismatch");
+  }
+  if (is_11) {
+    const Op& bcast = intent.ops[6];
+    if (bcast.inputs.size() != 1 || bcast.inputs[0] != scale_reshape.output) {
+      fail("per_token_group_quant_fp8 expects broadcast(y_s)");
+    }
+    if (quant_div.inputs[1] != bcast.output && quant_div.inputs[0] != bcast.output) {
+      fail("per_token_group_quant_fp8 expects quant_div to consume broadcast(y_s)");
+    }
+  } else {
+    if (quant_div.inputs[1] != scale_div.output && quant_div.inputs[0] != scale_div.output) {
+      fail("per_token_group_quant_fp8 expects quant_div to consume y_s_2d");
+    }
   }
 
   const std::string y_name = reshape0.inputs[0];
