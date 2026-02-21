@@ -624,31 +624,31 @@ def main() -> None:
                         }
                     )
                     chunk_done += 1
-                if progress_bar is not None:
-                    progress_bar.set_postfix_str(f"{family} {chunk_idx}/{len(chunks)} resume")
-                    progress_bar.update(1)
-                _emit_chunk_progress(
-                    style=progress_style,
-                    done=int(chunk_done),
-                    total=int(total_chunks),
-                    family=family,
-                    chunk_idx=int(chunk_idx),
-                    chunk_total=int(len(chunks)),
-                    status="RESUME",
-                )
-                _write_chunk_progress_file(
-                    path=progress_file,
-                    done=int(chunk_done),
-                    total=int(total_chunks),
-                    family=str(family),
-                    chunk_idx=int(chunk_idx),
-                    chunk_total=int(len(chunks)),
-                    status="RESUME",
-                    completed=False,
-                    failures=int(len(chunk_failures)),
-                    progress_style=str(progress_style),
-                )
-                continue
+                    if progress_bar is not None:
+                        progress_bar.set_postfix_str(f"{family} {chunk_idx}/{len(chunks)} resume")
+                        progress_bar.update(1)
+                    _emit_chunk_progress(
+                        style=progress_style,
+                        done=int(chunk_done),
+                        total=int(total_chunks),
+                        family=family,
+                        chunk_idx=int(chunk_idx),
+                        chunk_total=int(len(chunks)),
+                        status="RESUME",
+                    )
+                    _write_chunk_progress_file(
+                        path=progress_file,
+                        done=int(chunk_done),
+                        total=int(total_chunks),
+                        family=str(family),
+                        chunk_idx=int(chunk_idx),
+                        chunk_total=int(len(chunks)),
+                        status="RESUME",
+                        completed=False,
+                        failures=int(len(chunk_failures)),
+                        progress_style=str(progress_style),
+                    )
+                    continue
 
             cmd = [
                 sys.executable,

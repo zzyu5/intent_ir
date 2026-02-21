@@ -100,9 +100,14 @@ def _resolve_report_path(raw: object, *, artifact_root: Path) -> Path | None:
         return None
     if p.is_absolute():
         return p if p.is_file() else None
-    rel = (artifact_root / p).resolve()
-    if rel.is_file():
-        return rel
+    candidates = [p, (ROOT / p), (artifact_root / p)]
+    for cand in candidates:
+        try:
+            resolved = cand.resolve()
+        except Exception:
+            resolved = cand
+        if resolved.is_file():
+            return resolved
     return None
 
 
