@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_feature_list_v2",
-  "generated_at": "2026-02-18T16:19:32+00:00",
+  "generated_at": "2026-02-21T02:31:09+00:00",
   "source_registry_path": "pipeline/triton/flaggems_registry.json",
   "summary": {
     "semantic_ops": 196,
@@ -6987,8 +6987,8 @@
       "family": "workflow",
       "status": "done",
       "passes": true,
-      "reason_code": "dual_pass",
-      "next_action": "advance_mlir_default_cutover",
+      "reason_code": "ok",
+      "next_action": "none",
       "e2e_spec": null,
       "intent_ops": [],
       "track": "mlir_migration",
@@ -7006,7 +7006,10 @@
       "evidence_paths": [
         "scripts/intentir.py",
         "scripts/flaggems/run_coverage_batches.py",
-        "workflow/flaggems/state/current_status.json"
+        "workflow/flaggems/state/current_status.json",
+        "artifacts/flaggems_matrix/daily/20260221/full196_mlir_forcecompile_head_refresh_v3/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260221/full196_mlir_forcecompile_head_refresh_v3/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260221/full196_mlir_forcecompile_head_refresh_v3/coverage_integrity.json"
       ],
       "description": "Prepare and validate MLIR default execution cutover using full196 force_compile evidence on HEAD."
     }

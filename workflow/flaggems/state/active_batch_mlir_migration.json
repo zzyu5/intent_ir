@@ -1,9 +1,9 @@
 {
   "schema_version": "flaggems_active_batch_v2",
-  "generated_at": "2026-02-19T01:44:23+00:00",
+  "generated_at": "2026-02-21T00:01:55+00:00",
   "branch": "compiler-cleanup-v1",
   "lane": "mlir_migration",
-  "batch_size": 3,
+  "batch_size": 10,
   "selection_policy": [
     "status:blocking",
     "priority",

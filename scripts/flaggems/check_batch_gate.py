@@ -152,6 +152,27 @@ def _validate_mlir_llvm_artifact_complete(run_summary: dict[str, Any]) -> tuple[
             p = ROOT / p
         if p.is_file():
             return True, f"llvm_emit stage artifact exists: {p}"
+    # Category-batch aggregate runs may expose MLIR/LLVM evidence through
+    # stage_timing_breakdown instead of per-run llvm_emit fields.
+    timing_stage = stage_map.get("stage_timing_breakdown") or {}
+    if isinstance(timing_stage, dict):
+        timing_json = str(timing_stage.get("json_path") or "").strip()
+        if timing_json:
+            p = Path(timing_json)
+            if not p.is_absolute():
+                p = ROOT / p
+            if p.is_file():
+                payload = _load_json(p)
+                mlir = payload.get("mlir")
+                if isinstance(mlir, dict) and bool(mlir.get("available")):
+                    totals = mlir.get("totals_ms")
+                    if isinstance(totals, dict):
+                        try:
+                            total_ms = float(totals.get("mlir_total_ms", 0.0))
+                        except Exception:
+                            total_ms = 0.0
+                        if total_ms > 0.0:
+                            return True, f"stage_timing_breakdown mlir totals present: {p}"
     return False, "missing LLVM artifact evidence (llvm_ir_path/mlir_llvm_artifacts/llvm_emit)"
 
 

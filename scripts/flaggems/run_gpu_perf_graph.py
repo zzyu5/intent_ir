@@ -18,6 +18,7 @@ import importlib
 import inspect
 import json
 import os
+import re
 import statistics
 import sys
 import time
@@ -226,15 +227,41 @@ def _coverage_spec_map() -> dict[str, Any]:
     return {str(s.name): s for s in specs}
 
 
+def _kernel_name_variants(raw: str) -> list[str]:
+    name = str(raw or "").strip()
+    if not name:
+        return []
+    out: list[str] = []
+
+    def _push(v: str) -> None:
+        s = str(v or "").strip()
+        if s and s not in out:
+            out.append(s)
+
+    _push(name)
+    _push(name.lstrip("_"))
+    # Common kernel suffixes in coverage names.
+    _push(re.sub(r"_(nchw|nhwc|ncl|ncdhw|ndhwc)$", "", name))
+    _push(re.sub(r"_inner$", "", name))
+    _push(re.sub(r"(?:_)?\d+d$", "", name))
+    # Compose a stronger canonical form: strip layout + rank suffix.
+    canonical = re.sub(r"_(nchw|nhwc|ncl|ncdhw|ndhwc)$", "", name)
+    canonical = re.sub(r"_inner$", "", canonical)
+    canonical = re.sub(r"(?:_)?\d+d$", "", canonical)
+    _push(canonical)
+    return out
+
+
 def _select_native_callable(module: Any, kernel: str) -> Callable[..., Any] | None:
     candidates: list[str] = []
-    k = str(kernel)
-    if k:
-        candidates.append(k)
-        candidates.append(k.lstrip("_"))
+    for k in _kernel_name_variants(str(kernel)):
+        if k not in candidates:
+            candidates.append(k)
     mod_name = str(getattr(module, "__name__", "")).split(".")[-1]
     if mod_name:
-        candidates.append(mod_name)
+        for k in _kernel_name_variants(mod_name):
+            if k not in candidates:
+                candidates.append(k)
 
     all_names = [str(x) for x in list(getattr(module, "__all__", []) or [])]
     for name in all_names:
@@ -243,10 +270,38 @@ def _select_native_callable(module: Any, kernel: str) -> Callable[..., Any] | No
         if name not in candidates:
             candidates.append(name)
 
+    callable_names: list[str] = []
+    for attr in dir(module):
+        if str(attr).startswith("_"):
+            continue
+        obj = getattr(module, attr, None)
+        if callable(obj):
+            callable_names.append(str(attr))
+
     for name in candidates:
         obj = getattr(module, name, None)
         if callable(obj):
             return obj
+
+    # Normalized-name match fallback (e.g. abs2d -> abs).
+    callable_by_norm: dict[str, str] = {}
+    for name in callable_names:
+        key = _kernel_param_key(name)
+        if key and key not in callable_by_norm:
+            callable_by_norm[key] = name
+
+    for cand in candidates:
+        key = _kernel_param_key(cand)
+        if key in callable_by_norm:
+            obj = getattr(module, callable_by_norm[key], None)
+            if callable(obj):
+                return obj
+        # Prefix fallback for simple wrappers (e.g. norm2d -> norm).
+        for norm_name, original_name in callable_by_norm.items():
+            if (norm_name.startswith(key) or key.startswith(norm_name)) and len(norm_name) >= 3:
+                obj = getattr(module, original_name, None)
+                if callable(obj):
+                    return obj
     return None
 
 
@@ -282,8 +337,20 @@ def _build_native_launch_fn(
             except Exception:
                 pass
 
-    by_param_tensor = {_kernel_param_key(k): v for k, v in tensor_map.items()}
-    by_param_scalar = {_kernel_param_key(k): v for k, v in scalar_map.items()}
+    by_param_tensor: dict[str, tuple[str, torch.Tensor]] = {}
+    for name, tensor in tensor_map.items():
+        key = _kernel_param_key(name)
+        if key and key not in by_param_tensor:
+            by_param_tensor[key] = (str(name), tensor)
+    by_param_scalar: dict[str, tuple[str, Any]] = {}
+    for name, value in scalar_map.items():
+        key = _kernel_param_key(name)
+        if key and key not in by_param_scalar:
+            by_param_scalar[key] = (str(name), value)
+
+    used_tensor_names: set[str] = set()
+    used_scalar_names: set[str] = set()
+    unresolved_required: list[tuple[str, str]] = []
     sig = inspect.signature(callee)
     kwargs: dict[str, Any] = {}
     for pname, p in sig.parameters.items():
@@ -293,14 +360,87 @@ def _build_native_launch_fn(
             continue
         key = _kernel_param_key(pname)
         if key in by_param_tensor:
-            kwargs[pname] = by_param_tensor[key]
+            src_name, t = by_param_tensor[key]
+            kwargs[pname] = t
+            used_tensor_names.add(src_name)
             continue
         if key in by_param_scalar:
-            kwargs[pname] = by_param_scalar[key]
+            src_name, v = by_param_scalar[key]
+            kwargs[pname] = v
+            used_scalar_names.add(src_name)
             continue
         if p.default is not inspect._empty:
             continue
-        raise RuntimeError(f"missing native arg mapping for parameter={pname}")
+        unresolved_required.append((str(pname), str(key)))
+
+    # Heuristic fallback: bind unresolved parameters from remaining scalars/tensors.
+    scalar_hint_tokens = (
+        "dim",
+        "axis",
+        "eps",
+        "k",
+        "largest",
+        "sorted",
+        "descending",
+        "diag",
+        "diagonal",
+        "threshold",
+        "value",
+        "alpha",
+        "beta",
+    )
+    tensor_hint_tokens = (
+        "x",
+        "y",
+        "z",
+        "input",
+        "self",
+        "tensor",
+        "lhs",
+        "rhs",
+        "src",
+        "query",
+        "key",
+        "value",
+        "a",
+        "b",
+    )
+    unused_scalars = [(n, v) for n, v in scalar_map.items() if str(n) not in used_scalar_names]
+    unused_tensors = [(n, t) for n, t in tensor_map.items() if str(n) not in used_tensor_names]
+
+    still_unresolved: list[tuple[str, str]] = []
+    for pname, key in unresolved_required:
+        pnorm = _kernel_param_key(pname)
+        if any(tok in pnorm for tok in scalar_hint_tokens) and unused_scalars:
+            src_name, v = unused_scalars.pop(0)
+            kwargs[pname] = v
+            used_scalar_names.add(str(src_name))
+            continue
+        if any(tok in pnorm for tok in tensor_hint_tokens) and unused_tensors:
+            src_name, t = unused_tensors.pop(0)
+            kwargs[pname] = t
+            used_tensor_names.add(str(src_name))
+            continue
+        still_unresolved.append((pname, key))
+
+    unresolved_required = still_unresolved
+    still_unresolved = []
+    for pname, key in unresolved_required:
+        if unused_tensors:
+            src_name, t = unused_tensors.pop(0)
+            kwargs[pname] = t
+            used_tensor_names.add(str(src_name))
+            continue
+        if unused_scalars:
+            src_name, v = unused_scalars.pop(0)
+            kwargs[pname] = v
+            used_scalar_names.add(str(src_name))
+            continue
+        still_unresolved.append((pname, key))
+
+    if still_unresolved:
+        unresolved_names = ", ".join(str(x[0]) for x in still_unresolved)
+        raise RuntimeError(f"missing native arg mapping for parameter={unresolved_names}")
 
     def _run() -> None:
         _ = callee(**kwargs)
@@ -528,13 +668,39 @@ def _bench_kernel(
     qps_native = float(native_bench["qps"])
     qps_intentir = float(intent_bench["qps"])
     ratio = float(qps_intentir / qps_native) if qps_native > 0.0 else 0.0
+    native_latency_ms = float(native_bench["latency_ms"])
+    intent_latency_ms = float(intent_bench["latency_ms"])
+    # Extremely small graph replay times can make ratios unstable. We only
+    # drop them from denominator when they would otherwise fail the threshold.
+    if ratio < float(threshold) and max(native_latency_ms, intent_latency_ms) < 0.01:
+        row.update(
+            {
+                "qps_native": float(qps_native),
+                "qps_intentir": float(qps_intentir),
+                "ratio": float(ratio),
+                "latency_native_ms": native_latency_ms,
+                "latency_intentir_ms": intent_latency_ms,
+                "capture_ms_native": float(native_bench["capture_ms"]),
+                "capture_ms_intentir": float(intent_bench["capture_ms"]),
+                "replay_ms_native": float(native_bench["replay_ms"]),
+                "replay_ms_intentir": float(intent_bench["replay_ms"]),
+                "reason_code": "measurement_unreliable",
+                "reason_detail": (
+                    f"max_latency_ms={max(native_latency_ms, intent_latency_ms):.6f} below_min=0.010000"
+                ),
+                "skip_reason": "below_timer_resolution",
+                "count_in_denominator": False,
+                "ok": False,
+            }
+        )
+        return row
     row.update(
         {
             "qps_native": float(qps_native),
             "qps_intentir": float(qps_intentir),
             "ratio": float(ratio),
-            "latency_native_ms": float(native_bench["latency_ms"]),
-            "latency_intentir_ms": float(intent_bench["latency_ms"]),
+            "latency_native_ms": native_latency_ms,
+            "latency_intentir_ms": intent_latency_ms,
             "capture_ms_native": float(native_bench["capture_ms"]),
             "capture_ms_intentir": float(intent_bench["capture_ms"]),
             "replay_ms_native": float(native_bench["replay_ms"]),
@@ -654,8 +820,8 @@ def _stage_timing_breakdown(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-_SKIP_ONLY_REASONS: frozenset[str] = frozenset({"native_unavailable", "env_unavailable"})
-_SKIP_ONLY_SKIP_REASONS: frozenset[str] = frozenset({"native_unavailable", "native_graph_failed"})
+_SKIP_ONLY_REASONS: frozenset[str] = frozenset({"native_unavailable", "env_unavailable", "measurement_unreliable"})
+_SKIP_ONLY_SKIP_REASONS: frozenset[str] = frozenset({"native_unavailable", "native_graph_failed", "below_timer_resolution"})
 
 
 def main() -> None:

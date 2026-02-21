@@ -1071,12 +1071,12 @@
       "id": "mlir_migration::default_cutover_readiness",
       "track": "mlir_migration",
       "task_type": "migration_cutover",
-      "status": "pending",
-      "passes": false,
+      "status": "done",
+      "passes": true,
       "priority": 40,
       "gate_profile": "mlir_migration",
-      "reason_code": "pending",
-      "next_action": "run_full196_mlir_force_compile",
+      "reason_code": "ok",
+      "next_action": "none",
       "acceptance": [
         "execution_ir_mlir_full196_green_on_head",
         "workflow_freshness_includes_mlir_validated_commit",
@@ -1088,7 +1088,10 @@
       "evidence_paths": [
         "scripts/intentir.py",
         "scripts/flaggems/run_coverage_batches.py",
-        "workflow/flaggems/state/current_status.json"
+        "workflow/flaggems/state/current_status.json",
+        "artifacts/flaggems_matrix/daily/20260221/full196_mlir_forcecompile_head_refresh_v3/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260221/full196_mlir_forcecompile_head_refresh_v3/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260221/full196_mlir_forcecompile_head_refresh_v3/coverage_integrity.json"
       ],
       "description": "Prepare and validate MLIR default execution cutover using full196 force_compile evidence on HEAD."
     }

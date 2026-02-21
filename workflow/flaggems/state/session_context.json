@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-21T00:01:33+00:00",
+  "updated_at": "2026-02-21T02:33:00+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,99 +13,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "c608ad4 workflow: mark mlir cutover stale when full196 evidence is not fresh on HEAD\n5463c0b workflow: record mlir emit-llvm and json macro expansion migration\n3b083e3 feat(mlir): add emit-llvm cli and json-level macro expansion helpers\n7a4f96c workflow: record json codegen entrypoint migration progress\n3c13ca4 refactor(backend): switch smoke/perf scripts to json codegen entrypoints\na969f25 workflow: log backend contract-json cutover progress\ndc1fd43 feat(mlir): consume backend contracts without IntentFunction bridge\nfee4e1e workflow: track frontend cli backend-target routing progress\n5f9c80c feat(cli): expose backend-target in tilelang/cuda pipeline runners\nd47e155 workflow: record tilelang/cuda mlir backend-target routing progress\nf5685f9 feat(mlir): route tilelang/cuda llvm pipeline by backend target\n2754af3 workflow: record rvv llvm pipeline migration evidence\n72d89c1 feat(mlir): add rvv llvm pipeline and backend-target llvm routing\n3e271f0 workflow: lift coverage and gpu-perf freshness to current HEAD\n4fe8689 workflow: refresh full196 and gpu-perf freshness on HEAD\n66de1e1 workflow: refresh full196 head evidence after 7/7 chunked rerun\n5422318 workflow: record index and norm family remote dual-pass evidence\n66150ab workflow: record matmul_linear remote dual-pass evidence\nc807b40 workflow: record attention_sequence remote dual-pass evidence\n4e4d1dd feat(matrix): support partial-family runs and rvv remote timeouts",
+  "git_log_short": "fb110cf fix(rvv-remote): restore intent_macro in alias/freeze paths after json macro refactor\n106df15 workflow: record stale_validation cutover state and smoke evidence\nc608ad4 workflow: mark mlir cutover stale when full196 evidence is not fresh on HEAD\n5463c0b workflow: record mlir emit-llvm and json macro expansion migration\n3b083e3 feat(mlir): add emit-llvm cli and json-level macro expansion helpers\n7a4f96c workflow: record json codegen entrypoint migration progress\n3c13ca4 refactor(backend): switch smoke/perf scripts to json codegen entrypoints\na969f25 workflow: log backend contract-json cutover progress\ndc1fd43 feat(mlir): consume backend contracts without IntentFunction bridge\nfee4e1e workflow: track frontend cli backend-target routing progress\n5f9c80c feat(cli): expose backend-target in tilelang/cuda pipeline runners\nd47e155 workflow: record tilelang/cuda mlir backend-target routing progress\nf5685f9 feat(mlir): route tilelang/cuda llvm pipeline by backend target\n2754af3 workflow: record rvv llvm pipeline migration evidence\n72d89c1 feat(mlir): add rvv llvm pipeline and backend-target llvm routing\n3e271f0 workflow: lift coverage and gpu-perf freshness to current HEAD\n4fe8689 workflow: refresh full196 and gpu-perf freshness on HEAD\n66de1e1 workflow: refresh full196 head evidence after 7/7 chunked rerun\n5422318 workflow: record index and norm family remote dual-pass evidence\n66150ab workflow: record matmul_linear remote dual-pass evidence",
   "progress_tail": [
-    {
-      "ts": "2026-02-20T19:52:10+00:00",
-      "commit": "66de1e1a6b07fd4dba678eb6d63a4d6d53bc3695",
-      "lane": "backend_compiler",
-      "summary": "gpu-perf graph 7/7 chunk rerun completed on HEAD; ratio gate data refreshed",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260221/gpu_perf_head_refresh_v1/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260221/gpu_perf_head_refresh_v1/status_converged.json",
-      "next_focus": "continue mlir backend/compiler mainline; rerun perf on impacted families after backend changes",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260221/gpu_perf_head_refresh_v1/chunk_progress.json",
-        "artifacts/flaggems_matrix/daily/20260221/gpu_perf_head_refresh_v1/gpu_perf_graph.json",
-        "artifacts/flaggems_matrix/daily/20260221/gpu_perf_head_refresh_v1/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260221/gpu_perf_head_refresh_v1/stage_timing_breakdown.json",
-        "artifacts/flaggems_matrix/daily/20260221/gpu_perf_head_refresh_v1/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
-    {
-      "ts": "2026-02-20T20:00:20+00:00",
-      "commit": "3e271f0fd311aee41a7ff9c58f5fa7fa13a19343",
-      "lane": "mlir_migration",
-      "summary": "route llvm artifact emission by backend target; add downstream_rvv_llvm pipeline and matrix collector compatibility",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_mlir_migration.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260221/matrix_rvv_llvm_key_smoke_v1/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260221/matrix_rvv_llvm_key_smoke_v1/status_converged.json",
-      "next_focus": "extend same backend-target llvm pipeline selection in non-triton frontends and continue backend contract hardening",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260221/matrix_rvv_llvm_key_smoke_v1/pipeline_reports/abs2d.json",
-        "artifacts/flaggems_matrix/daily/20260221/matrix_rvv_llvm_key_smoke_v1/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260221/matrix_rvv_llvm_key_smoke_v1/status_converged.json",
-        "artifacts/flaggems_matrix/daily/20260221/mlir_rvv_llvm_pass_smoke_v1/pass_trace.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260221/matrix_rvv_llvm_key_smoke_v1",
-      "counts_by_status": {
-        "blocked_backend": 195,
-        "cuda_only": 1
-      }
-    },
-    {
-      "ts": "2026-02-20T23:35:12+00:00",
-      "commit": "f5685f9",
-      "lane": "mlir_migration",
-      "summary": "align tilelang/cuda MLIR downstream+LLVM routing with backend target and add safe report path handling",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_mlir_migration.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260221/matrix_rvv_key_smoke_v2/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260221/matrix_rvv_key_smoke_v2/status_converged.json",
-      "next_focus": "continue MLIR backend-contract hardening and remove remaining IntentFunction-only backend entrypoints",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260221/cuda_relpath_smoke_v1/any_kernel_dim.baseline.npz",
-        "artifacts/flaggems_matrix/daily/20260221/cuda_rvv_llvm_smoke_v1/any_kernel_dim.json",
-        "artifacts/flaggems_matrix/daily/20260221/matrix_rvv_key_smoke_v2/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260221/matrix_rvv_key_smoke_v2/status_converged.json",
-        "artifacts/flaggems_matrix/daily/20260221/tilelang_rvv_llvm_smoke_v1/any_kernel_dim.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260221/matrix_rvv_key_smoke_v2",
-      "counts_by_status": {
-        "blocked_backend": 195,
-        "cuda_only": 1
-      }
-    },
-    {
-      "ts": "2026-02-20T23:36:48+00:00",
-      "commit": "5f9c80c",
-      "lane": "mlir_migration",
-      "summary": "surface backend-target routing in tilelang/cuda CLI runners and validate rvv llvm emission path",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_mlir_migration.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260221/matrix_rvv_key_smoke_v2/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260221/matrix_rvv_key_smoke_v2/status_converged.json",
-      "next_focus": "continue MLIR backend-contract hardening and start removing remaining IntentFunction-only backend entrypoints",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260221/cuda_cli_rvv_smoke_v1/any_kernel_dim.json",
-        "artifacts/flaggems_matrix/daily/20260221/matrix_rvv_key_smoke_v2/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260221/matrix_rvv_key_smoke_v2/status_converged.json",
-        "artifacts/flaggems_matrix/daily/20260221/tilelang_cli_rvv_smoke_v1/any_kernel_dim.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": "artifacts/flaggems_matrix/daily/20260221/matrix_rvv_key_smoke_v2",
-      "counts_by_status": {
-        "blocked_backend": 195,
-        "cuda_only": 1
-      }
-    },
     {
       "ts": "2026-02-20T23:40:54+00:00",
       "commit": "dc1fd43",
@@ -201,20 +110,97 @@
         "blocked_backend": 195,
         "cuda_only": 1
       }
+    },
+    {
+      "ts": "2026-02-21T02:16:47+00:00",
+      "commit": "fb110cf4626fc03628ca4dfbdae9eee46db57b7c",
+      "lane": "coverage",
+      "summary": "full196 category aggregate refreshed on HEAD with rvv_remote+cuda",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260221/full196_mlir_forcecompile_head_refresh_v3/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260221/full196_mlir_forcecompile_head_refresh_v3/status_converged.json",
+      "next_focus": "continue mlir_migration phase work after freshness gate green",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260221/full196_mlir_forcecompile_head_refresh_v3/coverage_integrity.json",
+        "artifacts/flaggems_matrix/daily/20260221/full196_mlir_forcecompile_head_refresh_v3/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260221/full196_mlir_forcecompile_head_refresh_v3/stage_timing_breakdown.json",
+        "artifacts/flaggems_matrix/daily/20260221/full196_mlir_forcecompile_head_refresh_v3/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-21T02:20:20+00:00",
+      "commit": "fb110cf4626fc03628ca4dfbdae9eee46db57b7c",
+      "lane": "backend_compiler",
+      "summary": "gpu-perf-graph category run refreshed with chunk progress and threshold gate",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260221/gpu_perf_graph_head_refresh_v1/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260221/gpu_perf_graph_head_refresh_v1/status_converged.json",
+      "next_focus": "increase measurable kernel coverage for gpu perf while keeping >=0.80 ratio",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260221/gpu_perf_graph_head_refresh_v1/gpu_perf_graph.json",
+        "artifacts/flaggems_matrix/daily/20260221/gpu_perf_graph_head_refresh_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260221/gpu_perf_graph_head_refresh_v1/stage_timing_breakdown.json",
+        "artifacts/flaggems_matrix/daily/20260221/gpu_perf_graph_head_refresh_v1/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-21T02:30:45+00:00",
+      "commit": "fb110cf4626fc03628ca4dfbdae9eee46db57b7c",
+      "lane": "backend_compiler",
+      "summary": "gpu-perf-graph refreshed with stable ratio gate and tiny-latency unreliable skip policy",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260221/gpu_perf_graph_head_refresh_v4/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260221/gpu_perf_graph_head_refresh_v4/status_converged.json",
+      "next_focus": "expand measurable kernel set for gpu perf while preserving >=0.80 ratio",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260221/gpu_perf_graph_head_refresh_v4/gpu_perf_graph.json",
+        "artifacts/flaggems_matrix/daily/20260221/gpu_perf_graph_head_refresh_v4/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260221/gpu_perf_graph_head_refresh_v4/stage_timing_breakdown.json",
+        "artifacts/flaggems_matrix/daily/20260221/gpu_perf_graph_head_refresh_v4/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-21T02:33:00+00:00",
+      "commit": "fb110cf4626fc03628ca4dfbdae9eee46db57b7c",
+      "lane": "workflow",
+      "summary": "align mlir llvm artifact gate for category-aggregate evidence and close pending mlir cutover readiness task",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_workflow.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260221/full196_mlir_forcecompile_head_refresh_v3/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260221/full196_mlir_forcecompile_head_refresh_v3/status_converged.json",
+      "next_focus": "continue backend compiler modularization/perf optimization with measurable-kernel expansion",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260221/ci_gate_mlir_only_v1.json",
+        "artifacts/flaggems_matrix/daily/20260221/full196_mlir_forcecompile_head_refresh_v3/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260221/full196_mlir_forcecompile_head_refresh_v3/status_converged.json",
+        "workflow/flaggems/state/feature_list.json",
+        "workflow/flaggems/state/task_templates.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
     }
   ],
-  "next_focus": "run category-batch full196 on HEAD to clear stale_validation and then continue mlir hard-cut runtime cleanup",
+  "next_focus": "continue backend compiler modularization/perf optimization with measurable-kernel expansion",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
-  "active_lanes": [
-    "backend_compiler",
-    "coverage",
-    "mlir_migration"
-  ],
+  "active_lanes": [],
   "next_focus_by_lane": {
-    "backend_compiler": "continue mlir backend/compiler mainline; rerun perf on impacted families after backend changes",
     "mlir_migration": "continue mlir hard-cut by removing remaining IntentFunction-only loading in runtime tools and keep category-batch regressions green",
-    "workflow": "run category-batch full196 on HEAD to clear stale_validation and then continue mlir hard-cut runtime cleanup",
-    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD."
+    "workflow": "continue backend compiler modularization/perf optimization with measurable-kernel expansion",
+    "coverage": "continue mlir_migration phase work after freshness gate green",
+    "backend_compiler": "expand measurable kernel set for gpu perf while preserving >=0.80 ratio"
   },
   "known_risks": []
 }
