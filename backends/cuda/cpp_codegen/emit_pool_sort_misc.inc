@@ -436,18 +436,53 @@ json emit_kron2d_f32(const Intent& intent, const json& bindings) {
 }
 
 json emit_isin1d_i32_bool(const Intent& intent, const json& bindings) {
-  if (intent.ops.size() != 5) fail("isin lowering expects 5-op pattern");
-  if (!(intent.ops[0].op == "broadcast_in_dim" && intent.ops[1].op == "broadcast_in_dim" && intent.ops[2].op == "ne" && intent.ops[3].op == "not" &&
-        intent.ops[4].op == "reduce_any")) {
-    fail("isin lowering expects broadcast+broadcast+ne+not+reduce_any");
+  std::string in0_name;
+  std::string in1_name;
+  std::string out_name;
+  if (intent.ops.size() == 5) {
+    if (!(intent.ops[0].op == "broadcast_in_dim" && intent.ops[1].op == "broadcast_in_dim" && intent.ops[2].op == "ne" && intent.ops[3].op == "not" &&
+          intent.ops[4].op == "reduce_any")) {
+      fail("isin lowering expects broadcast+broadcast+ne+not+reduce_any");
+    }
+    const Op& b0 = intent.ops[0];
+    const Op& b1 = intent.ops[1];
+    const Op& ne = intent.ops[2];
+    const Op& nt = intent.ops[3];
+    const Op& red = intent.ops[4];
+    if (b0.inputs.size() != 1 || b1.inputs.size() != 1 || ne.inputs.size() != 2 || nt.inputs.size() != 1 || red.inputs.size() != 1) {
+      fail("isin lowering invalid inputs");
+    }
+    in0_name = b0.inputs[0];
+    in1_name = b1.inputs[0];
+    if (!((ne.inputs[0] == b0.output && ne.inputs[1] == b1.output) || (ne.inputs[1] == b0.output && ne.inputs[0] == b1.output))) {
+      fail("isin lowering expects ne(bcast(in0), bcast(in1))");
+    }
+    if (nt.inputs[0] != ne.output) fail("isin lowering expects not(ne_out)");
+    if (red.inputs[0] != nt.output) fail("isin lowering expects reduce_any(not_out)");
+    out_name = red.output;
+  } else if (intent.ops.size() == 4) {
+    if (!(intent.ops[0].op == "broadcast_in_dim" && intent.ops[1].op == "ne" && intent.ops[2].op == "not" && intent.ops[3].op == "reduce_any")) {
+      fail("isin lowering expects broadcast+ne+not+reduce_any");
+    }
+    const Op& b0 = intent.ops[0];
+    const Op& ne = intent.ops[1];
+    const Op& nt = intent.ops[2];
+    const Op& red = intent.ops[3];
+    if (b0.inputs.size() != 1 || ne.inputs.size() != 2 || nt.inputs.size() != 1 || red.inputs.size() != 1) fail("isin lowering invalid inputs");
+    in0_name = b0.inputs[0];
+    if (ne.inputs[0] == b0.output)
+      in1_name = ne.inputs[1];
+    else if (ne.inputs[1] == b0.output)
+      in1_name = ne.inputs[0];
+    else
+      fail("isin lowering expects one ne input from broadcast(in0)");
+    if (nt.inputs[0] != ne.output) fail("isin lowering expects not(ne_out)");
+    if (red.inputs[0] != nt.output) fail("isin lowering expects reduce_any(not_out)");
+    out_name = red.output;
+  } else {
+    fail("isin lowering expects 4-op or 5-op pattern");
   }
-  const Op& b0 = intent.ops[0];
-  const Op& b1 = intent.ops[1];
-  const Op& red = intent.ops[4];
-  if (b0.inputs.size() != 1 || b1.inputs.size() != 1 || red.inputs.size() != 1) fail("isin lowering invalid inputs");
-  const std::string in0_name = b0.inputs[0];
-  const std::string in1_name = b1.inputs[0];
-  const std::string out_name = red.output;
+
   auto a_it = intent.tensors.find(in0_name);
   auto b_it = intent.tensors.find(in1_name);
   auto o_it = intent.tensors.find(out_name);

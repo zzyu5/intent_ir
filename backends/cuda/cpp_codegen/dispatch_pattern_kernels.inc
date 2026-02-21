@@ -6,6 +6,10 @@
       intent.ops[3].op == "not" && intent.ops[4].op == "reduce_any") {
     return emit_isin1d_i32_bool(intent, bindings_json);
   }
+  if (intent.ops.size() == 4 && intent.ops[0].op == "broadcast_in_dim" && intent.ops[1].op == "ne" && intent.ops[2].op == "not" &&
+      intent.ops[3].op == "reduce_any") {
+    return emit_isin1d_i32_bool(intent, bindings_json);
+  }
   if (intent.ops.size() == 4 && intent.ops[0].op == "const" && intent.ops[1].op == "eq" && intent.ops[2].op == "reduce_any" &&
       intent.ops[3].op == "not") {
     return emit_all_dim_f32_to_i1(intent, bindings_json);
