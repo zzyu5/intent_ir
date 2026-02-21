@@ -429,9 +429,13 @@ def run_remote(
         )
     _log(f"[{frontend}:{kernel}] load artifact: {report_path}")
     report = json.loads(report_path.read_text())
+    intent_macro_json = report.get("intent")
+    if not isinstance(intent_macro_json, dict):
+        raise ValueError(f"invalid artifact intent payload: {report_path}")
+    intent_macro = IntentFunction.from_json_dict(intent_macro_json)
     intent_expanded_json = report.get("intent_expanded")
     if not isinstance(intent_expanded_json, dict):
-        intent_expanded_json = expand_macros_json(dict(report["intent"]))
+        intent_expanded_json = expand_macros_json(dict(intent_macro_json))
     intent = IntentFunction.from_json_dict(intent_expanded_json)
 
     def _coerce_schedule(obj: ScheduleSketch | dict) -> ScheduleSketch:
