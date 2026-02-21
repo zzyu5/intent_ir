@@ -138,9 +138,11 @@ def _contract_report_paths(report: dict, *, artifact_root: Path) -> list[Path]:
     if not isinstance(mlir, dict):
         return []
     preferred = [
+        # CUDA path must prefer CUDA-specific contracts first.
         "downstream_cuda_contract_path",
-        "downstream_contract_path",
         "midend_cuda_contract_path",
+        # Generic downstream contract is allowed only as a late fallback.
+        "downstream_contract_path",
         "downstream_rvv_contract_path",
         "midend_rvv_contract_path",
     ]
@@ -156,7 +158,7 @@ def _contract_report_paths(report: dict, *, artifact_root: Path) -> list[Path]:
     return out
 
 
-def _intent_from_contract_path(path: Path) -> IntentFunction | None:
+def _intent_from_contract_path(path: Path, *, expected_backend: str = "cuda") -> IntentFunction | None:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
@@ -164,6 +166,9 @@ def _intent_from_contract_path(path: Path) -> IntentFunction | None:
     if not isinstance(payload, dict):
         return None
     if str(payload.get("schema_version") or "") != "intent_mlir_backend_contract_v1":
+        return None
+    backend = str(payload.get("backend") or "").strip().lower()
+    if backend and backend != str(expected_backend).strip().lower():
         return None
     intent_json = payload.get("intent_json")
     if not isinstance(intent_json, dict):
@@ -178,7 +183,7 @@ def _load_intent(
     require_mlir_artifacts: bool = False,
 ) -> IntentFunction:
     for contract_path in _contract_report_paths(report, artifact_root=artifact_root):
-        parsed = _intent_from_contract_path(contract_path)
+        parsed = _intent_from_contract_path(contract_path, expected_backend="cuda")
         if parsed is not None:
             return parsed
     for mlir_path in _mlir_report_paths(report, artifact_root=artifact_root):

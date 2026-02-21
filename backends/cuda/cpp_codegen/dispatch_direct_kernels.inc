@@ -136,6 +136,10 @@
   if (intent.ops.size() == 1 && intent.ops[0].op == "upsample_nearest2d") return emit_upsample_nearest2d_nchw_f32(intent, bindings_json);
   if (intent.ops.size() == 1 && intent.ops[0].op == "cumsum") return emit_cumsum2d_axis1_f32(intent, bindings_json);
   if (intent.ops.size() == 2 && intent.ops[0].op == "mul" && intent.ops[1].op == "reduce_sum") return emit_dot1d_f32(intent, bindings_json);
+  if (intent.ops.size() == 4 && (intent.ops[0].op == "cast" || intent.ops[0].op == "identity") &&
+      (intent.ops[1].op == "cast" || intent.ops[1].op == "identity") && intent.ops[2].op == "mul" && intent.ops[3].op == "reduce_sum") {
+    return emit_dot1d_f32(intent, bindings_json);
+  }
   if (intent.ops.size() == 4 && intent.ops[0].op == "iota" && intent.ops[1].op == "identity" && intent.ops[2].op == "cumsum" &&
       intent.ops[3].op == "identity") {
     const Op& id_in = intent.ops[1];
