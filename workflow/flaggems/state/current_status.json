@@ -1,16 +1,16 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-22T04:26:27+00:00",
+  "updated_at": "2026-02-22T04:34:51+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "f948e11c3500f86976c9daa7c774e2f7a7c9a9bd",
+  "head_commit": "cbffff967b1a7a49f12787a350f5775136ac50fa",
   "mode": "maintenance",
-  "coverage_integrity_phase": "recomputed_ok",
+  "coverage_integrity_phase": "recompute_stale",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260222/full196_forcecompile_head_refresh_v4/run_summary.json",
   "full196_last_ok": true,
   "full196_validated_commit": "f948e11c3500f86976c9daa7c774e2f7a7c9a9bd",
   "full196_validated_commit_source": "run_summary.repo.head_commit",
-  "full196_commits_since_validated": 0,
-  "full196_commits_since_validated_total": 0,
+  "full196_commits_since_validated": 2,
+  "full196_commits_since_validated_total": 2,
   "full196_lifted_to_head": false,
   "full196_validated_mode": "force_compile",
   "full196_validated_execution_ir": "mlir",
@@ -26,17 +26,17 @@
   "full196_last_run_dirty": false,
   "full196_artifact_repo_stamp_ok": true,
   "mlir_migration_phase": "default_mlir",
-  "mlir_cutover_level": "mlir_primary",
+  "mlir_cutover_level": "stale_validation",
   "mlir_default_enabled": true,
   "mlir_toolchain_ok": true,
   "mlir_backend_contract_ready": true,
   "mlir_llvm_chain_ok": true,
-  "mlir_full196_validated_commit": "f948e11c3500f86976c9daa7c774e2f7a7c9a9bd",
-  "gpu_perf_phase": "recomputed_ok",
+  "mlir_full196_validated_commit": "",
+  "gpu_perf_phase": "recompute_stale",
   "gpu_perf_last_run": "artifacts/flaggems_matrix/daily/20260222/gpu_perf_head_refresh_v3/run_summary.json",
   "gpu_perf_last_ok": true,
   "gpu_perf_validated_commit": "f948e11c3500f86976c9daa7c774e2f7a7c9a9bd",
-  "gpu_perf_commits_since_validated": 0,
+  "gpu_perf_commits_since_validated": 2,
   "gpu_perf_mode": "graph_only",
   "gpu_perf_threshold": 0.8,
   "gpu_perf_devices": [
@@ -125,10 +125,15 @@
     "catalog_path": "scripts/CATALOG.json",
     "catalog_validated": true
   },
-  "active_lanes": [],
+  "active_lanes": [
+    "backend_compiler",
+    "coverage",
+    "mlir_migration"
+  ],
   "next_focus_by_lane": {
-    "coverage": "Continue backend_compiler lane and MLIR mainline tasks.",
-    "backend_compiler": "Continue backend compiler optimization passes with perf guardrails."
+    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
+    "backend_compiler": "Refactor backend_codegen_smoke and rvv_remote_run to contract-first path.",
+    "mlir_migration": "Enable MLIR cutover prerequisites (toolchain + backend contract + LLVM artifact chain)."
   },
   "latest_artifacts": {
     "run_summary": "artifacts/flaggems_matrix/daily/20260222/gpu_perf_head_refresh_v3/run_summary.json",
