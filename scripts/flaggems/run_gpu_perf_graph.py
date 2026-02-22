@@ -697,7 +697,10 @@ def _bench_kernel(
     intent_latency_ms = float(intent_bench["latency_ms"])
     # Extremely small graph replay times can make ratios unstable. Before
     # skipping, re-measure with higher iters to improve timer resolution.
-    if ratio < float(threshold) and max(native_latency_ms, intent_latency_ms) < 0.01:
+    # Also guard against effectively-empty native graph captures where native
+    # replay latency is in sub-microsecond range and ratio becomes meaningless.
+    native_too_fast = native_latency_ms < 0.001
+    if ratio < float(threshold) and (max(native_latency_ms, intent_latency_ms) < 0.01 or native_too_fast):
         boosted_iters = max(int(iters) * 10, 2000)
         if boosted_iters != int(iters):
             try:
@@ -714,7 +717,8 @@ def _bench_kernel(
             except Exception:
                 # Keep original measurements and fall through to skip decision.
                 pass
-        if ratio < float(threshold) and max(native_latency_ms, intent_latency_ms) < 0.01:
+        native_too_fast = native_latency_ms < 0.001
+        if ratio < float(threshold) and (max(native_latency_ms, intent_latency_ms) < 0.01 or native_too_fast):
             row.update(
                 {
                     "qps_native": float(qps_native),
@@ -728,7 +732,9 @@ def _bench_kernel(
                     "replay_ms_intentir": float(intent_bench["replay_ms"]),
                     "reason_code": "measurement_unreliable",
                     "reason_detail": (
-                        f"max_latency_ms={max(native_latency_ms, intent_latency_ms):.6f} below_min=0.010000"
+                        "graph replay below reliable timer resolution "
+                        f"(native_ms={native_latency_ms:.6f}, intentir_ms={intent_latency_ms:.6f}, "
+                        "native_min=0.001000, max_min=0.010000)"
                     ),
                     "skip_reason": "below_timer_resolution",
                     "count_in_denominator": False,
