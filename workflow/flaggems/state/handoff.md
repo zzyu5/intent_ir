@@ -1,11 +1,11 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-22T04:36:52+00:00
-- Commit: `eb9339b0e35404a05d27ea1eb830b24bf980e3cc`
+- Timestamp: 2026-02-22T04:41:40+00:00
+- Commit: `c9e4a2538b8e55f890032d452e4872ee56d30f03`
 - Lane: `backend_compiler`
-- Summary: Refactored RVV/CUDA smoke runners to contract-first intent_json path; validated abs2d local compile+run on both backends.
+- Summary: Refactored rvv_remote_run to contract-first IO/binding path; validated abs2d remote run using downstream RVV contract artifact.
 - Batch Ops (0): (none)
 - Run Summary: `artifacts/flaggems_matrix/daily/20260222/gpu_perf_head_refresh_v3/run_summary.json`
 - Status Converged: `artifacts/flaggems_matrix/daily/20260222/gpu_perf_head_refresh_v3/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260222/full196_forcecompile_head_refresh_v4/family_elementwise_broadcast/chunk_001/pipeline_reports/abs2d.json, artifacts/flaggems_matrix/daily/20260222/gpu_perf_head_refresh_v3/run_summary.json, artifacts/flaggems_matrix/daily/20260222/gpu_perf_head_refresh_v3/status_converged.json, scripts/backend_codegen_smoke.py, scripts/cuda_backend_smoke.py
-- Next Focus: Continue MLIR contract-first cleanup in rvv_remote_run and reduce remaining IntentFunction-only runtime paths.
+- Evidence Paths: artifacts/flaggems_matrix/daily/20260222/gpu_perf_head_refresh_v3/run_summary.json, artifacts/flaggems_matrix/daily/20260222/gpu_perf_head_refresh_v3/status_converged.json, artifacts/flaggems_matrix/daily/20260222/rvv_remote_contract_first_v1/abs2d_rvv_remote.json, scripts/rvv_remote_run.py
+- Next Focus: Continue removing IntentFunction-default paths from rvv_remote_run tuning/baseline logic and align with MLIR contract-only flow.
