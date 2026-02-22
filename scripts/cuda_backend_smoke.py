@@ -2,9 +2,9 @@
 CUDA backend smoke from existing frontend artifacts (no LLM, no remote).
 
 For each kernel artifact under `artifacts/<frontend>_full_pipeline/`, this script:
-  - loads expanded IntentIR (or expands macros)
+  - loads MLIR backend contract (contract-first; fallback to intent JSON only when needed)
   - loads baseline inputs/outputs from `<kernel>.baseline.npz`
-  - lowers IntentIR to CUDA
+  - lowers intent JSON to CUDA
   - runs the CUDA kernel via runtime wrapper
   - compares outputs against baseline reference
 """
@@ -41,10 +41,9 @@ from backends.cuda.runtime import (  # noqa: E402
     cuda_extension_cache_info,
     run_cuda_kernel,
 )
-from intent_ir.ir import IntentFunction  # noqa: E402
+from backends.common.mlir_contract import MlirBackendContract  # noqa: E402
 from intent_ir.macros import expand_macros_json  # noqa: E402
 from intent_ir.mlir.convert_to_intent import to_intent  # noqa: E402
-from verify.diff_runner import _with_io_aliases as _with_io_aliases_for_diff  # noqa: E402
 
 
 DEFAULT_KERNELS = [
@@ -158,30 +157,84 @@ def _contract_report_paths(report: dict, *, artifact_root: Path) -> list[Path]:
     return out
 
 
-def _intent_from_contract_path(path: Path, *, expected_backend: str = "cuda") -> IntentFunction | None:
+def _normalize_io_name(name: str) -> str:
+    s = str(name).strip().strip("_").lower()
+    if s.startswith("ptr_"):
+        s = s[4:]
+    if s.endswith("_ptr"):
+        s = s[:-4]
+    if s.endswith("ptr") and len(s) > 3:
+        s = s[:-3]
+    if s == "i":
+        s = "input"
+    if s == "o":
+        s = "output"
+    if s == "x":
+        s = "input"
+    if s == "y":
+        s = "output"
+    if s == "w":
+        s = "weight"
+    if s == "b":
+        s = "bias"
+    if s == "in":
+        s = "input"
+    if s == "out":
+        s = "output"
+    return s.replace("_", "")
+
+
+def _with_io_aliases_for_names(wanted: list[str], io: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    out = dict(io)
+    norm_to_keys: dict[str, list[str]] = {}
+    for k in io.keys():
+        norm_to_keys.setdefault(_normalize_io_name(k), []).append(k)
+    for name in list(wanted or []):
+        n = str(name)
+        if not n or n in out:
+            continue
+        keys = norm_to_keys.get(_normalize_io_name(n)) or []
+        if len(keys) == 1:
+            out[n] = io[keys[0]]
+            continue
+        if len(keys) > 1:
+            lower_name = n.lower()
+            picked = None
+            for k in keys:
+                if str(k).lower() == lower_name:
+                    picked = k
+                    break
+            if picked is None:
+                picked = keys[0]
+            out[n] = io[picked]
+    return out
+
+
+def _intent_from_contract_path(path: Path, *, expected_backend: str = "cuda") -> tuple[dict[str, Any], dict[str, Any]] | None:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload_raw = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return None
-    if not isinstance(payload, dict):
+    if not isinstance(payload_raw, dict):
         return None
-    if str(payload.get("schema_version") or "") != "intent_mlir_backend_contract_v1":
+    try:
+        payload = MlirBackendContract.from_json_dict(payload_raw)
+    except Exception:
         return None
-    backend = str(payload.get("backend") or "").strip().lower()
+    backend = str(payload.backend or "").strip().lower()
     if backend and backend != str(expected_backend).strip().lower():
         return None
-    intent_json = payload.get("intent_json")
-    if not isinstance(intent_json, dict):
+    if not isinstance(payload.intent_json, dict):
         return None
-    return IntentFunction.from_json_dict(intent_json)
+    return dict(payload.intent_json), dict(payload.io_spec or {})
 
 
-def _load_intent(
+def _load_intent_json(
     report: dict,
     *,
     artifact_root: Path,
     require_mlir_artifacts: bool = False,
-) -> IntentFunction:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     for contract_path in _contract_report_paths(report, artifact_root=artifact_root):
         parsed = _intent_from_contract_path(contract_path, expected_backend="cuda")
         if parsed is not None:
@@ -196,16 +249,22 @@ def _load_intent(
     intent_expanded_json = report.get("intent_expanded")
     if not isinstance(intent_expanded_json, dict):
         intent_expanded_json = expand_macros_json(dict(report["intent"]))
-    return IntentFunction.from_json_dict(intent_expanded_json)
+    return dict(intent_expanded_json), {}
 
 
-def _external_inputs(intent: IntentFunction) -> tuple[list[str], list[str]]:
-    produced = {op.output for op in intent.ops if op.output}
+def _external_inputs(intent_json: dict[str, Any]) -> tuple[list[str], list[str]]:
+    ops = [x for x in list(intent_json.get("ops") or []) if isinstance(x, dict)]
+    tensors = dict(intent_json.get("tensors") or {})
+    outputs = [str(x) for x in list(intent_json.get("outputs") or []) if str(x).strip()]
+    produced = {str(op.get("output") or "") for op in ops if str(op.get("output") or "").strip()}
     used: set[str] = set()
-    for op in intent.ops:
-        used.update(op.inputs)
-    external_inputs = sorted([n for n in used if n in intent.tensors and n not in produced])
-    return external_inputs, list(intent.outputs)
+    for op in ops:
+        for inp in list(op.get("inputs") or []):
+            inp_s = str(inp).strip()
+            if inp_s:
+                used.add(inp_s)
+    external_inputs = sorted([n for n in used if n in tensors and n not in produced])
+    return external_inputs, outputs
 
 
 def _np_dtype(dt: str) -> Any:
@@ -277,8 +336,158 @@ def _derive_scalar_input(name: str, *, dtype: str, bindings: dict) -> np.ndarray
     return np.array(value, dtype=_np_dtype(dtype))
 
 
-def _resolve_tensor_shape(tensor: Any, bindings: dict) -> tuple[int, ...] | None:
+def _resolve_tensor_shape(shape_spec: list[Any], bindings: dict[str, Any]) -> tuple[int, ...] | None:
     shape: list[int] = []
+    for d in list(shape_spec or []):
+        if isinstance(d, dict):
+            kind = str(d.get("kind") or "").strip().lower()
+            if kind == "sym":
+                key = str(d.get("value") or "")
+                if key not in bindings:
+                    return None
+                try:
+                    shape.append(int(bindings[key]))
+                except Exception:
+                    return None
+                continue
+            if kind == "const":
+                try:
+                    shape.append(int(d.get("value")))
+                except Exception:
+                    return None
+                continue
+        if isinstance(d, int):
+            shape.append(int(d))
+            continue
+        key = str(d)
+        if key in bindings:
+            try:
+                shape.append(int(bindings[key]))
+                continue
+            except Exception:
+                return None
+        try:
+            shape.append(int(key))
+        except Exception:
+            return None
+    return tuple(shape)
+
+
+def _tensor_shape_spec(tensor_spec: dict[str, Any]) -> list[Any]:
+    shape = tensor_spec.get("shape")
+    if isinstance(shape, list):
+        return list(shape)
+    return []
+
+
+def _tensor_dtype(tensor_spec: dict[str, Any]) -> str:
+    return str(tensor_spec.get("dtype") or "f32")
+
+
+def _augment_bindings_from_arrays(
+    *,
+    tensor_specs: dict[str, Any],
+    bindings: dict[str, Any],
+    arrays: dict[str, np.ndarray],
+) -> dict[str, Any]:
+    out = dict(bindings)
+    for name, arr in arrays.items():
+        spec_raw = tensor_specs.get(str(name))
+        if not isinstance(spec_raw, dict):
+            continue
+        arr_np = np.asarray(arr)
+        spec_shape = _tensor_shape_spec(spec_raw)
+        if len(spec_shape) == 0 and arr_np.size == 1:
+            key = str(name)
+            if key and key not in out:
+                try:
+                    out[key] = int(arr_np.reshape(()).item())
+                except Exception:
+                    pass
+        arr_shape = tuple(int(v) for v in np.asarray(arr).shape)
+        if len(spec_shape) != len(arr_shape):
+            continue
+        for dim_spec, dim_val in zip(spec_shape, arr_shape):
+            key: str | None = None
+            if isinstance(dim_spec, dict):
+                kind = str(dim_spec.get("kind") or "").strip().lower()
+                if kind == "sym":
+                    key = str(dim_spec.get("value") or "")
+            elif isinstance(dim_spec, str):
+                try:
+                    int(dim_spec)
+                except Exception:
+                    key = str(dim_spec)
+            if key and key not in out:
+                out[key] = int(dim_val)
+    return out
+
+
+def _derive_optional_tensor_input(name: str, *, tensor_spec: dict[str, Any], bindings: dict[str, Any]) -> np.ndarray | None:
+    if str(name) != "attn_mask":
+        return None
+    shape = _resolve_tensor_shape(_tensor_shape_spec(tensor_spec), bindings)
+    if shape is None:
+        return None
+    return np.zeros(shape, dtype=_np_dtype(_tensor_dtype(tensor_spec)))
+
+
+def _outputs_from_io_spec(io_spec: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    for x in list(io_spec.get("outputs") or []):
+        s = str(x).strip()
+        if s and s not in out:
+            out.append(s)
+    return out
+
+
+def _tensor_specs_from_io_spec(io_spec: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    tensors = io_spec.get("tensors")
+    if not isinstance(tensors, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for k, v in tensors.items():
+        if isinstance(v, dict):
+            out[str(k)] = dict(v)
+    return out
+
+
+def _tensor_specs_from_intent_json(intent_json: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    tensors = intent_json.get("tensors")
+    if not isinstance(tensors, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for k, v in tensors.items():
+        if isinstance(v, dict):
+            out[str(k)] = dict(v)
+    return out
+
+
+def _intent_outputs(intent_json: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    for x in list(intent_json.get("outputs") or []):
+        s = str(x).strip()
+        if s and s not in out:
+            out.append(s)
+    return out
+
+
+def _produced_outputs(intent_json: dict[str, Any]) -> set[str]:
+    produced: set[str] = set()
+    for op in list(intent_json.get("ops") or []):
+        if not isinstance(op, dict):
+            continue
+        out = str(op.get("output") or "").strip()
+        if out:
+            produced.add(out)
+    return produced
+
+
+def _resolve_tensor_shape_compat(tensor: Any, bindings: dict) -> tuple[int, ...] | None:
+    # Kept for backward compatibility in worker state reload paths.
+    if isinstance(tensor, dict):
+        return _resolve_tensor_shape(_tensor_shape_spec(tensor), bindings)
+    shape = []
     for d in list(getattr(tensor, "shape", []) or []):
         if hasattr(d, "kind") and getattr(d, "kind") == "sym":
             key = str(getattr(d, "value"))
@@ -310,49 +519,6 @@ def _resolve_tensor_shape(tensor: Any, bindings: dict) -> tuple[int, ...] | None
         except Exception:
             return None
     return tuple(shape)
-
-
-def _augment_bindings_from_arrays(*, intent: IntentFunction, bindings: dict[str, Any], arrays: dict[str, np.ndarray]) -> dict[str, Any]:
-    out = dict(bindings)
-    for name, arr in arrays.items():
-        tensor = intent.tensors.get(str(name))
-        if tensor is None:
-            continue
-        arr_np = np.asarray(arr)
-        spec_shape = list(getattr(tensor, "shape", []) or [])
-        if len(spec_shape) == 0 and arr_np.size == 1:
-            # Scalar tensors often carry symbolic shape params (e.g., group_size).
-            # Bind by tensor name so codegen can resolve reshape expressions.
-            key = str(name)
-            if key and key not in out:
-                try:
-                    out[key] = int(arr_np.reshape(()).item())
-                except Exception:
-                    pass
-        arr_shape = tuple(int(v) for v in np.asarray(arr).shape)
-        if len(spec_shape) != len(arr_shape):
-            continue
-        for dim_spec, dim_val in zip(spec_shape, arr_shape):
-            key: str | None = None
-            if hasattr(dim_spec, "kind") and getattr(dim_spec, "kind") == "sym":
-                key = str(getattr(dim_spec, "value"))
-            elif isinstance(dim_spec, str):
-                try:
-                    int(dim_spec)
-                except Exception:
-                    key = str(dim_spec)
-            if key and key not in out:
-                out[key] = int(dim_val)
-    return out
-
-
-def _derive_optional_tensor_input(name: str, *, tensor: Any, bindings: dict) -> np.ndarray | None:
-    if str(name) != "attn_mask":
-        return None
-    shape = _resolve_tensor_shape(tensor, bindings)
-    if shape is None:
-        return None
-    return np.zeros(shape, dtype=_np_dtype(str(getattr(tensor, "dtype", "f32"))))
 
 
 def _compare_output(name: str, got: np.ndarray, ref: np.ndarray, *, atol: float, rtol: float) -> tuple[bool, str]:
@@ -388,25 +554,34 @@ def _prepare_kernel_context(
         raise FileNotFoundError(f"missing baseline npz: {baseline_npz_path}")
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    intent = _load_intent(
+    intent_json, io_spec = _load_intent_json(
         report,
         artifact_root=artifact_root,
         require_mlir_artifacts=bool(require_mlir_artifacts),
     )
+    tensor_specs = _tensor_specs_from_io_spec(io_spec) or _tensor_specs_from_intent_json(intent_json)
+    if not tensor_specs:
+        raise RuntimeError("invalid intent payload: missing tensor specs")
     baseline = dict(np.load(baseline_npz_path, allow_pickle=False))
-    baseline = _with_io_aliases_for_diff(intent, baseline)
-    external_inputs, outputs = _external_inputs(intent)
-    produced = {op.output for op in intent.ops if op.output}
+    wanted_aliases = sorted(set(list(tensor_specs.keys()) + _outputs_from_io_spec(io_spec) + _intent_outputs(intent_json)))
+    baseline = _with_io_aliases_for_names(wanted_aliases, baseline)
+    external_inputs, outputs = _external_inputs(intent_json)
+    produced = _produced_outputs(intent_json)
+    io_outputs = _outputs_from_io_spec(io_spec)
+    if io_outputs:
+        outputs = io_outputs
     outputs = [name for name in outputs if (name in baseline or name in produced)]
     if not outputs:
-        outputs = list(intent.outputs)
+        outputs = _intent_outputs(intent_json)
     raw_bindings = ((report.get("baseline") or {}).get("shapes") or {}) if isinstance(report.get("baseline"), dict) else {}
     bindings = _coerce_bindings(raw_bindings)
-    bindings = _augment_bindings_from_arrays(intent=intent, bindings=bindings, arrays=baseline)
+    bindings = _augment_bindings_from_arrays(tensor_specs=tensor_specs, bindings=bindings, arrays=baseline)
     tol = (report.get("tolerances") or {}) if isinstance(report.get("tolerances"), dict) else {}
     return {
         "kernel": str(kernel),
-        "intent": intent,
+        "intent_json": dict(intent_json),
+        "io_spec": dict(io_spec),
+        "tensor_specs": dict(tensor_specs),
         "baseline": baseline,
         "external_inputs": external_inputs,
         "outputs": outputs,
@@ -419,7 +594,7 @@ def _prepare_kernel_context(
 def _build_inputs_np(
     *,
     kernel: str,
-    intent: IntentFunction,
+    tensor_specs: dict[str, dict[str, Any]],
     baseline: dict[str, np.ndarray],
     external_inputs: list[str],
     bindings: dict[str, Any],
@@ -429,16 +604,17 @@ def _build_inputs_np(
         if name in baseline:
             inputs_np[name] = np.asarray(baseline[name])
             continue
-        tt = intent.tensors.get(name)
-        if tt is None:
+        spec = tensor_specs.get(str(name))
+        if not isinstance(spec, dict):
             raise RuntimeError(f"baseline missing input {name} for {kernel}")
-        if tt.shape:
-            derived_t = _derive_optional_tensor_input(name, tensor=tt, bindings=bindings)
+        shape_spec = _tensor_shape_spec(spec)
+        if shape_spec:
+            derived_t = _derive_optional_tensor_input(name, tensor_spec=spec, bindings=bindings)
             if derived_t is None:
                 raise RuntimeError(f"baseline missing input {name} for {kernel}")
             inputs_np[name] = derived_t
             continue
-        derived_s = _derive_scalar_input(name, dtype=str(tt.dtype), bindings=bindings)
+        derived_s = _derive_scalar_input(name, dtype=_tensor_dtype(spec), bindings=bindings)
         if derived_s is None:
             raise RuntimeError(f"baseline missing input {name} for {kernel}")
         inputs_np[name] = derived_s
@@ -487,7 +663,7 @@ def _run_compile_stage(
         require_mlir_artifacts=bool(require_mlir_artifacts),
     )
     t_lower = time.perf_counter()
-    lowered = lower_intent_json_to_cuda_kernel(ctx["intent"].to_json_dict(), shape_bindings=ctx["bindings"])
+    lowered = lower_intent_json_to_cuda_kernel(dict(ctx["intent_json"]), shape_bindings=ctx["bindings"])
     lower_ms = (time.perf_counter() - t_lower) * 1000.0
     cache_info = cuda_extension_cache_info(
         kernel_name=lowered.kernel_name,
@@ -535,7 +711,7 @@ def _run_launch_stage(
     )
 
     t_lower = time.perf_counter()
-    lowered = lower_intent_json_to_cuda_kernel(ctx["intent"].to_json_dict(), shape_bindings=ctx["bindings"])
+    lowered = lower_intent_json_to_cuda_kernel(dict(ctx["intent_json"]), shape_bindings=ctx["bindings"])
     lower_ms = (time.perf_counter() - t_lower) * 1000.0
     cache_info = cuda_extension_cache_info(
         kernel_name=lowered.kernel_name,
@@ -552,7 +728,7 @@ def _run_launch_stage(
 
     inputs_np = _build_inputs_np(
         kernel=str(kernel),
-        intent=ctx["intent"],
+        tensor_specs=ctx["tensor_specs"],
         baseline=ctx["baseline"],
         external_inputs=ctx["external_inputs"],
         bindings=ctx["bindings"],
@@ -569,7 +745,10 @@ def _run_launch_stage(
         output_names=lowered.output_names or ctx["outputs"],
         compiled_module=compiled_mod,
     )
-    out = _with_io_aliases_for_diff(ctx["intent"], out)
+    out = _with_io_aliases_for_names(
+        sorted(set(list(ctx["outputs"]) + list(dict(ctx["tensor_specs"]).keys()))),
+        out,
+    )
     launch_ms = (time.perf_counter() - t_launch) * 1000.0
 
     checks: list[dict[str, Any]] = []
