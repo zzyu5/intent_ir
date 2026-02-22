@@ -328,6 +328,11 @@ def test_run_coverage_batches_chunk_progress_is_compact(tmp_path: Path) -> None:
     assert "[chunk] 2/2" in out
     assert "RUN family=" not in out
     assert "DONE family=" not in out
+    progress_payload = json.loads((out_root / "chunk_progress.json").read_text(encoding="utf-8"))
+    assert progress_payload["done_chunks"] == 2
+    assert progress_payload["total_chunks"] == 2
+    assert "active" in progress_payload
+    assert progress_payload["active"] == {}
 
 
 def test_run_coverage_batches_subset_scope_skips_full_aggregate(tmp_path: Path) -> None:

@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,23 +50,40 @@ def _run(
         return 0, "(dry-run)", ""
 
     if not bool(stream_output):
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(ROOT),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        next_beat = time.monotonic() + max(5, int(heartbeat_sec))
-        while True:
-            rc = proc.poll()
-            if rc is not None:
-                out, err = proc.communicate()
-                return int(rc), str(out or ""), str(err or "")
-            if heartbeat_label and time.monotonic() >= next_beat:
-                print(f"[progress] {heartbeat_label} status=RUNNING", flush=True)
+        # In non-stream mode, avoid PIPE backpressure deadlocks on long runs.
+        # We spool child output to temp files while polling heartbeats.
+        out_path = Path(tempfile.mkstemp(prefix="intentir_cov_out_", suffix=".log")[1])
+        err_path = Path(tempfile.mkstemp(prefix="intentir_cov_err_", suffix=".log")[1])
+        try:
+            with out_path.open("w", encoding="utf-8") as out_f, err_path.open("w", encoding="utf-8") as err_f:
+                proc = subprocess.Popen(
+                    cmd,
+                    cwd=str(ROOT),
+                    stdout=out_f,
+                    stderr=err_f,
+                    text=True,
+                )
                 next_beat = time.monotonic() + max(5, int(heartbeat_sec))
-            time.sleep(1.0)
+                while True:
+                    rc = proc.poll()
+                    if rc is not None:
+                        break
+                    if heartbeat_label and time.monotonic() >= next_beat:
+                        print(f"[progress] {heartbeat_label} status=RUNNING", flush=True)
+                        next_beat = time.monotonic() + max(5, int(heartbeat_sec))
+                    time.sleep(1.0)
+            out = out_path.read_text(encoding="utf-8", errors="replace")
+            err = err_path.read_text(encoding="utf-8", errors="replace")
+            return int(rc), str(out or ""), str(err or "")
+        finally:
+            try:
+                out_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            try:
+                err_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     proc = subprocess.Popen(
         cmd,
@@ -156,6 +174,7 @@ def _write_chunk_progress_file(
     completed: bool,
     failures: int,
     progress_style: str,
+    active: dict[str, Any] | None = None,
 ) -> None:
     payload = {
         "schema_version": "flaggems_chunk_progress_v1",
@@ -173,6 +192,7 @@ def _write_chunk_progress_file(
             "chunk_total": int(chunk_total),
             "status": str(status),
         },
+        "active": dict(active or {}),
     }
     _dump_json(path, payload)
 
@@ -490,6 +510,7 @@ def main() -> None:
         completed=False,
         failures=0,
         progress_style=str(progress_style),
+        active={},
     )
 
     progress_bar = None
@@ -558,6 +579,7 @@ def main() -> None:
                     completed=False,
                     failures=int(len(chunk_failures)),
                     progress_style=str(progress_style),
+                    active={},
                 )
                 family_rows.append(
                     {
@@ -647,6 +669,7 @@ def main() -> None:
                         completed=False,
                         failures=int(len(chunk_failures)),
                         progress_style=str(progress_style),
+                        active={},
                     )
                     continue
 
@@ -709,6 +732,25 @@ def main() -> None:
                     f"  - chunk {chunk_idx}/{len(chunks)} family={family} kernels={len(chunk_kernels)}",
                     flush=True,
                 )
+            _write_chunk_progress_file(
+                path=progress_file,
+                done=int(chunk_done),
+                total=int(total_chunks),
+                family=str(family),
+                chunk_idx=int(chunk_idx),
+                chunk_total=int(len(chunks)),
+                status="RUNNING",
+                completed=False,
+                failures=int(len(chunk_failures)),
+                progress_style=str(progress_style),
+                active={
+                    "family": str(family),
+                    "chunk_index": int(chunk_idx),
+                    "chunk_total": int(len(chunks)),
+                    "kernel_count": int(len(chunk_kernels)),
+                    "status": "RUNNING",
+                },
+            )
             rc, out, err = _run(
                 cmd_run,
                 stream_output=bool(args.stream_subprocess_output),
@@ -791,6 +833,7 @@ def main() -> None:
                 completed=False,
                 failures=int(len(chunk_failures)),
                 progress_style=str(progress_style),
+                active={},
             )
 
         # Always materialize a family-level summary/status from chunk outputs.
@@ -931,6 +974,7 @@ def main() -> None:
         completed=True,
         failures=int(len(chunk_failures)),
         progress_style=str(progress_style),
+        active={},
     )
     raise SystemExit(0 if ok else 1)
 
