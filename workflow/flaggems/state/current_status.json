@@ -1,16 +1,16 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-22T04:41:54+00:00",
+  "updated_at": "2026-02-22T04:43:14+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "c9e4a2538b8e55f890032d452e4872ee56d30f03",
+  "head_commit": "0bacb6e8cb8b0c42db325ad3e95ff41858d21f4d",
   "mode": "maintenance",
   "coverage_integrity_phase": "recompute_stale",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260222/full196_forcecompile_head_refresh_v4/run_summary.json",
   "full196_last_ok": true,
   "full196_validated_commit": "f948e11c3500f86976c9daa7c774e2f7a7c9a9bd",
   "full196_validated_commit_source": "run_summary.repo.head_commit",
-  "full196_commits_since_validated": 6,
-  "full196_commits_since_validated_total": 6,
+  "full196_commits_since_validated": 7,
+  "full196_commits_since_validated_total": 7,
   "full196_lifted_to_head": false,
   "full196_validated_mode": "force_compile",
   "full196_validated_execution_ir": "mlir",
@@ -36,7 +36,7 @@
   "gpu_perf_last_run": "artifacts/flaggems_matrix/daily/20260222/gpu_perf_head_refresh_v3/run_summary.json",
   "gpu_perf_last_ok": true,
   "gpu_perf_validated_commit": "f948e11c3500f86976c9daa7c774e2f7a7c9a9bd",
-  "gpu_perf_commits_since_validated": 6,
+  "gpu_perf_commits_since_validated": 7,
   "gpu_perf_mode": "graph_only",
   "gpu_perf_threshold": 0.8,
   "gpu_perf_devices": [
@@ -132,12 +132,12 @@
   ],
   "next_focus_by_lane": {
     "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
-    "backend_compiler": "Continue removing IntentFunction-default paths from rvv_remote_run tuning/baseline logic and align with MLIR contract-only flow.",
+    "backend_compiler": "Continue contract-first cleanup in rvv_remote_run to reduce remaining IntentFunction-only tuning code paths.",
     "mlir_migration": "Enable MLIR cutover prerequisites (toolchain + backend contract + LLVM artifact chain)."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260222/gpu_perf_head_refresh_v3/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260222/gpu_perf_head_refresh_v3/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260222/matrix_abs2d_remote_contract_first_v1/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260222/matrix_abs2d_remote_contract_first_v1/status_converged.json"
   },
   "lanes": {
     "coverage": {
