@@ -45,6 +45,7 @@ from backends.spmd_rvv.analysis.tuning import (
     select_schedule,
 )
 from backends.spmd_rvv.baseline_freeze_tile import freeze_tile_schedule
+from backends.common.mlir_contract import MlirBackendContract
 from intent_ir.ir import IntentFunction, ScheduleSketch
 from intent_ir.macros import expand_macros_json
 from intent_ir.mlir.convert_to_intent import to_intent
@@ -138,12 +139,12 @@ def _normalize_io_name(name: str) -> str:
     return s
 
 
-def _with_io_aliases(intent: IntentFunction, io: dict) -> dict:
+def _with_io_aliases(wanted_names: set[str] | list[str], io: dict) -> dict:
     out = dict(io)
     norm_to_keys: dict[str, list[str]] = {}
     for k in io.keys():
         norm_to_keys.setdefault(_normalize_io_name(k), []).append(k)
-    wanted = set(intent.tensors.keys()) | set(intent.outputs)
+    wanted = {str(x) for x in list(wanted_names or []) if str(x).strip()}
     for name in wanted:
         if name in out:
             continue
@@ -272,9 +273,26 @@ def _derive_scalar_input_array(name: str, *, dtype: str, bindings: dict) -> "np.
     return np.array(value, dtype=_np_dtype(dtype))
 
 
-def _resolve_tensor_shape(tensor: Any, bindings: dict) -> tuple[int, ...] | None:
+def _resolve_tensor_shape(shape_spec: list[Any], bindings: dict) -> tuple[int, ...] | None:
     shape = []
-    for d in list(getattr(tensor, "shape", []) or []):
+    for d in list(shape_spec or []):
+        if isinstance(d, dict):
+            kind = str(d.get("kind") or "").strip().lower()
+            if kind == "sym":
+                key = str(d.get("value") or "")
+                if key not in bindings:
+                    return None
+                try:
+                    shape.append(int(bindings[key]))
+                except Exception:
+                    return None
+                continue
+            if kind == "const":
+                try:
+                    shape.append(int(d.get("value")))
+                except Exception:
+                    return None
+                continue
         if hasattr(d, "kind") and getattr(d, "kind") == "sym":
             key = str(getattr(d, "value"))
             if key not in bindings:
@@ -307,14 +325,50 @@ def _resolve_tensor_shape(tensor: Any, bindings: dict) -> tuple[int, ...] | None
     return tuple(shape)
 
 
-def _augment_bindings_from_arrays(*, intent: IntentFunction, bindings: dict[str, Any], arrays: dict[str, np.ndarray]) -> dict[str, Any]:
+def _tensor_shape_spec(tensor_spec: dict[str, Any]) -> list[Any]:
+    shape = tensor_spec.get("shape")
+    return list(shape) if isinstance(shape, list) else []
+
+
+def _tensor_dtype(tensor_spec: dict[str, Any]) -> str:
+    return str(tensor_spec.get("dtype") or "f32")
+
+
+def _tensor_specs_from_io_spec(io_spec: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    tensors = io_spec.get("tensors")
+    if not isinstance(tensors, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for k, v in tensors.items():
+        if isinstance(v, dict):
+            out[str(k)] = dict(v)
+    return out
+
+
+def _tensor_specs_from_intent_json(intent_json: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    tensors = intent_json.get("tensors")
+    if not isinstance(tensors, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for k, v in tensors.items():
+        if isinstance(v, dict):
+            out[str(k)] = dict(v)
+    return out
+
+
+def _augment_bindings_from_arrays(
+    *,
+    tensor_specs: dict[str, dict[str, Any]],
+    bindings: dict[str, Any],
+    arrays: dict[str, np.ndarray],
+) -> dict[str, Any]:
     out = dict(bindings)
     for name, arr in arrays.items():
-        tensor = intent.tensors.get(str(name))
-        if tensor is None:
+        tensor_spec = tensor_specs.get(str(name))
+        if not isinstance(tensor_spec, dict):
             continue
         arr_np = np.asarray(arr)
-        spec_shape = list(getattr(tensor, "shape", []) or [])
+        spec_shape = _tensor_shape_spec(tensor_spec)
         if len(spec_shape) == 0 and arr_np.size == 1:
             # Scalar tensors often carry symbolic shape params (e.g., group_size).
             # Bind by tensor name so codegen can resolve reshape expressions.
@@ -329,7 +383,11 @@ def _augment_bindings_from_arrays(*, intent: IntentFunction, bindings: dict[str,
             continue
         for dim_spec, dim_val in zip(spec_shape, arr_shape):
             key: str | None = None
-            if hasattr(dim_spec, "kind") and getattr(dim_spec, "kind") == "sym":
+            if isinstance(dim_spec, dict):
+                kind = str(dim_spec.get("kind") or "").strip().lower()
+                if kind == "sym":
+                    key = str(dim_spec.get("value") or "")
+            elif hasattr(dim_spec, "kind") and getattr(dim_spec, "kind") == "sym":
                 key = str(getattr(dim_spec, "value"))
             elif isinstance(dim_spec, str):
                 try:
@@ -341,14 +399,14 @@ def _augment_bindings_from_arrays(*, intent: IntentFunction, bindings: dict[str,
     return out
 
 
-def _derive_optional_tensor_input_array(name: str, *, tensor: Any, bindings: dict) -> "np.ndarray" | None:
+def _derive_optional_tensor_input_array(name: str, *, tensor_spec: dict[str, Any], bindings: dict) -> "np.ndarray" | None:
     # Attention kernels may omit mask from baseline exports when no mask is supplied.
     if str(name) != "attn_mask":
         return None
-    shape = _resolve_tensor_shape(tensor, bindings)
+    shape = _resolve_tensor_shape(_tensor_shape_spec(tensor_spec), bindings)
     if shape is None:
         return None
-    return np.zeros(shape, dtype=_np_dtype(str(getattr(tensor, "dtype", "f32"))))
+    return np.zeros(shape, dtype=_np_dtype(_tensor_dtype(tensor_spec)))
 
 
 def _sftp_mkdir_p(sftp: paramiko.SFTPClient, path: str) -> None:
@@ -443,19 +501,20 @@ def _contract_report_paths(report: dict, *, artifact_root: Path) -> list[Path]:
     return out
 
 
-def _intent_from_contract_path(path: Path) -> IntentFunction | None:
+def _intent_from_contract_path(path: Path) -> tuple[dict[str, Any], dict[str, Any]] | None:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload_raw = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return None
-    if not isinstance(payload, dict):
+    if not isinstance(payload_raw, dict):
         return None
-    if str(payload.get("schema_version") or "") != "intent_mlir_backend_contract_v1":
+    try:
+        payload = MlirBackendContract.from_json_dict(payload_raw)
+    except Exception:
         return None
-    intent_json = payload.get("intent_json")
-    if not isinstance(intent_json, dict):
+    if not isinstance(payload.intent_json, dict):
         return None
-    return IntentFunction.from_json_dict(intent_json)
+    return dict(payload.intent_json), dict(payload.io_spec or {})
 
 
 def run_remote(
@@ -509,45 +568,51 @@ def run_remote(
     report = json.loads(report_path.read_text())
     contract_artifact_path = ""
     mlir_artifact_path = ""
-    intent_macro: IntentFunction | None = None
-    intent: IntentFunction | None = None
+    intent_macro_json: dict[str, Any] | None = None
+    intent_json: dict[str, Any] | None = None
+    io_spec: dict[str, Any] = {}
     for contract_path in _contract_report_paths(report, artifact_root=artifact_root):
         parsed = _intent_from_contract_path(contract_path)
         if parsed is None:
             continue
-        intent_macro = parsed
-        intent = parsed
+        intent_json, io_spec = parsed
+        intent_macro_json = dict(intent_json)
         contract_artifact_path = str(contract_path)
         _log(f"[{frontend}:{kernel}] contract artifact selected: {contract_artifact_path}")
         break
     for mlir_path in _mlir_report_paths(report, artifact_root=artifact_root):
-        if intent is not None:
+        if intent_json is not None:
             break
         try:
             parsed = to_intent(mlir_path.read_text(encoding="utf-8"))
-            intent_macro = parsed
-            intent = parsed
+            intent_json = parsed.to_json_dict()
+            intent_macro_json = dict(intent_json)
             mlir_artifact_path = str(mlir_path)
             _log(f"[{frontend}:{kernel}] mlir artifact selected: {mlir_artifact_path}")
             break
         except Exception:
             continue
-    if intent is None:
+    if intent_json is None:
         if bool(require_mlir_artifacts):
             raise RuntimeError(
                 "mlir_artifact_missing: no readable MLIR contract/module path in report: "
                 f"{report_path}"
             )
-        intent_macro_json = report.get("intent")
-        if not isinstance(intent_macro_json, dict):
+        raw_macro_json = report.get("intent")
+        if not isinstance(raw_macro_json, dict):
             raise ValueError(f"invalid artifact intent payload: {report_path}")
-        intent_macro = IntentFunction.from_json_dict(intent_macro_json)
+        intent_macro_json = dict(raw_macro_json)
         intent_expanded_json = report.get("intent_expanded")
         if not isinstance(intent_expanded_json, dict):
-            intent_expanded_json = expand_macros_json(dict(intent_macro_json))
-        intent = IntentFunction.from_json_dict(intent_expanded_json)
-    assert intent is not None
-    assert intent_macro is not None
+            intent_expanded_json = expand_macros_json(dict(raw_macro_json))
+        intent_json = dict(intent_expanded_json)
+    assert intent_json is not None
+    assert intent_macro_json is not None
+    tensor_specs = _tensor_specs_from_io_spec(io_spec) or _tensor_specs_from_intent_json(intent_json)
+    if not tensor_specs:
+        raise RuntimeError(f"invalid artifact intent payload: missing tensors in {report_path}")
+    intent = IntentFunction.from_json_dict(dict(intent_json))
+    intent_macro = IntentFunction.from_json_dict(dict(intent_macro_json))
 
     def _coerce_schedule(obj: ScheduleSketch | dict) -> ScheduleSketch:
         if isinstance(obj, ScheduleSketch):
@@ -697,13 +762,13 @@ def run_remote(
 
     # Add naming aliases to baseline to match IntentIR tensor names.
     # Add naming aliases to baseline to match IntentIR tensor names.
-    # Use the macro intent here to avoid iterating over a huge expanded tensor set.
+    # Use contract / intent tensor names instead of class-bound lookups.
     if baseline is not None:
-        baseline = _with_io_aliases(intent_macro, baseline)
+        baseline = _with_io_aliases(set(tensor_specs.keys()) | set(str(x) for x in list(intent_json.get("outputs") or [])), baseline)
         # Recover symbolic extents that appear only on outputs (e.g. nonzero count)
         # so backend lowering can resolve all output dimensions.
         baseline = dict(baseline)
-        bindings = _augment_bindings_from_arrays(intent=intent, bindings=bindings, arrays=baseline)
+        bindings = _augment_bindings_from_arrays(tensor_specs=tensor_specs, bindings=bindings, arrays=baseline)
 
     # Derive a few common implicit symbols.
     if "group" in bindings and "num_groups" not in bindings:
@@ -965,12 +1030,12 @@ def run_remote(
         f.write(ops_c_local.read_text(encoding="utf-8"))
 
     # Generic lowering path: upload all external inputs and reference outputs, then lower ops list.
-    produced = {op.output for op in intent.ops if op.output}
+    produced = {str(op.output) for op in intent.ops if op.output}
     used = set()
     for op in intent.ops:
         for n in op.inputs:
             used.add(n)
-    external_inputs = sorted([n for n in used if n in intent.tensors and n not in produced])
+    external_inputs = sorted([n for n in used if n in tensor_specs and n not in produced])
     has_baseline = isinstance(baseline, dict)
     if has_baseline:
         # Only verify outputs present in the baseline bundle. Some kernels
@@ -1019,16 +1084,16 @@ def run_remote(
         _log(f"[{frontend}:{kernel}] upload inputs/refs")
         assert baseline is not None
         for name in external_inputs:
-            declared_dt = declared_dtypes.get(name, str(intent.tensors[name].dtype))
+            declared_dt = declared_dtypes.get(name, _tensor_dtype(tensor_specs.get(str(name), {})))
             if name not in baseline:
-                tt = intent.tensors.get(name)
-                if tt is not None:
-                    if len(getattr(tt, "shape", [])) == 0:
-                        arr0 = _derive_scalar_input_array(str(name), dtype=str(tt.dtype), bindings=bindings)
+                tt = tensor_specs.get(str(name))
+                if isinstance(tt, dict):
+                    if len(_tensor_shape_spec(tt)) == 0:
+                        arr0 = _derive_scalar_input_array(str(name), dtype=_tensor_dtype(tt), bindings=bindings)
                         if arr0 is not None:
                             baseline[name] = arr0
                     else:
-                        arrn = _derive_optional_tensor_input_array(str(name), tensor=tt, bindings=bindings)
+                        arrn = _derive_optional_tensor_input_array(str(name), tensor_spec=tt, bindings=bindings)
                         if arrn is not None:
                             baseline[name] = arrn
             if name not in baseline:
@@ -1039,7 +1104,7 @@ def run_remote(
         for name in outputs:
             if name not in baseline:
                 raise RuntimeError(f"baseline missing output tensor {name} for {kernel}")
-            declared_dt = declared_dtypes.get(name, str(intent.tensors[name].dtype))
+            declared_dt = declared_dtypes.get(name, _tensor_dtype(tensor_specs.get(str(name), {})))
             raw = _to_raw_bytes(np.asarray(baseline[name]), str(declared_dt))
             _sftp_write_bytes(sftp, f"{remote_dir}/{name}_ref.bin", raw)
 
