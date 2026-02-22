@@ -356,6 +356,64 @@ def _tensor_specs_from_intent_json(intent_json: dict[str, Any]) -> dict[str, dic
     return out
 
 
+def _intent_outputs(intent_json: dict[str, Any]) -> list[str]:
+    return [str(x) for x in list(intent_json.get("outputs") or [])]
+
+
+def _intent_ops(intent_json: dict[str, Any]) -> list[dict[str, Any]]:
+    ops = intent_json.get("ops")
+    if not isinstance(ops, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for op in ops:
+        if isinstance(op, dict):
+            out.append(dict(op))
+    return out
+
+
+def _schedule_to_json(schedule: ScheduleSketch | dict | None) -> dict[str, Any]:
+    if isinstance(schedule, ScheduleSketch):
+        return {
+            "tile_m": schedule.tile_m,
+            "tile_n": schedule.tile_n,
+            "tile_k": schedule.tile_k,
+            "vec_width": schedule.vec_width,
+            "pipeline_depth": schedule.pipeline_depth,
+            "axis_bindings": dict(schedule.axis_bindings or {}),
+            "vec_axis": schedule.vec_axis,
+            "parallel_axes": list(schedule.parallel_axes or []),
+            "memory_hint": dict(schedule.memory_hint or {}),
+        }
+    if isinstance(schedule, dict):
+        return {
+            "tile_m": schedule.get("tile_m"),
+            "tile_n": schedule.get("tile_n"),
+            "tile_k": schedule.get("tile_k"),
+            "vec_width": schedule.get("vec_width"),
+            "pipeline_depth": schedule.get("pipeline_depth"),
+            "axis_bindings": dict(schedule.get("axis_bindings") or {}),
+            "vec_axis": schedule.get("vec_axis"),
+            "parallel_axes": [str(x) for x in (schedule.get("parallel_axes") or [])],
+            "memory_hint": dict(schedule.get("memory_hint") or {}),
+        }
+    return {}
+
+
+def _schedule_from_json(schedule: dict[str, Any] | None) -> ScheduleSketch:
+    obj = dict(schedule or {})
+    return ScheduleSketch(
+        tile_m=obj.get("tile_m"),
+        tile_n=obj.get("tile_n"),
+        tile_k=obj.get("tile_k"),
+        vec_width=obj.get("vec_width"),
+        pipeline_depth=obj.get("pipeline_depth"),
+        axis_bindings=dict(obj.get("axis_bindings") or {}),
+        vec_axis=(obj.get("vec_axis") if isinstance(obj.get("vec_axis"), str) else None),
+        parallel_axes=[str(x) for x in (obj.get("parallel_axes") or [])],
+        memory_hint=dict(obj.get("memory_hint") or {}),
+    )
+
+
 def _augment_bindings_from_arrays(
     *,
     tensor_specs: dict[str, dict[str, Any]],
@@ -611,28 +669,10 @@ def run_remote(
     tensor_specs = _tensor_specs_from_io_spec(io_spec) or _tensor_specs_from_intent_json(intent_json)
     if not tensor_specs:
         raise RuntimeError(f"invalid artifact intent payload: missing tensors in {report_path}")
-    intent = IntentFunction.from_json_dict(dict(intent_json))
-    intent_macro = IntentFunction.from_json_dict(dict(intent_macro_json))
-
-    def _coerce_schedule(obj: ScheduleSketch | dict) -> ScheduleSketch:
-        if isinstance(obj, ScheduleSketch):
-            return obj
-        if not isinstance(obj, dict):
-            return ScheduleSketch()
-        return ScheduleSketch(
-            tile_m=obj.get("tile_m"),
-            tile_n=obj.get("tile_n"),
-            tile_k=obj.get("tile_k"),
-            vec_width=obj.get("vec_width"),
-            pipeline_depth=obj.get("pipeline_depth"),
-            axis_bindings=dict(obj.get("axis_bindings") or {}),
-            vec_axis=(obj.get("vec_axis") if isinstance(obj.get("vec_axis"), str) else None),
-            parallel_axes=[str(x) for x in (obj.get("parallel_axes") or [])],
-            memory_hint=dict(obj.get("memory_hint") or {}),
-        )
-
+    intent_json_base = dict(intent_json)
+    intent_macro_json_base = dict(intent_macro_json)
     if schedule_override is not None:
-        intent.schedule = _coerce_schedule(schedule_override)
+        intent_json_base["schedule"] = _schedule_to_json(schedule_override)
 
     # Frontend-derived "tile-ish" constants (schedule hints). Triton CertificateV2
     # extracts these from TTIR; TileLang may leave empty (OK).
@@ -806,8 +846,13 @@ def run_remote(
             pass
 
     tuning_info: dict | None = None
-    tune_candidates = None
+    tune_candidates: list[ScheduleCandidate] | None = None
+    selected_schedule = _schedule_from_json(
+        intent_json_base.get("schedule") if isinstance(intent_json_base.get("schedule"), dict) else {}
+    )
     if tune_request is not None:
+        intent_for_tuning = IntentFunction.from_json_dict(dict(intent_json_base))
+        intent_macro_for_tuning = IntentFunction.from_json_dict(dict(intent_macro_json_base))
         _log(f"[{frontend}:{kernel}] schedule selection: mode={tune_request.mode} budget={getattr(tune_request,'budget',0)}")
         if tune_profile:
             prof = load_profile(str(tune_profile))
@@ -834,7 +879,10 @@ def run_remote(
             frozen_sched = None
             frozen_notes: list[str] = []
             try:
-                frozen = freeze_tile_schedule(intent_macro, desc=(report.get("descriptor") if isinstance(report, dict) else None))
+                frozen = freeze_tile_schedule(
+                    intent_macro_for_tuning,
+                    desc=(report.get("descriptor") if isinstance(report, dict) else None),
+                )
                 frozen_sched = frozen.schedule
                 frozen_notes = list(frozen.notes)
             except Exception:
@@ -844,7 +892,7 @@ def run_remote(
             # Build a larger candidate pool, then pick a diverse top-K to benchmark.
             pool_limit = max(int(budget) * 4, int(budget))
             pool = propose_schedule_candidates(
-                intent,
+                intent_for_tuning,
                 shape_bindings=shape_bindings_int,
                 profile=prof,
                 request=tune_request,
@@ -854,7 +902,7 @@ def run_remote(
             )
             if not pool:
                 pool = propose_schedule_candidates(
-                    intent,
+                    intent_for_tuning,
                     shape_bindings=shape_bindings_int,
                     profile=prof,
                     request=tune_request,
@@ -932,7 +980,7 @@ def run_remote(
 
             # Keep a deterministic default schedule in case benchmarking fails.
             if tune_candidates:
-                intent.schedule = tune_candidates[0].schedule
+                selected_schedule = tune_candidates[0].schedule
             tuning_info = {
                 "profile_source": prof_src,
                 "profile": prof.__dict__,
@@ -963,14 +1011,14 @@ def run_remote(
             }
         else:
             tuned = select_schedule(
-                intent,
+                intent_for_tuning,
                 shape_bindings=shape_bindings_int,
                 profile=prof,
                 request=tune_request,
                 tile_hints=tile_hints,
                 evidence=cert_v2,
             )
-            intent.schedule = tuned.schedule
+            selected_schedule = tuned.schedule
             tuning_info = {
                 "profile_source": prof_src,
                 "profile": prof.__dict__,
@@ -978,7 +1026,7 @@ def run_remote(
                 "budget": int(budget),
                 "tile_hints": list(tile_hints),
                 "notes": list(tuned.notes),
-                "schedule": (intent.to_json_dict().get("schedule") or {}),
+                "schedule": _schedule_to_json(selected_schedule),
             }
             if getattr(tuned, "debug", None) is not None:
                 tuning_info["debug"] = tuned.debug
@@ -1030,36 +1078,43 @@ def run_remote(
         f.write(ops_c_local.read_text(encoding="utf-8"))
 
     # Generic lowering path: upload all external inputs and reference outputs, then lower ops list.
-    produced = {str(op.output) for op in intent.ops if op.output}
-    used = set()
-    for op in intent.ops:
-        for n in op.inputs:
-            used.add(n)
+    intent_ops = _intent_ops(intent_json_base)
+    produced: set[str] = set()
+    used: set[str] = set()
+    for op in intent_ops:
+        out_name = str(op.get("output") or "").strip()
+        if out_name:
+            produced.add(out_name)
+        for n in list(op.get("inputs") or []):
+            name = str(n).strip()
+            if name:
+                used.add(name)
     external_inputs = sorted([n for n in used if n in tensor_specs and n not in produced])
+    intent_outputs = _intent_outputs(intent_json_base)
     has_baseline = isinstance(baseline, dict)
     if has_baseline:
         # Only verify outputs present in the baseline bundle. Some kernels
         # expose auxiliary outputs (e.g., indices) that are not exported.
-        outputs = [n for n in list(intent.outputs) if n in baseline]
+        outputs = [n for n in list(intent_outputs) if n in baseline]
     else:
-        outputs = [n for n in list(intent.outputs) if n in produced]
+        outputs = [n for n in list(intent_outputs) if n in produced]
     if not outputs:
-        outputs = [n for n in list(intent.outputs) if n in baseline] if has_baseline else list(intent.outputs)
+        outputs = [n for n in list(intent_outputs) if n in baseline] if has_baseline else list(intent_outputs)
     if not outputs:
         # Keep declared outputs to avoid constructing an invalid empty-output intent.
-        outputs = list(intent.outputs)
-    intent_codegen = intent
-    if outputs != list(intent.outputs):
-        intent_j = intent.to_json_dict()
-        intent_j["outputs"] = list(outputs)
-        intent_codegen = IntentFunction.from_json_dict(intent_j)
+        outputs = list(intent_outputs)
+    intent_codegen_json = dict(intent_json_base)
+    if outputs != list(intent_outputs):
+        intent_codegen_json["outputs"] = list(outputs)
+    intent_codegen_json["schedule"] = _schedule_to_json(selected_schedule)
 
     # Lowering tolerances are shared across data materialization + compile/run.
     #
     # Remote runs compare against a GPU-produced baseline (Triton/TileLang CUDA),
     # so keep tolerances at least legacy-default to avoid false negatives.
     if baseline is not None:
-        auto_tol = infer_tolerances(intent, ref_out=baseline).to_dict()
+        intent_for_tol = IntentFunction.from_json_dict(dict(intent_codegen_json))
+        auto_tol = infer_tolerances(intent_for_tol, ref_out=baseline).to_dict()
         atol_use = max(float(auto_tol.get("atol", 1e-3)), 1e-3)
         rtol_use = max(float(auto_tol.get("rtol", 1e-3)), 1e-3)
     else:
@@ -1070,8 +1125,11 @@ def run_remote(
 
     # Materialize one lowered C source early to derive the final buffer dtypes.
     # This avoids intent-vs-lowered dtype drift (e.g. compare outputs lowered to u8).
+    initial_schedule = _schedule_from_json(
+        intent_codegen_json.get("schedule") if isinstance(intent_codegen_json.get("schedule"), dict) else {}
+    )
     initial_src = lower_intent_to_c_with_files(
-        intent_codegen,
+        intent_codegen_json,
         shape_bindings=bindings,
         atol=float(atol_use),
         rtol=float(rtol_use),
@@ -1108,15 +1166,16 @@ def run_remote(
             raw = _to_raw_bytes(np.asarray(baseline[name]), str(declared_dt))
             _sftp_write_bytes(sftp, f"{remote_dir}/{name}_ref.bin", raw)
 
-    def _compile_and_run(schedule) -> dict:
+    def _compile_and_run(schedule: ScheduleSketch) -> dict:
         # Generate + upload code for this schedule.
-        intent_codegen.schedule = schedule
+        intent_codegen_run = dict(intent_codegen_json)
+        intent_codegen_run["schedule"] = _schedule_to_json(schedule)
         # Reuse the already-lowered source when schedule is unchanged.
-        if schedule == intent.schedule:
+        if _schedule_to_json(schedule) == _schedule_to_json(initial_schedule):
             src = initial_src
         else:
             src = lower_intent_to_c_with_files(
-                intent_codegen,
+                intent_codegen_run,
                 shape_bindings=bindings,
                 atol=float(atol_use),
                 rtol=float(rtol_use),
@@ -1283,7 +1342,7 @@ def run_remote(
             },
         }
 
-    chosen_schedule = intent.schedule
+    chosen_schedule = selected_schedule
     chosen = None
     if tune_candidates is not None and len(tune_candidates) > 0:
         # Measured autotune: benchmark top-K candidates and pick the best passing one.
@@ -1335,9 +1394,9 @@ def run_remote(
         }
         if chosen is None:
             # Fallback: run once with the current schedule (already set to the first candidate above).
-            chosen = _compile_and_run(intent.schedule)
+            chosen = _compile_and_run(selected_schedule)
     else:
-        chosen = _compile_and_run(intent.schedule)
+        chosen = _compile_and_run(selected_schedule)
 
     sftp.close()
     client.close()

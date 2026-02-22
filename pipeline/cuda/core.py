@@ -1799,6 +1799,7 @@ def run_pipeline_for_spec(
                     llvm_ensure_rows = [
                         p for p in llvm_passes if str(p.get("name") or "").startswith("python:ensure_llvm_ir_text")
                     ]
+                    llvm_text_origin = str((llvm_mod.meta or {}).get("llvm_text_origin") or "").strip()
                     llvm_as_rows = [p for p in llvm_passes if str(p.get("name") or "").startswith("llvm-as")]
                     llvm_opt_rows = [p for p in llvm_passes if str(p.get("name") or "").startswith("opt")]
                     llvm_emit_ms = sum(
@@ -1821,9 +1822,16 @@ def run_pipeline_for_spec(
                     if llvm_ensure_rows:
                         last_ensure = dict(llvm_ensure_rows[-1])
                         ensure_detail = str(last_ensure.get("detail") or "").strip()
-                        ensure_ok = bool(last_ensure.get("ok")) and ensure_detail == "ok"
+                        ensure_ok = (
+                            bool(last_ensure.get("ok"))
+                            and ensure_detail == "ok"
+                            and llvm_text_origin in {"translated", "already_llvm"}
+                        )
                         if not ensure_ok:
-                            ensure_reason = ensure_detail or "ensure_llvm_ir_text_not_ok"
+                            if llvm_text_origin and llvm_text_origin not in {"translated", "already_llvm"}:
+                                ensure_reason = f"ensure_llvm_ir_text_origin:{llvm_text_origin}"
+                            else:
+                                ensure_reason = ensure_detail or "ensure_llvm_ir_text_not_ok"
 
                     llvm_as_ok = True
                     llvm_as_reason = ""
