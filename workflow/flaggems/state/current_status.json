@@ -1,13 +1,13 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-22T03:48:44+00:00",
+  "updated_at": "2026-02-22T04:26:27+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "7bb4024fc0ea378d8643f72598f716aff89c7c47",
+  "head_commit": "f948e11c3500f86976c9daa7c774e2f7a7c9a9bd",
   "mode": "maintenance",
   "coverage_integrity_phase": "recomputed_ok",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260222/full196_forcecompile_head_refresh_v4/run_summary.json",
   "full196_last_ok": true,
-  "full196_validated_commit": "7bb4024fc0ea378d8643f72598f716aff89c7c47",
+  "full196_validated_commit": "f948e11c3500f86976c9daa7c774e2f7a7c9a9bd",
   "full196_validated_commit_source": "run_summary.repo.head_commit",
   "full196_commits_since_validated": 0,
   "full196_commits_since_validated_total": 0,
@@ -21,7 +21,7 @@
   "coverage_batches_completed": 7,
   "coverage_batches_failed": [],
   "full196_evidence_kind": "batch_aggregate",
-  "full196_last_run_repo_head_commit": "7bb4024fc0ea378d8643f72598f716aff89c7c47",
+  "full196_last_run_repo_head_commit": "f948e11c3500f86976c9daa7c774e2f7a7c9a9bd",
   "full196_last_run_repo_branch": "compiler-cleanup-v1",
   "full196_last_run_dirty": false,
   "full196_artifact_repo_stamp_ok": true,
@@ -31,31 +31,31 @@
   "mlir_toolchain_ok": true,
   "mlir_backend_contract_ready": true,
   "mlir_llvm_chain_ok": true,
-  "mlir_full196_validated_commit": "7bb4024fc0ea378d8643f72598f716aff89c7c47",
-  "gpu_perf_phase": "recompute_stale",
-  "gpu_perf_last_run": "artifacts/flaggems_matrix/daily/20260222/gpu_perf_norm_activation_specsource_v2/run_summary.json",
+  "mlir_full196_validated_commit": "f948e11c3500f86976c9daa7c774e2f7a7c9a9bd",
+  "gpu_perf_phase": "recomputed_ok",
+  "gpu_perf_last_run": "artifacts/flaggems_matrix/daily/20260222/gpu_perf_head_refresh_v3/run_summary.json",
   "gpu_perf_last_ok": true,
-  "gpu_perf_validated_commit": "0640852c49002340cb10b278e472fd39ba7ec157",
-  "gpu_perf_commits_since_validated": 22,
+  "gpu_perf_validated_commit": "f948e11c3500f86976c9daa7c774e2f7a7c9a9bd",
+  "gpu_perf_commits_since_validated": 0,
   "gpu_perf_mode": "graph_only",
   "gpu_perf_threshold": 0.8,
   "gpu_perf_devices": [
     {
       "gpu_name": "NVIDIA GeForce RTX 4080 SUPER",
-      "kernel_total": 14,
-      "kernel_measured": 8,
-      "kernel_pass": 8,
+      "kernel_total": 159,
+      "kernel_measured": 7,
+      "kernel_pass": 7,
       "kernel_fail": 0,
       "ok": true,
-      "min_ratio": 0.8713532337925728
+      "min_ratio": 0.9180328171935892
     }
   ],
   "gpu_perf_failures_by_family": {},
-  "gpu_perf_categories_expected": 1,
-  "gpu_perf_categories_completed": 1,
+  "gpu_perf_categories_expected": 7,
+  "gpu_perf_categories_completed": 7,
   "gpu_perf_categories_failed": [],
   "gpu_perf_categories_expected_full": 7,
-  "gpu_perf_scope_full": false,
+  "gpu_perf_scope_full": true,
   "gpu_perf_lifted_to_head": false,
   "coverage": {
     "semantic_ops": 196,
@@ -125,16 +125,14 @@
     "catalog_path": "scripts/CATALOG.json",
     "catalog_validated": true
   },
-  "active_lanes": [
-    "backend_compiler"
-  ],
+  "active_lanes": [],
   "next_focus_by_lane": {
-    "coverage": "Refresh workflow freshness and continue mlir/backend mainline batches.",
-    "backend_compiler": "Run gpu-perf-graph by family/chunk, then refresh gpu perf freshness on HEAD."
+    "coverage": "Continue backend_compiler lane and MLIR mainline tasks.",
+    "backend_compiler": "Continue backend compiler optimization passes with perf guardrails."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260222/full196_forcecompile_head_refresh_v4/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260222/full196_forcecompile_head_refresh_v4/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260222/gpu_perf_head_refresh_v3/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260222/gpu_perf_head_refresh_v3/status_converged.json"
   },
   "lanes": {
     "coverage": {
