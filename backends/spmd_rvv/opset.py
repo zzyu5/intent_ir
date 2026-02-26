@@ -6,7 +6,7 @@ This is used for:
 - completeness tests (PROJECT_CRITICAL_GAPS_ANALYSIS_2025.md §3.1)
 
 Source of truth for actual lowering is the C++ codegen tool under
-`backends/spmd_rvv/cpp_codegen/intentir_codegen.cpp`.
+`backends/spmd_rvv/pipeline/driver.py` strict contract execution stages.
 """
 
 from __future__ import annotations

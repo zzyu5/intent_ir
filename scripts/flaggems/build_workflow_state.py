@@ -836,7 +836,7 @@ def main() -> None:
     if "backend_compiler" in active_lanes:
         next_focus_by_lane.setdefault(
             "backend_compiler",
-            "Run backend_compiler active batch and keep cpp_codegen modular split + stage contract artifacts green.",
+            "Run backend_compiler active batch and keep strict mlir contract artifacts green.",
         )
     if "workflow" in active_lanes:
         next_focus_by_lane.setdefault(

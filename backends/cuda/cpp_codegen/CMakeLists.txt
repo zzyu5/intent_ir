@@ -10,5 +10,5 @@ add_executable(intentir_cuda_codegen
     ir_model.cpp
     shape_eval.cpp
 )
-target_include_directories(intentir_cuda_codegen PRIVATE ../../spmd_rvv/cpp_codegen/third_party)
+target_include_directories(intentir_cuda_codegen PRIVATE third_party)
 target_compile_options(intentir_cuda_codegen PRIVATE -Wall -Wextra -Wno-unused-parameter)

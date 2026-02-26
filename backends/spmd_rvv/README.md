@@ -1,23 +1,16 @@
 # Task6 Backend (`backends/spmd_rvv`)
 
-This package contains the Task6 backend components.
+This package contains the RVV strict backend components.
 
 **Directory layout**
 
 - `backends/spmd_rvv/analysis/`: cost model, tiling search, hardware profiles
-- `backends/spmd_rvv/codegen/`: code generation entrypoints
-- `backends/spmd_rvv/cpp_codegen/`: C++ host tool that parses IntentIR JSON and emits a standalone C program
+- `backends/spmd_rvv/pipeline/`: strict MLIR backend-contract pipeline and runtime stages
+- `backends/spmd_rvv/runtime/`: target-side runtime helpers used by remote execution
 
-**Key API**
+**Execution model**
 
-- `backends.spmd_rvv.codegen.cpp_driver.lower_intent_to_c_with_files()`:
-  Generates a standalone `main.c` that reads `<tensor>.bin` inputs and compares
-  outputs against `<output>_ref.bin`.
-
-The remote runner (`scripts/rvv_remote_run.py`) uses this API and compiles the
-generated C on the RVV host.
-
-**Experiments**
-
-- `backends.spmd_rvv.experiments.matmul_c.generate_c()` is a matmul-only C/OpenMP
-  emitter kept for tiling-search experiments (not used in the end-to-end RVV pipeline).
+- Mainline execution is contract-first and strict:
+  - prebuilt RVV ELF
+  - remote LLVM compile on RVV target
+- Legacy C/C++ compatibility codegen paths have been removed from the main repo path.
