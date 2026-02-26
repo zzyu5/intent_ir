@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-26T03:36:11+00:00",
+  "updated_at": "2026-02-26T04:54:28+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,28 +13,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "677c6a7 flaggems: add strict policy, artifact cleanup, and workflow context outputs\n2f3e26f docs: expand MLIR entry flow with flaggems/triton/tilelang details\nff9f049 docs(deep_read): add mlir entry flow truth map\n71ab942 feat(mlir): advance strict cutover and refresh workflow truth state\n34e8396 chore(workflow): record llvm-dialect bridge progress and matrix evidence\n253af53 feat(mlir): add llvm-dialect lowering pass before mlir-translate\n649ba86 chore(workflow): record contract-first rvv run and llvm readiness tightening\n6a1deb1 refactor(mlir): tighten llvm readiness and contract-first rvv remote path\nfc00dad chore(workflow): refresh head-aligned status snapshot\n47af79f chore(workflow): log matrix validation for rvv remote contract-first path\n0bacb6e chore(workflow): log rvv remote contract-first progress\nc9e4a25 refactor(rvv-remote): contract-first io/binding materialization\n7d34ec3 chore(workflow): update progress after contract-first smoke refactors\neb9339b refactor(rvv-smoke): use mlir contract intent_json as primary input\ncca8f9e chore(workflow): record contract-first cuda smoke session\ncbffff9 refactor(cuda-smoke): run contract-first intent_json pipeline\n03c64bc chore(workflow): refresh coverage+gpu perf head evidence and gate state\nf948e11 fix(gpu-perf): skip unstable sub-microsecond native graph ratios from denominator\n0c8a621 chore(workflow): record full196 7/7 head validation and fresh coverage gate\n7bb4024 fix(coverage): prevent no-stream chunk deadlock and expose active progress state",
+  "git_log_short": "8cd717a workflow: refresh state snapshots after strict-policy wave\n677c6a7 flaggems: add strict policy, artifact cleanup, and workflow context outputs\n2f3e26f docs: expand MLIR entry flow with flaggems/triton/tilelang details\nff9f049 docs(deep_read): add mlir entry flow truth map\n71ab942 feat(mlir): advance strict cutover and refresh workflow truth state\n34e8396 chore(workflow): record llvm-dialect bridge progress and matrix evidence\n253af53 feat(mlir): add llvm-dialect lowering pass before mlir-translate\n649ba86 chore(workflow): record contract-first rvv run and llvm readiness tightening\n6a1deb1 refactor(mlir): tighten llvm readiness and contract-first rvv remote path\nfc00dad chore(workflow): refresh head-aligned status snapshot\n47af79f chore(workflow): log matrix validation for rvv remote contract-first path\n0bacb6e chore(workflow): log rvv remote contract-first progress\nc9e4a25 refactor(rvv-remote): contract-first io/binding materialization\n7d34ec3 chore(workflow): update progress after contract-first smoke refactors\neb9339b refactor(rvv-smoke): use mlir contract intent_json as primary input\ncca8f9e chore(workflow): record contract-first cuda smoke session\ncbffff9 refactor(cuda-smoke): run contract-first intent_json pipeline\n03c64bc chore(workflow): refresh coverage+gpu perf head evidence and gate state\nf948e11 fix(gpu-perf): skip unstable sub-microsecond native graph ratios from denominator\n0c8a621 chore(workflow): record full196 7/7 head validation and fresh coverage gate",
   "progress_tail": [
-    {
-      "ts": "2026-02-25T22:31:41+00:00",
-      "commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
-      "lane": "coverage",
-      "summary": "full196 strict remains current HEAD evidence (7/7, dual_pass=196).",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/status_converged.json",
-      "next_focus": "Keep coverage truth aligned while gpu_perf strict evidence advances.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/ci_gate.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/coverage_integrity.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
     {
       "ts": "2026-02-25T22:45:16+00:00",
       "commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
@@ -188,18 +168,35 @@
       "counts_by_status": {
         "dual_pass": 75
       }
+    },
+    {
+      "ts": "2026-02-26T04:54:28+00:00",
+      "commit": "8cd717a279c0bd6a32f6b406aeefc915220dd38f",
+      "lane": "coverage",
+      "summary": "full196 strict refreshed on HEAD (7/7, dual_pass=196)",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json",
+      "next_focus": "Refresh gpu_perf strict evidence on same HEAD.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/coverage_integrity.json",
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
     }
   ],
-  "next_focus": "Sync deep_read truth package with wave64 evidence and keep strict gate freshness on HEAD.",
+  "next_focus": "Refresh gpu_perf strict evidence on same HEAD.",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
   "active_lanes": [
-    "backend_compiler",
-    "coverage",
-    "mlir_migration"
+    "backend_compiler"
   ],
   "next_focus_by_lane": {
-    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
     "mlir_migration": "Sync deep_read truth package with wave64 evidence and keep strict gate freshness on HEAD.",
+    "coverage": "Refresh gpu_perf strict evidence on same HEAD.",
     "backend_compiler": "Run gpu-perf-graph by family/chunk, then refresh gpu perf freshness on HEAD."
   },
   "known_risks": []
