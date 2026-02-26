@@ -302,6 +302,48 @@ def test_build_native_launch_fn_skips_zero_arg_helper_callable(
     assert calls == ["foo"]
 
 
+def test_build_native_launch_fn_flaggems_native_prefers_ops_callable_over_helper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = _load_module()
+    _install_fake_torch(mod, monkeypatch)
+
+    helper_calls: list[str] = []
+    native_calls: list[tuple[str, int]] = []
+
+    def _helper():
+        helper_calls.append("helper")
+        return {"noop": True}
+
+    def _normed_cumsum(inp, dim=-1):  # noqa: ARG001
+        native_calls.append(("normed_cumsum", int(dim)))
+        return inp
+
+    fake_module = SimpleNamespace(
+        __name__="fake.module",
+        default_flaggems_kernel_specs=_helper,
+        flag_gems_ops=SimpleNamespace(normed_cumsum=_normed_cumsum),
+    )
+    monkeypatch.setattr(mod.importlib, "import_module", lambda _name: fake_module)
+
+    run_fn, _module_name, meta = mod._build_native_launch_fn(
+        kernel="normed_cumsum2d",
+        inputs_np={
+            "inp": np.ones((4, 64), dtype=np.float32),
+            "axis": np.array(1, dtype=np.int32),
+            "eps": np.array(1.0e-6, dtype=np.float32),
+        },
+        bindings={"M": 4, "N": 64, "AXIS": 1, "EPS": 1.0e-6},
+        spec_map={"normed_cumsum2d": {"spec": SimpleNamespace(module="fake.module"), "source": "flaggems_native"}},
+        device="cuda",
+    )
+    assert str(meta.get("launch_source") or "") == "kernel_adapter:normed_cumsum2d"
+    run_fn()
+    assert len(native_calls) == 1
+    assert native_calls[0][0] == "normed_cumsum"
+    assert helper_calls == []
+
+
 def test_to_status_entries_emits_runtime_fallback_and_native_launch_fields() -> None:
     mod = _load_module()
     rows = [

@@ -527,23 +527,66 @@ def _kernel_name_variants(raw: str) -> list[str]:
     return out
 
 
-def _select_native_callable(module: Any, kernel: str) -> Callable[..., Any] | None:
+def _select_native_callable(
+    module: Any,
+    kernel: str,
+    *,
+    extra_candidates: list[str] | None = None,
+    include_all_exports: bool = True,
+) -> Callable[..., Any] | None:
+    def _resolve_candidate(obj: Any, name: str) -> Callable[..., Any] | None:
+        if callable(obj):
+            return obj
+        if not inspect.ismodule(obj):
+            return None
+        n = str(name or "").strip()
+        preferred = [n]
+        if n.startswith("bitwise_"):
+            preferred = [f"{n}_tensor", f"{n}_scalar_tensor", f"{n}_scalar", n]
+        elif n == "div":
+            preferred = ["true_divide", "div_mode", "floor_divide", "remainder", n]
+        elif n == "lerp":
+            preferred = ["lerp_tensor", "lerp_scalar", n]
+        elif n == "conv_depthwise2d":
+            preferred = ["conv2d", n]
+        elif n == "unique2":
+            preferred = ["_unique2", "unique", n]
+        for cand in preferred:
+            sub = getattr(obj, str(cand), None)
+            if callable(sub):
+                return sub
+        key = _kernel_param_key(n)
+        for attr in dir(obj):
+            if str(attr).startswith("_"):
+                continue
+            sub = getattr(obj, attr, None)
+            if not callable(sub):
+                continue
+            norm = _kernel_param_key(str(attr))
+            if norm == key or norm.startswith(key) or key.startswith(norm):
+                return sub
+        return None
+
     candidates: list[str] = []
     for k in _kernel_name_variants(str(kernel)):
         if k not in candidates:
             candidates.append(k)
+    for k in list(extra_candidates or []):
+        if str(k) not in candidates:
+            candidates.append(str(k))
     mod_name = str(getattr(module, "__name__", "")).split(".")[-1]
     if mod_name:
         for k in _kernel_name_variants(mod_name):
             if k not in candidates:
                 candidates.append(k)
 
-    all_names = [str(x) for x in list(getattr(module, "__all__", []) or [])]
-    for name in all_names:
-        if name.endswith("_kernel"):
-            continue
-        if name not in candidates:
-            candidates.append(name)
+    if bool(include_all_exports):
+        all_names = [str(x) for x in list(getattr(module, "__all__", []) or [])]
+        for name in all_names:
+            if name.endswith("_kernel"):
+                continue
+            if name not in candidates:
+                candidates.append(name)
 
     callable_names: list[str] = []
     for attr in dir(module):
@@ -558,8 +601,9 @@ def _select_native_callable(module: Any, kernel: str) -> Callable[..., Any] | No
 
     for name in candidates:
         obj = getattr(module, name, None)
-        if _callable_usable_for_launch(name, obj):
-            return obj
+        resolved = _resolve_candidate(obj, str(name))
+        if _callable_usable_for_launch(str(name), resolved):
+            return resolved
 
     # Normalized-name match fallback (e.g. abs2d -> abs).
     callable_by_norm: dict[str, str] = {}
@@ -594,10 +638,15 @@ def _build_native_launch_adapter(
     kernel_key = _kernel_param_key(kernel)
 
     def _pick_callable(*names: str) -> Callable[..., Any] | None:
+        flaggems_ops = getattr(module, "flag_gems_ops", None)
         for name in names:
             obj = getattr(module, str(name), None)
             if callable(obj):
                 return obj
+            if flaggems_ops is not None:
+                obj = getattr(flaggems_ops, str(name), None)
+                if callable(obj):
+                    return obj
         return None
 
     def _pick_tensor(*aliases: str, required: bool = True) -> torch.Tensor | None:
@@ -705,6 +754,20 @@ def _build_native_launch_adapter(
                 _ = callee(inp, weight, eps)
 
             return _run, {"launch_source": "kernel_adapter:rms_norm2d", "arg_count": 3}
+
+    if kernel_key == "normedcumsum2d":
+        fg_ops = getattr(module, "flag_gems_ops", None)
+        callee = getattr(fg_ops, "normed_cumsum", None) if fg_ops is not None else None
+        if not callable(callee):
+            callee = _pick_callable("normed_cumsum")
+        if callee is not None:
+            inp = _pick_tensor("inp", "input", "x", "a")
+            dim = int(_pick_scalar("axis", "AXIS", "dim", default=-1))
+
+            def _run() -> None:
+                _ = callee(inp, dim=dim)
+
+            return _run, {"launch_source": "kernel_adapter:normed_cumsum2d", "arg_count": 2}
 
     if kernel_key == "where2d":
         callee = _pick_callable("where2d")
@@ -861,7 +924,11 @@ def _build_native_launch_fn(
             "launch_source": launch_source,
         }
 
-    callee = _select_native_callable(module, str(kernel))
+    callee = _select_native_callable(
+        module,
+        str(kernel),
+        include_all_exports=True,
+    )
     if callee is None:
         raise RuntimeError(f"no native callable found in module={spec.module} kernel={kernel}")
 
