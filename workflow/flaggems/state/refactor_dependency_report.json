@@ -1,18 +1,15 @@
 {
   "schema_version": "refactor_dependency_report_v1",
-  "generated_at": "2026-02-26T10:19:59+00:00",
-  "head_commit": "ca3985539cd706dc6fe09a5bba5489357c3a1fe2",
+  "generated_at": "2026-02-26T10:22:20+00:00",
+  "head_commit": "80299af5d548978c5bb36eb0a0c8337df7acf4a4",
   "branch": "compiler-cleanup-v1",
   "legacy_dependency_refs": {
     "cuda_cpp_codegen_refs": {
       "pattern": "backends/cuda/cpp_codegen|backends\\.cuda\\.codegen|lower_intent_to_cuda_kernel_cpp|lower_intent_json_to_cuda_kernel_cpp|INTENTIR_CUDA_CPP_CODEGEN",
-      "count": 5,
+      "count": 2,
       "matches": [
         "tests/backends/cuda/test_cuda_pipeline_driver.py:212:        _ = importlib.import_module(\"backends.cuda.codegen\")",
-        "tests/backends/cuda/test_cuda_pipeline_driver.py:214:        _ = importlib.import_module(\"backends.cuda.codegen.cpp_driver\")",
-        "scripts/cuda_backend_smoke.py:797:    os.environ.pop(\"INTENTIR_CUDA_CPP_CODEGEN_ENGINE\", None)",
-        "scripts/cuda_backend_smoke.py:798:    os.environ.pop(\"INTENTIR_CUDA_CPP_CODEGEN_ENGINE_STRICT\", None)",
-        "scripts/flaggems/check_batch_gate.py:461:        \"INTENTIR_CUDA_CPP_CODEGEN_ENGINE\","
+        "tests/backends/cuda/test_cuda_pipeline_driver.py:214:        _ = importlib.import_module(\"backends.cuda.codegen.cpp_driver\")"
       ]
     },
     "rvv_compat_refs": {
