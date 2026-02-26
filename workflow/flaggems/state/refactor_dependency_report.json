@@ -1,0 +1,73 @@
+{
+  "schema_version": "refactor_dependency_report_v1",
+  "generated_at": "2026-02-26T09:43:02Z",
+  "head_commit": "4c2b6b93701b1d1733b1c0ce56db58b514d0cc34",
+  "branch": "compiler-cleanup-v1",
+  "legacy_dependency_refs": {
+    "cuda_cpp_codegen_refs": {
+      "pattern": "backends/cuda/cpp_codegen|lower_intent_to_cuda_kernel_cpp|lower_intent_json_to_cuda_kernel_cpp|INTENTIR_CUDA_CPP_CODEGEN",
+      "count": 45,
+      "matches": [
+        "tests/backends/cuda/test_cuda_pipeline_driver.py:8:from backends.cuda.codegen.cpp_driver import lower_intent_json_to_cuda_kernel_cpp, lower_intent_to_cuda_kernel_cpp",
+        "tests/backends/cuda/test_cuda_pipeline_driver.py:226:    lowered = lower_intent_to_cuda_kernel_cpp(intent, bindings={\"M\": 4, \"N\": 64})",
+        "tests/backends/cuda/test_cuda_pipeline_driver.py:232:def test_lower_intent_json_to_cuda_kernel_cpp_accepts_json_payload() -> None:",
+        "tests/backends/cuda/test_cuda_pipeline_driver.py:234:    lowered = lower_intent_json_to_cuda_kernel_cpp(intent.to_json_dict(), bindings={\"M\": 4, \"N\": 64})",
+        "tests/backends/cuda/test_cuda_pipeline_driver.py:241:    lowered = lower_intent_to_cuda_kernel_cpp(_sdpa_intent(), bindings={\"B\": 1, \"H\": 2, \"Q\": 8, \"K\": 8, \"D\": 16})",
+        "tests/backends/cuda/test_cuda_pipeline_driver.py:252:    lowered = lower_intent_to_cuda_kernel_cpp(intent, bindings={\"N\": 16, \"M\": 32, \"alpha\": 1, \"beta\": 1})",
+        "tests/backends/cuda/test_cuda_pipeline_driver.py:530:        \"backends.cuda.codegen.cpp_driver.lower_intent_to_cuda_kernel_cpp\",",
+        "tests/backends/cuda/test_cuda_pipeline_driver.py:594:        \"backends.cuda.codegen.cpp_driver.lower_intent_to_cuda_kernel_cpp\",",
+        "tests/backends/cuda/test_cuda_pipeline_driver.py:670:        \"backends.cuda.codegen.cpp_driver.lower_intent_to_cuda_kernel_cpp\",",
+        "tests/backends/cuda/test_cuda_pipeline_driver.py:722:        \"backends.cuda.codegen.cpp_driver.lower_intent_to_cuda_kernel_cpp\",",
+        "tests/backends/cuda/test_cuda_pipeline_driver.py:776:        \"backends.cuda.codegen.cpp_driver.lower_intent_to_cuda_kernel_cpp\",",
+        "tests/backends/cuda/test_cuda_pipeline_driver.py:782:        \"backends.cuda.codegen.cpp_driver.lower_intent_json_to_cuda_kernel_cpp\",",
+        "tests/backends/cuda/test_cuda_pipeline_driver.py:837:        \"backends.cuda.codegen.cpp_driver.lower_intent_json_to_cuda_kernel_cpp\",",
+        "scripts/cuda_backend_smoke.py:797:    os.environ.pop(\"INTENTIR_CUDA_CPP_CODEGEN_ENGINE\", None)",
+        "scripts/cuda_backend_smoke.py:798:    os.environ.pop(\"INTENTIR_CUDA_CPP_CODEGEN_ENGINE_STRICT\", None)",
+        "scripts/flaggems/check_batch_gate.py:461:        \"INTENTIR_CUDA_CPP_CODEGEN_ENGINE\",",
+        "intent_ir/mlir/passes/lower_intent_to_llvm_dialect.py:11:from backends.cuda.codegen.cpp_driver import lower_intent_to_cuda_kernel_cpp",
+        "intent_ir/mlir/passes/lower_intent_to_llvm_dialect.py:93:                lowered = lower_intent_to_cuda_kernel_cpp(intent, bindings=shape_bindings)",
+        "intent_ir/mlir/passes/lower_intent_to_llvm_dialect.py:104:                    lowered = lower_intent_to_cuda_kernel_cpp(intent, bindings=shape_bindings)",
+        "pipeline/mlir_contract_artifacts.py:822:        from backends.cuda.codegen.cpp_driver import lower_intent_to_cuda_kernel_cpp  # noqa: PLC0415",
+        "pipeline/mlir_contract_artifacts.py:878:            lowered = lower_intent_to_cuda_kernel_cpp(intent, bindings=shape_bindings)",
+        "pipeline/mlir_contract_artifacts.py:1048:        from backends.cuda.codegen.cpp_driver import lower_intent_to_cuda_kernel_cpp  # noqa: PLC0415",
+        "pipeline/mlir_contract_artifacts.py:1059:                lowered = lower_intent_to_cuda_kernel_cpp(cand_intent, bindings=bindings)",
+        "tests/intentir/test_mlir_migration.py:138:        \"lower_intent_to_cuda_kernel_cpp\",",
+        "tests/intentir/test_mlir_migration.py:164:        \"lower_intent_to_cuda_kernel_cpp\",",
+        "backends/cuda/codegen/cpp_driver.py:23:    # backends/cuda/cpp_codegen (C++ host tool)",
+        "backends/cuda/codegen/cpp_driver.py:30:        env_var=\"INTENTIR_CUDA_CPP_CODEGEN_BUILD_DIR\",",
+        "backends/cuda/codegen/cpp_driver.py:51:        env_var=\"INTENTIR_CUDA_CPP_CODEGEN_EXT_BUILD_DIR\",",
+        "backends/cuda/codegen/cpp_driver.py:98:    raw = os.getenv(\"INTENTIR_CUDA_CPP_CODEGEN_LOCK_STALE_SEC\", \"300\")",
+        "backends/cuda/codegen/cpp_driver.py:186:    The backend tool lives in `backends/cuda/cpp_codegen/` and parses IntentIR",
+        "backends/cuda/codegen/cpp_driver.py:201:def lower_intent_to_cuda_kernel_cpp(",
+        "backends/cuda/codegen/cpp_driver.py:213:    return lower_intent_json_to_cuda_kernel_cpp(",
+        "backends/cuda/codegen/cpp_driver.py:220:def lower_intent_json_to_cuda_kernel_cpp(",
+        "backends/cuda/codegen/cpp_driver.py:280:        j = lower_intent_to_cuda_kernel_cpp(intent, bindings=_normalize_bindings(shape_bindings))",
+        "backends/cuda/codegen/cpp_driver.py:317:        j = lower_intent_json_to_cuda_kernel_cpp(payload, bindings=_normalize_bindings(shape_bindings))",
+        "backends/cuda/codegen/cpp_driver.py:344:    \"lower_intent_to_cuda_kernel_cpp\",",
+        "backends/cuda/codegen/cpp_driver.py:345:    \"lower_intent_json_to_cuda_kernel_cpp\",",
+        "tests/intentir/test_mlir_contract_artifacts.py:156:        \"backends.cuda.codegen.cpp_driver.lower_intent_to_cuda_kernel_cpp\",",
+        "tests/intentir/test_mlir_contract_artifacts.py:228:        \"backends.cuda.codegen.cpp_driver.lower_intent_to_cuda_kernel_cpp\",",
+        "backends/cuda/codegen/__init__.py:6:from .cpp_driver import lower_intent_json_to_cuda_kernel, lower_intent_json_to_cuda_kernel_cpp  # noqa: F401",
+        "backends/cuda/codegen/__init__.py:11:    \"lower_intent_json_to_cuda_kernel_cpp\",",
+        "backends/cuda/pipeline/driver.py:255:        lower_intent_json_to_cuda_kernel_cpp,",
+        "backends/cuda/pipeline/driver.py:256:        lower_intent_to_cuda_kernel_cpp,",
+        "backends/cuda/pipeline/driver.py:267:        lowered = lower_intent_to_cuda_kernel_cpp(intent, bindings=dict(bindings))",
+        "backends/cuda/pipeline/driver.py:271:                lowered = lower_intent_json_to_cuda_kernel_cpp(dict(fallback_intent_json), bindings=dict(bindings))"
+      ]
+    },
+    "rvv_compat_refs": {
+      "pattern": "lower_intent_to_c_with_files_cpp|compat_c_src|INTENTIR_RVV_.*COMPAT|INTENTIR_RVV_EMIT_COMPAT_C_SRC",
+      "count": 8,
+      "matches": [
+        "tests/backends/spmd_rvv/test_rvv_remote_run_bytes.py:40:    assert \"compat_c_src\" not in src",
+        "intent_ir/mlir/passes/lower_intent_to_llvm_dialect.py:12:from backends.spmd_rvv.codegen.cpp_driver import lower_intent_to_c_with_files_cpp",
+        "intent_ir/mlir/passes/lower_intent_to_llvm_dialect.py:122:            c_src = lower_intent_to_c_with_files_cpp(",
+        "intent_ir/mlir/passes/lower_intent_to_llvm_dialect.py:139:    c_src = lower_intent_to_c_with_files_cpp(",
+        "backends/spmd_rvv/codegen/cpp_driver.py:24:def lower_intent_to_c_with_files_cpp(",
+        "backends/spmd_rvv/codegen/cpp_driver.py:59:    \"lower_intent_to_c_with_files_cpp\",",
+        "backends/spmd_rvv/codegen/__init__.py:9:from .cpp_driver import ensure_cpp_codegen_built, lower_intent_json_to_c_with_files_cpp, lower_intent_to_c_with_files, lower_intent_to_c_with_files_cpp  # noqa: F401",
+        "backends/spmd_rvv/codegen/__init__.py:13:    \"lower_intent_to_c_with_files_cpp\","
+      ]
+    }
+  }
+}
