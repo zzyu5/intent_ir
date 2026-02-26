@@ -1,17 +1,17 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-26T05:12:10+00:00",
+  "updated_at": "2026-02-26T05:18:43+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "9a4e6b1d322b450a2f885596369e8df9bba665a8",
+  "head_commit": "8f597ef3a669a9dbe6dc07af5574e2f6d1b09ff3",
   "mode": "maintenance",
   "coverage_integrity_phase": "recomputed_ok",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
   "full196_last_ok": true,
-  "full196_validated_commit": "9a4e6b1d322b450a2f885596369e8df9bba665a8",
+  "full196_validated_commit": "8f597ef3a669a9dbe6dc07af5574e2f6d1b09ff3",
   "full196_validated_commit_source": "run_summary.repo.head_commit",
   "full196_commits_since_validated": 0,
-  "full196_commits_since_validated_total": 1,
-  "full196_lifted_to_head": true,
+  "full196_commits_since_validated_total": 0,
+  "full196_lifted_to_head": false,
   "full196_validated_mode": "force_cache",
   "full196_validated_execution_ir": "mlir",
   "full196_validated_scope": "coverage_158_kernels_to_196_semantics",
@@ -21,9 +21,9 @@
   "coverage_batches_completed": 7,
   "coverage_batches_failed": [],
   "full196_evidence_kind": "batch_aggregate",
-  "full196_last_run_repo_head_commit": "8cd717a279c0bd6a32f6b406aeefc915220dd38f",
+  "full196_last_run_repo_head_commit": "8f597ef3a669a9dbe6dc07af5574e2f6d1b09ff3",
   "full196_last_run_repo_branch": "compiler-cleanup-v1",
-  "full196_last_run_dirty": false,
+  "full196_last_run_dirty": true,
   "full196_artifact_repo_stamp_ok": true,
   "mlir_migration_phase": "default_mlir",
   "mlir_cutover_level": "mlir_primary",
@@ -31,11 +31,11 @@
   "mlir_toolchain_ok": true,
   "mlir_backend_contract_ready": true,
   "mlir_llvm_chain_ok": true,
-  "mlir_full196_validated_commit": "9a4e6b1d322b450a2f885596369e8df9bba665a8",
+  "mlir_full196_validated_commit": "8f597ef3a669a9dbe6dc07af5574e2f6d1b09ff3",
   "gpu_perf_phase": "recomputed_ok",
   "gpu_perf_last_run": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/run_summary.json",
   "gpu_perf_last_ok": true,
-  "gpu_perf_validated_commit": "9a4e6b1d322b450a2f885596369e8df9bba665a8",
+  "gpu_perf_validated_commit": "8f597ef3a669a9dbe6dc07af5574e2f6d1b09ff3",
   "gpu_perf_commits_since_validated": 0,
   "gpu_perf_mode": "graph_only",
   "gpu_perf_threshold": 0.8,
@@ -128,12 +128,12 @@
   "active_lanes": [],
   "next_focus_by_lane": {
     "mlir_migration": "Sync deep_read truth package with wave64 evidence and keep strict gate freshness on HEAD.",
-    "coverage": "Refresh gpu_perf strict evidence on same HEAD.",
-    "backend_compiler": "Proceed RVV strict cutover and deep_read truth sync."
+    "coverage": "Finalize deep_read truth sync for current HEAD evidence.",
+    "backend_compiler": "Sync deep_read truth package to current strict evidence."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json"
   },
   "lanes": {
     "coverage": {

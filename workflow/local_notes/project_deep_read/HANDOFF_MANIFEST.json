@@ -1,7 +1,7 @@
 {
   "schema_version": "intentir_handoff_manifest_v1",
-  "generated_at": "2026-02-25T23:54:00Z",
-  "snapshot_commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
+  "generated_at": "2026-02-26T05:19:01Z",
+  "snapshot_commit": "8f597ef3a669a9dbe6dc07af5574e2f6d1b09ff3",
   "docs": [
     "workflow/local_notes/project_deep_read/INTENTIR_MASTER_BRIEF.md",
     "workflow/local_notes/project_deep_read/DIRECTORY_ATLAS.md",
@@ -18,8 +18,8 @@
     "workflow/local_notes/project_deep_read/evidence_index.json"
   ],
   "unresolved_questions": [
-    "RVV strict 切换何时将 compat_cpp_codegen 完全下线并转为 hard-fail（当前仍需继续推进）。",
-    "是否需要把 deep_read 真相包生成过程脚本化，避免后续人工回写漂移。",
-    "是否将 scoped convergence projection 上沉到 converge_status.py，减少 run_multibackend_matrix 的后处理职责。"
+    "RVV strict 路径何时将 compat_cpp_codegen 完全降级为 debug-only 并默认 hard-fail。",
+    "是否在当前 HEAD 追加一轮 mlir_migration strict wave（更新 matrix_wave64 到 HEAD 级证据）。",
+    "是否将 deep_read 真相包回写流程脚本化，避免人工回写漂移。"
   ]
 }
