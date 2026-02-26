@@ -207,56 +207,12 @@ def test_run_cuda_pipeline_accepts_contract_json_mapping() -> None:
     assert result.input_ir_kind == "mlir_contract"
 
 
-def test_var_mean_codegen_signature_has_no_trailing_comma() -> None:
-    intent = IntentFunction.from_json_dict(
-        {
-            "name": "var_mean2d",
-            "tensors": {
-                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
-                "std_out": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
-                "out": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
-            },
-            "ops": [
-                {"op": "std", "inputs": ["inp"], "output": "std_out", "attrs": {"axis": 1, "dims": [1], "keepdims": False, "correction": 1}},
-                {"op": "mul", "inputs": ["std_out", "std_out"], "output": "out", "attrs": {}},
-            ],
-            "outputs": ["out"],
-        }
-    )
-    lowered = lower_intent_to_cuda_kernel_cpp(intent, bindings={"M": 4, "N": 64})
-    src = str(lowered.get("cuda_src") or "")
-    assert "float* __restrict__ out,\n)" not in src
-    assert "float* __restrict__ out\n)" in src
-
-
-def test_lower_intent_json_to_cuda_kernel_cpp_accepts_json_payload() -> None:
-    intent = _add_intent("cuda_pipeline_json_lower")
-    lowered = lower_intent_json_to_cuda_kernel_cpp(intent.to_json_dict(), bindings={"M": 4, "N": 64})
-    assert isinstance(lowered, dict)
-    assert str(lowered.get("kernel_name") or "").strip()
-    assert isinstance(lowered.get("io_spec"), dict)
-
-
-def test_sdpa_codegen_launch_covers_total_elements() -> None:
-    lowered = lower_intent_to_cuda_kernel_cpp(_sdpa_intent(), bindings={"B": 1, "H": 2, "Q": 8, "K": 8, "D": 16})
-    launch = dict(lowered.get("launch") or {})
-    grid = list(launch.get("grid") or [])
-    block = list(launch.get("block") or [])
-    assert len(grid) == 3 and len(block) == 3
-    total = 1 * 2 * 8 * 16
-    assert int(grid[0]) * int(block[0]) >= total
-
-
-def test_addmv_reduce_form_codegen_is_supported() -> None:
-    intent = _addmv_reduce_intent()
-    lowered = lower_intent_to_cuda_kernel_cpp(intent, bindings={"N": 16, "M": 32, "alpha": 1, "beta": 1})
-    assert isinstance(lowered, dict)
-    assert str(lowered.get("kernel_name") or "").strip()
-    output_names = [str(x) for x in list(lowered.get("output_names") or [])]
-    assert "Out" in output_names
-    launch = dict(lowered.get("launch") or {})
-    assert len(list(launch.get("grid") or [])) == 3
-    assert len(list(launch.get("block") or [])) == 3
+def test_cuda_cpp_codegen_entrypoints_are_removed_for_hard_cut() -> None:
+    intent = _add_intent("cuda_pipeline_json_lower_removed")
+    with pytest.raises(RuntimeError, match="removed from strict hard-cut path"):
+        _ = lower_intent_json_to_cuda_kernel_cpp(intent.to_json_dict(), bindings={"M": 4, "N": 64})
+    with pytest.raises(RuntimeError, match="removed from strict hard-cut path"):
+        _ = lower_intent_to_cuda_kernel_cpp(intent, bindings={"M": 4, "N": 64})
 
 
 def test_lower_cuda_contract_to_kernel_rejects_cuda_kernel_json_executable(tmp_path: Path) -> None:

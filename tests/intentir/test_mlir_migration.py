@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from intent_ir.ir import IntentFunction
 from intent_ir.mlir import detect_mlir_toolchain, run_pipeline, to_intent, to_mlir
 from intent_ir.mlir.passes.attach_provider_meta import attach_provider_meta
@@ -129,79 +131,25 @@ def test_ensure_llvm_ir_text_fails_without_real_llvm_text() -> None:
         raise AssertionError("ensure_llvm_ir_text should fail for non-LLVM payloads")
 
 
-def test_lower_intent_to_llvm_dialect_cuda_prefers_device_llvm_path(monkeypatch) -> None:
-    intent = _sample_intent()
-    module = to_mlir(intent)
+@pytest.mark.parametrize("backend", ["cuda", "rvv"])
+def test_lower_intent_to_llvm_dialect_rejects_non_llvm_input_in_hard_cut(backend: str) -> None:
+    module = to_mlir(_sample_intent())
+    with pytest.raises(RuntimeError, match="legacy C/CUDA-C fallback has been removed"):
+        _ = _LOWER_LLVM_PASS.lower_intent_to_llvm_dialect(module, backend=backend)
 
-    monkeypatch.setattr(
-        _LOWER_LLVM_PASS,
-        "lower_intent_to_cuda_kernel_cpp",
-        lambda *_a, **_k: {"kernel_name": "add2d", "cuda_src": 'extern "C" __global__ void add2d(float* out) { out[0] = 1.0f; }'},
+
+@pytest.mark.parametrize("backend", ["cuda", "rvv"])
+def test_lower_intent_to_llvm_dialect_passes_through_existing_llvm_text(backend: str) -> None:
+    llvm_module = to_mlir(_sample_intent())
+    llvm_module.module_text = (
+        '; ModuleID = "intentir"\n'
+        'target triple = "nvptx64-nvidia-cuda"\n'
+        "define void @k() { ret void }\n"
     )
-    monkeypatch.setattr(
-        _LOWER_LLVM_PASS,
-        "_compile_cuda_src_to_device_llvm_ir",
-        lambda _src, *, kernel_name: (
-            '; ModuleID = "cuda"\ntarget triple = "nvptx64-nvidia-cuda"\ndefine void @add2d() { ret void }\n',
-            "/fake/clang++",
-        ),
-    )
-
-    out = _LOWER_LLVM_PASS.lower_intent_to_llvm_dialect(module, backend="cuda")
-    assert str(out.meta.get("llvm_dialect_origin") or "") == "lowered_from_intent_cuda_codegen"
-    assert str(out.meta.get("llvm_cuda_compiler") or "") == "/fake/clang++"
-    assert str(out.meta.get("llvm_cuda_kernel_name") or "") == "add2d"
-    assert str(out.meta.get("llvm_target_triple") or "") == "nvptx64-nvidia-cuda"
-    assert "define void @add2d" in str(out.module_text)
-
-
-def test_lower_intent_to_llvm_dialect_cuda_falls_back_to_c_codegen_on_cuda_path_error(monkeypatch) -> None:
-    intent = _sample_intent()
-    module = to_mlir(intent)
-
-    monkeypatch.setattr(
-        _LOWER_LLVM_PASS,
-        "lower_intent_to_cuda_kernel_cpp",
-        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("cuda lowering failed")),
-    )
-    monkeypatch.setattr(
-        _LOWER_LLVM_PASS,
-        "_compile_c_to_llvm_ir",
-        lambda _src: (
-            '; ModuleID = "host"\ntarget triple = "x86_64-pc-linux-gnu"\ndefine void @main() { ret void }\n',
-            "/fake/clang",
-        ),
-    )
-
-    out = _LOWER_LLVM_PASS.lower_intent_to_llvm_dialect(module, backend="cuda")
-    assert str(out.meta.get("llvm_dialect_origin") or "") == "lowered_from_intent_c_codegen_fallback_for_cuda"
-    assert "cuda lowering failed" in str(out.meta.get("llvm_cuda_backend_error") or "")
-    assert str(out.meta.get("llvm_target_triple") or "") == "x86_64-pc-linux-gnu"
-
-
-def test_lower_intent_to_llvm_dialect_rvv_retargets_host_llvm_to_riscv(monkeypatch) -> None:
-    intent = _sample_intent()
-    module = to_mlir(intent)
-    host_llvm = (
-        '; ModuleID = "host"\n'
-        'target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"\n'
-        'target triple = "x86_64-pc-linux-gnu"\n'
-        "define void @main() #0 { ret void }\n"
-        'attributes #0 = { "target-cpu"="x86-64" "target-features"="+cx8,+sse2" "tune-cpu"="generic" }\n'
-    )
-    monkeypatch.setattr(
-        _LOWER_LLVM_PASS,
-        "_compile_c_to_llvm_ir",
-        lambda _src: (host_llvm, "/fake/clang"),
-    )
-
-    out = _LOWER_LLVM_PASS.lower_intent_to_llvm_dialect(module, backend="rvv")
-    assert str(out.meta.get("llvm_dialect_origin") or "") == "lowered_from_intent_c_codegen_rvv"
-    assert str(out.meta.get("llvm_target_triple") or "") == "riscv64-unknown-linux-gnu"
-    assert str(out.meta.get("llvm_rvv_target_triple") or "") == "riscv64-unknown-linux-gnu"
-    assert '"target-cpu"="x86-64"' not in str(out.module_text or "")
-    assert '"target-features"="+cx8,+sse2"' not in str(out.module_text or "")
-    assert 'target triple = "riscv64-unknown-linux-gnu"' in str(out.module_text or "")
+    out = _LOWER_LLVM_PASS.lower_intent_to_llvm_dialect(llvm_module, backend=backend)
+    assert str(out.meta.get("llvm_dialect_origin") or "") == "already_llvm_ir"
+    assert str(out.meta.get("llvm_dialect_backend") or "") == str(backend)
+    assert "define void @k" in str(out.module_text or "")
 
 
 def test_cuda_device_llvm_preamble_defines_infinity_and_nan() -> None:

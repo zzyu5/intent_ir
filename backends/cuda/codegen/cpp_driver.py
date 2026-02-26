@@ -1,350 +1,83 @@
+"""
+Compatibility stubs for removed CUDA C/C++ codegen.
+
+Strict MLIR hard-cut no longer supports IntentIR->CUDA C++ codegen entrypoints.
+Execution must flow through MLIR backend contracts with PTX executables.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
-import os
-import sys
-import time
-from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
-import hashlib
-
-from intent_ir.ir import IntentFunction
-from backends.cuda.runtime import CudaLaunch
-from backends.common.cpp_build import (
-    ensure_cmake_binary_built,
-    resolve_binary_path,
-    resolve_build_root,
-    stable_source_tag,
-)
+from typing import Any, Mapping
 
 
-def _cpp_codegen_dir() -> Path:
-    # backends/cuda/cpp_codegen (C++ host tool)
-    return Path(__file__).resolve().parents[1] / "cpp_codegen"
-
-
-def _cpp_codegen_build_dir() -> Path:
-    return resolve_build_root(
-        _cpp_codegen_dir(),
-        env_var="INTENTIR_CUDA_CPP_CODEGEN_BUILD_DIR",
-        namespace="cuda_cpp_codegen",
+def _removed() -> RuntimeError:
+    return RuntimeError(
+        "CUDA C/C++ compatibility codegen has been removed from strict hard-cut path; "
+        "use MLIR backend contracts with executable.format in {cuda_ptx, ptx}"
     )
-
-
-def _cpp_codegen_bin(*, build_type: str) -> Path:
-    return resolve_binary_path(
-        _cpp_codegen_build_dir(),
-        build_type=str(build_type),
-        binary_name="intentir_cuda_codegen",
-    )
-
-
-def _cpp_codegen_ext_build_dir() -> Path:
-    """
-    Build directory for the in-process pybind11 module.
-
-    This is intentionally separate from the CMake build dir used by the CLI tool.
-    """
-    return resolve_build_root(
-        _cpp_codegen_dir(),
-        env_var="INTENTIR_CUDA_CPP_CODEGEN_EXT_BUILD_DIR",
-        namespace="cuda_cpp_codegen_ext",
-    )
-
-
-def _maybe_add_python_ninja_to_path() -> None:
-    # Reuse the CUDA runtime helper when available (common on SSH clusters).
-    try:
-        from frontends.cuda.runtime import _maybe_add_python_ninja_to_path as _rt_fix  # type: ignore[attr-defined]
-
-        _rt_fix()
-    except Exception:
-        return
-
-
-_CPP_CODEGEN_EXT: Optional[Any] = None
-
-
-def _source_mtime_tag(source_dir: Path) -> str:
-    """
-    Coarse invalidation tag for pybind extension names.
-
-    Torch extension caching keys off module name + listed source files; `.inc`
-    updates are otherwise easy to miss. We fold source mtimes into the module
-    name to force rebuilds when codegen includes change.
-    """
-    suffixes = {".cpp", ".cc", ".c", ".h", ".hpp", ".inc", ".inl", ".cmake"}
-    h = hashlib.sha1()
-    for p in sorted(source_dir.rglob("*")):
-        if not p.is_file():
-            continue
-        if p.name != "CMakeLists.txt" and p.suffix not in suffixes:
-            continue
-        try:
-            st = p.stat()
-        except FileNotFoundError:
-            continue
-        rel = str(p.relative_to(source_dir))
-        h.update(rel.encode("utf-8"))
-        h.update(str(int(st.st_mtime_ns)).encode("utf-8"))
-    return h.hexdigest()[:10]
-
-
-def _prune_stale_torch_lock(build_dir: Path) -> None:
-    lock_path = build_dir / "lock"
-    if not lock_path.is_file():
-        return
-    raw = os.getenv("INTENTIR_CUDA_CPP_CODEGEN_LOCK_STALE_SEC", "300")
-    try:
-        stale_sec = max(30, int(raw))
-    except Exception:
-        stale_sec = 300
-    try:
-        age_sec = max(0.0, time.time() - float(lock_path.stat().st_mtime))
-    except Exception:
-        return
-    if age_sec < float(stale_sec):
-        return
-    try:
-        lock_path.unlink()
-    except Exception:
-        # Best effort only. If removal fails, torch's own lock handling still applies.
-        return
-
-
-def ensure_cpp_codegen_ext_loaded(*, verbose: bool = False) -> Any:
-    """
-    Ensure the pybind11 module is built and importable, returning the loaded module.
-
-    The module provides:
-      - lower_from_json_str(intent_json: str, bindings_json: str) -> str
-
-    NOTE: This is for backend maturity (in-process codegen). It does not affect
-    the performance of the generated CUDA kernels.
-    """
-    global _CPP_CODEGEN_EXT
-    if _CPP_CODEGEN_EXT is not None:
-        return _CPP_CODEGEN_EXT
-
-    _maybe_add_python_ninja_to_path()
-    try:
-        from frontends.cuda.runtime import _maybe_set_cuda_home_for_hopper as _rt_cuda_home_fix  # type: ignore[attr-defined]
-
-        _rt_cuda_home_fix()
-    except Exception:
-        pass
-    try:
-        from torch.utils.cpp_extension import load  # noqa: PLC0415
-    except Exception as e:
-        raise RuntimeError(f"cuda cpp codegen ext: torch extension build unavailable: {type(e).__name__}: {e}") from e
-
-    src_dir = _cpp_codegen_dir()
-    src_tag = stable_source_tag(src_dir)
-    src_mtime_tag = _source_mtime_tag(src_dir)
-    py_tag = f"py{sys.version_info.major}{sys.version_info.minor}"
-    # Bump this suffix if the module init symbol changes (pybind module name must match).
-    name = f"intentir_cuda_codegen_ext_{src_tag}_{src_mtime_tag}_{py_tag}_v1"
-    build_dir = _cpp_codegen_ext_build_dir() / py_tag
-    build_dir.mkdir(parents=True, exist_ok=True)
-    _prune_stale_torch_lock(build_dir)
-
-    third_party = (src_dir.parents[1] / "spmd_rvv" / "cpp_codegen" / "third_party").resolve()
-    extra_includes = [str(src_dir), str(third_party)]
-
-    extra_cflags = [
-        "-O3",
-        "-std=c++17",
-        "-DINTENTIR_CUDA_CODEGEN_NO_MAIN=1",
-        "-DINTENTIR_CUDA_CODEGEN_PYBIND=1",
-        f"-DINTENTIR_CUDA_CODEGEN_PYBIND_MODULE_NAME={name}",
-    ]
-
-    mod = load(
-        name=name,
-        sources=[
-            str(src_dir / "intentir_cuda_codegen.cpp"),
-            str(src_dir / "ir_model.cpp"),
-            str(src_dir / "shape_eval.cpp"),
-        ],
-        extra_cflags=extra_cflags,
-        extra_include_paths=extra_includes,
-        build_directory=str(build_dir),
-        verbose=bool(verbose),
-        with_cuda=False,
-        is_python_module=True,
-        is_standalone=False,
-    )
-    _CPP_CODEGEN_EXT = mod
-    return mod
-
-
-def ensure_cpp_codegen_built(*, build_type: str = "Release") -> Path:
-    """
-    Ensure the C++ IntentIR->CUDA codegen binary is built and return its path.
-
-    The backend tool lives in `backends/cuda/cpp_codegen/` and parses IntentIR
-    JSON directly. Python remains orchestration only.
-    """
-    src_dir = _cpp_codegen_dir()
-    build_dir = _cpp_codegen_build_dir() / str(build_type).lower()
-    bin_path = _cpp_codegen_bin(build_type=build_type)
-    return ensure_cmake_binary_built(
-        source_dir=src_dir,
-        build_dir=build_dir,
-        binary_path=bin_path,
-        build_type=str(build_type),
-        label="cuda cpp codegen",
-    )
-
-
-def lower_intent_to_cuda_kernel_cpp(
-    intent: IntentFunction,
-    *,
-    bindings: Mapping[str, Any],
-    build_type: str = "Release",
-) -> Dict[str, Any]:
-    """
-    Lower `IntentFunction` into a single CUDA kernel by invoking the C++ pybind backend.
-
-    Returns a plain JSON-like dict with keys compatible with `CudaLoweredKernel`:
-      - kernel_name, cuda_src, io_spec, launch, output_names, bindings
-    """
-    return lower_intent_json_to_cuda_kernel_cpp(
-        intent.to_json_dict(),
-        bindings=bindings,
-        build_type=build_type,
-    )
-
-
-def lower_intent_json_to_cuda_kernel_cpp(
-    intent_json: Mapping[str, Any],
-    *,
-    bindings: Mapping[str, Any],
-    build_type: str = "Release",
-) -> Dict[str, Any]:
-    """
-    Lower IntentIR JSON payload directly through the C++ pybind backend.
-
-    This is the MLIR-backend-contract entrypoint used by compiler pipelines.
-    """
-    del build_type  # Reserved for future ABI/version routing.
-    payload = dict(intent_json or {})
-    bindings_json = dict(bindings)
-    mod = ensure_cpp_codegen_ext_loaded(verbose=False)
-    out_s = mod.lower_from_json_str(json.dumps(payload), json.dumps(bindings_json))
-    j = json.loads(str(out_s))
-    if not isinstance(j, dict):
-        raise RuntimeError("cuda cpp codegen ext: output must be a JSON object")
-    return j
-
-
-class CudaLoweringError(RuntimeError):
-    pass
 
 
 @dataclass(frozen=True)
 class CudaLoweredKernel:
     kernel_name: str
     cuda_src: str
-    io_spec: Dict[str, Any]
-    launch: CudaLaunch
+    io_spec: dict[str, Any]
+    launch: Any
     output_names: list[str]
-    bindings: Dict[str, Any]
+    bindings: dict[str, Any]
 
 
-def _normalize_bindings(shape_bindings: Mapping[str, Any]) -> dict[str, Any]:
-    out: dict[str, Any] = {}
-    for key_raw, value in dict(shape_bindings).items():
-        key = str(key_raw)
-        if isinstance(value, bool):
-            out[key] = int(value)
-            continue
-        if isinstance(value, int):
-            out[key] = int(value)
-            continue
-        try:
-            f = float(value)
-        except Exception:
-            continue
-        out[key] = int(f) if float(f).is_integer() else float(f)
-    return out
+def ensure_cpp_codegen_ext_loaded(*, verbose: bool = False) -> Any:  # noqa: ARG001
+    raise _removed()
+
+
+def ensure_cpp_codegen_built(*, build_type: str = "Release") -> str:  # noqa: ARG001
+    raise _removed()
+
+
+def lower_intent_to_cuda_kernel_cpp(
+    intent_or_json: Any,  # noqa: ARG001
+    *,
+    bindings: Mapping[str, Any],
+    build_type: str = "Release",  # noqa: ARG001
+) -> dict[str, Any]:
+    raise _removed()
+
+
+def lower_intent_json_to_cuda_kernel_cpp(
+    intent_json: Mapping[str, Any],  # noqa: ARG001
+    *,
+    bindings: Mapping[str, Any],
+    build_type: str = "Release",  # noqa: ARG001
+) -> dict[str, Any]:
+    raise _removed()
 
 
 def lower_intent_to_cuda_kernel(
-    intent: IntentFunction,
+    intent_or_json: Any,  # noqa: ARG001
     *,
-    shape_bindings: Mapping[str, Any],
+    shape_bindings: Mapping[str, Any] | None = None,  # noqa: ARG001
+    build_type: str = "Release",  # noqa: ARG001
 ) -> CudaLoweredKernel:
-    try:
-        j = lower_intent_to_cuda_kernel_cpp(intent, bindings=_normalize_bindings(shape_bindings))
-    except Exception as exc:
-        raise CudaLoweringError(str(exc)) from exc
-    launch_j = j.get("launch") if isinstance(j.get("launch"), dict) else {}
-    grid = launch_j.get("grid")
-    block = launch_j.get("block")
-    shared_mem = launch_j.get("shared_mem", 0)
-    if not (isinstance(grid, list) and len(grid) == 3 and isinstance(block, list) and len(block) == 3):
-        raise CudaLoweringError("cuda cpp codegen returned invalid launch config")
-    launch = CudaLaunch(
-        grid=(int(grid[0]), int(grid[1]), int(grid[2])),
-        block=(int(block[0]), int(block[1]), int(block[2])),
-        shared_mem=int(shared_mem),
-    )
-    return CudaLoweredKernel(
-        kernel_name=str(j.get("kernel_name") or intent.name),
-        cuda_src=str(j.get("cuda_src") or ""),
-        io_spec=j.get("io_spec") if isinstance(j.get("io_spec"), dict) else {},
-        launch=launch,
-        output_names=[str(x) for x in (j.get("output_names") or [])],
-        bindings=j.get("bindings") if isinstance(j.get("bindings"), dict) else {},
-    )
+    raise _removed()
 
 
 def lower_intent_json_to_cuda_kernel(
-    intent_json: Mapping[str, Any],
+    intent_json: Mapping[str, Any],  # noqa: ARG001
     *,
-    shape_bindings: Mapping[str, Any],
+    shape_bindings: Mapping[str, Any] | None = None,  # noqa: ARG001
+    build_type: str = "Release",  # noqa: ARG001
 ) -> CudaLoweredKernel:
-    """
-    Lower IntentIR JSON directly to a typed CUDA lowered kernel payload.
-
-    This keeps MLIR/contract-driven call sites free from IntentFunction rebuilds.
-    """
-    payload = dict(intent_json or {})
-    name = str(payload.get("name") or "intent")
-    try:
-        j = lower_intent_json_to_cuda_kernel_cpp(payload, bindings=_normalize_bindings(shape_bindings))
-    except Exception as exc:
-        raise CudaLoweringError(str(exc)) from exc
-    launch_j = j.get("launch") if isinstance(j.get("launch"), dict) else {}
-    grid = launch_j.get("grid")
-    block = launch_j.get("block")
-    shared_mem = launch_j.get("shared_mem", 0)
-    if not (isinstance(grid, list) and len(grid) == 3 and isinstance(block, list) and len(block) == 3):
-        raise CudaLoweringError("cuda cpp codegen returned invalid launch config")
-    launch = CudaLaunch(
-        grid=(int(grid[0]), int(grid[1]), int(grid[2])),
-        block=(int(block[0]), int(block[1]), int(block[2])),
-        shared_mem=int(shared_mem),
-    )
-    return CudaLoweredKernel(
-        kernel_name=str(j.get("kernel_name") or name),
-        cuda_src=str(j.get("cuda_src") or ""),
-        io_spec=j.get("io_spec") if isinstance(j.get("io_spec"), dict) else {},
-        launch=launch,
-        output_names=[str(x) for x in (j.get("output_names") or [])],
-        bindings=j.get("bindings") if isinstance(j.get("bindings"), dict) else {},
-    )
+    raise _removed()
 
 
 __all__ = [
+    "CudaLoweredKernel",
     "ensure_cpp_codegen_built",
     "ensure_cpp_codegen_ext_loaded",
-    "lower_intent_to_cuda_kernel_cpp",
-    "lower_intent_json_to_cuda_kernel_cpp",
-    "lower_intent_json_to_cuda_kernel",
-    "CudaLoweringError",
-    "CudaLoweredKernel",
     "lower_intent_to_cuda_kernel",
+    "lower_intent_to_cuda_kernel_cpp",
+    "lower_intent_json_to_cuda_kernel",
+    "lower_intent_json_to_cuda_kernel_cpp",
 ]

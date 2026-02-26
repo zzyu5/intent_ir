@@ -8,8 +8,6 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from backends.cuda.codegen.cpp_driver import lower_intent_to_cuda_kernel_cpp
-from backends.spmd_rvv.codegen.cpp_driver import lower_intent_to_c_with_files_cpp
 from intent_ir.ir import IntentFunction
 
 from ..convert_to_intent import to_intent
@@ -72,8 +70,8 @@ def lower_intent_to_llvm_dialect(module: IntentMLIRModule, *, backend: str | Non
     """
     Lower Intent-dialect payload to textual LLVM IR.
 
-    The downstream llvm_* pipelines consume textual LLVM IR, so this pass emits
-    non-stub `.ll` by lowering to C first and then compiling to LLVM IR via clang.
+    Hard-cut mode: this pass no longer invokes legacy C/CUDA-C codegen.
+    It only accepts payloads that are already textual LLVM IR.
     """
     text = str(module.module_text or "")
     if _looks_like_llvm_ir(text):
@@ -83,70 +81,12 @@ def lower_intent_to_llvm_dialect(module: IntentMLIRModule, *, backend: str | Non
             out.meta["llvm_dialect_backend"] = str(backend)
         return out
 
-    intent = _recover_intent(module)
-    shape_bindings = _resolve_shape_bindings(module=module, intent=intent)
     selected_backend = str(backend or "").strip().lower()
-
-    if selected_backend == "cuda":
-        try:
-            lowered = lower_intent_to_cuda_kernel_cpp(intent, bindings=shape_bindings)
-        except Exception as bind_err:
-            # Keep CUDA lowering on the CUDA path when the only blocker is missing
-            # symbolic bindings (for example output-only symbols like `U`).
-            retry_bindings = _ensure_symbolic_default_bindings(
-                bindings=shape_bindings,
-                intent=intent,
-                error=bind_err,
-            )
-            if retry_bindings != shape_bindings:
-                shape_bindings = dict(retry_bindings)
-                lowered = lower_intent_to_cuda_kernel_cpp(intent, bindings=shape_bindings)
-            else:
-                raise RuntimeError(
-                    "cuda lowering failed and compatibility C fallback is removed: "
-                    f"{type(bind_err).__name__}: {bind_err}"
-                ) from bind_err
-        kernel_name = str(lowered.get("kernel_name") or intent.name or "intent")
-        cuda_src = str(lowered.get("cuda_src") or "")
-        if not cuda_src.strip():
-            raise RuntimeError("empty cuda_src from cuda codegen")
-        llvm_ir_text, cc_path = _compile_cuda_src_to_device_llvm_ir(cuda_src, kernel_name=kernel_name)
-        out = _clone(module, module_text=llvm_ir_text)
-        out.meta["llvm_dialect_origin"] = "lowered_from_intent_cuda_codegen"
-        out.meta["llvm_shape_bindings"] = dict(shape_bindings)
-        out.meta["llvm_cuda_compiler"] = str(cc_path)
-        out.meta["llvm_cuda_kernel_name"] = str(kernel_name)
-        out.meta["llvm_target_triple"] = str(_llvm_target_triple(llvm_ir_text))
-        out.meta["llvm_dialect_backend"] = "cuda"
-        return out
-
-    c_src = lower_intent_to_c_with_files_cpp(
-        intent,
-        shape_bindings=shape_bindings,
-        atol=1e-3,
-        rtol=1e-3,
-        mode="verify",
+    backend_tag = selected_backend or "generic"
+    raise RuntimeError(
+        "lower_intent_to_llvm_dialect: legacy C/CUDA-C fallback has been removed; "
+        f"backend={backend_tag} requires textual LLVM IR input"
     )
-    llvm_ir_text, cc_path = _compile_c_to_llvm_ir(c_src)
-    rvv_retargeted = False
-    if selected_backend == "rvv":
-        llvm_ir_text, rvv_retargeted = _retarget_host_llvm_ir_to_rvv(llvm_ir_text)
-
-    out = _clone(module, module_text=llvm_ir_text)
-    out.meta["llvm_dialect_origin"] = (
-        "lowered_from_intent_c_codegen_rvv"
-        if selected_backend == "rvv"
-        else "lowered_from_intent_c_codegen"
-    )
-    out.meta["llvm_shape_bindings"] = dict(shape_bindings)
-    out.meta["llvm_c_compiler"] = str(cc_path)
-    out.meta["llvm_target_triple"] = str(_llvm_target_triple(llvm_ir_text))
-    if selected_backend == "rvv":
-        out.meta["llvm_rvv_retargeted_from_host"] = bool(rvv_retargeted)
-        out.meta["llvm_rvv_target_triple"] = str(_rvv_target_triple())
-    if backend:
-        out.meta["llvm_dialect_backend"] = str(backend)
-    return out
 
 
 def _recover_intent(module: IntentMLIRModule) -> IntentFunction:

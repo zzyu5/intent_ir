@@ -12,6 +12,8 @@ except Exception:
 
 from intent_ir.ir import IntentFunction
 
+pytestmark = pytest.mark.skip(reason="legacy CUDA cpp_codegen path removed in strict MLIR hard-cut")
+
 
 def _cuda_available() -> bool:
     if torch is None:
