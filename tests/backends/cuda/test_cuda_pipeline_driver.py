@@ -336,6 +336,49 @@ def test_lower_cuda_contract_to_kernel_uses_ptx_invocation_shape_bindings_for_mi
     assert bindings.get("T") == 16
 
 
+def test_lower_cuda_contract_to_kernel_augments_ptx_invocation_arg_names_from_signature(tmp_path: Path) -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_ptx_invocation_signature_augment"))
+    contract = build_cuda_contract(mod)
+    ptx_path = tmp_path / "k.ptx"
+    ptx_path.write_text(
+        (
+            "// fake ptx\n"
+            ".visible .entry k(\n"
+            "    .param .u64 k_param_0,\n"
+            "    .param .u64 k_param_1,\n"
+            "    .param .u32 k_param_2,\n"
+            "    .param .u32 k_param_3\n"
+            ") { ret; }\n"
+        ),
+        encoding="utf-8",
+    )
+    contract.executable.format = "cuda_ptx"
+    contract.executable.path = str(ptx_path)
+    contract.executable.entry = "k"
+    contract.executable.target = "cuda"
+    contract.executable.invocation = {
+        "shape_bindings": {"M": 4, "N": 8},
+        "io_spec": {
+            "arg_names": ["A", "C"],
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"]},
+                "C": {"dtype": "f32", "shape": ["M", "N"]},
+            },
+            "outputs": ["C"],
+            "scalars": {},
+        },
+        "launch": {"grid": [1, 1, 1], "block": [64, 1, 1], "shared_mem": 0},
+        "output_names": ["C"],
+    }
+    contract.launch = {}
+    lowered = lower_cuda_contract_to_kernel(contract.to_json_dict(), shape_bindings={"M": 4, "N": 8})
+    io_spec = dict(lowered.get("io_spec") or {})
+    assert io_spec.get("arg_names") == ["A", "C", "M", "N"]
+    scalars = dict(io_spec.get("scalars") or {})
+    assert scalars.get("M") == "i32"
+    assert scalars.get("N") == "i32"
+
+
 def test_lower_cuda_contract_to_kernel_ptx_augments_scalar_aliases_from_shape_bindings(tmp_path: Path) -> None:
     mod = to_mlir(_add_intent("cuda_pipeline_ptx_alias_augment"))
     contract = build_cuda_contract(mod)

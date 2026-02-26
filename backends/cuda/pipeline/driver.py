@@ -166,6 +166,129 @@ def _augment_scalar_bindings_from_io_spec(
     return out
 
 
+def _ptx_entry_param_types(*, ptx_text: str, entry: str) -> list[str]:
+    text = str(ptx_text or "")
+    if not text.strip():
+        return []
+    wanted = str(entry or "").strip()
+    entry_pat = re.compile(r"\.visible\s+\.entry\s+([A-Za-z_.$][\w.$]*)\s*\((.*?)\)\s*(?:\.\w+[^\n]*\n)*\{", re.S)
+    fallback_sig: str | None = None
+    for m in entry_pat.finditer(text):
+        name = str(m.group(1) or "").strip()
+        sig = str(m.group(2) or "")
+        if sig and fallback_sig is None:
+            fallback_sig = sig
+        if wanted and name == wanted:
+            fallback_sig = sig
+            break
+    if not fallback_sig:
+        return []
+    out: list[str] = []
+    for m in re.finditer(r"\.param\s+\.([A-Za-z0-9_]+)\s+[A-Za-z_.$][\w.$]*", fallback_sig):
+        out.append(str(m.group(1)).lower())
+    return out
+
+
+def _infer_symbol_order_from_io_spec(io_spec: Mapping[str, Any]) -> list[str]:
+    tensors = io_spec.get("tensors") if isinstance(io_spec.get("tensors"), Mapping) else {}
+    if not isinstance(tensors, Mapping):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for spec in tensors.values():
+        shape = spec.get("shape") if isinstance(spec, Mapping) else None
+        if not isinstance(shape, list):
+            continue
+        for d in shape:
+            if not isinstance(d, str):
+                continue
+            dim = d.strip()
+            if not dim or dim in seen:
+                continue
+            seen.add(dim)
+            out.append(dim)
+    return out
+
+
+def _augment_io_spec_arg_names_with_ptx_params(
+    *,
+    io_spec: Mapping[str, Any],
+    invocation: Mapping[str, Any],
+    merged_bindings: Mapping[str, Any],
+    ptx_text: str,
+    entry: str,
+) -> dict[str, Any]:
+    out = dict(io_spec or {})
+    arg_names_raw = out.get("arg_names")
+    arg_names = [str(x) for x in arg_names_raw] if isinstance(arg_names_raw, list) else []
+    ptx_param_types = _ptx_entry_param_types(ptx_text=ptx_text, entry=entry)
+    if len(ptx_param_types) <= len(arg_names):
+        return out
+
+    tensors = out.get("tensors") if isinstance(out.get("tensors"), Mapping) else {}
+    tensor_names = {str(k) for k in tensors.keys()} if isinstance(tensors, Mapping) else set()
+    io_scalars = out.get("scalars") if isinstance(out.get("scalars"), Mapping) else {}
+    scalars = {str(k): str(v) for k, v in dict(io_scalars or {}).items() if str(k).strip()}
+    seen_arg = {str(x) for x in arg_names}
+
+    ordered_candidates: list[str] = []
+    seen_candidate: set[str] = set()
+
+    def _add_candidate(name: str) -> None:
+        n = str(name).strip()
+        if not n or n in seen_candidate or n in tensor_names or n in seen_arg:
+            return
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", n):
+            return
+        ordered_candidates.append(n)
+        seen_candidate.add(n)
+
+    for name in _infer_symbol_order_from_io_spec(out):
+        _add_candidate(name)
+    inv_shape_bindings = invocation.get("shape_bindings") if isinstance(invocation.get("shape_bindings"), Mapping) else {}
+    if isinstance(inv_shape_bindings, Mapping):
+        for name in inv_shape_bindings.keys():
+            _add_candidate(str(name))
+    for name in scalars.keys():
+        _add_candidate(name)
+    for name in merged_bindings.keys():
+        _add_candidate(str(name))
+
+    missing = max(0, len(ptx_param_types) - len(arg_names))
+    if missing <= 0:
+        return out
+    append_names = ordered_candidates[:missing]
+    if len(append_names) < missing:
+        for i in range(missing - len(append_names)):
+            append_names.append(f"sym_{len(arg_names) + len(append_names) + i}")
+
+    # PTX params are positional; infer scalar dtypes for newly appended args from
+    # trailing PTX param slots.
+    scalar_type_map = {
+        "f16": "f32",
+        "f32": "f32",
+        "f64": "f32",
+        "u16": "i32",
+        "u32": "i32",
+        "s32": "i32",
+        "u64": "i64",
+        "s64": "i64",
+        "b16": "i32",
+        "b32": "i32",
+        "b64": "i64",
+    }
+    for i, name in enumerate(append_names):
+        arg_names.append(name)
+        slot = len(arg_names) - 1
+        ptx_ty = ptx_param_types[slot] if slot < len(ptx_param_types) else ""
+        scalars.setdefault(name, scalar_type_map.get(str(ptx_ty).lower(), "i32"))
+
+    out["arg_names"] = list(arg_names)
+    if scalars:
+        out["scalars"] = dict(scalars)
+    return out
+
+
 def _build_dummy_inputs(*, io_spec: Mapping[str, Any], output_names: list[str], bindings: Mapping[str, Any]) -> dict[str, np.ndarray]:
     tensors = io_spec.get("tensors") if isinstance(io_spec.get("tensors"), Mapping) else {}
     out_set = {str(n) for n in output_names}
@@ -282,6 +405,7 @@ def lower_cuda_contract_to_kernel(
                 "cuda contract executable rejected under strict LLVM PTX mode: "
                 f"cuda_ptx_origin={ptx_origin!r}"
             )
+        ptx_payload = exe_path.read_bytes()
         invocation = dict(executable.invocation or {})
         merged_bindings = dict(bindings)
         inv_shape_bindings = invocation.get("shape_bindings")
@@ -301,6 +425,13 @@ def lower_cuda_contract_to_kernel(
             # arg_names/scalars metadata that semantic-level contracts may not carry.
             if not isinstance(io_spec.get("arg_names"), list):
                 io_spec = dict(inv_io)
+        io_spec = _augment_io_spec_arg_names_with_ptx_params(
+            io_spec=io_spec,
+            invocation=invocation,
+            merged_bindings=merged_bindings,
+            ptx_text=ptx_payload.decode("utf-8", errors="ignore"),
+            entry=str(exe_entry or contract.kernel_name or "intent"),
+        )
         merged_bindings = _augment_scalar_bindings_from_io_spec(bindings=merged_bindings, io_spec=io_spec)
         output_names = list((io_spec.get("outputs") if isinstance(io_spec, Mapping) else []) or [])
         inv_outputs = invocation.get("output_names")
@@ -315,7 +446,7 @@ def lower_cuda_contract_to_kernel(
             "launch": launch,
             "output_names": [str(x) for x in output_names],
             "bindings": dict(merged_bindings),
-            "cuda_ptx": exe_path.read_bytes(),
+            "cuda_ptx": ptx_payload,
             "executable_format": exe_format,
             "executable_path": str(exe_path),
             "execution_engine": "mlir_native",
