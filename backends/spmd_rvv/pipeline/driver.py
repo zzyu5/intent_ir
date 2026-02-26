@@ -8,7 +8,6 @@ legalize -> shape_infer -> schedule -> emit_cpp -> compile -> run.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import os
 from time import perf_counter
 import numpy as np
 import shutil
@@ -194,50 +193,6 @@ def _contract_tensor_shapes(contract: MlirBackendContract) -> dict[str, list[Any
         if isinstance(v, list):
             out[str(k)] = list(v)
     return out
-
-
-def lower_rvv_contract_to_c_src(
-    intent_payload: Any,
-    *,
-    shape_bindings: Mapping[str, Any] | None = None,
-    atol: float = 1e-3,
-    rtol: float = 1e-3,
-    mode: str = "verify",
-    allow_compat_c_src: bool | None = None,
-) -> str:
-    contract, _ = _resolve_rvv_contract(intent_payload, shape_bindings=shape_bindings)
-    bindings = normalize_bindings(shape_bindings or contract.reason_context.get("shape_bindings") or {})
-    if not bindings:
-        raise ValueError("rvv contract lowering requires concrete shape bindings")
-    resolved = _resolve_rvv_contract_executable(contract=contract, bindings=bindings)
-    c_src = resolved.get("c_src")
-    if isinstance(c_src, str) and c_src.strip():
-        return str(c_src)
-    # Compatibility path: when execution is hard-cut to prebuilt ELF, scripts may
-    # still need C text for remote packaging and dtype parsing.
-    if allow_compat_c_src is None:
-        allow_compat_c_src = str(os.getenv("INTENTIR_RVV_ALLOW_COMPAT_C_SRC", "")).strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "y",
-            "on",
-        }
-    if not allow_compat_c_src:
-        raise ValueError(
-            "rvv contract C-source compatibility access is disabled by default in strict hard-cut mode; "
-            "set INTENTIR_RVV_ALLOW_COMPAT_C_SRC=1 or pass allow_compat_c_src=True "
-            "to enable explicit compatibility fallback"
-        )
-    art_src = str((contract.artifacts or {}).get("rvv_kernel_src_path") or "").strip()
-    if art_src:
-        src_path = _resolve_repo_artifact_path(art_src)
-        if src_path.is_file():
-            return str(src_path.read_text(encoding="utf-8"))
-    raise ValueError(
-        "rvv contract is executable-only (rvv_elf) and has no readable rvv_kernel_src_path artifact "
-        "for C-source compatibility access"
-    )
 
 
 def run_rvv_pipeline(

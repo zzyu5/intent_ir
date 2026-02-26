@@ -980,34 +980,9 @@ def _materialize_executable(
                 recovered_intent_json = dict(recovered_intent.to_json_dict())
         except Exception as e:
             artifacts["rvv_io_spec_recover_error"] = f"{type(e).__name__}: {e}"
-        # Hard-cut default: keep RVV executable path contract-first and do not emit
-        # compatibility C source unless explicitly requested.
-        if _env_flag("INTENTIR_RVV_EMIT_COMPAT_C_SRC", default=False):
-            from backends.spmd_rvv.codegen.cpp_driver import lower_intent_to_c_with_files_cpp  # noqa: PLC0415
-
-            try:
-                if recovered_intent is None:
-                    recovered_intent = _recover_intent()
-                if recovered_intent_json is None and recovered_intent is not None:
-                    recovered_intent_json = dict(recovered_intent.to_json_dict())
-                compat_c_src = str(
-                    lower_intent_to_c_with_files_cpp(
-                        recovered_intent,
-                        shape_bindings=shape_bindings,
-                        atol=1e-3,
-                        rtol=1e-3,
-                        mode="verify",
-                    )
-                )
-                if compat_c_src.strip():
-                    compat_c_path = out_dir / f"{spec_name}.intentir.intentdialect.{suffix}.kernel.c"
-                    compat_c_path.write_text(compat_c_src, encoding="utf-8")
-                    artifacts["rvv_kernel_src_path"] = str(compat_c_path)
-                    artifacts["rvv_kernel_src_origin"] = "compat_cpp_codegen"
-            except Exception as e:
-                artifacts["rvv_kernel_src_error"] = f"{type(e).__name__}: {e}"
-        else:
-            artifacts["rvv_compat_c_src_skipped"] = True
+        # Hard-cut: RVV compatibility C-source artifacts are fully removed from
+        # default pipeline outputs; strict path keeps executable-only contracts.
+        artifacts["rvv_compat_removed"] = True
         if isinstance(recovered_intent_json, dict):
             try:
                 inv = dict(executable.get("invocation") or {})

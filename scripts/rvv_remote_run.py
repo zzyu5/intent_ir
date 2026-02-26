@@ -2,7 +2,9 @@
 Prototype: end-to-end RVV remote run for supported kernels.
 
 Current support:
-- generic IntentIR ops lowering to a standalone C program (default: C++ codegen).
+- strict MLIR backend contract execution via:
+  - prebuilt RVV ELF
+  - remote LLVM compile on RVV target
 
 Usage:
   python scripts/rvv_remote_run.py --kernel any_kernel_dim --use-key
@@ -46,62 +48,14 @@ from backends.spmd_rvv.analysis.tuning import (
     select_schedule_from_intent_json,
 )
 from backends.spmd_rvv.baseline_freeze_tile import freeze_tile_schedule_from_intent_json
-from backends.spmd_rvv.pipeline.driver import lower_rvv_contract_to_c_src
 from backends.common.mlir_contract import MlirBackendContract
-from intent_ir.ir import IntentFunction, ScheduleSketch
+from intent_ir.ir import ScheduleSketch
 from intent_ir.macros import expand_macros_json
-from intent_ir.mlir import to_mlir
 from intent_ir.mlir.convert_to_intent import to_intent
-from intent_ir.mlir.passes.emit_rvv_contract import build_rvv_contract
 from verify.gen_cases import TestCase
-from verify.tolerances import infer_tolerances_from_intent_json
 
 DEFAULT_RVV_HOST = os.getenv("INTENTIR_RVV_HOST", "192.168.8.72")
 DEFAULT_RVV_USER = os.getenv("INTENTIR_RVV_USER", "ubuntu")
-
-
-def lower_intent_to_c_with_files(
-    intent_or_json: Any,
-    *,
-    shape_bindings: dict[str, Any],
-    atol: float = 1e-3,
-    rtol: float = 1e-3,
-    mode: str = "verify",
-) -> str:
-    """
-    Compatibility wrapper for RVV remote codegen.
-
-    Accepts either IntentFunction or intent JSON and lowers through the
-    contract-oriented JSON entrypoint.
-    """
-    if isinstance(intent_or_json, dict) and str(intent_or_json.get("schema_version") or "").startswith("intent_mlir_backend_contract_"):
-        payload: dict[str, Any] = dict(intent_or_json)
-    else:
-        if not _env_flag("INTENTIR_RVV_REMOTE_ALLOW_COMPAT_C", default=False):
-            raise RuntimeError(
-                "rvv strict hard-cut: lower_intent_to_c_with_files accepts non-contract input only in explicit "
-                "compat mode (set INTENTIR_RVV_REMOTE_ALLOW_COMPAT_C=1)"
-            )
-        if isinstance(intent_or_json, dict):
-            intent_json = dict(intent_or_json)
-        elif hasattr(intent_or_json, "to_json_dict"):
-            intent_json = dict(intent_or_json.to_json_dict())
-        else:
-            raise TypeError("intent_or_json must be IntentFunction, intent JSON, or mlir contract JSON")
-        intent = getattr(IntentFunction, "from_json_dict")(intent_json)
-        mod = to_mlir(intent)
-        contract = build_rvv_contract(mod, source_kind="script_fallback")
-        artifacts = dict(contract.artifacts or {})
-        artifacts["mlir_module_text"] = str(mod.module_text or "")
-        contract.artifacts = artifacts
-        payload = contract.to_json_dict()
-    return lower_rvv_contract_to_c_src(
-        payload,
-        shape_bindings=shape_bindings,
-        atol=float(atol),
-        rtol=float(rtol),
-        mode=str(mode),
-    )
 
 
 def _normalize_io_name(name: str) -> str:
@@ -234,42 +188,6 @@ def _to_raw_bytes(arr: "np.ndarray", dt: str) -> bytes:
     if dt == "f64":
         return np.asarray(arr_np, dtype=np.float64).tobytes(order="C")
     return np.asarray(arr_np, dtype=np.float32).tobytes(order="C")
-
-
-_BUF_DESC_RE = re.compile(r'\{\s*"(?P<name>[^"]+)"\s*,.*?(?P<dtype>INTENTIR_DTYPE_[A-Z0-9_]+)')
-
-
-def _dtype_from_buffer_token(tok: str) -> str | None:
-    m = {
-        "INTENTIR_DTYPE_F16": "f16",
-        "INTENTIR_DTYPE_BF16": "bf16",
-        "INTENTIR_DTYPE_F32": "f32",
-        "INTENTIR_DTYPE_F64": "f64",
-        "INTENTIR_DTYPE_I8": "i8",
-        "INTENTIR_DTYPE_U8": "u8",
-        "INTENTIR_DTYPE_I16": "i16",
-        "INTENTIR_DTYPE_I32": "i32",
-        "INTENTIR_DTYPE_I64": "i64",
-        "INTENTIR_DTYPE_BOOL": "bool",
-        "INTENTIR_DTYPE_I1": "i1",
-    }
-    return m.get(str(tok))
-
-
-def _extract_buffer_declared_dtypes(c_src: str) -> dict[str, str]:
-    out: dict[str, str] = {}
-    for line in str(c_src).splitlines():
-        s = line.strip()
-        if not s.startswith('{"') or "INTENTIR_DTYPE_" not in s:
-            continue
-        m = _BUF_DESC_RE.search(s)
-        if not m:
-            continue
-        name = str(m.group("name"))
-        dt = _dtype_from_buffer_token(str(m.group("dtype")))
-        if dt:
-            out[name] = dt
-    return out
 
 
 def _derive_scalar_input_array(name: str, *, dtype: str, bindings: dict) -> "np.ndarray" | None:
@@ -681,25 +599,16 @@ def _resolve_rvv_execution_plan(
     *,
     contract_payload_json: dict[str, Any] | None,
     contract_artifact_path: str,
-    compat_c_allowed: bool,
 ) -> dict[str, Any]:
     if not isinstance(contract_payload_json, dict):
-        if compat_c_allowed:
-            return {"mode": "compat_c_src", "reason": "legacy_or_missing_contract"}
         raise RuntimeError(
-            "rvv hard-cut mode requires mlir backend contract; legacy C-source fallback disabled "
-            "(set INTENTIR_RVV_REMOTE_ALLOW_COMPAT_C=1 to re-enable compatibility path)"
+            "rvv hard-cut mode requires mlir backend contract; compatibility C-source path has been removed"
         )
 
     contract_path = Path(str(contract_artifact_path or ""))
     try:
         contract = MlirBackendContract.from_json_dict(dict(contract_payload_json))
     except Exception as e:
-        if compat_c_allowed:
-            return {
-                "mode": "compat_c_src",
-                "reason": f"contract_parse_error:{type(e).__name__}",
-            }
         raise RuntimeError(
             f"rvv hard-cut mode requires valid mlir backend contract, parse failed: {type(e).__name__}: {e}"
         ) from e
@@ -738,16 +647,6 @@ def _resolve_rvv_execution_plan(
             "llvm_triple": str(llvm_triple),
             "module_path": str(module_path) if isinstance(module_path, Path) else "",
             "llvm_ir_text": str(llvm_ir_text),
-        }
-
-    if compat_c_allowed:
-        return {
-            "mode": "compat_c_src",
-            "reason": "contract_not_rvv_executable_and_rvv_llvm_missing",
-            "local_elf_path": str(exe_path) if isinstance(exe_path, Path) else "",
-            "elf_machine": str(elf_machine),
-            "llvm_triple": str(llvm_triple),
-            "module_path": str(module_path) if isinstance(module_path, Path) else "",
         }
 
     raise RuntimeError(
@@ -1107,11 +1006,9 @@ def run_remote(
         except Exception:
             pass
 
-    compat_c_allowed = _env_flag("INTENTIR_RVV_REMOTE_ALLOW_COMPAT_C", default=False)
     execution_plan = _resolve_rvv_execution_plan(
         contract_payload_json=(dict(contract_payload_json) if isinstance(contract_payload_json, dict) else None),
         contract_artifact_path=str(contract_artifact_path),
-        compat_c_allowed=bool(compat_c_allowed),
     )
     execution_mode = _execution_mode_from_plan(execution_plan)
     _log(
@@ -1124,13 +1021,10 @@ def run_remote(
     selected_schedule = _schedule_from_json(
         intent_json_base.get("schedule") if isinstance(intent_json_base.get("schedule"), dict) else {}
     )
-    can_tune = bool(_intent_ops(intent_json_base)) and execution_mode == "compat_c_src"
+    can_tune = False
     if tune_request is not None:
         if not can_tune:
-            if execution_mode != "compat_c_src":
-                reason = f"fixed_executable_mode:{execution_mode}"
-            else:
-                reason = "no_ops_in_contract_synth_intent"
+            reason = f"fixed_executable_mode:{execution_mode}"
             _log(f"[{frontend}:{kernel}] schedule selection skipped: {reason}")
             tuning_info = {
                 "mode": str(tune_request.mode),
@@ -1328,7 +1222,6 @@ def run_remote(
     _log(f"[{frontend}:{kernel}] remote dir: {remote_dir}")
 
     # Prepare code + data according to kernel kind.
-    remote_c = f"{remote_dir}/main.c"
     remote_bin = f"{remote_dir}/run"
 
     # Upload the target-side runtime (shared helpers) once per kernel.
@@ -1398,51 +1291,12 @@ def run_remote(
     if outputs != list(intent_outputs):
         intent_codegen_json["outputs"] = list(outputs)
     intent_codegen_json["schedule"] = _schedule_to_json(selected_schedule)
-    lower_payload: dict[str, Any] = (
-        dict(contract_payload_json)
-        if isinstance(contract_payload_json, dict)
-        else dict(intent_codegen_json)
-    )
-
-    # Lowering tolerances are shared across data materialization + compile/run.
-    #
-    # Remote runs compare against a GPU-produced baseline (Triton/TileLang CUDA),
-    # so keep tolerances at least legacy-default to avoid false negatives.
-    if baseline is not None and intent_ops:
-        auto_tol = infer_tolerances_from_intent_json(intent_codegen_json, ref_out=baseline).to_dict()
-        atol_use = max(float(auto_tol.get("atol", 1e-3)), 1e-3)
-        rtol_use = max(float(auto_tol.get("rtol", 1e-3)), 1e-3)
-    else:
-        # Perf-only runs do not compare against refs; keep legacy defaults.
-        # Contract-only synthesized intents can be ops-empty as well.
-        atol_use = 1e-3
-        rtol_use = 1e-3
-    if execution_mode == "compat_c_src":
-        backend_used = "mlir_contract_compat_c_src" if isinstance(contract_payload_json, dict) else "cpp"
-    else:
-        backend_used = "mlir_contract"
-
-    # In strict modes (prebuilt_elf / remote_llvm), use io_spec tensor dtypes as
-    # source of truth and avoid regenerating compatibility C source.
-    initial_schedule = _schedule_from_json(
-        intent_codegen_json.get("schedule") if isinstance(intent_codegen_json.get("schedule"), dict) else {}
-    )
-    initial_src = ""
-    if execution_mode == "compat_c_src":
-        initial_src = lower_intent_to_c_with_files(
-            lower_payload,
-            shape_bindings=bindings,
-            atol=float(atol_use),
-            rtol=float(rtol_use),
-            mode=("bench" if bool(bench_only) else "verify"),
-        )
-        declared_dtypes = _extract_buffer_declared_dtypes(initial_src)
-    else:
-        declared_dtypes = {
-            str(name): _rvv_staging_dtype(_tensor_dtype(spec), execution_mode=execution_mode)
-            for name, spec in dict(tensor_specs or {}).items()
-            if isinstance(spec, dict)
-        }
+    backend_used = "mlir_contract"
+    declared_dtypes = {
+        str(name): _rvv_staging_dtype(_tensor_dtype(spec), execution_mode=execution_mode)
+        for name, spec in dict(tensor_specs or {}).items()
+        if isinstance(spec, dict)
+    }
 
     if not bool(bench_only):
         # Upload inputs/refs for correctness runs.
@@ -1491,44 +1345,7 @@ def run_remote(
         q_driver_c = shlex.quote(f"{remote_dir}/intentir_driver.c")
         q_ops_c = shlex.quote(f"{remote_dir}/intentir_ops.c")
         try:
-            if execution_mode == "compat_c_src":
-                # Generate + upload compatibility C source for this schedule.
-                if _schedule_to_json(schedule) == _schedule_to_json(initial_schedule):
-                    src = initial_src
-                else:
-                    src = lower_intent_to_c_with_files(
-                        lower_payload,
-                        shape_bindings=bindings,
-                        atol=float(atol_use),
-                        rtol=float(rtol_use),
-                        mode=("bench" if bool(bench_only) else "verify"),
-                    )
-                with sftp.file(remote_c, "w") as f:
-                    f.write(src)
-                opt = "-O3" if (int(bench_iters) > 0 or bool(bench_only)) else "-O2"
-                vec_define = ""
-                try:
-                    vw = schedule.vec_width
-                    if isinstance(vw, int) and vw > 0:
-                        vec_define = f" -DINTENTIR_VEC_WIDTH={int(vw)}"
-                    elif isinstance(vw, str):
-                        key = vw.strip()
-                        if key and key in bindings:
-                            vwi = int(bindings[key])
-                            if vwi > 0:
-                                vec_define = f" -DINTENTIR_VEC_WIDTH={vwi}"
-                except Exception:
-                    vec_define = ""
-                q_remote_c = shlex.quote(str(remote_c))
-                compile_cmd = (
-                    f"gcc {opt} -std=c11 -D_POSIX_C_SOURCE=200809L -march=rv64gcv -fopenmp{vec_define} -I{q_remote_dir} -o {q_remote_bin} {q_remote_c} "
-                    f"{q_runtime_c} {q_driver_c} {q_ops_c} -lm -lrt"
-                )
-                stdin, stdout, stderr = client.exec_command(compile_cmd, timeout=60)
-                comp_out = stdout.read().decode()
-                comp_err = stderr.read().decode()
-                compile_rc = stdout.channel.recv_exit_status()
-            elif execution_mode == "prebuilt_elf":
+            if execution_mode == "prebuilt_elf":
                 local_elf_path = Path(str(execution_plan.get("local_elf_path") or ""))
                 if not local_elf_path.is_file():
                     raise FileNotFoundError(f"prebuilt RVV ELF missing: {local_elf_path}")

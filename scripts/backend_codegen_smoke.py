@@ -16,7 +16,6 @@ from __future__ import annotations
 import argparse
 import re
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -33,7 +32,6 @@ if str(ROOT) not in sys.path:
 
 from backends.spmd_rvv.analysis.device_query import load_profile  # noqa: E402
 from backends.spmd_rvv.analysis.tuning import TuningRequest, parse_constraints, parse_locks, select_schedule_from_intent_json  # noqa: E402
-from backends.spmd_rvv.pipeline.driver import lower_rvv_contract_to_c_src  # noqa: E402
 from backends.common.mlir_contract import MlirBackendContract  # noqa: E402
 from intent_ir.ir import IntentFunction  # noqa: E402
 from intent_ir.macros import expand_macros_json  # noqa: E402
@@ -65,41 +63,15 @@ def lower_intent_to_c_with_files(
     rtol: float = 1e-3,
     mode: str = "verify",
 ) -> str:
-    """
-    Compatibility wrapper for RVV codegen entry.
-
-    Accepts either IntentFunction or intent JSON and lowers through the
-    contract-oriented JSON entrypoint.
-    """
-    if isinstance(intent_or_json, dict) and str(intent_or_json.get("schema_version") or "").startswith("intent_mlir_backend_contract_"):
-        payload: dict[str, Any] = dict(intent_or_json)
-    else:
-        compat_raw = str(os.getenv("INTENTIR_RVV_ALLOW_COMPAT_C_SRC", "")).strip().lower()
-        compat_enabled = compat_raw in {"1", "true", "yes", "y", "on"}
-        if not compat_enabled:
-            raise RuntimeError(
-                "rvv strict hard-cut: backend_codegen_smoke lower_intent_to_c_with_files accepts non-contract input "
-                "only in explicit compat mode (set INTENTIR_RVV_ALLOW_COMPAT_C_SRC=1)"
-            )
-        if isinstance(intent_or_json, dict):
-            intent_json = dict(intent_or_json)
-        elif hasattr(intent_or_json, "to_json_dict"):
-            intent_json = dict(intent_or_json.to_json_dict())
-        else:
-            raise TypeError("intent_or_json must be IntentFunction, intent JSON, or mlir contract JSON")
-        intent = _intent_from_json_payload(intent_json)
-        mod = to_mlir(intent)
-        contract = build_rvv_contract(mod, source_kind="script_fallback")
-        artifacts = dict(contract.artifacts or {})
-        artifacts["mlir_module_text"] = str(mod.module_text or "")
-        contract.artifacts = artifacts
-        payload = contract.to_json_dict()
-    return lower_rvv_contract_to_c_src(
-        payload,
-        shape_bindings=shape_bindings,
-        atol=float(atol),
-        rtol=float(rtol),
-        mode=str(mode),
+    if not isinstance(intent_or_json, dict):
+        raise TypeError("backend_codegen_smoke requires mlir backend contract JSON payload")
+    if not str(intent_or_json.get("schema_version") or "").startswith("intent_mlir_backend_contract_"):
+        raise RuntimeError(
+            "rvv strict hard-cut: backend_codegen_smoke lower_intent_to_c_with_files accepts only mlir backend contract JSON"
+        )
+    raise RuntimeError(
+        "backend_codegen_smoke contract-to-C lowering path has been removed in strict hard-cut mode; "
+        "use RVV remote contract execution for runtime validation"
     )
 
 def _default_kernels_for(
@@ -742,7 +714,19 @@ def run_one(
     lower_payload: Any = dict(mlir_contract)
     if outputs != _intent_outputs(intent_json):
         intent_codegen_json["outputs"] = list(outputs)
-        lower_payload = intent_codegen_json
+        # Keep contract-first lowering: patch invocation outputs instead of
+        # downgrading to non-contract intent JSON payload.
+        payload = dict(lower_payload)
+        executable = dict(payload.get("executable") or {})
+        invocation = dict(executable.get("invocation") or {})
+        io_spec = dict(invocation.get("io_spec") or {})
+        if io_spec:
+            io_spec["outputs"] = list(outputs)
+            invocation["io_spec"] = io_spec
+        invocation["output_names"] = list(outputs)
+        executable["invocation"] = invocation
+        payload["executable"] = executable
+        lower_payload = payload
 
     bindings = ((report.get("baseline") or {}).get("shapes") or {}) if isinstance(report.get("baseline"), dict) else {}
     # Common axis aliases (match pipeline/runner conventions).
