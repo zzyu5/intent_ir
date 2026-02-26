@@ -58,6 +58,73 @@ json emit_addmv_f32(const Intent& intent, const json& bindings) {
         ((add.inputs[0] == scaled_mv && add.inputs[1] == scaled_inp) || (add.inputs[0] == scaled_inp && add.inputs[1] == scaled_mv));
     if (!add_inputs_ok) fail("addmv lowering expects add(scaled_mv, scaled_inp)");
     Out = add.output;
+  } else if (intent.ops.size() == 5) {
+    const Op& mul_AB = intent.ops[0];
+    const Op& reduce_mv = intent.ops[1];
+    const Op& mul_alpha = intent.ops[2];
+    const Op& mul_beta = intent.ops[3];
+    const Op& add = intent.ops[4];
+    if (mul_AB.op != "mul" || reduce_mv.op != "reduce_sum" || mul_alpha.op != "mul" || mul_beta.op != "mul" || add.op != "add") {
+      fail("addmv lowering pattern mismatch for mul+reduce form");
+    }
+    if (mul_AB.inputs.size() != 2 || reduce_mv.inputs.size() != 1 || mul_alpha.inputs.size() != 2 || mul_beta.inputs.size() != 2 || add.inputs.size() != 2) {
+      fail("addmv lowering: invalid arity in mul+reduce form");
+    }
+
+    const std::string ab0 = mul_AB.inputs[0];
+    const std::string ab1 = mul_AB.inputs[1];
+    auto ab0_it = intent.tensors.find(ab0);
+    auto ab1_it = intent.tensors.find(ab1);
+    if (ab0_it == intent.tensors.end() || ab1_it == intent.tensors.end()) {
+      fail("addmv lowering missing mul operands for mul+reduce form");
+    }
+    const bool ab0_is_mat = (ab0_it->second.shape.size() == 2);
+    const bool ab1_is_mat = (ab1_it->second.shape.size() == 2);
+    const bool ab0_is_vec = (ab0_it->second.shape.size() == 1);
+    const bool ab1_is_vec = (ab1_it->second.shape.size() == 1);
+    if (ab0_is_mat && ab1_is_vec) {
+      A = ab0;
+      B = ab1;
+    } else if (ab1_is_mat && ab0_is_vec) {
+      A = ab1;
+      B = ab0;
+    } else {
+      fail("addmv lowering expects mul(A[2D], B[1D]) in mul+reduce form");
+    }
+
+    if (reduce_mv.inputs[0] != mul_AB.output) fail("addmv lowering expects reduce_sum(mul_AB) in mul+reduce form");
+
+    if (mul_alpha.inputs[0] == reduce_mv.output)
+      alpha_name = mul_alpha.inputs[1];
+    else if (mul_alpha.inputs[1] == reduce_mv.output)
+      alpha_name = mul_alpha.inputs[0];
+    else
+      fail("addmv lowering expects mul(reduce_mv, alpha) in mul+reduce form");
+
+    auto is_rank1_f32 = [&](const std::string& n) -> bool {
+      auto it = intent.tensors.find(n);
+      return it != intent.tensors.end() && it->second.dtype == "f32" && it->second.shape.size() == 1;
+    };
+    auto is_scalar_f32 = [&](const std::string& n) -> bool {
+      auto it = intent.tensors.find(n);
+      return it != intent.tensors.end() && it->second.dtype == "f32" && it->second.shape.empty();
+    };
+    if (is_rank1_f32(mul_beta.inputs[0]) && is_scalar_f32(mul_beta.inputs[1])) {
+      Inp = mul_beta.inputs[0];
+      beta_name = mul_beta.inputs[1];
+    } else if (is_rank1_f32(mul_beta.inputs[1]) && is_scalar_f32(mul_beta.inputs[0])) {
+      Inp = mul_beta.inputs[1];
+      beta_name = mul_beta.inputs[0];
+    } else {
+      fail("addmv lowering expects mul(input,beta_scalar) in mul+reduce form");
+    }
+
+    const std::string scaled_mv = mul_alpha.output;
+    const std::string scaled_inp = mul_beta.output;
+    const bool add_inputs_ok =
+        ((add.inputs[0] == scaled_mv && add.inputs[1] == scaled_inp) || (add.inputs[0] == scaled_inp && add.inputs[1] == scaled_mv));
+    if (!add_inputs_ok) fail("addmv lowering expects add(mul_alpha, mul_beta) in mul+reduce form");
+    Out = add.output;
   } else if (intent.ops.size() == 10) {
     const Op& cast_A = intent.ops[0];
     const Op& cast_B = intent.ops[1];
@@ -150,7 +217,7 @@ json emit_addmv_f32(const Intent& intent, const json& bindings) {
     if (cast_Out.inputs[0] != add_out.output) fail("addmv lowering expects cast_or_id(add_out) as final output");
     Out = cast_Out.output;
   } else {
-    fail("addmv lowering expects either 4-op, 9-op, or 10-op canonical pattern");
+    fail("addmv lowering expects either 4-op, 5-op, 9-op, or 10-op canonical pattern");
   }
 
   auto A_it = intent.tensors.find(A);
@@ -184,10 +251,7 @@ json emit_addmv_f32(const Intent& intent, const json& bindings) {
   const int64_t N = *N_opt;
   const int64_t M = *M_opt;
 
-  int64_t block_x = resolve_schedule_int(intent, bindings, "tile_n", 256);
-  if (block_x <= 0) block_x = 256;
-  if (block_x < 32) block_x = 32;
-  if (block_x > 1024) block_x = 1024;
+  int64_t block_x = choose_1d_block_threads(intent, bindings, N, /*default_threads=*/128, /*elems_per_thread=*/1);
   const int64_t grid_x = (N + block_x - 1) / block_x;
 
   const bool n_is_tensor = is_scalar_tensor(intent, "N", "i32");

@@ -1,0 +1,184 @@
+{
+  "schema_version": "intentir_entrypoints_v1",
+  "generated_at": "2026-02-22T14:15:48.803144+00:00",
+  "entries": [
+    {
+      "entry": "scripts/intentir.py:suite",
+      "layer": "cli",
+      "consumes": [
+        "suite args",
+        "workflow/flaggems/state/coverage_batches.json"
+      ],
+      "produces": [
+        "artifacts/intentir_suite/*",
+        "artifacts/flaggems_matrix/**"
+      ],
+      "downstream": [
+        "scripts/flaggems/run_coverage_batches.py",
+        "scripts/flaggems/run_multibackend_matrix.py",
+        "scripts/flaggems/run_gpu_perf_graph.py"
+      ],
+      "main_path": true
+    },
+    {
+      "entry": "scripts/intentir.py:kernel",
+      "layer": "cli",
+      "consumes": [
+        "frontend/provider/kernel args"
+      ],
+      "produces": [
+        "artifacts/intentir_kernel/*"
+      ],
+      "downstream": [
+        "scripts/flaggems/run_multibackend_matrix.py",
+        "scripts/tilelang/full_pipeline_verify.py",
+        "scripts/cuda/full_pipeline_verify.py"
+      ],
+      "main_path": true
+    },
+    {
+      "entry": "pipeline/triton/core.py:run_pipeline_for_spec",
+      "layer": "pipeline_core",
+      "consumes": [
+        "Triton spec",
+        "provider hooks",
+        "execution policy"
+      ],
+      "produces": [
+        "pipeline report json",
+        "intentdialect *.mlir",
+        "llvm *.ll"
+      ],
+      "downstream": [
+        "pipeline/mlir_contract_artifacts.py",
+        "verify/diff_runner.py",
+        "backends/*/pipeline/driver.py"
+      ],
+      "main_path": true
+    },
+    {
+      "entry": "pipeline/tilelang/core.py:run_pipeline_for_spec",
+      "layer": "pipeline_core",
+      "consumes": [
+        "TileLang spec"
+      ],
+      "produces": [
+        "tilelang pipeline reports",
+        "intentdialect *.mlir",
+        "llvm *.ll"
+      ],
+      "downstream": [
+        "pipeline/mlir_contract_artifacts.py",
+        "verify/diff_runner.py",
+        "backends/*/pipeline/driver.py"
+      ],
+      "main_path": true
+    },
+    {
+      "entry": "pipeline/cuda/core.py:run_pipeline_for_spec",
+      "layer": "pipeline_core",
+      "consumes": [
+        "CUDA frontend spec"
+      ],
+      "produces": [
+        "cuda pipeline reports",
+        "intentdialect *.mlir",
+        "llvm *.ll"
+      ],
+      "downstream": [
+        "pipeline/mlir_contract_artifacts.py",
+        "verify/diff_runner.py",
+        "backends/*/pipeline/driver.py"
+      ],
+      "main_path": true
+    },
+    {
+      "entry": "backends/cuda/pipeline/driver.py:run_cuda_pipeline",
+      "layer": "backend_pipeline",
+      "consumes": [
+        "MlirBackendContract | IntentMLIRModule | mlir text",
+        "shape bindings"
+      ],
+      "produces": [
+        "stage results (legalize/shape_infer/schedule/emit/compile/launch)",
+        "timings",
+        "reason_code"
+      ],
+      "downstream": [
+        "backends/cuda/codegen/cpp_driver.py",
+        "backends/cuda/runtime.py"
+      ],
+      "main_path": true
+    },
+    {
+      "entry": "backends/spmd_rvv/pipeline/driver.py:run_rvv_pipeline",
+      "layer": "backend_pipeline",
+      "consumes": [
+        "MlirBackendContract | IntentMLIRModule | mlir text",
+        "shape bindings"
+      ],
+      "produces": [
+        "stage results (legalize/shape_infer/schedule/emit_cpp/compile/run)",
+        "timings",
+        "reason_code"
+      ],
+      "downstream": [
+        "backends/spmd_rvv/codegen/cpp_driver.py",
+        "backends/spmd_rvv/runtime/*"
+      ],
+      "main_path": true
+    },
+    {
+      "entry": "verify/diff_runner.py:run_diff",
+      "layer": "verification",
+      "consumes": [
+        "IntentFunction",
+        "reference runner outputs",
+        "generated cases"
+      ],
+      "produces": [
+        "DiffResult list",
+        "Counterexample list"
+      ],
+      "downstream": [
+        "pipeline/*/core.py reports",
+        "scripts/flaggems/run_multibackend_matrix.py"
+      ],
+      "main_path": true
+    },
+    {
+      "entry": "scripts/flaggems/build_workflow_state.py",
+      "layer": "workflow_state",
+      "consumes": [
+        "feature_list/current_status/session_context/progress/handoff/artifacts"
+      ],
+      "produces": [
+        "workflow/flaggems/state/current_status.json",
+        "workflow/flaggems/state/session_context.json"
+      ],
+      "downstream": [
+        "scripts/flaggems/ci_gate.py",
+        "workflow/flaggems/init.sh",
+        "workflow/flaggems/nightly.sh"
+      ],
+      "main_path": true
+    },
+    {
+      "entry": "scripts/flaggems/ci_gate.py",
+      "layer": "workflow_gate",
+      "consumes": [
+        "run_summary",
+        "status_converged",
+        "workflow state"
+      ],
+      "produces": [
+        "ci_gate.json"
+      ],
+      "downstream": [
+        "nightly maintenance",
+        "handoff decisions"
+      ],
+      "main_path": true
+    }
+  ]
+}

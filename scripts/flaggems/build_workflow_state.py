@@ -277,35 +277,45 @@ def _mlir_backend_contract_ready() -> bool:
 
 def _mlir_llvm_chain_ok(run_summary_path: Path | None) -> bool:
     """
-    Return true only if run summary contains explicit LLVM-chain evidence.
+    Return true only if run summary contains explicit LLVM artifact-complete evidence.
+
+    NOTE:
+    - We intentionally do not infer LLVM chain readiness from stage timing.
+    - Timing only shows MLIR path execution happened; it does not guarantee
+      downstream LLVM artifacts are complete (e.g. runtime fallback cases).
     """
     run_summary = _load_json_if_exists(run_summary_path)
     if not run_summary:
         return False
-    if bool(run_summary.get("mlir_llvm_chain_ok")):
+    if bool(run_summary.get("mlir_llvm_artifact_complete")):
+        return True
+    if bool(run_summary.get("mlir_llvm_chain_ok")) and bool(run_summary.get("mlir_llvm_artifact_complete")):
         return True
     stages = [s for s in list(run_summary.get("stages") or []) if isinstance(s, dict)]
     stage_map = {str(s.get("stage") or ""): s for s in stages}
     llvm_stage = stage_map.get("mlir_llvm_artifacts") or stage_map.get("llvm_emit")
-    if isinstance(llvm_stage, dict) and bool(llvm_stage.get("ok")):
+    if not isinstance(llvm_stage, dict):
+        return False
+
+    if bool(llvm_stage.get("artifact_complete")):
         return True
-    stage_timing = stage_map.get("stage_timing_breakdown") or {}
-    stage_timing_json = _resolve_artifact(str(stage_timing.get("json_path") or ""))
-    payload = _load_json_if_exists(stage_timing_json)
-    if not payload:
+    if bool(llvm_stage.get("ok")):
+        reason = str(llvm_stage.get("reason_code") or "").strip().lower()
+        if reason in {"ok", "artifact_complete", "llvm_artifacts_complete"}:
+            return True
+        # If stage says "ok" but reason is absent, require family counters to
+        # prove completion.
+        try:
+            completed = int(llvm_stage.get("families_completed") or 0)
+            expected = int(llvm_stage.get("families_expected") or 0)
+            if expected > 0 and completed >= expected:
+                return True
+        except Exception:
+            pass
         return False
-    mlir = payload.get("mlir")
-    if not isinstance(mlir, dict):
-        return False
-    if not bool(mlir.get("available")):
-        return False
-    totals = mlir.get("totals_ms")
-    if not isinstance(totals, dict):
-        return False
-    try:
-        return float(totals.get("mlir_total_ms") or 0.0) > 0.0
-    except Exception:
-        return False
+    if str(llvm_stage.get("reason_code") or "").strip().lower() == "ok":
+        return True
+    return False
 
 
 def _classify_full196_run(run_summary_path: Path | None) -> tuple[bool, bool | None, dict[str, Any]]:

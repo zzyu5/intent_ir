@@ -82,6 +82,13 @@ def _safe_float(val: Any) -> float:
         return 0.0
 
 
+def _safe_int(val: Any, default: int = 0) -> int:
+    try:
+        return int(val)
+    except Exception:
+        return int(default)
+
+
 def _resolve_json_path(path_raw: str, *, anchor: Path) -> Path:
     p = Path(str(path_raw or "").strip())
     if p.is_absolute():
@@ -122,6 +129,120 @@ def _collect_stage_timing_paths(run_summary_payload: dict[str, Any], *, run_summ
         if p.is_file():
             out.append(p)
     return out
+
+
+def _mlir_llvm_artifact_complete_from_summary(run_summary_payload: dict[str, Any]) -> bool | None:
+    if not isinstance(run_summary_payload, dict):
+        return None
+    if "mlir_llvm_artifact_complete" in run_summary_payload:
+        return bool(run_summary_payload.get("mlir_llvm_artifact_complete"))
+    stages = [s for s in list(run_summary_payload.get("stages") or []) if isinstance(s, dict)]
+    stage_map = {str(s.get("stage") or ""): s for s in stages}
+    stage = stage_map.get("mlir_llvm_artifacts") or stage_map.get("llvm_emit")
+    if not isinstance(stage, dict):
+        return None
+    if "artifact_complete" in stage:
+        return bool(stage.get("artifact_complete"))
+    if bool(stage.get("ok")):
+        reason = str(stage.get("reason_code") or "").strip().lower()
+        if reason in {"ok", "artifact_complete", "llvm_artifacts_complete"}:
+            return True
+    return bool(stage.get("ok"))
+
+
+def _runtime_fallback_from_summary(
+    run_summary_payload: dict[str, Any],
+    *,
+    label_prefix: str,
+) -> tuple[list[str], int]:
+    if not isinstance(run_summary_payload, dict):
+        return [], 0
+    kernels = [str(x) for x in list(run_summary_payload.get("runtime_fallback_kernels") or []) if str(x).strip()]
+    count = _safe_int(run_summary_payload.get("runtime_fallback_kernel_count"), default=0)
+    if count <= 0 and kernels:
+        count = int(len(kernels))
+    if count > len(kernels):
+        for i in range(1, int(count - len(kernels)) + 1):
+            kernels.append(f"{label_prefix}::fallback_{i}")
+    return sorted(set(kernels)), int(max(count, len(kernels)))
+
+
+def _chunk_run_summaries(run_summary_payload: dict[str, Any], *, run_summary_path: Path) -> list[tuple[dict[str, Any], str]]:
+    out: list[tuple[dict[str, Any], str]] = []
+    chunk_rows = [r for r in list(run_summary_payload.get("chunk_runs") or []) if isinstance(r, dict)]
+    for row in chunk_rows:
+        chunk_run_summary_raw = str(row.get("run_summary_path") or "").strip()
+        if not chunk_run_summary_raw:
+            continue
+        chunk_run_summary_path = _resolve_json_path(chunk_run_summary_raw, anchor=run_summary_path)
+        if not chunk_run_summary_path.is_file():
+            continue
+        try:
+            payload = _load_json(chunk_run_summary_path)
+        except Exception:
+            continue
+        out.append((payload, str(row.get("chunk") or "")))
+    return out
+
+
+def _family_mlir_llvm_artifact_complete(
+    *,
+    family_summary: dict[str, Any],
+    run_summary_path: Path,
+) -> bool | None:
+    direct = _mlir_llvm_artifact_complete_from_summary(family_summary)
+    if direct is not None:
+        return bool(direct)
+    chunk_payloads = _chunk_run_summaries(family_summary, run_summary_path=run_summary_path)
+    if not chunk_payloads:
+        return None
+    seen = 0
+    complete = True
+    for chunk_summary, _ in chunk_payloads:
+        val = _mlir_llvm_artifact_complete_from_summary(chunk_summary)
+        if val is None:
+            complete = False
+            continue
+        seen += 1
+        if not bool(val):
+            complete = False
+    if seen <= 0:
+        return None
+    return bool(complete)
+
+
+def _family_runtime_fallback(
+    *,
+    family: str,
+    family_summary: dict[str, Any],
+    run_summary_path: Path,
+) -> tuple[list[str], int]:
+    direct_kernels, direct_count = _runtime_fallback_from_summary(
+        family_summary,
+        label_prefix=(str(family) or "family"),
+    )
+    if direct_count > 0:
+        return direct_kernels, direct_count
+    chunk_payloads = _chunk_run_summaries(family_summary, run_summary_path=run_summary_path)
+    if not chunk_payloads:
+        return [], 0
+    merged: set[str] = set()
+    merged_count = 0
+    for chunk_summary, chunk_label in chunk_payloads:
+        kernels, count = _runtime_fallback_from_summary(
+            chunk_summary,
+            label_prefix=(chunk_label or str(family) or "chunk"),
+        )
+        if kernels:
+            merged.update(kernels)
+        merged_count += int(count)
+    if merged_count <= 0 and merged:
+        merged_count = int(len(merged))
+    if merged_count > len(merged):
+        for i in range(1, int(merged_count - len(merged)) + 1):
+            merged.add(f"{family}::fallback_{i}")
+    merged_list = sorted(merged)
+    return merged_list, int(max(merged_count, len(merged_list)))
 
 
 def _collect_backend_json_pairs(run_summary_payload: dict[str, Any], *, run_summary_path: Path) -> list[dict[str, Path]]:
@@ -866,6 +987,7 @@ def main() -> None:
     mlir_llvm_expected = 0
     mlir_llvm_artifact_complete = True
     mlir_llvm_missing_families: list[str] = []
+    runtime_fallback_kernels: set[str] = set()
     for row in list(family_rows):
         if not isinstance(row, dict):
             continue
@@ -881,15 +1003,31 @@ def main() -> None:
             continue
         mlir_llvm_expected += 1
         family_summary = _load_json(run_summary_path)
-        if bool(family_summary.get("mlir_llvm_artifact_complete")):
+        family_mlir_complete = _family_mlir_llvm_artifact_complete(
+            family_summary=family_summary,
+            run_summary_path=run_summary_path,
+        )
+        if bool(family_mlir_complete):
             mlir_llvm_completed += 1
         else:
             mlir_llvm_artifact_complete = False
             if family:
                 mlir_llvm_missing_families.append(family)
+        family_runtime_fallback_kernels, family_runtime_fallback_count = _family_runtime_fallback(
+            family=family,
+            family_summary=family_summary,
+            run_summary_path=run_summary_path,
+        )
+        if family_runtime_fallback_kernels:
+            runtime_fallback_kernels.update(family_runtime_fallback_kernels)
+        elif int(family_runtime_fallback_count) > 0 and family:
+            for i in range(1, int(family_runtime_fallback_count) + 1):
+                runtime_fallback_kernels.add(f"{family}::fallback_{i}")
     if mlir_llvm_expected <= 0:
         mlir_llvm_artifact_complete = False
 
+    runtime_fallback_kernel_list = sorted(runtime_fallback_kernels)
+    runtime_fallback_kernel_count = int(len(runtime_fallback_kernel_list))
     run_summary_payload = {
         "ok": bool(coverage_integrity_ok),
         "suite": "coverage",
@@ -921,6 +1059,8 @@ def main() -> None:
         "mlir_llvm_artifact_families_expected": int(mlir_llvm_expected),
         "mlir_llvm_artifact_families_completed": int(mlir_llvm_completed),
         "mlir_llvm_artifact_families_missing": list(sorted(set(mlir_llvm_missing_families))),
+        "runtime_fallback_kernel_count": int(runtime_fallback_kernel_count),
+        "runtime_fallback_kernels": list(runtime_fallback_kernel_list),
         "stages": [
             {
                 "stage": "coverage_categories",

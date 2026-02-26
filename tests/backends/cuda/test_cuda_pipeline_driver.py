@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
+import pytest
+
 from backends.cuda.codegen.cpp_driver import lower_intent_json_to_cuda_kernel_cpp, lower_intent_to_cuda_kernel_cpp
-from backends.cuda.pipeline.driver import run_cuda_pipeline
+from backends.cuda.pipeline.driver import lower_cuda_contract_to_kernel, run_cuda_pipeline
 from backends.cuda.pipeline.stages import CUDA_PIPELINE_STAGES
 from intent_ir.ir import IntentFunction
 from intent_ir.mlir import to_mlir
@@ -25,6 +30,61 @@ def _add_intent(name: str = "cuda_pipeline_add") -> IntentFunction:
     )
 
 
+def _sdpa_intent(name: str = "cuda_pipeline_sdpa") -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": name,
+            "tensors": {
+                "query": {"dtype": "f32", "shape": ["B", "H", "Q", "D"], "layout": "row_major"},
+                "key": {"dtype": "f32", "shape": ["B", "H", "K", "D"], "layout": "row_major"},
+                "value": {"dtype": "f32", "shape": ["B", "H", "K", "D"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["B", "H", "Q", "D"], "layout": "row_major"},
+            },
+            "ops": [
+                {
+                    "op": "scaled_dot_product_attention",
+                    "inputs": ["query", "key", "value"],
+                    "output": "out",
+                    "attrs": {"is_causal": False},
+                }
+            ],
+            "outputs": ["out"],
+            "parallel_axes": ["B", "H", "Q", "D"],
+            "schedule": {"tile_n": 128, "parallel_axes": ["B", "H", "Q", "D"]},
+        }
+    )
+
+
+def _addmv_reduce_intent(name: str = "cuda_pipeline_addmv_reduce") -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": name,
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["N", "M"], "layout": "row_major"},
+                "B": {"dtype": "f32", "shape": ["M"], "layout": "row_major"},
+                "Inp": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "Out": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "mul_AB": {"dtype": "f32", "shape": ["N", "M"], "layout": "row_major"},
+                "reduce_M": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "mul_alpha": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "mul_beta": {"dtype": "f32", "shape": ["N"], "layout": "row_major"},
+                "alpha": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "beta": {"dtype": "f32", "shape": [], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "mul", "inputs": ["A", "B"], "output": "mul_AB", "attrs": {}},
+                {"op": "reduce_sum", "inputs": ["mul_AB"], "output": "reduce_M", "attrs": {"dims": [1]}},
+                {"op": "mul", "inputs": ["reduce_M", "alpha"], "output": "mul_alpha", "attrs": {}},
+                {"op": "mul", "inputs": ["Inp", "beta"], "output": "mul_beta", "attrs": {}},
+                {"op": "add", "inputs": ["mul_alpha", "mul_beta"], "output": "Out", "attrs": {}},
+            ],
+            "outputs": ["Out"],
+            "parallel_axes": ["N", "M"],
+            "schedule": {"parallel_axes": ["N", "M"]},
+        }
+    )
+
+
 def test_run_cuda_pipeline_reports_stage_artifacts_for_valid_intent() -> None:
     result = run_cuda_pipeline(to_mlir(_add_intent()))
     assert result.ok is True
@@ -37,8 +97,11 @@ def test_run_cuda_pipeline_reports_stage_artifacts_for_valid_intent() -> None:
     assert "rewrite_counts" in legalize.artifacts
     assert "total_rewrite_candidates" in legalize.artifacts["rewrite_counts"]
     emit = next(s for s in result.stages if s.name == "emit")
-    assert emit.artifacts.get("emit_backend") == "cpp_pybind"
-    assert emit.artifacts.get("emit_mode") in {"kernel_generated", "skipped_missing_bindings"}
+    assert emit.artifacts.get("emit_backend") == "mlir_contract"
+    assert emit.artifacts.get("emit_mode") in {"executed", "skipped_missing_bindings"}
+    if emit.artifacts.get("emit_mode") == "executed":
+        assert emit.artifacts.get("execution_engine") == "mlir_native"
+        assert emit.artifacts.get("contract_schema_version") == "intent_mlir_backend_contract_v2"
     schedule = next(s for s in result.stages if s.name == "schedule")
     assert schedule.artifacts.get("op_family") == "elementwise_reduction"
     assert str(schedule.artifacts.get("schedule_profile") or "").startswith("cuda_")
@@ -172,3 +235,635 @@ def test_lower_intent_json_to_cuda_kernel_cpp_accepts_json_payload() -> None:
     assert isinstance(lowered, dict)
     assert str(lowered.get("kernel_name") or "").strip()
     assert isinstance(lowered.get("io_spec"), dict)
+
+
+def test_sdpa_codegen_launch_covers_total_elements() -> None:
+    lowered = lower_intent_to_cuda_kernel_cpp(_sdpa_intent(), bindings={"B": 1, "H": 2, "Q": 8, "K": 8, "D": 16})
+    launch = dict(lowered.get("launch") or {})
+    grid = list(launch.get("grid") or [])
+    block = list(launch.get("block") or [])
+    assert len(grid) == 3 and len(block) == 3
+    total = 1 * 2 * 8 * 16
+    assert int(grid[0]) * int(block[0]) >= total
+
+
+def test_addmv_reduce_form_codegen_is_supported() -> None:
+    intent = _addmv_reduce_intent()
+    lowered = lower_intent_to_cuda_kernel_cpp(intent, bindings={"N": 16, "M": 32, "alpha": 1, "beta": 1})
+    assert isinstance(lowered, dict)
+    assert str(lowered.get("kernel_name") or "").strip()
+    output_names = [str(x) for x in list(lowered.get("output_names") or [])]
+    assert "Out" in output_names
+    launch = dict(lowered.get("launch") or {})
+    assert len(list(launch.get("grid") or [])) == 3
+    assert len(list(launch.get("block") or [])) == 3
+
+
+def test_lower_cuda_contract_to_kernel_rejects_cuda_kernel_json_executable(tmp_path: Path) -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_kernel_json"))
+    contract = build_cuda_contract(mod)
+    src_path = tmp_path / "k.cu"
+    src_path.write_text('extern "C" __global__ void k() {}', encoding="utf-8")
+    kernel_payload = {
+        "schema_version": "intent_cuda_lowered_kernel_v1",
+        "kernel_name": "k",
+        "io_spec": dict(contract.io_spec or {}),
+        "launch": {"grid": [1, 1, 1], "block": [1, 1, 1], "shared_mem": 0},
+        "output_names": ["C"],
+        "cuda_src_path": str(src_path),
+    }
+    kernel_json = tmp_path / "k.json"
+    kernel_json.write_text(json.dumps(kernel_payload), encoding="utf-8")
+    contract.executable.format = "cuda_kernel_json"
+    contract.executable.path = str(kernel_json)
+    contract.executable.entry = "k"
+    contract.executable.target = "cuda"
+    try:
+        _ = lower_cuda_contract_to_kernel(contract.to_json_dict(), shape_bindings={"M": 4, "N": 4})
+    except ValueError as e:
+        msg = str(e)
+        assert "unsupported or missing" in msg
+        assert "cuda_ptx" in msg
+    else:
+        raise AssertionError("expected ValueError for cuda_kernel_json executable")
+
+
+def test_lower_cuda_contract_to_kernel_supports_cuda_ptx_executable(tmp_path: Path) -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_ptx_exec"))
+    contract = build_cuda_contract(mod)
+    ptx_path = tmp_path / "k.ptx"
+    ptx_path.write_text("// fake ptx\n.visible .entry k() { ret; }\n", encoding="utf-8")
+    contract.executable.format = "cuda_ptx"
+    contract.executable.path = str(ptx_path)
+    contract.executable.entry = "k"
+    contract.executable.target = "cuda"
+    contract.launch = {"grid": [1, 1, 1], "block": [1, 1, 1], "shared_mem": 0}
+    lowered = lower_cuda_contract_to_kernel(contract.to_json_dict(), shape_bindings={"M": 4, "N": 4})
+    assert str(lowered.get("kernel_name") or "") == "k"
+    assert str(lowered.get("execution_engine") or "") == "mlir_native"
+    assert isinstance(lowered.get("cuda_ptx"), (bytes, bytearray))
+
+
+def test_lower_cuda_contract_to_kernel_uses_ptx_invocation_launch_when_contract_launch_empty(tmp_path: Path) -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_ptx_invocation_launch"))
+    contract = build_cuda_contract(mod)
+    ptx_path = tmp_path / "k.ptx"
+    ptx_path.write_text("// fake ptx\n.visible .entry k() { ret; }\n", encoding="utf-8")
+    contract.executable.format = "cuda_ptx"
+    contract.executable.path = str(ptx_path)
+    contract.executable.entry = "k"
+    contract.executable.target = "cuda"
+    contract.executable.invocation = {
+        "launch": {"grid": [2, 1, 1], "block": [64, 1, 1], "shared_mem": 0},
+        "output_names": ["C"],
+    }
+    contract.launch = {}
+    lowered = lower_cuda_contract_to_kernel(contract.to_json_dict(), shape_bindings={"M": 4, "N": 4})
+    launch = dict(lowered.get("launch") or {})
+    assert launch.get("grid") == [2, 1, 1]
+    assert launch.get("block") == [64, 1, 1]
+
+
+def test_lower_cuda_contract_to_kernel_uses_ptx_invocation_io_spec_when_contract_io_semantic_only(tmp_path: Path) -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_ptx_invocation_io"))
+    contract = build_cuda_contract(mod)
+    ptx_path = tmp_path / "k.ptx"
+    ptx_path.write_text("// fake ptx\n.visible .entry k() { ret; }\n", encoding="utf-8")
+    contract.executable.format = "cuda_ptx"
+    contract.executable.path = str(ptx_path)
+    contract.executable.entry = "k"
+    contract.executable.target = "cuda"
+    contract.executable.invocation = {
+        "io_spec": {
+            "arg_names": ["x", "y", "out"],
+            "tensors": {
+                "x": {"dtype": "f32", "shape": [4, 4]},
+                "y": {"dtype": "f32", "shape": [4, 4]},
+                "out": {"dtype": "f32", "shape": [4, 4]},
+            },
+            "outputs": ["out"],
+        },
+        "launch": {"grid": [1, 1, 1], "block": [64, 1, 1], "shared_mem": 0},
+        "output_names": ["out"],
+    }
+    contract.launch = {}
+    lowered = lower_cuda_contract_to_kernel(contract.to_json_dict(), shape_bindings={"M": 4, "N": 4})
+    io_spec = dict(lowered.get("io_spec") or {})
+    assert io_spec.get("arg_names") == ["x", "y", "out"]
+
+
+def test_lower_cuda_contract_to_kernel_uses_ptx_invocation_shape_bindings_for_missing_scalars(tmp_path: Path) -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_ptx_invocation_bindings"))
+    contract = build_cuda_contract(mod)
+    ptx_path = tmp_path / "k.ptx"
+    ptx_path.write_text("// fake ptx\n.visible .entry k() { ret; }\n", encoding="utf-8")
+    contract.executable.format = "cuda_ptx"
+    contract.executable.path = str(ptx_path)
+    contract.executable.entry = "k"
+    contract.executable.target = "cuda"
+    contract.executable.invocation = {
+        "shape_bindings": {"M": 4, "N": 4, "T": 16},
+        "io_spec": {
+            "arg_names": ["x", "out", "M", "N", "T"],
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"]},
+                "out": {"dtype": "f32", "shape": ["T"]},
+            },
+            "scalars": {"M": "i32", "N": "i32", "T": "i32"},
+            "outputs": ["out"],
+        },
+        "launch": {"grid": [1, 1, 1], "block": [64, 1, 1], "shared_mem": 0},
+        "output_names": ["out"],
+    }
+    contract.launch = {}
+    lowered = lower_cuda_contract_to_kernel(contract.to_json_dict(), shape_bindings={"M": 4, "N": 4})
+    bindings = dict(lowered.get("bindings") or {})
+    assert bindings.get("T") == 16
+
+
+def test_lower_cuda_contract_to_kernel_ptx_augments_scalar_aliases_from_shape_bindings(tmp_path: Path) -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_ptx_alias_augment"))
+    contract = build_cuda_contract(mod)
+    ptx_path = tmp_path / "k.ptx"
+    ptx_path.write_text("// fake ptx\n.visible .entry k() { ret; }\n", encoding="utf-8")
+    contract.executable.format = "cuda_ptx"
+    contract.executable.path = str(ptx_path)
+    contract.executable.entry = "k"
+    contract.executable.target = "cuda"
+    contract.io_spec = {
+        "arg_names": ["A", "B", "out", "M0", "N0", "M1", "N1", "M_OUT", "N_OUT"],
+        "tensors": {
+            "A": {"dtype": "f32", "shape": ["M", "N"]},
+            "B": {"dtype": "f32", "shape": ["M", "N"]},
+            "out": {"dtype": "f32", "shape": ["M_OUT", "N_OUT"]},
+        },
+        "scalars": {
+            "M0": "i32",
+            "N0": "i32",
+            "M1": "i32",
+            "N1": "i32",
+            "M_OUT": "i32",
+            "N_OUT": "i32",
+        },
+        "outputs": ["out"],
+    }
+    lowered = lower_cuda_contract_to_kernel(
+        contract.to_json_dict(),
+        shape_bindings={"M": 4, "N": 8, "M_OUT": 4, "N_OUT": 16},
+    )
+    bindings = dict(lowered.get("bindings") or {})
+    assert bindings.get("M0") == 4
+    assert bindings.get("N0") == 8
+    assert bindings.get("M1") == 4
+    assert bindings.get("N1") == 8
+    assert bindings.get("M_OUT") == 4
+    assert bindings.get("N_OUT") == 16
+
+
+def test_lower_cuda_contract_to_kernel_strict_llvm_ptx_rejects_nvrtc_origin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_ptx_strict"))
+    contract = build_cuda_contract(mod)
+    ptx_path = tmp_path / "k.ptx"
+    ptx_path.write_text("// fake ptx\n.visible .entry k() { ret; }\n", encoding="utf-8")
+    contract.executable.format = "cuda_ptx"
+    contract.executable.path = str(ptx_path)
+    contract.executable.entry = "k"
+    contract.executable.target = "cuda"
+    artifacts = dict(contract.artifacts or {})
+    artifacts["cuda_ptx_origin"] = "nvrtc_fallback_from_llvm"
+    contract.artifacts = artifacts
+    monkeypatch.setenv("INTENTIR_CUDA_REQUIRE_LLVM_PTX", "1")
+    with pytest.raises(ValueError, match="strict LLVM PTX mode"):
+        _ = lower_cuda_contract_to_kernel(contract.to_json_dict(), shape_bindings={"M": 4, "N": 4})
+
+
+def test_lower_cuda_contract_to_kernel_materializes_mlir_module_contract_when_not_strict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_no_exec"))
+    contract = build_cuda_contract(mod)
+    module_path = tmp_path / "mod.mlir"
+    module_path.write_text(str(mod.module_text), encoding="utf-8")
+    contract.executable.format = "cuda_mlir_module"
+    contract.executable.path = str(module_path)
+    contract.executable.target = "cuda"
+    monkeypatch.delenv("INTENTIR_CUDA_REQUIRE_LLVM_PTX", raising=False)
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver._compile_cuda_src_to_ptx_via_llvm_llc",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("llc unavailable")),
+    )
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver.compile_cuda_ptx_nvcc_dlto",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("nvcc_dlto unavailable")),
+    )
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver.compile_cuda_ptx_nvcc",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("nvcc unavailable")),
+    )
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver.compile_cuda_ptx",
+        lambda **_kwargs: b"// fake ptx\n.visible .entry k() { ret; }\n",
+    )
+    lowered = lower_cuda_contract_to_kernel(contract.to_json_dict(), shape_bindings={"M": 2, "N": 2})
+    assert str(lowered.get("executable_format") or "") == "cuda_ptx"
+    assert str(lowered.get("cuda_ptx_origin") or "") == "nvrtc_fallback_from_contract_mlir_module"
+    assert isinstance(lowered.get("cuda_ptx"), (bytes, bytearray))
+
+
+def test_lower_cuda_contract_to_kernel_rejects_mlir_module_when_strict_llvm_ptx_required(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_no_exec_strict"))
+    contract = build_cuda_contract(mod)
+    module_path = tmp_path / "mod.mlir"
+    module_path.write_text(str(mod.module_text), encoding="utf-8")
+    contract.executable.format = "cuda_mlir_module"
+    contract.executable.path = str(module_path)
+    contract.executable.target = "cuda"
+    monkeypatch.setenv("INTENTIR_CUDA_REQUIRE_LLVM_PTX", "1")
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver._compile_cuda_src_to_ptx_via_llvm_llc",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("llc unavailable")),
+    )
+    with pytest.raises(ValueError, match="strict LLVM PTX mode"):
+        _ = lower_cuda_contract_to_kernel(contract.to_json_dict(), shape_bindings={"M": 2, "N": 2})
+
+
+def test_lower_cuda_contract_to_kernel_accepts_mlir_module_when_strict_llvm_llc_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_no_exec_strict_ok"))
+    contract = build_cuda_contract(mod)
+    module_path = tmp_path / "mod.mlir"
+    module_path.write_text(str(mod.module_text), encoding="utf-8")
+    contract.executable.format = "cuda_mlir_module"
+    contract.executable.path = str(module_path)
+    contract.executable.target = "cuda"
+    monkeypatch.setenv("INTENTIR_CUDA_REQUIRE_LLVM_PTX", "1")
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver._compile_cuda_src_to_ptx_via_llvm_llc",
+        lambda **_kwargs: (b"// fake ptx\n.visible .entry k() { ret; }\n", "llvm_llc"),
+    )
+    lowered = lower_cuda_contract_to_kernel(contract.to_json_dict(), shape_bindings={"M": 2, "N": 2})
+    assert str(lowered.get("executable_format") or "") == "cuda_ptx"
+    assert str(lowered.get("cuda_ptx_origin") or "") == "llvm_llc"
+    assert isinstance(lowered.get("cuda_ptx"), (bytes, bytearray))
+
+
+def test_lower_cuda_contract_to_kernel_mlir_module_fills_concat_scalar_aliases(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_mlir_alias_fill"))
+    contract = build_cuda_contract(mod)
+    module_path = tmp_path / "mod.mlir"
+    module_path.write_text(str(mod.module_text), encoding="utf-8")
+    contract.executable.format = "cuda_mlir_module"
+    contract.executable.path = str(module_path)
+    contract.executable.target = "cuda"
+    monkeypatch.delenv("INTENTIR_CUDA_REQUIRE_LLVM_PTX", raising=False)
+    monkeypatch.setattr("intent_ir.mlir.convert_to_intent.to_intent", lambda _text: object())
+    monkeypatch.setattr(
+        "backends.cuda.codegen.cpp_driver.lower_intent_to_cuda_kernel_cpp",
+        lambda _intent, bindings: {
+            "kernel_name": "k",
+            "cuda_src": 'extern "C" __global__ void k() {}',
+            "io_spec": {
+                "arg_names": ["A", "B", "out", "M0", "N0", "M1", "N1", "M_OUT", "N_OUT"],
+                "tensors": {
+                    "A": {"dtype": "f32", "shape": ["M", "N"]},
+                    "B": {"dtype": "f32", "shape": ["M", "N"]},
+                    "out": {"dtype": "f32", "shape": ["M_OUT", "N_OUT"]},
+                },
+                "scalars": {
+                    "M0": "i32",
+                    "N0": "i32",
+                    "M1": "i32",
+                    "N1": "i32",
+                    "M_OUT": "i32",
+                    "N_OUT": "i32",
+                },
+                "outputs": ["out"],
+            },
+            "launch": {"grid": [1, 1, 1], "block": [1, 1, 1], "shared_mem": 0},
+            "output_names": ["out"],
+        },
+    )
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver.compile_cuda_ptx_nvcc_dlto",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("nvcc_dlto unavailable")),
+    )
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver.compile_cuda_ptx_nvcc",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("nvcc unavailable")),
+    )
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver.compile_cuda_ptx",
+        lambda **_kwargs: b"// fake ptx\n.visible .entry k() { ret; }\n",
+    )
+    lowered = lower_cuda_contract_to_kernel(
+        contract.to_json_dict(),
+        shape_bindings={"M": 4, "N": 8, "M_OUT": 4, "N_OUT": 16},
+    )
+    merged = dict(lowered.get("bindings") or {})
+    assert merged.get("M0") == 4
+    assert merged.get("M1") == 4
+    assert merged.get("N0") == 8
+    assert merged.get("N1") == 8
+    assert merged.get("M_OUT") == 4
+    assert merged.get("N_OUT") == 16
+
+
+def test_lower_cuda_contract_to_kernel_mlir_module_fills_none_scalar_placeholders(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_mlir_alias_fill_none"))
+    contract = build_cuda_contract(mod)
+    module_path = tmp_path / "mod.mlir"
+    module_path.write_text(str(mod.module_text), encoding="utf-8")
+    contract.executable.format = "cuda_mlir_module"
+    contract.executable.path = str(module_path)
+    contract.executable.target = "cuda"
+    monkeypatch.delenv("INTENTIR_CUDA_REQUIRE_LLVM_PTX", raising=False)
+    monkeypatch.setattr("intent_ir.mlir.convert_to_intent.to_intent", lambda _text: object())
+    monkeypatch.setattr(
+        "backends.cuda.codegen.cpp_driver.lower_intent_to_cuda_kernel_cpp",
+        lambda _intent, bindings: {
+            "kernel_name": "k",
+            "cuda_src": 'extern "C" __global__ void k() {}',
+            "io_spec": {
+                "arg_names": ["A", "B", "out", "M0", "N0", "M1", "N1", "M_OUT", "N_OUT", "T"],
+                "tensors": {
+                    "A": {"dtype": "f32", "shape": ["M", "N"]},
+                    "B": {"dtype": "f32", "shape": ["M", "N"]},
+                    "out": {"dtype": "f32", "shape": ["M_OUT", "N_OUT"]},
+                },
+                "scalars": {
+                    "M0": "i32",
+                    "N0": "i32",
+                    "M1": "i32",
+                    "N1": "i32",
+                    "M_OUT": "i32",
+                    "N_OUT": "i32",
+                    "T": "i32",
+                },
+                "outputs": ["out"],
+            },
+            "launch": {"grid": [1, 1, 1], "block": [1, 1, 1], "shared_mem": 0},
+            "output_names": ["out"],
+        },
+    )
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver.compile_cuda_ptx_nvcc_dlto",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("nvcc_dlto unavailable")),
+    )
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver.compile_cuda_ptx_nvcc",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("nvcc unavailable")),
+    )
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver.compile_cuda_ptx",
+        lambda **_kwargs: b"// fake ptx\n.visible .entry k() { ret; }\n",
+    )
+    lowered = lower_cuda_contract_to_kernel(
+        contract.to_json_dict(),
+        shape_bindings={
+            "M": 4,
+            "N": 8,
+            "M_OUT": 4,
+            "N_OUT": 16,
+            "M0": None,
+            "N0": None,
+            "M1": None,
+            "N1": None,
+            "T": None,
+        },
+    )
+    merged = dict(lowered.get("bindings") or {})
+    assert merged.get("M0") == 4
+    assert merged.get("N0") == 8
+    assert merged.get("M1") == 4
+    assert merged.get("N1") == 8
+    assert merged.get("M_OUT") == 4
+    assert merged.get("N_OUT") == 16
+    assert merged.get("T") == 64
+
+
+def test_lower_cuda_contract_to_kernel_mlir_module_prefers_symbolic_out_expr_over_plain_mn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_mlir_out_expr_priority"))
+    contract = build_cuda_contract(mod)
+    module_path = tmp_path / "mod.mlir"
+    module_path.write_text(str(mod.module_text), encoding="utf-8")
+    contract.executable.format = "cuda_mlir_module"
+    contract.executable.path = str(module_path)
+    contract.executable.target = "cuda"
+    monkeypatch.delenv("INTENTIR_CUDA_REQUIRE_LLVM_PTX", raising=False)
+    monkeypatch.setattr("intent_ir.mlir.convert_to_intent.to_intent", lambda _text: object())
+    monkeypatch.setattr(
+        "backends.cuda.codegen.cpp_driver.lower_intent_to_cuda_kernel_cpp",
+        lambda _intent, bindings: {
+            "kernel_name": "k",
+            "cuda_src": 'extern "C" __global__ void k() {}',
+            "io_spec": {
+                "arg_names": ["x", "out", "M", "N", "M_OUT", "N_OUT"],
+                "tensors": {
+                    "x": {"dtype": "f32", "shape": ["M", "N"]},
+                    "out": {"dtype": "f32", "shape": ["M + 1", "N + 3"]},
+                },
+                "scalars": {"M": "i32", "N": "i32", "M_OUT": "i32", "N_OUT": "i32"},
+                "outputs": ["out"],
+            },
+            "launch": {"grid": [1, 1, 1], "block": [1, 1, 1], "shared_mem": 0},
+            "output_names": ["out"],
+        },
+    )
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver.compile_cuda_ptx_nvcc_dlto",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("nvcc_dlto unavailable")),
+    )
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver.compile_cuda_ptx_nvcc",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("nvcc unavailable")),
+    )
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver.compile_cuda_ptx",
+        lambda **_kwargs: b"// fake ptx\n.visible .entry k() { ret; }\n",
+    )
+    lowered = lower_cuda_contract_to_kernel(
+        contract.to_json_dict(),
+        shape_bindings={"M": 4, "N": 64, "M + 1": 5, "N + 3": 67},
+    )
+    merged = dict(lowered.get("bindings") or {})
+    assert merged.get("M_OUT") == 5
+    assert merged.get("N_OUT") == 67
+
+
+def test_lower_cuda_contract_to_kernel_mlir_module_derives_t_scalar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_mlir_t_fill"))
+    contract = build_cuda_contract(mod)
+    module_path = tmp_path / "mod.mlir"
+    module_path.write_text(str(mod.module_text), encoding="utf-8")
+    contract.executable.format = "cuda_mlir_module"
+    contract.executable.path = str(module_path)
+    contract.executable.target = "cuda"
+    monkeypatch.delenv("INTENTIR_CUDA_REQUIRE_LLVM_PTX", raising=False)
+    monkeypatch.setattr("intent_ir.mlir.convert_to_intent.to_intent", lambda _text: object())
+    monkeypatch.setattr(
+        "backends.cuda.codegen.cpp_driver.lower_intent_to_cuda_kernel_cpp",
+        lambda _intent, bindings: {
+            "kernel_name": "k",
+            "cuda_src": 'extern "C" __global__ void k() {}',
+            "io_spec": {
+                "arg_names": ["inp", "out", "M_OUT", "N_OUT", "T"],
+                "tensors": {
+                    "inp": {"dtype": "f32", "shape": ["M", "N"]},
+                    "out": {"dtype": "f32", "shape": ["M_OUT", "N_OUT"]},
+                },
+                "scalars": {"M_OUT": "i32", "N_OUT": "i32", "T": "i32"},
+                "outputs": ["out"],
+            },
+            "launch": {"grid": [1, 1, 1], "block": [1, 1, 1], "shared_mem": 0},
+            "output_names": ["out"],
+        },
+    )
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver.compile_cuda_ptx_nvcc_dlto",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("nvcc_dlto unavailable")),
+    )
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver.compile_cuda_ptx_nvcc",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("nvcc unavailable")),
+    )
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver.compile_cuda_ptx",
+        lambda **_kwargs: b"// fake ptx\n.visible .entry k() { ret; }\n",
+    )
+    lowered = lower_cuda_contract_to_kernel(
+        contract.to_json_dict(),
+        shape_bindings={"M": 4, "N": 8, "M_OUT": 6, "N_OUT": 10},
+    )
+    merged = dict(lowered.get("bindings") or {})
+    assert merged.get("T") == 60
+
+
+def test_lower_cuda_contract_to_kernel_mlir_module_uses_intent_json_fallback_on_unsupported_codegen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_mlir_json_fallback"))
+    contract = build_cuda_contract(mod)
+    module_path = tmp_path / "mod.mlir"
+    module_path.write_text(str(mod.module_text), encoding="utf-8")
+    contract.executable.format = "cuda_mlir_module"
+    contract.executable.path = str(module_path)
+    contract.executable.target = "cuda"
+    reason_ctx = dict(contract.reason_context or {})
+    reason_ctx["fallback_intent_json"] = _add_intent("cuda_pipeline_mlir_json_fallback_intent").to_json_dict()
+    contract.reason_context = reason_ctx
+    monkeypatch.delenv("INTENTIR_CUDA_REQUIRE_LLVM_PTX", raising=False)
+    monkeypatch.setattr("intent_ir.mlir.convert_to_intent.to_intent", lambda _text: object())
+    monkeypatch.setattr(
+        "backends.cuda.codegen.cpp_driver.lower_intent_to_cuda_kernel_cpp",
+        lambda _intent, bindings: (_ for _ in ()).throw(
+            RuntimeError("unsupported intent for cuda cpp codegen (test)")
+        ),
+    )
+    monkeypatch.setattr(
+        "backends.cuda.codegen.cpp_driver.lower_intent_json_to_cuda_kernel_cpp",
+        lambda payload, bindings: {
+            "kernel_name": "k",
+            "cuda_src": 'extern "C" __global__ void k() {}',
+            "io_spec": {
+                "arg_names": ["x", "y", "out", "M", "N"],
+                "tensors": {
+                    "x": {"dtype": "f32", "shape": ["M", "N"]},
+                    "y": {"dtype": "f32", "shape": ["M", "N"]},
+                    "out": {"dtype": "f32", "shape": ["M", "N"]},
+                },
+                "scalars": {"M": "i32", "N": "i32"},
+                "outputs": ["out"],
+            },
+            "launch": {"grid": [1, 1, 1], "block": [1, 1, 1], "shared_mem": 0},
+            "output_names": ["out"],
+        },
+    )
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver.compile_cuda_ptx_nvcc_dlto",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("nvcc_dlto unavailable")),
+    )
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver.compile_cuda_ptx_nvcc",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("nvcc unavailable")),
+    )
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver.compile_cuda_ptx",
+        lambda **_kwargs: b"// fake ptx\n.visible .entry k() { ret; }\n",
+    )
+    lowered = lower_cuda_contract_to_kernel(contract.to_json_dict(), shape_bindings={"M": 4, "N": 8})
+    assert str(lowered.get("kernel_name") or "") == "k"
+    assert isinstance(lowered.get("cuda_ptx"), (bytes, bytearray))
+
+
+def test_lower_cuda_contract_to_kernel_mlir_module_uses_intent_json_fallback_on_mlir_recover_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_mlir_json_fallback_recover_fail"))
+    contract = build_cuda_contract(mod)
+    module_path = tmp_path / "mod.mlir"
+    module_path.write_text(str(mod.module_text), encoding="utf-8")
+    contract.executable.format = "cuda_mlir_module"
+    contract.executable.path = str(module_path)
+    contract.executable.target = "cuda"
+    reason_ctx = dict(contract.reason_context or {})
+    reason_ctx["fallback_intent_json"] = _add_intent("cuda_pipeline_mlir_json_fallback_recover_fail_intent").to_json_dict()
+    contract.reason_context = reason_ctx
+    monkeypatch.delenv("INTENTIR_CUDA_REQUIRE_LLVM_PTX", raising=False)
+    monkeypatch.setattr(
+        "intent_ir.mlir.convert_to_intent.to_intent",
+        lambda _text: (_ for _ in ()).throw(ValueError("missing intentir_json payload block (test)")),
+    )
+    monkeypatch.setattr(
+        "backends.cuda.codegen.cpp_driver.lower_intent_json_to_cuda_kernel_cpp",
+        lambda payload, bindings: {
+            "kernel_name": "k",
+            "cuda_src": 'extern "C" __global__ void k() {}',
+            "io_spec": {
+                "arg_names": ["x", "y", "out", "M", "N"],
+                "tensors": {
+                    "x": {"dtype": "f32", "shape": ["M", "N"]},
+                    "y": {"dtype": "f32", "shape": ["M", "N"]},
+                    "out": {"dtype": "f32", "shape": ["M", "N"]},
+                },
+                "scalars": {"M": "i32", "N": "i32"},
+                "outputs": ["out"],
+            },
+            "launch": {"grid": [1, 1, 1], "block": [1, 1, 1], "shared_mem": 0},
+            "output_names": ["out"],
+        },
+    )
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver.compile_cuda_ptx_nvcc_dlto",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("nvcc_dlto unavailable")),
+    )
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver.compile_cuda_ptx_nvcc",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("nvcc unavailable")),
+    )
+    monkeypatch.setattr(
+        "backends.cuda.pipeline.driver.compile_cuda_ptx",
+        lambda **_kwargs: b"// fake ptx\n.visible .entry k() { ret; }\n",
+    )
+    lowered = lower_cuda_contract_to_kernel(contract.to_json_dict(), shape_bindings={"M": 4, "N": 8})
+    assert str(lowered.get("kernel_name") or "") == "k"
+    assert isinstance(lowered.get("cuda_ptx"), (bytes, bytearray))

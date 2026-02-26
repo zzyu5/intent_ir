@@ -80,13 +80,37 @@ def infer_tolerances(
     - If any output dtype is f16, keep legacy 1e-3 tolerances (avoid false positives).
     - If output is f32-only and op mix is "stable", uses tighter defaults (e.g., softmax 1e-4).
     """
-    op_set: Set[str] = {op.op for op in intent.ops}
-    matmul_count = sum(1 for op in intent.ops if op.op == "matmul")
+    op_names = [str(op.op) for op in intent.ops]
+    op_set: Set[str] = set(op_names)
+    matmul_count = sum(1 for op_name in op_names if op_name == "matmul")
+    tensor_dtypes = {str(name): str(t.dtype) for name, t in intent.tensors.items() if t is not None}
+    tensor_names = set(tensor_dtypes.keys())
+    output_names = set(str(x) for x in list(intent.outputs or []))
+
+    return _infer_tolerances_core(
+        op_set=op_set,
+        matmul_count=matmul_count,
+        tensor_dtypes=tensor_dtypes,
+        tensor_names=tensor_names,
+        output_names=output_names,
+        ref_out=ref_out,
+    )
+
+
+def _infer_tolerances_core(
+    *,
+    op_set: Set[str],
+    matmul_count: int,
+    tensor_dtypes: Dict[str, str],
+    tensor_names: Set[str],
+    output_names: Set[str],
+    ref_out: Optional[Dict[str, np.ndarray]],
+) -> Tolerances:
 
     # 1) Op mix.
     tol = Tolerances(1e-4, 1e-4)
-    for op in intent.ops:
-        op_tol = _OP_TOL_F32.get(op.op)
+    for op_name in op_set:
+        op_tol = _OP_TOL_F32.get(op_name)
         if op_tol is None:
             continue
         tol = Tolerances(atol=max(tol.atol, op_tol.atol), rtol=max(tol.rtol, op_tol.rtol))
@@ -99,17 +123,16 @@ def infer_tolerances(
     # If any external dtype is f16/bf16, keep legacy tolerances (avoid false positives).
     out_dtypes: Set[str] = set()
     if ref_out is not None:
-        for name in (set(intent.outputs) | set(intent.tensors.keys())):
+        for name in (set(output_names) | set(tensor_names)):
             if name in ref_out:
                 try:
                     out_dtypes.add(_dtype_kind(np.asarray(ref_out[name]).dtype))
                 except Exception:
                     pass
     else:
-        for name in intent.tensors.keys():
-            t = intent.tensors.get(name)
-            if t is not None:
-                out_dtypes.add(str(t.dtype))
+        for name, dtype in tensor_dtypes.items():
+            if str(name).strip():
+                out_dtypes.add(str(dtype))
 
     # Conservative: if any output is f16/bf16, do not tighten below legacy default.
     if ("f16" in out_dtypes) or ("bf16" in out_dtypes):
@@ -138,4 +161,43 @@ def infer_tolerances(
     return tol
 
 
-__all__ = ["Tolerances", "infer_tolerances"]
+def infer_tolerances_from_intent_json(
+    intent_json: Dict[str, object],
+    *,
+    ref_out: Optional[Dict[str, np.ndarray]] = None,
+) -> Tolerances:
+    """JSON-first tolerance inference without rebuilding IntentFunction."""
+    payload = dict(intent_json or {})
+    op_names = [str((op or {}).get("op") or "") for op in list(payload.get("ops") or []) if isinstance(op, dict)]
+    op_names = [x for x in op_names if x]
+    op_set: Set[str] = set(op_names)
+    matmul_count = sum(1 for op_name in op_names if op_name == "matmul")
+
+    tensors_raw = payload.get("tensors")
+    tensor_dtypes: Dict[str, str] = {}
+    tensor_names: Set[str] = set()
+    if isinstance(tensors_raw, dict):
+        for name, spec in tensors_raw.items():
+            key = str(name).strip()
+            if not key:
+                continue
+            tensor_names.add(key)
+            if isinstance(spec, dict):
+                tensor_dtypes[key] = str(spec.get("dtype") or "")
+
+    outputs_raw = payload.get("outputs")
+    output_names: Set[str] = set()
+    if isinstance(outputs_raw, list):
+        output_names = {str(x).strip() for x in outputs_raw if str(x).strip()}
+
+    return _infer_tolerances_core(
+        op_set=op_set,
+        matmul_count=matmul_count,
+        tensor_dtypes=tensor_dtypes,
+        tensor_names=tensor_names,
+        output_names=output_names,
+        ref_out=ref_out,
+    )
+
+
+__all__ = ["Tolerances", "infer_tolerances", "infer_tolerances_from_intent_json"]

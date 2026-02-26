@@ -22,6 +22,48 @@
       intent.ops[3].op == "div") {
     return emit_normed_cumsum2d_f32(intent, bindings_json);
   }
+  {
+    bool addcmul_like = false;
+    if (intent.ops.size() == 3 && intent.ops[0].op == "mul" && intent.ops[1].op == "mul" && intent.ops[2].op == "add") {
+      const Op& o0 = intent.ops[0];
+      const Op& o1 = intent.ops[1];
+      const Op& o2 = intent.ops[2];
+      if (o0.inputs.size() == 2 && o1.inputs.size() == 2 && o2.inputs.size() == 2) {
+        const std::string t1_t2 = o0.output;
+        const bool o1_wires = (o1.inputs[0] == t1_t2 || o1.inputs[1] == t1_t2);
+        const bool o2_wires = (o2.inputs[0] == o1.output || o2.inputs[1] == o1.output);
+        if (o1_wires && o2_wires) {
+          const std::string value = (o1.inputs[0] == t1_t2) ? o1.inputs[1] : o1.inputs[0];
+          auto val_it = intent.tensors.find(value);
+          if (val_it != intent.tensors.end() && val_it->second.shape.empty()) {
+            addcmul_like = true;
+          }
+        }
+      }
+    }
+    if (addcmul_like) return emit_addcmul2d_f32(intent, bindings_json);
+  }
+  {
+    bool addcdiv_like = false;
+    if (intent.ops.size() == 3 && intent.ops[0].op == "div" && intent.ops[1].op == "mul" && intent.ops[2].op == "add") {
+      const Op& o0 = intent.ops[0];
+      const Op& o1 = intent.ops[1];
+      const Op& o2 = intent.ops[2];
+      if (o0.inputs.size() == 2 && o1.inputs.size() == 2 && o2.inputs.size() == 2) {
+        const std::string div_out = o0.output;
+        const bool o1_wires = (o1.inputs[0] == div_out || o1.inputs[1] == div_out);
+        const bool o2_wires = (o2.inputs[0] == o1.output || o2.inputs[1] == o1.output);
+        if (o1_wires && o2_wires) {
+          const std::string value = (o1.inputs[0] == div_out) ? o1.inputs[1] : o1.inputs[0];
+          auto val_it = intent.tensors.find(value);
+          if (val_it != intent.tensors.end() && val_it->second.shape.empty()) {
+            addcdiv_like = true;
+          }
+        }
+      }
+    }
+    if (addcdiv_like) return emit_addcdiv2d_f32(intent, bindings_json);
+  }
   if (intent.ops.size() == 2 && intent.ops[0].op == "std" && intent.ops[1].op == "mul") {
     return emit_var_mean2d_f32(intent, bindings_json);
   }
@@ -34,6 +76,80 @@
       intent.ops[3].op == "reduce_sum" && intent.ops[4].op == "sub" && intent.ops[5].op == "div" && intent.ops[6].op == "mul" &&
       intent.ops[7].op == "sub" && intent.ops[8].op == "identity") {
     return emit_var_mean2d_f32(intent, bindings_json);
+  }
+  if (intent.ops.size() == 6 && intent.ops[0].op == "iota" && intent.ops[1].op == "cast" && intent.ops[2].op == "sub" &&
+      intent.ops[3].op == "div" && intent.ops[4].op == "mul" && intent.ops[5].op == "add") {
+    return emit_linspace1d_f32(intent, bindings_json);
+  }
+  if (intent.ops.size() == 6 && intent.ops[0].op == "sub" && intent.ops[1].op == "abs" && intent.ops[2].op == "abs" &&
+      intent.ops[3].op == "mul" && intent.ops[4].op == "add" && intent.ops[5].op == "le") {
+    return emit_isclose2d_f32_bool(intent, bindings_json);
+  }
+  {
+    auto is_cmp = [](const std::string& op) {
+      return op == "gt" || op == "ge" || op == "lt" || op == "le" || op == "eq" || op == "ne";
+    };
+    bool cmp_like = false;
+    if (intent.ops.size() == 1 && is_cmp(intent.ops[0].op) && intent.ops[0].inputs.size() == 2) {
+      const Op& cmp = intent.ops[0];
+      auto l_it = intent.tensors.find(cmp.inputs[0]);
+      auto r_it = intent.tensors.find(cmp.inputs[1]);
+      auto o_it = intent.tensors.find(cmp.output);
+      if (l_it != intent.tensors.end() && r_it != intent.tensors.end() && o_it != intent.tensors.end()) {
+        const bool out_ok = (o_it->second.dtype == "bool" || o_it->second.dtype == "i32");
+        cmp_like = (l_it->second.dtype == "f32" && r_it->second.dtype == "f32" && out_ok);
+      }
+    } else if (intent.ops.size() == 3 && intent.ops[0].op == "cast" && intent.ops[1].op == "cast" && is_cmp(intent.ops[2].op) &&
+               intent.ops[0].inputs.size() == 1 && intent.ops[1].inputs.size() == 1 && intent.ops[2].inputs.size() == 2 &&
+               intent.ops[2].inputs[0] == intent.ops[0].output && intent.ops[2].inputs[1] == intent.ops[1].output) {
+      const Op& c0 = intent.ops[0];
+      const Op& c1 = intent.ops[1];
+      const Op& cmp = intent.ops[2];
+      const bool cast0_f32 = (!c0.attrs.is_object() || !c0.attrs.contains("to") || (c0.attrs["to"].is_string() && c0.attrs["to"].get<std::string>() == "f32"));
+      const bool cast1_f32 = (!c1.attrs.is_object() || !c1.attrs.contains("to") || (c1.attrs["to"].is_string() && c1.attrs["to"].get<std::string>() == "f32"));
+      auto l_it = intent.tensors.find(c0.inputs[0]);
+      auto r_it = intent.tensors.find(c1.inputs[0]);
+      auto o_it = intent.tensors.find(cmp.output);
+      if (l_it != intent.tensors.end() && r_it != intent.tensors.end() && o_it != intent.tensors.end()) {
+        const bool out_ok = (o_it->second.dtype == "bool" || o_it->second.dtype == "i32");
+        cmp_like = (cast0_f32 && cast1_f32 && l_it->second.dtype == "f32" && r_it->second.dtype == "f32" && out_ok);
+      }
+    }
+    if (cmp_like) return emit_cmp2d_f32_bool(intent, bindings_json);
+  }
+  {
+    bool atan2_like = false;
+    if (intent.ops.size() == 2 && intent.ops[0].op == "div" && intent.ops[1].op == "atan") {
+      const Op& div0 = intent.ops[0];
+      const Op& atan1 = intent.ops[1];
+      if (div0.inputs.size() == 2 && atan1.inputs.size() == 1 && atan1.inputs[0] == div0.output) {
+        auto y_it = intent.tensors.find(div0.inputs[0]);
+        auto x_it = intent.tensors.find(div0.inputs[1]);
+        auto o_it = intent.tensors.find(atan1.output);
+        if (y_it != intent.tensors.end() && x_it != intent.tensors.end() && o_it != intent.tensors.end()) {
+          atan2_like = (y_it->second.dtype == "f32" && x_it->second.dtype == "f32" && o_it->second.dtype == "f32");
+        }
+      }
+    }
+    if (atan2_like) return emit_atan2d_f32(intent, bindings_json);
+  }
+  {
+    bool pow_scalar_like = false;
+    if (intent.ops.size() == 2 && intent.ops[0].op == "broadcast_in_dim" && intent.ops[1].op == "pow") {
+      const Op& b0 = intent.ops[0];
+      const Op& p1 = intent.ops[1];
+      if (b0.inputs.size() == 1 && p1.inputs.size() == 2 && (p1.inputs[0] == b0.output || p1.inputs[1] == b0.output)) {
+        auto it_exp = intent.tensors.find(b0.inputs[0]);
+        if (it_exp != intent.tensors.end() && it_exp->second.shape.empty()) pow_scalar_like = true;
+      }
+    }
+    if (pow_scalar_like) return emit_pow_scalar2d_f32(intent, bindings_json);
+  }
+  if (intent.ops.size() == 1 && intent.ops[0].op == "acos") {
+    return emit_acos2d_f32(intent, bindings_json);
+  }
+  if (intent.ops.size() == 1 && intent.ops[0].op == "abs") {
+    return emit_abs2d_f32(intent, bindings_json);
   }
   {
     bool vector_norm_like = false;

@@ -7,6 +7,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
+import hashlib
 
 from intent_ir.ir import IntentFunction
 from backends.cuda.runtime import CudaLaunch
@@ -65,6 +66,31 @@ def _maybe_add_python_ninja_to_path() -> None:
 _CPP_CODEGEN_EXT: Optional[Any] = None
 
 
+def _source_mtime_tag(source_dir: Path) -> str:
+    """
+    Coarse invalidation tag for pybind extension names.
+
+    Torch extension caching keys off module name + listed source files; `.inc`
+    updates are otherwise easy to miss. We fold source mtimes into the module
+    name to force rebuilds when codegen includes change.
+    """
+    suffixes = {".cpp", ".cc", ".c", ".h", ".hpp", ".inc", ".inl", ".cmake"}
+    h = hashlib.sha1()
+    for p in sorted(source_dir.rglob("*")):
+        if not p.is_file():
+            continue
+        if p.name != "CMakeLists.txt" and p.suffix not in suffixes:
+            continue
+        try:
+            st = p.stat()
+        except FileNotFoundError:
+            continue
+        rel = str(p.relative_to(source_dir))
+        h.update(rel.encode("utf-8"))
+        h.update(str(int(st.st_mtime_ns)).encode("utf-8"))
+    return h.hexdigest()[:10]
+
+
 def _prune_stale_torch_lock(build_dir: Path) -> None:
     lock_path = build_dir / "lock"
     if not lock_path.is_file():
@@ -115,9 +141,10 @@ def ensure_cpp_codegen_ext_loaded(*, verbose: bool = False) -> Any:
 
     src_dir = _cpp_codegen_dir()
     src_tag = stable_source_tag(src_dir)
+    src_mtime_tag = _source_mtime_tag(src_dir)
     py_tag = f"py{sys.version_info.major}{sys.version_info.minor}"
     # Bump this suffix if the module init symbol changes (pybind module name must match).
-    name = f"intentir_cuda_codegen_ext_{src_tag}_{py_tag}_v1"
+    name = f"intentir_cuda_codegen_ext_{src_tag}_{src_mtime_tag}_{py_tag}_v1"
     build_dir = _cpp_codegen_ext_build_dir() / py_tag
     build_dir.mkdir(parents=True, exist_ok=True)
     _prune_stale_torch_lock(build_dir)

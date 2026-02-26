@@ -224,6 +224,17 @@ def _downstream_llvm_pipeline(backend_target: str | None) -> tuple[str | None, s
     return None, None
 
 
+def _downstream_llvm_extra_pipelines(backend_target: str | None) -> list[tuple[str, str]]:
+    target = str(backend_target or "").strip().lower()
+    if not target:
+        return []
+    if target.startswith("cuda"):
+        return [("downstream_rvv_llvm", "rvv")]
+    if target.startswith("rvv"):
+        return [("downstream_cuda_llvm", "cuda")]
+    return []
+
+
 def _emit_mlir_shadow_artifacts(
     *,
     spec_name: str,
@@ -231,6 +242,7 @@ def _emit_mlir_shadow_artifacts(
     intent: IntentFunction,
     report: Dict[str, object],
     backend_target: str | None,
+    shape_bindings: Dict[str, int] | None = None,
 ) -> None:
     if not _mlir_shadow_mode_enabled() and _execution_ir_mode() != "mlir":
         return
@@ -284,15 +296,8 @@ def _emit_mlir_shadow_artifacts(
         else:
             mlir_report["downstream"] = {"ok": True, "skipped": True, "reason": "backend_target_not_set"}
 
-        emit_backend_contract_artifacts(
-            spec_name=str(spec_name),
-            out_dir=out_dir,
-            midend_module=mid_mod,
-            mlir_report=mlir_report,
-            downstream_name=str(down) if down is not None else None,
-            downstream_module=down_mod,
-        )
-
+        llvm_mod = None
+        llvm_variants: list[tuple[str, IntentMLIRModule]] = []
         llvm_pipeline, llvm_backend = _downstream_llvm_pipeline(backend_target)
         if llvm_pipeline is None:
             mlir_report["llvm_emit_ok"] = False
@@ -302,6 +307,16 @@ def _emit_mlir_shadow_artifacts(
             mlir_report["llvm_pipeline"] = str(llvm_pipeline)
             mlir_report["llvm_backend"] = str(llvm_backend or "")
             try:
+                if shape_bindings:
+                    try:
+                        mid_mod.meta = dict(mid_mod.meta or {})
+                        mid_mod.meta["shape_bindings"] = {
+                            str(k): max(1, int(v))
+                            for k, v in dict(shape_bindings).items()
+                            if str(k).strip()
+                        }
+                    except Exception:
+                        pass
                 llvm_mod, llvm_trace = run_mlir_pipeline(
                     mid_mod,
                     str(llvm_pipeline),
@@ -312,6 +327,7 @@ def _emit_mlir_shadow_artifacts(
                 llvm_stage_path.write_text(llvm_mod.module_text, encoding="utf-8")
                 mlir_report[str(llvm_pipeline)] = dict(llvm_trace)
                 mlir_report[f"{llvm_pipeline}_module_path"] = str(llvm_stage_path)
+                llvm_variants.append((str(llvm_pipeline), llvm_mod))
 
                 llvm_passes = [p for p in list(llvm_trace.get("passes") or []) if isinstance(p, dict)]
                 llvm_translate = [p for p in llvm_passes if str(p.get("name") or "").startswith("mlir-translate")]
@@ -351,6 +367,10 @@ def _emit_mlir_shadow_artifacts(
                             ensure_reason = f"ensure_llvm_ir_text_origin:{llvm_text_origin}"
                         else:
                             ensure_reason = ensure_detail or "ensure_llvm_ir_text_not_ok"
+                if (not llvm_translate) and ensure_ok:
+                    # Pre-translated textual LLVM IR path: lower pass already emitted LLVM text.
+                    translate_ok = True
+                    translate_reason = "mlir_translate_bypassed_pretranslated_llvm"
 
                 llvm_as_ok = True
                 llvm_as_reason = ""
@@ -370,7 +390,9 @@ def _emit_mlir_shadow_artifacts(
                     if not llvm_opt_ok:
                         llvm_opt_reason = llvm_opt_detail or "llvm_opt_not_ok"
 
-                llvm_text_ready = bool(translate_ok or ensure_ok)
+                # Hard-cut MLIR-native policy: downstream LLVM text must come from
+                # the translation chain, not synthesized fallback.
+                llvm_text_ready = bool(translate_ok and ensure_ok)
                 llvm_emit_ok = bool(llvm_text_ready and llvm_as_ok and llvm_opt_ok)
                 llvm_skip_reason = ""
                 if not llvm_emit_ok:
@@ -380,16 +402,13 @@ def _emit_mlir_shadow_artifacts(
                         llvm_skip_reason = llvm_as_reason or "llvm_as_not_ok"
                     elif not llvm_opt_ok:
                         llvm_skip_reason = llvm_opt_reason or "llvm_opt_not_ok"
-                elif (not translate_ok) and ensure_ok:
-                    mlir_report["llvm_skip_reason"] = "llvm_text_synthesized_from_intent"
 
                 if llvm_emit_ok:
                     llvm_ir_path = out_dir / f"{spec_name}.intentir.intentdialect.{llvm_pipeline}.ll"
                     llvm_ir_path.write_text(llvm_mod.module_text, encoding="utf-8")
                     mlir_report["llvm_emit_ok"] = True
                     mlir_report["llvm_ir_path"] = str(llvm_ir_path)
-                    if str(mlir_report.get("llvm_skip_reason") or "").strip() != "llvm_text_synthesized_from_intent":
-                        mlir_report["llvm_skip_reason"] = ""
+                    mlir_report["llvm_skip_reason"] = ""
                 else:
                     mlir_report["llvm_emit_ok"] = False
                     mlir_report["llvm_ir_path"] = ""
@@ -402,6 +421,46 @@ def _emit_mlir_shadow_artifacts(
                 mlir_report["llvm_emit_ok"] = False
                 mlir_report["llvm_ir_path"] = ""
                 mlir_report["llvm_skip_reason"] = f"{llvm_pipeline}_error:{type(e).__name__}"
+            for extra_pipeline, extra_backend in _downstream_llvm_extra_pipelines(backend_target):
+                if str(extra_pipeline) == str(llvm_pipeline):
+                    continue
+                try:
+                    extra_mod, extra_trace = run_mlir_pipeline(
+                        mid_mod,
+                        str(extra_pipeline),
+                        backend=str(extra_backend or ""),
+                        out_dir=(out_dir / f"mlir_{extra_pipeline}"),
+                    )
+                    extra_path = out_dir / f"{spec_name}.intentir.intentdialect.{extra_pipeline}.mlir"
+                    extra_path.write_text(extra_mod.module_text, encoding="utf-8")
+                    mlir_report[str(extra_pipeline)] = dict(extra_trace)
+                    mlir_report[f"{extra_pipeline}_module_path"] = str(extra_path)
+                    llvm_variants.append((str(extra_pipeline), extra_mod))
+                    extra_passes = [p for p in list(extra_trace.get("passes") or []) if isinstance(p, dict)]
+                    lower_ms_total += sum(float(p.get("ms") or 0.0) for p in extra_passes)
+                    extra_llvm_as = [p for p in extra_passes if str(p.get("name") or "").startswith("llvm-as")]
+                    extra_llvm_opt = [p for p in extra_passes if str(p.get("name") or "").startswith("opt")]
+                    extra_emit_ms = sum(float(p.get("ms") or 0.0) for p in [*extra_llvm_as, *extra_llvm_opt])
+                    mlir_report[f"{extra_pipeline}_emit_ms"] = float(extra_emit_ms)
+                except Exception as e:
+                    mlir_report[str(extra_pipeline)] = {
+                        "ok": False,
+                        "error": f"{type(e).__name__}: {e}",
+                    }
+
+        emit_backend_contract_artifacts(
+            spec_name=str(spec_name),
+            out_dir=out_dir,
+            midend_module=mid_mod,
+            fallback_intent_module=upstream_mod,
+            mlir_report=mlir_report,
+            downstream_name=str(down) if down is not None else None,
+            downstream_module=down_mod,
+            downstream_llvm_name=(str(llvm_pipeline) if llvm_pipeline is not None else None),
+            downstream_llvm_module=llvm_mod,
+            downstream_llvm_variants=llvm_variants,
+            shape_bindings=dict(shape_bindings or {}),
+        )
 
         mlir_report["mlir_lower_ms"] = float(lower_ms_total)
 
@@ -2658,6 +2717,44 @@ def _persist_baseline_snapshot(
         report["baseline"] = {"shapes": dict(baseline_case.shapes), "seed": int(baseline_case.seed), "error": str(e)}
 
 
+def _augment_shape_bindings_from_baseline_io(
+    *,
+    intent: IntentFunction,
+    baseline_io_raw: Dict[str, np.ndarray],
+    shape_bindings: Dict[str, int],
+) -> Dict[str, int]:
+    out: Dict[str, int] = {str(k): int(v) for k, v in dict(shape_bindings or {}).items()}
+    io_view: Dict[str, np.ndarray] = dict(baseline_io_raw or {})
+    try:
+        from verify.diff_runner import _with_io_aliases as _with_io_aliases_for_diff
+
+        io_view = _with_io_aliases_for_diff(intent, io_view)
+    except Exception:
+        pass
+    for t_name, t in dict(getattr(intent, "tensors", {}) or {}).items():
+        arr = io_view.get(str(t_name))
+        if arr is None:
+            continue
+        shape_spec = list(getattr(t, "shape", []) or [])
+        arr_shape = tuple(int(x) for x in np.asarray(arr).shape)
+        if len(shape_spec) != len(arr_shape):
+            continue
+        for dim, size in zip(shape_spec, arr_shape):
+            sym = ""
+            kind = getattr(dim, "kind", None)
+            if kind == "sym":
+                sym = str(getattr(dim, "value"))
+            elif isinstance(dim, str):
+                sym = str(dim)
+            if not sym or sym in out:
+                continue
+            try:
+                out[sym] = int(size)
+            except Exception:
+                continue
+    return out
+
+
 def run_pipeline_for_spec(
     spec: KernelSpec,
     *,
@@ -2914,6 +3011,44 @@ def run_pipeline_for_spec(
 
     should_try_cache = bool(seed_policy in {"auto", "force_cache"})
     should_try_llm = bool(seed_policy in {"auto", "force_llm"})
+    prefer_provider_deterministic_in_force_llm = (
+        seed_policy == "force_llm"
+        and allow_deterministic_fallback
+        and str(os.getenv("INTENTIR_TRITON_FORCE_COMPILE_PREFER_PROVIDER_DETERMINISTIC", "1")).strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+    if cand is None and prefer_provider_deterministic_in_force_llm:
+        provider_fb_intent = provider_plugin.deterministic_intent_for_spec(spec_name=str(spec.name))
+        if provider_fb_intent is not None:
+            cand = CandidateIntent(
+                intent=provider_fb_intent,
+                problem_params={},
+                schedule_params={},
+                raw_json={"fallback": True},
+                llm_trace={},
+            )
+            report["llm_fallback"] = {
+                "used": True,
+                "kind": f"provider.{provider_name}.deterministic_prefill",
+                "reason": "force_compile_deterministic_miss_policy",
+            }
+            report["llm_enabled"] = False
+            enrich_intent_macros(cand.intent)
+            mlir_txt = _intent_to_mlir_text(cand.intent)
+            (out_dir / f"{spec.name}.intentir.mlir").write_text(mlir_txt, encoding="utf-8")
+            (out_dir / f"{spec.name}.intentir.fallback.mlir").write_text(mlir_txt, encoding="utf-8")
+            expanded_intent = expand_macros(cand.intent)
+            cand_expanded = CandidateIntent(
+                intent=expanded_intent,
+                problem_params={},
+                schedule_params={},
+                raw_json={"fallback": True},
+                llm_trace={},
+            )
+            exp_txt = _intent_to_mlir_text(expanded_intent)
+            (out_dir / f"{spec.name}.intentir.expanded.mlir").write_text(exp_txt, encoding="utf-8")
+            (out_dir / f"{spec.name}.intentir.fallback.expanded.mlir").write_text(exp_txt, encoding="utf-8")
+
     if should_try_cache and seed_path.is_file():
         cand, cand_expanded = _load_intent_seed(seed_path)
         cache_used = True
@@ -3658,12 +3793,19 @@ def run_pipeline_for_spec(
             report["intent_seed"]["saved"] = False
             report["intent_seed"]["error"] = f"{type(e).__name__}: {e}"
 
+    shape_bindings = _augment_shape_bindings_from_baseline_io(
+        intent=cand.intent,
+        baseline_io_raw=baseline_io_raw,
+        shape_bindings={str(k): int(v) for k, v in dict(baseline_case.shapes).items()},
+    )
+
     _emit_mlir_shadow_artifacts(
         spec_name=spec.name,
         out_dir=out_dir,
         intent=cand.intent,
         report=report,
         backend_target=backend_target,
+        shape_bindings=dict(shape_bindings),
     )
 
     # Persist baseline IO aligned to the final macro intent, so Task6 tools can

@@ -145,19 +145,71 @@ def _probe_tool(base: str, *, env_var: str) -> dict[str, Any]:
     }
 
 
+def _probe_tool_aliases(aliases: list[str], *, env_var: str) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "available": False,
+        "path": "",
+        "version": "",
+        "resolved_name": "",
+        "env_var": str(env_var),
+        "candidates_checked": [],
+    }
+    for base in list(aliases or []):
+        probe = _probe_tool(str(base), env_var=env_var)
+        out["candidates_checked"] = list(out.get("candidates_checked") or []) + list(probe.get("candidates_checked") or [])
+        if bool(probe.get("available")):
+            return probe
+    return out
+
+
 def detect_mlir_toolchain() -> dict[str, Any]:
     mlir_opt = _probe_tool("mlir-opt", env_var="INTENTIR_MLIR_OPT")
     mlir_translate = _probe_tool("mlir-translate", env_var="INTENTIR_MLIR_TRANSLATE")
     llvm_as = _probe_tool("llvm-as", env_var="INTENTIR_LLVM_AS")
     llvm_opt = _probe_tool("opt", env_var="INTENTIR_LLVM_OPT")
+    llc = _probe_tool("llc", env_var="INTENTIR_LLC")
+    ptxas = _probe_tool("ptxas", env_var="INTENTIR_PTXAS")
+    clang = _probe_tool("clang", env_var="INTENTIR_CLANG")
+    rvv_cc = _probe_tool_aliases(
+        ["riscv64-linux-gnu-gcc", "riscv64-unknown-linux-gnu-gcc", "clang"],
+        env_var="INTENTIR_RVV_CC",
+    )
+    rvv_ld = _probe_tool_aliases(
+        ["riscv64-linux-gnu-ld", "ld.lld", "ld"],
+        env_var="INTENTIR_RVV_LD",
+    )
     tools = {
         "mlir-opt": mlir_opt,
         "mlir-translate": mlir_translate,
         "llvm-as": llvm_as,
         "opt": llvm_opt,
+        "llc": llc,
+        "ptxas": ptxas,
+        "clang": clang,
+        "rvv_cc": rvv_cc,
+        "rvv_ld": rvv_ld,
     }
     required_tools = ("mlir-opt", "mlir-translate", "llvm-as", "opt")
     missing_required = [name for name in required_tools if not bool((tools.get(name) or {}).get("available"))]
+    cuda_required_tools = ("llc",)
+    cuda_optional_tools = ("ptxas",)
+    rvv_required_tools = ("llc", "rvv_cc", "rvv_ld")
+    rvv_optional_tools = ("clang",)
+    missing_cuda_required = [name for name in cuda_required_tools if not bool((tools.get(name) or {}).get("available"))]
+    missing_rvv_required = [name for name in rvv_required_tools if not bool((tools.get(name) or {}).get("available"))]
+    backend_install_hints: dict[str, str] = {}
+    if missing_cuda_required:
+        backend_install_hints["cuda"] = (
+            "Missing CUDA downstream LLVM tools: "
+            + ", ".join(missing_cuda_required)
+            + ". Set INTENTIR_LLC (and optionally INTENTIR_PTXAS)."
+        )
+    if missing_rvv_required:
+        backend_install_hints["rvv"] = (
+            "Missing RVV downstream LLVM tools: "
+            + ", ".join(missing_rvv_required)
+            + ". Set INTENTIR_LLC / INTENTIR_RVV_CC / INTENTIR_RVV_LD."
+        )
     return {
         "schema_version": "intent_mlir_toolchain_probe_v1",
         # `ok` is the hard requirement used by migration gates.
@@ -171,7 +223,21 @@ def detect_mlir_toolchain() -> dict[str, Any]:
             "mlir-translate": "INTENTIR_MLIR_TRANSLATE",
             "llvm-as": "INTENTIR_LLVM_AS",
             "opt": "INTENTIR_LLVM_OPT",
+            "llc": "INTENTIR_LLC",
+            "ptxas": "INTENTIR_PTXAS",
+            "clang": "INTENTIR_CLANG",
+            "rvv_cc": "INTENTIR_RVV_CC",
+            "rvv_ld": "INTENTIR_RVV_LD",
         },
+        "cuda_required_tools": list(cuda_required_tools),
+        "cuda_optional_tools": list(cuda_optional_tools),
+        "cuda_toolchain_ok": bool(len(missing_cuda_required) == 0),
+        "missing_cuda_required_tools": list(missing_cuda_required),
+        "rvv_required_tools": list(rvv_required_tools),
+        "rvv_optional_tools": list(rvv_optional_tools),
+        "rvv_toolchain_ok": bool(len(missing_rvv_required) == 0),
+        "missing_rvv_required_tools": list(missing_rvv_required),
+        "backend_install_hints": backend_install_hints,
         "local_toolchain_roots": [
             str(_DEFAULT_TOOLCHAIN_ROOT / "mlir-current"),
             str(_DEFAULT_TOOLCHAIN_ROOT / "mlir-*"),

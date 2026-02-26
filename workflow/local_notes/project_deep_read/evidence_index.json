@@ -1,0 +1,144 @@
+{
+  "schema_version": "intentir_evidence_index_v1",
+  "generated_at": "2026-02-25T23:54:00Z",
+  "claims": [
+    {
+      "claim_id": "C001",
+      "claim_text": "workflow current_status 与 git HEAD 对齐，full196/gpu_perf freshness 均为 fresh（commit gap=0，phase=recomputed_ok）。",
+      "source_path": [
+        "workflow/flaggems/state/current_status.json"
+      ],
+      "source_type": "workflow_state",
+      "commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
+      "freshness_scope": "repo_head",
+      "confidence": "high"
+    },
+    {
+      "claim_id": "C002",
+      "claim_text": "full196 strict HEAD 证据已完成：run_summary.ok=true，coverage_batches=7/7，status_converged dual_pass=196，mlir_llvm_artifact_complete=true。",
+      "source_path": [
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/coverage_integrity.json"
+      ],
+      "source_type": "artifact",
+      "commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
+      "freshness_scope": "head_validated",
+      "confidence": "high"
+    },
+    {
+      "claim_id": "C003",
+      "claim_text": "gpu_perf strict HEAD 证据通过：kernel_measured=159，categories_complete=true，per_device_ok=true，status_converged dual_pass=159。",
+      "source_path": [
+        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v14_strict_policy_refresh4/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v14_strict_policy_refresh4/gpu_perf_graph.json",
+        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v14_strict_policy_refresh4/status_converged.json"
+      ],
+      "source_type": "artifact",
+      "commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
+      "freshness_scope": "head_validated",
+      "confidence": "high"
+    },
+    {
+      "claim_id": "C004",
+      "claim_text": "MLIR 切入状态为 mlir_primary，且 mlir_llvm_chain_ok=true（非 blocked_llvm_chain）。",
+      "source_path": [
+        "workflow/flaggems/state/current_status.json",
+        "scripts/flaggems/build_workflow_state.py"
+      ],
+      "source_type": "workflow_state+source_code",
+      "commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
+      "freshness_scope": "repo_head",
+      "confidence": "high"
+    },
+    {
+      "claim_id": "C005",
+      "claim_text": "full196 与 gpu_perf 两个 profile 的 ci_gate 均通过。",
+      "source_path": [
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/ci_gate.json",
+        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v14_strict_policy_refresh4/ci_gate.json"
+      ],
+      "source_type": "gate_artifact",
+      "commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
+      "freshness_scope": "head_gate",
+      "confidence": "high"
+    },
+    {
+      "claim_id": "C006",
+      "claim_text": "gpu_perf native 关键内核路径已由 adapter 固定：scaled_dot_product_attention_bhsd / flash_attn_varlen_func_bhsd / unique2d，避免错误 callable 导致的空图测量。",
+      "source_path": [
+        "scripts/flaggems/run_gpu_perf_graph.py",
+        "tests/frontends/triton/test_flaggems_gpu_perf_graph_native_launch.py",
+        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v14_strict_policy_refresh4/gpu_perf_graph.json"
+      ],
+      "source_type": "source_code+test+artifact",
+      "commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
+      "freshness_scope": "repo_head",
+      "confidence": "high"
+    },
+    {
+      "claim_id": "C007",
+      "claim_text": "gpu_perf key-kernel baseline 审计通过，min_relative=1.0425（policy 基线已刷新到 strict 证据）。",
+      "source_path": [
+        "workflow/flaggems/state/gpu_perf_policy.json",
+        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v14_strict_policy_refresh4/ci_gate.json"
+      ],
+      "source_type": "policy+gate_artifact",
+      "commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
+      "freshness_scope": "head_gate",
+      "confidence": "high"
+    },
+    {
+      "claim_id": "C008",
+      "claim_text": "strict MLIR matrix 已扩到跨 family 13-kernel 波次，rvv_remote_llvm + cuda 双后端均通过，runtime_fallback=0。",
+      "source_path": [
+        "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave13_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave13_v1/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave13_v1/stage_timing_breakdown.json"
+      ],
+      "source_type": "artifact",
+      "commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
+      "freshness_scope": "repo_head",
+      "confidence": "high"
+    },
+    {
+      "claim_id": "C009",
+      "claim_text": "strict attention 子族（embedding+sdp+flash）已双后端通过且零 fallback，证明高复杂 kernel 也可走硬切路径。",
+      "source_path": [
+        "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_attention3_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_attention3_v1/status_converged.json"
+      ],
+      "source_type": "artifact",
+      "commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
+      "freshness_scope": "repo_head",
+      "confidence": "high"
+    },
+    {
+      "claim_id": "C010",
+      "claim_text": "strict MLIR matrix 已扩到 24-kernel 跨 family 波次，rvv_remote_llvm+cuda 全部通过，scoped dual_pass=35，runtime_fallback=0。",
+      "source_path": [
+        "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave24_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave24_v1/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave24_v1/stage_timing_breakdown.json"
+      ],
+      "source_type": "artifact",
+      "commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
+      "freshness_scope": "repo_head",
+      "confidence": "high"
+    },
+    {
+      "claim_id": "C011",
+      "claim_text": "strict MLIR matrix 已扩到 64-kernel 跨 family 波次，rvv_remote_llvm+cuda 通过，counts_scoped.dual_pass=75，runtime_fallback=0。",
+      "source_path": [
+        "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave64_v1/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave64_v1/status_converged.json",
+        "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave64_v1/stage_timing_breakdown.json",
+        "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave64_v1/mlir_llvm_artifacts.json"
+      ],
+      "source_type": "artifact",
+      "commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
+      "freshness_scope": "repo_head",
+      "confidence": "high"
+    }
+  ]
+}

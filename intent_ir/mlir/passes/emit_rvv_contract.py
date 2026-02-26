@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 from intent_ir.mlir.module import IntentMLIRModule
-from .emit_cuda_contract import _dim_to_json, _schedule_to_json, _tensor_io_spec
+from .emit_cuda_contract import _dim_to_json, _resolve_executable, _schedule_to_json, _tensor_io_spec
 from intent_ir.mlir.convert_to_intent import to_intent
 from intent_ir.ir import IntentFunction
 from backends.common.mlir_contract import MlirBackendContract
@@ -14,6 +14,8 @@ def build_rvv_contract_from_intent(
     *,
     source_kind: str,
     source_module: IntentMLIRModule | None = None,
+    artifact_module_path: str | None = None,
+    executable: Mapping[str, Any] | None = None,
 ) -> MlirBackendContract:
     op_names = [str(getattr(op, "op", "")) for op in list(intent.ops or []) if str(getattr(op, "op", ""))]
     tensor_shapes: dict[str, list[object]] = {}
@@ -23,6 +25,15 @@ def build_rvv_contract_from_intent(
     if source_module is not None:
         artifacts["dialect_version"] = str(source_module.dialect_version)
         artifacts["symbols"] = [str(x) for x in list(source_module.symbols or []) if str(x).strip()]
+    if artifact_module_path:
+        artifacts["mlir_module_path"] = str(artifact_module_path)
+    exe = _resolve_executable(
+        backend="rvv",
+        kernel_name=str(intent.name),
+        source_module=source_module,
+        artifact_module_path=artifact_module_path,
+        executable=executable,
+    )
     contract = MlirBackendContract(
         backend="rvv",
         kernel_name=str(intent.name),
@@ -33,7 +44,7 @@ def build_rvv_contract_from_intent(
         reason_context={"source_kind": str(source_kind), "mlir_backend_contract_used": True},
         op_names=op_names,
         tensor_shapes=tensor_shapes,
-        intent_json=intent.to_json_dict(),
+        executable=exe,
     )
     return contract
 
@@ -42,9 +53,17 @@ def build_rvv_contract(
     module: IntentMLIRModule,
     *,
     source_kind: str = "mlir_module",
+    artifact_module_path: str | None = None,
+    executable: Mapping[str, Any] | None = None,
 ) -> MlirBackendContract:
     intent = to_intent(module)
-    return build_rvv_contract_from_intent(intent, source_kind=source_kind, source_module=module)
+    return build_rvv_contract_from_intent(
+        intent,
+        source_kind=source_kind,
+        source_module=module,
+        artifact_module_path=artifact_module_path,
+        executable=executable,
+    )
 
 
 def emit_rvv_contract(module: IntentMLIRModule, **_: object) -> IntentMLIRModule:

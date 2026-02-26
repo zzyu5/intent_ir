@@ -1347,16 +1347,50 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
     }
   }
 
+  auto dim_token_equal = [&](const json& a, const json& b) -> bool {
+    if ((a.is_number_integer() || a.is_number()) && (b.is_number_integer() || b.is_number())) {
+      const int64_t av = a.is_number_integer() ? a.get<int64_t>() : static_cast<int64_t>(a.get<double>());
+      const int64_t bv = b.is_number_integer() ? b.get<int64_t>() : static_cast<int64_t>(b.get<double>());
+      return av == bv;
+    }
+    if (a.is_string() && b.is_string()) return a.get<std::string>() == b.get<std::string>();
+    return false;
+  };
+  auto tensor_shape_matches_out = [&](const Tensor& t) -> bool {
+    if (static_cast<int>(t.shape.size()) != out_rank) return false;
+    for (int i = 0; i < out_rank; ++i) {
+      if (!dim_token_equal(t.shape[static_cast<size_t>(i)], out_t.shape[static_cast<size_t>(i)])) return false;
+    }
+    return true;
+  };
+
+  bool need_structured_index = false;
+  for (const auto& op : intent.ops) {
+    if (op.op == "iota" || op.op == "broadcast_in_dim") {
+      need_structured_index = true;
+      break;
+    }
+  }
+  if (!need_structured_index) {
+    for (const auto& name : external_inputs) {
+      auto it = intent.tensors.find(name);
+      if (it == intent.tensors.end()) continue;
+      const Tensor& t = it->second;
+      if (t.shape.empty()) continue;  // scalar tensor is handled as [0].
+      if (!tensor_shape_matches_out(t)) {
+        need_structured_index = true;
+        break;
+      }
+    }
+  }
+
   std::vector<std::string> tensor_args;
   tensor_args.reserve(external_inputs.size() + 1 + tensor_dim_args.size());
   for (const auto& x : external_inputs) tensor_args.push_back(x);
   tensor_args.push_back(out_name);
   for (const auto& x : tensor_dim_args) tensor_args.push_back(x);
 
-  int64_t block_x = resolve_schedule_int(intent, bindings, "tile_n", 256);
-  if (block_x <= 0) block_x = 256;
-  if (block_x < 32) block_x = 32;
-  if (block_x > 1024) block_x = 1024;
+  int64_t block_x = 0;
 
   std::vector<std::string> out_dims_expr;
   out_dims_expr.reserve(out_rank);
@@ -1369,34 +1403,36 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
 
   std::vector<std::string> idx_vars;
   std::vector<std::string> idx_code;
-  if (out_rank == 0) {
-  } else if (out_rank == 1) {
-    idx_vars = {"i0"};
-    idx_code.push_back("const int64_t i0 = tid;");
-  } else if (out_rank == 2) {
-    idx_vars = {"i0", "i1"};
-    const std::string d1 = out_dims_expr[1].size() && std::isdigit((unsigned char)out_dims_expr[1][0]) ? out_dims_expr[1] : dim_expr.at(out_dims_expr[1]);
-    idx_code.push_back("const int64_t i0 = tid / (int64_t)(" + d1 + ");");
-    idx_code.push_back("const int64_t i1 = tid - i0 * (int64_t)(" + d1 + ");");
-  } else if (out_rank == 3) {
-    idx_vars = {"i0", "i1", "i2"};
-    const std::string d1 = out_dims_expr[1].size() && std::isdigit((unsigned char)out_dims_expr[1][0]) ? out_dims_expr[1] : dim_expr.at(out_dims_expr[1]);
-    const std::string d2 = out_dims_expr[2].size() && std::isdigit((unsigned char)out_dims_expr[2][0]) ? out_dims_expr[2] : dim_expr.at(out_dims_expr[2]);
-    idx_code.push_back("const int64_t i0 = tid / ((int64_t)(" + d1 + ") * (int64_t)(" + d2 + "));");
-    idx_code.push_back("const int64_t rem = tid - i0 * ((int64_t)(" + d1 + ") * (int64_t)(" + d2 + "));");
-    idx_code.push_back("const int64_t i1 = rem / (int64_t)(" + d2 + ");");
-    idx_code.push_back("const int64_t i2 = rem - i1 * (int64_t)(" + d2 + ");");
-  } else {
-    idx_vars = {"i0", "i1", "i2", "i3"};
-    const std::string d1 = out_dims_expr[1].size() && std::isdigit((unsigned char)out_dims_expr[1][0]) ? out_dims_expr[1] : dim_expr.at(out_dims_expr[1]);
-    const std::string d2 = out_dims_expr[2].size() && std::isdigit((unsigned char)out_dims_expr[2][0]) ? out_dims_expr[2] : dim_expr.at(out_dims_expr[2]);
-    const std::string d3 = out_dims_expr[3].size() && std::isdigit((unsigned char)out_dims_expr[3][0]) ? out_dims_expr[3] : dim_expr.at(out_dims_expr[3]);
-    idx_code.push_back("const int64_t i0 = tid / ((int64_t)(" + d1 + ") * (int64_t)(" + d2 + ") * (int64_t)(" + d3 + "));");
-    idx_code.push_back("const int64_t rem0 = tid - i0 * ((int64_t)(" + d1 + ") * (int64_t)(" + d2 + ") * (int64_t)(" + d3 + "));");
-    idx_code.push_back("const int64_t i1 = rem0 / ((int64_t)(" + d2 + ") * (int64_t)(" + d3 + "));");
-    idx_code.push_back("const int64_t rem1 = rem0 - i1 * ((int64_t)(" + d2 + ") * (int64_t)(" + d3 + "));");
-    idx_code.push_back("const int64_t i2 = rem1 / (int64_t)(" + d3 + ");");
-    idx_code.push_back("const int64_t i3 = rem1 - i2 * (int64_t)(" + d3 + ");");
+  if (need_structured_index) {
+    if (out_rank == 0) {
+    } else if (out_rank == 1) {
+      idx_vars = {"i0"};
+      idx_code.push_back("const int64_t i0 = tid;");
+    } else if (out_rank == 2) {
+      idx_vars = {"i0", "i1"};
+      const std::string d1 = out_dims_expr[1].size() && std::isdigit((unsigned char)out_dims_expr[1][0]) ? out_dims_expr[1] : dim_expr.at(out_dims_expr[1]);
+      idx_code.push_back("const int64_t i0 = tid / (int64_t)(" + d1 + ");");
+      idx_code.push_back("const int64_t i1 = tid - i0 * (int64_t)(" + d1 + ");");
+    } else if (out_rank == 3) {
+      idx_vars = {"i0", "i1", "i2"};
+      const std::string d1 = out_dims_expr[1].size() && std::isdigit((unsigned char)out_dims_expr[1][0]) ? out_dims_expr[1] : dim_expr.at(out_dims_expr[1]);
+      const std::string d2 = out_dims_expr[2].size() && std::isdigit((unsigned char)out_dims_expr[2][0]) ? out_dims_expr[2] : dim_expr.at(out_dims_expr[2]);
+      idx_code.push_back("const int64_t i0 = tid / ((int64_t)(" + d1 + ") * (int64_t)(" + d2 + "));");
+      idx_code.push_back("const int64_t rem = tid - i0 * ((int64_t)(" + d1 + ") * (int64_t)(" + d2 + "));");
+      idx_code.push_back("const int64_t i1 = rem / (int64_t)(" + d2 + ");");
+      idx_code.push_back("const int64_t i2 = rem - i1 * (int64_t)(" + d2 + ");");
+    } else {
+      idx_vars = {"i0", "i1", "i2", "i3"};
+      const std::string d1 = out_dims_expr[1].size() && std::isdigit((unsigned char)out_dims_expr[1][0]) ? out_dims_expr[1] : dim_expr.at(out_dims_expr[1]);
+      const std::string d2 = out_dims_expr[2].size() && std::isdigit((unsigned char)out_dims_expr[2][0]) ? out_dims_expr[2] : dim_expr.at(out_dims_expr[2]);
+      const std::string d3 = out_dims_expr[3].size() && std::isdigit((unsigned char)out_dims_expr[3][0]) ? out_dims_expr[3] : dim_expr.at(out_dims_expr[3]);
+      idx_code.push_back("const int64_t i0 = tid / ((int64_t)(" + d1 + ") * (int64_t)(" + d2 + ") * (int64_t)(" + d3 + "));");
+      idx_code.push_back("const int64_t rem0 = tid - i0 * ((int64_t)(" + d1 + ") * (int64_t)(" + d2 + ") * (int64_t)(" + d3 + "));");
+      idx_code.push_back("const int64_t i1 = rem0 / ((int64_t)(" + d2 + ") * (int64_t)(" + d3 + "));");
+      idx_code.push_back("const int64_t rem1 = rem0 - i1 * ((int64_t)(" + d2 + ") * (int64_t)(" + d3 + "));");
+      idx_code.push_back("const int64_t i2 = rem1 / (int64_t)(" + d3 + ");");
+      idx_code.push_back("const int64_t i3 = rem1 - i2 * (int64_t)(" + d3 + ");");
+    }
   }
 
   std::unordered_map<std::string, std::string> value_expr;
@@ -1414,6 +1450,10 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
     auto it = intent.tensors.find(name);
     if (it == intent.tensors.end()) fail("elementwise: unknown tensor " + name);
     const Tensor& t = it->second;
+    if (!need_structured_index) {
+      if (t.shape.empty()) return name + "[0]";
+      return name + "[(size_t)tid]";
+    }
     const std::string idx_expr = emit_broadcast_index_expr(out_rank, t.shape, idx_vars, dim_expr);
     return name + "[(size_t)(" + idx_expr + ")]";
   };
@@ -1685,6 +1725,7 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
     if (!v.has_value()) fail("elementwise missing binding for out dim");
     total *= *v;
   }
+  block_x = choose_1d_block_threads(intent, bindings, total, /*default_threads=*/128, /*elems_per_thread=*/1);
   const bool full_tile = (block_x > 0) ? ((total % block_x) == 0) : false;
   const int64_t grid_x = full_tile ? (total / block_x) : ((total + block_x - 1) / block_x);
 
@@ -1738,4 +1779,3 @@ json emit_fused_elementwise(const Intent& intent, const json& bindings) {
   out["bindings"] = bindings;
   return out;
 }
-

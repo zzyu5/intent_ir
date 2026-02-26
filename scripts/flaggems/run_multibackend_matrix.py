@@ -26,6 +26,11 @@ if str(ROOT) not in sys.path:
 from intent_ir.utils.repo_state import repo_state  # noqa: E402
 
 
+def _env_flag(name: str) -> bool:
+    raw = str(os.getenv(str(name), "")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _run(cmd: list[str], *, cwd: Path, stream_output: bool = False) -> tuple[int, str, str]:
     if not bool(stream_output):
         p = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True)
@@ -181,6 +186,79 @@ def _load_json(path: Path) -> dict[str, Any]:
         return {}
 
 
+def _count_status_entries(entries: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in list(entries):
+        status = str(row.get("status") or "unknown").strip() or "unknown"
+        counts[status] = int(counts.get(status, 0)) + 1
+    return dict(sorted(counts.items(), key=lambda kv: kv[0]))
+
+
+def _project_status_converged_to_scope(
+    *,
+    status_converged_path: Path,
+) -> bool:
+    """For scoped matrix runs, project primary counters to scoped entries only.
+
+    converge_status.py always emits full-registry `counts_global`. For explicit
+    kernel subset runs, that inflates blocked_backend/provider-missing noise.
+    This projection keeps scoped entries as the canonical counters while
+    preserving original registry counters for auditability.
+    """
+
+    payload = _load_json(status_converged_path)
+    if not payload:
+        return False
+    if not bool(payload.get("scope_enabled")):
+        return False
+    scoped_entries = [e for e in list(payload.get("scoped_entries") or []) if isinstance(e, dict)]
+    if not scoped_entries:
+        return False
+
+    original_counts = dict(payload.get("counts_global") or {})
+    original_count_total = int(payload.get("global_entries_count") or 0)
+    original_fallback_count = int(payload.get("runtime_fallback_kernel_count") or 0)
+    original_fallback_kernels = list(payload.get("runtime_fallback_kernels") or [])
+
+    projected_counts = _count_status_entries(scoped_entries)
+    projected_total = int(len(scoped_entries))
+    projected_determinability_ok = int(sum(1 for e in scoped_entries if bool(e.get("determinability"))))
+    projected_artifact_complete = int(sum(1 for e in scoped_entries if bool(e.get("artifact_complete"))))
+    projected_fallback_kernels = sorted(
+        {
+            str(e.get("e2e_spec") or e.get("semantic_op") or "unknown")
+            for e in scoped_entries
+            if bool(e.get("runtime_fallback"))
+        }
+    )
+    projected_fallback_count = int(len(projected_fallback_kernels))
+
+    payload["registry_counts_global"] = original_counts
+    payload["registry_entries_count"] = original_count_total
+    payload["registry_runtime_fallback_kernel_count"] = original_fallback_count
+    payload["registry_runtime_fallback_kernels"] = original_fallback_kernels
+    payload["scope_projection_applied"] = True
+    payload["scope_projection_source"] = "scoped_entries"
+
+    payload["entries"] = scoped_entries
+    payload["counts_by_status"] = projected_counts
+    payload["counts_global"] = projected_counts
+    payload["global_entries_count"] = projected_total
+    payload["determinability_ok_count"] = projected_determinability_ok
+    payload["artifact_complete_count"] = projected_artifact_complete
+    payload["determinability_ratio"] = (
+        float(projected_determinability_ok) / float(projected_total) if projected_total else 0.0
+    )
+    payload["artifact_complete_ratio"] = (
+        float(projected_artifact_complete) / float(projected_total) if projected_total else 0.0
+    )
+    payload["runtime_fallback_kernel_count"] = projected_fallback_count
+    payload["runtime_fallback_kernels"] = projected_fallback_kernels
+
+    status_converged_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return True
+
+
 def _resolve_report_path(path_raw: str, *, default_dir: Path) -> Path:
     p = Path(str(path_raw).strip())
     if not p.is_absolute():
@@ -198,6 +276,10 @@ def _collect_mlir_llvm_artifacts(
     artifact_complete = True
     ok_kernels = 0
     missing_reports: list[str] = []
+    observed_execution_engines: set[str] = set()
+    observed_contract_schemas: set[str] = set()
+    runtime_fallback_kernels: set[str] = set()
+    require_cuda_llvm = _env_flag("INTENTIR_CUDA_REQUIRE_LLVM_PTX")
 
     for kernel in list(kernels):
         row: dict[str, Any] = {
@@ -206,6 +288,10 @@ def _collect_mlir_llvm_artifacts(
             "reason_code": "",
             "reason_detail": "",
             "llvm_ir_path": "",
+            "execution_engine": "",
+            "contract_schema_version": "",
+            "runtime_fallback": False,
+            "runtime_fallback_detail": "",
         }
         report_path = provider_report_dir / f"{kernel}.json"
         if not report_path.is_file():
@@ -224,12 +310,112 @@ def _collect_mlir_llvm_artifacts(
             artifact_complete = False
             rows.append(row)
             continue
+        row["execution_engine"] = "mlir_native"
+        observed_execution_engines.add("mlir_native")
+        llvm_pipeline = str(mlir.get("llvm_pipeline") or "").strip()
+        effective_llvm_pipeline = str(llvm_pipeline)
+        if bool(require_cuda_llvm):
+            effective_llvm_pipeline = "downstream_cuda_llvm"
+        row["llvm_pipeline"] = str(llvm_pipeline)
+        if str(effective_llvm_pipeline).strip():
+            row["llvm_pipeline"] = str(effective_llvm_pipeline)
+        expected_contract_key = ""
+        if effective_llvm_pipeline == "downstream_cuda_llvm":
+            expected_contract_key = "downstream_cuda_llvm_contract_path"
+        elif effective_llvm_pipeline == "downstream_rvv_llvm":
+            expected_contract_key = "downstream_rvv_llvm_contract_path"
+        if expected_contract_key:
+            expected_contract_raw = str(mlir.get(expected_contract_key) or "").strip()
+            if not expected_contract_raw:
+                row["reason_code"] = "llvm_contract_missing"
+                row["reason_detail"] = (
+                    f"missing {expected_contract_key} for llvm_pipeline={effective_llvm_pipeline}"
+                )
+                artifact_complete = False
+                rows.append(row)
+                continue
+            expected_contract_path = _resolve_report_path(expected_contract_raw, default_dir=ROOT)
+            if not expected_contract_path.is_file():
+                row["reason_code"] = "llvm_contract_missing"
+                row["reason_detail"] = (
+                    f"{expected_contract_key} path does not exist: {expected_contract_raw}"
+                )
+                artifact_complete = False
+                rows.append(row)
+                continue
+        contract_candidates: list[str] = []
+        if effective_llvm_pipeline == "downstream_cuda_llvm":
+            contract_candidates = [
+                "downstream_cuda_llvm_contract_path",
+                "downstream_contract_path",
+                "downstream_llvm_contract_path",
+                "downstream_cuda_contract_path",
+            ]
+        elif effective_llvm_pipeline == "downstream_rvv_llvm":
+            contract_candidates = [
+                "downstream_rvv_llvm_contract_path",
+                "downstream_contract_path",
+                "downstream_llvm_contract_path",
+                "downstream_rvv_contract_path",
+            ]
+        else:
+            contract_candidates = [
+                "downstream_cuda_llvm_contract_path",
+                "downstream_rvv_llvm_contract_path",
+                "downstream_llvm_contract_path",
+                "downstream_contract_path",
+                "downstream_cuda_contract_path",
+                "downstream_rvv_contract_path",
+            ]
+        contract_path_raw = ""
+        selected_contract_backend = ""
+        selected_contract_cuda_ptx_origin = ""
+        selected_contract_rvv_src_origin = ""
+        for key in contract_candidates:
+            cand = str(mlir.get(key) or "").strip()
+            if cand:
+                contract_path_raw = cand
+                break
+        if contract_path_raw:
+            contract_path = _resolve_report_path(contract_path_raw, default_dir=ROOT)
+            if contract_path.is_file():
+                contract_payload = _load_json(contract_path)
+                schema = str(contract_payload.get("schema_version") or "").strip()
+                if schema:
+                    row["contract_schema_version"] = schema
+                    observed_contract_schemas.add(schema)
+                contract_backend = str(contract_payload.get("backend") or "").strip().lower()
+                selected_contract_backend = str(contract_backend)
+                artifacts = dict(contract_payload.get("artifacts") or {})
+                executable = dict(contract_payload.get("executable") or {})
+                invocation = dict(executable.get("invocation") or {})
+                fallback_tags: list[str] = []
+                explicit_fallback = str(artifacts.get("runtime_fallback") or invocation.get("runtime_fallback") or "").strip()
+                if explicit_fallback:
+                    fallback_tags.append(explicit_fallback)
+                cuda_ptx_origin = str(artifacts.get("cuda_ptx_origin") or "").strip()
+                selected_contract_cuda_ptx_origin = str(cuda_ptx_origin)
+                if contract_backend == "cuda" and cuda_ptx_origin and cuda_ptx_origin != "llvm_llc":
+                    fallback_tags.append(f"cuda_ptx_origin={cuda_ptx_origin}")
+                rvv_src_origin = str(artifacts.get("rvv_kernel_src_origin") or "").strip()
+                selected_contract_rvv_src_origin = str(rvv_src_origin)
+                if contract_backend == "rvv" and rvv_src_origin and rvv_src_origin != "llvm_llc":
+                    fallback_tags.append(f"rvv_kernel_src_origin={rvv_src_origin}")
+                intent_recovery = str(artifacts.get("intent_recovery_fallback") or "").strip()
+                if intent_recovery:
+                    fallback_tags.append(f"intent_recovery_fallback={intent_recovery}")
+                if fallback_tags:
+                    row["runtime_fallback"] = True
+                    row["runtime_fallback_detail"] = ",".join(sorted(set(fallback_tags)))
+                    runtime_fallback_kernels.add(str(kernel))
 
         llvm_emit_ok = bool(mlir.get("llvm_emit_ok"))
+        if str(effective_llvm_pipeline) and str(effective_llvm_pipeline) != str(llvm_pipeline):
+            trace = mlir.get(str(effective_llvm_pipeline))
+            if isinstance(trace, dict):
+                llvm_emit_ok = bool(trace.get("ok"))
         llvm_path_raw = str(mlir.get("llvm_ir_path") or "").strip()
         llvm_skip_reason = str(mlir.get("llvm_skip_reason") or "").strip()
-        llvm_pipeline = str(mlir.get("llvm_pipeline") or "").strip()
-        row["llvm_pipeline"] = str(llvm_pipeline)
         if not llvm_skip_reason:
             trace = None
             trace_keys = [str(llvm_pipeline)] if str(llvm_pipeline).strip() else []
@@ -261,13 +447,34 @@ def _collect_mlir_llvm_artifacts(
         if llvm_path_raw:
             llvm_path = _resolve_report_path(llvm_path_raw, default_dir=ROOT)
             llvm_path_exists = llvm_path.is_file()
+        allow_contract_only_cuda_llvm = bool(
+            require_cuda_llvm
+            and str(effective_llvm_pipeline) == "downstream_cuda_llvm"
+            and str(selected_contract_backend) == "cuda"
+            and str(selected_contract_cuda_ptx_origin) == "llvm_llc"
+            and (not llvm_path_exists)
+        )
 
-        if llvm_emit_ok and llvm_path_exists:
+        runtime_fallback = bool(row.get("runtime_fallback"))
+        runtime_fallback_detail = str(row.get("runtime_fallback_detail") or "").strip()
+        if llvm_emit_ok and (llvm_path_exists or allow_contract_only_cuda_llvm) and (not runtime_fallback):
             row["ok"] = True
             row["reason_code"] = "ok"
-            row["reason_detail"] = "llvm artifact present"
-            row["llvm_ir_path"] = str(llvm_path)
+            row["reason_detail"] = (
+                "llvm artifact present"
+                if bool(llvm_path_exists)
+                else "cuda llvm contract present (llvmlc-ptx) without standalone llvm_ir_path"
+            )
+            row["llvm_ir_path"] = str(llvm_path) if llvm_path_exists else ""
             ok_kernels += 1
+        elif llvm_emit_ok and llvm_path_exists and runtime_fallback:
+            row["reason_code"] = "runtime_fallback_present"
+            row["reason_detail"] = (
+                runtime_fallback_detail
+                if runtime_fallback_detail
+                else "runtime fallback marker present in contract artifacts"
+            )
+            artifact_complete = False
         elif llvm_emit_ok and (not llvm_path_exists):
             row["reason_code"] = "llvm_artifact_missing"
             row["reason_detail"] = f"llvm_emit_ok=true but llvm_ir_path missing: {llvm_path_raw}"
@@ -282,14 +489,29 @@ def _collect_mlir_llvm_artifacts(
             artifact_complete = False
         rows.append(row)
 
+    execution_engine = ""
+    if len(observed_execution_engines) == 1:
+        execution_engine = next(iter(observed_execution_engines))
+    elif len(observed_execution_engines) > 1:
+        execution_engine = "mixed"
+    contract_schema_version = ""
+    if len(observed_contract_schemas) == 1:
+        contract_schema_version = next(iter(observed_contract_schemas))
+    elif len(observed_contract_schemas) > 1:
+        contract_schema_version = "mixed"
+
     payload = {
         "schema_version": "flaggems_mlir_llvm_artifacts_v1",
         "repo": repo_state(root=ROOT),
+        "execution_engine": execution_engine,
+        "contract_schema_version": contract_schema_version,
         "provider_report_dir": str(provider_report_dir),
         "kernel_count_expected": int(len(list(kernels))),
         "kernel_count_checked": int(len(rows)),
         "kernel_count_ok": int(ok_kernels),
         "artifact_complete": bool(artifact_complete),
+        "runtime_fallback_kernel_count": int(len(runtime_fallback_kernels)),
+        "runtime_fallback_kernels": sorted(runtime_fallback_kernels),
         "missing_provider_reports": list(missing_reports),
         "entries": rows,
     }
@@ -633,11 +855,15 @@ def main() -> None:
         llvm_payload = {
             "schema_version": "flaggems_mlir_llvm_artifacts_v1",
             "repo": repo_state(root=ROOT),
+            "execution_engine": "mlir_native",
+            "contract_schema_version": "",
             "provider_report_dir": str(pipeline_out_dir),
             "kernel_count_expected": int(len(scoped_kernels)),
             "kernel_count_checked": 0,
             "kernel_count_ok": 0,
             "artifact_complete": False,
+            "runtime_fallback_kernel_count": 0,
+            "runtime_fallback_kernels": [],
             "missing_provider_reports": list(missing_provider_reports),
             "entries": [],
         }
@@ -654,6 +880,9 @@ def main() -> None:
                 "reason_code": "skipped_missing_provider_reports",
             },
         )
+    execution_engine = str(llvm_payload.get("execution_engine") or "").strip() or "mlir_native"
+    contract_schema_version = str(llvm_payload.get("contract_schema_version") or "").strip() or "intent_mlir_backend_contract_v2"
+    runtime_fallback_kernels = [str(x) for x in list(llvm_payload.get("runtime_fallback_kernels") or []) if str(x).strip()]
 
     rvv_json = out_dir / "rvv_local.json"
     if not bool(args.skip_rvv) and (not bool(args.skip_rvv_local)) and not missing_provider_reports:
@@ -851,6 +1080,10 @@ def main() -> None:
         str(miss_policy),
         "--cuda-runtime-backend",
         str(args.cuda_runtime_backend),
+        "--execution-engine",
+        str(execution_engine),
+        "--contract-schema-version",
+        str(contract_schema_version),
     ]
     cmd.append("--rvv-remote" if bool(args.run_rvv_remote) else "--no-rvv-remote")
     if rvv_remote_json.is_file():
@@ -870,6 +1103,10 @@ def main() -> None:
     print("[matrix] stage=converge", flush=True)
     rc, out, err = _run(cmd, cwd=ROOT, stream_output=bool(args.stream_subprocess_output))
     _record("converge", rc, out, err, extra={"cmd": cmd, "json_path": str(converged)})
+    if int(rc) == 0 and converged.is_file() and bool(explicit_kernel_filter):
+        projected = _project_status_converged_to_scope(status_converged_path=converged)
+        if bool(projected):
+            print("[matrix] scoped convergence projection applied", flush=True)
 
     coverage_integrity = out_dir / "coverage_integrity.json"
     full_coverage_run = (str(effective_suite) == "coverage") and (len(explicit_kernel_filter) == 0)
@@ -891,6 +1128,8 @@ def main() -> None:
         tmp_summary = {
             "ok": all(bool(r.get("ok")) for r in stage_results),
             "repo": repo_state(root=ROOT),
+            "execution_engine": str(execution_engine),
+            "contract_schema_version": str(contract_schema_version),
             "stages": stage_results,
         }
         (out_dir / "run_summary.json").write_text(json.dumps(tmp_summary, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -914,12 +1153,18 @@ def main() -> None:
     summary = {
         "ok": bool(ok),
         "repo": repo_state(root=ROOT),
+        "execution_engine": str(execution_engine),
+        "contract_schema_version": str(contract_schema_version),
+        "runtime_fallback_kernel_count": int(len(runtime_fallback_kernels)),
+        "runtime_fallback_kernels": list(runtime_fallback_kernels),
         "invocation": {
             "intentir_mode": str(args.intentir_mode),
             "miss_policy": str(miss_policy),
             "rvv_remote": bool(args.run_rvv_remote),
             "cuda_runtime_backend": str(args.cuda_runtime_backend),
             "execution_ir": str(execution_ir),
+            "execution_engine": str(execution_engine),
+            "contract_schema_version": str(contract_schema_version),
             "require_mlir_artifacts": bool(require_mlir_artifacts),
             "pipeline_timeout_sec": int(args.pipeline_timeout_sec),
             "rvv_remote_timeout_sec": int(args.rvv_remote_timeout_sec),
@@ -929,6 +1174,7 @@ def main() -> None:
         "suite": str(effective_suite),
         "kernel_filter": list(kernel_filter),
         "scope_kernels": list(scoped_kernels),
+        "scope_kernels_count": int(len(scoped_kernels)),
         "missing_provider_reports": list(missing_provider_reports),
         "flaggems_path": str(args.flaggems_path),
         "intentir_mode": str(args.intentir_mode),

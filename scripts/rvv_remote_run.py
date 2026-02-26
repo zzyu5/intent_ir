@@ -22,6 +22,8 @@ import json
 import math
 import os
 import re
+import shlex
+import struct
 import sys
 import time
 from pathlib import Path
@@ -34,23 +36,25 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backends.spmd_rvv.codegen.cpp_driver import lower_intent_json_to_c_with_files_cpp as _lower_intent_json_to_c_with_files_cpp
 from backends.spmd_rvv.analysis.device_query import load_profile, query_remote_device
 from backends.spmd_rvv.analysis.tuning import (
     ScheduleCandidate,
     TuningRequest,
     parse_constraints,
     parse_locks,
-    propose_schedule_candidates,
-    select_schedule,
+    propose_schedule_candidates_from_intent_json,
+    select_schedule_from_intent_json,
 )
-from backends.spmd_rvv.baseline_freeze_tile import freeze_tile_schedule
+from backends.spmd_rvv.baseline_freeze_tile import freeze_tile_schedule_from_intent_json
+from backends.spmd_rvv.pipeline.driver import lower_rvv_contract_to_c_src
 from backends.common.mlir_contract import MlirBackendContract
 from intent_ir.ir import IntentFunction, ScheduleSketch
 from intent_ir.macros import expand_macros_json
+from intent_ir.mlir import to_mlir
 from intent_ir.mlir.convert_to_intent import to_intent
+from intent_ir.mlir.passes.emit_rvv_contract import build_rvv_contract
 from verify.gen_cases import TestCase
-from verify.tolerances import infer_tolerances
+from verify.tolerances import infer_tolerances_from_intent_json
 
 DEFAULT_RVV_HOST = os.getenv("INTENTIR_RVV_HOST", "192.168.8.72")
 DEFAULT_RVV_USER = os.getenv("INTENTIR_RVV_USER", "ubuntu")
@@ -70,13 +74,23 @@ def lower_intent_to_c_with_files(
     Accepts either IntentFunction or intent JSON and lowers through the
     contract-oriented JSON entrypoint.
     """
-    if isinstance(intent_or_json, dict):
-        payload = dict(intent_or_json)
-    elif hasattr(intent_or_json, "to_json_dict"):
-        payload = dict(intent_or_json.to_json_dict())
+    if isinstance(intent_or_json, dict) and str(intent_or_json.get("schema_version") or "").startswith("intent_mlir_backend_contract_"):
+        payload: dict[str, Any] = dict(intent_or_json)
     else:
-        raise TypeError("intent_or_json must be IntentFunction or intent JSON")
-    return _lower_intent_json_to_c_with_files_cpp(
+        if isinstance(intent_or_json, dict):
+            intent_json = dict(intent_or_json)
+        elif hasattr(intent_or_json, "to_json_dict"):
+            intent_json = dict(intent_or_json.to_json_dict())
+        else:
+            raise TypeError("intent_or_json must be IntentFunction, intent JSON, or mlir contract JSON")
+        intent = getattr(IntentFunction, "from_json_dict")(intent_json)
+        mod = to_mlir(intent)
+        contract = build_rvv_contract(mod, source_kind="script_fallback")
+        artifacts = dict(contract.artifacts or {})
+        artifacts["mlir_module_text"] = str(mod.module_text or "")
+        contract.artifacts = artifacts
+        payload = contract.to_json_dict()
+    return lower_rvv_contract_to_c_src(
         payload,
         shape_bindings=shape_bindings,
         atol=float(atol),
@@ -334,6 +348,21 @@ def _tensor_dtype(tensor_spec: dict[str, Any]) -> str:
     return str(tensor_spec.get("dtype") or "f32")
 
 
+def _rvv_staging_dtype(dtype: str, *, execution_mode: str) -> str:
+    """
+    Normalize host-side staging dtype for strict RVV executable paths.
+
+    Current RVV C codegen lowers f16/bf16 tensor buffers through f32 host buffers.
+    For prebuilt/remote LLVM strict modes, match staging dtype to the lowered
+    runtime expectation to avoid byte-size mismatches on remote load/compare.
+    """
+    dt = str(dtype or "f32").strip().lower()
+    if str(execution_mode).strip().lower() in {"remote_llvm", "prebuilt_elf"}:
+        if dt in {"f16", "bf16"}:
+            return "f32"
+    return dt or "f32"
+
+
 def _tensor_specs_from_io_spec(io_spec: dict[str, Any]) -> dict[str, dict[str, Any]]:
     tensors = io_spec.get("tensors")
     if not isinstance(tensors, dict):
@@ -541,10 +570,13 @@ def _contract_report_paths(report: dict, *, artifact_root: Path) -> list[Path]:
     if not isinstance(mlir, dict):
         return []
     preferred = [
+        "downstream_rvv_llvm_contract_path",
         "downstream_rvv_contract_path",
+        "downstream_cuda_llvm_contract_path",
+        "downstream_cuda_contract_path",
+        "downstream_llvm_contract_path",
         "downstream_contract_path",
         "midend_rvv_contract_path",
-        "downstream_cuda_contract_path",
         "midend_cuda_contract_path",
     ]
     out: list[Path] = []
@@ -559,7 +591,208 @@ def _contract_report_paths(report: dict, *, artifact_root: Path) -> list[Path]:
     return out
 
 
-def _intent_from_contract_path(path: Path) -> tuple[dict[str, Any], dict[str, Any]] | None:
+def _resolve_contract_module_path(contract: MlirBackendContract, *, contract_path: Path) -> Path | None:
+    artifacts = dict(contract.artifacts or {})
+    module_path_raw = str(artifacts.get("mlir_module_path") or "").strip()
+    if not module_path_raw and str(contract.executable.format or "").endswith("mlir_module"):
+        module_path_raw = str(contract.executable.path or "").strip()
+    if not module_path_raw:
+        return None
+    p = Path(module_path_raw)
+    if p.is_absolute():
+        return p if p.is_file() else None
+    for cand in (contract_path.parent / p, ROOT / p):
+        try:
+            resolved = cand.resolve()
+        except Exception:
+            resolved = cand
+        if resolved.is_file():
+            return resolved
+    return None
+
+
+def _env_flag(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(str(name), "")
+    if raw is None:
+        return bool(default)
+    value = str(raw).strip().lower()
+    if not value:
+        return bool(default)
+    return value in {"1", "true", "yes", "y", "on"}
+
+
+def _resolve_contract_executable_path(contract: MlirBackendContract, *, contract_path: Path) -> Path | None:
+    exe_path_raw = str((contract.executable.path or "")).strip()
+    if not exe_path_raw:
+        return None
+    p = Path(exe_path_raw)
+    if p.is_absolute():
+        return p if p.is_file() else None
+    for cand in (contract_path.parent / p, ROOT / p):
+        try:
+            resolved = cand.resolve()
+        except Exception:
+            resolved = cand
+        if resolved.is_file():
+            return resolved
+    return None
+
+
+def _elf_machine(path: Path) -> str:
+    try:
+        data = path.read_bytes()
+    except Exception:
+        return "unknown"
+    if len(data) < 20 or data[:4] != b"\x7fELF":
+        return "unknown"
+    ei_data = int(data[5]) if len(data) > 5 else 1
+    endian = "<" if ei_data == 1 else ">"
+    try:
+        e_machine = int(struct.unpack_from(f"{endian}H", data, 18)[0])
+    except Exception:
+        return "unknown"
+    if e_machine == 243:
+        return "riscv"
+    if e_machine == 62:
+        return "x86_64"
+    if e_machine == 183:
+        return "aarch64"
+    return f"machine_{e_machine}"
+
+
+def _llvm_target_triple(llvm_ir_text: str) -> str:
+    m = re.search(r'target\s+triple\s*=\s*"([^"]+)"', str(llvm_ir_text or ""))
+    return str(m.group(1)).strip() if m is not None else ""
+
+
+def _is_rvv_llvm_triple(triple: str) -> bool:
+    t = str(triple or "").strip().lower()
+    if not t:
+        return False
+    return ("riscv" in t) and ("linux" in t or "unknown" in t or "elf" in t)
+
+
+def _resolve_rvv_execution_plan(
+    *,
+    contract_payload_json: dict[str, Any] | None,
+    contract_artifact_path: str,
+    compat_c_allowed: bool,
+) -> dict[str, Any]:
+    if not isinstance(contract_payload_json, dict):
+        if compat_c_allowed:
+            return {"mode": "compat_c_src", "reason": "legacy_or_missing_contract"}
+        raise RuntimeError(
+            "rvv hard-cut mode requires mlir backend contract; legacy C-source fallback disabled "
+            "(set INTENTIR_RVV_REMOTE_ALLOW_COMPAT_C=1 to re-enable compatibility path)"
+        )
+
+    contract_path = Path(str(contract_artifact_path or ""))
+    try:
+        contract = MlirBackendContract.from_json_dict(dict(contract_payload_json))
+    except Exception as e:
+        if compat_c_allowed:
+            return {
+                "mode": "compat_c_src",
+                "reason": f"contract_parse_error:{type(e).__name__}",
+            }
+        raise RuntimeError(
+            f"rvv hard-cut mode requires valid mlir backend contract, parse failed: {type(e).__name__}: {e}"
+        ) from e
+
+    exe = contract.executable
+    exe_format = str(exe.format or "").strip().lower()
+    exe_path = _resolve_contract_executable_path(contract, contract_path=contract_path)
+    elf_machine = _elf_machine(exe_path) if isinstance(exe_path, Path) else "unknown"
+
+    module_path = _resolve_contract_module_path(contract, contract_path=contract_path)
+    llvm_ir_text = str((contract.artifacts or {}).get("mlir_module_text") or "")
+    if not llvm_ir_text and isinstance(module_path, Path) and module_path.is_file():
+        try:
+            llvm_ir_text = module_path.read_text(encoding="utf-8")
+        except Exception:
+            llvm_ir_text = ""
+    llvm_triple = _llvm_target_triple(llvm_ir_text)
+    has_rvv_llvm = bool(llvm_ir_text) and _is_rvv_llvm_triple(llvm_triple)
+
+    if exe_format in {"rvv_elf", "elf"} and isinstance(exe_path, Path) and exe_path.is_file() and elf_machine == "riscv":
+        return {
+            "mode": "prebuilt_elf",
+            "reason": "contract_executable_rvv_elf",
+            "local_elf_path": str(exe_path),
+            "elf_machine": str(elf_machine),
+            "llvm_triple": str(llvm_triple),
+            "module_path": str(module_path) if isinstance(module_path, Path) else "",
+            "llvm_ir_text": str(llvm_ir_text),
+        }
+    if has_rvv_llvm:
+        return {
+            "mode": "remote_llvm",
+            "reason": "contract_downstream_rvv_llvm",
+            "local_elf_path": str(exe_path) if isinstance(exe_path, Path) else "",
+            "elf_machine": str(elf_machine),
+            "llvm_triple": str(llvm_triple),
+            "module_path": str(module_path) if isinstance(module_path, Path) else "",
+            "llvm_ir_text": str(llvm_ir_text),
+        }
+
+    if compat_c_allowed:
+        return {
+            "mode": "compat_c_src",
+            "reason": "contract_not_rvv_executable_and_rvv_llvm_missing",
+            "local_elf_path": str(exe_path) if isinstance(exe_path, Path) else "",
+            "elf_machine": str(elf_machine),
+            "llvm_triple": str(llvm_triple),
+            "module_path": str(module_path) if isinstance(module_path, Path) else "",
+        }
+
+    raise RuntimeError(
+        "rvv hard-cut mode requires either riscv prebuilt ELF or RVV-target LLVM IR; "
+        f"got executable.format={exe_format or '<empty>'}, elf_machine={elf_machine}, llvm_triple={llvm_triple or '<missing>'}"
+    )
+
+
+def _synthesize_intent_from_contract(contract: MlirBackendContract) -> dict[str, Any]:
+    io_spec = _runtime_io_spec_from_contract(contract)
+    tensors_in = io_spec.get("tensors")
+    tensors: dict[str, dict[str, Any]] = {}
+    if isinstance(tensors_in, dict):
+        for name, spec in tensors_in.items():
+            if not isinstance(spec, dict):
+                continue
+            tensors[str(name)] = {
+                "dtype": str(spec.get("dtype") or "f32"),
+                "shape": list(spec.get("shape") or []),
+                "layout": str(spec.get("layout") or "row_major"),
+            }
+    outputs = [str(x) for x in list(io_spec.get("outputs") or []) if str(x).strip()]
+    schedule = dict(contract.schedule or {})
+    parallel_axes = list(schedule.get("parallel_axes") or []) if isinstance(schedule, dict) else []
+    return {
+        "name": str(contract.kernel_name or "intent"),
+        "tensors": tensors,
+        "ops": [],
+        "outputs": outputs,
+        "schedule": dict(schedule),
+        "parallel_axes": [str(x) for x in parallel_axes if str(x).strip()],
+        "meta": {"source_kind": "contract_io_spec_synth"},
+    }
+
+
+def _runtime_io_spec_from_contract(contract: MlirBackendContract) -> dict[str, Any]:
+    io_spec = dict(contract.io_spec or {})
+    invocation = dict(contract.executable.invocation or {})
+    inv_io = invocation.get("io_spec")
+    if isinstance(inv_io, dict) and isinstance(inv_io.get("tensors"), dict):
+        io_spec = dict(inv_io)
+    if not isinstance(io_spec.get("outputs"), list):
+        inv_out = invocation.get("output_names")
+        if isinstance(inv_out, list):
+            io_spec = dict(io_spec)
+            io_spec["outputs"] = [str(x) for x in inv_out if str(x).strip()]
+    return io_spec
+
+
+def _intent_from_contract_path(path: Path) -> tuple[dict[str, Any] | None, dict[str, Any], dict[str, Any]] | None:
     try:
         payload_raw = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
@@ -570,9 +803,23 @@ def _intent_from_contract_path(path: Path) -> tuple[dict[str, Any], dict[str, An
         payload = MlirBackendContract.from_json_dict(payload_raw)
     except Exception:
         return None
-    if not isinstance(payload.intent_json, dict):
-        return None
-    return dict(payload.intent_json), dict(payload.io_spec or {})
+    io_spec = _runtime_io_spec_from_contract(payload)
+    payload_json = payload.to_json_dict()
+    module_text = str((payload.artifacts or {}).get("mlir_module_text") or "").strip()
+    if module_text:
+        try:
+            parsed = to_intent(module_text)
+            return parsed.to_json_dict(), io_spec, payload_json
+        except Exception:
+            pass
+    module_path = _resolve_contract_module_path(payload, contract_path=path)
+    if module_path is not None:
+        try:
+            parsed = to_intent(module_path.read_text(encoding="utf-8"))
+            return parsed.to_json_dict(), io_spec, payload_json
+        except Exception:
+            pass
+    return _synthesize_intent_from_contract(payload), io_spec, payload_json
 
 
 def run_remote(
@@ -625,6 +872,7 @@ def run_remote(
     _log(f"[{frontend}:{kernel}] load artifact: {report_path}")
     report = json.loads(report_path.read_text())
     contract_artifact_path = ""
+    contract_payload_json: dict[str, Any] | None = None
     mlir_artifact_path = ""
     intent_macro_json: dict[str, Any] | None = None
     intent_json: dict[str, Any] | None = None
@@ -633,8 +881,10 @@ def run_remote(
         parsed = _intent_from_contract_path(contract_path)
         if parsed is None:
             continue
-        intent_json, io_spec = parsed
-        intent_macro_json = dict(intent_json)
+        parsed_intent, io_spec, contract_payload_json = parsed
+        if isinstance(parsed_intent, dict):
+            intent_json = dict(parsed_intent)
+            intent_macro_json = dict(parsed_intent)
         contract_artifact_path = str(contract_path)
         _log(f"[{frontend}:{kernel}] contract artifact selected: {contract_artifact_path}")
         break
@@ -845,191 +1095,216 @@ def run_remote(
         except Exception:
             pass
 
+    compat_c_allowed = _env_flag("INTENTIR_RVV_REMOTE_ALLOW_COMPAT_C", default=False)
+    execution_plan = _resolve_rvv_execution_plan(
+        contract_payload_json=(dict(contract_payload_json) if isinstance(contract_payload_json, dict) else None),
+        contract_artifact_path=str(contract_artifact_path),
+        compat_c_allowed=bool(compat_c_allowed),
+    )
+    execution_mode = str(execution_plan.get("mode") or "compat_c_src")
+    _log(
+        f"[{frontend}:{kernel}] execution plan: mode={execution_mode} "
+        f"reason={execution_plan.get('reason') or ''}"
+    )
+
     tuning_info: dict | None = None
     tune_candidates: list[ScheduleCandidate] | None = None
     selected_schedule = _schedule_from_json(
         intent_json_base.get("schedule") if isinstance(intent_json_base.get("schedule"), dict) else {}
     )
+    can_tune = bool(_intent_ops(intent_json_base)) and execution_mode == "compat_c_src"
     if tune_request is not None:
-        intent_for_tuning = IntentFunction.from_json_dict(dict(intent_json_base))
-        intent_macro_for_tuning = IntentFunction.from_json_dict(dict(intent_macro_json_base))
-        _log(f"[{frontend}:{kernel}] schedule selection: mode={tune_request.mode} budget={getattr(tune_request,'budget',0)}")
-        if tune_profile:
-            prof = load_profile(str(tune_profile))
-            prof_src = str(tune_profile)
+        if not can_tune:
+            if execution_mode != "compat_c_src":
+                reason = f"fixed_executable_mode:{execution_mode}"
+            else:
+                reason = "no_ops_in_contract_synth_intent"
+            _log(f"[{frontend}:{kernel}] schedule selection skipped: {reason}")
+            tuning_info = {
+                "mode": str(tune_request.mode),
+                "budget": int(getattr(tune_request, "budget", 0) or 0),
+                "skipped": True,
+                "reason": str(reason),
+                "schedule": _schedule_to_json(selected_schedule),
+            }
         else:
-            _log(f"[{frontend}:{kernel}] query remote RVV profile (probe)")
-            prof = query_remote_device(host, user=user, password=password, port=port, timeout=20)
-            prof_src = "remote"
+            _log(f"[{frontend}:{kernel}] schedule selection: mode={tune_request.mode} budget={getattr(tune_request,'budget',0)}")
+            if tune_profile:
+                prof = load_profile(str(tune_profile))
+                prof_src = str(tune_profile)
+            else:
+                _log(f"[{frontend}:{kernel}] query remote RVV profile (probe)")
+                prof = query_remote_device(host, user=user, password=password, port=port, timeout=20)
+                prof_src = "remote"
 
-        shape_bindings_int: dict[str, int] = {}
-        for k, v in dict(bindings).items():
-            try:
-                shape_bindings_int[str(k)] = int(v)
-            except Exception:
-                continue
+            shape_bindings_int: dict[str, int] = {}
+            for k, v in dict(bindings).items():
+                try:
+                    shape_bindings_int[str(k)] = int(v)
+                except Exception:
+                    continue
 
-        budget = int(getattr(tune_request, "budget", 0) or 0)
-        if budget > 1:
-            if int(bench_iters) <= 0:
-                raise ValueError("tune-budget > 1 requires --bench-iters > 0 (measured autotune)")
+            budget = int(getattr(tune_request, "budget", 0) or 0)
+            if budget > 1:
+                if int(bench_iters) <= 0:
+                    raise ValueError("tune-budget > 1 requires --bench-iters > 0 (measured autotune)")
 
-            # Always include a "frozen" schedule candidate as a no-regression baseline:
-            # resolve BLOCK_* style schedule symbols using frontend launch constexpr values.
-            frozen_sched = None
-            frozen_notes: list[str] = []
-            try:
-                frozen = freeze_tile_schedule(
-                    intent_macro_for_tuning,
-                    desc=(report.get("descriptor") if isinstance(report, dict) else None),
-                )
-                frozen_sched = frozen.schedule
-                frozen_notes = list(frozen.notes)
-            except Exception:
+                # Always include a "frozen" schedule candidate as a no-regression baseline:
+                # resolve BLOCK_* style schedule symbols using frontend launch constexpr values.
                 frozen_sched = None
-                frozen_notes = []
+                frozen_notes: list[str] = []
+                try:
+                    frozen = freeze_tile_schedule_from_intent_json(
+                        intent_macro_json_base,
+                        desc=(report.get("descriptor") if isinstance(report, dict) else None),
+                    )
+                    frozen_sched = frozen.schedule
+                    frozen_notes = list(frozen.notes)
+                except Exception:
+                    frozen_sched = None
+                    frozen_notes = []
 
-            # Build a larger candidate pool, then pick a diverse top-K to benchmark.
-            pool_limit = max(int(budget) * 4, int(budget))
-            pool = propose_schedule_candidates(
-                intent_for_tuning,
-                shape_bindings=shape_bindings_int,
-                profile=prof,
-                request=tune_request,
-                tile_hints=tile_hints,
-                limit=pool_limit,
-                evidence=cert_v2,
-            )
-            if not pool:
-                pool = propose_schedule_candidates(
-                    intent_for_tuning,
+                # Build a larger candidate pool, then pick a diverse top-K to benchmark.
+                pool_limit = max(int(budget) * 4, int(budget))
+                pool = propose_schedule_candidates_from_intent_json(
+                    intent_json_base,
                     shape_bindings=shape_bindings_int,
                     profile=prof,
                     request=tune_request,
                     tile_hints=tile_hints,
-                    limit=1,
+                    limit=pool_limit,
                     evidence=cert_v2,
                 )
+                if not pool:
+                    pool = propose_schedule_candidates_from_intent_json(
+                        intent_json_base,
+                        shape_bindings=shape_bindings_int,
+                        profile=prof,
+                        request=tune_request,
+                        tile_hints=tile_hints,
+                        limit=1,
+                        evidence=cert_v2,
+                    )
 
-            def _sched_key(s: ScheduleSketch) -> tuple:
-                return (
-                    s.tile_m,
-                    s.tile_n,
-                    s.tile_k,
-                    s.vec_width,
-                    s.pipeline_depth,
-                    tuple(sorted((s.axis_bindings or {}).items())),
-                    s.vec_axis,
-                    tuple(s.parallel_axes or []),
-                )
+                def _sched_key(s: ScheduleSketch) -> tuple:
+                    return (
+                        s.tile_m,
+                        s.tile_n,
+                        s.tile_k,
+                        s.vec_width,
+                        s.pipeline_depth,
+                        tuple(sorted((s.axis_bindings or {}).items())),
+                        s.vec_axis,
+                        tuple(s.parallel_axes or []),
+                    )
 
-            selected: list = []
-            seen: set[tuple] = set()
+                selected: list = []
+                seen: set[tuple] = set()
 
-            # Candidate 0: frozen baseline (if available), otherwise the top predicted one.
-            if frozen_sched is not None:
-                freeze_cand = ScheduleCandidate(schedule=frozen_sched, score=0.0, tile_mnk=None, notes=(["freeze_baseline"] + frozen_notes))
-                k0 = _sched_key(freeze_cand.schedule)
-                selected.append(freeze_cand)
-                seen.add(k0)
+                # Candidate 0: frozen baseline (if available), otherwise the top predicted one.
+                if frozen_sched is not None:
+                    freeze_cand = ScheduleCandidate(schedule=frozen_sched, score=0.0, tile_mnk=None, notes=(["freeze_baseline"] + frozen_notes))
+                    k0 = _sched_key(freeze_cand.schedule)
+                    selected.append(freeze_cand)
+                    seen.add(k0)
 
-            # Prefer diversity across vec_width, then tile_n, then fill by score.
-            def _add_if_new(c) -> bool:
-                k = _sched_key(c.schedule)
-                if k in seen:
-                    return False
-                selected.append(c)
-                seen.add(k)
-                return True
+                # Prefer diversity across vec_width, then tile_n, then fill by score.
+                def _add_if_new(c) -> bool:
+                    k = _sched_key(c.schedule)
+                    if k in seen:
+                        return False
+                    selected.append(c)
+                    seen.add(k)
+                    return True
 
-            # Pass 1: cover distinct vec_width values.
-            seen_vw: set[int] = set()
-            for c in pool:
-                if len(selected) >= int(budget):
-                    break
-                vw = c.schedule.vec_width
-                if isinstance(vw, int) and vw > 0 and vw in seen_vw:
-                    continue
-                if _add_if_new(c):
-                    if isinstance(vw, int) and vw > 0:
-                        seen_vw.add(int(vw))
+                # Pass 1: cover distinct vec_width values.
+                seen_vw: set[int] = set()
+                for c in pool:
+                    if len(selected) >= int(budget):
+                        break
+                    vw = c.schedule.vec_width
+                    if isinstance(vw, int) and vw > 0 and vw in seen_vw:
+                        continue
+                    if _add_if_new(c):
+                        if isinstance(vw, int) and vw > 0:
+                            seen_vw.add(int(vw))
 
-            # Pass 2: cover distinct tile_n values.
-            seen_tn: set[int] = set()
-            for c in selected:
-                tn = c.schedule.tile_n
-                if isinstance(tn, int) and tn > 0:
-                    seen_tn.add(int(tn))
-            for c in pool:
-                if len(selected) >= int(budget):
-                    break
-                tn = c.schedule.tile_n
-                if isinstance(tn, int) and tn > 0 and tn in seen_tn:
-                    continue
-                if _add_if_new(c):
+                # Pass 2: cover distinct tile_n values.
+                seen_tn: set[int] = set()
+                for c in selected:
+                    tn = c.schedule.tile_n
                     if isinstance(tn, int) and tn > 0:
                         seen_tn.add(int(tn))
+                for c in pool:
+                    if len(selected) >= int(budget):
+                        break
+                    tn = c.schedule.tile_n
+                    if isinstance(tn, int) and tn > 0 and tn in seen_tn:
+                        continue
+                    if _add_if_new(c):
+                        if isinstance(tn, int) and tn > 0:
+                            seen_tn.add(int(tn))
 
-            # Pass 3: fill remaining slots by predicted ranking.
-            for c in pool:
-                if len(selected) >= int(budget):
-                    break
-                _add_if_new(c)
+                # Pass 3: fill remaining slots by predicted ranking.
+                for c in pool:
+                    if len(selected) >= int(budget):
+                        break
+                    _add_if_new(c)
 
-            tune_candidates = selected or pool
+                tune_candidates = selected or pool
 
-            # Keep a deterministic default schedule in case benchmarking fails.
-            if tune_candidates:
-                selected_schedule = tune_candidates[0].schedule
-            tuning_info = {
-                "profile_source": prof_src,
-                "profile": prof.__dict__,
-                "mode": str(tune_request.mode),
-                "budget": int(budget),
-                "tile_hints": list(tile_hints),
-                "candidate_pool_limit": int(pool_limit),
-                "candidate_pool_size": int(len(pool)),
-                "candidates_pred": [
-                    {
-                        "score": float(c.score),
-                        "tile_mnk": (list(c.tile_mnk) if c.tile_mnk is not None else None),
-                        "notes": list(c.notes),
-                        "schedule": {
-                            "tile_m": c.schedule.tile_m,
-                            "tile_n": c.schedule.tile_n,
-                            "tile_k": c.schedule.tile_k,
-                            "vec_width": c.schedule.vec_width,
-                            "pipeline_depth": c.schedule.pipeline_depth,
-                            "axis_bindings": dict(c.schedule.axis_bindings or {}),
-                            "vec_axis": c.schedule.vec_axis,
-                            "parallel_axes": list(c.schedule.parallel_axes or []),
-                            "memory_hint": dict(c.schedule.memory_hint or {}),
-                        },
-                    }
-                    for c in tune_candidates
-                ],
-            }
-        else:
-            tuned = select_schedule(
-                intent_for_tuning,
-                shape_bindings=shape_bindings_int,
-                profile=prof,
-                request=tune_request,
-                tile_hints=tile_hints,
-                evidence=cert_v2,
-            )
-            selected_schedule = tuned.schedule
-            tuning_info = {
-                "profile_source": prof_src,
-                "profile": prof.__dict__,
-                "mode": str(tune_request.mode),
-                "budget": int(budget),
-                "tile_hints": list(tile_hints),
-                "notes": list(tuned.notes),
-                "schedule": _schedule_to_json(selected_schedule),
-            }
-            if getattr(tuned, "debug", None) is not None:
-                tuning_info["debug"] = tuned.debug
+                # Keep a deterministic default schedule in case benchmarking fails.
+                if tune_candidates:
+                    selected_schedule = tune_candidates[0].schedule
+                tuning_info = {
+                    "profile_source": prof_src,
+                    "profile": prof.__dict__,
+                    "mode": str(tune_request.mode),
+                    "budget": int(budget),
+                    "tile_hints": list(tile_hints),
+                    "candidate_pool_limit": int(pool_limit),
+                    "candidate_pool_size": int(len(pool)),
+                    "candidates_pred": [
+                        {
+                            "score": float(c.score),
+                            "tile_mnk": (list(c.tile_mnk) if c.tile_mnk is not None else None),
+                            "notes": list(c.notes),
+                            "schedule": {
+                                "tile_m": c.schedule.tile_m,
+                                "tile_n": c.schedule.tile_n,
+                                "tile_k": c.schedule.tile_k,
+                                "vec_width": c.schedule.vec_width,
+                                "pipeline_depth": c.schedule.pipeline_depth,
+                                "axis_bindings": dict(c.schedule.axis_bindings or {}),
+                                "vec_axis": c.schedule.vec_axis,
+                                "parallel_axes": list(c.schedule.parallel_axes or []),
+                                "memory_hint": dict(c.schedule.memory_hint or {}),
+                            },
+                        }
+                        for c in tune_candidates
+                    ],
+                }
+            else:
+                tuned = select_schedule_from_intent_json(
+                    intent_json_base,
+                    shape_bindings=shape_bindings_int,
+                    profile=prof,
+                    request=tune_request,
+                    tile_hints=tile_hints,
+                    evidence=cert_v2,
+                )
+                selected_schedule = tuned.schedule
+                tuning_info = {
+                    "profile_source": prof_src,
+                    "profile": prof.__dict__,
+                    "mode": str(tune_request.mode),
+                    "budget": int(budget),
+                    "tile_hints": list(tile_hints),
+                    "notes": list(tuned.notes),
+                    "schedule": _schedule_to_json(selected_schedule),
+                }
+                if getattr(tuned, "debug", None) is not None:
+                    tuning_info["debug"] = tuned.debug
 
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -1089,7 +1364,11 @@ def run_remote(
             name = str(n).strip()
             if name:
                 used.add(name)
-    external_inputs = sorted([n for n in used if n in tensor_specs and n not in produced])
+    if used:
+        external_inputs = sorted([n for n in used if n in tensor_specs and n not in produced])
+    else:
+        declared_outputs = {str(n) for n in _intent_outputs(intent_json_base)}
+        external_inputs = sorted([n for n in tensor_specs if n not in declared_outputs])
     intent_outputs = _intent_outputs(intent_json_base)
     has_baseline = isinstance(baseline, dict)
     if has_baseline:
@@ -1107,42 +1386,61 @@ def run_remote(
     if outputs != list(intent_outputs):
         intent_codegen_json["outputs"] = list(outputs)
     intent_codegen_json["schedule"] = _schedule_to_json(selected_schedule)
+    lower_payload: dict[str, Any] = (
+        dict(contract_payload_json)
+        if isinstance(contract_payload_json, dict)
+        else dict(intent_codegen_json)
+    )
 
     # Lowering tolerances are shared across data materialization + compile/run.
     #
     # Remote runs compare against a GPU-produced baseline (Triton/TileLang CUDA),
     # so keep tolerances at least legacy-default to avoid false negatives.
-    if baseline is not None:
-        intent_for_tol = IntentFunction.from_json_dict(dict(intent_codegen_json))
-        auto_tol = infer_tolerances(intent_for_tol, ref_out=baseline).to_dict()
+    if baseline is not None and intent_ops:
+        auto_tol = infer_tolerances_from_intent_json(intent_codegen_json, ref_out=baseline).to_dict()
         atol_use = max(float(auto_tol.get("atol", 1e-3)), 1e-3)
         rtol_use = max(float(auto_tol.get("rtol", 1e-3)), 1e-3)
     else:
         # Perf-only runs do not compare against refs; keep legacy defaults.
+        # Contract-only synthesized intents can be ops-empty as well.
         atol_use = 1e-3
         rtol_use = 1e-3
-    backend_used = "cpp"
+    if execution_mode == "compat_c_src":
+        backend_used = "mlir_contract_compat_c_src" if isinstance(contract_payload_json, dict) else "cpp"
+    else:
+        backend_used = "mlir_contract"
 
-    # Materialize one lowered C source early to derive the final buffer dtypes.
-    # This avoids intent-vs-lowered dtype drift (e.g. compare outputs lowered to u8).
+    # In strict modes (prebuilt_elf / remote_llvm), use io_spec tensor dtypes as
+    # source of truth and avoid regenerating compatibility C source.
     initial_schedule = _schedule_from_json(
         intent_codegen_json.get("schedule") if isinstance(intent_codegen_json.get("schedule"), dict) else {}
     )
-    initial_src = lower_intent_to_c_with_files(
-        intent_codegen_json,
-        shape_bindings=bindings,
-        atol=float(atol_use),
-        rtol=float(rtol_use),
-        mode=("bench" if bool(bench_only) else "verify"),
-    )
-    declared_dtypes = _extract_buffer_declared_dtypes(initial_src)
+    initial_src = ""
+    if execution_mode == "compat_c_src":
+        initial_src = lower_intent_to_c_with_files(
+            lower_payload,
+            shape_bindings=bindings,
+            atol=float(atol_use),
+            rtol=float(rtol_use),
+            mode=("bench" if bool(bench_only) else "verify"),
+        )
+        declared_dtypes = _extract_buffer_declared_dtypes(initial_src)
+    else:
+        declared_dtypes = {
+            str(name): _rvv_staging_dtype(_tensor_dtype(spec), execution_mode=execution_mode)
+            for name, spec in dict(tensor_specs or {}).items()
+            if isinstance(spec, dict)
+        }
 
     if not bool(bench_only):
         # Upload inputs/refs for correctness runs.
         _log(f"[{frontend}:{kernel}] upload inputs/refs")
         assert baseline is not None
         for name in external_inputs:
-            declared_dt = declared_dtypes.get(name, _tensor_dtype(tensor_specs.get(str(name), {})))
+            declared_dt = declared_dtypes.get(
+                name,
+                _rvv_staging_dtype(_tensor_dtype(tensor_specs.get(str(name), {})), execution_mode=execution_mode),
+            )
             if name not in baseline:
                 tt = tensor_specs.get(str(name))
                 if isinstance(tt, dict):
@@ -1162,52 +1460,112 @@ def run_remote(
         for name in outputs:
             if name not in baseline:
                 raise RuntimeError(f"baseline missing output tensor {name} for {kernel}")
-            declared_dt = declared_dtypes.get(name, _tensor_dtype(tensor_specs.get(str(name), {})))
+            declared_dt = declared_dtypes.get(
+                name,
+                _rvv_staging_dtype(_tensor_dtype(tensor_specs.get(str(name), {})), execution_mode=execution_mode),
+            )
             raw = _to_raw_bytes(np.asarray(baseline[name]), str(declared_dt))
             _sftp_write_bytes(sftp, f"{remote_dir}/{name}_ref.bin", raw)
 
     def _compile_and_run(schedule: ScheduleSketch) -> dict:
-        # Generate + upload code for this schedule.
-        intent_codegen_run = dict(intent_codegen_json)
-        intent_codegen_run["schedule"] = _schedule_to_json(schedule)
-        # Reuse the already-lowered source when schedule is unchanged.
-        if _schedule_to_json(schedule) == _schedule_to_json(initial_schedule):
-            src = initial_src
-        else:
-            src = lower_intent_to_c_with_files(
-                intent_codegen_run,
-                shape_bindings=bindings,
-                atol=float(atol_use),
-                rtol=float(rtol_use),
-                mode=("bench" if bool(bench_only) else "verify"),
-            )
-        with sftp.file(remote_c, "w") as f:
-            f.write(src)
-
-        _log(f"[{frontend}:{kernel}] remote compile")
-        opt = "-O3" if (int(bench_iters) > 0 or bool(bench_only)) else "-O2"
-        vec_define = ""
-        try:
-            vw = schedule.vec_width
-            if isinstance(vw, int) and vw > 0:
-                vec_define = f" -DINTENTIR_VEC_WIDTH={int(vw)}"
-            elif isinstance(vw, str):
-                key = vw.strip()
-                if key and key in bindings:
-                    vwi = int(bindings[key])
-                    if vwi > 0:
-                        vec_define = f" -DINTENTIR_VEC_WIDTH={vwi}"
-        except Exception:
-            vec_define = ""
-        compile_cmd = (
-            f"gcc {opt} -std=c11 -march=rv64gcv -fopenmp{vec_define} -I{remote_dir} -o {remote_bin} {remote_c} "
-            f"{remote_dir}/intentir_runtime.c {remote_dir}/intentir_driver.c {remote_dir}/intentir_ops.c -lm -lrt"
-        )
+        _log(f"[{frontend}:{kernel}] remote compile mode={execution_mode}")
         t_compile0 = time.perf_counter()
-        stdin, stdout, stderr = client.exec_command(compile_cmd, timeout=60)
-        comp_out = stdout.read().decode()
-        comp_err = stderr.read().decode()
-        compile_rc = stdout.channel.recv_exit_status()
+        comp_out = ""
+        comp_err = ""
+        compile_rc = 0
+        q_remote_dir = shlex.quote(str(remote_dir))
+        q_remote_bin = shlex.quote(str(remote_bin))
+        q_runtime_c = shlex.quote(f"{remote_dir}/intentir_runtime.c")
+        q_driver_c = shlex.quote(f"{remote_dir}/intentir_driver.c")
+        q_ops_c = shlex.quote(f"{remote_dir}/intentir_ops.c")
+        try:
+            if execution_mode == "compat_c_src":
+                # Generate + upload compatibility C source for this schedule.
+                if _schedule_to_json(schedule) == _schedule_to_json(initial_schedule):
+                    src = initial_src
+                else:
+                    src = lower_intent_to_c_with_files(
+                        lower_payload,
+                        shape_bindings=bindings,
+                        atol=float(atol_use),
+                        rtol=float(rtol_use),
+                        mode=("bench" if bool(bench_only) else "verify"),
+                    )
+                with sftp.file(remote_c, "w") as f:
+                    f.write(src)
+                opt = "-O3" if (int(bench_iters) > 0 or bool(bench_only)) else "-O2"
+                vec_define = ""
+                try:
+                    vw = schedule.vec_width
+                    if isinstance(vw, int) and vw > 0:
+                        vec_define = f" -DINTENTIR_VEC_WIDTH={int(vw)}"
+                    elif isinstance(vw, str):
+                        key = vw.strip()
+                        if key and key in bindings:
+                            vwi = int(bindings[key])
+                            if vwi > 0:
+                                vec_define = f" -DINTENTIR_VEC_WIDTH={vwi}"
+                except Exception:
+                    vec_define = ""
+                q_remote_c = shlex.quote(str(remote_c))
+                compile_cmd = (
+                    f"gcc {opt} -std=c11 -D_POSIX_C_SOURCE=200809L -march=rv64gcv -fopenmp{vec_define} -I{q_remote_dir} -o {q_remote_bin} {q_remote_c} "
+                    f"{q_runtime_c} {q_driver_c} {q_ops_c} -lm -lrt"
+                )
+                stdin, stdout, stderr = client.exec_command(compile_cmd, timeout=60)
+                comp_out = stdout.read().decode()
+                comp_err = stderr.read().decode()
+                compile_rc = stdout.channel.recv_exit_status()
+            elif execution_mode == "prebuilt_elf":
+                local_elf_path = Path(str(execution_plan.get("local_elf_path") or ""))
+                if not local_elf_path.is_file():
+                    raise FileNotFoundError(f"prebuilt RVV ELF missing: {local_elf_path}")
+                sftp.put(str(local_elf_path), str(remote_bin))
+                chmod_cmd = f"chmod +x {q_remote_bin}"
+                stdin, stdout, stderr = client.exec_command(chmod_cmd, timeout=20)
+                comp_out = stdout.read().decode()
+                comp_err = stderr.read().decode()
+                compile_rc = stdout.channel.recv_exit_status()
+                comp_out = (comp_out + "\n" if comp_out else "") + f"uploaded prebuilt elf: {local_elf_path}"
+            elif execution_mode == "remote_llvm":
+                llvm_ir_text = str(execution_plan.get("llvm_ir_text") or "")
+                llvm_triple = str(execution_plan.get("llvm_triple") or "")
+                if not llvm_ir_text.strip():
+                    raise RuntimeError("remote_llvm mode requires non-empty LLVM IR text in contract artifacts")
+                if not _is_rvv_llvm_triple(llvm_triple):
+                    raise RuntimeError(
+                        "remote_llvm mode requires RVV-target LLVM IR triple, "
+                        f"got {llvm_triple or '<missing>'}"
+                    )
+                remote_ll = f"{remote_dir}/kernel.ll"
+                remote_obj = f"{remote_dir}/kernel.o"
+                q_remote_ll = shlex.quote(remote_ll)
+                q_remote_obj = shlex.quote(remote_obj)
+                q_remote_target = shlex.quote(f"--target={llvm_triple}")
+                q_remote_mtriple = shlex.quote(f"-mtriple={llvm_triple}")
+                with sftp.file(remote_ll, "w") as f:
+                    f.write(llvm_ir_text)
+                compile_cmd = (
+                    "if command -v clang >/dev/null 2>&1; then "
+                    f"clang -O3 -x ir {q_remote_target} -c -o {q_remote_obj} {q_remote_ll} && "
+                    f"clang -O3 {q_remote_target} -fopenmp -std=c11 -D_POSIX_C_SOURCE=200809L -I{q_remote_dir} -o {q_remote_bin} {q_remote_obj} "
+                    f"{q_runtime_c} {q_driver_c} {q_ops_c} -lm -lrt; "
+                    "elif command -v llc >/dev/null 2>&1; then "
+                    f"llc -O3 {q_remote_mtriple} -filetype=obj -o {q_remote_obj} {q_remote_ll} && "
+                    f"gcc -O3 -std=c11 -D_POSIX_C_SOURCE=200809L -march=rv64gcv -fopenmp -I{q_remote_dir} -o {q_remote_bin} {q_remote_obj} "
+                    f"{q_runtime_c} {q_driver_c} {q_ops_c} -lm -lrt; "
+                    "else echo 'remote llvm toolchain missing: clang/llc' >&2; exit 127; fi"
+                )
+                stdin, stdout, stderr = client.exec_command(compile_cmd, timeout=120)
+                comp_out = stdout.read().decode()
+                comp_err = stderr.read().decode()
+                compile_rc = stdout.channel.recv_exit_status()
+            else:
+                raise RuntimeError(f"unsupported rvv execution mode: {execution_mode}")
+        except Exception as e:
+            compile_rc = 1
+            comp_err = f"{type(e).__name__}: {e}"
+
         compile_ms = float((time.perf_counter() - t_compile0) * 1000.0)
         if compile_rc != 0:
             return {
@@ -1215,6 +1573,7 @@ def run_remote(
                 "compile_stdout": comp_out,
                 "compile_stderr": comp_err,
                 "compile_ms": compile_ms,
+                "compile_mode": str(execution_mode),
                 "run_rc": None,
                 "stdout": "",
                 "stderr": "",
@@ -1326,6 +1685,7 @@ def run_remote(
             "compile_stdout": comp_out,
             "compile_stderr": comp_err,
             "compile_ms": compile_ms,
+            "compile_mode": str(execution_mode),
             "run_rc": run.get("run_rc"),
             "stdout": run.get("stdout") or "",
             "stderr": run.get("stderr") or "",
@@ -1446,6 +1806,10 @@ def run_remote(
         "mlir_artifact_used": bool(mlir_artifact_path),
         "mlir_artifact_path": str(mlir_artifact_path),
         "backend": backend_used,
+        "execution_mode": str(execution_mode),
+        "execution_reason": str(execution_plan.get("reason") or ""),
+        "execution_elf_machine": str(execution_plan.get("elf_machine") or ""),
+        "execution_llvm_triple": str(execution_plan.get("llvm_triple") or ""),
         "omp_threads": int(omp_threads),
         "omp": chosen.get("omp"),
         "schedule": {
@@ -1460,6 +1824,7 @@ def run_remote(
             "memory_hint": dict(chosen_schedule.memory_hint or {}),
         },
         "compile_rc": rc,
+        "compile_mode": str(chosen.get("compile_mode") or execution_mode),
         "run_rc": run_rc,
         "lower_ms": 0.0,
         "compile_ms": compile_ms,

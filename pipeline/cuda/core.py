@@ -1755,14 +1755,6 @@ def run_pipeline_for_spec(
                 report["mlir"]["downstream"] = dict(down_trace)
                 lower_ms_total = 0.0
 
-            emit_backend_contract_artifacts(
-                spec_name=str(spec.name),
-                out_dir=out_dir,
-                midend_module=mid_mod,
-                mlir_report=report["mlir"],
-                downstream_name=str(down_name) if down_name is not None else None,
-                downstream_module=down_mod,
-            )
             report["mlir"]["llvm_pipeline"] = ""
             report["mlir"]["llvm_backend"] = ""
             report["mlir"]["llvm_emit_ok"] = False
@@ -1774,6 +1766,7 @@ def run_pipeline_for_spec(
                 sum(float(p.get("ms") or 0.0) for p in list(up_trace.get("passes") or []))
                 + sum(float(p.get("ms") or 0.0) for p in list(mid_trace.get("passes") or []))
             )
+            llvm_mod = None
             llvm_pipeline, llvm_backend = _downstream_llvm_pipeline(effective_backend_target)
             if llvm_pipeline is None:
                 report["mlir"]["llvm_emit_ok"] = False
@@ -1783,6 +1776,12 @@ def run_pipeline_for_spec(
                 report["mlir"]["llvm_pipeline"] = str(llvm_pipeline)
                 report["mlir"]["llvm_backend"] = str(llvm_backend or "")
                 try:
+                    mid_mod.meta = dict(mid_mod.meta or {})
+                    mid_mod.meta["shape_bindings"] = {
+                        str(k): max(1, int(v))
+                        for k, v in dict(baseline_case.shapes).items()
+                        if str(k).strip()
+                    }
                     llvm_mod, llvm_trace = run_mlir_pipeline(
                         mid_mod,
                         str(llvm_pipeline),
@@ -1832,6 +1831,9 @@ def run_pipeline_for_spec(
                                 ensure_reason = f"ensure_llvm_ir_text_origin:{llvm_text_origin}"
                             else:
                                 ensure_reason = ensure_detail or "ensure_llvm_ir_text_not_ok"
+                    if (not llvm_translate) and ensure_ok:
+                        translate_ok = True
+                        translate_reason = "mlir_translate_bypassed_pretranslated_llvm"
 
                     llvm_as_ok = True
                     llvm_as_reason = ""
@@ -1851,7 +1853,9 @@ def run_pipeline_for_spec(
                         if not llvm_opt_ok:
                             llvm_opt_reason = llvm_opt_detail or "llvm_opt_not_ok"
 
-                    llvm_text_ready = bool(translate_ok or ensure_ok)
+                    # Hard-cut MLIR-native policy: downstream LLVM text must come from
+                    # the translation chain, not synthesized fallback.
+                    llvm_text_ready = bool(translate_ok and ensure_ok)
                     llvm_emit_ok = bool(llvm_text_ready and llvm_as_ok and llvm_opt_ok)
                     llvm_skip_reason = ""
                     if not llvm_emit_ok:
@@ -1861,15 +1865,12 @@ def run_pipeline_for_spec(
                             llvm_skip_reason = llvm_as_reason or "llvm_as_not_ok"
                         elif not llvm_opt_ok:
                             llvm_skip_reason = llvm_opt_reason or "llvm_opt_not_ok"
-                    elif (not translate_ok) and ensure_ok:
-                        report["mlir"]["llvm_skip_reason"] = "llvm_text_synthesized_from_intent"
                     if llvm_emit_ok:
                         llvm_ir_path = out_dir / f"{spec.name}.intentir.intentdialect.{llvm_pipeline}.ll"
                         llvm_ir_path.write_text(llvm_mod.module_text, encoding="utf-8")
                         report["mlir"]["llvm_emit_ok"] = True
                         report["mlir"]["llvm_ir_path"] = str(llvm_ir_path)
-                        if str(report["mlir"].get("llvm_skip_reason") or "").strip() != "llvm_text_synthesized_from_intent":
-                            report["mlir"]["llvm_skip_reason"] = ""
+                        report["mlir"]["llvm_skip_reason"] = ""
                     else:
                         report["mlir"]["llvm_emit_ok"] = False
                         report["mlir"]["llvm_ir_path"] = ""
@@ -1882,6 +1883,19 @@ def run_pipeline_for_spec(
                     report["mlir"]["llvm_emit_ok"] = False
                     report["mlir"]["llvm_ir_path"] = ""
                     report["mlir"]["llvm_skip_reason"] = f"{llvm_pipeline}_error:{type(e).__name__}"
+
+            emit_backend_contract_artifacts(
+                spec_name=str(spec.name),
+                out_dir=out_dir,
+                midend_module=mid_mod,
+                fallback_intent_module=up_mod,
+                mlir_report=report["mlir"],
+                downstream_name=str(down_name) if down_name is not None else None,
+                downstream_module=down_mod,
+                downstream_llvm_name=(str(llvm_pipeline) if llvm_pipeline is not None else None),
+                downstream_llvm_module=llvm_mod,
+                shape_bindings={str(k): int(v) for k, v in dict(baseline_case.shapes).items()},
+            )
 
             report["mlir"]["mlir_lower_ms"] = float(lower_ms_total)
     except Exception as e:

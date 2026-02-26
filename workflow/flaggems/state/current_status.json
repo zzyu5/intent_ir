@@ -1,16 +1,16 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-22T13:27:53+00:00",
+  "updated_at": "2026-02-25T23:52:12+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "253af53aa67de2c68027f3ea2c72e018b40c9d47",
+  "head_commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
   "mode": "maintenance",
-  "coverage_integrity_phase": "recompute_stale",
-  "full196_last_run": "artifacts/flaggems_matrix/daily/20260222/full196_forcecompile_head_refresh_v4/run_summary.json",
+  "coverage_integrity_phase": "recomputed_ok",
+  "full196_last_run": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/run_summary.json",
   "full196_last_ok": true,
-  "full196_validated_commit": "f948e11c3500f86976c9daa7c774e2f7a7c9a9bd",
+  "full196_validated_commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
   "full196_validated_commit_source": "run_summary.repo.head_commit",
-  "full196_commits_since_validated": 12,
-  "full196_commits_since_validated_total": 12,
+  "full196_commits_since_validated": 0,
+  "full196_commits_since_validated_total": 0,
   "full196_lifted_to_head": false,
   "full196_validated_mode": "force_compile",
   "full196_validated_execution_ir": "mlir",
@@ -21,33 +21,33 @@
   "coverage_batches_completed": 7,
   "coverage_batches_failed": [],
   "full196_evidence_kind": "batch_aggregate",
-  "full196_last_run_repo_head_commit": "f948e11c3500f86976c9daa7c774e2f7a7c9a9bd",
+  "full196_last_run_repo_head_commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
   "full196_last_run_repo_branch": "compiler-cleanup-v1",
-  "full196_last_run_dirty": false,
+  "full196_last_run_dirty": true,
   "full196_artifact_repo_stamp_ok": true,
   "mlir_migration_phase": "default_mlir",
-  "mlir_cutover_level": "stale_validation",
+  "mlir_cutover_level": "mlir_primary",
   "mlir_default_enabled": true,
   "mlir_toolchain_ok": true,
   "mlir_backend_contract_ready": true,
   "mlir_llvm_chain_ok": true,
-  "mlir_full196_validated_commit": "",
-  "gpu_perf_phase": "recompute_stale",
-  "gpu_perf_last_run": "artifacts/flaggems_matrix/daily/20260222/gpu_perf_head_refresh_v3/run_summary.json",
+  "mlir_full196_validated_commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
+  "gpu_perf_phase": "recomputed_ok",
+  "gpu_perf_last_run": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v14_strict_policy_refresh4/run_summary.json",
   "gpu_perf_last_ok": true,
-  "gpu_perf_validated_commit": "f948e11c3500f86976c9daa7c774e2f7a7c9a9bd",
-  "gpu_perf_commits_since_validated": 12,
+  "gpu_perf_validated_commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
+  "gpu_perf_commits_since_validated": 0,
   "gpu_perf_mode": "graph_only",
   "gpu_perf_threshold": 0.8,
   "gpu_perf_devices": [
     {
       "gpu_name": "NVIDIA GeForce RTX 4080 SUPER",
       "kernel_total": 159,
-      "kernel_measured": 7,
-      "kernel_pass": 7,
+      "kernel_measured": 159,
+      "kernel_pass": 159,
       "kernel_fail": 0,
       "ok": true,
-      "min_ratio": 0.9180328171935892
+      "min_ratio": 0.8253543405021411
     }
   ],
   "gpu_perf_failures_by_family": {},
@@ -125,19 +125,14 @@
     "catalog_path": "scripts/CATALOG.json",
     "catalog_validated": true
   },
-  "active_lanes": [
-    "backend_compiler",
-    "coverage",
-    "mlir_migration"
-  ],
+  "active_lanes": [],
   "next_focus_by_lane": {
-    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
-    "backend_compiler": "Continue contract-first cleanup in rvv_remote_run to reduce remaining IntentFunction-only tuning code paths.",
-    "mlir_migration": "Apply the same real-translation guarantee to broader kernel chunks and keep removing IntentFunction compatibility from backend smoke/remote scripts."
+    "coverage": "Keep coverage truth aligned while gpu_perf strict evidence advances.",
+    "mlir_migration": "Sync deep_read truth package with wave64 evidence and keep strict gate freshness on HEAD."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260222/matrix_abs2d_remote_contract_first_v4/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260222/matrix_abs2d_remote_contract_first_v4/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave64_v1/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave64_v1/status_converged.json"
   },
   "lanes": {
     "coverage": {

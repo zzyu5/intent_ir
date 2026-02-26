@@ -1,7 +1,7 @@
 import numpy as np
 
 from intent_ir.ir import IntentFunction
-from verify.tolerances import infer_tolerances
+from verify.tolerances import infer_tolerances, infer_tolerances_from_intent_json
 
 
 def test_infer_tolerances_softmax_is_tighter_than_legacy():
@@ -55,3 +55,21 @@ def test_infer_tolerances_bf16_minimum_is_looser_than_legacy():
     tol = infer_tolerances(intent).to_dict()
     assert tol["atol"] >= 1e-2
     assert tol["rtol"] >= 1e-2
+
+
+def test_infer_tolerances_from_intent_json_matches_intent_path():
+    intent_json = {
+        "name": "softmax_only_json",
+        "tensors": {
+            "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            "y": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+        },
+        "ops": [{"op": "softmax", "inputs": ["x"], "output": "y", "attrs": {"axis": 1, "stable": True}}],
+        "outputs": ["y"],
+    }
+    ref = {"y": np.ones((2, 2), dtype=np.float32)}
+
+    tol_json = infer_tolerances_from_intent_json(intent_json, ref_out=ref).to_dict()
+    tol_intent = infer_tolerances(IntentFunction.from_json_dict(dict(intent_json)), ref_out=ref).to_dict()
+
+    assert tol_json == tol_intent

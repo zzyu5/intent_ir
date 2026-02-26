@@ -8,6 +8,7 @@ legalize -> shape_infer -> schedule -> emit_cpp -> compile -> run.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from time import perf_counter
 import numpy as np
 import shutil
@@ -16,7 +17,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Mapping
 
-from backends.common.mlir_contract import MlirBackendContract
+from backends.common.mlir_contract import CONTRACT_SCHEMA_V2, MlirBackendContract
 from backends.common.pipeline_utils import (
     has_symbolic_dims,
     legalize_rewrite_counts,
@@ -45,6 +46,13 @@ def _classify_failure(detail: str) -> str:
     if "invalid" in msg or "empty" in msg:
         return "invalid_intent"
     return "runtime_fail"
+
+
+def _resolve_repo_artifact_path(path_raw: str) -> Path:
+    p = Path(str(path_raw).strip())
+    if p.is_absolute():
+        return p
+    return (Path(__file__).resolve().parents[3] / p).resolve()
 
 
 def _write_bin(path: Path, arr: np.ndarray, dtype: str) -> None:
@@ -91,23 +99,38 @@ def _build_dummy_io_files(*, contract: MlirBackendContract, bindings: Mapping[st
     return in_count, out_count
 
 
-def _compile_local_rvv_program(*, workdir: Path) -> subprocess.CompletedProcess[str]:
-    compile_cmd = [
-        "gcc",
-        "-O2",
-        "-std=c11",
-        "-D_POSIX_C_SOURCE=200809L",
-        "-I.",
-        "-o",
-        str(workdir / "run"),
-        str(workdir / "main.c"),
-        str(workdir / "intentir_runtime.c"),
-        str(workdir / "intentir_driver.c"),
-        str(workdir / "intentir_ops.c"),
-        "-lm",
-        "-lrt",
-    ]
-    return subprocess.run(compile_cmd, cwd=workdir, capture_output=True, text=True)
+def _resolve_rvv_contract_executable(
+    *,
+    contract: MlirBackendContract,
+    bindings: Mapping[str, Any],
+) -> dict[str, Any]:
+    executable = contract.executable
+    exe_format = str(executable.format or "").strip().lower()
+    exe_target = str(executable.target or contract.backend or "rvv").strip().lower()
+    if exe_target and exe_target != "rvv":
+        raise ValueError(f"rvv contract executable target mismatch: {exe_target!r}")
+
+    if exe_format in {"rvv_elf", "elf"}:
+        exe_path_raw = str(executable.path or "").strip()
+        if not exe_path_raw:
+            raise ValueError("rvv contract executable.path is empty for ELF executable")
+        exe_path = _resolve_repo_artifact_path(exe_path_raw)
+        if not exe_path.is_file():
+            raise FileNotFoundError(f"rvv ELF executable missing: {exe_path}")
+        return {
+            "executable_format": "rvv_elf",
+            "executable_path": str(exe_path),
+            "entry": str(executable.entry or contract.kernel_name or ""),
+            "bindings": dict(bindings),
+            "execution_engine": "mlir_native",
+            "contract_schema_version": str(contract.schema_version or ""),
+        }
+
+    raise ValueError(
+        "rvv contract executable unsupported or missing; expected executable.format in "
+        "{rvv_elf,elf}. "
+        "legacy cpp-driver runtime fallback has been removed."
+    )
 
 
 @dataclass(frozen=True)
@@ -128,18 +151,29 @@ def _resolve_rvv_contract(
     if isinstance(payload, MlirBackendContract):
         contract = payload
         source_kind = "mlir_contract"
-    elif isinstance(payload, Mapping) and str(payload.get("schema_version") or "") == "intent_mlir_backend_contract_v1":
+    elif isinstance(payload, Mapping):
         contract = MlirBackendContract.from_json_dict(dict(payload))
         source_kind = "mlir_contract"
     elif isinstance(payload, IntentMLIRModule):
         contract = build_rvv_contract(payload, source_kind="mlir_module")
+        artifacts = dict(contract.artifacts or {})
+        artifacts.setdefault("mlir_module_text", str(payload.module_text or ""))
+        contract.artifacts = artifacts
         source_kind = "mlir_module"
     elif isinstance(payload, str):
         module = IntentMLIRModule(module_text=str(payload))
         contract = build_rvv_contract(module, source_kind="mlir_text")
+        artifacts = dict(contract.artifacts or {})
+        artifacts.setdefault("mlir_module_text", str(module.module_text or ""))
+        contract.artifacts = artifacts
         source_kind = "mlir_text"
     else:
         raise ValueError("invalid mlir payload for rvv pipeline")
+
+    if str(contract.schema_version or "") != CONTRACT_SCHEMA_V2:
+        raise ValueError(
+            f"unsupported rvv contract schema_version={contract.schema_version!r}; expected {CONTRACT_SCHEMA_V2}"
+        )
 
     if bindings:
         reason_context = dict(contract.reason_context or {})
@@ -160,6 +194,47 @@ def _contract_tensor_shapes(contract: MlirBackendContract) -> dict[str, list[Any
         if isinstance(v, list):
             out[str(k)] = list(v)
     return out
+
+
+def lower_rvv_contract_to_c_src(
+    intent_payload: Any,
+    *,
+    shape_bindings: Mapping[str, Any] | None = None,
+    atol: float = 1e-3,
+    rtol: float = 1e-3,
+    mode: str = "verify",
+) -> str:
+    contract, _ = _resolve_rvv_contract(intent_payload, shape_bindings=shape_bindings)
+    bindings = normalize_bindings(shape_bindings or contract.reason_context.get("shape_bindings") or {})
+    if not bindings:
+        raise ValueError("rvv contract lowering requires concrete shape bindings")
+    resolved = _resolve_rvv_contract_executable(contract=contract, bindings=bindings)
+    c_src = resolved.get("c_src")
+    if isinstance(c_src, str) and c_src.strip():
+        return str(c_src)
+    # Compatibility path: when execution is hard-cut to prebuilt ELF, scripts may
+    # still need C text for remote packaging and dtype parsing.
+    allow_compat_c_src = str(os.getenv("INTENTIR_RVV_ALLOW_COMPAT_C_SRC", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+        "on",
+    }
+    if not allow_compat_c_src:
+        raise ValueError(
+            "rvv contract C-source compatibility access is disabled by default in hard-cut mode; "
+            "set INTENTIR_RVV_ALLOW_COMPAT_C_SRC=1 to enable explicit compatibility fallback"
+        )
+    art_src = str((contract.artifacts or {}).get("rvv_kernel_src_path") or "").strip()
+    if art_src:
+        src_path = _resolve_repo_artifact_path(art_src)
+        if src_path.is_file():
+            return str(src_path.read_text(encoding="utf-8"))
+    raise ValueError(
+        "rvv contract is executable-only (rvv_elf) and has no readable rvv_kernel_src_path artifact "
+        "for C-source compatibility access"
+    )
 
 
 def run_rvv_pipeline(
@@ -283,17 +358,24 @@ def run_rvv_pipeline(
 
     def _emit_cpp() -> tuple[str, dict[str, Any]]:
         if not can_execute:
-            return ("emit skipped: missing bindings", {"emit_backend": "cpp", "emit_mode": "skipped_missing_bindings"})
-        from backends.spmd_rvv.codegen.cpp_driver import lower_intent_json_to_c_with_files_cpp  # noqa: PLC0415
-
-        intent_json = contract.intent_json
-        if not isinstance(intent_json, dict):
-            raise ValueError("mlir backend contract missing intent_json for rvv emission")
-        src = lower_intent_json_to_c_with_files_cpp(intent_json, shape_bindings=bindings, atol=1e-3, rtol=1e-3, mode="verify")
-        state["c_src"] = str(src)
+            return ("emit skipped: missing bindings", {"emit_backend": "mlir_contract", "emit_mode": "skipped_missing_bindings"})
+        resolved = _resolve_rvv_contract_executable(contract=contract, bindings=bindings)
+        state["rvv_executable"] = dict(resolved)
         return (
-            "emitted standalone C via RVV C++ codegen",
-            {"emit_backend": "cpp", "emit_mode": "executed", "c_src_bytes": len(str(src))},
+            "resolved RVV executable via MLIR contract path",
+            {
+                "emit_backend": "mlir_contract",
+                "emit_mode": "executed",
+                "executable_format": str(resolved.get("executable_format") or ""),
+                "prebuilt_elf_bytes": (
+                    int(Path(str(resolved.get("executable_path") or "")).stat().st_size)
+                    if str(resolved.get("executable_format") or "") == "rvv_elf"
+                    and Path(str(resolved.get("executable_path") or "")).is_file()
+                    else 0
+                ),
+                "contract_schema_version": str(contract.schema_version or ""),
+                "execution_engine": "mlir_native",
+            },
         )
 
     def _compile() -> tuple[str, dict[str, Any]]:
@@ -301,34 +383,30 @@ def run_rvv_pipeline(
             return ("compile skipped: schedule_only mode", {"compile_mode": "skipped_schedule_only", "pipeline_mode": mode})
         if not can_execute:
             return ("compile skipped: missing bindings", {"compile_mode": "skipped_missing_bindings"})
-        c_src = str(state.get("c_src") or "")
-        if not c_src:
-            raise ValueError("emit_cpp stage artifacts missing")
+        resolved = state.get("rvv_executable")
+        if not isinstance(resolved, Mapping):
+            raise ValueError("emit_cpp stage artifacts missing executable metadata")
+        exe_format = str(resolved.get("executable_format") or "")
         tmp_ctx = tempfile.TemporaryDirectory(prefix=f"intentir_rvv_pipeline_{name}_")
         td = Path(tmp_ctx.name)
         state["tmp_ctx"] = tmp_ctx
         state["tmp_dir"] = td
-        (td / "main.c").write_text(c_src, encoding="utf-8")
-        runtime_dir = Path(__file__).resolve().parents[1] / "runtime"
-        for fn in [
-            "intentir_runtime.h",
-            "intentir_runtime.c",
-            "intentir_driver.h",
-            "intentir_driver.c",
-            "intentir_ops.h",
-            "intentir_ops.c",
-        ]:
-            src_p = runtime_dir / fn
-            if not src_p.exists():
-                raise FileNotFoundError(f"missing RVV runtime file: {src_p}")
-            shutil.copy(src_p, td / fn)
-        cp = _compile_local_rvv_program(workdir=td)
-        if int(cp.returncode) != 0:
-            raise RuntimeError(f"rvv local compile failed rc={cp.returncode}: {cp.stderr or cp.stdout}")
-        return (
-            "compiled local RVV host program",
-            {"compile_mode": "executed", "workdir": str(td)},
-        )
+        if exe_format == "rvv_elf":
+            src_elf = Path(str(resolved.get("executable_path") or ""))
+            if not src_elf.is_file():
+                raise FileNotFoundError(f"rvv prebuilt executable missing: {src_elf}")
+            dst_elf = td / "run"
+            shutil.copy(src_elf, dst_elf)
+            dst_elf.chmod(dst_elf.stat().st_mode | 0o111)
+            state["run_bin"] = dst_elf
+            return (
+                "staged prebuilt RVV ELF executable",
+                {
+                    "compile_mode": "prebuilt_elf_staged",
+                    "workdir": str(td),
+                },
+            )
+        raise ValueError("compile stage requires prebuilt rvv_elf executable from emit stage")
 
     def _run() -> tuple[str, dict[str, Any]]:
         if mode == "schedule_only":
@@ -338,8 +416,11 @@ def run_rvv_pipeline(
         td = state.get("tmp_dir")
         if not isinstance(td, Path):
             raise ValueError("compile stage artifacts missing workdir")
+        run_bin = state.get("run_bin")
+        if not isinstance(run_bin, Path):
+            run_bin = td / "run"
         in_count, out_count = _build_dummy_io_files(contract=contract, bindings=bindings, out_dir=td)
-        rp = subprocess.run([str(td / "run")], cwd=td, capture_output=True, text=True)
+        rp = subprocess.run([str(run_bin)], cwd=td, capture_output=True, text=True)
         if int(rp.returncode) != 0:
             raise RuntimeError(f"rvv local run failed rc={rp.returncode}: {rp.stderr or rp.stdout}")
         return (

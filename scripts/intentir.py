@@ -52,6 +52,27 @@ def _execution_ir_default() -> str:
     return "mlir"
 
 
+def _infer_full196_artifact_dir() -> str:
+    status_path = ROOT / "workflow" / "flaggems" / "state" / "current_status.json"
+    try:
+        payload = json.loads(status_path.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    raw = str(payload.get("full196_last_run") or "").strip()
+    if not raw:
+        return ""
+    p = Path(raw)
+    if not p.is_absolute():
+        p = ROOT / p
+    try:
+        rp = p.resolve()
+    except Exception:
+        rp = p
+    if rp.is_file():
+        return str(rp.parent)
+    return ""
+
+
 def _cmd_suite(args: argparse.Namespace) -> int:
     out_root = Path(args.out_root) if args.out_root else (ROOT / "artifacts" / "intentir_suite")
     out_root.mkdir(parents=True, exist_ok=True)
@@ -77,6 +98,8 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             str(args.execution_ir),
             "--flaggems-path",
             str(args.flaggems_path),
+            "--backend-target",
+            str(args.backend_target),
             "--intentir-mode",
             str(args.intentir_mode),
             "--intentir-miss-policy",
@@ -146,6 +169,16 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             "--resume" if args.resume else "--no-resume",
             "--stream" if args.stream else "--no-stream",
         )
+        intent_artifact_dir = str(getattr(args, "gpu_perf_intent_artifact_dir", "") or "").strip()
+        if not intent_artifact_dir:
+            intent_artifact_dir = _infer_full196_artifact_dir()
+        if intent_artifact_dir:
+            cmd.extend(["--intent-artifact-dir", str(intent_artifact_dir)])
+        if str(args.gpu_perf_policy_json).strip():
+            cmd.extend(["--policy-json", str(args.gpu_perf_policy_json)])
+        for kernel in list(args.gpu_perf_gate_exclude_kernel or []):
+            if str(kernel).strip():
+                cmd.extend(["--gate-exclude-kernel", str(kernel)])
         for fam in list(args.family or []):
             cmd.extend(["--family", str(fam)])
         return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
@@ -159,6 +192,8 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             str(out_root),
             "--cases-limit",
             str(int(args.cases_limit)),
+            "--backend-target",
+            str(args.backend_target),
             "--flaggems-path",
             str(args.flaggems_path),
             "--intentir-mode",
@@ -198,6 +233,8 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             str(out_root),
             "--cases-limit",
             str(int(args.cases_limit)),
+            "--backend-target",
+            str(args.backend_target),
             "--flaggems-path",
             str(args.flaggems_path),
             "--intentir-mode",
@@ -272,6 +309,8 @@ def _cmd_kernel(args: argparse.Namespace) -> int:
             str(out_dir),
             "--cases-limit",
             str(int(args.cases_limit)),
+            "--backend-target",
+            str(args.backend_target),
             "--flaggems-path",
             str(args.flaggems_path),
             "--intentir-mode",
@@ -571,6 +610,23 @@ def _build_parser() -> argparse.ArgumentParser:
     suite.add_argument("--perf-iters", type=int, default=200)
     suite.add_argument("--perf-repeats", type=int, default=5)
     suite.add_argument(
+        "--gpu-perf-policy-json",
+        default="workflow/flaggems/state/gpu_perf_policy.json",
+        help="Optional gpu perf policy JSON path passed to run_gpu_perf_graph.py.",
+    )
+    suite.add_argument(
+        "--gpu-perf-gate-exclude-kernel",
+        action="append",
+        default=[],
+        help="Kernel alias to exclude from gpu_perf gate denominator (repeatable).",
+    )
+    suite.add_argument(
+        "--gpu-perf-intent-artifact-dir",
+        default="",
+        help="Optional artifact root passed to run_gpu_perf_graph.py --intent-artifact-dir. "
+        "If empty, auto-infers from workflow state full196_last_run.",
+    )
+    suite.add_argument(
         "--pipeline-timeout-sec",
         type=int,
         default=0,
@@ -591,6 +647,7 @@ def _build_parser() -> argparse.ArgumentParser:
     suite.add_argument("--resume", action=argparse.BooleanOptionalAction, default=True)
     suite.add_argument("--write-registry", action=argparse.BooleanOptionalAction, default=False)
     suite.add_argument("--flaggems-path", choices=["intentir", "original"], default="intentir")
+    suite.add_argument("--backend-target", choices=["rvv", "cuda_h100", "cuda_5090d"], default="rvv")
     suite.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="auto")
     suite.add_argument("--intentir-miss-policy", choices=["deterministic", "strict"], default="strict")
     suite.add_argument("--run-rvv-remote", action=argparse.BooleanOptionalAction, default=True)
@@ -625,6 +682,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     kernel.add_argument("--execution-ir", choices=["mlir"], default=_execution_ir_default())
     kernel.add_argument("--flaggems-path", choices=["intentir", "original"], default="intentir")
+    kernel.add_argument("--backend-target", choices=["rvv", "cuda_h100", "cuda_5090d"], default="rvv")
     kernel.add_argument("--intentir-mode", choices=["auto", "force_compile", "force_cache"], default="auto")
     kernel.add_argument("--intentir-miss-policy", choices=["deterministic", "strict"], default="strict")
     kernel.add_argument("--run-rvv-remote", action=argparse.BooleanOptionalAction, default=True)

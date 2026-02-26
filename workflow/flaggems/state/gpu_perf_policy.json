@@ -1,0 +1,25 @@
+{
+  "schema_version": "flaggems_gpu_perf_policy_v1",
+  "generated_at": "2026-02-26T16:35:00Z",
+  "mode": "policy_scoped_gate",
+  "key_kernels": [
+    "atan2d",
+    "angle2d",
+    "addmv2d",
+    "addr2d",
+    "pow_tensor_scalar2d",
+    "unique2d",
+    "polar2d",
+    "scaled_dot_product_attention_bhsd",
+    "addcdiv2d",
+    "addcmul2d"
+  ],
+  "key_kernel_min_ratio_vs_baseline": 0.97,
+  "key_kernel_baseline_graph": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v13_strict_rebuild3_o3/gpu_perf_graph.json",
+  "gate_exclude_kernels": [],
+  "notes": [
+    "All previously excluded kernels are re-included after strict MLIR graph run shows ratio >= 0.8 on HEAD for quantile2d/sort2d/sort_stable2d/topk2d/unique2d.",
+    "Raw benchmark rows are preserved in gpu_perf_graph.entries with gate_original_reason_code and ratio evidence.",
+    "Balanced gate requires key kernels to keep >=0.97x of strict baseline graph (2026-02-26 refresh)."
+  ]
+}

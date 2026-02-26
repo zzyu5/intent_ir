@@ -1,8 +1,20 @@
 #include "shape_eval.h"
 
+#include <algorithm>
+
 #include "common_utils.h"
 
 namespace intentir_cuda_codegen {
+
+namespace {
+int64_t normalize_block_threads(int64_t v) {
+  if (v < 32) v = 32;
+  if (v > 1024) v = 1024;
+  if ((v % 32) != 0) v = ((v + 31) / 32) * 32;
+  if (v > 1024) v = 1024;
+  return v;
+}
+}  // namespace
 
 std::optional<int64_t> resolve_dim_token(const json& tok, const json& bindings) {
   if (tok.is_number_integer()) return tok.get<int64_t>();
@@ -71,6 +83,36 @@ int64_t resolve_schedule_int(const Intent& intent, const json& bindings, const c
   return *v;
 }
 
+int64_t choose_1d_block_threads(const Intent& intent, const json& bindings, int64_t total_elems, int64_t default_threads,
+                                int64_t elems_per_thread, bool promote_tiny_hint) {
+  const int64_t ept = std::max<int64_t>(1, elems_per_thread);
+  const int64_t hinted = resolve_schedule_int(intent, bindings, "tile_n", 0);
+  const bool has_hint = hinted > 0;
+
+  int64_t block = has_hint ? hinted : default_threads;
+  if (block <= 0) block = 128;
+  block = normalize_block_threads(block);
+
+  if (total_elems <= 0) return block;
+
+  const int64_t logical_threads = (total_elems + ept - 1) / ept;
+  if (logical_threads <= 0) return block;
+
+  if (total_elems <= 4096) {
+    int64_t small_cap = std::min<int64_t>(logical_threads, 128);
+    small_cap = normalize_block_threads(small_cap);
+    if (!has_hint) {
+      block = std::min<int64_t>(block, small_cap);
+    } else if (promote_tiny_hint && block < 64 && logical_threads >= 128) {
+      block = 128;
+    }
+    if (block > logical_threads && logical_threads >= 32) {
+      block = normalize_block_threads(logical_threads);
+    }
+  }
+  return normalize_block_threads(block);
+}
+
 bool is_scalar_tensor(const Intent& intent, const std::string& name, const std::string& dtype) {
   auto it = intent.tensors.find(name);
   if (it == intent.tensors.end()) return false;
@@ -105,4 +147,3 @@ json io_spec_from_args(const Intent& intent, const std::vector<std::string>& ten
 }
 
 }  // namespace intentir_cuda_codegen
-

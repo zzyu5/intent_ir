@@ -68,6 +68,76 @@ def test_run_one_compile_failure_contains_timing_fields(monkeypatch, tmp_path: P
         assert key in result
 
 
+def test_run_one_tuning_uses_json_first_selector(monkeypatch, tmp_path: Path) -> None:
+    mod = _load_module()
+
+    artifact = tmp_path / "artifacts"
+    artifact.mkdir(parents=True, exist_ok=True)
+    (artifact / "k.json").write_text(
+        """
+        {
+          "intent": {
+            "name": "f",
+            "tensors": {
+              "x": {"dtype": "f32", "shape": [2]},
+              "y": {"dtype": "f32", "shape": [2]}
+            },
+            "ops": [{"op":"identity","inputs":["x"],"attrs":{},"output":"y"}],
+            "outputs": ["y"]
+          },
+          "baseline": {"shapes": {"M": 2}}
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+    np.savez(artifact / "k.baseline.npz", x=np.ones((2,), dtype=np.float32), y=np.ones((2,), dtype=np.float32))
+
+    def _fake_lower(*args, **kwargs):
+        _ = args, kwargs
+        return "int main(){return 0;}"
+
+    class _P:
+        def __init__(self, rc: int, out: str = "", err: str = ""):
+            self.returncode = rc
+            self.stdout = out
+            self.stderr = err
+
+    def _fake_run(*args, **kwargs):
+        _ = args, kwargs
+        return _P(1, "", "compile error")
+
+    class _Schedule:
+        def to_json_dict(self):
+            return {"tile_n": 8}
+
+    class _Tuned:
+        schedule = _Schedule()
+
+    seen: dict[str, object] = {}
+
+    def _fake_select(intent_json, **kwargs):
+        seen["intent_json"] = dict(intent_json)
+        seen["kwargs"] = dict(kwargs)
+        return _Tuned()
+
+    monkeypatch.setattr(mod, "lower_intent_to_c_with_files", _fake_lower)
+    monkeypatch.setattr(mod.subprocess, "run", _fake_run)
+    monkeypatch.setattr(mod, "select_schedule_from_intent_json", _fake_select)
+    monkeypatch.setattr(mod, "load_profile", lambda *_a, **_k: object())
+
+    _ = mod.run_one(
+        "k",
+        frontend="triton",
+        triton_provider="native",
+        artifact_dir=str(artifact),
+        keep_tmp=False,
+        tune_request=mod.TuningRequest(mode="auto", budget=1),
+    )
+
+    assert isinstance(seen.get("intent_json"), dict)
+    assert (seen.get("intent_json") or {}).get("ops")
+
+
 def test_write_bin_respects_declared_dtype_over_bool_array(tmp_path: Path) -> None:
     mod = _load_module()
     out_f32 = tmp_path / "f32.bin"

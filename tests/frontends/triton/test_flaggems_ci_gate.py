@@ -479,6 +479,8 @@ def _run_ci_gate_mlir(
                 "full_coverage_run": True,
                 "full196_evidence_kind": "batch_aggregate",
                 "execution_ir": "mlir",
+                "execution_engine": "mlir_native",
+                "contract_schema_version": "intent_mlir_backend_contract_v2",
                 "stages": [
                     {"stage": "mlir_llvm_artifacts", "ok": True, "artifact_complete": True},
                 ],
@@ -487,7 +489,13 @@ def _run_ci_gate_mlir(
         encoding="utf-8",
     )
     status_converged.write_text(
-        json.dumps({"entries": [{"semantic_op": "add", "status": "dual_pass", "reason_code": "runtime_dual_backend_pass"}]}),
+        json.dumps(
+            {
+                "execution_engine": "mlir_native",
+                "contract_schema_version": "intent_mlir_backend_contract_v2",
+                "entries": [{"semantic_op": "add", "status": "dual_pass", "reason_code": "runtime_dual_backend_pass"}],
+            }
+        ),
         encoding="utf-8",
     )
     progress.write_text(
@@ -592,6 +600,51 @@ def test_ci_gate_mlir_profile_fails_when_toolchain_not_ready(tmp_path: Path) -> 
             str(tmp_path / "handoff.md"),
             "--out",
             str(tmp_path / "ci_gate_mlir_blocked.json"),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p2.returncode != 0
+
+
+def test_ci_gate_mlir_profile_fails_when_runtime_fallback_marked(tmp_path: Path) -> None:
+    p = _run_ci_gate_mlir(tmp_path, mlir_commit=_head_commit(), validated_execution_ir="mlir")
+    assert p.returncode == 0, p.stderr
+    status_converged = tmp_path / "status_converged.json"
+    payload = json.loads(status_converged.read_text(encoding="utf-8"))
+    entries = [dict(x) for x in list(payload.get("entries") or []) if isinstance(x, dict)]
+    assert entries
+    entries[0]["runtime_fallback"] = True
+    entries[0]["runtime_fallback_detail"] = "cuda_ptx_origin=nvrtc_fallback_from_llvm"
+    payload["entries"] = entries
+    status_converged.write_text(json.dumps(payload), encoding="utf-8")
+    p2 = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/ci_gate.py",
+            "--registry",
+            str(tmp_path / "registry.json"),
+            "--feature-list",
+            str(tmp_path / "feature_list.json"),
+            "--active-batch-coverage",
+            str(tmp_path / "active_batch_cov.json"),
+            "--active-batch-mlir-migration",
+            str(tmp_path / "active_batch_mlir.json"),
+            "--profiles",
+            "mlir_migration",
+            "--run-summary",
+            str(tmp_path / "run_summary.json"),
+            "--status-converged",
+            str(status_converged),
+            "--current-status",
+            str(tmp_path / "current_status.json"),
+            "--progress-log",
+            str(tmp_path / "progress_log.jsonl"),
+            "--handoff",
+            str(tmp_path / "handoff.md"),
+            "--out",
+            str(tmp_path / "ci_gate_mlir_runtime_fallback.json"),
         ],
         cwd=str(ROOT),
         capture_output=True,
@@ -730,6 +783,7 @@ def _run_ci_gate_gpu_perf(
     fresh_on_head: bool,
     per_device_ok: bool,
     ratio: float,
+    expected_policy_path_matches: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     registry = tmp_path / "registry.json"
     feature = tmp_path / "feature_list.json"
@@ -741,6 +795,11 @@ def _run_ci_gate_gpu_perf(
     handoff = tmp_path / "handoff_gpu_perf.md"
     current_status = tmp_path / "current_status_gpu_perf.json"
     gpu_perf_json = tmp_path / "gpu_perf_graph.json"
+    gpu_perf_baseline_json = tmp_path / "gpu_perf_graph_baseline.json"
+    policy_json = tmp_path / "gpu_perf_policy.json"
+    expected_policy_json = (
+        policy_json if expected_policy_path_matches else (tmp_path / "gpu_perf_policy_expected.json")
+    )
     out = tmp_path / "ci_gate_gpu_perf.json"
     head = _head_commit()
     validated_commit = head if fresh_on_head else "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
@@ -773,6 +832,34 @@ def _run_ci_gate_gpu_perf(
         json.dumps({"schema_version": "flaggems_active_batch_v2", "lane": "coverage", "items": []}),
         encoding="utf-8",
     )
+    policy_payload = {
+        "schema_version": "flaggems_gpu_perf_policy_v1",
+        "gate_exclude_kernels": ["sort2d"],
+        "key_kernels": ["add2d"],
+        "key_kernel_min_ratio_vs_baseline": 0.97,
+        "key_kernel_baseline_graph": str(gpu_perf_baseline_json),
+    }
+    policy_json.write_text(json.dumps(policy_payload), encoding="utf-8")
+    if expected_policy_json != policy_json:
+        expected_policy_json.write_text(json.dumps(policy_payload), encoding="utf-8")
+    gpu_perf_baseline_json.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_gpu_perf_graph_v1",
+                "entries": [
+                    {
+                        "kernel": "add2d",
+                        "family": "elementwise_broadcast",
+                        "count_in_denominator": True,
+                        "ratio": 0.90,
+                        "ok": True,
+                        "reason_code": "ok",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     gpu_perf_json.write_text(
         json.dumps(
             {
@@ -782,6 +869,15 @@ def _run_ci_gate_gpu_perf(
                 "coverage_batches_expected": 7,
                 "coverage_batches_completed": 7,
                 "coverage_batches_failed": [],
+                "gate_policy": {
+                    "policy_json": str(policy_json),
+                    "policy_loaded": True,
+                    "exclude_kernels_policy": ["sort2d"],
+                    "exclude_kernels_cli": [],
+                    "exclude_kernels": ["sort2d"],
+                    "excluded_rows": 0,
+                    "policy_schema_version": "flaggems_gpu_perf_policy_v1",
+                },
                 "devices": [{"gpu_name": "NVIDIA H100", "ok": bool(per_device_ok)}],
                 "entries": [
                     {
@@ -802,6 +898,11 @@ def _run_ci_gate_gpu_perf(
             {
                 "ok": bool(fresh_on_head and per_device_ok and ratio >= 0.80),
                 "suite": "gpu_perf_graph",
+                "execution_engine": "mlir_native",
+                "contract_schema_version": "intent_mlir_backend_contract_v2",
+                "gpu_perf_policy_json_path": str(policy_json),
+                "gpu_perf_policy_loaded": True,
+                "gpu_perf_kernel_excluded": 0,
                 "stages": [
                     {"stage": "gpu_perf_graph", "ok": bool(per_device_ok and ratio >= 0.80), "json_path": str(gpu_perf_json)}
                 ],
@@ -811,7 +912,16 @@ def _run_ci_gate_gpu_perf(
     )
     status_converged.write_text(
         json.dumps(
-            {"entries": [{"semantic_op": "add", "status": "dual_pass", "reason_code": "runtime_dual_backend_pass"}]}
+            {
+                "execution_engine": "mlir_native",
+                "contract_schema_version": "intent_mlir_backend_contract_v2",
+                "invocation": {
+                    "policy_json": str(policy_json),
+                    "policy_loaded": True,
+                    "gate_exclude_kernels": ["sort2d"],
+                },
+                "entries": [{"semantic_op": "add", "status": "dual_pass", "reason_code": "runtime_dual_backend_pass"}],
+            }
         ),
         encoding="utf-8",
     )
@@ -868,6 +978,8 @@ def _run_ci_gate_gpu_perf(
             str(handoff),
             "--gpu-perf-threshold",
             "0.80",
+            "--gpu-perf-policy-json",
+            str(expected_policy_json),
             "--out",
             str(out),
         ],
@@ -884,4 +996,15 @@ def test_ci_gate_gpu_perf_profile_passes_when_fresh_and_above_threshold(tmp_path
 
 def test_ci_gate_gpu_perf_profile_fails_when_stale_or_under_threshold(tmp_path: Path) -> None:
     p = _run_ci_gate_gpu_perf(tmp_path, fresh_on_head=False, per_device_ok=False, ratio=0.70)
+    assert p.returncode != 0
+
+
+def test_ci_gate_gpu_perf_profile_fails_when_policy_path_mismatch(tmp_path: Path) -> None:
+    p = _run_ci_gate_gpu_perf(
+        tmp_path,
+        fresh_on_head=True,
+        per_device_ok=True,
+        ratio=0.92,
+        expected_policy_path_matches=False,
+    )
     assert p.returncode != 0

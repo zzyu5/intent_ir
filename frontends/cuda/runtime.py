@@ -12,13 +12,14 @@ import importlib.machinery
 import hashlib
 import inspect
 import os
+import re
 import shutil
 import sys
 import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, Tuple
+from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
 import numpy as np
 
@@ -72,6 +73,99 @@ def _min_free_mem_mb() -> int:
     except Exception:
         v = 0
     return max(0, v)
+
+
+def _try_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _base_expr_binding(bindings: Mapping[str, Any], *, base: str) -> int | None:
+    # Heuristic for symbolic keys like "N + 3" emitted by shape materialization.
+    pat = re.compile(rf"^{re.escape(str(base))}\s*\+\s*\d+$")
+    out: list[int] = []
+    for k, v in dict(bindings or {}).items():
+        key = str(k).strip()
+        if not key or not pat.match(key):
+            continue
+        iv = _try_int(v)
+        if iv is not None:
+            out.append(iv)
+    if not out:
+        return None
+    return int(max(out))
+
+
+def _augment_scalar_bindings_from_io_spec(
+    *,
+    bindings: Mapping[str, Any],
+    io_spec: Mapping[str, Any],
+) -> dict[str, Any]:
+    out = dict(bindings or {})
+    scalars = io_spec.get("scalars") if isinstance(io_spec.get("scalars"), Mapping) else {}
+    if not isinstance(scalars, Mapping) or not scalars:
+        return out
+
+    def _has_binding(name: str) -> bool:
+        if name not in out:
+            return False
+        value = out.get(name)
+        if value is None:
+            return False
+        if isinstance(value, str) and not value.strip():
+            return False
+        return True
+
+    def _set_if_missing(name: str, value: Any) -> None:
+        if _has_binding(name):
+            return
+        iv = _try_int(value)
+        if iv is not None:
+            out[name] = int(iv)
+
+    _set_if_missing("M0", out.get("M"))
+    _set_if_missing("M1", out.get("M"))
+    _set_if_missing("N0", out.get("N"))
+    _set_if_missing("N1", out.get("N"))
+    _set_if_missing("M_OUT", out.get("M_OUT"))
+    _set_if_missing("N_OUT", out.get("N_OUT"))
+    if not _has_binding("M_OUT"):
+        _set_if_missing("M_OUT", _base_expr_binding(out, base="M"))
+    if not _has_binding("N_OUT"):
+        _set_if_missing("N_OUT", _base_expr_binding(out, base="N"))
+    _set_if_missing("M_OUT", out.get("M"))
+    _set_if_missing("N_OUT", out.get("N"))
+
+    if "T" in scalars and not _has_binding("T"):
+        m_out = _try_int(out.get("M_OUT"))
+        n_out = _try_int(out.get("N_OUT"))
+        m = _try_int(out.get("M"))
+        n = _try_int(out.get("N"))
+        l = _try_int(out.get("L"))
+        if m_out is not None and n_out is not None:
+            out["T"] = int(m_out * n_out)
+        elif m is not None and n_out is not None:
+            out["T"] = int(m * n_out)
+        elif m is not None and n is not None:
+            out["T"] = int(m * n)
+        elif l is not None and n is not None:
+            out["T"] = int(l * n)
+        elif n_out is not None:
+            out["T"] = int(n_out)
+        elif n is not None:
+            out["T"] = int(n)
+
+    for name in [str(k) for k in scalars.keys()]:
+        if _has_binding(name):
+            continue
+        m = re.match(r"^([A-Za-z_]+)\d+$", name)
+        if m is not None:
+            base = str(m.group(1))
+            if base in out:
+                _set_if_missing(name, out.get(base))
+    return out
 
 
 def _dtype_to_torch(dt: str):
@@ -499,7 +593,16 @@ def _nvrtc_compile_ptx(
 
 
 class _NvrtcCudaModule:
-    def __init__(self, *, kernel_name: str, cuda_src: str, io_spec: Dict[str, Any], extra_cuda_cflags: Tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        *,
+        kernel_name: str,
+        cuda_src: str,
+        io_spec: Dict[str, Any],
+        extra_cuda_cflags: Tuple[str, ...],
+        ptx: bytes | str | None = None,
+        selected_tag: str = "nvrtc_direct",
+    ) -> None:
         torch = _torch()
         if bool(io_spec.get("host_launch")):
             raise CudaRuntimeError(
@@ -529,10 +632,16 @@ class _NvrtcCudaModule:
         self._kernel_name = str(kernel_name)
         self._io_spec = dict(io_spec)
         self._selected_variant = -1
-        self._selected_tag = "nvrtc_direct"
+        self._selected_tag = str(selected_tag or "nvrtc_direct")
 
-        ptx = _nvrtc_compile_ptx(cuda_src=cuda_src, prog_name=f"{kernel_name}.cu", extra_cuda_cflags=extra_cuda_cflags)
-        err, mod = cuda.cuModuleLoadData(ptx)
+        ptx_payload: bytes
+        if ptx is None:
+            ptx_payload = _nvrtc_compile_ptx(cuda_src=cuda_src, prog_name=f"{kernel_name}.cu", extra_cuda_cflags=extra_cuda_cflags)
+        elif isinstance(ptx, bytes):
+            ptx_payload = ptx
+        else:
+            ptx_payload = str(ptx).encode("utf-8")
+        err, mod = cuda.cuModuleLoadData(ptx_payload)
         if int(err) != 0:
             raise CudaRuntimeError(f"cuModuleLoadData failed: {err}")
         err, func = cuda.cuModuleGetFunction(mod, self._kernel_name.encode("utf-8"))
@@ -1077,6 +1186,75 @@ def compile_cuda_extension(
         return _load_nvrtc_cached(mod_name, kernel_name, cuda_src, json.dumps(io_spec, sort_keys=True), flags)
 
 
+def compile_cuda_src_to_ptx(
+    *,
+    kernel_name: str,
+    cuda_src: str,
+    extra_cuda_cflags: Optional[Iterable[str]] = None,
+) -> bytes:
+    """
+    Compile CUDA source to PTX bytes via NVRTC.
+    """
+    flags = _normalize_cuda_compile_flags(extra_cuda_cflags)
+    return _nvrtc_compile_ptx(
+        cuda_src=cuda_src,
+        prog_name=f"{kernel_name}.cu",
+        extra_cuda_cflags=flags,
+    )
+
+
+def load_cuda_ptx_module(
+    *,
+    kernel_name: str,
+    ptx: bytes | str,
+    io_spec: Dict[str, Any],
+) -> Any:
+    """
+    Load a prebuilt PTX module and return an object exposing `launch(...)`.
+    """
+    return _NvrtcCudaModule(
+        kernel_name=kernel_name,
+        cuda_src="",
+        io_spec=io_spec,
+        extra_cuda_cflags=(),
+        ptx=ptx,
+        selected_tag="ptx_prebuilt",
+    )
+
+
+def run_cuda_kernel_io_ptx(
+    *,
+    kernel_name: str,
+    ptx: bytes | str,
+    io_spec: Dict[str, Any],
+    launch: CudaLaunch,
+    bindings: Dict[str, Any],
+    inputs_np: Dict[str, np.ndarray],
+    output_names: Iterable[str],
+    device: str = "cuda",
+    compiled_module: Any = None,
+) -> Dict[str, np.ndarray]:
+    """
+    Execute a CUDA kernel from prebuilt PTX, returning a numpy IO dict.
+    """
+    mod = compiled_module if compiled_module is not None else load_cuda_ptx_module(
+        kernel_name=kernel_name,
+        ptx=ptx,
+        io_spec=io_spec,
+    )
+    return run_cuda_kernel_io(
+        kernel_name=kernel_name,
+        cuda_src="",
+        io_spec=io_spec,
+        launch=launch,
+        bindings=bindings,
+        inputs_np=inputs_np,
+        output_names=output_names,
+        device=device,
+        compiled_module=mod,
+    )
+
+
 def _tensor_to_numpy(tensor: Any) -> np.ndarray:
     torch = _torch()
     host = tensor.detach().cpu()
@@ -1122,6 +1300,7 @@ def run_cuda_kernel_io(
     arg_names = io_spec.get("arg_names") if isinstance(io_spec.get("arg_names"), list) else []
     arg_names = [str(x) for x in arg_names]
     out_set = {str(x) for x in output_names}
+    bindings = _augment_scalar_bindings_from_io_spec(bindings=bindings, io_spec=io_spec)
 
     # Build torch args in kernel param order.
     args: list[Any] = []
@@ -1211,6 +1390,9 @@ __all__ = [
     "CudaLaunch",
     "CudaRuntimeError",
     "compile_cuda_extension",
+    "compile_cuda_src_to_ptx",
     "cuda_extension_cache_info",
+    "load_cuda_ptx_module",
     "run_cuda_kernel_io",
+    "run_cuda_kernel_io_ptx",
 ]

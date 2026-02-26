@@ -63,6 +63,55 @@ def _canonical_tanh2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_silu2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "silu2d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "y": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "const", "inputs": [], "output": "one_const", "attrs": {"value": 1.0}},
+                {"op": "const", "inputs": [], "output": "neg_one_const", "attrs": {"value": -1.0}},
+                {"op": "mul", "inputs": ["x", "neg_one_const"], "output": "neg_x"},
+                {"op": "exp", "inputs": ["neg_x"], "output": "exp_neg_x"},
+                {"op": "add", "inputs": ["one_const", "exp_neg_x"], "output": "denominator"},
+                {"op": "div", "inputs": ["one_const", "denominator"], "output": "sigma"},
+                {"op": "mul", "inputs": ["x", "sigma"], "output": "y"},
+            ],
+            "outputs": ["y"],
+            "schedule": {"tile_m": "BLOCK_M", "tile_n": "BLOCK_N", "axis_bindings": {"tile_m": "M", "tile_n": "N"}},
+        }
+    )
+
+
+def _canonical_softplus2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "softplus2d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "beta": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "threshold": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "const", "inputs": [], "output": "one_const", "attrs": {"value": 1.0}},
+                {"op": "mul", "inputs": ["x", "beta"], "output": "z"},
+                {"op": "exp", "inputs": ["z"], "output": "exp_z"},
+                {"op": "add", "inputs": ["one_const", "exp_z"], "output": "exp_plus_one"},
+                {"op": "log", "inputs": ["exp_plus_one"], "output": "log_term"},
+                {"op": "gt", "inputs": ["z", "threshold"], "output": "gt_threshold"},
+                {"op": "where", "inputs": ["gt_threshold", "z", "log_term"], "output": "soft_z"},
+                {"op": "div", "inputs": ["soft_z", "beta"], "output": "out"},
+            ],
+            "outputs": ["out"],
+            "schedule": {"tile_m": "BLOCK_M", "tile_n": "BLOCK_N", "axis_bindings": {"tile_m": "M", "tile_n": "N"}},
+        }
+    )
+
+
 def _canonical_batch_norm2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -280,6 +329,22 @@ def _canonical_sub2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_cast2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "cast2d",
+            "tensors": {
+                "x": {"dtype": "f16", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cast", "inputs": ["x"], "output": "out", "attrs": {"to": "f32"}},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def _canonical_sqrt2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -290,6 +355,38 @@ def _canonical_sqrt2d_intent() -> IntentFunction:
             },
             "ops": [
                 {"op": "sqrt", "inputs": ["A"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_sin2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "sin2d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "sin", "inputs": ["A"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_tan2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "tan2d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "tan", "inputs": ["A"], "output": "out"},
             ],
             "outputs": ["out"],
         }
@@ -753,6 +850,44 @@ def _canonical_remainder2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_reciprocal2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "reciprocal2d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "one": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "A_f32": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "const", "inputs": [], "output": "one", "attrs": {"value": 1.0}},
+                {"op": "cast", "inputs": ["A"], "output": "A_f32", "attrs": {"to": "f32"}},
+                {"op": "div", "inputs": ["one", "A_f32"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_rsqrt2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "rsqrt2d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "A_f32": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cast", "inputs": ["A"], "output": "A_f32", "attrs": {"to": "f32"}},
+                {"op": "rsqrt", "inputs": ["A_f32"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
 def _canonical_per_token_group_quant_fp8_2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -1032,6 +1167,26 @@ def _canonical_logspace1d_intent() -> IntentFunction:
     )
 
 
+def _canonical_lerp2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "lerp2d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "B": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "W": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "C": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "sub", "inputs": ["B", "A"], "output": "delta"},
+                {"op": "mul", "inputs": ["W", "delta"], "output": "scaled_delta"},
+                {"op": "add", "inputs": ["A", "scaled_delta"], "output": "C"},
+            ],
+            "outputs": ["C"],
+        }
+    )
+
+
 def _canonical_le2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -1134,6 +1289,129 @@ def _canonical_logical_not2d_intent() -> IntentFunction:
             },
             "ops": [
                 {"op": "not", "inputs": ["inp"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_logical_or2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "logical_or2d",
+            "tensors": {
+                "A": {"dtype": "i1", "shape": ["M", "N"], "layout": "row_major"},
+                "B": {"dtype": "i1", "shape": ["M", "N"], "layout": "row_major"},
+                "Out": {"dtype": "i1", "shape": ["M", "N"], "layout": "row_major"},
+                "a_i1": {"dtype": "i1", "shape": ["M", "N"], "layout": "row_major"},
+                "b_i1": {"dtype": "i1", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cast", "inputs": ["A"], "output": "a_i1", "attrs": {"to": "i1"}},
+                {"op": "cast", "inputs": ["B"], "output": "b_i1", "attrs": {"to": "i1"}},
+                {"op": "max", "inputs": ["a_i1", "b_i1"], "output": "Out"},
+            ],
+            "outputs": ["Out"],
+        }
+    )
+
+
+def _canonical_logical_xor2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "logical_xor2d",
+            "tensors": {
+                "A": {"dtype": "i1", "shape": ["M", "N"], "layout": "row_major"},
+                "B": {"dtype": "i1", "shape": ["M", "N"], "layout": "row_major"},
+                "Out": {"dtype": "i1", "shape": ["M", "N"], "layout": "row_major"},
+                "a_bool": {"dtype": "i1", "shape": ["M", "N"], "layout": "row_major"},
+                "b_bool": {"dtype": "i1", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cast", "inputs": ["A"], "output": "a_bool", "attrs": {"to": "i1"}},
+                {"op": "cast", "inputs": ["B"], "output": "b_bool", "attrs": {"to": "i1"}},
+                {"op": "ne", "inputs": ["a_bool", "b_bool"], "output": "Out"},
+            ],
+            "outputs": ["Out"],
+        }
+    )
+
+
+def _canonical_lt2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "lt2d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "y": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                "cast_x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cast", "inputs": ["x"], "output": "cast_x", "attrs": {"to": "f32"}},
+                {"op": "lt", "inputs": ["cast_x", "y"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_minimum2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "minimum2d",
+            "tensors": {
+                "X": {"dtype": "bf16", "shape": ["M", "N"], "layout": "row_major"},
+                "Y": {"dtype": "bf16", "shape": ["M", "N"], "layout": "row_major"},
+                "Out": {"dtype": "bf16", "shape": ["M", "N"], "layout": "row_major"},
+                "x_f32": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "y_f32": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "result_f32": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cast", "inputs": ["X"], "output": "x_f32", "attrs": {"to": "f32"}},
+                {"op": "cast", "inputs": ["Y"], "output": "y_f32", "attrs": {"to": "f32"}},
+                {"op": "min", "inputs": ["x_f32", "y_f32"], "output": "result_f32"},
+                {"op": "cast", "inputs": ["result_f32"], "output": "Out", "attrs": {"to": "bf16"}},
+            ],
+            "outputs": ["Out"],
+        }
+    )
+
+
+def _canonical_ne2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "ne2d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "y": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "output": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                "x_f32": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "y_f32": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cast", "inputs": ["x"], "output": "x_f32", "attrs": {"to": "f32"}},
+                {"op": "cast", "inputs": ["y"], "output": "y_f32", "attrs": {"to": "f32"}},
+                {"op": "ne", "inputs": ["x_f32", "y_f32"], "output": "output"},
+            ],
+            "outputs": ["output"],
+        }
+    )
+
+
+def _canonical_neg2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "neg2d",
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "neg_one": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "const", "inputs": [], "output": "neg_one", "attrs": {"value": -1.0}},
+                {"op": "mul", "inputs": ["A", "neg_one"], "output": "out"},
             ],
             "outputs": ["out"],
         }
@@ -1334,14 +1612,42 @@ def _canonical_normed_cumsum2d_intent() -> IntentFunction:
             "name": "normed_cumsum2d",
             "tensors": {
                 "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
-                "eps": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "EPS": {"dtype": "f32", "shape": [], "layout": "row_major"},
                 "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
             },
             "ops": [
                 {"op": "cumsum", "inputs": ["inp"], "output": "y_cumsum", "attrs": {"axis": 1}},
-                {"op": "reduce_sum", "inputs": ["inp"], "output": "y_sum", "attrs": {"dims": [1], "keepdims": True}},
-                {"op": "add", "inputs": ["y_sum", "eps"], "output": "y_sum_eps"},
-                {"op": "div", "inputs": ["y_cumsum", "y_sum_eps"], "output": "out"},
+                {"op": "reduce_sum", "inputs": ["inp"], "output": "y_denom", "attrs": {"dims": [1], "keepdims": True}},
+                {"op": "add", "inputs": ["y_denom", "EPS"], "output": "y_sum_eps"},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["y_sum_eps"],
+                    "output": "y_sum_eps_bc",
+                    "attrs": {"out_shape": ["M", "N"], "broadcast_dims": [0, 1]},
+                },
+                {"op": "div", "inputs": ["y_cumsum", "y_sum_eps_bc"], "output": "out"},
+            ],
+            "outputs": ["out"],
+        }
+    )
+
+
+def _canonical_cumsum2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "cumsum2d",
+            "tensors": {
+                "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "offset": {"dtype": "i32", "shape": ["M", "N"], "layout": "row_major"},
+                "inp_vals": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "result": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "iota", "inputs": [], "output": "offset", "attrs": {"axis": 1, "shape": ["M", "N"]}},
+                {"op": "identity", "inputs": ["inp"], "output": "inp_vals"},
+                {"op": "cumsum", "inputs": ["inp_vals"], "output": "result", "attrs": {"axis": 1}},
+                {"op": "identity", "inputs": ["result"], "output": "out"},
             ],
             "outputs": ["out"],
         }
@@ -2248,6 +2554,57 @@ def _canonical_pow_scalar2d_intent() -> IntentFunction:
     )
 
 
+def _canonical_pow_tensor_scalar2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "pow_tensor_scalar2d",
+            "tensors": {
+                "X": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "exponent": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "Out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "x_f32": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "exp_f32": {"dtype": "f32", "shape": [], "layout": "row_major"},
+                "exp_bcast": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cast", "inputs": ["X"], "output": "x_f32", "attrs": {"to": "f32"}},
+                {"op": "cast", "inputs": ["exponent"], "output": "exp_f32", "attrs": {"to": "f32"}},
+                {
+                    "op": "broadcast_in_dim",
+                    "inputs": ["exp_f32"],
+                    "output": "exp_bcast",
+                    "attrs": {"out_shape": ["M", "N"], "broadcast_dims": []},
+                },
+                {"op": "pow", "inputs": ["x_f32", "exp_bcast"], "output": "Out"},
+            ],
+            "outputs": ["Out"],
+        }
+    )
+
+
+def _canonical_pow_tensor_tensor2d_intent() -> IntentFunction:
+    return IntentFunction.from_json_dict(
+        {
+            "name": "pow_tensor_tensor2d",
+            "tensors": {
+                "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "exponent": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "output": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "cast_x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "cast_exponent": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                "pow_op": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+            },
+            "ops": [
+                {"op": "cast", "inputs": ["x"], "output": "cast_x", "attrs": {"to": "f32"}},
+                {"op": "cast", "inputs": ["exponent"], "output": "cast_exponent", "attrs": {"to": "f32"}},
+                {"op": "pow", "inputs": ["cast_x", "cast_exponent"], "output": "pow_op"},
+                {"op": "identity", "inputs": ["pow_op"], "output": "output"},
+            ],
+            "outputs": ["output"],
+        }
+    )
+
+
 def _canonical_min_dim2d_intent() -> IntentFunction:
     return IntentFunction.from_json_dict(
         {
@@ -2300,6 +2657,10 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_sigmoid2d_intent()
     if name == "tanh2d":
         return _canonical_tanh2d_intent()
+    if name == "silu2d":
+        return _canonical_silu2d_intent()
+    if name == "softplus2d":
+        return _canonical_softplus2d_intent()
     if name == "angle2d":
         return _canonical_angle2d_intent()
     if name == "argmax2d":
@@ -2326,6 +2687,10 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_min2d_intent()
     if name == "pow_scalar2d":
         return _canonical_pow_scalar2d_intent()
+    if name == "pow_tensor_scalar2d":
+        return _canonical_pow_tensor_scalar2d_intent()
+    if name == "pow_tensor_tensor2d":
+        return _canonical_pow_tensor_tensor2d_intent()
     if name == "exp22d":
         return _canonical_exp22d_intent()
     if name == "any_kernel_dim":
@@ -2360,8 +2725,12 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_prod2d_intent()
     if name == "prod_dim2d":
         return _canonical_prod_dim2d_intent()
+    if name == "reciprocal2d":
+        return _canonical_reciprocal2d_intent()
     if name == "remainder2d":
         return _canonical_remainder2d_intent()
+    if name == "rsqrt2d":
+        return _canonical_rsqrt2d_intent()
     if name == "per_token_group_quant_fp8_2d":
         return _canonical_per_token_group_quant_fp8_2d_intent()
     if name == "gather2d":
@@ -2390,6 +2759,8 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_linspace1d_intent()
     if name == "logspace1d":
         return _canonical_logspace1d_intent()
+    if name == "lerp2d":
+        return _canonical_lerp2d_intent()
     if name == "le2d":
         return _canonical_le2d_intent()
     if name == "log2d":
@@ -2402,6 +2773,18 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_logical_and2d_intent()
     if name == "logical_not2d":
         return _canonical_logical_not2d_intent()
+    if name == "logical_or2d":
+        return _canonical_logical_or2d_intent()
+    if name == "logical_xor2d":
+        return _canonical_logical_xor2d_intent()
+    if name == "lt2d":
+        return _canonical_lt2d_intent()
+    if name == "minimum2d":
+        return _canonical_minimum2d_intent()
+    if name == "ne2d":
+        return _canonical_ne2d_intent()
+    if name == "neg2d":
+        return _canonical_neg2d_intent()
     if name == "masked_select2d":
         return _canonical_masked_select2d_intent()
     if name == "masked_scatter2d":
@@ -2420,6 +2803,8 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_nonzero2d_intent()
     if name == "normed_cumsum2d":
         return _canonical_normed_cumsum2d_intent()
+    if name == "cumsum2d":
+        return _canonical_cumsum2d_intent()
     if name == "one_hot2d":
         return _canonical_one_hot2d_intent()
     if name == "max_pool2d_with_indices_nchw":
@@ -2446,6 +2831,12 @@ def canonical_flaggems_intent_for_spec(spec_name: str) -> IntentFunction | None:
         return _canonical_triu2d_intent()
     if name == "sub2d":
         return _canonical_sub2d_intent()
+    if name == "sin2d":
+        return _canonical_sin2d_intent()
+    if name == "tan2d":
+        return _canonical_tan2d_intent()
+    if name == "cast2d":
+        return _canonical_cast2d_intent()
     if name == "sqrt2d":
         return _canonical_sqrt2d_intent()
     if name == "std2d":

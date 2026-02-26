@@ -753,6 +753,50 @@ def select_schedule(
     )
 
 
+def propose_schedule_candidates_from_intent_json(
+    intent_json: Dict[str, Any],
+    *,
+    shape_bindings: Dict[str, int],
+    profile: RVVHardwareProfile,
+    request: TuningRequest | None = None,
+    tile_hints: Iterable[int] | None = None,
+    limit: int | None = None,
+    evidence: object | None = None,
+) -> List[ScheduleCandidate]:
+    """JSON-first wrapper kept for contract-first runtime callers."""
+    intent = IntentFunction.from_json_dict(dict(intent_json))
+    return propose_schedule_candidates(
+        intent,
+        shape_bindings=shape_bindings,
+        profile=profile,
+        request=request,
+        tile_hints=tile_hints,
+        limit=limit,
+        evidence=evidence,
+    )
+
+
+def select_schedule_from_intent_json(
+    intent_json: Dict[str, Any],
+    *,
+    shape_bindings: Dict[str, int],
+    profile: RVVHardwareProfile,
+    request: TuningRequest | None = None,
+    tile_hints: Iterable[int] | None = None,
+    evidence: object | None = None,
+) -> TuningResult:
+    """JSON-first wrapper kept for contract-first runtime callers."""
+    intent = IntentFunction.from_json_dict(dict(intent_json))
+    return select_schedule(
+        intent,
+        shape_bindings=shape_bindings,
+        profile=profile,
+        request=request,
+        tile_hints=tile_hints,
+        evidence=evidence,
+    )
+
+
 __all__ = [
     "TuningMode",
     "TuningRequest",
@@ -761,5 +805,7 @@ __all__ = [
     "parse_constraints",
     "ScheduleCandidate",
     "propose_schedule_candidates",
+    "propose_schedule_candidates_from_intent_json",
     "select_schedule",
+    "select_schedule_from_intent_json",
 ]

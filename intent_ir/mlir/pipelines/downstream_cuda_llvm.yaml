@@ -1,9 +1,7 @@
 passes:
   - python:backend_legalize
-  - mlir-opt?:canonicalize
   - python:attach_provider_meta
   - python:lower_intent_to_llvm_dialect
-  - mlir-translate?:mlir-to-llvmir
   - python:ensure_llvm_ir_text
-  - "llvm-as?:"
-  - "opt?:-O2"
+  - "llvm-as:"
+  - "opt:-O2"

@@ -226,6 +226,51 @@ def _counts(entries: list[dict[str, Any]]) -> dict[str, int]:
     return {k: int(v) for k, v in sorted(c.items(), key=lambda kv: kv[0])}
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return int(default)
+
+
+def _mlir_llvm_artifact_complete_from_summary(run_summary: dict[str, Any]) -> bool | None:
+    if not isinstance(run_summary, dict):
+        return None
+    if "mlir_llvm_artifact_complete" in run_summary:
+        return bool(run_summary.get("mlir_llvm_artifact_complete"))
+    stages = [s for s in list(run_summary.get("stages") or []) if isinstance(s, dict)]
+    stage_map = {str(s.get("stage") or ""): s for s in stages}
+    stage = stage_map.get("mlir_llvm_artifacts") or stage_map.get("llvm_emit")
+    if not isinstance(stage, dict):
+        return None
+    if "artifact_complete" in stage:
+        return bool(stage.get("artifact_complete"))
+    if bool(stage.get("ok")):
+        reason = str(stage.get("reason_code") or "").strip().lower()
+        if reason in {"ok", "artifact_complete", "llvm_artifacts_complete"}:
+            return True
+    return bool(stage.get("ok"))
+
+
+def _runtime_fallback_from_summary(
+    run_summary: dict[str, Any],
+    *,
+    chunk_label: str,
+) -> tuple[list[str], int]:
+    if not isinstance(run_summary, dict):
+        return [], 0
+    kernels = [str(x) for x in list(run_summary.get("runtime_fallback_kernels") or []) if str(x).strip()]
+    count = _safe_int(run_summary.get("runtime_fallback_kernel_count"), default=0)
+    if count <= 0 and kernels:
+        count = int(len(kernels))
+    if count > len(kernels):
+        missing = int(count - len(kernels))
+        for i in range(1, missing + 1):
+            label = str(chunk_label or "chunk").strip()
+            kernels.append(f"{label}::fallback_{i}")
+    return sorted(set(kernels)), int(max(count, len(kernels)))
+
+
 def _placeholder_entry(*, semantic_op: str, family: str, reason_detail: str) -> dict[str, Any]:
     reason = "pipeline_missing_report"
     return {
@@ -260,10 +305,49 @@ def _materialize_family_outputs(
 ) -> tuple[bool, Path, Path]:
     semantic_set = set(semantics)
     merged_by_semantic: dict[str, dict[str, Any]] = {}
+    chunk_run_meta: dict[str, dict[str, Any]] = {}
     all_chunks_ok = True
+    mlir_llvm_artifact_complete = True
+    mlir_llvm_artifact_seen = 0
+    runtime_fallback_kernels: set[str] = set()
     for row in list(chunk_rows or []):
         all_chunks_ok = bool(all_chunks_ok and bool(row.get("ok")))
         status_path = Path(str(row.get("status_converged_path") or ""))
+        chunk_name = str(row.get("chunk") or "")
+        chunk_run_summary_path = Path(str(row.get("run_summary_path") or ""))
+        chunk_run_summary_key = str(row.get("run_summary_path") or "")
+        chunk_mlir_complete: bool | None = None
+        chunk_runtime_fallback: list[str] = []
+        chunk_runtime_fallback_count = 0
+        if chunk_run_summary_path.is_file():
+            try:
+                chunk_run_summary = _load_json(chunk_run_summary_path)
+                chunk_mlir_complete = _mlir_llvm_artifact_complete_from_summary(chunk_run_summary)
+                chunk_runtime_fallback, chunk_runtime_fallback_count = _runtime_fallback_from_summary(
+                    chunk_run_summary,
+                    chunk_label=(chunk_name or family),
+                )
+            except Exception:
+                all_chunks_ok = False
+                chunk_mlir_complete = False
+                chunk_runtime_fallback = []
+                chunk_runtime_fallback_count = 0
+        else:
+            all_chunks_ok = False
+            chunk_mlir_complete = False
+        if chunk_mlir_complete is None:
+            mlir_llvm_artifact_complete = False
+        else:
+            mlir_llvm_artifact_seen += 1
+            if not bool(chunk_mlir_complete):
+                mlir_llvm_artifact_complete = False
+        if chunk_runtime_fallback:
+            runtime_fallback_kernels.update(str(x) for x in chunk_runtime_fallback if str(x).strip())
+        chunk_run_meta[chunk_run_summary_key] = {
+            "mlir_llvm_artifact_complete": (None if chunk_mlir_complete is None else bool(chunk_mlir_complete)),
+            "runtime_fallback_kernel_count": int(chunk_runtime_fallback_count),
+            "runtime_fallback_kernels": list(chunk_runtime_fallback),
+        }
         if not status_path.is_file():
             all_chunks_ok = False
             continue
@@ -298,6 +382,10 @@ def _materialize_family_outputs(
             non_dual_semantics.append(sop)
         final_entries.append(entry)
 
+    if mlir_llvm_artifact_seen <= 0:
+        mlir_llvm_artifact_complete = False
+    runtime_fallback_kernel_list = sorted(runtime_fallback_kernels)
+    runtime_fallback_kernel_count = int(len(runtime_fallback_kernel_list))
     family_ok = bool(all_chunks_ok and not missing_semantics and not non_dual_semantics)
     status_path = family_out / "status_converged.json"
     run_summary_path = family_out / "run_summary.json"
@@ -328,6 +416,9 @@ def _materialize_family_outputs(
         "chunk_count": int(len(chunk_rows)),
         "missing_semantics": list(missing_semantics),
         "non_dual_semantics": list(non_dual_semantics),
+        "mlir_llvm_artifact_complete": bool(mlir_llvm_artifact_complete),
+        "runtime_fallback_kernel_count": int(runtime_fallback_kernel_count),
+        "runtime_fallback_kernels": list(runtime_fallback_kernel_list),
         "status_converged_path": str(status_path),
         "chunk_runs": [
             {
@@ -339,6 +430,15 @@ def _materialize_family_outputs(
                 "status_converged_path": str(r.get("status_converged_path") or ""),
                 "kernel_count": int(r.get("kernel_count", 0)),
                 "kernels": list(r.get("kernels") or []),
+                "mlir_llvm_artifact_complete": (
+                    chunk_run_meta.get(str(r.get("run_summary_path") or ""), {}).get("mlir_llvm_artifact_complete")
+                ),
+                "runtime_fallback_kernel_count": int(
+                    chunk_run_meta.get(str(r.get("run_summary_path") or ""), {}).get("runtime_fallback_kernel_count", 0)
+                ),
+                "runtime_fallback_kernels": list(
+                    chunk_run_meta.get(str(r.get("run_summary_path") or ""), {}).get("runtime_fallback_kernels") or []
+                ),
             }
             for r in list(chunk_rows or [])
         ],

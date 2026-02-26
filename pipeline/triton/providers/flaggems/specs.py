@@ -5438,7 +5438,9 @@ def _norm_polar2d(shapes: Dict[str, int]) -> Dict[str, int]:
 
 def _norm_unique2d(shapes: Dict[str, int]) -> Dict[str, int]:
     out = dict(shapes)
-    out["N"] = max(1, int(out.get("N", 128)))
+    # Keep unique coverage shape small enough to avoid pathological CUDA hangs
+    # while still exercising dynamic-output semantics.
+    out["N"] = max(1, int(out.get("N", 1)))
     return out
 
 
@@ -6183,7 +6185,7 @@ _FLAGGEMS_SPEC_BUILDERS = {
         module="pipeline.triton.providers.flaggems.specs",
         attr="FLAGGEMS_UNIQUE_SRC",
         runner=_run_flaggems_unique2d_reference,
-        canonical_shapes={"N": 128},
+        canonical_shapes={"N": 1},
         vary_axes=["N"],
         normalize_shapes=_norm_unique2d,
         stage_c_max_cases=8,

@@ -1,11 +1,11 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-22T13:27:44+00:00
-- Commit: `253af53aa67de2c68027f3ea2c72e018b40c9d47`
+- Timestamp: 2026-02-25T23:52:12+00:00
+- Commit: `34e839652470d4d9e8fc49b1e6c47c7206b40b47`
 - Lane: `mlir_migration`
-- Summary: Inserted llvm-dialect lowering pass before mlir-translate; abs2d matrix now reports mlir_llvm_artifacts artifact_complete=true with rvv_remote+cuda both passing
+- Summary: Expanded strict MLIR wave to 64 kernels (cross-family), rvv_remote_llvm+cuda dual-pass, runtime_fallback=0.
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/flaggems_matrix/daily/20260222/matrix_abs2d_remote_contract_first_v4/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260222/matrix_abs2d_remote_contract_first_v4/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260222/debug_abs2d_corecheck_v2/abs2d.json, artifacts/flaggems_matrix/daily/20260222/matrix_abs2d_remote_contract_first_v4/run_summary.json, artifacts/flaggems_matrix/daily/20260222/matrix_abs2d_remote_contract_first_v4/status_converged.json
-- Next Focus: Apply the same real-translation guarantee to broader kernel chunks and keep removing IntentFunction compatibility from backend smoke/remote scripts.
+- Run Summary: `artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave64_v1/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave64_v1/status_converged.json`
+- Evidence Paths: artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave64_v1/mlir_llvm_artifacts.json, artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave64_v1/run_summary.json, artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave64_v1/stage_timing_breakdown.json, artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave64_v1/status_converged.json
+- Next Focus: Sync deep_read truth package with wave64 evidence and keep strict gate freshness on HEAD.

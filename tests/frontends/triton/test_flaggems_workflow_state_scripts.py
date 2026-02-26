@@ -707,3 +707,367 @@ def test_build_workflow_state_marks_stale_or_invalid_for_unreachable_validated_c
     status_payload = json.loads(current.read_text(encoding="utf-8"))
     assert status_payload["coverage_integrity_phase"] == "stale_or_invalid"
     assert "coverage" in list(status_payload.get("active_lanes") or [])
+
+
+def test_build_workflow_state_gpu_perf_freshness_transitions_to_recomputed_ok(tmp_path: Path) -> None:
+    feature = tmp_path / "feature_list.json"
+    progress = tmp_path / "progress_log.jsonl"
+    handoff = tmp_path / "handoff.md"
+    current = tmp_path / "current_status.json"
+    context = tmp_path / "session_context.json"
+    run_summary = tmp_path / "gpu_run_summary.json"
+    gpu_graph = tmp_path / "gpu_perf_graph.json"
+    status_json = tmp_path / "gpu_status_converged.json"
+    head_commit = _head_commit()
+
+    feature.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_feature_list_v2",
+                "summary": {
+                    "semantic_ops": 196,
+                    "by_status": {"dual_pass": 196},
+                    "by_family": {"elementwise_broadcast": 196},
+                    "tasks_total": 196,
+                    "by_track": {"coverage": 196},
+                },
+                "features": [
+                    {"id": "flaggems::abs", "track": "coverage", "status": "dual_pass", "passes": True},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    run_summary.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "suite": "gpu_perf_graph",
+                "requested_suite": "gpu_perf_graph",
+                "repo": {"head_commit": head_commit, "branch": "test", "dirty": False},
+                "gpu_perf_threshold": 0.8,
+                "gpu_perf_categories_complete": True,
+                "gpu_perf_per_device_ok": True,
+                "gpu_perf_kernel_measured": 10,
+                "coverage_batches_expected": 7,
+                "coverage_batches_completed": 7,
+                "coverage_batches_failed": [],
+                "stages": [{"stage": "gpu_perf_graph", "ok": True, "json_path": str(gpu_graph)}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    gpu_graph.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_gpu_perf_graph_v1",
+                "ok": True,
+                "mode": "graph_only",
+                "threshold": 0.8,
+                "coverage_batches_expected": 7,
+                "coverage_batches_completed": 7,
+                "coverage_batches_failed": [],
+                "devices": [
+                    {
+                        "gpu_name": "Fake GPU",
+                        "kernel_total": 10,
+                        "kernel_measured": 10,
+                        "kernel_pass": 10,
+                        "kernel_fail": 0,
+                        "ok": True,
+                        "min_ratio": 0.95,
+                    }
+                ],
+                "failures_by_family": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    status_json.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_status_converged_v3",
+                "repo": {"head_commit": head_commit, "branch": "test", "dirty": False},
+                "entries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    progress.write_text(
+        json.dumps(
+            {
+                "summary": "gpu_perf refresh",
+                "run_ok": True,
+                "commit": head_commit,
+                "run_summary_path": str(run_summary),
+                "status_converged_path": str(status_json),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    handoff.write_text("# FlagGems Session Handoff\n- Next Focus: gpu perf done\n", encoding="utf-8")
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/build_workflow_state.py",
+            "--feature-list",
+            str(feature),
+            "--progress-log",
+            str(progress),
+            "--handoff",
+            str(handoff),
+            "--current-status-out",
+            str(current),
+            "--session-context-out",
+            str(context),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    status_payload = json.loads(current.read_text(encoding="utf-8"))
+    assert status_payload["gpu_perf_phase"] == "recomputed_ok"
+    assert status_payload["gpu_perf_validated_commit"] == head_commit
+    assert status_payload["gpu_perf_commits_since_validated"] == 0
+
+
+def test_build_workflow_state_blocks_llvm_chain_when_artifact_incomplete_even_with_timing(tmp_path: Path) -> None:
+    feature = tmp_path / "feature_list.json"
+    progress = tmp_path / "progress_log.jsonl"
+    handoff = tmp_path / "handoff.md"
+    current = tmp_path / "current_status.json"
+    context = tmp_path / "session_context.json"
+    run_summary = tmp_path / "full196_run_summary.json"
+    status_json = tmp_path / "status_converged.json"
+    coverage_json = tmp_path / "coverage_integrity.json"
+    timing_json = tmp_path / "stage_timing_breakdown.json"
+    head_commit = _head_commit()
+
+    feature.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_feature_list_v2",
+                "summary": {
+                    "semantic_ops": 196,
+                    "by_status": {"dual_pass": 196},
+                    "by_family": {"elementwise_broadcast": 196},
+                    "tasks_total": 196,
+                    "by_track": {"coverage": 196},
+                },
+                "features": [
+                    {"id": "flaggems::abs", "track": "coverage", "status": "dual_pass", "passes": True},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    coverage_json.write_text(json.dumps({"coverage_integrity_ok": True}), encoding="utf-8")
+    timing_json.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_stage_timing_breakdown_v1",
+                "mlir": {"available": True, "totals_ms": {"mlir_total_ms": 123.0}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    run_summary.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "suite": "coverage",
+                "requested_suite": "flaggems-full196",
+                "repo": {"head_commit": head_commit, "branch": "test", "dirty": False},
+                "execution_ir": "mlir",
+                "kernel_filter": [],
+                "scope_kernels": ["abs2d"],
+                "mlir_llvm_chain_ok": False,
+                "mlir_llvm_artifact_complete": False,
+                "stages": [
+                    {
+                        "stage": "coverage_integrity",
+                        "ok": True,
+                        "json_path": str(coverage_json),
+                        "full_coverage_run": True,
+                    },
+                    {
+                        "stage": "stage_timing_breakdown",
+                        "ok": True,
+                        "json_path": str(timing_json),
+                        "reason_code": "ok",
+                    },
+                    {
+                        "stage": "mlir_llvm_artifacts",
+                        "ok": False,
+                        "reason_code": "llvm_artifacts_incomplete",
+                        "families_expected": 7,
+                        "families_completed": 0,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    status_json.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_status_converged_v3",
+                "repo": {"head_commit": head_commit, "branch": "test", "dirty": False},
+                "entries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    progress.write_text(
+        json.dumps(
+            {
+                "summary": "full196 refresh",
+                "run_ok": True,
+                "commit": head_commit,
+                "run_summary_path": str(run_summary),
+                "status_converged_path": str(status_json),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    handoff.write_text("# FlagGems Session Handoff\n- Next Focus: llvm chain fix\n", encoding="utf-8")
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/build_workflow_state.py",
+            "--feature-list",
+            str(feature),
+            "--progress-log",
+            str(progress),
+            "--handoff",
+            str(handoff),
+            "--current-status-out",
+            str(current),
+            "--session-context-out",
+            str(context),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    status_payload = json.loads(current.read_text(encoding="utf-8"))
+    assert status_payload["mlir_llvm_chain_ok"] is False
+    assert status_payload["mlir_cutover_level"] == "blocked_llvm_chain"
+
+
+def test_build_workflow_state_promotes_mlir_cutover_when_artifact_complete(tmp_path: Path) -> None:
+    feature = tmp_path / "feature_list.json"
+    progress = tmp_path / "progress_log.jsonl"
+    handoff = tmp_path / "handoff.md"
+    current = tmp_path / "current_status.json"
+    context = tmp_path / "session_context.json"
+    run_summary = tmp_path / "full196_run_summary.json"
+    status_json = tmp_path / "status_converged.json"
+    coverage_json = tmp_path / "coverage_integrity.json"
+    head_commit = _head_commit()
+
+    feature.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_feature_list_v2",
+                "summary": {
+                    "semantic_ops": 196,
+                    "by_status": {"dual_pass": 196},
+                    "by_family": {"elementwise_broadcast": 196},
+                    "tasks_total": 196,
+                    "by_track": {"coverage": 196},
+                },
+                "features": [
+                    {"id": "flaggems::abs", "track": "coverage", "status": "dual_pass", "passes": True},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    coverage_json.write_text(json.dumps({"coverage_integrity_ok": True}), encoding="utf-8")
+    run_summary.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "suite": "coverage",
+                "requested_suite": "flaggems-full196",
+                "repo": {"head_commit": head_commit, "branch": "test", "dirty": False},
+                "execution_ir": "mlir",
+                "kernel_filter": [],
+                "scope_kernels": ["abs2d"],
+                "mlir_llvm_chain_ok": True,
+                "mlir_llvm_artifact_complete": True,
+                "stages": [
+                    {
+                        "stage": "coverage_integrity",
+                        "ok": True,
+                        "json_path": str(coverage_json),
+                        "full_coverage_run": True,
+                    },
+                    {
+                        "stage": "mlir_llvm_artifacts",
+                        "ok": True,
+                        "reason_code": "ok",
+                        "families_expected": 7,
+                        "families_completed": 7,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    status_json.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_status_converged_v3",
+                "repo": {"head_commit": head_commit, "branch": "test", "dirty": False},
+                "entries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    progress.write_text(
+        json.dumps(
+            {
+                "summary": "full196 refresh",
+                "run_ok": True,
+                "commit": head_commit,
+                "run_summary_path": str(run_summary),
+                "status_converged_path": str(status_json),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    handoff.write_text("# FlagGems Session Handoff\n- Next Focus: strict mlir gate\n", encoding="utf-8")
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/build_workflow_state.py",
+            "--feature-list",
+            str(feature),
+            "--progress-log",
+            str(progress),
+            "--handoff",
+            str(handoff),
+            "--current-status-out",
+            str(current),
+            "--session-context-out",
+            str(context),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    status_payload = json.loads(current.read_text(encoding="utf-8"))
+    assert status_payload["mlir_llvm_chain_ok"] is True
+    assert status_payload["mlir_cutover_level"] == "mlir_primary"

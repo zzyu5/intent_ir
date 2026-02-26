@@ -30,13 +30,15 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backends.spmd_rvv.codegen.cpp_driver import lower_intent_json_to_c_with_files_cpp as _lower_intent_json_to_c_with_files_cpp  # noqa: E402
 from backends.spmd_rvv.analysis.device_query import load_profile  # noqa: E402
-from backends.spmd_rvv.analysis.tuning import TuningRequest, parse_constraints, parse_locks, select_schedule  # noqa: E402
+from backends.spmd_rvv.analysis.tuning import TuningRequest, parse_constraints, parse_locks, select_schedule_from_intent_json  # noqa: E402
+from backends.spmd_rvv.pipeline.driver import lower_rvv_contract_to_c_src  # noqa: E402
 from backends.common.mlir_contract import MlirBackendContract  # noqa: E402
 from intent_ir.ir import IntentFunction  # noqa: E402
 from intent_ir.macros import expand_macros_json  # noqa: E402
+from intent_ir.mlir import to_mlir  # noqa: E402
 from intent_ir.mlir.convert_to_intent import to_intent  # noqa: E402
+from intent_ir.mlir.passes.emit_rvv_contract import build_rvv_contract  # noqa: E402
 
 
 DEFAULT_KERNELS = [
@@ -47,6 +49,11 @@ DEFAULT_KERNELS = [
     "layer_norm_persistent",
     "upsample_bicubic2d_aa",
 ]
+
+
+def _intent_from_json_payload(intent_json: dict[str, Any]) -> IntentFunction:
+    loader = getattr(IntentFunction, "from_json_dict")
+    return loader(dict(intent_json))
 
 
 def lower_intent_to_c_with_files(
@@ -63,13 +70,23 @@ def lower_intent_to_c_with_files(
     Accepts either IntentFunction or intent JSON and lowers through the
     contract-oriented JSON entrypoint.
     """
-    if isinstance(intent_or_json, dict):
-        payload = dict(intent_or_json)
-    elif hasattr(intent_or_json, "to_json_dict"):
-        payload = dict(intent_or_json.to_json_dict())
+    if isinstance(intent_or_json, dict) and str(intent_or_json.get("schema_version") or "").startswith("intent_mlir_backend_contract_"):
+        payload: dict[str, Any] = dict(intent_or_json)
     else:
-        raise TypeError("intent_or_json must be IntentFunction or intent JSON")
-    return _lower_intent_json_to_c_with_files_cpp(
+        if isinstance(intent_or_json, dict):
+            intent_json = dict(intent_or_json)
+        elif hasattr(intent_or_json, "to_json_dict"):
+            intent_json = dict(intent_or_json.to_json_dict())
+        else:
+            raise TypeError("intent_or_json must be IntentFunction, intent JSON, or mlir contract JSON")
+        intent = _intent_from_json_payload(intent_json)
+        mod = to_mlir(intent)
+        contract = build_rvv_contract(mod, source_kind="script_fallback")
+        artifacts = dict(contract.artifacts or {})
+        artifacts["mlir_module_text"] = str(mod.module_text or "")
+        contract.artifacts = artifacts
+        payload = contract.to_json_dict()
+    return lower_rvv_contract_to_c_src(
         payload,
         shape_bindings=shape_bindings,
         atol=float(atol),
@@ -153,10 +170,13 @@ def _contract_report_paths(report: dict, *, artifact_root: Path) -> list[Path]:
     if not isinstance(mlir, dict):
         return []
     preferred = [
+        "downstream_rvv_llvm_contract_path",
         "downstream_rvv_contract_path",
+        "downstream_cuda_llvm_contract_path",
+        "downstream_cuda_contract_path",
+        "downstream_llvm_contract_path",
         "downstream_contract_path",
         "midend_rvv_contract_path",
-        "downstream_cuda_contract_path",
         "midend_cuda_contract_path",
     ]
     out: list[Path] = []
@@ -224,7 +244,68 @@ def _with_io_aliases_for_names(wanted: list[str], io: dict[str, np.ndarray]) -> 
     return out
 
 
-def _intent_from_contract_path(path: Path) -> tuple[dict[str, Any], dict[str, Any]] | None:
+def _resolve_contract_module_path(contract: MlirBackendContract, *, contract_path: Path) -> Path | None:
+    artifacts = dict(contract.artifacts or {})
+    module_path_raw = str(artifacts.get("mlir_module_path") or "").strip()
+    if not module_path_raw and str(contract.executable.format or "").endswith("mlir_module"):
+        module_path_raw = str(contract.executable.path or "").strip()
+    if not module_path_raw:
+        return None
+    p = Path(module_path_raw)
+    if p.is_absolute():
+        return p if p.is_file() else None
+    for cand in (contract_path.parent / p, ROOT / p):
+        try:
+            resolved = cand.resolve()
+        except Exception:
+            resolved = cand
+        if resolved.is_file():
+            return resolved
+    return None
+
+
+def _synthesize_intent_from_contract(contract: MlirBackendContract) -> dict[str, Any]:
+    io_spec = _runtime_io_spec_from_contract(contract)
+    tensors_in = io_spec.get("tensors")
+    tensors: dict[str, dict[str, Any]] = {}
+    if isinstance(tensors_in, dict):
+        for name, spec in tensors_in.items():
+            if not isinstance(spec, dict):
+                continue
+            tensors[str(name)] = {
+                "dtype": str(spec.get("dtype") or "f32"),
+                "shape": list(spec.get("shape") or []),
+                "layout": str(spec.get("layout") or "row_major"),
+            }
+    outputs = [str(x) for x in list(io_spec.get("outputs") or []) if str(x).strip()]
+    schedule = dict(contract.schedule or {})
+    parallel_axes = list(schedule.get("parallel_axes") or []) if isinstance(schedule, dict) else []
+    return {
+        "name": str(contract.kernel_name or "intent"),
+        "tensors": tensors,
+        "ops": [],
+        "outputs": outputs,
+        "schedule": dict(schedule),
+        "parallel_axes": [str(x) for x in parallel_axes if str(x).strip()],
+        "meta": {"source_kind": "contract_io_spec_synth"},
+    }
+
+
+def _runtime_io_spec_from_contract(contract: MlirBackendContract) -> dict[str, Any]:
+    io_spec = dict(contract.io_spec or {})
+    invocation = dict(contract.executable.invocation or {})
+    inv_io = invocation.get("io_spec")
+    if isinstance(inv_io, dict) and isinstance(inv_io.get("tensors"), dict):
+        io_spec = dict(inv_io)
+    if not isinstance(io_spec.get("outputs"), list):
+        inv_out = invocation.get("output_names")
+        if isinstance(inv_out, list):
+            io_spec = dict(io_spec)
+            io_spec["outputs"] = [str(x) for x in inv_out if str(x).strip()]
+    return io_spec
+
+
+def _intent_from_contract_path(path: Path) -> tuple[dict[str, Any] | None, dict[str, Any], dict[str, Any]] | None:
     try:
         payload_raw = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
@@ -235,24 +316,54 @@ def _intent_from_contract_path(path: Path) -> tuple[dict[str, Any], dict[str, An
         payload = MlirBackendContract.from_json_dict(payload_raw)
     except Exception:
         return None
-    if not isinstance(payload.intent_json, dict):
-        return None
-    return dict(payload.intent_json), dict(payload.io_spec or {})
+    io_spec = _runtime_io_spec_from_contract(payload)
+    payload_json = payload.to_json_dict()
+    module_text = str((payload.artifacts or {}).get("mlir_module_text") or "").strip()
+    if module_text:
+        try:
+            intent = to_intent(module_text)
+            return intent.to_json_dict(), io_spec, payload_json
+        except Exception:
+            pass
+    module_path = _resolve_contract_module_path(payload, contract_path=path)
+    if module_path is not None:
+        try:
+            intent = to_intent(module_path.read_text(encoding="utf-8"))
+            return intent.to_json_dict(), io_spec, payload_json
+        except Exception:
+            pass
+    return _synthesize_intent_from_contract(payload), io_spec, payload_json
 
 
-def _load_intent_json(
+def _load_intent_and_contract(
     report: dict,
     *,
     artifact_root: Path,
     require_mlir_artifacts: bool = False,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     for contract_path in _contract_report_paths(report, artifact_root=artifact_root):
         parsed = _intent_from_contract_path(contract_path)
-        if parsed is not None:
-            return parsed
+        if parsed is None:
+            continue
+        parsed_intent, io_spec, payload = parsed
+        if isinstance(parsed_intent, dict):
+            return parsed_intent, io_spec, payload
+        # Contract payload is still valid for lowering even when module->intent recovery fails.
+        break
+    else:
+        parsed_intent = None
+        io_spec = {}
+        payload = {}
     for mlir_path in _mlir_report_paths(report, artifact_root=artifact_root):
         try:
-            return to_intent(mlir_path.read_text(encoding="utf-8")).to_json_dict(), {}
+            intent = to_intent(mlir_path.read_text(encoding="utf-8"))
+            mod = to_mlir(intent)
+            contract = build_rvv_contract(mod, source_kind="mlir_path_fallback")
+            artifacts = dict(contract.artifacts or {})
+            artifacts["mlir_module_text"] = str(mod.module_text or "")
+            contract.artifacts = artifacts
+            intent_json = intent.to_json_dict()
+            return intent_json, io_spec, payload if payload else contract.to_json_dict()
         except Exception:
             continue
     if bool(require_mlir_artifacts):
@@ -260,13 +371,22 @@ def _load_intent_json(
     intent_expanded_json = report.get("intent_expanded")
     if not isinstance(intent_expanded_json, dict):
         intent_expanded_json = expand_macros_json(dict(report["intent"]))
-    return dict(intent_expanded_json), {}
+    intent = _intent_from_json_payload(dict(intent_expanded_json))
+    mod = to_mlir(intent)
+    contract = build_rvv_contract(mod, source_kind="intent_json_fallback")
+    artifacts = dict(contract.artifacts or {})
+    artifacts["mlir_module_text"] = str(mod.module_text or "")
+    contract.artifacts = artifacts
+    return dict(intent_expanded_json), {}, contract.to_json_dict()
 
 
 def _external_inputs(intent_json: dict[str, Any]) -> tuple[list[str], list[str]]:
     ops = [x for x in list(intent_json.get("ops") or []) if isinstance(x, dict)]
     tensors = dict(intent_json.get("tensors") or {})
     outputs = [str(x) for x in list(intent_json.get("outputs") or []) if str(x).strip()]
+    if not ops and tensors:
+        external_inputs = sorted([str(n) for n in tensors.keys() if str(n) and str(n) not in set(outputs)])
+        return external_inputs, outputs
     produced = {str(op.get("output") or "") for op in ops if str(op.get("output") or "").strip()}
     used: set[str] = set()
     for op in ops:
@@ -572,7 +692,7 @@ def run_one(
         raise FileNotFoundError(f"missing baseline npz: {baseline_npz_path}")
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    intent_json, io_spec = _load_intent_json(
+    intent_json, io_spec, mlir_contract = _load_intent_and_contract(
         report,
         artifact_root=artifact_root,
         require_mlir_artifacts=bool(require_mlir_artifacts),
@@ -611,8 +731,10 @@ def run_one(
         # Keep declared outputs to avoid constructing an invalid empty-output intent.
         outputs = _intent_outputs(intent_json)
     intent_codegen_json = dict(intent_json)
+    lower_payload: Any = dict(mlir_contract)
     if outputs != _intent_outputs(intent_json):
         intent_codegen_json["outputs"] = list(outputs)
+        lower_payload = intent_codegen_json
 
     bindings = ((report.get("baseline") or {}).get("shapes") or {}) if isinstance(report.get("baseline"), dict) else {}
     # Common axis aliases (match pipeline/runner conventions).
@@ -644,11 +766,16 @@ def run_one(
         except Exception:
             pass
     bindings = _augment_bindings_from_arrays(tensor_specs=tensor_specs, bindings=bindings, arrays=baseline)
-    intent_for_tuning: IntentFunction | None = None
     if tune_request is not None:
-        intent_for_tuning = IntentFunction.from_json_dict(dict(intent_codegen_json))
         prof = load_profile(tune_profile or "generic_rvv_256")
-        tuned = select_schedule(intent_for_tuning, shape_bindings=bindings, profile=prof, request=tune_request, tile_hints=tile_hints, evidence=cert_v2)
+        tuned = select_schedule_from_intent_json(
+            intent_codegen_json,
+            shape_bindings=bindings,
+            profile=prof,
+            request=tune_request,
+            tile_hints=tile_hints,
+            evidence=cert_v2,
+        )
         intent_codegen_json["schedule"] = tuned.schedule.to_json_dict()
     tol = {
         "any_kernel_dim": (0.0, 0.0),
@@ -665,7 +792,7 @@ def run_one(
     try:
         t_lower = perf_counter()
         c_src = lower_intent_to_c_with_files(
-            intent_codegen_json,
+            lower_payload,
             shape_bindings=bindings,
             atol=float(atol),
             rtol=float(rtol),

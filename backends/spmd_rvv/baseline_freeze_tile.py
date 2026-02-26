@@ -124,5 +124,19 @@ def freeze_tile_schedule(intent: IntentFunction, *, desc: KernelDescriptor | Map
     return FrozenSchedule(schedule=resolved, notes=notes)
 
 
-__all__ = ["FrozenSchedule", "freeze_tile_schedule", "resolve_schedule_symbols"]
+def freeze_tile_schedule_from_intent_json(
+    intent_json: Mapping[str, Any],
+    *,
+    desc: KernelDescriptor | Mapping[str, Any] | None = None,
+) -> FrozenSchedule:
+    """JSON-first wrapper kept for contract-first runtime callers."""
+    intent = IntentFunction.from_json_dict(dict(intent_json))
+    return freeze_tile_schedule(intent, desc=desc)
 
+
+__all__ = [
+    "FrozenSchedule",
+    "freeze_tile_schedule",
+    "freeze_tile_schedule_from_intent_json",
+    "resolve_schedule_symbols",
+]

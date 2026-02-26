@@ -239,17 +239,38 @@ json emit_reduce_prod_2d_all_f32(const Intent& intent, const json& bindings) {
   if (i_shape.size() != 2 || !o_shape.empty()) fail("reduce_prod(all) expects rank-2 input and scalar output");
   const int64_t M = i_shape[0];
   const int64_t N = i_shape[1];
+  int64_t block_x = resolve_schedule_int(intent, bindings, "tile_n", 256);
+  if (block_x <= 0) block_x = 256;
+  if (block_x < 32) block_x = 32;
+  if (block_x > 1024) block_x = 1024;
+  if ((block_x & (block_x - 1)) != 0) {
+    int64_t p2 = 1;
+    while (p2 < block_x && p2 < 1024) p2 <<= 1;
+    block_x = p2;
+  }
 
   std::ostringstream cuda_ss;
   CodeWriter w(cuda_ss);
   w.line("#include <stdint.h>");
   w.blank();
-  w.line("extern \"C\" __global__ void " + intent.name + "(const float* __restrict__ " + in_name + ", float* __restrict__ " + out_name + ") {");
+  w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_x) + ") void " + intent.name +
+         "(const float* __restrict__ " + in_name + ", float* __restrict__ " + out_name + ") {");
   w.indent();
-  w.line("if ((int)blockIdx.x != 0 || (int)threadIdx.x != 0) return;");
+  w.line("if ((int)blockIdx.x != 0) return;");
+  w.line("const int tid = (int)threadIdx.x;");
+  w.line("__shared__ float smem[" + std::to_string(block_x) + "];");
   w.line("float p = 1.0f;");
-  w.line("for (int64_t i = 0; i < " + std::to_string(M * N) + "LL; ++i) p *= " + in_name + "[i];");
-  w.line(out_name + "[0] = p;");
+  w.line("const int64_t total = " + std::to_string(M * N) + "LL;");
+  w.line("for (int64_t i = (int64_t)tid; i < total; i += (int64_t)blockDim.x) p *= " + in_name + "[(size_t)i];");
+  w.line("smem[tid] = p;");
+  w.line("__syncthreads();");
+  w.line("for (int s = ((int)blockDim.x >> 1); s > 0; s >>= 1) {");
+  w.indent();
+  w.line("if (tid < s) smem[tid] *= smem[tid + s];");
+  w.line("__syncthreads();");
+  w.dedent();
+  w.line("}");
+  w.line("if (tid == 0) " + out_name + "[0] = smem[0];");
   w.dedent();
   w.line("}");
 
@@ -260,7 +281,7 @@ json emit_reduce_prod_2d_all_f32(const Intent& intent, const json& bindings) {
   out["kernel_name"] = intent.name;
   out["cuda_src"] = cuda_ss.str();
   out["io_spec"] = io_spec_from_args(intent, {in_name, out_name}, {}, {in_name, out_name});
-  out["launch"] = {{"grid", {1, 1, 1}}, {"block", {1, 1, 1}}, {"shared_mem", 0}};
+  out["launch"] = {{"grid", {1, 1, 1}}, {"block", {block_x, 1, 1}}, {"shared_mem", 0}};
   out["output_names"] = {out_name};
   out["bindings"] = out_bindings;
   return out;
@@ -292,7 +313,10 @@ json emit_reduce_prod_2d_axis1_f32(const Intent& intent, const json& bindings) {
   if (block_x < 32) block_x = 32;
   if (block_x > 1024) block_x = 1024;
   if ((block_x % 32) != 0) block_x = ((block_x + 31) / 32) * 32;
-  const int64_t grid_x = (M + block_x - 1) / block_x;
+  int64_t max_useful = 32;
+  while ((max_useful << 1) <= N && (max_useful << 1) <= 1024) max_useful <<= 1;
+  if (block_x > max_useful) block_x = max_useful;
+  const int64_t grid_x = M;
 
   std::ostringstream cuda_ss;
   CodeWriter w(cuda_ss);
@@ -364,17 +388,24 @@ json emit_quantile2d_dim1_f32(const Intent& intent, const json& bindings) {
     if (!(o_shape.size() == 1 && o_shape[0] == M)) fail("quantile expects out shape [M]");
   }
 
-  int64_t block_x = resolve_schedule_int(intent, bindings, "tile_m", 128);
-  if (block_x <= 0) block_x = 128;
-  if (block_x < 32) block_x = 32;
-  if (block_x > 1024) block_x = 1024;
-  if ((block_x % 32) != 0) block_x = ((block_x + 31) / 32) * 32;
-  const int64_t grid_x = (M + block_x - 1) / block_x;
+  auto next_pow2 = [](int64_t v) -> int64_t {
+    int64_t p = 1;
+    while (p < v && p < 256) p <<= 1;
+    return p;
+  };
+  const bool use_parallel = (N <= 256);
+  int64_t block_x = use_parallel ? next_pow2(N) : resolve_schedule_int(intent, bindings, "tile_m", 128);
+  if (block_x <= 0) block_x = use_parallel ? 32 : 128;
+  if (use_parallel && block_x < 32) block_x = 32;
+  if (block_x > (use_parallel ? 256 : 1024)) block_x = (use_parallel ? 256 : 1024);
+  if (!use_parallel && (block_x % 32) != 0) block_x = ((block_x + 31) / 32) * 32;
+  const int64_t grid_x = use_parallel ? M : ((M + block_x - 1) / block_x);
 
   std::ostringstream cuda_ss;
   CodeWriter w(cuda_ss);
   w.line("#include <math.h>");
   w.line("#include <stdint.h>");
+  w.line("#include \"kernels/reduce.cuh\"");
   w.blank();
   w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_x) + ") void " + intent.name + "(");
   w.indent();
@@ -384,41 +415,88 @@ json emit_quantile2d_dim1_f32(const Intent& intent, const json& bindings) {
   w.dedent();
   w.line(") {");
   w.indent();
-  w.line("const int64_t row = (int64_t)blockIdx.x * (int64_t)blockDim.x + (int64_t)threadIdx.x;");
-  w.line("if (row >= " + std::to_string(M) + "LL) return;");
-  w.line("float qv = " + q + " ? " + q + "[0] : 0.5f;");
-  w.line("if (qv < 0.0f) qv = 0.0f;");
-  w.line("if (qv > 1.0f) qv = 1.0f;");
-  w.line("const float h = qv * (float)(" + std::to_string(N - 1) + ");");
-  w.line("int64_t k0 = (int64_t)floorf(h);");
-  w.line("int64_t k1 = (int64_t)ceilf(h);");
-  w.line("if (k0 < 0) k0 = 0;");
-  w.line("if (k1 < 0) k1 = 0;");
-  w.line("if (k0 >= " + std::to_string(N) + "LL) k0 = " + std::to_string(N - 1) + "LL;");
-  w.line("if (k1 >= " + std::to_string(N) + "LL) k1 = " + std::to_string(N - 1) + "LL;");
-  w.line("const int64_t base = row * " + std::to_string(N) + "LL;");
-  w.line("float v0 = 0.0f;");
-  w.line("float v1 = 0.0f;");
-  w.line("bool f0 = false;");
-  w.line("bool f1 = false;");
-  w.line("for (int64_t i = 0; i < " + std::to_string(N) + "LL; ++i) {");
-  w.indent();
-  w.line("const float vi = " + inp + "[base + i];");
-  w.line("int64_t rank = 0;");
-  w.line("for (int64_t j = 0; j < " + std::to_string(N) + "LL; ++j) {");
-  w.indent();
-  w.line("const float vj = " + inp + "[base + j];");
-  w.line("if (vj < vi || (vj == vi && j < i)) ++rank;");
-  w.dedent();
-  w.line("}");
-  w.line("if (!f0 && rank == k0) { v0 = vi; f0 = true; }");
-  w.line("if (!f1 && rank == k1) { v1 = vi; f1 = true; }");
-  w.line("if (f0 && f1) break;");
-  w.dedent();
-  w.line("}");
-  w.line("if (!f0) v0 = " + inp + "[base];");
-  w.line("if (!f1) v1 = " + inp + "[base];");
-  w.line("const float frac = h - floorf(h);");
+  if (use_parallel) {
+    const int64_t p2 = block_x;
+    w.line("const int row = (int)blockIdx.x;");
+    w.line("const int tid = (int)threadIdx.x;");
+    w.line("if (row >= " + std::to_string(M) + "LL) return;");
+    w.line("__shared__ float vals[" + std::to_string(p2) + "];");
+    w.line("const int64_t base = (int64_t)row * " + std::to_string(N) + "LL;");
+    w.line("if (tid < " + std::to_string(N) + ") vals[tid] = " + inp + "[base + (int64_t)tid];");
+    w.line("else vals[tid] = INFINITY;");
+    w.line("__syncthreads();");
+    w.line("for (int k = 2; k <= " + std::to_string(p2) + "; k <<= 1) {");
+    w.indent();
+    w.line("for (int j = (k >> 1); j > 0; j >>= 1) {");
+    w.indent();
+    w.line("const int ixj = tid ^ j;");
+    w.line("if (ixj > tid) {");
+    w.indent();
+    w.line("const float a = vals[tid];");
+    w.line("const float b = vals[ixj];");
+    w.line("const bool up = ((tid & k) == 0);");
+    w.line("const bool gt = (a > b);");
+    w.line("const bool lt = (a < b);");
+    w.line("if (up ? gt : lt) { vals[tid] = b; vals[ixj] = a; }");
+    w.dedent();
+    w.line("}");
+    w.line("__syncthreads();");
+    w.dedent();
+    w.line("}");
+    w.dedent();
+    w.line("}");
+    w.line("if (tid == 0) {");
+    w.indent();
+    w.line("float qv = " + q + " ? " + q + "[0] : 0.5f;");
+    w.line("if (qv < 0.0f) qv = 0.0f;");
+    w.line("if (qv > 1.0f) qv = 1.0f;");
+    w.line("const float h = qv * (float)(" + std::to_string(N - 1) + ");");
+    w.line("int64_t k0 = (int64_t)floorf(h);");
+    w.line("int64_t k1 = (int64_t)ceilf(h);");
+    w.line("if (k0 < 0) k0 = 0;");
+    w.line("if (k1 < 0) k1 = 0;");
+    w.line("if (k0 >= " + std::to_string(N) + "LL) k0 = " + std::to_string(N - 1) + "LL;");
+    w.line("if (k1 >= " + std::to_string(N) + "LL) k1 = " + std::to_string(N - 1) + "LL;");
+    w.line("const float v0 = vals[(int)k0];");
+    w.line("const float v1 = vals[(int)k1];");
+    w.line("const float frac = h - floorf(h);");
+  } else {
+    w.line("const int64_t row = (int64_t)blockIdx.x * (int64_t)blockDim.x + (int64_t)threadIdx.x;");
+    w.line("if (row >= " + std::to_string(M) + "LL) return;");
+    w.line("float qv = " + q + " ? " + q + "[0] : 0.5f;");
+    w.line("if (qv < 0.0f) qv = 0.0f;");
+    w.line("if (qv > 1.0f) qv = 1.0f;");
+    w.line("const float h = qv * (float)(" + std::to_string(N - 1) + ");");
+    w.line("int64_t k0 = (int64_t)floorf(h);");
+    w.line("int64_t k1 = (int64_t)ceilf(h);");
+    w.line("if (k0 < 0) k0 = 0;");
+    w.line("if (k1 < 0) k1 = 0;");
+    w.line("if (k0 >= " + std::to_string(N) + "LL) k0 = " + std::to_string(N - 1) + "LL;");
+    w.line("if (k1 >= " + std::to_string(N) + "LL) k1 = " + std::to_string(N - 1) + "LL;");
+    w.line("const int64_t base = row * " + std::to_string(N) + "LL;");
+    w.line("float v0 = 0.0f;");
+    w.line("float v1 = 0.0f;");
+    w.line("bool f0 = false;");
+    w.line("bool f1 = false;");
+    w.line("for (int64_t i = 0; i < " + std::to_string(N) + "LL; ++i) {");
+    w.indent();
+    w.line("const float vi = " + inp + "[base + i];");
+    w.line("int64_t rank = 0;");
+    w.line("for (int64_t j = 0; j < " + std::to_string(N) + "LL; ++j) {");
+    w.indent();
+    w.line("const float vj = " + inp + "[base + j];");
+    w.line("if (vj < vi || (vj == vi && j < i)) ++rank;");
+    w.dedent();
+    w.line("}");
+    w.line("if (!f0 && rank == k0) { v0 = vi; f0 = true; }");
+    w.line("if (!f1 && rank == k1) { v1 = vi; f1 = true; }");
+    w.line("if (f0 && f1) break;");
+    w.dedent();
+    w.line("}");
+    w.line("if (!f0) v0 = " + inp + "[base];");
+    w.line("if (!f1) v1 = " + inp + "[base];");
+    w.line("const float frac = h - floorf(h);");
+  }
   std::string q_expr;
   if (interpolation == "lower") {
     q_expr = "v0";
@@ -433,6 +511,10 @@ json emit_quantile2d_dim1_f32(const Intent& intent, const json& bindings) {
   }
   w.line("const float q_out = " + q_expr + ";");
   w.line(out_name + "[row] = q_out;");
+  if (use_parallel) {
+    w.dedent();
+    w.line("}");
+  }
   w.dedent();
   w.line("}");
 
@@ -489,12 +571,16 @@ json emit_rms_norm2d_f32(const Intent& intent, const json& bindings) {
   if (block_x < 32) block_x = 32;
   if (block_x > 1024) block_x = 1024;
   if ((block_x % 32) != 0) block_x = ((block_x + 31) / 32) * 32;
-  const int64_t grid_x = (M + block_x - 1) / block_x;
+  int64_t max_useful = 32;
+  while ((max_useful << 1) <= N && (max_useful << 1) <= 1024) max_useful <<= 1;
+  if (block_x > max_useful) block_x = max_useful;
+  const int64_t grid_x = M;
 
   std::ostringstream cuda_ss;
   CodeWriter w(cuda_ss);
   w.line("#include <math.h>");
   w.line("#include <stdint.h>");
+  w.line("#include \"kernels/reduce.cuh\"");
   w.blank();
   w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_x) + ") void " + intent.name + "(");
   w.indent();
@@ -643,11 +729,18 @@ json emit_scatter2d_dim1_f32(const Intent& intent, const json& bindings) {
   const int64_t N = i_shape[1];
   const std::string idx_ctype = (idx_dt == "i32") ? "int" : "int64_t";
 
+  int64_t block_x = resolve_schedule_int(intent, bindings, "tile_m", 128);
+  if (block_x <= 0) block_x = 128;
+  if (block_x < 32) block_x = 32;
+  if (block_x > 1024) block_x = 1024;
+  if ((block_x % 32) != 0) block_x = ((block_x + 31) / 32) * 32;
+  const int64_t grid_x = (M + block_x - 1) / block_x;
+
   std::ostringstream cuda_ss;
   CodeWriter w(cuda_ss);
   w.line("#include <stdint.h>");
   w.blank();
-  w.line("extern \"C\" __global__ void " + intent.name + "(");
+  w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_x) + ") void " + intent.name + "(");
   w.indent();
   w.line("const float* __restrict__ " + inp + ",");
   w.line("const " + idx_ctype + "* __restrict__ " + index + ",");
@@ -656,18 +749,15 @@ json emit_scatter2d_dim1_f32(const Intent& intent, const json& bindings) {
   w.dedent();
   w.line(") {");
   w.indent();
-  w.line("if ((int)blockIdx.x != 0 || (int)threadIdx.x != 0) return;");
-  w.line("for (int64_t i = 0; i < " + std::to_string(M * N) + "LL; ++i) " + out_name + "[i] = " + inp + "[i];");
-  w.line("for (int64_t m = 0; m < " + std::to_string(M) + "LL; ++m) {");
-  w.indent();
+  w.line("const int64_t m = (int64_t)blockIdx.x * (int64_t)blockDim.x + (int64_t)threadIdx.x;");
+  w.line("if (m >= " + std::to_string(M) + "LL) return;");
   w.line("const int64_t row = m * " + std::to_string(N) + "LL;");
+  w.line("for (int64_t n = 0; n < " + std::to_string(N) + "LL; ++n) " + out_name + "[row + n] = " + inp + "[row + n];");
   w.line("for (int64_t n = 0; n < " + std::to_string(N) + "LL; ++n) {");
   w.indent();
   w.line("const int64_t col = (int64_t)" + index + "[row + n];");
-  w.line("if (col < 0 || col >= " + std::to_string(N) + "LL) continue;");
+  w.line("if ((unsigned long long)col >= (unsigned long long)" + std::to_string(N) + "LL) continue;");
   w.line(out_name + "[row + col] = " + src + "[row + n];");
-  w.dedent();
-  w.line("}");
   w.dedent();
   w.line("}");
   w.dedent();
@@ -680,7 +770,7 @@ json emit_scatter2d_dim1_f32(const Intent& intent, const json& bindings) {
   out["kernel_name"] = intent.name;
   out["cuda_src"] = cuda_ss.str();
   out["io_spec"] = io_spec_from_args(intent, {inp, index, src, out_name}, {}, {inp, index, src, out_name});
-  out["launch"] = {{"grid", {1, 1, 1}}, {"block", {1, 1, 1}}, {"shared_mem", 0}};
+  out["launch"] = {{"grid", {grid_x, 1, 1}}, {"block", {block_x, 1, 1}}, {"shared_mem", 0}};
   out["output_names"] = {out_name};
   out["bindings"] = out_bindings;
   return out;
@@ -781,12 +871,24 @@ json emit_slice_scatter2d_dim1_f32(const Intent& intent, const json& bindings) {
   if (end < start) end = start;
   const int64_t expected_L = (end - start + step - 1) / step;
   if (s_shape[1] != expected_L) fail("slice_scatter src second dim mismatch with (start,end,step)");
+  const int64_t total = M * N;
+  const int64_t scatter_total = M * expected_L;
+
+  int64_t block_x = resolve_schedule_int(intent, bindings, "tile_n", 256);
+  if (block_x <= 0) block_x = 256;
+  if (block_x < 32) block_x = 32;
+  if (block_x > 1024) block_x = 1024;
+  if ((block_x % 32) != 0) block_x = ((block_x + 31) / 32) * 32;
+  int64_t max_useful = 32;
+  const int64_t work = (total > scatter_total) ? total : scatter_total;
+  while ((max_useful << 1) <= work && (max_useful << 1) <= 1024) max_useful <<= 1;
+  if (block_x > max_useful) block_x = max_useful;
 
   std::ostringstream cuda_ss;
   CodeWriter w(cuda_ss);
   w.line("#include <stdint.h>");
   w.blank();
-  w.line("extern \"C\" __global__ void " + intent.name + "(");
+  w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_x) + ") void " + intent.name + "(");
   w.indent();
   w.line("const float* __restrict__ " + inp + ",");
   w.line("const float* __restrict__ " + src + ",");
@@ -794,17 +896,16 @@ json emit_slice_scatter2d_dim1_f32(const Intent& intent, const json& bindings) {
   w.dedent();
   w.line(") {");
   w.indent();
-  w.line("if ((int)blockIdx.x != 0 || (int)threadIdx.x != 0) return;");
-  w.line("for (int64_t i = 0; i < " + std::to_string(M * N) + "LL; ++i) " + out_name + "[i] = " + inp + "[i];");
-  w.line("for (int64_t m = 0; m < " + std::to_string(M) + "LL; ++m) {");
+  w.line("if ((int)blockIdx.x != 0) return;");
+  w.line("const int tid = (int)threadIdx.x;");
+  w.line("for (int64_t i = (int64_t)tid; i < " + std::to_string(total) + "LL; i += (int64_t)blockDim.x) " + out_name + "[i] = " + inp + "[i];");
+  w.line("__syncthreads();");
+  w.line("for (int64_t idx = (int64_t)tid; idx < " + std::to_string(scatter_total) + "LL; idx += (int64_t)blockDim.x) {");
   w.indent();
-  w.line("int64_t l = 0;");
-  w.line("for (int64_t n = " + std::to_string(start) + "LL; n < " + std::to_string(end) + "LL; n += " + std::to_string(step) + "LL) {");
-  w.indent();
+  w.line("const int64_t m = idx / " + std::to_string(expected_L) + "LL;");
+  w.line("const int64_t l = idx - m * " + std::to_string(expected_L) + "LL;");
+  w.line("const int64_t n = " + std::to_string(start) + "LL + l * " + std::to_string(step) + "LL;");
   w.line(out_name + "[m * " + std::to_string(N) + "LL + n] = " + src + "[m * " + std::to_string(expected_L) + "LL + l];");
-  w.line("++l;");
-  w.dedent();
-  w.line("}");
   w.dedent();
   w.line("}");
   w.dedent();
@@ -820,7 +921,7 @@ json emit_slice_scatter2d_dim1_f32(const Intent& intent, const json& bindings) {
   out["kernel_name"] = intent.name;
   out["cuda_src"] = cuda_ss.str();
   out["io_spec"] = io_spec_from_args(intent, {inp, src, out_name}, {}, {inp, src, out_name});
-  out["launch"] = {{"grid", {1, 1, 1}}, {"block", {1, 1, 1}}, {"shared_mem", 0}};
+  out["launch"] = {{"grid", {1, 1, 1}}, {"block", {block_x, 1, 1}}, {"shared_mem", 0}};
   out["output_names"] = {out_name};
   out["bindings"] = out_bindings;
   return out;
@@ -963,12 +1064,16 @@ json emit_var_mean2d_f32(const Intent& intent, const json& bindings) {
   if (block_x < 32) block_x = 32;
   if (block_x > 1024) block_x = 1024;
   if ((block_x % 32) != 0) block_x = ((block_x + 31) / 32) * 32;
-  const int64_t grid_x = (M + block_x - 1) / block_x;
+  int64_t max_useful = 32;
+  while ((max_useful << 1) <= N && (max_useful << 1) <= 1024) max_useful <<= 1;
+  if (block_x > max_useful) block_x = max_useful;
+  const int64_t grid_x = M;
 
   std::ostringstream cuda_ss;
   CodeWriter w(cuda_ss);
   w.line("#include <math.h>");
   w.line("#include <stdint.h>");
+  w.line("#include \"kernels/reduce.cuh\"");
   w.blank();
   w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_x) + ") void " + intent.name + "(");
   w.indent();
@@ -993,19 +1098,28 @@ json emit_var_mean2d_f32(const Intent& intent, const json& bindings) {
   w.dedent();
   w.line(") {");
   w.indent();
-  w.line("const int64_t row = (int64_t)blockIdx.x * (int64_t)blockDim.x + (int64_t)threadIdx.x;");
+  w.line("const int64_t row = (int64_t)blockIdx.x;");
+  w.line("const int tid = (int)threadIdx.x;");
   w.line("if (row >= " + std::to_string(M) + "LL) return;");
   w.line("const int64_t base = row * " + std::to_string(N) + "LL;");
-  w.line("float mean = 0.0f;");
-  w.line("for (int64_t n = 0; n < " + std::to_string(N) + "LL; ++n) mean += " + inp + "[base + n];");
-  w.line("mean /= (float)" + std::to_string(N) + ";");
-  w.line("float ss = 0.0f;");
-  w.line("for (int64_t n = 0; n < " + std::to_string(N) + "LL; ++n) {");
+  w.line("float part_sum = 0.0f;");
+  w.line("float part_sumsq = 0.0f;");
+  w.line("for (int64_t n = (int64_t)tid; n < " + std::to_string(N) + "LL; n += (int64_t)blockDim.x) {");
   w.indent();
-  w.line("const float d = " + inp + "[base + n] - mean;");
-  w.line("ss = fmaf(d, d, ss);");
+  w.line("const float x = " + inp + "[base + n];");
+  w.line("part_sum += x;");
+  w.line("part_sumsq = fmaf(x, x, part_sumsq);");
   w.dedent();
   w.line("}");
+  w.line("constexpr int BLOCK_THREADS = " + std::to_string(block_x) + ";");
+  w.line("__shared__ intentir_cuda::BlockAllreduceF32<BLOCK_THREADS> red_sum;");
+  w.line("__shared__ intentir_cuda::BlockAllreduceF32<BLOCK_THREADS> red_sumsq;");
+  w.line("const float sum = intentir_cuda::block_allreduce_sum<BLOCK_THREADS>(part_sum, &red_sum);");
+  w.line("const float sumsq = intentir_cuda::block_allreduce_sum<BLOCK_THREADS>(part_sumsq, &red_sumsq);");
+  w.line("if (tid == 0) {");
+  w.indent();
+  w.line("const float mean = sum / (float)" + std::to_string(N) + ";");
+  w.line("const float ss = fmaxf(fmaf(-mean, sum, sumsq), 0.0f);");
   if (has_mean_output) {
     if (!correction_tensor.empty() && correction_dtype == "i32") {
       w.line("const float corr = " + correction_tensor + " ? (float)" + correction_tensor + "[0] : 1.0f;");
@@ -1021,6 +1135,8 @@ json emit_var_mean2d_f32(const Intent& intent, const json& bindings) {
   } else {
     w.line(out_var + "[row] = ss / " + std::to_string(static_denom) + "f;");
   }
+  w.dedent();
+  w.line("}");
   w.dedent();
   w.line("}");
 
@@ -1104,17 +1220,23 @@ json emit_vector_norm2d_f32(const Intent& intent, const json& bindings) {
   const int64_t M = i_shape[0];
   const int64_t N = i_shape[1];
 
-  int64_t block_x = resolve_schedule_int(intent, bindings, "tile_m", 256);
+  int64_t block_x = resolve_schedule_int(intent, bindings, "tile_n", 256);
   if (block_x <= 0) block_x = 256;
   if (block_x < 32) block_x = 32;
   if (block_x > 1024) block_x = 1024;
   if ((block_x % 32) != 0) block_x = ((block_x + 31) / 32) * 32;
-  const int64_t grid_x = (M + block_x - 1) / block_x;
+  int64_t max_useful = 32;
+  while ((max_useful << 1) <= N && (max_useful << 1) <= 1024) max_useful <<= 1;
+  if (block_x > max_useful) block_x = max_useful;
+  const int64_t grid_x = M;
 
   std::ostringstream cuda_ss;
   CodeWriter w(cuda_ss);
   w.line("#include <math.h>");
+  w.line("#include <stddef.h>");
   w.line("#include <stdint.h>");
+  w.line("#include \"intentir_cuda_ops.cuh\"");
+  w.line("#include \"kernels/reduce.cuh\"");
   w.blank();
   w.line("extern \"C\" __global__ __launch_bounds__(" + std::to_string(block_x) + ") void " + intent.name + "(");
   w.indent();
@@ -1123,17 +1245,20 @@ json emit_vector_norm2d_f32(const Intent& intent, const json& bindings) {
   w.dedent();
   w.line(") {");
   w.indent();
-  w.line("const int64_t row = (int64_t)blockIdx.x * (int64_t)blockDim.x + (int64_t)threadIdx.x;");
-  w.line("if (row >= " + std::to_string(M) + "LL) return;");
-  w.line("const int64_t base = row * " + std::to_string(N) + "LL;");
-  w.line("float sum_sq = 0.0f;");
-  w.line("for (int64_t n = 0; n < " + std::to_string(N) + "LL; ++n) {");
+  w.line("const int m = (int)blockIdx.x;");
+  w.line("if (m >= " + std::to_string(M) + ") return;");
+  w.line("const float* row = " + inp + " + (size_t)m * (size_t)" + std::to_string(N) + ";");
+  w.line("float acc = 0.0f;");
+  w.line("for (int n = (int)threadIdx.x; n < " + std::to_string(N) + "; n += (int)blockDim.x) {");
   w.indent();
-  w.line("const float x = " + inp + "[base + n];");
-  w.line("sum_sq = fmaf(x, x, sum_sq);");
+  w.line("const float x = intentir_ldg_f32(row + (size_t)n);");
+  w.line("acc = fmaf(x, x, acc);");
   w.dedent();
   w.line("}");
-  w.line(out_name + "[row] = sqrtf(sum_sq);");
+  w.line("constexpr int BLOCK_THREADS = " + std::to_string(block_x) + ";");
+  w.line("__shared__ intentir_cuda::BlockAllreduceF32<BLOCK_THREADS> red;");
+  w.line("const float sum_sq = intentir_cuda::block_allreduce_sum<BLOCK_THREADS>(acc, &red);");
+  w.line("if ((int)threadIdx.x == 0) " + out_name + "[(size_t)m] = sqrtf(fmaxf(sum_sq, 0.0f));");
   w.dedent();
   w.line("}");
 
@@ -1475,8 +1600,12 @@ json emit_per_token_group_quant_fp8_2d_f32(const Intent& intent, const json& bin
   }
   if (is_11) {
     const Op& bcast = intent.ops[6];
-    if (bcast.inputs.size() != 1 || bcast.inputs[0] != scale_reshape.output) {
-      fail("per_token_group_quant_fp8 expects broadcast(y_s)");
+    if (bcast.inputs.size() != 1) {
+      fail("per_token_group_quant_fp8 expects single-input broadcast");
+    }
+    const std::string bcast_in = bcast.inputs[0];
+    if (bcast_in != scale_reshape.output && bcast_in != scale_div.output) {
+      fail("per_token_group_quant_fp8 expects broadcast(y_s or y_s_2d)");
     }
     if (quant_div.inputs[1] != bcast.output && quant_div.inputs[0] != bcast.output) {
       fail("per_token_group_quant_fp8 expects quant_div to consume broadcast(y_s)");

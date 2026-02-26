@@ -1,0 +1,138 @@
+{
+  "schema_version": "intentir_project_snapshot_v1",
+  "generated_at": "2026-02-25T23:54:00Z",
+  "repo": {
+    "branch": "compiler-cleanup-v1",
+    "head_commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
+    "head_short": "34e8396",
+    "dirty": true
+  },
+  "workflow": {
+    "current_status_path": "workflow/flaggems/state/current_status.json",
+    "session_context_path": "workflow/flaggems/state/session_context.json",
+    "progress_log_path": "workflow/flaggems/state/progress_log.jsonl",
+    "current_status": {
+      "head_commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
+      "coverage_integrity_phase": "recomputed_ok",
+      "full196_last_run": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/run_summary.json",
+      "full196_last_ok": true,
+      "full196_validated_commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
+      "full196_commits_since_validated": 0,
+      "gpu_perf_phase": "recomputed_ok",
+      "gpu_perf_last_run": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v14_strict_policy_refresh4/run_summary.json",
+      "gpu_perf_last_ok": true,
+      "gpu_perf_validated_commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
+      "gpu_perf_commits_since_validated": 0,
+      "gpu_perf_mode": "graph_only",
+      "gpu_perf_threshold": 0.8,
+      "gpu_perf_devices": [
+        {
+          "gpu_name": "NVIDIA GeForce RTX 4080 SUPER",
+          "kernel_total": 159,
+          "kernel_measured": 159,
+          "kernel_pass": 159,
+          "kernel_fail": 0,
+          "ok": true,
+          "min_ratio": 0.8253543405021411
+        }
+      ],
+      "mlir_backend_contract_ready": true,
+      "mlir_llvm_chain_ok": true,
+      "mlir_cutover_level": "mlir_primary",
+      "active_lanes": []
+    },
+    "session_context": {
+      "next_focus": "Sync deep_read truth package with wave64 evidence and keep strict gate freshness on HEAD.",
+      "active_lanes": [],
+      "must_read_scripts_catalog": "scripts/CATALOG.json"
+    },
+    "progress_tail": [
+      {
+        "ts": "2026-02-25T22:31:41+00:00",
+        "lane": "coverage",
+        "summary": "full196 strict remains current HEAD evidence (7/7, dual_pass=196).",
+        "run_ok": true,
+        "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/run_summary.json",
+        "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/status_converged.json"
+      },
+      {
+        "ts": "2026-02-25T22:45:16+00:00",
+        "lane": "mlir_migration",
+        "summary": "Strict MLIR matrix wave refreshed with scoped converge projection (4 kernels, rvv_remote_llvm+cuda_local).",
+        "run_ok": true,
+        "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_reduction4_v3/run_summary.json",
+        "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_reduction4_v3/status_converged.json"
+      },
+      {
+        "ts": "2026-02-25T22:48:57+00:00",
+        "lane": "mlir_migration",
+        "summary": "Expanded strict MLIR matrix wave to 8 kernels (cross-family) with rvv_remote_llvm+cuda dual-pass and zero runtime fallback.",
+        "run_ok": true,
+        "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave8_v1/run_summary.json",
+        "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave8_v1/status_converged.json"
+      },
+      {
+        "ts": "2026-02-25T22:54:24+00:00",
+        "lane": "mlir_migration",
+        "summary": "Expanded strict MLIR wave to 13 kernels (cross-family), rvv_remote_llvm+cuda dual-pass, runtime_fallback=0.",
+        "run_ok": true,
+        "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave13_v1/run_summary.json",
+        "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave13_v1/status_converged.json"
+      },
+      {
+        "ts": "2026-02-25T22:56:03+00:00",
+        "lane": "mlir_migration",
+        "summary": "Strict MLIR attention wave passed (embedding+sdp+flash), rvv_remote_llvm+cuda dual-pass, zero runtime fallback.",
+        "run_ok": true,
+        "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_attention3_v1/run_summary.json",
+        "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_attention3_v1/status_converged.json"
+      },
+      {
+        "ts": "2026-02-25T23:07:33+00:00",
+        "lane": "mlir_migration",
+        "summary": "Expanded strict MLIR wave to 24 kernels (cross-family), rvv_remote_llvm+cuda dual-pass, runtime_fallback=0.",
+        "run_ok": true,
+        "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave24_v1/run_summary.json",
+        "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave24_v1/status_converged.json"
+      },
+      {
+        "ts": "2026-02-25T23:25:09+00:00",
+        "lane": "mlir_migration",
+        "summary": "Expanded strict MLIR wave to 40 kernels (cross-family), rvv_remote_llvm+cuda dual-pass, runtime_fallback=0.",
+        "run_ok": true,
+        "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave40_v1/run_summary.json",
+        "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave40_v1/status_converged.json"
+      },
+      {
+        "ts": "2026-02-25T23:52:12+00:00",
+        "lane": "mlir_migration",
+        "summary": "Expanded strict MLIR wave to 64 kernels (cross-family), rvv_remote_llvm+cuda dual-pass, runtime_fallback=0.",
+        "run_ok": true,
+        "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave64_v1/run_summary.json",
+        "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict/matrix_wave64_v1/status_converged.json"
+      }
+    ]
+  },
+  "evidence_brief": {
+    "coverage_fresh_gate": {
+      "run_summary": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/run_summary.json",
+      "status_converged": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/status_converged.json",
+      "coverage_integrity": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/coverage_integrity.json",
+      "ci_gate": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/ci_gate.json"
+    },
+    "gpu_perf_fresh_gate": {
+      "run_summary": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v14_strict_policy_refresh4/run_summary.json",
+      "status_converged": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v14_strict_policy_refresh4/status_converged.json",
+      "gpu_perf_graph": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v14_strict_policy_refresh4/gpu_perf_graph.json",
+      "stage_timing_breakdown": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v14_strict_policy_refresh4/stage_timing_breakdown.json",
+      "ci_gate": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v14_strict_policy_refresh4/ci_gate.json",
+      "policy_json": "workflow/flaggems/state/gpu_perf_policy.json"
+    }
+  },
+  "notes": [
+    "证据优先级遵循 run_summary+status_converged（同 commit） > current_status > 文本描述。",
+    "full196/gpu_perf freshness 均与 HEAD 对齐（validated_commit=HEAD, commits_since_validated=0）。",
+    "coverage 与 gpu_perf 两个 profile 的 ci_gate 均为通过（ok=true）。",
+    "mlir_migration 已推进到 strict matrix_wave64（跨 family 64 kernels），counts_scoped.dual_pass=75 且 runtime_fallback=0。"
+  ]
+}

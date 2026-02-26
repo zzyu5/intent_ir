@@ -1,0 +1,25 @@
+{
+  "schema_version": "intentir_handoff_manifest_v1",
+  "generated_at": "2026-02-25T23:54:00Z",
+  "snapshot_commit": "34e839652470d4d9e8fc49b1e6c47c7206b40b47",
+  "docs": [
+    "workflow/local_notes/project_deep_read/INTENTIR_MASTER_BRIEF.md",
+    "workflow/local_notes/project_deep_read/DIRECTORY_ATLAS.md",
+    "workflow/local_notes/project_deep_read/CODE_OWNERSHIP_MAP.md",
+    "workflow/local_notes/project_deep_read/MLIR_POSITION_REPORT.md",
+    "workflow/local_notes/project_deep_read/WORKFLOW_TRUTH_AUDIT.md",
+    "workflow/local_notes/project_deep_read/SCRIPTS_TESTS_GOVERNANCE.md",
+    "workflow/local_notes/project_deep_read/NEXT_AGENT_RUNBOOK.md"
+  ],
+  "json_indexes": [
+    "workflow/local_notes/project_deep_read/PROJECT_SNAPSHOT.json",
+    "workflow/local_notes/project_deep_read/directory_index.json",
+    "workflow/local_notes/project_deep_read/entrypoints.json",
+    "workflow/local_notes/project_deep_read/evidence_index.json"
+  ],
+  "unresolved_questions": [
+    "RVV strict 切换何时将 compat_cpp_codegen 完全下线并转为 hard-fail（当前仍需继续推进）。",
+    "是否需要把 deep_read 真相包生成过程脚本化，避免后续人工回写漂移。",
+    "是否将 scoped convergence projection 上沉到 converge_status.py，减少 run_multibackend_matrix 的后处理职责。"
+  ]
+}

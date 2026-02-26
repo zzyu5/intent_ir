@@ -1,0 +1,2480 @@
+{
+  "schema_version": "intentir_directory_index_v1",
+  "generated_at": "2026-02-22T14:15:48.781390+00:00",
+  "root": "/home/kingdom/intentir",
+  "max_depth": 3,
+  "entries": [
+    {
+      "path": "archive",
+      "depth": 1,
+      "file_count": 24641,
+      "size_bytes": 15178631183,
+      "category": "archive_history",
+      "notes": "历史论文/实验/旧脚本与旧测试归档区，不作为主运行路径。"
+    },
+    {
+      "path": "archive/data",
+      "depth": 2,
+      "file_count": 1,
+      "size_bytes": 6020,
+      "category": "archive_history",
+      "notes": ""
+    },
+    {
+      "path": "archive/doc",
+      "depth": 2,
+      "file_count": 100,
+      "size_bytes": 17712904,
+      "category": "archive_history",
+      "notes": ""
+    },
+    {
+      "path": "archive/doc/backend",
+      "depth": 3,
+      "file_count": 2,
+      "size_bytes": 14566,
+      "category": "archive_history",
+      "notes": ""
+    },
+    {
+      "path": "archive/doc/old_version(not_used)",
+      "depth": 3,
+      "file_count": 18,
+      "size_bytes": 204216,
+      "category": "archive_history",
+      "notes": ""
+    },
+    {
+      "path": "archive/doc/paper",
+      "depth": 3,
+      "file_count": 66,
+      "size_bytes": 17160714,
+      "category": "archive_history",
+      "notes": ""
+    },
+    {
+      "path": "archive/experiment",
+      "depth": 2,
+      "file_count": 24451,
+      "size_bytes": 15160012186,
+      "category": "archive_history",
+      "notes": ""
+    },
+    {
+      "path": "archive/experiment/AI-Benchmark",
+      "depth": 3,
+      "file_count": 84,
+      "size_bytes": 5716150,
+      "category": "archive_history",
+      "notes": ""
+    },
+    {
+      "path": "archive/experiment/FlagGems",
+      "depth": 3,
+      "file_count": 1824,
+      "size_bytes": 26003234,
+      "category": "archive_history",
+      "notes": ""
+    },
+    {
+      "path": "archive/experiment/triton-cpu",
+      "depth": 3,
+      "file_count": 22543,
+      "size_bytes": 15128292802,
+      "category": "archive_history",
+      "notes": ""
+    },
+    {
+      "path": "archive/scripts",
+      "depth": 2,
+      "file_count": 28,
+      "size_bytes": 589233,
+      "category": "archive_history",
+      "notes": ""
+    },
+    {
+      "path": "archive/scripts/cuda",
+      "depth": 3,
+      "file_count": 0,
+      "size_bytes": 0,
+      "category": "archive_history",
+      "notes": ""
+    },
+    {
+      "path": "archive/scripts/experiments",
+      "depth": 3,
+      "file_count": 15,
+      "size_bytes": 499907,
+      "category": "archive_history",
+      "notes": ""
+    },
+    {
+      "path": "archive/scripts/legacy",
+      "depth": 3,
+      "file_count": 11,
+      "size_bytes": 66147,
+      "category": "archive_history",
+      "notes": ""
+    },
+    {
+      "path": "archive/scripts/tilelang",
+      "depth": 3,
+      "file_count": 0,
+      "size_bytes": 0,
+      "category": "archive_history",
+      "notes": ""
+    },
+    {
+      "path": "archive/scripts/tools",
+      "depth": 3,
+      "file_count": 2,
+      "size_bytes": 23179,
+      "category": "archive_history",
+      "notes": ""
+    },
+    {
+      "path": "archive/tests",
+      "depth": 2,
+      "file_count": 60,
+      "size_bytes": 310244,
+      "category": "archive_history",
+      "notes": ""
+    },
+    {
+      "path": "archive/tests/backends",
+      "depth": 3,
+      "file_count": 13,
+      "size_bytes": 125843,
+      "category": "archive_history",
+      "notes": ""
+    },
+    {
+      "path": "archive/tests/frontends",
+      "depth": 3,
+      "file_count": 30,
+      "size_bytes": 131218,
+      "category": "archive_history",
+      "notes": ""
+    },
+    {
+      "path": "archive/tests/golden",
+      "depth": 3,
+      "file_count": 7,
+      "size_bytes": 21395,
+      "category": "archive_history",
+      "notes": ""
+    },
+    {
+      "path": "archive/tests/intentir",
+      "depth": 3,
+      "file_count": 1,
+      "size_bytes": 5675,
+      "category": "archive_history",
+      "notes": ""
+    },
+    {
+      "path": "artifacts",
+      "depth": 1,
+      "file_count": 582331,
+      "size_bytes": 15802547186,
+      "category": "generated_artifacts",
+      "notes": "运行工件与中间产物目录，体量最大，需按证据索引读取。"
+    },
+    {
+      "path": "artifacts/_tmp_cuda_fact_check",
+      "depth": 2,
+      "file_count": 1,
+      "size_bytes": 4,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/_tmp_fig_view",
+      "depth": 2,
+      "file_count": 3,
+      "size_bytes": 5126819,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/_tmp_llm_cache_e1e3_barrier",
+      "depth": 2,
+      "file_count": 0,
+      "size_bytes": 0,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/_tmp_llm_cache_e1e3_barrier2",
+      "depth": 2,
+      "file_count": 0,
+      "size_bytes": 0,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/_tmp_llm_cache_e1e3_barrier3",
+      "depth": 2,
+      "file_count": 0,
+      "size_bytes": 0,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/_tmp_llm_cache_e1e3_cold",
+      "depth": 2,
+      "file_count": 0,
+      "size_bytes": 0,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/_tmp_llm_cache_e1e3_cold2",
+      "depth": 2,
+      "file_count": 0,
+      "size_bytes": 0,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/_tmp_llm_cache_e1e3_cuda_cov_cold",
+      "depth": 2,
+      "file_count": 0,
+      "size_bytes": 0,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/_tmp_llm_cache_e1e3_cuda_cov_cold_o6",
+      "depth": 2,
+      "file_count": 0,
+      "size_bytes": 0,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/_tmp_llm_cache_e3_cuda_compare",
+      "depth": 2,
+      "file_count": 0,
+      "size_bytes": 0,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/_tmp_tilelang",
+      "depth": 2,
+      "file_count": 42,
+      "size_bytes": 483010,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/cuda_full_pipeline",
+      "depth": 2,
+      "file_count": 356,
+      "size_bytes": 4627831,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/experiments",
+      "depth": 2,
+      "file_count": 425,
+      "size_bytes": 36199285,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/experiments/E1",
+      "depth": 3,
+      "file_count": 1,
+      "size_bytes": 25165,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/experiments/E1E3",
+      "depth": 3,
+      "file_count": 32,
+      "size_bytes": 2995440,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/experiments/E2",
+      "depth": 3,
+      "file_count": 22,
+      "size_bytes": 405644,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/experiments/E4",
+      "depth": 3,
+      "file_count": 33,
+      "size_bytes": 23111343,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/experiments/E5",
+      "depth": 3,
+      "file_count": 277,
+      "size_bytes": 6390074,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/experiments/E6",
+      "depth": 3,
+      "file_count": 32,
+      "size_bytes": 2856984,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/experiments/paper",
+      "depth": 3,
+      "file_count": 18,
+      "size_bytes": 211215,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/experiments/summaries",
+      "depth": 3,
+      "file_count": 8,
+      "size_bytes": 192389,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_coverage",
+      "depth": 2,
+      "file_count": 2,
+      "size_bytes": 537562,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_matrix",
+      "depth": 2,
+      "file_count": 515591,
+      "size_bytes": 12217953968,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_matrix/daily",
+      "depth": 3,
+      "file_count": 515544,
+      "size_bytes": 12214340434,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_matrix/gather_index_batch_v1",
+      "depth": 3,
+      "file_count": 4,
+      "size_bytes": 352039,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_matrix/gather_index_batch_v2_cuda",
+      "depth": 3,
+      "file_count": 5,
+      "size_bytes": 354299,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_matrix/isfinite_batch_v1",
+      "depth": 3,
+      "file_count": 4,
+      "size_bytes": 381627,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_matrix/isfinite_batch_v2",
+      "depth": 3,
+      "file_count": 4,
+      "size_bytes": 373084,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_matrix/nightly_logs",
+      "depth": 3,
+      "file_count": 3,
+      "size_bytes": 2334,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_matrix/norm_lerp_batch",
+      "depth": 3,
+      "file_count": 5,
+      "size_bytes": 345425,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_matrix/norm_lerp_batch_v2",
+      "depth": 3,
+      "file_count": 3,
+      "size_bytes": 344111,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_matrix/ops_batch_v3",
+      "depth": 3,
+      "file_count": 4,
+      "size_bytes": 381492,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_matrix/smoke_mlir_default_v1",
+      "depth": 3,
+      "file_count": 3,
+      "size_bytes": 527634,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_matrix/tmp_mlir_shm_fix_probe",
+      "depth": 3,
+      "file_count": 0,
+      "size_bytes": 0,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_seed_cache",
+      "depth": 2,
+      "file_count": 158,
+      "size_bytes": 1850946,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline",
+      "depth": 2,
+      "file_count": 37977,
+      "size_bytes": 911161811,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/_triton_cache",
+      "depth": 3,
+      "file_count": 12376,
+      "size_bytes": 286977787,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/_triton_dump",
+      "depth": 3,
+      "file_count": 5825,
+      "size_bytes": 177833145,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_active10_attention_angle_bitwise_v4",
+      "depth": 3,
+      "file_count": 450,
+      "size_bytes": 5418847,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_active10_attention_angle_bitwise_v5",
+      "depth": 3,
+      "file_count": 450,
+      "size_bytes": 5430626,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_active10_attention_angle_bitwise_v6",
+      "depth": 3,
+      "file_count": 908,
+      "size_bytes": 10008706,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_active10_log_min_pad_v1",
+      "depth": 3,
+      "file_count": 342,
+      "size_bytes": 3801499,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_active10_pow_prod_repeat_v1",
+      "depth": 3,
+      "file_count": 443,
+      "size_bytes": 4199800,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_active10_sort_topk_var_v1",
+      "depth": 3,
+      "file_count": 1764,
+      "size_bytes": 51777251,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_active10_vstack_attention_bitwise_v1",
+      "depth": 3,
+      "file_count": 947,
+      "size_bytes": 8676292,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_active10_vstack_attention_bitwise_v2",
+      "depth": 3,
+      "file_count": 1273,
+      "size_bytes": 13195736,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_active10_vstack_attention_bitwise_v3",
+      "depth": 3,
+      "file_count": 1273,
+      "size_bytes": 13236867,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_active11_bitshift_probe",
+      "depth": 3,
+      "file_count": 103,
+      "size_bytes": 549540,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_celu_eye",
+      "depth": 3,
+      "file_count": 0,
+      "size_bytes": 0,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_celu_eye_v2",
+      "depth": 3,
+      "file_count": 79,
+      "size_bytes": 509605,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_celu_eye_v3_after_iota",
+      "depth": 3,
+      "file_count": 79,
+      "size_bytes": 508261,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_conv_family_v1",
+      "depth": 3,
+      "file_count": 1530,
+      "size_bytes": 199073904,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_diag_scope",
+      "depth": 3,
+      "file_count": 0,
+      "size_bytes": 0,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_diag_scope_cov",
+      "depth": 3,
+      "file_count": 182,
+      "size_bytes": 1333165,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_diag_scope_fix",
+      "depth": 3,
+      "file_count": 181,
+      "size_bytes": 1318555,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_elu",
+      "depth": 3,
+      "file_count": 84,
+      "size_bytes": 571965,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_flip_embedding",
+      "depth": 3,
+      "file_count": 58,
+      "size_bytes": 394411,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_flip_embedding_v2",
+      "depth": 3,
+      "file_count": 58,
+      "size_bytes": 401933,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_glu_cum_index",
+      "depth": 3,
+      "file_count": 156,
+      "size_bytes": 1221451,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_glu_cum_index_v2",
+      "depth": 3,
+      "file_count": 224,
+      "size_bytes": 1945719,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_glu_cum_index_v3",
+      "depth": 3,
+      "file_count": 265,
+      "size_bytes": 2208934,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_glu_cum_index_v3_index_put_fix",
+      "depth": 3,
+      "file_count": 36,
+      "size_bytes": 340138,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_glu_cum_index_v3_index_put_fix2",
+      "depth": 3,
+      "file_count": 36,
+      "size_bytes": 342784,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_glu_cum_index_v4",
+      "depth": 3,
+      "file_count": 252,
+      "size_bytes": 2106065,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_isin_kron_lin_log_masked_v1",
+      "depth": 3,
+      "file_count": 829,
+      "size_bytes": 19392917,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_isin_kron_lin_log_masked_v2",
+      "depth": 3,
+      "file_count": 829,
+      "size_bytes": 19392891,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_masked_select_mse_nan_nll_v1",
+      "depth": 3,
+      "file_count": 0,
+      "size_bytes": 0,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_masked_select_mse_nan_nll_v2",
+      "depth": 3,
+      "file_count": 255,
+      "size_bytes": 1788789,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_onehot_nll_pool_v1",
+      "depth": 3,
+      "file_count": 359,
+      "size_bytes": 6433146,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_scatter_quantile_polar_v1",
+      "depth": 3,
+      "file_count": 276,
+      "size_bytes": 3811895,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_scatter_quantile_polar_v2",
+      "depth": 3,
+      "file_count": 276,
+      "size_bytes": 3810030,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_smoke_autopromote_check",
+      "depth": 3,
+      "file_count": 36,
+      "size_bytes": 232072,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/batch_trace_triu_upsample_v1",
+      "depth": 3,
+      "file_count": 340,
+      "size_bytes": 3345623,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/cpp_modsplit_wave2_validation_v1",
+      "depth": 3,
+      "file_count": 1184,
+      "size_bytes": 16419408,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/cpp_modsplit_wave2_validation_v2",
+      "depth": 3,
+      "file_count": 1079,
+      "size_bytes": 11387627,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/mlir_downstream_cuda_llvm",
+      "depth": 3,
+      "file_count": 19,
+      "size_bytes": 1378749,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/mlir_downstream_rvv",
+      "depth": 3,
+      "file_count": 9,
+      "size_bytes": 21439,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/mlir_downstream_rvv_llvm",
+      "depth": 3,
+      "file_count": 25,
+      "size_bytes": 35703,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/mlir_midend",
+      "depth": 3,
+      "file_count": 7,
+      "size_bytes": 16108,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/mlir_upstream",
+      "depth": 3,
+      "file_count": 5,
+      "size_bytes": 11505,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/reduction_index_split_validation_v2",
+      "depth": 3,
+      "file_count": 1253,
+      "size_bytes": 13454955,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/tmp_eye_debug",
+      "depth": 3,
+      "file_count": 0,
+      "size_bytes": 0,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/tmp_flip_fix",
+      "depth": 3,
+      "file_count": 23,
+      "size_bytes": 195258,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline/tmp_flip_fix2",
+      "depth": 3,
+      "file_count": 23,
+      "size_bytes": 200677,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_conv_family_v2",
+      "depth": 2,
+      "file_count": 1973,
+      "size_bytes": 174675023,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_conv_family_v2/_triton_cache",
+      "depth": 3,
+      "file_count": 1278,
+      "size_bytes": 104871002,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_conv_family_v2/_triton_dump",
+      "depth": 3,
+      "file_count": 595,
+      "size_bytes": 68663429,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_batch_v3",
+      "depth": 2,
+      "file_count": 569,
+      "size_bytes": 4370301,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_batch_v3/_triton_cache",
+      "depth": 3,
+      "file_count": 290,
+      "size_bytes": 2087344,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_batch_v3/_triton_dump",
+      "depth": 3,
+      "file_count": 195,
+      "size_bytes": 1640096,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_quantile_v1",
+      "depth": 2,
+      "file_count": 60,
+      "size_bytes": 1116457,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_quantile_v1/_triton_cache",
+      "depth": 3,
+      "file_count": 30,
+      "size_bytes": 523570,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_quantile_v1/_triton_dump",
+      "depth": 3,
+      "file_count": 20,
+      "size_bytes": 472354,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_quantile_v2",
+      "depth": 2,
+      "file_count": 60,
+      "size_bytes": 1116457,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_quantile_v2/_triton_cache",
+      "depth": 3,
+      "file_count": 30,
+      "size_bytes": 523570,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_quantile_v2/_triton_dump",
+      "depth": 3,
+      "file_count": 20,
+      "size_bytes": 472354,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_repeat_v3",
+      "depth": 2,
+      "file_count": 224,
+      "size_bytes": 1543028,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_repeat_v3/_triton_cache",
+      "depth": 3,
+      "file_count": 112,
+      "size_bytes": 708247,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_repeat_v3/_triton_dump",
+      "depth": 3,
+      "file_count": 75,
+      "size_bytes": 525513,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_repeat_v4",
+      "depth": 2,
+      "file_count": 145,
+      "size_bytes": 1061003,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_repeat_v4/_triton_cache",
+      "depth": 3,
+      "file_count": 68,
+      "size_bytes": 472004,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_repeat_v4/_triton_dump",
+      "depth": 3,
+      "file_count": 45,
+      "size_bytes": 344802,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_repeat_v5",
+      "depth": 2,
+      "file_count": 224,
+      "size_bytes": 1518319,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_repeat_v5/_triton_cache",
+      "depth": 3,
+      "file_count": 112,
+      "size_bytes": 708247,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_repeat_v5/_triton_dump",
+      "depth": 3,
+      "file_count": 75,
+      "size_bytes": 525513,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_repeat_v6",
+      "depth": 2,
+      "file_count": 224,
+      "size_bytes": 1519013,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_repeat_v6/_triton_cache",
+      "depth": 3,
+      "file_count": 112,
+      "size_bytes": 708247,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_repeat_v6/_triton_dump",
+      "depth": 3,
+      "file_count": 75,
+      "size_bytes": 525513,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_v4_nvrtc",
+      "depth": 2,
+      "file_count": 569,
+      "size_bytes": 4370299,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_v4_nvrtc/_triton_cache",
+      "depth": 3,
+      "file_count": 290,
+      "size_bytes": 2087344,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr4_v4_nvrtc/_triton_dump",
+      "depth": 3,
+      "file_count": 195,
+      "size_bytes": 1640096,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr5_v1_nvrtc",
+      "depth": 2,
+      "file_count": 684,
+      "size_bytes": 5045031,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr5_v1_nvrtc/_triton_cache",
+      "depth": 3,
+      "file_count": 354,
+      "size_bytes": 2348180,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr5_v1_nvrtc/_triton_dump",
+      "depth": 3,
+      "file_count": 240,
+      "size_bytes": 1864675,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr5_v2_nvrtc",
+      "depth": 2,
+      "file_count": 684,
+      "size_bytes": 5043024,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr5_v2_nvrtc/_triton_cache",
+      "depth": 3,
+      "file_count": 354,
+      "size_bytes": 2348180,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr5_v2_nvrtc/_triton_dump",
+      "depth": 3,
+      "file_count": 240,
+      "size_bytes": 1864675,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr5_v3_nvrtc",
+      "depth": 2,
+      "file_count": 684,
+      "size_bytes": 5043006,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr5_v3_nvrtc/_triton_cache",
+      "depth": 3,
+      "file_count": 354,
+      "size_bytes": 2348180,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr5_v3_nvrtc/_triton_dump",
+      "depth": 3,
+      "file_count": 240,
+      "size_bytes": 1864675,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr6_v1_nvrtc",
+      "depth": 2,
+      "file_count": 894,
+      "size_bytes": 16744082,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr6_v1_nvrtc/_triton_cache",
+      "depth": 3,
+      "file_count": 482,
+      "size_bytes": 8283889,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr6_v1_nvrtc/_triton_dump",
+      "depth": 3,
+      "file_count": 325,
+      "size_bytes": 7576160,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr6_v2_nvrtc",
+      "depth": 2,
+      "file_count": 844,
+      "size_bytes": 14592728,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr6_v2_nvrtc/_triton_cache",
+      "depth": 3,
+      "file_count": 452,
+      "size_bytes": 7252155,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr6_v2_nvrtc/_triton_dump",
+      "depth": 3,
+      "file_count": 305,
+      "size_bytes": 6594718,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr6_v3_nvrtc",
+      "depth": 2,
+      "file_count": 844,
+      "size_bytes": 14592763,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr6_v3_nvrtc/_triton_cache",
+      "depth": 3,
+      "file_count": 452,
+      "size_bytes": 7252155,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr6_v3_nvrtc/_triton_dump",
+      "depth": 3,
+      "file_count": 305,
+      "size_bytes": 6594718,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr6_v4_nvrtc",
+      "depth": 2,
+      "file_count": 844,
+      "size_bytes": 14596432,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr6_v4_nvrtc/_triton_cache",
+      "depth": 3,
+      "file_count": 452,
+      "size_bytes": 7252155,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_qr6_v4_nvrtc/_triton_dump",
+      "depth": 3,
+      "file_count": 305,
+      "size_bytes": 6594718,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_tanfix_v1_nvrtc",
+      "depth": 2,
+      "file_count": 96,
+      "size_bytes": 894651,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_tanfix_v1_nvrtc/_triton_cache",
+      "depth": 3,
+      "file_count": 51,
+      "size_bytes": 446112,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_tanfix_v1_nvrtc/_triton_dump",
+      "depth": 3,
+      "file_count": 35,
+      "size_bytes": 389209,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_twave_p0check_nvrtc",
+      "depth": 2,
+      "file_count": 688,
+      "size_bytes": 6120841,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_twave_p0check_nvrtc/_triton_cache",
+      "depth": 3,
+      "file_count": 400,
+      "size_bytes": 3256608,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_twave_p0check_nvrtc/_triton_dump",
+      "depth": 3,
+      "file_count": 195,
+      "size_bytes": 1995059,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_twave_v1_nvrtc",
+      "depth": 2,
+      "file_count": 987,
+      "size_bytes": 8802503,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_twave_v1_nvrtc/_triton_cache",
+      "depth": 3,
+      "file_count": 575,
+      "size_bytes": 4616313,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_twave_v1_nvrtc/_triton_dump",
+      "depth": 3,
+      "file_count": 320,
+      "size_bytes": 3306893,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_twave_v2_nvrtc",
+      "depth": 2,
+      "file_count": 987,
+      "size_bytes": 8801068,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_twave_v2_nvrtc/_triton_cache",
+      "depth": 3,
+      "file_count": 575,
+      "size_bytes": 4616313,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_twave_v2_nvrtc/_triton_dump",
+      "depth": 3,
+      "file_count": 320,
+      "size_bytes": 3306893,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_twave_v3_nvrtc",
+      "depth": 2,
+      "file_count": 733,
+      "size_bytes": 6349321,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_twave_v3_nvrtc/_triton_cache",
+      "depth": 3,
+      "file_count": 423,
+      "size_bytes": 3389527,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_twave_v3_nvrtc/_triton_dump",
+      "depth": 3,
+      "file_count": 210,
+      "size_bytes": 2080312,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_twave_v4_nvrtc",
+      "depth": 2,
+      "file_count": 733,
+      "size_bytes": 6355974,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_twave_v4_nvrtc/_triton_cache",
+      "depth": 3,
+      "file_count": 423,
+      "size_bytes": 3389527,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_twave_v4_nvrtc/_triton_dump",
+      "depth": 3,
+      "file_count": 210,
+      "size_bytes": 2080312,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_twave_v5_nvrtc",
+      "depth": 2,
+      "file_count": 733,
+      "size_bytes": 6361699,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_twave_v5_nvrtc/_triton_cache",
+      "depth": 3,
+      "file_count": 423,
+      "size_bytes": 3389527,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_twave_v5_nvrtc/_triton_dump",
+      "depth": 3,
+      "file_count": 210,
+      "size_bytes": 2080312,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_unique2d_v5_nvrtc",
+      "depth": 2,
+      "file_count": 60,
+      "size_bytes": 417793,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_unique2d_v5_nvrtc/_triton_cache",
+      "depth": 3,
+      "file_count": 30,
+      "size_bytes": 166334,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_unique2d_v5_nvrtc/_triton_dump",
+      "depth": 3,
+      "file_count": 20,
+      "size_bytes": 115013,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_unique2d_v6_nvrtc",
+      "depth": 2,
+      "file_count": 60,
+      "size_bytes": 423530,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_unique2d_v6_nvrtc/_triton_cache",
+      "depth": 3,
+      "file_count": 30,
+      "size_bytes": 166334,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/flaggems_triton_full_pipeline_unique2d_v6_nvrtc/_triton_dump",
+      "depth": 3,
+      "file_count": 20,
+      "size_bytes": 115013,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/full_pipeline_verify",
+      "depth": 2,
+      "file_count": 1103,
+      "size_bytes": 26579063,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/full_pipeline_verify/_triton_cache",
+      "depth": 3,
+      "file_count": 469,
+      "size_bytes": 6242933,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/full_pipeline_verify/_triton_dump",
+      "depth": 3,
+      "file_count": 290,
+      "size_bytes": 4744757,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/intentir",
+      "depth": 2,
+      "file_count": 11,
+      "size_bytes": 20505,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/intentir_kernel",
+      "depth": 2,
+      "file_count": 0,
+      "size_bytes": 0,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/intentir_suite",
+      "depth": 2,
+      "file_count": 0,
+      "size_bytes": 0,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/llm_cache",
+      "depth": 2,
+      "file_count": 48,
+      "size_bytes": 237289,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/llm_cache/e6_2_cuda_smoke_v3",
+      "depth": 3,
+      "file_count": 48,
+      "size_bytes": 237289,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/llm_raw",
+      "depth": 2,
+      "file_count": 3,
+      "size_bytes": 9434,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/remote",
+      "depth": 2,
+      "file_count": 11,
+      "size_bytes": 361952,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/rvv_profiles",
+      "depth": 2,
+      "file_count": 2,
+      "size_bytes": 700,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/tilelang_cuda_export_tmp",
+      "depth": 2,
+      "file_count": 60,
+      "size_bytes": 612769,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/tilelang_full_pipeline",
+      "depth": 2,
+      "file_count": 270,
+      "size_bytes": 2858962,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/tmp",
+      "depth": 2,
+      "file_count": 12,
+      "size_bytes": 12522,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/tmp/progress_cov_dryrun",
+      "depth": 3,
+      "file_count": 5,
+      "size_bytes": 7866,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/tmp/progress_perf_dryrun",
+      "depth": 3,
+      "file_count": 7,
+      "size_bytes": 4656,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/tmp_matrix_original_test",
+      "depth": 2,
+      "file_count": 3,
+      "size_bytes": 523211,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/tmp_matrix_original_test2",
+      "depth": 2,
+      "file_count": 4,
+      "size_bytes": 525873,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/toolchains",
+      "depth": 2,
+      "file_count": 20,
+      "size_bytes": 127824700,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/toolchains/mlir-14",
+      "depth": 3,
+      "file_count": 20,
+      "size_bytes": 127824700,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/toolchains/mlir-current",
+      "depth": 3,
+      "file_count": 20,
+      "size_bytes": 127824700,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/torch_extensions",
+      "depth": 2,
+      "file_count": 11613,
+      "size_bytes": 2153110804,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "artifacts/torch_extensions/py312",
+      "depth": 3,
+      "file_count": 11613,
+      "size_bytes": 2153110804,
+      "category": "generated_artifacts",
+      "notes": ""
+    },
+    {
+      "path": "backends",
+      "depth": 1,
+      "file_count": 139,
+      "size_bytes": 2395481,
+      "category": "runtime_code",
+      "notes": "CUDA 与 RVV 后端实现及 pipeline 驱动。"
+    },
+    {
+      "path": "backends/__pycache__",
+      "depth": 2,
+      "file_count": 2,
+      "size_bytes": 6442,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "backends/common",
+      "depth": 2,
+      "file_count": 9,
+      "size_bytes": 36367,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "backends/common/__pycache__",
+      "depth": 3,
+      "file_count": 5,
+      "size_bytes": 23045,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "backends/cuda",
+      "depth": 2,
+      "file_count": 61,
+      "size_bytes": 773421,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "backends/cuda/__pycache__",
+      "depth": 3,
+      "file_count": 3,
+      "size_bytes": 3488,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "backends/cuda/codegen",
+      "depth": 3,
+      "file_count": 4,
+      "size_bytes": 25463,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "backends/cuda/cpp_codegen",
+      "depth": 3,
+      "file_count": 28,
+      "size_bytes": 616159,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "backends/cuda/pipeline",
+      "depth": 3,
+      "file_count": 6,
+      "size_bytes": 36157,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "backends/cuda/runtime",
+      "depth": 3,
+      "file_count": 16,
+      "size_bytes": 87894,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "backends/spmd_rvv",
+      "depth": 2,
+      "file_count": 64,
+      "size_bytes": 1574835,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "backends/spmd_rvv/__pycache__",
+      "depth": 3,
+      "file_count": 3,
+      "size_bytes": 8330,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "backends/spmd_rvv/analysis",
+      "depth": 3,
+      "file_count": 13,
+      "size_bytes": 148234,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "backends/spmd_rvv/codegen",
+      "depth": 3,
+      "file_count": 4,
+      "size_bytes": 11147,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "backends/spmd_rvv/cpp_codegen",
+      "depth": 3,
+      "file_count": 25,
+      "size_bytes": 1183259,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "backends/spmd_rvv/experiments",
+      "depth": 3,
+      "file_count": 3,
+      "size_bytes": 16496,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "backends/spmd_rvv/pipeline",
+      "depth": 3,
+      "file_count": 6,
+      "size_bytes": 40113,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "backends/spmd_rvv/runtime",
+      "depth": 3,
+      "file_count": 6,
+      "size_bytes": 158843,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "docs",
+      "depth": 1,
+      "file_count": 8,
+      "size_bytes": 20135,
+      "category": "docs",
+      "notes": "维护文档与架构说明。"
+    },
+    {
+      "path": "frontends",
+      "depth": 1,
+      "file_count": 83,
+      "size_bytes": 796551,
+      "category": "runtime_code",
+      "notes": "Triton/TileLang/CUDA 前端提取与约束逻辑。"
+    },
+    {
+      "path": "frontends/__pycache__",
+      "depth": 2,
+      "file_count": 1,
+      "size_bytes": 463,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "frontends/common",
+      "depth": 2,
+      "file_count": 16,
+      "size_bytes": 220337,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "frontends/common/__pycache__",
+      "depth": 3,
+      "file_count": 8,
+      "size_bytes": 122105,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "frontends/cuda",
+      "depth": 2,
+      "file_count": 24,
+      "size_bytes": 233053,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "frontends/cuda/__pycache__",
+      "depth": 3,
+      "file_count": 9,
+      "size_bytes": 91028,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "frontends/cuda/ptx",
+      "depth": 3,
+      "file_count": 6,
+      "size_bytes": 71756,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "frontends/tilelang",
+      "depth": 2,
+      "file_count": 17,
+      "size_bytes": 122492,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "frontends/tilelang/__pycache__",
+      "depth": 3,
+      "file_count": 7,
+      "size_bytes": 65015,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "frontends/tilelang/shims",
+      "depth": 3,
+      "file_count": 1,
+      "size_bytes": 497,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "frontends/triton",
+      "depth": 2,
+      "file_count": 23,
+      "size_bytes": 219620,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "frontends/triton/__pycache__",
+      "depth": 3,
+      "file_count": 10,
+      "size_bytes": 114356,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "intent_ir",
+      "depth": 1,
+      "file_count": 101,
+      "size_bytes": 757817,
+      "category": "runtime_code",
+      "notes": "IntentIR 核心类型、parser、macro 与 MLIR 子系统。"
+    },
+    {
+      "path": "intent_ir/__pycache__",
+      "depth": 2,
+      "file_count": 2,
+      "size_bytes": 5489,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "intent_ir/ir",
+      "depth": 2,
+      "file_count": 10,
+      "size_bytes": 327095,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "intent_ir/ir/__pycache__",
+      "depth": 3,
+      "file_count": 5,
+      "size_bytes": 183722,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "intent_ir/llm",
+      "depth": 2,
+      "file_count": 8,
+      "size_bytes": 82772,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "intent_ir/llm/__pycache__",
+      "depth": 3,
+      "file_count": 4,
+      "size_bytes": 42211,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "intent_ir/macros",
+      "depth": 2,
+      "file_count": 14,
+      "size_bytes": 76594,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "intent_ir/macros/__pycache__",
+      "depth": 3,
+      "file_count": 3,
+      "size_bytes": 13421,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "intent_ir/macros/macro_lowering",
+      "depth": 3,
+      "file_count": 8,
+      "size_bytes": 53029,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "intent_ir/mlir",
+      "depth": 2,
+      "file_count": 44,
+      "size_bytes": 127827,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "intent_ir/mlir/__pycache__",
+      "depth": 3,
+      "file_count": 8,
+      "size_bytes": 48459,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "intent_ir/mlir/passes",
+      "depth": 3,
+      "file_count": 22,
+      "size_bytes": 45609,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "intent_ir/mlir/pipelines",
+      "depth": 3,
+      "file_count": 6,
+      "size_bytes": 815,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "intent_ir/ops",
+      "depth": 2,
+      "file_count": 10,
+      "size_bytes": 38540,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "intent_ir/ops/__pycache__",
+      "depth": 3,
+      "file_count": 5,
+      "size_bytes": 19961,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "intent_ir/parser",
+      "depth": 2,
+      "file_count": 4,
+      "size_bytes": 91176,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "intent_ir/parser/__pycache__",
+      "depth": 3,
+      "file_count": 2,
+      "size_bytes": 43805,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "intent_ir/utils",
+      "depth": 2,
+      "file_count": 4,
+      "size_bytes": 2820,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "intent_ir/utils/__pycache__",
+      "depth": 3,
+      "file_count": 2,
+      "size_bytes": 1773,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "kernels",
+      "depth": 1,
+      "file_count": 280,
+      "size_bytes": 1347059,
+      "category": "runtime_code",
+      "notes": "三类前端的样例 kernel 源。"
+    },
+    {
+      "path": "kernels/__pycache__",
+      "depth": 2,
+      "file_count": 1,
+      "size_bytes": 285,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "kernels/cuda",
+      "depth": 2,
+      "file_count": 136,
+      "size_bytes": 974618,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "kernels/cuda/__pycache__",
+      "depth": 3,
+      "file_count": 1,
+      "size_bytes": 451,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "kernels/cuda/ops",
+      "depth": 3,
+      "file_count": 134,
+      "size_bytes": 973873,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "kernels/tilelang",
+      "depth": 2,
+      "file_count": 67,
+      "size_bytes": 124796,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "kernels/tilelang/__pycache__",
+      "depth": 3,
+      "file_count": 1,
+      "size_bytes": 342,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "kernels/tilelang/ops",
+      "depth": 3,
+      "file_count": 64,
+      "size_bytes": 123838,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "kernels/triton",
+      "depth": 2,
+      "file_count": 74,
+      "size_bytes": 246858,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "kernels/triton/__pycache__",
+      "depth": 3,
+      "file_count": 1,
+      "size_bytes": 266,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "kernels/triton/ops",
+      "depth": 3,
+      "file_count": 54,
+      "size_bytes": 224909,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "kernels/triton/support",
+      "depth": 3,
+      "file_count": 14,
+      "size_bytes": 13295,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "kernels/triton/tools",
+      "depth": 3,
+      "file_count": 3,
+      "size_bytes": 7997,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "pipeline",
+      "depth": 1,
+      "file_count": 50,
+      "size_bytes": 2439103,
+      "category": "runtime_code",
+      "notes": "跨前端统一编排层，衔接 verify 与 backends。"
+    },
+    {
+      "path": "pipeline/__pycache__",
+      "depth": 2,
+      "file_count": 5,
+      "size_bytes": 14647,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "pipeline/cuda",
+      "depth": 2,
+      "file_count": 4,
+      "size_bytes": 196941,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "pipeline/cuda/__pycache__",
+      "depth": 3,
+      "file_count": 2,
+      "size_bytes": 110333,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "pipeline/tilelang",
+      "depth": 2,
+      "file_count": 4,
+      "size_bytes": 292610,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "pipeline/tilelang/__pycache__",
+      "depth": 3,
+      "file_count": 2,
+      "size_bytes": 158077,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "pipeline/triton",
+      "depth": 2,
+      "file_count": 31,
+      "size_bytes": 1922837,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "pipeline/triton/__pycache__",
+      "depth": 3,
+      "file_count": 3,
+      "size_bytes": 211636,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "pipeline/triton/providers",
+      "depth": 3,
+      "file_count": 24,
+      "size_bytes": 1063752,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "requirements",
+      "depth": 1,
+      "file_count": 6,
+      "size_bytes": 2678,
+      "category": "config",
+      "notes": "环境依赖与锁文件。"
+    },
+    {
+      "path": "requirements/lock",
+      "depth": 2,
+      "file_count": 2,
+      "size_bytes": 1556,
+      "category": "config",
+      "notes": ""
+    },
+    {
+      "path": "scripts",
+      "depth": 1,
+      "file_count": 66,
+      "size_bytes": 1408531,
+      "category": "runtime_code",
+      "notes": "统一 CLI 与 lane/gate 运行脚本。"
+    },
+    {
+      "path": "scripts/__pycache__",
+      "depth": 2,
+      "file_count": 5,
+      "size_bytes": 240677,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "scripts/cuda",
+      "depth": 2,
+      "file_count": 2,
+      "size_bytes": 5660,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "scripts/cuda/__pycache__",
+      "depth": 3,
+      "file_count": 1,
+      "size_bytes": 3535,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "scripts/flaggems",
+      "depth": 2,
+      "file_count": 36,
+      "size_bytes": 839249,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "scripts/flaggems/__pycache__",
+      "depth": 3,
+      "file_count": 13,
+      "size_bytes": 401958,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "scripts/intentir",
+      "depth": 2,
+      "file_count": 10,
+      "size_bytes": 61589,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "scripts/intentir/__pycache__",
+      "depth": 3,
+      "file_count": 5,
+      "size_bytes": 35916,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "scripts/tilelang",
+      "depth": 2,
+      "file_count": 3,
+      "size_bytes": 17165,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "scripts/tilelang/__pycache__",
+      "depth": 3,
+      "file_count": 1,
+      "size_bytes": 3716,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "scripts/triton",
+      "depth": 2,
+      "file_count": 1,
+      "size_bytes": 12285,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "tests",
+      "depth": 1,
+      "file_count": 72,
+      "size_bytes": 1204464,
+      "category": "tests",
+      "notes": "门禁与契约验证测试集合。"
+    },
+    {
+      "path": "tests/__pycache__",
+      "depth": 2,
+      "file_count": 8,
+      "size_bytes": 191240,
+      "category": "tests",
+      "notes": ""
+    },
+    {
+      "path": "tests/backends",
+      "depth": 2,
+      "file_count": 13,
+      "size_bytes": 151865,
+      "category": "tests",
+      "notes": ""
+    },
+    {
+      "path": "tests/backends/__pycache__",
+      "depth": 3,
+      "file_count": 3,
+      "size_bytes": 9737,
+      "category": "tests",
+      "notes": ""
+    },
+    {
+      "path": "tests/backends/cuda",
+      "depth": 3,
+      "file_count": 5,
+      "size_bytes": 93381,
+      "category": "tests",
+      "notes": ""
+    },
+    {
+      "path": "tests/backends/spmd_rvv",
+      "depth": 3,
+      "file_count": 4,
+      "size_bytes": 48068,
+      "category": "tests",
+      "notes": ""
+    },
+    {
+      "path": "tests/frontends",
+      "depth": 2,
+      "file_count": 28,
+      "size_bytes": 674179,
+      "category": "tests",
+      "notes": ""
+    },
+    {
+      "path": "tests/frontends/common",
+      "depth": 3,
+      "file_count": 0,
+      "size_bytes": 0,
+      "category": "tests",
+      "notes": ""
+    },
+    {
+      "path": "tests/frontends/cuda",
+      "depth": 3,
+      "file_count": 0,
+      "size_bytes": 0,
+      "category": "tests",
+      "notes": ""
+    },
+    {
+      "path": "tests/frontends/tilelang",
+      "depth": 3,
+      "file_count": 0,
+      "size_bytes": 0,
+      "category": "tests",
+      "notes": ""
+    },
+    {
+      "path": "tests/frontends/triton",
+      "depth": 3,
+      "file_count": 28,
+      "size_bytes": 674179,
+      "category": "tests",
+      "notes": ""
+    },
+    {
+      "path": "tests/intentir",
+      "depth": 2,
+      "file_count": 13,
+      "size_bytes": 99767,
+      "category": "tests",
+      "notes": ""
+    },
+    {
+      "path": "tests/intentir/__pycache__",
+      "depth": 3,
+      "file_count": 7,
+      "size_bytes": 79015,
+      "category": "tests",
+      "notes": ""
+    },
+    {
+      "path": "verify",
+      "depth": 1,
+      "file_count": 17,
+      "size_bytes": 475635,
+      "category": "runtime_code",
+      "notes": "差分验证、解释器、测试样例生成。"
+    },
+    {
+      "path": "verify/__pycache__",
+      "depth": 2,
+      "file_count": 7,
+      "size_bytes": 258743,
+      "category": "runtime_code",
+      "notes": ""
+    },
+    {
+      "path": "workflow",
+      "depth": 1,
+      "file_count": 99,
+      "size_bytes": 706529,
+      "category": "workflow_state",
+      "notes": "长任务状态、nightly 调度、会话接力上下文。"
+    },
+    {
+      "path": "workflow/flaggems",
+      "depth": 2,
+      "file_count": 99,
+      "size_bytes": 706529,
+      "category": "workflow_state",
+      "notes": ""
+    },
+    {
+      "path": "workflow/flaggems/state",
+      "depth": 3,
+      "file_count": 93,
+      "size_bytes": 693846,
+      "category": "workflow_state",
+      "notes": ""
+    },
+    {
+      "path": "workflow/local_notes",
+      "depth": 2,
+      "file_count": 0,
+      "size_bytes": 0,
+      "category": "workflow_state",
+      "notes": ""
+    },
+    {
+      "path": "workflow/local_notes/project_deep_read",
+      "depth": 3,
+      "file_count": 0,
+      "size_bytes": 0,
+      "category": "workflow_state",
+      "notes": ""
+    }
+  ]
+}

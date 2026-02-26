@@ -19,6 +19,10 @@
       intent.ops[7].op == "add" && (intent.ops[8].op == "cast" || intent.ops[8].op == "identity")) {
     return emit_addmv_f32(intent, bindings_json);
   }
+  if (intent.ops.size() == 5 && intent.ops[0].op == "mul" && intent.ops[1].op == "reduce_sum" && intent.ops[2].op == "mul" &&
+      intent.ops[3].op == "mul" && intent.ops[4].op == "add") {
+    return emit_addmv_f32(intent, bindings_json);
+  }
   if (intent.ops.size() == 5 && intent.ops[0].op == "matmul" && intent.ops[1].op == "mul" && intent.ops[2].op == "mul" && intent.ops[3].op == "add" &&
       (intent.ops[4].op == "cast" || intent.ops[4].op == "identity")) {
     return emit_addmm2d_f32(intent, bindings_json);

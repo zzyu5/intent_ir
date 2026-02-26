@@ -17,6 +17,7 @@ import json
 import math
 import multiprocessing as mp
 import os
+from functools import lru_cache
 from queue import Empty
 import shutil
 import sys
@@ -30,20 +31,22 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backends.cuda.codegen.cpp_driver import (  # noqa: E402
-    CudaLoweringError,
-    ensure_cpp_codegen_ext_loaded,
-    lower_intent_json_to_cuda_kernel,
-)
+from backends.cuda.pipeline.driver import lower_cuda_contract_to_kernel  # noqa: E402
 from backends.cuda.runtime import (  # noqa: E402
+    CudaLaunch,
     CudaRuntimeError,
     compile_cuda_extension,
     cuda_extension_cache_info,
+    load_cuda_ptx_module,
     run_cuda_kernel,
+    run_cuda_kernel_ptx,
 )
 from backends.common.mlir_contract import MlirBackendContract  # noqa: E402
+from intent_ir.ir import IntentFunction  # noqa: E402
 from intent_ir.macros import expand_macros_json  # noqa: E402
+from intent_ir.mlir import to_mlir  # noqa: E402
 from intent_ir.mlir.convert_to_intent import to_intent  # noqa: E402
+from intent_ir.mlir.passes.emit_cuda_contract import build_cuda_contract  # noqa: E402
 
 
 DEFAULT_KERNELS = [
@@ -58,6 +61,11 @@ DEFAULT_KERNELS = [
 
 _PERSISTENT_WORKERS: dict[str, dict[str, Any]] = {}
 _PERSISTENT_TASK_SEQ = 0
+
+
+def _intent_from_json_payload(intent_json: dict[str, Any]) -> IntentFunction:
+    loader = getattr(IntentFunction, "from_json_dict")
+    return loader(dict(intent_json))
 
 
 def _default_kernels_for(
@@ -110,6 +118,42 @@ def _resolve_report_path(raw: object, *, artifact_root: Path) -> Path | None:
     return None
 
 
+@lru_cache(maxsize=4096)
+def _discover_kernel_artifact_path_cached(artifact_root_raw: str, kernel: str, suffix: str) -> str:
+    root = Path(str(artifact_root_raw or "")).resolve()
+    k = str(kernel).strip()
+    sfx = str(suffix).strip()
+    if not k or not sfx:
+        return ""
+    direct = root / f"{k}{sfx}"
+    if direct.is_file():
+        return str(direct)
+    try:
+        matches = [p for p in root.rglob(f"{k}{sfx}") if p.is_file()]
+    except Exception:
+        matches = []
+    if not matches:
+        return ""
+    preferred: list[Path] = []
+    fallback: list[Path] = []
+    for p in matches:
+        if "pipeline_reports" in p.parts:
+            preferred.append(p)
+        else:
+            fallback.append(p)
+    pool = preferred or fallback
+    pool.sort(key=lambda p: float(p.stat().st_mtime), reverse=True)
+    return str(pool[0]) if pool else ""
+
+
+def _discover_kernel_artifact_path(*, artifact_root: Path, kernel: str, suffix: str) -> Path | None:
+    raw = _discover_kernel_artifact_path_cached(str(artifact_root), str(kernel), str(suffix))
+    if not raw:
+        return None
+    p = Path(raw)
+    return p if p.is_file() else None
+
+
 def _mlir_report_paths(report: dict, *, artifact_root: Path) -> list[Path]:
     mlir = report.get("mlir")
     if not isinstance(mlir, dict):
@@ -138,7 +182,9 @@ def _contract_report_paths(report: dict, *, artifact_root: Path) -> list[Path]:
         return []
     preferred = [
         # CUDA path must prefer CUDA-specific contracts first.
+        "downstream_cuda_llvm_contract_path",
         "downstream_cuda_contract_path",
+        "downstream_llvm_contract_path",
         "midend_cuda_contract_path",
         # Generic downstream contract is allowed only as a late fallback.
         "downstream_contract_path",
@@ -210,7 +256,80 @@ def _with_io_aliases_for_names(wanted: list[str], io: dict[str, np.ndarray]) -> 
     return out
 
 
-def _intent_from_contract_path(path: Path, *, expected_backend: str = "cuda") -> tuple[dict[str, Any], dict[str, Any]] | None:
+def _resolve_contract_module_path(
+    contract: MlirBackendContract,
+    *,
+    contract_path: Path,
+) -> Path | None:
+    artifacts = dict(contract.artifacts or {})
+    module_path_raw = str(artifacts.get("mlir_module_path") or "").strip()
+    if not module_path_raw and str(contract.executable.format or "").endswith("mlir_module"):
+        module_path_raw = str(contract.executable.path or "").strip()
+    if not module_path_raw:
+        return None
+    p = Path(module_path_raw)
+    if p.is_absolute():
+        return p if p.is_file() else None
+    candidates = [
+        (contract_path.parent / p),
+        (ROOT / p),
+    ]
+    for cand in candidates:
+        try:
+            resolved = cand.resolve()
+        except Exception:
+            resolved = cand
+        if resolved.is_file():
+            return resolved
+    return None
+
+
+def _synthesize_intent_from_contract(contract: MlirBackendContract) -> dict[str, Any]:
+    io_spec = _runtime_io_spec_from_contract(contract)
+    tensors_in = io_spec.get("tensors")
+    tensors: dict[str, dict[str, Any]] = {}
+    if isinstance(tensors_in, dict):
+        for name, spec in tensors_in.items():
+            if not isinstance(spec, dict):
+                continue
+            tensors[str(name)] = {
+                "dtype": str(spec.get("dtype") or "f32"),
+                "shape": list(spec.get("shape") or []),
+                "layout": str(spec.get("layout") or "row_major"),
+            }
+    outputs = [str(x) for x in list(io_spec.get("outputs") or []) if str(x).strip()]
+    schedule = dict(contract.schedule or {})
+    parallel_axes = list(schedule.get("parallel_axes") or []) if isinstance(schedule, dict) else []
+    return {
+        "name": str(contract.kernel_name or "intent"),
+        "tensors": tensors,
+        "ops": [],
+        "outputs": outputs,
+        "schedule": dict(schedule),
+        "parallel_axes": [str(x) for x in parallel_axes if str(x).strip()],
+        "meta": {"source_kind": "contract_io_spec_synth"},
+    }
+
+
+def _runtime_io_spec_from_contract(contract: MlirBackendContract) -> dict[str, Any]:
+    io_spec = dict(contract.io_spec or {})
+    invocation = dict(contract.executable.invocation or {})
+    inv_io = invocation.get("io_spec")
+    if isinstance(inv_io, dict) and isinstance(inv_io.get("tensors"), dict):
+        io_spec = dict(inv_io)
+    if not isinstance(io_spec.get("outputs"), list):
+        inv_out = invocation.get("output_names")
+        if isinstance(inv_out, list):
+            io_spec = dict(io_spec)
+            io_spec["outputs"] = [str(x) for x in inv_out if str(x).strip()]
+    return io_spec
+
+
+def _intent_from_contract_path(
+    path: Path,
+    *,
+    expected_backend: str = "cuda",
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]] | None:
     try:
         payload_raw = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
@@ -224,38 +343,70 @@ def _intent_from_contract_path(path: Path, *, expected_backend: str = "cuda") ->
     backend = str(payload.backend or "").strip().lower()
     if backend and backend != str(expected_backend).strip().lower():
         return None
-    if not isinstance(payload.intent_json, dict):
-        return None
-    return dict(payload.intent_json), dict(payload.io_spec or {})
+    module_text = str((payload.artifacts or {}).get("mlir_module_text") or "").strip()
+    io_spec = _runtime_io_spec_from_contract(payload)
+    if module_text:
+        try:
+            intent = to_intent(module_text)
+            return intent.to_json_dict(), io_spec, payload.to_json_dict()
+        except Exception:
+            pass
+    module_path = _resolve_contract_module_path(payload, contract_path=path)
+    if module_path is not None:
+        try:
+            intent = to_intent(module_path.read_text(encoding="utf-8"))
+            return intent.to_json_dict(), io_spec, payload.to_json_dict()
+        except Exception:
+            pass
+    intent_json = _synthesize_intent_from_contract(payload)
+    return intent_json, io_spec, payload.to_json_dict()
 
 
-def _load_intent_json(
+def _load_intent_and_contract(
     report: dict,
     *,
     artifact_root: Path,
     require_mlir_artifacts: bool = False,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     for contract_path in _contract_report_paths(report, artifact_root=artifact_root):
         parsed = _intent_from_contract_path(contract_path, expected_backend="cuda")
         if parsed is not None:
             return parsed
     for mlir_path in _mlir_report_paths(report, artifact_root=artifact_root):
         try:
-            return to_intent(mlir_path.read_text(encoding="utf-8"))
+            parsed = to_intent(mlir_path.read_text(encoding="utf-8"))
+            mlir_mod = to_mlir(parsed)
+            contract = build_cuda_contract(mlir_mod, source_kind="mlir_path_fallback")
+            artifacts = dict(contract.artifacts or {})
+            artifacts["mlir_module_text"] = str(mlir_mod.module_text or "")
+            contract.artifacts = artifacts
+            return parsed.to_json_dict(), {}, contract.to_json_dict()
         except Exception:
             continue
     if bool(require_mlir_artifacts):
         raise RuntimeError("mlir_artifact_missing: no readable MLIR module path in report")
     intent_expanded_json = report.get("intent_expanded")
     if not isinstance(intent_expanded_json, dict):
-        intent_expanded_json = expand_macros_json(dict(report["intent"]))
-    return dict(intent_expanded_json), {}
+        intent_raw = report.get("intent")
+        if not isinstance(intent_raw, dict):
+            raise RuntimeError("intent_payload_missing: report has no contract/mlir/intent payload")
+        intent_expanded_json = expand_macros_json(dict(intent_raw))
+    intent = _intent_from_json_payload(dict(intent_expanded_json))
+    mlir_mod = to_mlir(intent)
+    contract = build_cuda_contract(mlir_mod, source_kind="intent_json_fallback")
+    artifacts = dict(contract.artifacts or {})
+    artifacts["mlir_module_text"] = str(mlir_mod.module_text or "")
+    contract.artifacts = artifacts
+    return dict(intent_expanded_json), {}, contract.to_json_dict()
 
 
 def _external_inputs(intent_json: dict[str, Any]) -> tuple[list[str], list[str]]:
     ops = [x for x in list(intent_json.get("ops") or []) if isinstance(x, dict)]
     tensors = dict(intent_json.get("tensors") or {})
     outputs = [str(x) for x in list(intent_json.get("outputs") or []) if str(x).strip()]
+    if not ops and tensors:
+        external_inputs = sorted([str(n) for n in tensors.keys() if str(n) and str(n) not in set(outputs)])
+        return external_inputs, outputs
     produced = {str(op.get("output") or "") for op in ops if str(op.get("output") or "").strip()}
     used: set[str] = set()
     for op in ops:
@@ -548,13 +699,29 @@ def _prepare_kernel_context(
     artifact_root = (Path(artifact_dir) if artifact_dir else (ROOT / "artifacts" / artifact_rel)).resolve()
     report_path = artifact_root / f"{kernel}.json"
     baseline_npz_path = artifact_root / f"{kernel}.baseline.npz"
+    if not report_path.is_file():
+        discovered = _discover_kernel_artifact_path(artifact_root=artifact_root, kernel=str(kernel), suffix=".json")
+        if discovered is not None:
+            report_path = discovered
+    if not baseline_npz_path.is_file():
+        discovered = _discover_kernel_artifact_path(
+            artifact_root=artifact_root,
+            kernel=str(kernel),
+            suffix=".baseline.npz",
+        )
+        if discovered is not None:
+            baseline_npz_path = discovered
+        elif report_path.is_file():
+            sibling = report_path.with_name(f"{kernel}.baseline.npz")
+            if sibling.is_file():
+                baseline_npz_path = sibling
     if not report_path.exists():
         raise FileNotFoundError(f"missing artifact report: {report_path}")
     if not baseline_npz_path.exists():
         raise FileNotFoundError(f"missing baseline npz: {baseline_npz_path}")
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    intent_json, io_spec = _load_intent_json(
+    intent_json, io_spec, mlir_contract = _load_intent_and_contract(
         report,
         artifact_root=artifact_root,
         require_mlir_artifacts=bool(require_mlir_artifacts),
@@ -580,6 +747,7 @@ def _prepare_kernel_context(
     return {
         "kernel": str(kernel),
         "intent_json": dict(intent_json),
+        "mlir_contract": dict(mlir_contract),
         "io_spec": dict(io_spec),
         "tensor_specs": dict(tensor_specs),
         "baseline": baseline,
@@ -646,6 +814,19 @@ def _set_runtime_backend_env(runtime_backend: str) -> None:
         os.environ.pop("INTENTIR_CUDA_FORCE_NVRTC", None)
 
 
+def _parse_launch_dict(launch_raw: Any) -> CudaLaunch:
+    launch = dict(launch_raw or {}) if isinstance(launch_raw, dict) else {}
+    grid = launch.get("grid")
+    block = launch.get("block")
+    if not (isinstance(grid, list) and len(grid) == 3 and isinstance(block, list) and len(block) == 3):
+        raise RuntimeError("invalid_cuda_launch: missing grid/block in lowered payload")
+    return CudaLaunch(
+        grid=(int(grid[0]), int(grid[1]), int(grid[2])),
+        block=(int(block[0]), int(block[1]), int(block[2])),
+        shared_mem=int(launch.get("shared_mem", 0)),
+    )
+
+
 def _run_compile_stage(
     kernel: str,
     *,
@@ -663,19 +844,33 @@ def _run_compile_stage(
         require_mlir_artifacts=bool(require_mlir_artifacts),
     )
     t_lower = time.perf_counter()
-    lowered = lower_intent_json_to_cuda_kernel(dict(ctx["intent_json"]), shape_bindings=ctx["bindings"])
+    lowered = lower_cuda_contract_to_kernel(dict(ctx["mlir_contract"]), shape_bindings=ctx["bindings"])
     lower_ms = (time.perf_counter() - t_lower) * 1000.0
-    cache_info = cuda_extension_cache_info(
-        kernel_name=lowered.kernel_name,
-        cuda_src=lowered.cuda_src,
+    kernel_name = str(lowered.get("kernel_name") or "")
+    io_spec = dict(lowered.get("io_spec") or {})
+    is_ptx = lowered.get("cuda_ptx") is not None
+    cache_info = (
+        {
+            "artifact_exists": False,
+            "module_name": f"intentir_cuda_ptx_{kernel_name}",
+            "build_dir": "",
+        }
+        if is_ptx
+        else cuda_extension_cache_info(
+            kernel_name=kernel_name,
+            cuda_src=str(lowered.get("cuda_src") or ""),
+        )
     )
 
     t_compile = time.perf_counter()
-    compile_cuda_extension(
-        kernel_name=lowered.kernel_name,
-        cuda_src=lowered.cuda_src,
-        io_spec=lowered.io_spec,
-    )
+    if is_ptx:
+        _ = load_cuda_ptx_module(kernel_name=kernel_name, ptx=lowered.get("cuda_ptx"), io_spec=io_spec)
+    else:
+        _ = compile_cuda_extension(
+            kernel_name=kernel_name,
+            cuda_src=str(lowered.get("cuda_src") or ""),
+            io_spec=io_spec,
+        )
     compile_ms = (time.perf_counter() - t_compile) * 1000.0
 
     return {
@@ -711,18 +906,33 @@ def _run_launch_stage(
     )
 
     t_lower = time.perf_counter()
-    lowered = lower_intent_json_to_cuda_kernel(dict(ctx["intent_json"]), shape_bindings=ctx["bindings"])
+    lowered = lower_cuda_contract_to_kernel(dict(ctx["mlir_contract"]), shape_bindings=ctx["bindings"])
     lower_ms = (time.perf_counter() - t_lower) * 1000.0
-    cache_info = cuda_extension_cache_info(
-        kernel_name=lowered.kernel_name,
-        cuda_src=lowered.cuda_src,
+    kernel_name = str(lowered.get("kernel_name") or "")
+    io_spec = dict(lowered.get("io_spec") or {})
+    is_ptx = lowered.get("cuda_ptx") is not None
+    cache_info = (
+        {
+            "artifact_exists": False,
+            "module_name": f"intentir_cuda_ptx_{kernel_name}",
+            "build_dir": "",
+        }
+        if is_ptx
+        else cuda_extension_cache_info(
+            kernel_name=kernel_name,
+            cuda_src=str(lowered.get("cuda_src") or ""),
+        )
     )
 
     t_compile = time.perf_counter()
-    compiled_mod = compile_cuda_extension(
-        kernel_name=lowered.kernel_name,
-        cuda_src=lowered.cuda_src,
-        io_spec=lowered.io_spec,
+    compiled_mod = (
+        load_cuda_ptx_module(kernel_name=kernel_name, ptx=lowered.get("cuda_ptx"), io_spec=io_spec)
+        if is_ptx
+        else compile_cuda_extension(
+            kernel_name=kernel_name,
+            cuda_src=str(lowered.get("cuda_src") or ""),
+            io_spec=io_spec,
+        )
     )
     compile_ms = (time.perf_counter() - t_compile) * 1000.0
 
@@ -735,16 +945,28 @@ def _run_launch_stage(
     )
 
     t_launch = time.perf_counter()
-    out = run_cuda_kernel(
-        kernel_name=lowered.kernel_name,
-        cuda_src=lowered.cuda_src,
-        io_spec=lowered.io_spec,
-        launch=lowered.launch,
-        bindings=lowered.bindings,
-        inputs_np=inputs_np,
-        output_names=lowered.output_names or ctx["outputs"],
-        compiled_module=compiled_mod,
-    )
+    if is_ptx:
+        out = run_cuda_kernel_ptx(
+            kernel_name=kernel_name,
+            ptx=lowered.get("cuda_ptx"),
+            io_spec=io_spec,
+            launch=_parse_launch_dict(lowered.get("launch")),
+            bindings=dict(lowered.get("bindings") or {}),
+            inputs_np=inputs_np,
+            output_names=list(lowered.get("output_names") or ctx["outputs"]),
+            compiled_module=compiled_mod,
+        )
+    else:
+        out = run_cuda_kernel(
+            kernel_name=kernel_name,
+            cuda_src=str(lowered.get("cuda_src") or ""),
+            io_spec=io_spec,
+            launch=_parse_launch_dict(lowered.get("launch")),
+            bindings=dict(lowered.get("bindings") or {}),
+            inputs_np=inputs_np,
+            output_names=list(lowered.get("output_names") or ctx["outputs"]),
+            compiled_module=compiled_mod,
+        )
     out = _with_io_aliases_for_names(
         sorted(set(list(ctx["outputs"]) + list(dict(ctx["tensor_specs"]).keys()))),
         out,
@@ -810,10 +1032,10 @@ def run_one(
 
 
 def _reason_code_for_exception(e: Exception) -> str:
-    if isinstance(e, CudaLoweringError):
+    msg = str(e).lower()
+    if "unsupported" in msg or "missing op" in msg:
         return "lowering_missing_op"
     if isinstance(e, CudaRuntimeError):
-        msg = str(e).lower()
         if "timeout" in msg:
             return "launch_timeout"
         return "runtime_fail"
@@ -953,16 +1175,6 @@ def _cuda_stage_worker_loop(
     require_mlir_artifacts: bool,
     runtime_backend: str,
 ) -> None:
-    # Compile worker prewarm: pay pybind extension load once per worker process
-    # so first kernel lowering no longer absorbs this cold-start cost.
-    if stage == "compile" and str(runtime_backend).strip().lower() == "nvcc":
-        raw = str(os.getenv("INTENTIR_CUDA_SMOKE_PREWARM_COMPILE_WORKER", "1")).strip().lower()
-        if raw in {"1", "true", "yes", "y"}:
-            try:
-                ensure_cpp_codegen_ext_loaded(verbose=False)
-            except Exception:
-                # Best-effort only; functional path remains unchanged.
-                pass
     while True:
         item = in_q.get()
         if item is None:
@@ -1443,7 +1655,7 @@ def main() -> None:
                 launch_timeout_sec=int(launch_timeout_sec),
                 runtime_backend=runtime_backend,
             )
-        except (CudaLoweringError, CudaRuntimeError, FileNotFoundError, RuntimeError, ValueError) as e:
+        except (CudaRuntimeError, FileNotFoundError, RuntimeError, ValueError) as e:
             r = {
                 "kernel": str(k),
                 "ok": False,

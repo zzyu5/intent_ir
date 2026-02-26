@@ -176,6 +176,76 @@ def _validate_mlir_llvm_artifact_complete(run_summary: dict[str, Any]) -> tuple[
     return False, "missing LLVM artifact evidence (llvm_ir_path/mlir_llvm_artifacts/llvm_emit)"
 
 
+def _validate_mlir_native_execution(
+    run_summary: dict[str, Any],
+    status_converged: dict[str, Any],
+) -> tuple[bool, str]:
+    execution_engine = str(
+        run_summary.get("execution_engine")
+        or (run_summary.get("invocation") or {}).get("execution_engine")
+        or ""
+    ).strip()
+    contract_schema = str(
+        run_summary.get("contract_schema_version")
+        or (run_summary.get("invocation") or {}).get("contract_schema_version")
+        or ""
+    ).strip()
+    if execution_engine != "mlir_native":
+        return False, f"execution_engine={execution_engine!r} (expected 'mlir_native')"
+    if contract_schema != "intent_mlir_backend_contract_v2":
+        return False, (
+            f"contract_schema_version={contract_schema!r} "
+            "(expected 'intent_mlir_backend_contract_v2')"
+        )
+    status_engine = str(
+        status_converged.get("execution_engine")
+        or (status_converged.get("invocation") or {}).get("execution_engine")
+        or ""
+    ).strip()
+    status_contract = str(
+        status_converged.get("contract_schema_version")
+        or (status_converged.get("invocation") or {}).get("contract_schema_version")
+        or ""
+    ).strip()
+    if status_engine and status_engine != "mlir_native":
+        return False, f"status_converged.execution_engine={status_engine!r} (expected 'mlir_native')"
+    if status_contract and status_contract != "intent_mlir_backend_contract_v2":
+        return False, (
+            f"status_converged.contract_schema_version={status_contract!r} "
+            "(expected 'intent_mlir_backend_contract_v2')"
+        )
+    entries = [e for e in list(status_converged.get("entries") or []) if isinstance(e, dict)]
+    fallback_rows: list[str] = []
+    for row in entries:
+        reason_bits = [
+            str(row.get("status_reason_detail") or "").lower(),
+            str(row.get("reason_detail") or "").lower(),
+            str(row.get("runtime_fallback_detail") or "").lower(),
+        ]
+        runtime_provider = row.get("runtime")
+        if isinstance(runtime_provider, dict):
+            provider = runtime_provider.get("provider")
+            if isinstance(provider, dict):
+                reason_bits.append(str(provider.get("runtime_fallback_detail") or "").lower())
+                reason_bits.append(str(provider.get("runtime_fallback") or "").lower())
+                reason_bits.append(str(provider.get("cuda_ptx_origin") or "").lower())
+                reason_bits.append(str(provider.get("rvv_kernel_src_origin") or "").lower())
+        reason_detail = " | ".join([x for x in reason_bits if x])
+        has_runtime_fallback = bool(row.get("runtime_fallback"))
+        if (
+            has_runtime_fallback
+            or "intent_json" in reason_detail
+            or "cpp_codegen" in reason_detail
+            or "cpp_driver" in reason_detail
+            or "nvrtc_fallback_from_llvm" in reason_detail
+            or "compat_cpp_codegen" in reason_detail
+        ):
+            fallback_rows.append(str(row.get("kernel") or row.get("semantic_op") or "unknown"))
+    if fallback_rows:
+        return False, f"runtime fallback markers found in status_converged: {sorted(set(fallback_rows))[:8]}"
+    return True, "mlir-native execution and contract schema checks passed"
+
+
 def _validate_gpu_perf_fresh_on_head(current_status_path: Path) -> tuple[bool, str]:
     if not current_status_path.is_file():
         return False, f"missing current_status: {current_status_path}"
@@ -647,6 +717,12 @@ def main() -> None:
         help="Require LLVM artifact evidence for MLIR migration runs.",
     )
     ap.add_argument(
+        "--require-mlir-native-execution",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Require run_summary/status_converged to report mlir_native execution + contract v2.",
+    )
+    ap.add_argument(
         "--require-stage",
         action="append",
         default=[],
@@ -705,6 +781,7 @@ def main() -> None:
     require_mlir_fresh = bool(args.require_mlir_fresh_on_head) or profile == "mlir_migration"
     require_mlir_toolchain = bool(args.require_mlir_toolchain_required) or profile == "mlir_migration"
     require_mlir_llvm_artifact = bool(args.require_mlir_llvm_artifact_complete) or profile == "mlir_migration"
+    require_mlir_native_execution = bool(args.require_mlir_native_execution)
     require_gpu_perf_fresh = bool(args.require_gpu_perf_fresh_on_head)
     require_gpu_perf_categories = bool(args.require_gpu_perf_categories_complete)
     if (
@@ -1073,6 +1150,9 @@ def main() -> None:
     if require_mlir_llvm_artifact:
         llvm_ok, llvm_detail = _validate_mlir_llvm_artifact_complete(run_summary)
         checks.append(_check("mlir_llvm_artifact_complete", llvm_ok, llvm_detail))
+    if require_mlir_native_execution:
+        native_ok, native_detail = _validate_mlir_native_execution(run_summary, status_converged)
+        checks.append(_check("mlir_native_execution", native_ok, native_detail))
 
     ok = all(bool(c.get("ok")) for c in checks)
     payload = {

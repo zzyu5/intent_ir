@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from backends.common.mlir_contract import MlirBackendContract
-from backends.spmd_rvv.pipeline.driver import run_rvv_pipeline
+from backends.spmd_rvv.pipeline.driver import lower_rvv_contract_to_c_src, run_rvv_pipeline
 from backends.spmd_rvv.pipeline.stages import RVV_PIPELINE_STAGES
 from intent_ir.ir import IntentFunction
 from intent_ir.mlir import to_mlir
@@ -145,3 +147,77 @@ def test_run_rvv_pipeline_accepts_contract_json_mapping() -> None:
     assert result.input_ir_kind == "mlir_contract"
     assert result.mlir_backend_contract_used is True
     assert isinstance(MlirBackendContract.from_json_dict(payload), MlirBackendContract)
+
+
+def test_lower_rvv_contract_to_c_src_rejects_rvv_c_src_executable(tmp_path: Path) -> None:
+    mod = to_mlir(_intent("add", name="rvv_contract_c_src"))
+    contract = build_rvv_contract(mod, source_kind="mlir_module")
+    c_path = tmp_path / "k.c"
+    c_path.write_text("int main(void){return 0;}\n", encoding="utf-8")
+    contract.executable.format = "rvv_c_src"
+    contract.executable.path = str(c_path)
+    contract.executable.target = "rvv"
+    try:
+        _ = lower_rvv_contract_to_c_src(contract.to_json_dict(), shape_bindings={"M": 4, "N": 4})
+    except ValueError as e:
+        msg = str(e)
+        assert "unsupported or missing" in msg
+        assert "rvv_elf" in msg
+    else:
+        raise AssertionError("expected ValueError for rvv_c_src executable")
+
+
+def test_lower_rvv_contract_to_c_src_requires_explicit_compat_flag_for_src_artifact(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    mod = to_mlir(_intent("add", name="rvv_contract_elf_src"))
+    contract = build_rvv_contract(mod, source_kind="mlir_module")
+    elf_path = tmp_path / "k.elf"
+    elf_path.write_bytes(b"\x7fELFfake")
+    c_path = tmp_path / "k.c"
+    c_path.write_text("int main(void){return 0;}\n", encoding="utf-8")
+    contract.executable.format = "rvv_elf"
+    contract.executable.path = str(elf_path)
+    contract.executable.target = "rvv"
+    artifacts = dict(contract.artifacts or {})
+    artifacts["rvv_kernel_src_path"] = str(c_path)
+    contract.artifacts = artifacts
+    try:
+        _ = lower_rvv_contract_to_c_src(contract.to_json_dict(), shape_bindings={"M": 4, "N": 4})
+    except ValueError as e:
+        assert "disabled by default" in str(e)
+    else:
+        raise AssertionError("expected explicit compat flag requirement")
+    monkeypatch.setenv("INTENTIR_RVV_ALLOW_COMPAT_C_SRC", "1")
+    src = lower_rvv_contract_to_c_src(contract.to_json_dict(), shape_bindings={"M": 4, "N": 4})
+    assert "int main" in src
+
+
+def test_run_rvv_pipeline_supports_prebuilt_rvv_elf(monkeypatch, tmp_path: Path) -> None:
+    mod = to_mlir(_intent("add", name="rvv_pipeline_prebuilt_elf"))
+    contract = build_rvv_contract(mod, source_kind="mlir_module")
+    elf_path = tmp_path / "run.elf"
+    elf_path.write_bytes(b"\x7fELFfake")
+    contract.executable.format = "rvv_elf"
+    contract.executable.path = str(elf_path)
+    contract.executable.target = "rvv"
+
+    class _Proc:
+        def __init__(self) -> None:
+            self.returncode = 0
+            self.stdout = ""
+            self.stderr = ""
+
+    def _fake_run(*_args, **_kwargs):
+        return _Proc()
+
+    monkeypatch.setattr("backends.spmd_rvv.pipeline.driver.subprocess.run", _fake_run)
+    result = run_rvv_pipeline(contract.to_json_dict(), shape_bindings={"M": 2, "N": 2})
+    assert result.ok is True
+    emit_stage = next(s for s in result.stages if s.name == "emit_cpp")
+    compile_stage = next(s for s in result.stages if s.name == "compile")
+    run_stage = next(s for s in result.stages if s.name == "run")
+    assert emit_stage.artifacts.get("executable_format") == "rvv_elf"
+    assert compile_stage.artifacts.get("compile_mode") == "prebuilt_elf_staged"
+    assert run_stage.artifacts.get("run_mode") == "executed"

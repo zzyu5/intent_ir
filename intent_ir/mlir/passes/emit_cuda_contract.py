@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from backends.common.mlir_contract import MlirBackendContract
+from backends.common.mlir_contract import MlirBackendContract, MlirExecutableArtifact
 from intent_ir.ir import IntentFunction, TensorType
 from intent_ir.mlir.convert_to_intent import to_intent
 from intent_ir.mlir.module import IntentMLIRModule
@@ -50,11 +50,67 @@ def _schedule_to_json(schedule: Any) -> dict[str, Any]:
     return out
 
 
+def _toolchain_fingerprint(module: IntentMLIRModule | None) -> str:
+    if module is None:
+        return ""
+    tc = (module.meta or {}).get("toolchain")
+    if not isinstance(tc, Mapping):
+        return ""
+    tools = tc.get("tools")
+    if not isinstance(tools, Mapping):
+        return ""
+    parts: list[str] = []
+    for key in ("mlir-opt", "mlir-translate", "llvm-as", "opt", "llc", "ptxas", "clang"):
+        row = tools.get(key)
+        if not isinstance(row, Mapping):
+            continue
+        path = str(row.get("path") or "").strip()
+        ver = str(row.get("version") or "").strip()
+        if not path and not ver:
+            continue
+        parts.append(f"{key}:{path}:{ver}")
+    return "|".join(parts)
+
+
+def _resolve_executable(
+    *,
+    backend: str,
+    kernel_name: str,
+    source_module: IntentMLIRModule | None,
+    artifact_module_path: str | None,
+    executable: Mapping[str, Any] | None,
+) -> MlirExecutableArtifact:
+    override: Mapping[str, Any] | None = executable
+    if override is None and source_module is not None:
+        meta = dict(source_module.meta or {})
+        backend_exec = meta.get(f"{backend}_executable")
+        if isinstance(backend_exec, Mapping):
+            override = backend_exec
+        else:
+            generic_exec = meta.get("executable")
+            if isinstance(generic_exec, Mapping):
+                override = generic_exec
+    exe = MlirExecutableArtifact.from_json_dict(override or {})
+    if not str(exe.format).strip():
+        exe.format = f"{backend}_mlir_module"
+    if not str(exe.path).strip():
+        exe.path = str(artifact_module_path or "")
+    if not str(exe.entry).strip():
+        exe.entry = str(kernel_name or "")
+    if not str(exe.target).strip():
+        exe.target = str(backend)
+    if not str(exe.toolchain_fingerprint).strip():
+        exe.toolchain_fingerprint = _toolchain_fingerprint(source_module)
+    return exe
+
+
 def build_cuda_contract_from_intent(
     intent: IntentFunction,
     *,
     source_kind: str,
     source_module: IntentMLIRModule | None = None,
+    artifact_module_path: str | None = None,
+    executable: Mapping[str, Any] | None = None,
 ) -> MlirBackendContract:
     op_names = [str(getattr(op, "op", "")) for op in list(intent.ops or []) if str(getattr(op, "op", ""))]
     tensor_shapes: dict[str, list[Any]] = {}
@@ -64,6 +120,15 @@ def build_cuda_contract_from_intent(
     if source_module is not None:
         artifacts["dialect_version"] = str(source_module.dialect_version)
         artifacts["symbols"] = [str(x) for x in list(source_module.symbols or []) if str(x).strip()]
+    if artifact_module_path:
+        artifacts["mlir_module_path"] = str(artifact_module_path)
+    exe = _resolve_executable(
+        backend="cuda",
+        kernel_name=str(intent.name),
+        source_module=source_module,
+        artifact_module_path=artifact_module_path,
+        executable=executable,
+    )
     return MlirBackendContract(
         backend="cuda",
         kernel_name=str(intent.name),
@@ -74,7 +139,7 @@ def build_cuda_contract_from_intent(
         reason_context={"source_kind": str(source_kind), "mlir_backend_contract_used": True},
         op_names=op_names,
         tensor_shapes=tensor_shapes,
-        intent_json=intent.to_json_dict(),
+        executable=exe,
     )
 
 
@@ -82,9 +147,17 @@ def build_cuda_contract(
     module: IntentMLIRModule,
     *,
     source_kind: str = "mlir_module",
+    artifact_module_path: str | None = None,
+    executable: Mapping[str, Any] | None = None,
 ) -> MlirBackendContract:
     intent = to_intent(module)
-    return build_cuda_contract_from_intent(intent, source_kind=source_kind, source_module=module)
+    return build_cuda_contract_from_intent(
+        intent,
+        source_kind=source_kind,
+        source_module=module,
+        artifact_module_path=artifact_module_path,
+        executable=executable,
+    )
 
 
 def emit_cuda_contract(module: IntentMLIRModule, **_: object) -> IntentMLIRModule:

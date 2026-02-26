@@ -165,6 +165,200 @@ def _validate_gpu_perf_per_device_ok(current_status_path: Path) -> tuple[bool, s
     return True, "gpu perf per-device status is healthy"
 
 
+def _normalize_kernel_list(values: Any) -> list[str]:
+    out: list[str] = []
+    for raw in list(values or []):
+        name = str(raw or "").strip()
+        if name and name not in out:
+            out.append(name)
+    return sorted(out)
+
+
+def _kernel_ratio_median(graph_payload: dict[str, Any], kernel: str) -> float | None:
+    entries = [e for e in list(graph_payload.get("entries") or []) if isinstance(e, dict)]
+    target = str(kernel).strip()
+    ratios: list[float] = []
+    for row in entries:
+        if str(row.get("kernel") or "").strip() != target:
+            continue
+        if row.get("count_in_denominator") is False:
+            continue
+        try:
+            ratio = float(row.get("ratio"))
+        except Exception:
+            continue
+        if ratio > 0.0:
+            ratios.append(ratio)
+    if not ratios:
+        return None
+    ratios.sort()
+    n = len(ratios)
+    mid = n // 2
+    if n % 2 == 1:
+        return float(ratios[mid])
+    return float((ratios[mid - 1] + ratios[mid]) / 2.0)
+
+
+def _resolve_repo_path(path_raw: str) -> Path:
+    p = Path(str(path_raw).strip())
+    if not p.is_absolute():
+        p = ROOT / p
+    return p
+
+
+def _validate_gpu_perf_policy_audit(
+    run_summary: dict[str, Any],
+    status_converged: dict[str, Any],
+    *,
+    expected_policy_path: Path,
+) -> tuple[bool, str]:
+    stage = _stage_map(run_summary).get("gpu_perf_graph") or {}
+    stage_json_raw = str(stage.get("json_path") or "").strip()
+    if not stage_json_raw:
+        return False, "gpu_perf_graph stage json_path missing in run_summary"
+    stage_json_path = _resolve_repo_path(stage_json_raw)
+    if not stage_json_path.is_file():
+        return False, f"missing gpu_perf_graph json: {stage_json_path}"
+    graph_payload = load_json(stage_json_path)
+    gate_policy = graph_payload.get("gate_policy")
+    if not isinstance(gate_policy, dict):
+        return False, "gpu_perf_graph.gate_policy missing"
+
+    run_policy_raw = str(run_summary.get("gpu_perf_policy_json_path") or "").strip()
+    run_policy_loaded = bool(run_summary.get("gpu_perf_policy_loaded"))
+    status_invocation = status_converged.get("invocation")
+    if not isinstance(status_invocation, dict):
+        return False, "status_converged.invocation missing for policy audit"
+    status_policy_raw = str(status_invocation.get("policy_json") or "").strip()
+    status_policy_loaded = bool(status_invocation.get("policy_loaded"))
+    graph_policy_raw = str(gate_policy.get("policy_json") or "").strip()
+    graph_policy_loaded = bool(gate_policy.get("policy_loaded"))
+    graph_cli_excludes = _normalize_kernel_list(gate_policy.get("exclude_kernels_cli"))
+
+    if not run_policy_raw:
+        return False, "run_summary.gpu_perf_policy_json_path missing"
+    if not status_policy_raw:
+        return False, "status_converged.invocation.policy_json missing"
+    if not graph_policy_raw:
+        return False, "gpu_perf_graph.gate_policy.policy_json missing"
+    if not run_policy_loaded:
+        return False, "run_summary.gpu_perf_policy_loaded is not true"
+    if not status_policy_loaded:
+        return False, "status_converged.invocation.policy_loaded is not true"
+    if not graph_policy_loaded:
+        return False, "gpu_perf_graph.gate_policy.policy_loaded is not true"
+    if graph_cli_excludes:
+        return False, f"gpu_perf_graph uses cli excludes (must be policy-only): {graph_cli_excludes}"
+
+    run_policy_rel = _to_repo_rel(_resolve_repo_path(run_policy_raw))
+    status_policy_rel = _to_repo_rel(_resolve_repo_path(status_policy_raw))
+    graph_policy_rel = _to_repo_rel(_resolve_repo_path(graph_policy_raw))
+    expected_policy_rel = _to_repo_rel(expected_policy_path)
+    if len({run_policy_rel, status_policy_rel, graph_policy_rel}) != 1:
+        return False, (
+            "gpu perf policy path mismatch across artifacts: "
+            f"run_summary={run_policy_rel}, status={status_policy_rel}, graph={graph_policy_rel}"
+        )
+    if run_policy_rel != expected_policy_rel:
+        return False, f"gpu perf policy path mismatch: expected={expected_policy_rel}, got={run_policy_rel}"
+
+    policy_path = _resolve_repo_path(run_policy_raw)
+    if not policy_path.is_file():
+        return False, f"gpu perf policy file missing: {policy_path}"
+    policy_payload = load_json(policy_path)
+    policy_list = _normalize_kernel_list(
+        policy_payload.get("gate_exclude_kernels")
+        if policy_payload.get("gate_exclude_kernels") is not None
+        else policy_payload.get("exclude_kernels")
+    )
+    status_list = _normalize_kernel_list(status_invocation.get("gate_exclude_kernels"))
+    graph_policy_list = _normalize_kernel_list(gate_policy.get("exclude_kernels_policy"))
+
+    if policy_list != status_list:
+        return False, f"policy exclude list mismatch (policy vs status): {policy_list} != {status_list}"
+    if policy_list != graph_policy_list:
+        return False, f"policy exclude list mismatch (policy vs graph): {policy_list} != {graph_policy_list}"
+
+    return True, f"gpu perf policy audit passed ({run_policy_rel}, kernels={len(policy_list)})"
+
+
+def _validate_gpu_perf_key_kernel_baseline(
+    run_summary: dict[str, Any],
+    *,
+    expected_policy_path: Path,
+    key_kernels_override: list[str] | None = None,
+    baseline_graph_override: Path | None = None,
+    min_relative_override: float | None = None,
+) -> tuple[bool, str]:
+    stage = _stage_map(run_summary).get("gpu_perf_graph") or {}
+    stage_json_raw = str(stage.get("json_path") or "").strip()
+    if not stage_json_raw:
+        return False, "gpu_perf_graph stage json_path missing in run_summary"
+    stage_json_path = _resolve_repo_path(stage_json_raw)
+    if not stage_json_path.is_file():
+        return False, f"missing gpu_perf_graph json: {stage_json_path}"
+    current_graph = load_json(stage_json_path)
+
+    policy_payload: dict[str, Any] = {}
+    if expected_policy_path.is_file():
+        policy_payload = load_json(expected_policy_path)
+
+    key_kernels = _normalize_kernel_list(
+        key_kernels_override
+        if key_kernels_override
+        else policy_payload.get("key_kernels")
+    )
+    if not key_kernels:
+        return False, "gpu perf key-kernel policy is empty (no key_kernels configured)"
+
+    baseline_raw = (
+        str(baseline_graph_override)
+        if baseline_graph_override is not None
+        else str(
+            policy_payload.get("key_kernel_baseline_graph")
+            or policy_payload.get("baseline_gpu_perf_graph_path")
+            or ""
+        )
+    ).strip()
+    if not baseline_raw:
+        return False, "gpu perf key-kernel baseline graph path missing"
+    baseline_path = _resolve_repo_path(baseline_raw)
+    if not baseline_path.is_file():
+        return False, f"missing key-kernel baseline graph: {baseline_path}"
+    baseline_graph = load_json(baseline_path)
+
+    threshold = float(
+        min_relative_override
+        if min_relative_override is not None
+        else policy_payload.get("key_kernel_min_ratio_vs_baseline", 0.97)
+    )
+
+    failures: list[str] = []
+    missing: list[str] = []
+    rel_values: list[float] = []
+    for kernel in key_kernels:
+        cur_ratio = _kernel_ratio_median(current_graph, kernel)
+        base_ratio = _kernel_ratio_median(baseline_graph, kernel)
+        if cur_ratio is None or base_ratio is None or base_ratio <= 0.0:
+            missing.append(str(kernel))
+            continue
+        rel = float(cur_ratio / base_ratio)
+        rel_values.append(rel)
+        if rel < threshold:
+            failures.append(f"{kernel}:{rel:.4f}")
+
+    if missing:
+        return False, f"missing key-kernel ratio rows in current/baseline graph: {sorted(missing)}"
+    if failures:
+        return False, (
+            "key-kernel baseline ratio below threshold: "
+            + ", ".join(failures[:8])
+            + f" (threshold={threshold:.4f})"
+        )
+    min_rel = min(rel_values) if rel_values else 0.0
+    return True, f"key-kernel baseline ratio passed (kernels={len(key_kernels)}, min_relative={min_rel:.4f})"
+
+
 def _validate_mlir_fresh_on_head(current_status_path: Path) -> tuple[bool, str]:
     if not current_status_path.is_file():
         return False, f"missing current_status: {current_status_path}"
@@ -268,6 +462,76 @@ def _validate_mlir_llvm_artifact_complete(run_summary: dict[str, Any]) -> tuple[
                         if total_ms > 0.0:
                             return True, f"stage_timing_breakdown mlir totals present: {timing_path}"
     return False, "missing LLVM artifact evidence (llvm_ir_path/mlir_llvm_artifacts/llvm_emit)"
+
+
+def _validate_mlir_native_execution(
+    run_summary: dict[str, Any],
+    status_converged: dict[str, Any],
+) -> tuple[bool, str]:
+    execution_engine = str(
+        run_summary.get("execution_engine")
+        or (run_summary.get("invocation") or {}).get("execution_engine")
+        or ""
+    ).strip()
+    contract_schema = str(
+        run_summary.get("contract_schema_version")
+        or (run_summary.get("invocation") or {}).get("contract_schema_version")
+        or ""
+    ).strip()
+    if execution_engine != "mlir_native":
+        return False, f"execution_engine={execution_engine!r} (expected 'mlir_native')"
+    if contract_schema != "intent_mlir_backend_contract_v2":
+        return False, (
+            f"contract_schema_version={contract_schema!r} "
+            "(expected 'intent_mlir_backend_contract_v2')"
+        )
+    status_engine = str(
+        status_converged.get("execution_engine")
+        or (status_converged.get("invocation") or {}).get("execution_engine")
+        or ""
+    ).strip()
+    status_contract = str(
+        status_converged.get("contract_schema_version")
+        or (status_converged.get("invocation") or {}).get("contract_schema_version")
+        or ""
+    ).strip()
+    if status_engine and status_engine != "mlir_native":
+        return False, f"status_converged.execution_engine={status_engine!r} (expected 'mlir_native')"
+    if status_contract and status_contract != "intent_mlir_backend_contract_v2":
+        return False, (
+            f"status_converged.contract_schema_version={status_contract!r} "
+            "(expected 'intent_mlir_backend_contract_v2')"
+        )
+    entries = [e for e in list(status_converged.get("entries") or []) if isinstance(e, dict)]
+    fallback_rows: list[str] = []
+    for row in entries:
+        reason_bits = [
+            str(row.get("status_reason_detail") or "").lower(),
+            str(row.get("reason_detail") or "").lower(),
+            str(row.get("runtime_fallback_detail") or "").lower(),
+        ]
+        runtime_provider = row.get("runtime")
+        if isinstance(runtime_provider, dict):
+            provider = runtime_provider.get("provider")
+            if isinstance(provider, dict):
+                reason_bits.append(str(provider.get("runtime_fallback_detail") or "").lower())
+                reason_bits.append(str(provider.get("runtime_fallback") or "").lower())
+                reason_bits.append(str(provider.get("cuda_ptx_origin") or "").lower())
+                reason_bits.append(str(provider.get("rvv_kernel_src_origin") or "").lower())
+        reason_detail = " | ".join([x for x in reason_bits if x])
+        has_runtime_fallback = bool(row.get("runtime_fallback"))
+        if (
+            has_runtime_fallback
+            or "intent_json" in reason_detail
+            or "cpp_codegen" in reason_detail
+            or "cpp_driver" in reason_detail
+            or "nvrtc_fallback_from_llvm" in reason_detail
+            or "compat_cpp_codegen" in reason_detail
+        ):
+            fallback_rows.append(str(row.get("kernel") or row.get("semantic_op") or "unknown"))
+    if fallback_rows:
+        return False, f"runtime fallback markers found in status_converged: {sorted(set(fallback_rows))[:8]}"
+    return True, "mlir-native execution and contract schema checks passed"
 
 
 def _stage_map(run_summary: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -422,10 +686,46 @@ def main() -> None:
         help="Require gpu perf per-device status to be all-ok when gpu_perf profile is evaluated.",
     )
     ap.add_argument(
+        "--require-gpu-perf-policy-audit",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require gpu perf gate to use policy-file governance (no CLI excludes) and consistent policy metadata.",
+    )
+    ap.add_argument(
+        "--gpu-perf-policy-json",
+        type=Path,
+        default=(ROOT / "workflow" / "flaggems" / "state" / "gpu_perf_policy.json"),
+        help="Expected gpu perf policy file path used by run_summary/status_converged/gpu_perf_graph.",
+    )
+    ap.add_argument(
         "--gpu-perf-threshold",
         type=float,
         default=0.80,
         help="Pass-through gpu perf ratio threshold for check_batch_gate (default: 0.80).",
+    )
+    ap.add_argument(
+        "--require-gpu-perf-key-kernel-baseline",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require key-kernel relative performance against frozen gpu_perf baseline graph.",
+    )
+    ap.add_argument(
+        "--gpu-perf-key-kernel-min-ratio",
+        type=float,
+        default=0.97,
+        help="Minimum current/baseline ratio for key kernels (default: 0.97).",
+    )
+    ap.add_argument(
+        "--gpu-perf-key-kernel",
+        action="append",
+        default=[],
+        help="Override key kernel list for baseline-ratio gate (repeatable).",
+    )
+    ap.add_argument(
+        "--gpu-perf-baseline-json",
+        type=Path,
+        default=None,
+        help="Optional override path for frozen gpu_perf_graph baseline JSON.",
     )
     ap.add_argument(
         "--require-mlir-fresh-on-head",
@@ -444,6 +744,12 @@ def main() -> None:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Require LLVM artifact evidence for MLIR migration runs.",
+    )
+    ap.add_argument(
+        "--require-mlir-native-execution",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require run_summary/status_converged to report mlir_native execution + contract v2.",
     )
     ap.add_argument(
         "--max-total-regression-pct",
@@ -492,6 +798,14 @@ def main() -> None:
         checks.append(_check(f"exists::{_to_repo_rel(p)}", p.is_file(), "file exists" if p.is_file() else "missing file"))
     for p in (args.registry, args.feature_list, args.run_summary, args.status_converged):
         checks.append(_check(f"exists::{_to_repo_rel(p)}", p.is_file(), "file exists" if p.is_file() else "missing file"))
+    if bool(args.require_gpu_perf_policy_audit) and ("gpu_perf" in profiles):
+        checks.append(
+            _check(
+                f"exists::{_to_repo_rel(args.gpu_perf_policy_json)}",
+                args.gpu_perf_policy_json.is_file(),
+                "file exists" if args.gpu_perf_policy_json.is_file() else "missing file",
+            )
+        )
     if (
         bool(args.require_coverage_fresh_on_head)
         or bool(args.require_coverage_categories_complete)
@@ -563,11 +877,33 @@ def main() -> None:
         checks.append(_check("mlir_toolchain_required", tc_ok, tc_detail))
 
     run_summary_payload: dict[str, Any] = {}
+    status_converged_payload: dict[str, Any] = {}
+    if args.status_converged.is_file():
+        status_converged_payload = load_json(args.status_converged)
     if args.run_summary.is_file():
         run_summary_payload = load_json(args.run_summary)
         if bool(args.require_mlir_llvm_artifact_complete) and ("mlir_migration" in profiles):
             llvm_ok, llvm_detail = _validate_mlir_llvm_artifact_complete(run_summary_payload)
             checks.append(_check("mlir_llvm_artifact_complete", llvm_ok, llvm_detail))
+        if bool(args.require_mlir_native_execution) and (("gpu_perf" in profiles) or ("mlir_migration" in profiles)):
+            native_ok, native_detail = _validate_mlir_native_execution(run_summary_payload, status_converged_payload)
+            checks.append(_check("mlir_native_execution", native_ok, native_detail))
+        if bool(args.require_gpu_perf_policy_audit) and ("gpu_perf" in profiles):
+            policy_ok, policy_detail = _validate_gpu_perf_policy_audit(
+                run_summary_payload,
+                status_converged_payload,
+                expected_policy_path=args.gpu_perf_policy_json,
+            )
+            checks.append(_check("gpu_perf_policy_audit", policy_ok, policy_detail))
+        if bool(args.require_gpu_perf_key_kernel_baseline) and ("gpu_perf" in profiles):
+            key_ok, key_detail = _validate_gpu_perf_key_kernel_baseline(
+                run_summary_payload,
+                expected_policy_path=args.gpu_perf_policy_json,
+                key_kernels_override=_normalize_kernel_list(args.gpu_perf_key_kernel),
+                baseline_graph_override=args.gpu_perf_baseline_json,
+                min_relative_override=float(args.gpu_perf_key_kernel_min_ratio),
+            )
+            checks.append(_check("gpu_perf_key_kernel_baseline", key_ok, key_detail))
         if _is_full_coverage_run(run_summary_payload):
             stage_row = _stage_map(run_summary_payload).get("stage_timing_breakdown") or {}
             stage_path_raw = str(stage_row.get("json_path") or "").strip()
@@ -687,6 +1023,10 @@ def main() -> None:
             cmd.append("--require-mlir-llvm-artifact-complete")
         else:
             cmd.append("--no-require-mlir-llvm-artifact-complete")
+        if bool(args.require_mlir_native_execution) and profile in {"gpu_perf", "mlir_migration"}:
+            cmd.append("--require-mlir-native-execution")
+        else:
+            cmd.append("--no-require-mlir-native-execution")
         if profile == "coverage" and bool(args.require_coverage_categories_complete):
             is_batch_aggregate = str(run_summary_payload.get("full196_evidence_kind") or "") == "batch_aggregate"
             if is_batch_aggregate and _is_full_coverage_run(run_summary_payload):
@@ -720,8 +1060,7 @@ def main() -> None:
         )
 
     if args.status_converged.is_file():
-        converged = load_json(args.status_converged)
-        entries = [e for e in (converged.get("entries") or []) if isinstance(e, dict)]
+        entries = [e for e in (status_converged_payload.get("entries") or []) if isinstance(e, dict)]
         has_unknown_reason = any(str(e.get("reason_code") or "") in {"", "unknown"} for e in entries)
         checks.append(
             _check(

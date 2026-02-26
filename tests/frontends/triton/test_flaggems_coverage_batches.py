@@ -847,3 +847,166 @@ def test_aggregate_coverage_batches_fallback_merges_mlir_from_pipeline_reports(t
     assert stage_payload["mlir"]["available"] is True
     assert stage_payload["mlir"]["kernel_count"] == 1
     assert stage_payload["mlir"]["totals_ms"]["mlir_total_ms"] == 15.0
+
+
+def test_materialize_family_outputs_emits_mlir_and_runtime_fallback_summary_fields(tmp_path: Path) -> None:
+    from scripts.flaggems.run_coverage_batches import _materialize_family_outputs
+
+    family_out = tmp_path / "family_f1"
+    family_out.mkdir(parents=True, exist_ok=True)
+    chunk_status = family_out / "chunk_001_status.json"
+    chunk_run_summary = family_out / "chunk_001_run_summary.json"
+
+    chunk_run_summary.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "mlir_llvm_artifact_complete": True,
+                "runtime_fallback_kernel_count": 1,
+                "runtime_fallback_kernels": ["k1"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    chunk_status.write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {"semantic_op": "op1", "status": "dual_pass", "reason_code": "ok"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    chunk_rows = [
+        {
+            "chunk": "chunk_001",
+            "ok": True,
+            "rc": 0,
+            "out_dir": str(family_out),
+            "run_summary_path": str(chunk_run_summary),
+            "status_converged_path": str(chunk_status),
+            "kernel_count": 1,
+            "kernels": ["k1"],
+        }
+    ]
+    family_ok, run_summary_path, _ = _materialize_family_outputs(
+        family="f1",
+        semantics=["op1"],
+        kernels=["k1"],
+        family_out=family_out,
+        chunk_rows=chunk_rows,
+    )
+    assert family_ok is True
+    payload = json.loads(run_summary_path.read_text(encoding="utf-8"))
+    assert bool(payload.get("mlir_llvm_artifact_complete")) is True
+    assert int(payload.get("runtime_fallback_kernel_count") or 0) == 1
+    assert list(payload.get("runtime_fallback_kernels") or []) == ["k1"]
+    chunk_payload = list(payload.get("chunk_runs") or [])[0]
+    assert bool(chunk_payload.get("mlir_llvm_artifact_complete")) is True
+    assert int(chunk_payload.get("runtime_fallback_kernel_count") or 0) == 1
+    assert list(chunk_payload.get("runtime_fallback_kernels") or []) == ["k1"]
+
+
+def test_aggregate_coverage_batches_recovers_mlir_and_fallback_from_chunk_runs(tmp_path: Path) -> None:
+    coverage_batches = tmp_path / "coverage_batches.json"
+    runs_root = tmp_path / "runs"
+    runs_root.mkdir(parents=True, exist_ok=True)
+    coverage_batches.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_coverage_batches_v1",
+                "family_order": ["f1"],
+                "batches": [
+                    {"family": "f1", "semantic_ops": ["op1"], "kernels": ["k1"], "semantic_count": 1, "kernel_count": 1},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    family_dir = runs_root / "family_f1"
+    family_dir.mkdir(parents=True, exist_ok=True)
+    chunk_dir = family_dir / "chunk_001"
+    chunk_dir.mkdir(parents=True, exist_ok=True)
+
+    chunk_run_summary = chunk_dir / "run_summary.json"
+    chunk_run_summary.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "mlir_llvm_artifact_complete": True,
+                "runtime_fallback_kernel_count": 1,
+                "runtime_fallback_kernels": ["k1"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (chunk_dir / "status_converged.json").write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {"semantic_op": "op1", "status": "dual_pass", "reason_code": "ok"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    # Family summary intentionally omits mlir/runtime fields; aggregate must recover
+    # from chunk_runs.
+    (family_dir / "run_summary.json").write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "scope_kernels": ["k1"],
+                "chunk_runs": [
+                    {
+                        "chunk": "chunk_001",
+                        "ok": True,
+                        "rc": 0,
+                        "out_dir": str(chunk_dir),
+                        "run_summary_path": str(chunk_run_summary),
+                        "status_converged_path": str(chunk_dir / "status_converged.json"),
+                        "kernel_count": 1,
+                        "kernels": ["k1"],
+                    }
+                ],
+                "stages": [
+                    {"stage": "coverage_integrity", "ok": True, "json_path": str(runs_root / "coverage_integrity.json")},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (family_dir / "status_converged.json").write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {"semantic_op": "op1", "status": "dual_pass", "reason_code": "ok"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/aggregate_coverage_batches.py",
+            "--coverage-batches",
+            str(coverage_batches),
+            "--runs-root",
+            str(runs_root),
+            "--require-dual-pass-total",
+            "1",
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    run_summary = json.loads((runs_root / "run_summary.json").read_text(encoding="utf-8"))
+    assert bool(run_summary.get("mlir_llvm_artifact_complete")) is True
+    assert int(run_summary.get("mlir_llvm_artifact_families_expected") or 0) == 1
+    assert int(run_summary.get("mlir_llvm_artifact_families_completed") or 0) == 1
+    assert int(run_summary.get("runtime_fallback_kernel_count") or 0) == 1
+    assert list(run_summary.get("runtime_fallback_kernels") or []) == ["k1"]

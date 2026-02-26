@@ -41,6 +41,26 @@ def _load_json(path: Path | None) -> dict | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _resolve_artifact_path(path_raw: str, *, base_dir: Path) -> Path | None:
+    p = Path(str(path_raw).strip())
+    if not str(p):
+        return None
+    if p.is_absolute():
+        return p if p.is_file() else None
+    candidates = [
+        (base_dir / p),
+        (ROOT / p),
+    ]
+    for cand in candidates:
+        try:
+            resolved = cand.resolve()
+        except Exception:
+            resolved = cand
+        if resolved.is_file():
+            return resolved
+    return None
+
+
 def _load_result_map(summary: dict | None) -> tuple[dict[str, bool], dict[str, dict[str, Any]], bool, str | None]:
     if not isinstance(summary, dict):
         return {}, {}, False, None
@@ -70,7 +90,64 @@ def _provider_report_state(report_path: Path) -> dict[str, Any]:
     except Exception:
         return {"exists": True, "diff_ok": False, "parse_error": True}
     diff_ok = bool(((rep.get("diff") or {}).get("ok")))
-    return {"exists": True, "diff_ok": diff_ok}
+    state: dict[str, Any] = {
+        "exists": True,
+        "diff_ok": diff_ok,
+        "execution_engine": "",
+        "contract_schema_version": "",
+        "runtime_fallback": "",
+        "runtime_fallback_detail": "",
+    }
+    mlir = rep.get("mlir")
+    if not isinstance(mlir, dict):
+        return state
+    contract_path_raw = str(
+        mlir.get("downstream_llvm_contract_path")
+        or mlir.get("downstream_contract_path")
+        or mlir.get("downstream_cuda_llvm_contract_path")
+        or mlir.get("downstream_rvv_llvm_contract_path")
+        or ""
+    ).strip()
+    if not contract_path_raw:
+        return state
+    contract_path = _resolve_artifact_path(contract_path_raw, base_dir=report_path.parent)
+    if contract_path is None:
+        return state
+    try:
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    except Exception:
+        return state
+    if not isinstance(contract, dict):
+        return state
+    schema = str(contract.get("schema_version") or "").strip()
+    if schema:
+        state["contract_schema_version"] = schema
+    if schema.startswith("intent_mlir_backend_contract_"):
+        state["execution_engine"] = "mlir_native"
+    artifacts = dict(contract.get("artifacts") or {})
+    executable = dict(contract.get("executable") or {})
+    invocation = dict(executable.get("invocation") or {})
+    fallback_tags: list[str] = []
+    runtime_fallback = str(artifacts.get("runtime_fallback") or invocation.get("runtime_fallback") or "").strip()
+    if runtime_fallback:
+        fallback_tags.append(runtime_fallback)
+    cuda_ptx_origin = str(artifacts.get("cuda_ptx_origin") or "").strip()
+    if cuda_ptx_origin:
+        state["cuda_ptx_origin"] = cuda_ptx_origin
+        if cuda_ptx_origin != "llvm_llc":
+            fallback_tags.append(f"cuda_ptx_origin={cuda_ptx_origin}")
+    rvv_src_origin = str(artifacts.get("rvv_kernel_src_origin") or "").strip()
+    if rvv_src_origin:
+        state["rvv_kernel_src_origin"] = rvv_src_origin
+        if rvv_src_origin != "llvm_llc":
+            fallback_tags.append(f"rvv_kernel_src_origin={rvv_src_origin}")
+    intent_recovery_fallback = str(artifacts.get("intent_recovery_fallback") or "").strip()
+    if intent_recovery_fallback:
+        fallback_tags.append(f"intent_recovery_fallback={intent_recovery_fallback}")
+    if fallback_tags:
+        state["runtime_fallback"] = "yes"
+        state["runtime_fallback_detail"] = ",".join(sorted(set(fallback_tags)))
+    return state
 
 
 def _derive_status(
@@ -191,12 +268,33 @@ def _entry_evidence_hash(*, kernel: str | None, provider_state: dict[str, Any], 
         "kernel": (kernel or ""),
         "provider_exists": bool(provider_state.get("exists")),
         "provider_diff_ok": bool(provider_state.get("diff_ok")),
+        "provider_runtime_fallback": str(provider_state.get("runtime_fallback_detail") or ""),
         "rvv_state": str(rvv_state),
         "cuda_state": str(cuda_state),
         "reason_code": str(reason_code),
     }
     txt = json.dumps(payload, sort_keys=True, ensure_ascii=False)
     return hashlib.sha1(txt.encode("utf-8")).hexdigest()
+
+
+def _forbidden_runtime_fallback_tags(detail: str) -> list[str]:
+    """
+    Return fallback tags that violate strict MLIR hard-cut semantics.
+
+    compat_cpp_codegen is legacy compatibility fallback and must not be treated
+    as a valid converged path.
+    """
+    raw = str(detail or "").strip()
+    if not raw:
+        return []
+    out: list[str] = []
+    for token in str(raw).split(","):
+        tag = str(token).strip()
+        if not tag:
+            continue
+        if "compat_cpp_codegen" in tag:
+            out.append(tag)
+    return sorted(set(out))
 
 
 def main() -> None:
@@ -209,6 +307,8 @@ def main() -> None:
     ap.add_argument("--intentir-miss-policy", type=str, default="")
     ap.add_argument("--rvv-remote", action=argparse.BooleanOptionalAction, default=None)
     ap.add_argument("--cuda-runtime-backend", type=str, default="")
+    ap.add_argument("--execution-engine", type=str, default="")
+    ap.add_argument("--contract-schema-version", type=str, default="")
     ap.add_argument(
         "--scope-kernels",
         action="append",
@@ -253,6 +353,10 @@ def main() -> None:
     cuda_map, cuda_detail_map, cuda_skipped, cuda_skip_reason = _load_result_map(cuda_summary)
 
     converged_entries: list[dict[str, Any]] = []
+    observed_execution_engines: set[str] = set()
+    observed_contract_schemas: set[str] = set()
+    runtime_fallback_kernels: set[str] = set()
+    runtime_fallback_forbidden_kernels: set[str] = set()
     counts_global: dict[str, int] = {}
     counts_scoped: dict[str, int] = {}
     counts_scoped_active: dict[str, int] = {}
@@ -266,6 +370,12 @@ def main() -> None:
         provider_state = {"exists": False, "diff_ok": False}
         if kernel is not None:
             provider_state = _provider_report_state(args.provider_report_dir / f"{kernel}.json")
+        provider_engine = str(provider_state.get("execution_engine") or "").strip()
+        if provider_engine:
+            observed_execution_engines.add(provider_engine)
+        provider_schema = str(provider_state.get("contract_schema_version") or "").strip()
+        if provider_schema:
+            observed_contract_schemas.add(provider_schema)
 
         def _runtime_state(result_map: dict[str, bool], *, skipped: bool) -> str:
             if kernel is None:
@@ -287,6 +397,12 @@ def main() -> None:
             rvv=rvv_state,
             cuda=cuda_state,
         )
+        runtime_fallback_detail = str(provider_state.get("runtime_fallback_detail") or "").strip()
+        forbidden_fallback_tags = _forbidden_runtime_fallback_tags(runtime_fallback_detail)
+        if status == "dual_pass" and forbidden_fallback_tags:
+            status = "blocked_backend"
+            reason = "runtime_fallback_forbidden"
+            runtime_fallback_forbidden_kernels.add(str(kernel or semantic_op or "unknown"))
         out["status"] = status
         out["status_reason"] = reason
         rvv_detail = dict(rvv_detail_map.get(kernel, {})) if kernel is not None else {}
@@ -317,6 +433,12 @@ def main() -> None:
             "rvv": rvv_state,
             "cuda": cuda_state,
         }
+        out["runtime_fallback"] = bool(runtime_fallback_detail)
+        out["runtime_fallback_detail"] = runtime_fallback_detail
+        out["runtime_fallback_forbidden"] = bool(forbidden_fallback_tags)
+        out["runtime_fallback_forbidden_tags"] = list(forbidden_fallback_tags)
+        if runtime_fallback_detail:
+            runtime_fallback_kernels.add(str(kernel or semantic_op or "unknown"))
         provider_exists = bool(provider_state.get("exists"))
         rvv_has_result = rvv_state != "unknown"
         cuda_has_result = cuda_state != "unknown"
@@ -367,15 +489,33 @@ def main() -> None:
     scoped_entries_kernel_alias = [e for e in converged_entries if bool(e.get("in_scope_kernel_alias"))]
     determinability_ok_count = sum(1 for e in converged_entries if bool(e.get("determinability")))
     artifact_complete_count = sum(1 for e in converged_entries if bool(e.get("artifact_complete")))
+    execution_engine_hint = str(args.execution_engine or "").strip()
+    contract_schema_hint = str(args.contract_schema_version or "").strip()
+    execution_engine = execution_engine_hint
+    if not execution_engine:
+        if len(observed_execution_engines) == 1:
+            execution_engine = next(iter(observed_execution_engines))
+        elif len(observed_execution_engines) > 1:
+            execution_engine = "mixed"
+    contract_schema_version = contract_schema_hint
+    if not contract_schema_version:
+        if len(observed_contract_schemas) == 1:
+            contract_schema_version = next(iter(observed_contract_schemas))
+        elif len(observed_contract_schemas) > 1:
+            contract_schema_version = "mixed"
 
     result = {
         "schema_version": "flaggems_registry_converged_v3",
         "repo": repo_state(root=ROOT),
+        "execution_engine": execution_engine,
+        "contract_schema_version": contract_schema_version,
         "invocation": {
             "intentir_mode": str(args.intentir_mode),
             "miss_policy": str(args.intentir_miss_policy),
             "rvv_remote": (None if args.rvv_remote is None else bool(args.rvv_remote)),
             "cuda_runtime_backend": str(args.cuda_runtime_backend),
+            "execution_engine": execution_engine,
+            "contract_schema_version": contract_schema_version,
             "scope_enabled": bool(scope_enabled),
             "scope_mode": scope_mode,
             "scope_kernels": list(scope_kernels),
@@ -403,6 +543,10 @@ def main() -> None:
         "artifact_complete_count": int(artifact_complete_count),
         "determinability_ratio": (float(determinability_ok_count) / float(len(converged_entries)) if converged_entries else 0.0),
         "artifact_complete_ratio": (float(artifact_complete_count) / float(len(converged_entries)) if converged_entries else 0.0),
+        "runtime_fallback_kernel_count": int(len(runtime_fallback_kernels)),
+        "runtime_fallback_kernels": sorted(runtime_fallback_kernels),
+        "runtime_fallback_forbidden_kernel_count": int(len(runtime_fallback_forbidden_kernels)),
+        "runtime_fallback_forbidden_kernels": sorted(runtime_fallback_forbidden_kernels),
         "entries": converged_entries,
         "scoped_entries": scoped_entries,
         "scoped_entries_active": scoped_entries_active,
