@@ -40,6 +40,7 @@ from frontends.triton.contract import evaluate_contract_v2
 from verify.metamorphic import run_bounded_exhaustive, run_metamorphic_suite
 from verify.mutation import run_mutation_kill
 from verify.tolerances import infer_tolerances
+from pipeline.common.llvm_cache import discover_cached_downstream_llvm_module_path
 from pipeline.common.strict_policy import enrich_frontend_report_with_strict_fields
 from pipeline.triton.execution_policy import ExecutionPathPolicy, make_policy_from_legacy_flags
 from pipeline.triton.providers import get_provider_plugin
@@ -320,9 +321,13 @@ def _emit_mlir_shadow_artifacts(
                         pass
                 try:
                     mid_mod.meta = dict(mid_mod.meta or {})
-                    mid_mod.meta["prelowered_llvm_ir_path"] = str(
-                        out_dir / f"{spec_name}.intentir.intentdialect.{llvm_pipeline}.mlir"
+                    cached_llvm_path = discover_cached_downstream_llvm_module_path(
+                        spec_name=str(spec_name),
+                        llvm_pipeline=str(llvm_pipeline),
+                        current_out_dir=out_dir,
                     )
+                    if cached_llvm_path:
+                        mid_mod.meta["prelowered_llvm_ir_path"] = str(cached_llvm_path)
                 except Exception:
                     pass
                 llvm_mod, llvm_trace = run_mlir_pipeline(
@@ -435,9 +440,13 @@ def _emit_mlir_shadow_artifacts(
                 try:
                     try:
                         mid_mod.meta = dict(mid_mod.meta or {})
-                        mid_mod.meta["prelowered_llvm_ir_path"] = str(
-                            out_dir / f"{spec_name}.intentir.intentdialect.{extra_pipeline}.mlir"
+                        cached_extra_llvm_path = discover_cached_downstream_llvm_module_path(
+                            spec_name=str(spec_name),
+                            llvm_pipeline=str(extra_pipeline),
+                            current_out_dir=out_dir,
                         )
+                        if cached_extra_llvm_path:
+                            mid_mod.meta["prelowered_llvm_ir_path"] = str(cached_extra_llvm_path)
                     except Exception:
                         pass
                     extra_mod, extra_trace = run_mlir_pipeline(

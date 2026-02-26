@@ -21,6 +21,7 @@ from frontends.common.obligations import O3_MASK_IMPLIES_INBOUNDS, evaluate_obli
 from pipeline import registry as pipeline_registry
 from pipeline.interfaces import FrontendConstraints
 from pipeline.mlir_contract_artifacts import emit_backend_contract_artifacts
+from pipeline.common.llvm_cache import discover_cached_downstream_llvm_module_path
 from pipeline.common.strict_policy import enrich_frontend_report_with_strict_fields
 from verify.diff_runner import run_diff
 from verify.gen_cases import GeneratedCases, TestCase, generate_cases_split
@@ -2768,9 +2769,13 @@ def run_pipeline_for_spec(
                         for k, v in dict(baseline_case.shapes).items()
                         if str(k).strip()
                     }
-                    mid_mod.meta["prelowered_llvm_ir_path"] = str(
-                        out_dir / f"{spec.name}.intentir.intentdialect.{llvm_pipeline}.mlir"
+                    cached_llvm_path = discover_cached_downstream_llvm_module_path(
+                        spec_name=str(spec.name),
+                        llvm_pipeline=str(llvm_pipeline),
+                        current_out_dir=out_dir,
                     )
+                    if cached_llvm_path:
+                        mid_mod.meta["prelowered_llvm_ir_path"] = str(cached_llvm_path)
                     llvm_mod, llvm_trace = run_mlir_pipeline(
                         mid_mod,
                         str(llvm_pipeline),
