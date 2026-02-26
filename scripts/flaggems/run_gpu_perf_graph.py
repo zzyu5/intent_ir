@@ -1969,13 +1969,38 @@ def main() -> None:
     _dump_json(gpu_perf_json, gpu_perf_payload)
 
     status_entries = _to_status_entries(all_rows, threshold=float(args.threshold))
+    status_runtime_fallback_kernels = sorted(
+        {
+            str(row.get("kernel") or row.get("semantic_op") or "").strip()
+            for row in list(status_entries or [])
+            if bool(row.get("runtime_fallback"))
+            and str(row.get("kernel") or row.get("semantic_op") or "").strip()
+        }
+    )
+    status_runtime_fallback_forbidden_kernels = sorted(
+        {
+            str(row.get("kernel") or row.get("semantic_op") or "").strip()
+            for row in list(status_entries or [])
+            if bool(row.get("runtime_fallback_forbidden"))
+            and str(row.get("kernel") or row.get("semantic_op") or "").strip()
+        }
+    )
+    strict_mode = bool(strict_fallback_enabled())
+    fallback_policy = ("strict" if strict_mode else "legacy_compatible")
     status_payload = {
         "schema_version": "flaggems_status_converged_v3",
         "generated_at": _utc_now_iso(),
         "repo": repo_meta,
         "execution_engine": "mlir_native",
+        "strict_mode": bool(strict_mode),
+        "fallback_policy": str(fallback_policy),
         "contract_schema_version": "intent_mlir_backend_contract_v2",
-        "invocation": dict(invocation_meta),
+        "invocation": {
+            **dict(invocation_meta),
+            "strict_mode": bool(strict_mode),
+            "fallback_policy": str(fallback_policy),
+            "contract_schema_version": "intent_mlir_backend_contract_v2",
+        },
         "scope_enabled": False,
         "entries": status_entries,
         "counts_global": _counts(status_entries),
@@ -1986,6 +2011,9 @@ def main() -> None:
         "scoped_entries_count": int(len(status_entries)),
         "scoped_entries_active_count": int(len(status_entries)),
         "scoped_entries_kernel_alias_count": int(len(status_entries)),
+        "runtime_fallback_kernel_count": int(len(status_runtime_fallback_kernels)),
+        "runtime_fallback_kernels": list(status_runtime_fallback_kernels),
+        "runtime_fallback_forbidden_kernel_count": int(len(status_runtime_fallback_forbidden_kernels)),
     }
     status_path = _dump_json(out_root / "status_converged.json", status_payload)
 

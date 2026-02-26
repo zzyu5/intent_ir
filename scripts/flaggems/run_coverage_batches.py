@@ -398,6 +398,14 @@ def _materialize_family_outputs(
     status_payload = {
         "schema_version": "flaggems_status_converged_v3",
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "strict_mode": bool(strict_mode),
+        "fallback_policy": str(fallback_policy),
+        "contract_schema_version": str(CONTRACT_SCHEMA_VERSION),
+        "invocation": {
+            "strict_mode": bool(strict_mode),
+            "fallback_policy": str(fallback_policy),
+            "contract_schema_version": str(CONTRACT_SCHEMA_VERSION),
+        },
         "scope_enabled": False,
         "entries": final_entries,
         "counts_global": _counts(final_entries),
@@ -408,6 +416,9 @@ def _materialize_family_outputs(
         "scoped_entries_count": int(len(final_entries)),
         "scoped_entries_active_count": int(len(final_entries)),
         "scoped_entries_kernel_alias_count": int(len(final_entries)),
+        "runtime_fallback_kernel_count": int(runtime_fallback_kernel_count),
+        "runtime_fallback_kernels": list(runtime_fallback_kernel_list),
+        "runtime_fallback_forbidden_kernel_count": 0,
     }
     status_path.write_text(json.dumps(status_payload, indent=2, ensure_ascii=False), encoding="utf-8")
     run_payload = {

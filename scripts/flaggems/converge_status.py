@@ -399,7 +399,7 @@ def main() -> None:
         )
         runtime_fallback_detail = str(provider_state.get("runtime_fallback_detail") or "").strip()
         forbidden_fallback_tags = _forbidden_runtime_fallback_tags(runtime_fallback_detail)
-        if status == "dual_pass" and forbidden_fallback_tags:
+        if forbidden_fallback_tags:
             status = "blocked_backend"
             reason = "runtime_fallback_forbidden"
             runtime_fallback_forbidden_kernels.add(str(kernel or semantic_op or "unknown"))

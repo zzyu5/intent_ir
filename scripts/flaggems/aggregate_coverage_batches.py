@@ -919,16 +919,41 @@ def main() -> None:
     }
     _dump_json(out_stage_timing, stage_timing_payload)
 
+    strict_mode = bool(strict_fallback_enabled())
+    fallback_policy = "strict" if strict_mode else "legacy_compatible"
+    status_runtime_fallback_kernels = sorted(
+        {
+            str(row.get("kernel") or row.get("semantic_op") or "").strip()
+            for row in list(final_entries or [])
+            if bool(row.get("runtime_fallback"))
+            and str(row.get("kernel") or row.get("semantic_op") or "").strip()
+        }
+    )
+    status_runtime_fallback_forbidden_kernels = sorted(
+        {
+            str(row.get("kernel") or row.get("semantic_op") or "").strip()
+            for row in list(final_entries or [])
+            if bool(row.get("runtime_fallback_forbidden"))
+            and str(row.get("kernel") or row.get("semantic_op") or "").strip()
+        }
+    )
+
     status_payload = {
         "schema_version": "flaggems_status_converged_v3",
         "generated_at": _utc_now_iso(),
         "repo": repo_state(root=ROOT),
+        "strict_mode": bool(strict_mode),
+        "fallback_policy": str(fallback_policy),
+        "contract_schema_version": str(CONTRACT_SCHEMA_VERSION),
         "invocation": {
             "intentir_mode": str(args.intentir_mode),
             "miss_policy": str(args.intentir_miss_policy),
             "execution_ir": str(args.execution_ir),
             "rvv_remote": bool(args.run_rvv_remote),
             "cuda_runtime_backend": str(args.cuda_runtime_backend),
+            "strict_mode": bool(strict_mode),
+            "fallback_policy": str(fallback_policy),
+            "contract_schema_version": str(CONTRACT_SCHEMA_VERSION),
         },
         "coverage": {
             "mode": "category_batches",
@@ -948,6 +973,9 @@ def main() -> None:
         "coverage_batches_expected": categories_expected,
         "coverage_batches_completed": categories_completed,
         "coverage_batches_failed": categories_failed,
+        "runtime_fallback_kernel_count": int(len(status_runtime_fallback_kernels)),
+        "runtime_fallback_kernels": list(status_runtime_fallback_kernels),
+        "runtime_fallback_forbidden_kernel_count": int(len(status_runtime_fallback_forbidden_kernels)),
     }
     _dump_json(out_status, status_payload)
 
@@ -1029,8 +1057,6 @@ def main() -> None:
 
     runtime_fallback_kernel_list = sorted(runtime_fallback_kernels)
     runtime_fallback_kernel_count = int(len(runtime_fallback_kernel_list))
-    strict_mode = bool(strict_fallback_enabled())
-    fallback_policy = "strict" if strict_mode else "legacy_compatible"
     run_summary_payload = {
         "ok": bool(coverage_integrity_ok),
         "suite": "coverage",
