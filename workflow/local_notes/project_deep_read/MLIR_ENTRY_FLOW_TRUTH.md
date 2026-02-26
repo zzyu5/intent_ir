@@ -186,3 +186,103 @@
 - full196 196/196 与 gpu_perf 159/159 的强证据在 `20260226` 目录内成立，但绑定 commit 是 `34e839...`（见各 run_summary 的 `repo.head_commit`）。
 - 当前代码 HEAD 是 `71ab942...`，因此要回答“当前 HEAD 是否已验证”必须重新刷新 state/或重跑最小验证。
 
+## 11. FlagGems 到底是怎么调用起来的（端到端）
+
+### 11.1 从 suite 到每个 kernel 的真实调用链
+
+1. `scripts/intentir.py suite --suite flaggems-full196` 进入 coverage 批次执行，最终每个 chunk 调 `scripts/flaggems/run_multibackend_matrix.py`：`scripts/flaggems/run_coverage_batches.py:776-828`。
+2. `run_multibackend_matrix.py` 的 pipeline 阶段固定调用 `scripts/triton/flaggems_full_pipeline_verify.py`：`scripts/flaggems/run_multibackend_matrix.py:769-807`。
+3. `flaggems_full_pipeline_verify.py` 选择 specs（smoke/coverage），并对每个 spec 调统一 Triton pipeline：`run_pipeline_for_spec(...)`：`scripts/triton/flaggems_full_pipeline_verify.py:40-49`、`scripts/triton/flaggems_full_pipeline_verify.py:201-208`。
+
+### 11.2 original vs intentir 两条路径如何分流
+
+1. `--flaggems-path original|intentir` + `--intentir-mode` 先由 `resolve_flaggems_execution(...)` 解析成执行策略：`pipeline/triton/providers/flaggems/execution.py:39-88`。
+2. 若 `original`，core 在 stage5 明确走 `traditional_provider_path`，不构造 IntentIR：`pipeline/triton/core.py:2951-2981`。
+3. 若 `intentir`，core 在 stage5 走“seed cache/LLM/确定性 fallback -> IntentIR -> MLIR -> backend contract”：`pipeline/triton/core.py:2987-3255`。
+
+结论：FlagGems 不是“旁路”；它是通过 Triton 统一 pipeline 的 provider 分支接入，按 `original|intentir` 明确分流。
+
+## 12. FlagGems 是怎么“拿到 Triton kernel”的
+
+### 12.1 kernel source 从哪里来
+
+1. 每个 FlagGems kernel 都是 `KernelSpec(name,module,attr,runner,...)`，例如 `add2d`：`pipeline/triton/providers/flaggems/specs.py:5875-5890`。
+2. `attr` 指向 `FLAGGEMS_*_SRC`，而这类对象由 `_LazyModuleSource` 按需 import `flag_gems.ops.*` 并读取模块源码文本：`pipeline/triton/providers/flaggems/specs.py:58-83`、`pipeline/triton/providers/flaggems/specs.py:85-90`。
+3. Triton adapter 在 stage2 直接 `str(_import_attr(spec.module, spec.attr))` 装入 descriptor 的 `source_text`：`frontends/triton/adapter.py:85-99`。
+
+### 12.2 TTIR 是怎么来的
+
+1. FlagGems runner 在 `with flag_gems.use_gems(include=[...])` 环境内执行 torch op（示例 add2d）：`pipeline/triton/providers/flaggems/specs.py:258-275`。
+2. core stage3 会先实际跑一次 runner 触发 Triton 编译与 dump，再扫描 TTIR：`pipeline/triton/core.py:2857-2864`、`pipeline/triton/core.py:2876`。
+3. adapter 也有兜底：若没拿到 TTIR，再补跑一次 runner 后重试：`frontends/triton/adapter.py:151-164`。
+
+结论：我们拿到 kernel 的方式是“源码上下文 + 一次真实运行触发的 TTIR dump”，不是手工直接抓某个预编译 kernel 对象。
+
+## 13. 与其他 triton/tilelang 路径到底有什么不同
+
+### 13.1 Triton 内部：native vs flaggems
+
+1. provider 注册只有 `native` 和 `flaggems`：`pipeline/triton/providers/registry.py:8-11`。
+2. 两者共用 `pipeline/triton/core.py`，区别在 spec/provider plugin：
+   - native spec 主要指向 `kernels.triton.ops.*`：`pipeline/triton/core.py:2275-2325`、`pipeline/triton/core.py:2393-2431`。
+   - flaggems spec 指向 `flag_gems.ops.*` 源码 lazy loader + FlagGems runner：`pipeline/triton/providers/flaggems/specs.py:5-10`、`pipeline/triton/providers/flaggems/specs.py:58-87`。
+3. flaggems 还加了 provider 级 canonical deterministic 逻辑（seed/normalize/repair），native 没这层专用策略：`pipeline/triton/providers/flaggems/plugin.py:166-167`、`pipeline/triton/providers/flaggems/plugin.py:231-249`。
+4. semantic op -> e2e spec 的映射由 FlagGems registry 维护：`pipeline/triton/providers/flaggems/registry.py:63-66`。
+
+### 13.2 TileLang 与 Triton 的差异
+
+1. TileLang 入口脚本是 `scripts/tilelang/full_pipeline_verify.py`，走 `pipeline.tilelang.core.run_pipeline_for_spec`，不是 Triton core：`scripts/tilelang/full_pipeline_verify.py:18`、`scripts/tilelang/full_pipeline_verify.py:44`。
+2. TileLang adapter 输入是 `tvm.tir.PrimFunc`，descriptor `source_kind=ir`，并可落盘 TVM JSON IR：`frontends/tilelang/adapter.py:43-51`、`frontends/tilelang/adapter.py:90-101`。
+3. TileLang 还可直接导出 CUDA/PTX（生成器路径）：`frontends/tilelang/cuda_export.py:59-76`。
+4. 但 TileLang core 仍会走 IntentIR -> MLIR -> backend contract 同类链路：`pipeline/tilelang/core.py:2714-2721`、`pipeline/tilelang/core.py:2770-2778`、`pipeline/tilelang/core.py:2872-2883`。
+
+结论：FlagGems 与 native Triton 的差别在 provider/spec/seed 策略；TileLang 的差别在 frontend IR 获取方式。后端 contract 执行面仍是后端分叉驱动，不是“统一执行器”。
+
+## 14. “我们的 MLIR”具体长什么样（文件形态 + 真实样例）
+
+### 14.1 产物命名与阶段
+
+`pipeline/triton/core.py` 的 `_emit_mlir_shadow_artifacts` 会产出以下核心文件：`pipeline/triton/core.py:238-267`、`pipeline/triton/core.py:280-330`、`pipeline/triton/core.py:406-415`。
+
+1. `*.intentir.intentdialect.mlir`：Intent dialect 初始模块。
+2. `*.intentir.intentdialect.midend.mlir`：midend 后模块。
+3. `*.intentir.intentdialect.downstream_{cuda|rvv}.mlir`：后端下游语义模块。
+4. `*.intentir.intentdialect.downstream_{cuda|rvv}_llvm.mlir` 与 `.ll`：LLVM 方言/文本 IR。
+5. `*.intentir.intentdialect.downstream_*_llvm.contract.json`：可执行 contract（schema v2）。
+
+contract 写出逻辑在 `emit_backend_contract_artifacts(...)`：`pipeline/mlir_contract_artifacts.py:1164-1189`、`pipeline/mlir_contract_artifacts.py:1222-1278`，文件名规则为 `*.intentir.intentdialect.{suffix}.contract.json`：`pipeline/mlir_contract_artifacts.py:1160`。
+
+### 14.2 真实样例（2026-02-26 full196 artifact）
+
+样例路径（vector_norm2d）：
+
+- `artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/family_norm_activation/chunk_002/pipeline_reports/vector_norm2d.intentir.intentdialect.mlir`
+- `artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/family_norm_activation/chunk_002/pipeline_reports/vector_norm2d.intentir.intentdialect.downstream_cuda_llvm.mlir`
+- `artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/family_norm_activation/chunk_002/pipeline_reports/vector_norm2d.intentir.intentdialect.downstream_cuda_llvm.contract.json`
+
+`intentdialect.mlir` 开头就是 Intent op（`intent.mul/reduce_sum/sqrt`）：
+
+```mlir
+module attributes {intent.dialect_version = "intent_dialect_v0"} {
+  intent.func @vector_norm2d() {
+    %sq = intent.mul(%inp, %inp) : !intent.tensor<?Mx?Nxf32>{layout="row_major"}
+    %sum_sq = intent.reduce_sum(%sq) {dims=[1], keepdims=false} : !intent.tensor<?Mxf32>{layout="row_major"}
+    %out = intent.sqrt(%sum_sq) : !intent.tensor<?Mxf32>{layout="row_major"}
+    intent.return %out
+  }
+}
+```
+
+`downstream_cuda_llvm.mlir` 在当前链路下是 LLVM IR 文本（示例含 `target triple = "nvptx64-nvidia-cuda"`）：
+
+- `artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/family_norm_activation/chunk_002/pipeline_reports/vector_norm2d.intentir.intentdialect.downstream_cuda_llvm.mlir`
+
+对应 contract 会写出执行来源与可执行产物路径，例如：
+
+1. `schema_version = intent_mlir_backend_contract_v2`
+2. `artifacts.cuda_ptx_origin = llvm_llc`
+3. `executable.format = cuda_ptx`
+
+见：
+
+- `artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3/family_norm_activation/chunk_002/pipeline_reports/vector_norm2d.intentir.intentdialect.downstream_cuda_llvm.contract.json`
