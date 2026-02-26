@@ -1,16 +1,14 @@
 {
-  "plan_version": "intentir_mlir_hard_cut_v1",
-  "generated_at": "2026-02-26T09:43:02Z",
-  "head_commit": "4c2b6b93701b1d1733b1c0ce56db58b514d0cc34",
+  "schema_version": "flaggems_refactor_context_v1",
+  "generated_at": "2026-02-26T10:09:17+00:00",
   "branch": "compiler-cleanup-v1",
+  "head_commit": "d92b0bb603867dea1a37079140f45b1e34163719",
+  "plan_version": "intentir_mlir_engineering_v1",
   "strict_defaults": {
     "execution_ir": "mlir",
     "fallback_policy": "strict",
-    "cuda_require_llvm_ptx": true
-  },
-  "cutover_scope": {
-    "remove_cuda_cpp_codegen": true,
-    "remove_rvv_compat_codegen": true,
-    "enforce_mlir_to_llvm_to_executable": true
+    "strict_mode": true,
+    "artifact_retention_mode": "minimal_baseline",
+    "backend_sequence": "cuda_then_rvv"
   }
 }
