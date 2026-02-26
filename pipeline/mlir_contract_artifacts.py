@@ -11,7 +11,6 @@ from typing import Any
 from intent_ir.mlir.module import IntentMLIRModule
 from intent_ir.mlir.passes.emit_cuda_contract import build_cuda_contract
 from intent_ir.mlir.passes.emit_rvv_contract import build_rvv_contract
-from intent_ir.mlir.convert_to_intent import to_intent
 from intent_ir.mlir.toolchain import detect_mlir_toolchain
 from pipeline.common.strict_policy import cuda_require_llvm_ptx
 
@@ -804,28 +803,7 @@ def _materialize_executable(
     shape_bindings: dict[str, int],
     fallback_intent_module: IntentMLIRModule | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    def _recover_intent() -> Any:
-        errors: list[str] = []
-        for cand_name, cand_mod in (
-            ("downstream_module", module),
-            ("fallback_midend_module", fallback_intent_module),
-        ):
-            if cand_mod is None:
-                continue
-            try:
-                return to_intent(cand_mod)
-            except Exception as e:
-                errors.append(f"{cand_name}:{type(e).__name__}:{e}")
-        raise RuntimeError("unable to recover intent for executable materialization: " + "; ".join(errors))
-
     if backend == "cuda":
-        from backends.cuda.codegen.cpp_driver import lower_intent_to_cuda_kernel_cpp  # noqa: PLC0415
-        from backends.cuda.runtime import (  # noqa: PLC0415
-            compile_cuda_ptx,
-            compile_cuda_ptx_nvcc,
-            compile_cuda_ptx_nvcc_dlto,
-        )
-
         module_text = str(module.module_text or "")
         if not _looks_like_llvm_ir(module_text):
             raise RuntimeError(
@@ -867,81 +845,17 @@ def _materialize_executable(
                 artifacts["cuda_ptx_entry_resolved"] = str(resolved_entry)
             return executable, artifacts
         except Exception as llc_err:
+            # Hard-cut: CUDA executable materialization must succeed via LLVM->PTX.
+            # No nvcc/nvrtc/cpp_codegen compatibility fallback is allowed.
             if bool(cuda_require_llvm_ptx()):
                 raise RuntimeError(
                     "cuda llvm->ptx materialization failed under strict LLVM PTX mode: "
                     f"{type(llc_err).__name__}: {llc_err}"
                 ) from llc_err
-            # Transitional fallback: if LLVM IR cannot produce loadable PTX yet,
-            # keep runtime on executable PTX by lowering recovered intent via CUDA codegen.
-            intent = _recover_intent()
-            lowered = lower_intent_to_cuda_kernel_cpp(intent, bindings=shape_bindings)
-            if not isinstance(lowered, dict):
-                raise RuntimeError(f"cuda llvm->ptx failed and fallback lower returned non-object: {llc_err}")
-            kernel_name = str(lowered.get("kernel_name") or intent.name or spec_name)
-            cuda_src = str(lowered.get("cuda_src") or "")
-            if not cuda_src.strip():
-                raise RuntimeError(f"cuda llvm->ptx failed and fallback cuda_src is empty: {llc_err}")
-            src_path = out_dir / f"{spec_name}.intentir.intentdialect.{suffix}.kernel.cu"
-            src_path.write_text(cuda_src, encoding="utf-8")
-            ptx_compiler = "nvcc_dlto"
-            runtime_fallback = "cpp_codegen_nvcc_dlto"
-            dlto_compile_error = ""
-            nvcc_compile_error = ""
-            ltoir_bytes: bytes | None = None
-            try:
-                ptx, ltoir_bytes = compile_cuda_ptx_nvcc_dlto(kernel_name=kernel_name, cuda_src=cuda_src)
-            except Exception as dlto_err:
-                dlto_compile_error = f"{type(dlto_err).__name__}: {dlto_err}"
-                ptx_compiler = "nvcc"
-                runtime_fallback = "cpp_codegen_nvcc"
-                try:
-                    ptx = compile_cuda_ptx_nvcc(kernel_name=kernel_name, cuda_src=cuda_src)
-                except Exception as nvcc_err:
-                    nvcc_compile_error = f"{type(nvcc_err).__name__}: {nvcc_err}"
-                    ptx_compiler = "nvrtc"
-                    runtime_fallback = "cpp_codegen_nvrtc"
-                    ptx = compile_cuda_ptx(kernel_name=kernel_name, cuda_src=cuda_src)
-            ptx_path.write_bytes(bytes(ptx))
-            ltoir_path = out_dir / f"{spec_name}.intentir.intentdialect.{suffix}.kernel.ltoir"
-            if isinstance(ltoir_bytes, (bytes, bytearray)) and bytes(ltoir_bytes):
-                ltoir_path.write_bytes(bytes(ltoir_bytes))
-            ptx_origin = "nvcc_dlto_fallback_from_llvm"
-            if ptx_compiler == "nvcc":
-                ptx_origin = "nvcc_fallback_from_llvm"
-            elif ptx_compiler == "nvrtc":
-                ptx_origin = "nvrtc_fallback_from_llvm"
-            executable = {
-                "format": "cuda_ptx",
-                "path": str(ptx_path),
-                "entry": str(kernel_name),
-                "target": "cuda",
-                "toolchain_fingerprint": str(ptx_compiler),
-                "invocation": {
-                    "shape_bindings": dict(shape_bindings),
-                    "ptx_compiler": str(ptx_compiler),
-                    "runtime_fallback": str(runtime_fallback),
-                    "launch": dict(lowered.get("launch") or {}),
-                    "output_names": [str(x) for x in list(lowered.get("output_names") or [])],
-                    "io_spec": dict(lowered.get("io_spec") or {}),
-                },
-            }
-            artifacts = {
-                "cuda_ptx_path": str(ptx_path),
-                "cuda_kernel_src_path": str(src_path),
-                "cuda_ptx_origin": str(ptx_origin),
-                "runtime_fallback": str(runtime_fallback),
-                "cuda_ptx_llc_error": f"{type(llc_err).__name__}: {llc_err}",
-                "cuda_llvm_target_triple": str(llvm_target_triple),
-                "cuda_llvm_origin": str(llvm_origin),
-            }
-            if ltoir_path.is_file():
-                artifacts["cuda_ltoir_path"] = str(ltoir_path)
-            if dlto_compile_error:
-                artifacts["cuda_ptx_nvcc_dlto_error"] = str(dlto_compile_error)
-            if nvcc_compile_error:
-                artifacts["cuda_ptx_nvcc_error"] = str(nvcc_compile_error)
-            return executable, artifacts
+            raise RuntimeError(
+                "cuda llvm->ptx materialization failed; legacy compatibility fallback is removed: "
+                f"{type(llc_err).__name__}: {llc_err}"
+            ) from llc_err
 
     if backend == "rvv":
         module_text = str(module.module_text or "")
@@ -1044,27 +958,6 @@ def _emit_contract(
     contract_fallback_error = ""
     contract_fallback_used = False
 
-    def _recover_cuda_launch_io_patch() -> dict[str, Any]:
-        from backends.cuda.codegen.cpp_driver import lower_intent_to_cuda_kernel_cpp  # noqa: PLC0415
-
-        bindings = _normalize_shape_bindings(shape_bindings)
-        if not bindings:
-            return {}
-        errs: list[str] = []
-        for cand_mod in (module, fallback_intent_module):
-            if cand_mod is None:
-                continue
-            try:
-                cand_intent = to_intent(cand_mod)
-                lowered = lower_intent_to_cuda_kernel_cpp(cand_intent, bindings=bindings)
-                if isinstance(lowered, dict):
-                    return dict(lowered)
-            except Exception as e:  # pragma: no cover - best-effort enrichment only
-                errs.append(f"{type(e).__name__}: {e}")
-        if errs:
-            return {"__recover_error__": "; ".join(errs)}
-        return {}
-
     if backend == "cuda":
         try:
             contract = build_cuda_contract(
@@ -1110,23 +1003,6 @@ def _emit_contract(
         artifacts["intent_recovery_fallback"] = "midend_module"
         artifacts["intent_recovery_error"] = str(contract_fallback_error)
         contract.artifacts = artifacts
-    if backend == "cuda":
-        patch = _recover_cuda_launch_io_patch()
-        if patch:
-            launch_patch = patch.get("launch") if isinstance(patch.get("launch"), dict) else {}
-            io_patch = patch.get("io_spec") if isinstance(patch.get("io_spec"), dict) else {}
-            out_patch = patch.get("output_names") if isinstance(patch.get("output_names"), list) else []
-            if launch_patch:
-                contract.launch = dict(launch_patch)
-            if io_patch:
-                contract.io_spec = dict(io_patch)
-            if out_patch and isinstance(contract.io_spec, dict):
-                contract.io_spec["outputs"] = [str(x) for x in out_patch if str(x).strip()]
-            recover_err = str(patch.get("__recover_error__") or "").strip()
-            if recover_err:
-                artifacts = dict(contract.artifacts or {})
-                artifacts["cuda_contract_launch_io_recover_error"] = str(recover_err)
-                contract.artifacts = artifacts
     if exec_artifacts:
         artifacts = dict(contract.artifacts or {})
         artifacts.update(exec_artifacts)

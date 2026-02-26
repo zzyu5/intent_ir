@@ -89,52 +89,36 @@ def lower_intent_to_llvm_dialect(module: IntentMLIRModule, *, backend: str | Non
 
     if selected_backend == "cuda":
         try:
-            try:
-                lowered = lower_intent_to_cuda_kernel_cpp(intent, bindings=shape_bindings)
-            except Exception as bind_err:
-                # Keep CUDA lowering on the CUDA path when the only blocker is missing
-                # symbolic bindings (for example output-only symbols like `U`).
-                retry_bindings = _ensure_symbolic_default_bindings(
-                    bindings=shape_bindings,
-                    intent=intent,
-                    error=bind_err,
-                )
-                if retry_bindings != shape_bindings:
-                    shape_bindings = dict(retry_bindings)
-                    lowered = lower_intent_to_cuda_kernel_cpp(intent, bindings=shape_bindings)
-                else:
-                    raise
-            kernel_name = str(lowered.get("kernel_name") or intent.name or "intent")
-            cuda_src = str(lowered.get("cuda_src") or "")
-            if not cuda_src.strip():
-                raise RuntimeError("empty cuda_src from cuda codegen")
-            llvm_ir_text, cc_path = _compile_cuda_src_to_device_llvm_ir(cuda_src, kernel_name=kernel_name)
-            out = _clone(module, module_text=llvm_ir_text)
-            out.meta["llvm_dialect_origin"] = "lowered_from_intent_cuda_codegen"
-            out.meta["llvm_shape_bindings"] = dict(shape_bindings)
-            out.meta["llvm_cuda_compiler"] = str(cc_path)
-            out.meta["llvm_cuda_kernel_name"] = str(kernel_name)
-            out.meta["llvm_target_triple"] = str(_llvm_target_triple(llvm_ir_text))
-            out.meta["llvm_dialect_backend"] = "cuda"
-            return out
-        except Exception as cuda_err:
-            # Compatibility fallback: keep previous RVV-style C->LLVM path alive.
-            c_src = lower_intent_to_c_with_files_cpp(
-                intent,
-                shape_bindings=shape_bindings,
-                atol=1e-3,
-                rtol=1e-3,
-                mode="verify",
+            lowered = lower_intent_to_cuda_kernel_cpp(intent, bindings=shape_bindings)
+        except Exception as bind_err:
+            # Keep CUDA lowering on the CUDA path when the only blocker is missing
+            # symbolic bindings (for example output-only symbols like `U`).
+            retry_bindings = _ensure_symbolic_default_bindings(
+                bindings=shape_bindings,
+                intent=intent,
+                error=bind_err,
             )
-            llvm_ir_text, cc_path = _compile_c_to_llvm_ir(c_src)
-            out = _clone(module, module_text=llvm_ir_text)
-            out.meta["llvm_dialect_origin"] = "lowered_from_intent_c_codegen_fallback_for_cuda"
-            out.meta["llvm_shape_bindings"] = dict(shape_bindings)
-            out.meta["llvm_c_compiler"] = str(cc_path)
-            out.meta["llvm_cuda_backend_error"] = f"{type(cuda_err).__name__}: {cuda_err}"
-            out.meta["llvm_dialect_backend"] = "cuda"
-            out.meta["llvm_target_triple"] = str(_llvm_target_triple(llvm_ir_text))
-            return out
+            if retry_bindings != shape_bindings:
+                shape_bindings = dict(retry_bindings)
+                lowered = lower_intent_to_cuda_kernel_cpp(intent, bindings=shape_bindings)
+            else:
+                raise RuntimeError(
+                    "cuda lowering failed and compatibility C fallback is removed: "
+                    f"{type(bind_err).__name__}: {bind_err}"
+                ) from bind_err
+        kernel_name = str(lowered.get("kernel_name") or intent.name or "intent")
+        cuda_src = str(lowered.get("cuda_src") or "")
+        if not cuda_src.strip():
+            raise RuntimeError("empty cuda_src from cuda codegen")
+        llvm_ir_text, cc_path = _compile_cuda_src_to_device_llvm_ir(cuda_src, kernel_name=kernel_name)
+        out = _clone(module, module_text=llvm_ir_text)
+        out.meta["llvm_dialect_origin"] = "lowered_from_intent_cuda_codegen"
+        out.meta["llvm_shape_bindings"] = dict(shape_bindings)
+        out.meta["llvm_cuda_compiler"] = str(cc_path)
+        out.meta["llvm_cuda_kernel_name"] = str(kernel_name)
+        out.meta["llvm_target_triple"] = str(_llvm_target_triple(llvm_ir_text))
+        out.meta["llvm_dialect_backend"] = "cuda"
+        return out
 
     c_src = lower_intent_to_c_with_files_cpp(
         intent,

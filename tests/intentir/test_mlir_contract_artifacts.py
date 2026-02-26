@@ -125,7 +125,7 @@ def test_emit_backend_contract_artifacts_materializes_cuda_executable_from_downs
     assert "fake llc ptx" in ptx_path.read_text(encoding="utf-8")
 
 
-def test_emit_backend_contract_artifacts_falls_back_to_cuda_nvrtc_when_llvm_materialization_fails(
+def test_emit_backend_contract_artifacts_reports_cuda_llvm_error_when_materialization_fails(
     monkeypatch, tmp_path: Path
 ) -> None:
     mid_mod = to_mlir(_add_intent("cuda_contract_exec_llc_fail"))
@@ -152,28 +152,6 @@ def test_emit_backend_contract_artifacts_falls_back_to_cuda_nvrtc_when_llvm_mate
             self.stderr = "llc failed"
 
     monkeypatch.setattr("pipeline.mlir_contract_artifacts.subprocess.run", lambda *_args, **_kwargs: _Proc())
-    monkeypatch.setattr(
-        "backends.cuda.codegen.cpp_driver.lower_intent_to_cuda_kernel_cpp",
-        lambda *_args, **_kwargs: {
-            "kernel_name": "k",
-            "cuda_src": 'extern "C" __global__ void k() {}',
-            "io_spec": {"tensors": {}, "outputs": ["C"]},
-            "launch": {"grid": [1, 1, 1], "block": [1, 1, 1], "shared_mem": 0},
-            "output_names": ["C"],
-        },
-    )
-    monkeypatch.setattr(
-        "backends.cuda.runtime.compile_cuda_ptx_nvcc_dlto",
-        lambda **_: (_ for _ in ()).throw(RuntimeError("nvcc dlto unavailable")),
-    )
-    monkeypatch.setattr(
-        "backends.cuda.runtime.compile_cuda_ptx_nvcc",
-        lambda **_: (_ for _ in ()).throw(RuntimeError("nvcc unavailable")),
-    )
-    monkeypatch.setattr(
-        "backends.cuda.runtime.compile_cuda_ptx",
-        lambda **_: b"// fake ptx\n.visible .entry k() { ret; }\n",
-    )
 
     _ = emit_backend_contract_artifacts(
         spec_name="cuda_contract_exec_llc_fail",
@@ -185,88 +163,10 @@ def test_emit_backend_contract_artifacts_falls_back_to_cuda_nvrtc_when_llvm_mate
         shape_bindings={"M": 4, "N": 4},
     )
 
-    assert "downstream_cuda_llvm_contract_path" in mlir_report
-    assert "downstream_contract_path" in mlir_report
-    payload = json.loads(Path(str(mlir_report["downstream_cuda_llvm_contract_path"])).read_text(encoding="utf-8"))
-    exe = dict(payload.get("executable") or {})
-    artifacts = dict(payload.get("artifacts") or {})
-    assert str(exe.get("format") or "") == "cuda_ptx"
-    assert str(artifacts.get("cuda_ptx_origin") or "") == "nvrtc_fallback_from_llvm"
-    assert "cuda_ptx_llc_error" in artifacts
-    assert "cuda_ptx_nvcc_dlto_error" in artifacts
-    assert "cuda_ptx_nvcc_error" in artifacts
-
-
-def test_emit_backend_contract_artifacts_prefers_nvcc_dlto_fallback_when_llvm_materialization_fails(
-    monkeypatch, tmp_path: Path
-) -> None:
-    mid_mod = to_mlir(_add_intent("cuda_contract_exec_llc_fail_dlto"))
-    llvm_mod = _llvm_module(mid_mod, kernel_name="k")
-    mlir_report: dict[str, object] = {}
-
-    monkeypatch.setattr(
-        "pipeline.mlir_contract_artifacts.detect_mlir_toolchain",
-        lambda: {
-            "tools": {
-                "llc": {
-                    "available": True,
-                    "path": "/fake/llc",
-                    "version": "llc 19.0.0",
-                }
-            }
-        },
-    )
-
-    class _Proc:
-        def __init__(self) -> None:
-            self.returncode = 1
-            self.stdout = ""
-            self.stderr = "llc failed"
-
-    monkeypatch.setattr("pipeline.mlir_contract_artifacts.subprocess.run", lambda *_args, **_kwargs: _Proc())
-    monkeypatch.setattr(
-        "backends.cuda.codegen.cpp_driver.lower_intent_to_cuda_kernel_cpp",
-        lambda *_args, **_kwargs: {
-            "kernel_name": "k",
-            "cuda_src": 'extern "C" __global__ void k() {}',
-            "io_spec": {"tensors": {}, "outputs": ["C"]},
-            "launch": {"grid": [1, 1, 1], "block": [1, 1, 1], "shared_mem": 0},
-            "output_names": ["C"],
-        },
-    )
-    monkeypatch.setattr(
-        "backends.cuda.runtime.compile_cuda_ptx_nvcc_dlto",
-        lambda **_: (b"// fake ptx\n.visible .entry k() { ret; }\n", b"FAKE_LTOIR"),
-    )
-    monkeypatch.setattr(
-        "backends.cuda.runtime.compile_cuda_ptx_nvcc",
-        lambda **_: (_ for _ in ()).throw(AssertionError("nvcc fallback should not run")),
-    )
-    monkeypatch.setattr(
-        "backends.cuda.runtime.compile_cuda_ptx",
-        lambda **_: (_ for _ in ()).throw(AssertionError("nvrtc fallback should not run")),
-    )
-
-    _ = emit_backend_contract_artifacts(
-        spec_name="cuda_contract_exec_llc_fail_dlto",
-        out_dir=tmp_path,
-        midend_module=mid_mod,
-        mlir_report=mlir_report,
-        downstream_llvm_name="downstream_cuda_llvm",
-        downstream_llvm_module=llvm_mod,
-        shape_bindings={"M": 4, "N": 4},
-    )
-
-    payload = json.loads(Path(str(mlir_report["downstream_cuda_llvm_contract_path"])).read_text(encoding="utf-8"))
-    exe = dict(payload.get("executable") or {})
-    artifacts = dict(payload.get("artifacts") or {})
-    inv = dict(exe.get("invocation") or {})
-    assert str(artifacts.get("cuda_ptx_origin") or "") == "nvcc_dlto_fallback_from_llvm"
-    assert str(artifacts.get("runtime_fallback") or "") == "cpp_codegen_nvcc_dlto"
-    assert str(inv.get("ptx_compiler") or "") == "nvcc_dlto"
-    ltoir_path = Path(str(artifacts.get("cuda_ltoir_path") or ""))
-    assert ltoir_path.is_file()
-    assert ltoir_path.read_bytes() == b"FAKE_LTOIR"
+    assert "downstream_cuda_llvm_contract_path" not in mlir_report
+    assert "downstream_contract_path" not in mlir_report
+    err = str(mlir_report.get("downstream_cuda_llvm_contract_error") or "")
+    assert "cuda llvm->ptx materialization failed" in err
 
 
 def test_emit_backend_contract_artifacts_materializes_rvv_executable_from_downstream_llvm(
@@ -543,18 +443,10 @@ def test_emit_backend_contract_artifacts_caps_launch_block_by_ptx_maxntid(monkey
     payload = json.loads(Path(str(mlir_report["downstream_cuda_llvm_contract_path"])).read_text(encoding="utf-8"))
     launch = dict(payload.get("launch") or {})
     artifacts = dict(payload.get("artifacts") or {})
-    block = list(launch.get("block") or [])
-    grid = list(launch.get("grid") or [])
-    old_block = list(artifacts.get("cuda_launch_block_adjusted_from") or [])
-    old_grid = list(artifacts.get("cuda_launch_grid_adjusted_from") or [])
-
-    assert block == [32, 1, 1]
+    # Hard-cut keeps LLVM/PTX metadata only; no runtime fallback markers should appear.
+    assert list(launch.get("block") or []) == [32, 1, 1]
     assert list(artifacts.get("cuda_ptx_maxntid") or []) == [32, 1, 1]
-    assert str(artifacts.get("cuda_launch_adjust_reason") or "") == "ptx_maxntid_cap"
-    assert len(old_block) == 3 and len(old_grid) == 3
-    assert old_block[0] > block[0]
-    expect_grid = [((max(1, int(old_grid[i])) * max(1, int(old_block[i]))) + int(block[i]) - 1) // int(block[i]) for i in range(3)]
-    assert grid == expect_grid
+    assert str(artifacts.get("runtime_fallback") or "") == ""
 
 
 def test_compile_llvm_ir_to_cuda_ptx_rewrites_math_intrinsics_for_nvptx(monkeypatch, tmp_path: Path) -> None:

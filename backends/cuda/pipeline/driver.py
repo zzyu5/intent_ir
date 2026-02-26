@@ -8,10 +8,8 @@ legalize -> shape_infer -> schedule -> emit -> compile -> launch.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import os
 from pathlib import Path
 import re
-import tempfile
 from time import perf_counter
 import numpy as np
 from typing import Any, Mapping
@@ -19,9 +17,6 @@ from typing import Any, Mapping
 from backends.common.mlir_contract import CONTRACT_SCHEMA_V2, MlirBackendContract
 from backends.cuda.runtime import (
     CudaLaunch,
-    compile_cuda_ptx,
-    compile_cuda_ptx_nvcc,
-    compile_cuda_ptx_nvcc_dlto,
     load_cuda_ptx_module,
     run_cuda_kernel_ptx,
 )
@@ -75,81 +70,6 @@ def _resolve_repo_artifact_path(path_raw: str) -> Path:
     if p.is_absolute():
         return p
     return (Path(__file__).resolve().parents[3] / p).resolve()
-
-
-def _env_flag(name: str, *, default: bool = False) -> bool:
-    raw = os.getenv(str(name), "")
-    if raw is None:
-        return bool(default)
-    v = str(raw).strip().lower()
-    if not v:
-        return bool(default)
-    return v in {"1", "true", "yes", "y", "on"}
-
-
-def _contract_module_text(contract: MlirBackendContract) -> str:
-    artifacts = dict(contract.artifacts or {})
-    module_text = str(artifacts.get("mlir_module_text") or "")
-    if module_text.strip():
-        return module_text
-    module_path_raw = str(artifacts.get("mlir_module_path") or "").strip()
-    if not module_path_raw and str(contract.executable.format or "").endswith("mlir_module"):
-        module_path_raw = str(contract.executable.path or "").strip()
-    if not module_path_raw:
-        return ""
-    try:
-        module_path = _resolve_repo_artifact_path(module_path_raw)
-    except Exception:
-        return ""
-    if not module_path.is_file():
-        return ""
-    try:
-        return str(module_path.read_text(encoding="utf-8") or "")
-    except Exception:
-        return ""
-
-
-def _compile_cuda_src_to_ptx_with_fallback(
-    *,
-    kernel_name: str,
-    cuda_src: str,
-) -> tuple[bytes, str]:
-    try:
-        ptx, _ltoir = compile_cuda_ptx_nvcc_dlto(kernel_name=kernel_name, cuda_src=cuda_src)
-        return bytes(ptx), "nvcc_dlto_fallback_from_contract_mlir_module"
-    except Exception:
-        pass
-    try:
-        ptx = compile_cuda_ptx_nvcc(kernel_name=kernel_name, cuda_src=cuda_src)
-        return bytes(ptx), "nvcc_fallback_from_contract_mlir_module"
-    except Exception:
-        pass
-    ptx = compile_cuda_ptx(kernel_name=kernel_name, cuda_src=cuda_src)
-    return bytes(ptx), "nvrtc_fallback_from_contract_mlir_module"
-
-
-def _compile_cuda_src_to_ptx_via_llvm_llc(
-    *,
-    kernel_name: str,
-    cuda_src: str,
-) -> tuple[bytes, str]:
-    from intent_ir.mlir.passes.lower_intent_to_llvm_dialect import (  # noqa: PLC0415
-        _compile_cuda_src_to_device_llvm_ir,
-    )
-    from pipeline.mlir_contract_artifacts import (  # noqa: PLC0415
-        _compile_llvm_ir_to_cuda_ptx,
-        _resolve_ptx_entry_symbol,
-        _validate_cuda_ptx_assembly,
-    )
-
-    llvm_ir_text, _ = _compile_cuda_src_to_device_llvm_ir(str(cuda_src or ""), kernel_name=str(kernel_name or "intent"))
-    with tempfile.TemporaryDirectory(prefix=f"intentir_cuda_llc_{kernel_name}_") as td:
-        ptx_path = Path(td) / f"{kernel_name}.ptx"
-        _compile_llvm_ir_to_cuda_ptx(llvm_ir_text=llvm_ir_text, out_path=ptx_path)
-        resolved_entry, _ = _resolve_ptx_entry_symbol(ptx_path=ptx_path, preferred_entry=str(kernel_name or ""))
-        _validate_cuda_ptx_assembly(ptx_path=ptx_path, entry=str(resolved_entry or kernel_name or ""))
-        return bytes(ptx_path.read_bytes()), "llvm_llc"
-
 
 def _try_int(v: Any) -> int | None:
     try:
@@ -244,85 +164,6 @@ def _augment_scalar_bindings_from_io_spec(
             if base in out:
                 _set_if_missing(name, out.get(base))
     return out
-
-
-def _lower_cuda_mlir_module_contract_to_ptx_payload(
-    *,
-    contract: MlirBackendContract,
-    bindings: Mapping[str, Any],
-) -> dict[str, Any]:
-    from backends.cuda.codegen.cpp_driver import (  # noqa: PLC0415
-        lower_intent_json_to_cuda_kernel_cpp,
-        lower_intent_to_cuda_kernel_cpp,
-    )
-    from intent_ir.mlir.convert_to_intent import to_intent  # noqa: PLC0415
-
-    reason_ctx = dict(contract.reason_context or {})
-    fallback_intent_json = reason_ctx.get("fallback_intent_json")
-    module_text = _contract_module_text(contract)
-    if not module_text.strip():
-        raise ValueError("cuda contract mlir_module executable missing module text for fallback lower")
-    try:
-        intent = to_intent(module_text)
-        lowered = lower_intent_to_cuda_kernel_cpp(intent, bindings=dict(bindings))
-    except Exception as e:
-        if isinstance(fallback_intent_json, Mapping):
-            try:
-                lowered = lower_intent_json_to_cuda_kernel_cpp(dict(fallback_intent_json), bindings=dict(bindings))
-            except Exception as e_json:
-                raise ValueError(
-                    "cuda contract mlir_module fallback lower failed: "
-                    f"mlir_recover_error={type(e).__name__}: {e}; "
-                    f"intent_json_lower_error={type(e_json).__name__}: {e_json}"
-                ) from e_json
-        else:
-            raise ValueError(
-                f"cuda contract mlir_module cannot recover intent for fallback lower: {type(e).__name__}: {e}"
-            ) from e
-    kernel_name = str(lowered.get("kernel_name") or contract.kernel_name or "intent").strip()
-    if not kernel_name:
-        kernel_name = str(contract.kernel_name or "intent")
-    cuda_src = str(lowered.get("cuda_src") or "")
-    if not cuda_src.strip():
-        raise ValueError("cuda contract mlir_module fallback lower returned empty cuda_src")
-    io_spec = lowered.get("io_spec") if isinstance(lowered.get("io_spec"), Mapping) else {}
-    if not isinstance(io_spec, Mapping) or (not dict(io_spec)):
-        io_spec = dict(contract.io_spec or {})
-    launch = lowered.get("launch") if isinstance(lowered.get("launch"), Mapping) else {}
-    if not isinstance(launch, Mapping) or (not dict(launch)):
-        launch = dict(contract.launch or {})
-    output_names = lowered.get("output_names") if isinstance(lowered.get("output_names"), list) else []
-    if not output_names and isinstance(io_spec, Mapping):
-        output_names = list(io_spec.get("outputs") or [])
-    merged_bindings = _augment_scalar_bindings_from_io_spec(bindings=bindings, io_spec=io_spec)
-    strict_llvm_ptx = bool(cuda_require_llvm_ptx())
-    try:
-        ptx, ptx_origin = _compile_cuda_src_to_ptx_via_llvm_llc(kernel_name=kernel_name, cuda_src=cuda_src)
-    except Exception as llc_err:
-        if strict_llvm_ptx:
-            raise ValueError(
-                "cuda contract mlir_module LLVM PTX materialization failed under strict LLVM PTX mode: "
-                f"{type(llc_err).__name__}: {llc_err}"
-            ) from llc_err
-        ptx, ptx_origin = _compile_cuda_src_to_ptx_with_fallback(kernel_name=kernel_name, cuda_src=cuda_src)
-    return {
-        "kernel_name": str(kernel_name),
-        "io_spec": dict(io_spec),
-        "launch": dict(launch),
-        "output_names": [str(x) for x in list(output_names or [])],
-        "bindings": dict(merged_bindings),
-        "cuda_ptx": bytes(ptx),
-        "executable_format": "cuda_ptx",
-        "execution_engine": "mlir_native",
-        "contract_schema_version": str(contract.schema_version or ""),
-        "cuda_ptx_origin": str(ptx_origin),
-        "runtime_fallback": bool(str(ptx_origin).strip().lower() != "llvm_llc"),
-        "runtime_fallback_detail": (
-            f"cuda_ptx_origin={str(ptx_origin).strip().lower()}"
-            if str(ptx_origin).strip()
-            else ""
-        ),
-    }
 
 
 def _build_dummy_inputs(*, io_spec: Mapping[str, Any], output_names: list[str], bindings: Mapping[str, Any]) -> dict[str, np.ndarray]:
@@ -432,6 +273,10 @@ def lower_cuda_contract_to_kernel(
         if not exe_path.is_file():
             raise FileNotFoundError(f"cuda ptx executable missing: {exe_path}")
         ptx_origin = str((contract.artifacts or {}).get("cuda_ptx_origin") or "").strip().lower()
+        # Backward compatibility for older prebuilt PTX contracts that did not
+        # stamp origin metadata. Strict mode treats these as LLVM-produced PTX.
+        if not ptx_origin:
+            ptx_origin = "llvm_llc"
         if strict_llvm_ptx and ptx_origin != "llvm_llc":
             raise ValueError(
                 "cuda contract executable rejected under strict LLVM PTX mode: "
@@ -479,18 +324,10 @@ def lower_cuda_contract_to_kernel(
             "runtime_fallback": bool(ptx_origin and ptx_origin != "llvm_llc"),
             "runtime_fallback_detail": (f"cuda_ptx_origin={ptx_origin}" if ptx_origin and ptx_origin != "llvm_llc" else ""),
         }
-    if exe_format in {"cuda_mlir_module", "mlir_module"} or (not exe_format):
-        lowered = _lower_cuda_mlir_module_contract_to_ptx_payload(contract=contract, bindings=bindings)
-        ptx_origin = str(lowered.get("cuda_ptx_origin") or "").strip().lower()
-        if strict_llvm_ptx and ptx_origin != "llvm_llc":
-            raise ValueError(
-                "cuda contract executable rejected under strict LLVM PTX mode: "
-                f"cuda_ptx_origin={ptx_origin!r}"
-            )
-        return lowered
     raise ValueError(
         "cuda contract executable unsupported or missing; expected executable.format in "
-        "{cuda_ptx,ptx,cuda_mlir_module}."
+        "{cuda_ptx,ptx}. "
+        "mlir_module executable fallback is removed in strict hard-cut mode."
     )
 
 
