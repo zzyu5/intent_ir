@@ -214,7 +214,12 @@ def _perf_rebuild_kernel_set() -> set[str]:
     if raw_disable in {"1", "true", "yes", "y"}:
         return set()
     raw = str(os.getenv("INTENTIR_GPU_PERF_REBUILD_KERNELS", "")).strip()
+    # In strict hard-cut mode, default rebuild kernels force executable.format
+    # to cuda_mlir_module and would violate strict PTX-only execution.
+    # Keep explicit opt-in available through INTENTIR_GPU_PERF_REBUILD_KERNELS.
     if not raw:
+        if bool(strict_fallback_enabled()):
+            return set()
         return defaults
     out: set[str] = set()
     for part in raw.split(","):

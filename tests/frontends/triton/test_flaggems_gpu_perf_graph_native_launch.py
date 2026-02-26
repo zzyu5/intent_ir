@@ -510,6 +510,26 @@ def test_apply_intentir_perf_binding_overrides_respects_existing_and_disable_fla
     assert applied2 == {}
 
 
+def test_perf_rebuild_kernel_set_disabled_by_default_in_strict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = _load_module()
+    monkeypatch.setenv("INTENTIR_FALLBACK_POLICY", "strict")
+    monkeypatch.delenv("INTENTIR_GPU_PERF_DISABLE_CONTRACT_REBUILD", raising=False)
+    monkeypatch.delenv("INTENTIR_GPU_PERF_REBUILD_KERNELS", raising=False)
+    assert mod._perf_rebuild_kernel_set() == set()
+
+
+def test_perf_rebuild_kernel_set_respects_explicit_list_in_strict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = _load_module()
+    monkeypatch.setenv("INTENTIR_FALLBACK_POLICY", "strict")
+    monkeypatch.delenv("INTENTIR_GPU_PERF_DISABLE_CONTRACT_REBUILD", raising=False)
+    monkeypatch.setenv("INTENTIR_GPU_PERF_REBUILD_KERNELS", "batch_norm2d, mm2d")
+    assert mod._perf_rebuild_kernel_set() == {"batch_norm2d", "mm2d"}
+
+
 def test_maybe_rewrite_contract_for_perf_rebuild_uses_intent_seed_fallback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
