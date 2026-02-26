@@ -7,6 +7,8 @@ Source of truth for coverage baseline:
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import json
 import os
 import re
@@ -270,17 +272,109 @@ _SEMANTIC_E2E_ALIASES: dict[str, str] = {
 _E2E_SPEC_TO_SEMANTIC: dict[str, str] = {v: k for k, v in _SEMANTIC_TO_E2E_SPEC.items()}
 
 
-def ensure_flaggems_importable(flaggems_src: str | Path | None = None) -> None:
-    candidates: list[Path] = []
+def _is_valid_flaggems_src_dir(path: Path) -> bool:
+    p = Path(path)
+    return bool((p / "flag_gems" / "__init__.py").is_file())
+
+
+def _iter_flaggems_src_candidates(flaggems_src: str | Path | None) -> list[Path]:
+    raw_candidates: list[str] = []
     if flaggems_src is not None:
-        candidates.append(Path(str(flaggems_src)))
+        raw_candidates.append(str(flaggems_src))
     env = os.getenv("FLAGGEMS_SRC")
     if isinstance(env, str) and env.strip():
-        candidates.append(Path(env.strip()))
+        raw_candidates.append(env.strip())
+    try:
+        if DEFAULT_REGISTRY_PATH.is_file():
+            payload = json.loads(DEFAULT_REGISTRY_PATH.read_text(encoding="utf-8"))
+            reg_src = str(payload.get("flaggems_source") or "").strip()
+            if reg_src:
+                raw_candidates.append(reg_src)
+    except Exception:
+        pass
 
+    out: list[Path] = []
+    seen: set[str] = set()
+    for raw in raw_candidates:
+        s = str(raw).strip()
+        if not s or s.startswith("python:"):
+            continue
+        p = Path(s)
+        # Allow callers to provide either ".../src" or ".../src/flag_gems".
+        if p.name == "flag_gems" and (p / "__init__.py").is_file():
+            p = p.parent
+        key = str(p)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(p)
+    return out
+
+
+def _drop_broken_flaggems_editable_finders() -> None:
+    # Editable installs based on `_flag_gems_editable` can keep stale absolute
+    # source paths after local cleanups. If all mapped files are gone, drop the
+    # finder so normal source-path import resolution can proceed.
+    for finder in list(sys.meta_path):
+        if type(finder).__module__ != "_flag_gems_editable":
+            continue
+        known = getattr(finder, "known_source_files", None)
+        if not isinstance(known, dict) or not known:
+            continue
+        paths = [Path(str(v)) for v in known.values() if isinstance(v, str)]
+        if not paths:
+            continue
+        if not all(not p.exists() for p in paths):
+            continue
+        try:
+            sys.meta_path.remove(finder)
+        except ValueError:
+            continue
+
+
+def _force_import_flaggems_from_src(src_dir: Path) -> None:
+    pkg_dir = Path(src_dir) / "flag_gems"
+    init_py = pkg_dir / "__init__.py"
+    if not init_py.is_file():
+        raise FileNotFoundError(f"flag_gems package not found under source dir: {src_dir}")
+    for key in list(sys.modules.keys()):
+        if key == "flag_gems" or key.startswith("flag_gems."):
+            sys.modules.pop(key, None)
+    spec = importlib.util.spec_from_file_location(
+        "flag_gems",
+        str(init_py),
+        submodule_search_locations=[str(pkg_dir)],
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"unable to build import spec for flag_gems from: {init_py}")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["flag_gems"] = mod
+    spec.loader.exec_module(mod)
+
+
+def ensure_flaggems_importable(flaggems_src: str | Path | None = None) -> None:
+    candidates = _iter_flaggems_src_candidates(flaggems_src)
+    valid_candidates: list[Path] = []
     for p in candidates:
         if p.is_dir() and str(p) not in sys.path:
             sys.path.insert(0, str(p))
+        if _is_valid_flaggems_src_dir(p):
+            valid_candidates.append(p.resolve())
+
+    if not valid_candidates:
+        return
+
+    _drop_broken_flaggems_editable_finders()
+
+    try:
+        mod = importlib.import_module("flag_gems")
+        origin = Path(str(getattr(mod, "__file__", "")))
+        if origin.is_file():
+            return
+    except Exception:
+        pass
+
+    _force_import_flaggems_from_src(valid_candidates[0])
 
 
 def load_flaggems_all_ops(flaggems_src: str | Path | None = None) -> list[str]:

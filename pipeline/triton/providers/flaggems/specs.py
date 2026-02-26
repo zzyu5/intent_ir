@@ -3,7 +3,7 @@ FlagGems-backed Triton kernel specs for the existing Triton full pipeline.
 
 Important:
 - This is NOT a new frontend. We reuse `pipeline.triton.core.run_pipeline_for_spec`.
-- Runners execute PyTorch APIs under `flag_gems.use_gems(...)` so ATen dispatch
+- Runners execute PyTorch APIs under `_flaggems_use_gems(...)` so ATen dispatch
   goes through FlagGems Triton kernels.
 - Spec names intentionally align with existing Triton/TileLang semantic kernels
   (`add2d`, `softmax_inner`) so deterministic fallback remains available when
@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib
 import os
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -53,6 +54,24 @@ class _LazyModule:
 
 flag_gems = _LazyModule("flag_gems")
 flag_gems_ops = _LazyModule("flag_gems.ops")
+
+
+@contextmanager
+def _flaggems_use_gems(*, include: list[str] | None = None):
+    if include is None:
+        with flag_gems.use_gems():
+            yield
+        return
+    try:
+        with flag_gems.use_gems(include=list(include)):
+            yield
+        return
+    except TypeError as e:
+        # Older FlagGems builds do not support the `include=` keyword.
+        if "include" not in str(e):
+            raise
+    with flag_gems.use_gems():
+        yield
 
 
 class _LazyModuleSource:
@@ -271,7 +290,7 @@ def _run_flaggems_add2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         b = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["add"]):
+    with _flaggems_use_gems(include=["add"]):
         c = a + b
 
     a_np = _to_np(a)
@@ -311,7 +330,7 @@ def _run_flaggems_sub2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         b = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["sub"]):
+    with _flaggems_use_gems(include=["sub"]):
         c = a - b
 
     a_np = _to_np(a)
@@ -346,7 +365,7 @@ def _run_flaggems_mul2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         b = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["mul"]):
+    with _flaggems_use_gems(include=["mul"]):
         c = a * b
 
     a_np = _to_np(a)
@@ -390,7 +409,7 @@ def _run_flaggems_binary2d_reference(
         # Stabilize division to avoid accidental inf/nan from near-zero denominator.
         b = torch.where(torch.abs(b) < 1e-3, b + 1e-3, b)
 
-    with flag_gems.use_gems(include=include):
+    with _flaggems_use_gems(include=include):
         if op_name == "div":
             c = torch.div(a, b)
         elif op_name == "max":
@@ -462,7 +481,7 @@ def _run_flaggems_addc2d_reference(
     else:
         value = 0.5
 
-    with flag_gems.use_gems(include=include):
+    with _flaggems_use_gems(include=include):
         if op_name == "addcmul":
             out = torch.addcmul(a, b, c, value=float(value))
         elif op_name == "addcdiv":
@@ -531,7 +550,7 @@ def _run_flaggems_addr2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         beta = 1.0
 
-    with flag_gems.use_gems(include=["addr"]):
+    with _flaggems_use_gems(include=["addr"]):
         out = torch.addr(a, vec1, vec2, beta=float(beta), alpha=float(alpha))
 
     a_np = _to_np(a)
@@ -620,7 +639,7 @@ def _run_flaggems_neg2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         raw = np.abs(rg.standard_normal((m, n), dtype=np.float32)) + 1e-3
         inp = torch.from_numpy(raw).to(device)
 
-    with flag_gems.use_gems(include=["neg"]):
+    with _flaggems_use_gems(include=["neg"]):
         out = torch.neg(inp)
 
     inp_np = _to_np(inp)
@@ -663,7 +682,7 @@ def _run_flaggems_unary2d_reference(
     if clip_unit_input:
         inp = torch.clamp(inp, -0.999, 0.999)
 
-    with flag_gems.use_gems(include=include):
+    with _flaggems_use_gems(include=include):
         if op_name == "ceil":
             out = torch.ceil(inp)
         elif op_name == "reciprocal":
@@ -782,7 +801,7 @@ def _run_flaggems_softplus2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["softplus"]):
+    with _flaggems_use_gems(include=["softplus"]):
         out = flag_gems_ops.softplus(inp, beta=beta, threshold=threshold)
 
     inp_np = _to_np(inp)
@@ -826,7 +845,7 @@ def _run_flaggems_angle2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["angle"]):
+    with _flaggems_use_gems(include=["angle"]):
         out = torch.angle(inp)
 
     inp_np = _to_np(inp)
@@ -895,7 +914,7 @@ def _run_flaggems_bitwise_binary2d_reference(
         else:
             b = torch.from_numpy(rg.integers(-7, 8, size=(m, n), dtype=np.int32)).to(device=device, dtype=torch.int32)
 
-    with flag_gems.use_gems(include=include):
+    with _flaggems_use_gems(include=include):
         if op_name == "bitwise_and":
             out = torch.bitwise_and(a, b)
         elif op_name == "bitwise_or":
@@ -961,7 +980,7 @@ def _run_flaggems_bitwise_not2d_reference(case: TestCase) -> Dict[str, np.ndarra
         inp = _as_i32_tensor(np.asarray(case.inputs["inp"]), device=device)
     else:
         inp = torch.from_numpy(rg.integers(-7, 8, size=(m, n), dtype=np.int32)).to(device=device, dtype=torch.int32)
-    with flag_gems.use_gems(include=["bitwise_not"]):
+    with _flaggems_use_gems(include=["bitwise_not"]):
         out = torch.bitwise_not(inp)
     inp_np = _to_np(inp)
     out_np = _to_np(out)
@@ -986,7 +1005,7 @@ def _run_flaggems_row_mean_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["mean", "mean_dim"]):
+    with _flaggems_use_gems(include=["mean", "mean_dim"]):
         out = torch.mean(inp, dim=1)
 
     inp_np = _to_np(inp)
@@ -1010,7 +1029,7 @@ def _run_flaggems_row_all_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy((rg.random((m, n), dtype=np.float32) > 0.3)).to(device=device, dtype=torch.bool)
 
-    with flag_gems.use_gems(include=["all", "all_dim", "all_dims"]):
+    with _flaggems_use_gems(include=["all", "all_dim", "all_dims"]):
         out = torch.all(inp, dim=1, keepdim=True)
 
     inp_np = _to_np(inp)
@@ -1044,7 +1063,7 @@ def _run_flaggems_logical_binary2d_reference(
     else:
         b = torch.from_numpy((rg.random((m, n), dtype=np.float32) > 0.5)).to(device=device, dtype=torch.bool)
 
-    with flag_gems.use_gems(include=include):
+    with _flaggems_use_gems(include=include):
         if op_name == "logical_and":
             c = torch.logical_and(a, b)
         elif op_name == "logical_or":
@@ -1105,7 +1124,7 @@ def _run_flaggems_logical_not2d_reference(case: TestCase) -> Dict[str, np.ndarra
     else:
         inp = torch.from_numpy((rg.random((m, n), dtype=np.float32) > 0.5)).to(device=device, dtype=torch.bool)
 
-    with flag_gems.use_gems(include=["logical_not"]):
+    with _flaggems_use_gems(include=["logical_not"]):
         out = torch.logical_not(inp)
 
     inp_np = _to_np(inp)
@@ -1130,7 +1149,7 @@ def _run_flaggems_full2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         value = 0.25
 
-    with flag_gems.use_gems(include=["full", "full_like", "ones", "ones_like", "zeros", "zeros_like", "fill_scalar", "fill_tensor"]):
+    with _flaggems_use_gems(include=["full", "full_like", "ones", "ones_like", "zeros", "zeros_like", "fill_scalar", "fill_tensor"]):
         out = torch.full((m, n), value, device=device, dtype=torch.float32)
 
     out_np = _to_np(out)
@@ -1160,7 +1179,7 @@ def _run_flaggems_arange1d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     if step == 0.0:
         step = 1.0
 
-    with flag_gems.use_gems(include=["arange"]):
+    with _flaggems_use_gems(include=["arange"]):
         out = torch.arange(start=start, end=end, step=step, device=device, dtype=torch.float32)
 
     out_np = _to_np(out)
@@ -1194,7 +1213,7 @@ def _run_flaggems_cat2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     if axis < -2 or axis >= 2:
         axis = 1
 
-    with flag_gems.use_gems(include=["cat"]):
+    with _flaggems_use_gems(include=["cat"]):
         out = torch.cat([a, b], dim=axis)
 
     a_np = _to_np(a)
@@ -1226,7 +1245,7 @@ def _run_flaggems_hstack2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         b = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["hstack"]):
+    with _flaggems_use_gems(include=["hstack"]):
         out = torch.hstack((a, b))
 
     a_np = _to_np(a)
@@ -1258,7 +1277,7 @@ def _run_flaggems_vstack2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         b = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
     try:
-        with flag_gems.use_gems(include=["vstack"]):
+        with _flaggems_use_gems(include=["vstack"]):
             out = flag_gems_ops.vstack((a, b))
     except Exception:
         # Some FlagGems versions hit Triton constexpr issues for vstack.
@@ -1316,7 +1335,7 @@ def _run_flaggems_avg_pool2d_nchw_reference(case: TestCase) -> Dict[str, np.ndar
     else:
         inp = torch.from_numpy(rg.standard_normal((n, c, h, w), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["avg_pool2d"]):
+    with _flaggems_use_gems(include=["avg_pool2d"]):
         out = torch.nn.functional.avg_pool2d(inp, kernel_size=(k, k), stride=(s, s), padding=(p, p))
 
     inp_np = _to_np(inp)
@@ -1376,7 +1395,7 @@ def _run_flaggems_conv1d_ncl_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         bias = torch.from_numpy(rg.standard_normal((c_out,), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["conv1d"]):
+    with _flaggems_use_gems(include=["conv1d"]):
         out = flag_gems_ops.conv1d(
             inp,
             weight,
@@ -1443,7 +1462,7 @@ def _run_flaggems_conv2d_nchw_reference(case: TestCase) -> Dict[str, np.ndarray]
     else:
         bias = torch.from_numpy(rg.standard_normal((c_out,), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["conv2d"]):
+    with _flaggems_use_gems(include=["conv2d"]):
         out = flag_gems_ops.conv2d(
             inp,
             weight,
@@ -1517,7 +1536,7 @@ def _run_flaggems_conv3d_ncdhw_reference(case: TestCase) -> Dict[str, np.ndarray
     else:
         bias = torch.from_numpy(rg.standard_normal((c_out,), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["conv3d"]):
+    with _flaggems_use_gems(include=["conv3d"]):
         out = flag_gems_ops.conv3d(
             inp,
             weight,
@@ -1581,7 +1600,7 @@ def _run_flaggems_conv_depthwise2d_nchw_reference(case: TestCase) -> Dict[str, n
     else:
         bias = torch.from_numpy(rg.standard_normal((c_out,), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["_conv_depthwise2d"]):
+    with _flaggems_use_gems(include=["_conv_depthwise2d"]):
         out = flag_gems_ops._conv_depthwise2d(
             inp,
             weight,
@@ -1619,7 +1638,7 @@ def _run_flaggems_count_nonzero2d_reference(case: TestCase) -> Dict[str, np.ndar
         inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
-    with flag_gems.use_gems(include=["count_nonzero"]):
+    with _flaggems_use_gems(include=["count_nonzero"]):
         out = torch.count_nonzero(inp)
     inp_np = _to_np(inp)
     out_np = _to_np(out).astype(np.int64, copy=False)
@@ -1642,7 +1661,7 @@ def _run_flaggems_diag2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
-    with flag_gems.use_gems(include=["diag"]):
+    with _flaggems_use_gems(include=["diag"]):
         out = torch.diag(inp, diagonal=diagonal)
     inp_np = _to_np(inp)
     out_np = _to_np(out)
@@ -1668,7 +1687,7 @@ def _run_flaggems_diag_embed2d_reference(case: TestCase) -> Dict[str, np.ndarray
         inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
     else:
         inp = torch.from_numpy(rg.standard_normal((b, n), dtype=np.float32)).to(device)
-    with flag_gems.use_gems(include=["diag_embed"]):
+    with _flaggems_use_gems(include=["diag_embed"]):
         out = torch.diag_embed(inp, offset=offset, dim1=-2, dim2=-1)
     inp_np = _to_np(inp)
     out_np = _to_np(out)
@@ -1695,7 +1714,7 @@ def _run_flaggems_trace2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
-    with flag_gems.use_gems(include=["trace"]):
+    with _flaggems_use_gems(include=["trace"]):
         out = flag_gems_ops.trace(inp)
     inp_np = _to_np(inp)
     out_np = _to_np(out)
@@ -1718,7 +1737,7 @@ def _run_flaggems_triu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         inp = _as_f32_tensor(np.asarray(case.inputs["inp"]), device=device)
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
-    with flag_gems.use_gems(include=["triu"]):
+    with _flaggems_use_gems(include=["triu"]):
         out = torch.triu(inp, diagonal=diagonal)
     inp_np = _to_np(inp)
     out_np = _to_np(out)
@@ -1745,7 +1764,7 @@ def _run_flaggems_upsample_nearest1d_ncl_reference(case: TestCase) -> Dict[str, 
         inp = _as_f32_tensor(np.asarray(case.inputs["input"]), device=device)
     else:
         inp = torch.from_numpy(rg.standard_normal((n, c, il), dtype=np.float32)).to(device)
-    with flag_gems.use_gems(include=["upsample_nearest1d"]):
+    with _flaggems_use_gems(include=["upsample_nearest1d"]):
         out = flag_gems_ops.upsample_nearest1d(inp, output_size=(ol,), scales=None)
     inp_np = _to_np(inp)
     out_np = _to_np(out)
@@ -1773,7 +1792,7 @@ def _run_flaggems_upsample_nearest2d_nchw_reference(case: TestCase) -> Dict[str,
         inp = _as_f32_tensor(np.asarray(case.inputs["input"]), device=device)
     else:
         inp = torch.from_numpy(rg.standard_normal((n, c, ih, iw), dtype=np.float32)).to(device)
-    with flag_gems.use_gems(include=["upsample_nearest2d"]):
+    with _flaggems_use_gems(include=["upsample_nearest2d"]):
         out = flag_gems_ops.upsample_nearest2d(inp, (oh, ow), scales_h=None, scales_w=None)
     inp_np = _to_np(inp)
     out_np = _to_np(out)
@@ -1808,7 +1827,7 @@ def _run_flaggems_scatter2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         idx_np = np.stack([rg.permutation(n).astype(np.int32, copy=False) for _ in range(m)], axis=0)
         index = torch.from_numpy(idx_np).to(device=device, dtype=torch.int64)
-    with flag_gems.use_gems(include=["scatter"]):
+    with _flaggems_use_gems(include=["scatter"]):
         out = flag_gems_ops.scatter(inp, int(dim), index, src, reduce=None)
     inp_np = _to_np(inp)
     src_np = _to_np(src)
@@ -1841,7 +1860,7 @@ def _run_flaggems_select_scatter2d_reference(case: TestCase) -> Dict[str, np.nda
     else:
         src = torch.from_numpy(rg.standard_normal((m,), dtype=np.float32)).to(device)
     index = max(-n, min(index, n - 1))
-    with flag_gems.use_gems(include=["select_scatter"]):
+    with _flaggems_use_gems(include=["select_scatter"]):
         out = flag_gems_ops.select_scatter(inp, src, dim=int(dim), index=int(index))
     inp_np = _to_np(inp)
     src_np = _to_np(src)
@@ -1880,7 +1899,7 @@ def _run_flaggems_slice_scatter2d_reference(case: TestCase) -> Dict[str, np.ndar
         src = _as_f32_tensor(np.asarray(case.inputs["src"]), device=device)
     else:
         src = torch.from_numpy(rg.standard_normal((m, l), dtype=np.float32)).to(device)
-    with flag_gems.use_gems(include=["slice_scatter"]):
+    with _flaggems_use_gems(include=["slice_scatter"]):
         out = flag_gems_ops.slice_scatter(inp, src, dim=int(dim), start=int(start), end=int(end), step=int(step))
     inp_np = _to_np(inp)
     src_np = _to_np(src)
@@ -1910,7 +1929,7 @@ def _run_flaggems_quantile2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
     q_t = torch.tensor(q, device=device, dtype=inp.dtype)
-    with flag_gems.use_gems(include=["quantile"]):
+    with _flaggems_use_gems(include=["quantile"]):
         out = flag_gems_ops.quantile(inp, q_t, dim=1, keepdim=False, interpolation="linear")
     inp_np = _to_np(inp)
     q_np = np.array(q, dtype=np.float32)
@@ -1938,7 +1957,7 @@ def _run_flaggems_polar2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         angle_t = _as_f32_tensor(np.asarray(case.inputs["angle"]), device=device)
     else:
         angle_t = torch.from_numpy(rg.uniform(-3.14159, 3.14159, size=(m, n)).astype(np.float32)).to(device)
-    with flag_gems.use_gems(include=["polar"]):
+    with _flaggems_use_gems(include=["polar"]):
         out_complex = flag_gems_ops.polar(abs_t, angle_t)
     out_ri = torch.view_as_real(out_complex)
     abs_np = _to_np(abs_t)
@@ -1963,7 +1982,7 @@ def _run_flaggems_unique2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         # Constrain value range to keep enough duplicates for unique2 kernels.
         vals = rg.integers(0, max(2, n // 4), size=(n,), dtype=np.int32)
         inp = _as_i32_tensor(vals, device=device).reshape(-1)
-    with flag_gems.use_gems(include=["_unique2"]):
+    with _flaggems_use_gems(include=["_unique2"]):
         out_vals, _, _ = flag_gems_ops._unique2(inp, sorted=False, return_inverse=False, return_counts=False)
     inp_np = _to_np(inp).astype(np.int32, copy=False)
     out_np = _to_np(out_vals).astype(np.int32, copy=False)
@@ -1993,7 +2012,7 @@ def _run_flaggems_weight_norm2d_reference(case: TestCase) -> Dict[str, np.ndarra
     else:
         g_shape = (m,) if dim == 0 else (n,)
         g = _as_f32_tensor(rg.uniform(0.25, 1.75, size=g_shape).astype(np.float32), device=device).reshape(-1)
-    with flag_gems.use_gems(include=["weight_norm_interface"]):
+    with _flaggems_use_gems(include=["weight_norm_interface"]):
         out, norm = flag_gems_ops.weight_norm_interface(v, g, dim=dim)
     v_np = _to_np(v).astype(np.float32, copy=False)
     g_np = _to_np(g).astype(np.float32, copy=False)
@@ -2031,7 +2050,7 @@ def _run_flaggems_scaled_dot_product_attention_bhsd_reference(case: TestCase) ->
     value = _as_f16("value", (b, h, kv_len, d))
     scale = np.float32(1.0 / np.sqrt(float(d)))
 
-    with flag_gems.use_gems(include=["scaled_dot_product_attention", "scaled_dot_product_attention_forward"]):
+    with _flaggems_use_gems(include=["scaled_dot_product_attention", "scaled_dot_product_attention_forward"]):
         out = flag_gems_ops.scaled_dot_product_attention(
             query,
             key,
@@ -2095,7 +2114,7 @@ def _run_flaggems_identity2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         base = torch.from_numpy(rg.standard_normal((n, m), dtype=np.float32)).to(device)
         inp = base.transpose(0, 1)
 
-    with flag_gems.use_gems(include=["copy", "contiguous", "resolve_conj", "resolve_neg"]):
+    with _flaggems_use_gems(include=["copy", "contiguous", "resolve_conj", "resolve_neg"]):
         template = torch.empty_like(inp)
         out = flag_gems_ops.copy(template, inp)
         out = flag_gems_ops.contiguous(out)
@@ -2127,7 +2146,7 @@ def _run_flaggems_cast2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device=device, dtype=torch.float16)
 
-    with flag_gems.use_gems(include=["to_copy"]):
+    with _flaggems_use_gems(include=["to_copy"]):
         out = torch.ops.aten._to_copy(inp, dtype=torch.float32)
 
     inp_np = _to_np(inp)
@@ -2159,7 +2178,7 @@ def _run_flaggems_mm2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         b = torch.from_numpy(rg.standard_normal((k, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["mm"]):
+    with _flaggems_use_gems(include=["mm"]):
         c = torch.mm(a, b)
 
     a_np = _to_np(a)
@@ -2194,7 +2213,7 @@ def _run_flaggems_bmm3d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         b = torch.from_numpy(rg.standard_normal((batch, k, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["bmm"]):
+    with _flaggems_use_gems(include=["bmm"]):
         c = torch.bmm(a, b)
 
     a_np = _to_np(a)
@@ -2233,7 +2252,7 @@ def _run_flaggems_addmm2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         mat2 = torch.from_numpy(rg.standard_normal((k, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["addmm", "mm"]):
+    with _flaggems_use_gems(include=["addmm", "mm"]):
         out = torch.addmm(inp, mat1, mat2)
 
     inp_np = _to_np(inp)
@@ -2278,7 +2297,7 @@ def _run_flaggems_baddbmm3d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         batch2 = torch.from_numpy(rg.standard_normal((batch, k, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["baddbmm", "bmm"]):
+    with _flaggems_use_gems(include=["baddbmm", "bmm"]):
         out = torch.baddbmm(inp, batch1, batch2)
 
     inp_np = _to_np(inp)
@@ -2315,7 +2334,7 @@ def _run_flaggems_dot1d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         b = torch.from_numpy(rg.standard_normal((n,), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["dot"]):
+    with _flaggems_use_gems(include=["dot"]):
         out = torch.dot(a, b)
 
     a_np = _to_np(a)
@@ -2347,7 +2366,7 @@ def _run_flaggems_vdot1d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         b = torch.from_numpy(rg.standard_normal((n,), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["vdot"]):
+    with _flaggems_use_gems(include=["vdot"]):
         out = torch.vdot(a, b)
 
     a_np = _to_np(a)
@@ -2388,7 +2407,7 @@ def _run_flaggems_mv2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         vec = torch.from_numpy(rg.standard_normal((m,), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["mv"]):
+    with _flaggems_use_gems(include=["mv"]):
         out = torch.mv(mat, vec)
 
     mat_np = _to_np(mat)
@@ -2439,7 +2458,7 @@ def _run_flaggems_addmv2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         vec = torch.from_numpy(rg.standard_normal((m,), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["addmv", "mv"]):
+    with _flaggems_use_gems(include=["addmv", "mv"]):
         out = torch.addmv(inp, mat, vec)
 
     inp_np = _to_np(inp)
@@ -2472,7 +2491,7 @@ def _run_flaggems_flip2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["flip"]):
+    with _flaggems_use_gems(include=["flip"]):
         out = torch.flip(inp, dims=[1])
 
     inp_np = _to_np(inp)
@@ -2511,7 +2530,7 @@ def _run_flaggems_embedding2d_reference(case: TestCase) -> Dict[str, np.ndarray]
     if index.numel() == 0:
         index = torch.zeros((1,), device=device, dtype=torch.int64)
 
-    with flag_gems.use_gems(include=["embedding"]):
+    with _flaggems_use_gems(include=["embedding"]):
         out = torch.nn.functional.embedding(index, inp)
 
     inp_np = _to_np(inp)
@@ -2546,7 +2565,7 @@ def _run_flaggems_isin1d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         in1 = torch.from_numpy(rg.integers(0, 32, size=(k,), dtype=np.int32)).to(device)
 
-    with flag_gems.use_gems(include=["isin"]):
+    with _flaggems_use_gems(include=["isin"]):
         out = torch.isin(in0, in1, assume_unique=False, invert=False)
 
     in0_np = _to_np(in0)
@@ -2579,7 +2598,7 @@ def _run_flaggems_kron2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         b = torch.from_numpy(rg.standard_normal((p, q), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["kron"]):
+    with _flaggems_use_gems(include=["kron"]):
         out = torch.kron(a, b)
 
     a_np = _to_np(a)
@@ -2610,7 +2629,7 @@ def _run_flaggems_linspace1d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         end = float(rg.uniform(0.5, 2.5))
 
-    with flag_gems.use_gems(include=["linspace"]):
+    with _flaggems_use_gems(include=["linspace"]):
         out = torch.linspace(start, end, n, device=device, dtype=torch.float32)
 
     out_np = _to_np(out)
@@ -2643,7 +2662,7 @@ def _run_flaggems_logspace1d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         base = 10.0
 
-    with flag_gems.use_gems(include=["logspace"]):
+    with _flaggems_use_gems(include=["logspace"]):
         out = torch.logspace(start, end, n, base=base, device=device, dtype=torch.float32)
 
     out_np = _to_np(out)
@@ -2681,7 +2700,7 @@ def _run_flaggems_masked_scatter2d_reference(case: TestCase) -> Dict[str, np.nda
     else:
         source = torch.from_numpy(rg.standard_normal((src_len,), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["masked_scatter"]):
+    with _flaggems_use_gems(include=["masked_scatter"]):
         out = torch.masked_scatter(inp, mask, source)
 
     inp_np = _to_np(inp)
@@ -2718,7 +2737,7 @@ def _run_flaggems_masked_select2d_reference(case: TestCase) -> Dict[str, np.ndar
         mask_np[idx[:l]] = True
         mask = torch.from_numpy(mask_np.reshape(m, n)).to(device)
 
-    with flag_gems.use_gems(include=["masked_select"]):
+    with _flaggems_use_gems(include=["masked_select"]):
         out = flag_gems_ops.masked_select(inp, mask)
 
     inp_np = _to_np(inp)
@@ -2751,7 +2770,7 @@ def _run_flaggems_mse_loss2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         target = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["mse_loss"]):
+    with _flaggems_use_gems(include=["mse_loss"]):
         out = flag_gems_ops.mse_loss(inp, target, reduction=reduction)
 
     inp_np = _to_np(inp)
@@ -2787,7 +2806,7 @@ def _run_flaggems_nan_to_num2d_reference(case: TestCase) -> Dict[str, np.ndarray
         a_np.reshape(-1)[2::11] = -np.inf
         a = torch.from_numpy(a_np).to(device)
 
-    with flag_gems.use_gems(include=["nan_to_num"]):
+    with _flaggems_use_gems(include=["nan_to_num"]):
         out = flag_gems_ops.nan_to_num(a, nan=nan, posinf=posinf, neginf=neginf)
 
     a_np = _to_np(a)
@@ -2831,7 +2850,7 @@ def _run_flaggems_nll_loss2d_forward_reference(case: TestCase) -> Dict[str, np.n
     else:
         weight = torch.from_numpy(np.abs(rg.standard_normal((c,), dtype=np.float32)) + 0.1).to(device)
 
-    with flag_gems.use_gems(include=["nll_loss2d_forward"]):
+    with _flaggems_use_gems(include=["nll_loss2d_forward"]):
         out, total_weight = flag_gems_ops.nll_loss2d_forward(
             self_t,
             target,
@@ -2882,7 +2901,7 @@ def _run_flaggems_nll_loss_forward_reference(case: TestCase) -> Dict[str, np.nda
     else:
         weight = torch.from_numpy(np.abs(rg.standard_normal((c,), dtype=np.float32)) + 0.1).to(device)
 
-    with flag_gems.use_gems(include=["nll_loss_forward"]):
+    with _flaggems_use_gems(include=["nll_loss_forward"]):
         out, total_weight = flag_gems_ops.nll_loss_forward(
             self_t,
             target,
@@ -2921,7 +2940,7 @@ def _run_flaggems_one_hot2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         tensor = torch.from_numpy(rg.integers(0, c, size=(m,), dtype=np.int64)).to(device)
 
-    with flag_gems.use_gems(include=["one_hot"]):
+    with _flaggems_use_gems(include=["one_hot"]):
         out = flag_gems_ops.one_hot(tensor, num_classes=c)
 
     tensor_np = _to_np(tensor).astype(np.int64, copy=False)
@@ -2956,7 +2975,7 @@ def _run_flaggems_max_pool2d_with_indices_nchw_reference(case: TestCase) -> Dict
     else:
         inp = torch.from_numpy(rg.standard_normal((n, c, h, w), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["max_pool2d_with_indices"]):
+    with _flaggems_use_gems(include=["max_pool2d_with_indices"]):
         out, indices = flag_gems_ops.max_pool2d_with_indices(
             inp,
             kernel_size=(kh, kw),
@@ -3004,7 +3023,7 @@ def _run_flaggems_glu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         x = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["glu"]):
+    with _flaggems_use_gems(include=["glu"]):
         out = torch.nn.functional.glu(x, dim=int(axis))
 
     x_np = _to_np(x)
@@ -3031,7 +3050,7 @@ def _run_flaggems_cummax1d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         x = torch.from_numpy(rg.standard_normal((n,), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["cummax"]):
+    with _flaggems_use_gems(include=["cummax"]):
         out = torch.cummax(x, dim=int(axis)).values
 
     x_np = _to_np(x)
@@ -3058,7 +3077,7 @@ def _run_flaggems_cummin1d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         x = torch.from_numpy(rg.standard_normal((n,), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["cummin"]):
+    with _flaggems_use_gems(include=["cummin"]):
         out = torch.cummin(x, dim=int(axis)).values
 
     x_np = _to_np(x)
@@ -3099,7 +3118,7 @@ def _run_flaggems_index_add2d_reference(case: TestCase) -> Dict[str, np.ndarray]
     else:
         src = torch.from_numpy(rg.standard_normal(src_shape, dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["index_add"]):
+    with _flaggems_use_gems(include=["index_add"]):
         out = torch.index_add(base, dim=int(axis), index=index, source=src, alpha=float(alpha))
 
     base_np = _to_np(base)
@@ -3158,7 +3177,7 @@ def _run_flaggems_index_put2d_reference(case: TestCase) -> Dict[str, np.ndarray]
     else:
         values = torch.from_numpy(rg.standard_normal((int(row_idx.numel()),), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["index_put"]):
+    with _flaggems_use_gems(include=["index_put"]):
         out = torch.index_put(base, (row_idx, col_idx), values, accumulate=bool(accumulate))
 
     base_np = _to_np(base)
@@ -3206,7 +3225,7 @@ def _run_flaggems_index_select2d_reference(case: TestCase) -> Dict[str, np.ndarr
     if index.numel() == 0:
         index = torch.zeros((1,), device=device, dtype=torch.int64)
 
-    with flag_gems.use_gems(include=["index_select"]):
+    with _flaggems_use_gems(include=["index_select"]):
         out = torch.index_select(inp, dim=0, index=index)
 
     inp_np = _to_np(inp)
@@ -3249,7 +3268,7 @@ def _run_flaggems_any_reference(case: TestCase) -> Dict[str, np.ndarray]:
             if i % 2 == 1:
                 inp[i, (i * 3) % max(1, int(n))] = 1.0
 
-    with flag_gems.use_gems(include=["any", "any_dim", "any_dims"]):
+    with _flaggems_use_gems(include=["any", "any_dim", "any_dims"]):
         out = torch.any(inp, dim=1)
 
     inp_np = _to_np(inp)
@@ -3291,7 +3310,7 @@ def _run_flaggems_group_norm_reference(case: TestCase) -> Dict[str, np.ndarray]:
 
     # Use FlagGems op directly; this avoids PyTorch's guard for tiny shapes
     # (e.g., [1,1,1]) while still exercising FlagGems Triton kernels.
-    with flag_gems.use_gems(include=["group_norm"]):
+    with _flaggems_use_gems(include=["group_norm"]):
         y, mean, rstd = flag_gems_ops.group_norm(x, w, b, n, c, hw, num_groups, eps)
 
     # Keep defensive fallback for environments where ops.group_norm may return
@@ -3361,7 +3380,7 @@ def _run_flaggems_batch_norm_reference(case: TestCase) -> Dict[str, np.ndarray]:
     running_mean_in = running_mean.clone()
     running_var_in = running_var.clone()
 
-    with flag_gems.use_gems(include=["batch_norm"]):
+    with _flaggems_use_gems(include=["batch_norm"]):
         y, mean, inv_std = flag_gems_ops.batch_norm(
             x,
             w,
@@ -3435,7 +3454,7 @@ def _run_flaggems_layer_norm_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         b = torch.zeros((n,), device=device, dtype=torch.float32)
 
-    with flag_gems.use_gems(include=["layer_norm"]):
+    with _flaggems_use_gems(include=["layer_norm"]):
         y = torch.nn.functional.layer_norm(x, (n,), weight=w, bias=b, eps=eps)
 
     mean = x.mean(dim=1)
@@ -3480,7 +3499,7 @@ def _run_flaggems_rms_norm_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         w = torch.ones((n,), device=device, dtype=torch.float32)
 
-    with flag_gems.use_gems(include=["rms_norm", "rms_norm_forward"]):
+    with _flaggems_use_gems(include=["rms_norm", "rms_norm_forward"]):
         y, inv_rms = flag_gems_ops.rms_norm_forward(x, (n,), w, eps)
 
     x_np = _to_np(x)
@@ -3514,7 +3533,7 @@ def _run_flaggems_softmax_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         x = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["softmax"]):
+    with _flaggems_use_gems(include=["softmax"]):
         y = torch.softmax(x, dim=1)
 
     x_np = _to_np(x)
@@ -3540,7 +3559,7 @@ def _run_flaggems_relu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["relu"]):
+    with _flaggems_use_gems(include=["relu"]):
         out = torch.relu(inp)
 
     inp_np = _to_np(inp)
@@ -3564,7 +3583,7 @@ def _run_flaggems_celu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["celu"]):
+    with _flaggems_use_gems(include=["celu"]):
         out = torch.nn.functional.celu(inp, alpha=1.0)
 
     inp_np = _to_np(inp)
@@ -3588,7 +3607,7 @@ def _run_flaggems_elu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["elu"]):
+    with _flaggems_use_gems(include=["elu"]):
         out = torch.nn.functional.elu(inp, alpha=1.0)
 
     inp_np = _to_np(inp)
@@ -3604,7 +3623,7 @@ def _run_flaggems_elu2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
 def _run_flaggems_eye2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     n = int(case.shapes.get("N", 8))
     device = str(flag_gems.device)
-    with flag_gems.use_gems(include=["eye"]):
+    with _flaggems_use_gems(include=["eye"]):
         out = torch.eye(n, device=device, dtype=torch.float32)
     out_np = _to_np(out)
     return {
@@ -3617,7 +3636,7 @@ def _run_flaggems_eye_m2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     n = int(case.shapes.get("N", 8))
     m = int(case.shapes.get("M", 6))
     device = str(flag_gems.device)
-    with flag_gems.use_gems(include=["eye_m"]):
+    with _flaggems_use_gems(include=["eye_m"]):
         out = torch.eye(n, m, device=device, dtype=torch.float32)
     out_np = _to_np(out)
     return {
@@ -3637,7 +3656,7 @@ def _run_flaggems_exp2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["exp"]):
+    with _flaggems_use_gems(include=["exp"]):
         out = torch.exp(inp)
 
     inp_np = _to_np(inp)
@@ -3663,7 +3682,7 @@ def _run_flaggems_log2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         x = np.abs(rg.standard_normal((m, n), dtype=np.float32)) + np.float32(1.0e-3)
         inp = torch.from_numpy(x).to(device)
 
-    with flag_gems.use_gems(include=["log"]):
+    with _flaggems_use_gems(include=["log"]):
         out = torch.log(inp)
 
     inp_np = _to_np(inp)
@@ -3688,7 +3707,7 @@ def _run_flaggems_log_sigmoid2d_reference(case: TestCase) -> Dict[str, np.ndarra
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["log_sigmoid"]):
+    with _flaggems_use_gems(include=["log_sigmoid"]):
         out = torch.nn.functional.logsigmoid(inp)
 
     inp_np = _to_np(inp)
@@ -3714,7 +3733,7 @@ def _run_flaggems_log_softmax2d_reference(case: TestCase) -> Dict[str, np.ndarra
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["log_softmax"]):
+    with _flaggems_use_gems(include=["log_softmax"]):
         out = torch.nn.functional.log_softmax(inp, dim=axis)
 
     inp_np = _to_np(inp)
@@ -3739,7 +3758,7 @@ def _run_flaggems_min2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["min"]):
+    with _flaggems_use_gems(include=["min"]):
         out = torch.min(inp)
 
     inp_np = _to_np(inp)
@@ -3767,7 +3786,7 @@ def _run_flaggems_min_dim2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["min", "min_dim"]):
+    with _flaggems_use_gems(include=["min", "min_dim"]):
         out, indices = torch.min(inp, dim=axis, keepdim=keepdim)
 
     inp_np = _to_np(inp)
@@ -3798,7 +3817,7 @@ def _run_flaggems_nonzero2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         x[np.abs(x) < 0.35] = 0.0
         inp = torch.from_numpy(x).to(device)
 
-    with flag_gems.use_gems(include=["nonzero"]):
+    with _flaggems_use_gems(include=["nonzero"]):
         out = torch.nonzero(inp)
 
     inp_np = _to_np(inp)
@@ -3827,7 +3846,7 @@ def _run_flaggems_normed_cumsum2d_reference(case: TestCase) -> Dict[str, np.ndar
     else:
         inp = torch.from_numpy(np.abs(rg.standard_normal((m, n), dtype=np.float32))).to(device)
 
-    with flag_gems.use_gems(include=["normed_cumsum", "cumsum"]):
+    with _flaggems_use_gems(include=["normed_cumsum", "cumsum"]):
         csum = torch.cumsum(inp, dim=axis)
         if axis == 0:
             denom = csum[-1:, :]
@@ -3869,7 +3888,7 @@ def _run_flaggems_pad2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         value = 0.0
 
     pads = (pad_left, pad_right, pad_top, pad_bottom)
-    with flag_gems.use_gems(include=["pad"]):
+    with _flaggems_use_gems(include=["pad"]):
         out = torch.nn.functional.pad(inp, pads, mode="constant", value=value)
 
     inp_np = _to_np(inp)
@@ -3898,7 +3917,7 @@ def _run_flaggems_pow_scalar2d_reference(case: TestCase) -> Dict[str, np.ndarray
         x = np.abs(rg.standard_normal((m, n), dtype=np.float32)) + np.float32(1.0e-3)
         inp = torch.from_numpy(x).to(device)
 
-    with flag_gems.use_gems(include=["pow", "pow_scalar"]):
+    with _flaggems_use_gems(include=["pow", "pow_scalar"]):
         out = torch.pow(inp, exponent)
 
     inp_np = _to_np(inp)
@@ -3926,7 +3945,7 @@ def _run_flaggems_pow_tensor_scalar2d_reference(case: TestCase) -> Dict[str, np.
         x = np.abs(rg.standard_normal((m, n), dtype=np.float32)) + np.float32(1.0e-3)
         a = torch.from_numpy(x).to(device)
 
-    with flag_gems.use_gems(include=["pow", "pow_tensor_scalar"]):
+    with _flaggems_use_gems(include=["pow", "pow_tensor_scalar"]):
         out = flag_gems_ops.pow_tensor_scalar(a, exponent)
 
     a_np = _to_np(a)
@@ -3958,7 +3977,7 @@ def _run_flaggems_pow_tensor_tensor2d_reference(case: TestCase) -> Dict[str, np.
         exp_np = rg.integers(1, 4, size=(m, n), dtype=np.int32).astype(np.float32)
         exponent = torch.from_numpy(exp_np).to(device)
 
-    with flag_gems.use_gems(include=["pow", "pow_tensor_tensor"]):
+    with _flaggems_use_gems(include=["pow", "pow_tensor_tensor"]):
         out = flag_gems_ops.pow_tensor_tensor(a, exponent)
 
     a_np = _to_np(a)
@@ -4018,7 +4037,7 @@ def _run_flaggems_sin2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["sin"]):
+    with _flaggems_use_gems(include=["sin"]):
         out = torch.sin(inp)
 
     inp_np = _to_np(inp)
@@ -4044,7 +4063,7 @@ def _run_flaggems_prod2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         x = (rg.standard_normal((m, n), dtype=np.float32) * np.float32(0.05)) + np.float32(1.0)
         inp = torch.from_numpy(x).to(device)
 
-    with flag_gems.use_gems(include=["prod"]):
+    with _flaggems_use_gems(include=["prod"]):
         out = flag_gems_ops.prod(inp)
 
     inp_np = _to_np(inp)
@@ -4073,7 +4092,7 @@ def _run_flaggems_prod_dim2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         x = (rg.standard_normal((m, n), dtype=np.float32) * np.float32(0.05)) + np.float32(1.0)
         inp = torch.from_numpy(x).to(device)
 
-    with flag_gems.use_gems(include=["prod", "prod_dim"]):
+    with _flaggems_use_gems(include=["prod", "prod_dim"]):
         out = flag_gems_ops.prod_dim(inp, dim=axis, keepdim=keepdim)
 
     inp_np = _to_np(inp)
@@ -4102,7 +4121,7 @@ def _run_flaggems_repeat2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["repeat"]):
+    with _flaggems_use_gems(include=["repeat"]):
         out = flag_gems_ops.repeat(inp, (r0, r1))
 
     inp_np = _to_np(inp)
@@ -4141,7 +4160,7 @@ def _run_flaggems_tile2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["tile"]):
+    with _flaggems_use_gems(include=["tile"]):
         out = flag_gems_ops.tile(inp, (r0, r1))
 
     inp_np = _to_np(inp)
@@ -4183,7 +4202,7 @@ def _run_flaggems_stack2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         b = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["stack"]):
+    with _flaggems_use_gems(include=["stack"]):
         out = flag_gems_ops.stack((a, b), dim=axis)
 
     a_np = _to_np(a)
@@ -4211,7 +4230,7 @@ def _run_flaggems_repeat_interleave_self_int1d_reference(case: TestCase) -> Dict
     else:
         inp = torch.from_numpy(rg.standard_normal((n,), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["repeat_interleave_self_int"]):
+    with _flaggems_use_gems(include=["repeat_interleave_self_int"]):
         out = flag_gems_ops.repeat_interleave_self_int(inp, repeats, dim=0)
 
     inp_np = _to_np(inp)
@@ -4248,7 +4267,7 @@ def _run_flaggems_repeat_interleave_self_tensor1d_reference(case: TestCase) -> D
     else:
         repeats = torch.full((n,), int(r), device=device, dtype=torch.int64)
 
-    with flag_gems.use_gems(include=["repeat_interleave_self_tensor"]):
+    with _flaggems_use_gems(include=["repeat_interleave_self_tensor"]):
         out = flag_gems_ops.repeat_interleave_self_tensor(inp, repeats, dim=0)
 
     inp_np = _to_np(inp)
@@ -4282,7 +4301,7 @@ def _run_flaggems_repeat_interleave_tensor1d_reference(case: TestCase) -> Dict[s
     else:
         repeats = torch.full((n,), int(r), device=device, dtype=torch.int64)
 
-    with flag_gems.use_gems(include=["repeat_interleave_tensor"]):
+    with _flaggems_use_gems(include=["repeat_interleave_tensor"]):
         out = flag_gems_ops.repeat_interleave_tensor(repeats)
 
     repeats_np = _to_np(repeats).astype(np.int32, copy=False)
@@ -4356,7 +4375,7 @@ def _run_flaggems_abs2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["abs"]):
+    with _flaggems_use_gems(include=["abs"]):
         out = torch.abs(inp)
 
     inp_np = _to_np(inp)
@@ -4386,7 +4405,7 @@ def _run_flaggems_isnan2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
             x.reshape(-1)[0] = np.nan
         inp = torch.from_numpy(x).to(device)
 
-    with flag_gems.use_gems(include=["isnan"]):
+    with _flaggems_use_gems(include=["isnan"]):
         out = torch.isnan(inp)
 
     inp_np = _to_np(inp)
@@ -4416,7 +4435,7 @@ def _run_flaggems_isinf2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
             flat[1] = -np.inf
         inp = torch.from_numpy(x).to(device)
 
-    with flag_gems.use_gems(include=["isinf"]):
+    with _flaggems_use_gems(include=["isinf"]):
         out = torch.isinf(inp)
 
     inp_np = _to_np(inp)
@@ -4448,7 +4467,7 @@ def _run_flaggems_isfinite2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
             flat[2] = -np.inf
         inp = torch.from_numpy(x).to(device)
 
-    with flag_gems.use_gems(include=["isfinite"]):
+    with _flaggems_use_gems(include=["isfinite"]):
         out = torch.isfinite(inp)
 
     inp_np = _to_np(inp)
@@ -4485,7 +4504,7 @@ def _run_flaggems_isclose2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         atol = 1e-8
 
-    with flag_gems.use_gems(include=["isclose"]):
+    with _flaggems_use_gems(include=["isclose"]):
         out = torch.isclose(a, b, rtol=rtol, atol=atol)
 
     a_np = _to_np(a)
@@ -4527,7 +4546,7 @@ def _run_flaggems_allclose2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         atol = 1e-8
 
-    with flag_gems.use_gems(include=["allclose"]):
+    with _flaggems_use_gems(include=["allclose"]):
         out_bool = bool(torch.allclose(a, b, rtol=rtol, atol=atol))
 
     a_np = _to_np(a)
@@ -4556,7 +4575,7 @@ def _run_flaggems_rsqrt2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
         # keep positive values for rsqrt numerical stability
         inp = torch.from_numpy(np.abs(rg.standard_normal((m, n), dtype=np.float32)) + 1e-3).to(device)
 
-    with flag_gems.use_gems(include=["rsqrt"]):
+    with _flaggems_use_gems(include=["rsqrt"]):
         out = torch.rsqrt(inp)
 
     inp_np = _to_np(inp)
@@ -4595,18 +4614,18 @@ def _run_flaggems_lerp2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     if weight_array is not None:
         if weight_array.ndim == 0 or int(weight_array.size) == 1:
             w_scalar = float(weight_array.reshape(()))
-            with flag_gems.use_gems(include=["lerp_scalar", "lerp_tensor"]):
+            with _flaggems_use_gems(include=["lerp_scalar", "lerp_tensor"]):
                 c = torch.lerp(a, b, w_scalar)
             w_out = np.array(w_scalar, dtype=np.float32)
         else:
             w = _as_f32_tensor(weight_array, device=device)
-            with flag_gems.use_gems(include=["lerp_scalar", "lerp_tensor"]):
+            with _flaggems_use_gems(include=["lerp_scalar", "lerp_tensor"]):
                 c = torch.lerp(a, b, w)
             w_out = _to_np(w)
     else:
         # Keep scalar in [0, 1] to avoid unstable interpolation branches.
         w_scalar = float(rg.random())
-        with flag_gems.use_gems(include=["lerp_scalar", "lerp_tensor"]):
+        with _flaggems_use_gems(include=["lerp_scalar", "lerp_tensor"]):
             c = torch.lerp(a, b, w_scalar)
         w_out = np.array(w_scalar, dtype=np.float32)
 
@@ -4642,7 +4661,7 @@ def _run_flaggems_where2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         b = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["gt", "where_self", "where_scalar_self", "where_scalar_other"]):
+    with _flaggems_use_gems(include=["gt", "where_self", "where_scalar_self", "where_scalar_other"]):
         cond = torch.gt(a, b)
         c = torch.where(cond, a, b)
 
@@ -4684,7 +4703,7 @@ def _run_flaggems_masked_fill2d_reference(case: TestCase) -> Dict[str, np.ndarra
     else:
         value = 0.25
 
-    with flag_gems.use_gems(include=["masked_fill"]):
+    with _flaggems_use_gems(include=["masked_fill"]):
         out = torch.masked_fill(inp, mask, value)
 
     inp_np = _to_np(inp)
@@ -4719,7 +4738,7 @@ def _run_flaggems_threshold2d_reference(case: TestCase) -> Dict[str, np.ndarray]
     else:
         value = -0.5
 
-    with flag_gems.use_gems(include=["threshold"]):
+    with _flaggems_use_gems(include=["threshold"]):
         out = torch.threshold(inp, threshold, value)
 
     inp_np = _to_np(inp)
@@ -4754,7 +4773,7 @@ def _run_flaggems_constant_pad_nd2d_reference(case: TestCase) -> Dict[str, np.nd
         value = 0.0
 
     pads = (pad_left, pad_right, pad_top, pad_bottom)
-    with flag_gems.use_gems(include=["constant_pad_nd"]):
+    with _flaggems_use_gems(include=["constant_pad_nd"]):
         out = torch.nn.functional.pad(inp, pads, mode="constant", value=value)
 
     inp_np = _to_np(inp)
@@ -4787,7 +4806,7 @@ def _run_flaggems_row_sum_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["sum", "sum_dim", "sum_out", "sum_dim_out"]):
+    with _flaggems_use_gems(include=["sum", "sum_dim", "sum_out", "sum_dim_out"]):
         out = torch.sum(inp, dim=1)
 
     inp_np = _to_np(inp)
@@ -4811,7 +4830,7 @@ def _run_flaggems_row_max_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["max", "max_dim"]):
+    with _flaggems_use_gems(include=["max", "max_dim"]):
         max_result = torch.max(inp, dim=1)
         out = max_result.values
         out_index = max_result.indices.to(dtype=torch.int32)
@@ -4843,7 +4862,7 @@ def _run_flaggems_sort2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["sort"]):
+    with _flaggems_use_gems(include=["sort"]):
         values, indices = flag_gems_ops.sort(inp, dim=axis, descending=descending)
 
     inp_np = _to_np(inp)
@@ -4876,7 +4895,7 @@ def _run_flaggems_sort_stable2d_reference(case: TestCase) -> Dict[str, np.ndarra
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["sort", "sort_stable"]):
+    with _flaggems_use_gems(include=["sort", "sort_stable"]):
         values, indices = flag_gems_ops.sort_stable(inp, stable=True, dim=axis, descending=descending)
 
     inp_np = _to_np(inp)
@@ -4912,7 +4931,7 @@ def _run_flaggems_topk2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["topk"]):
+    with _flaggems_use_gems(include=["topk"]):
         values, indices = flag_gems_ops.topk(inp, k=k, dim=axis, largest=largest, sorted=sorted_out)
 
     inp_np = _to_np(inp)
@@ -4947,7 +4966,7 @@ def _run_flaggems_std2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["std"]):
+    with _flaggems_use_gems(include=["std"]):
         out = flag_gems_ops.std(inp, dim=axis, correction=correction, keepdim=keepdim)
 
     inp_np = _to_np(inp)
@@ -4978,7 +4997,7 @@ def _run_flaggems_var_mean2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["var_mean"]):
+    with _flaggems_use_gems(include=["var_mean"]):
         var_out, mean_out = flag_gems_ops.var_mean(inp, dim=(axis,), correction=correction, keepdim=keepdim)
 
     inp_np = _to_np(inp)
@@ -5016,7 +5035,7 @@ def _run_flaggems_vector_norm2d_reference(case: TestCase) -> Dict[str, np.ndarra
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["vector_norm"]):
+    with _flaggems_use_gems(include=["vector_norm"]):
         out = flag_gems_ops.vector_norm(inp, ord=ord_value, dim=(axis,), keepdim=keepdim, dtype=torch.float32)
 
     inp_np = _to_np(inp)
@@ -5048,7 +5067,7 @@ def _run_flaggems_argmax2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["argmax"]):
+    with _flaggems_use_gems(include=["argmax"]):
         out = torch.argmax(inp, dim=axis, keepdim=keepdim)
 
     inp_np = _to_np(inp)
@@ -5079,7 +5098,7 @@ def _run_flaggems_argmin2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["argmin"]):
+    with _flaggems_use_gems(include=["argmin"]):
         out = torch.argmin(inp, dim=axis, keepdim=keepdim)
 
     inp_np = _to_np(inp)
@@ -5109,7 +5128,7 @@ def _run_flaggems_cumsum2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         inp = torch.from_numpy(rg.standard_normal((m, n), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["cumsum"]):
+    with _flaggems_use_gems(include=["cumsum"]):
         out = torch.cumsum(inp, dim=axis)
 
     inp_np = _to_np(inp)
@@ -5143,7 +5162,7 @@ def _run_flaggems_gather2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     else:
         col_idx = torch.from_numpy(rg.integers(0, max(1, n), size=(l,), dtype=np.int64)).to(device)
 
-    with flag_gems.use_gems(include=["gather"]):
+    with _flaggems_use_gems(include=["gather"]):
         out = inp[row_idx, col_idx]
 
     inp_np = _to_np(inp)
@@ -5182,7 +5201,7 @@ def _run_flaggems_clamp2d_reference(case: TestCase) -> Dict[str, np.ndarray]:
     if hi < lo:
         lo, hi = hi, lo
 
-    with flag_gems.use_gems(include=["clamp", "maximum", "minimum"]):
+    with _flaggems_use_gems(include=["clamp", "maximum", "minimum"]):
         out = torch.clamp(inp, min=float(lo), max=float(hi))
 
     inp_np = _to_np(inp)
@@ -5218,7 +5237,7 @@ def _run_flaggems_upsample_bicubic2d_aa_reference(case: TestCase) -> Dict[str, n
     else:
         x = torch.from_numpy(rg.standard_normal((n, c, ih, iw), dtype=np.float32)).to(device)
 
-    with flag_gems.use_gems(include=["_upsample_bicubic2d_aa"]):
+    with _flaggems_use_gems(include=["_upsample_bicubic2d_aa"]):
         y = torch.ops.aten._upsample_bicubic2d_aa(x, [oh, ow], False, None, None)
 
     x_np = _to_np(x)
