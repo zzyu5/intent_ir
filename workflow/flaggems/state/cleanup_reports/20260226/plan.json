@@ -1,0 +1,1075 @@
+{
+  "schema_version": "flaggems_cleanup_plan_v1",
+  "generated_at": "2026-02-26T05:31:38.442179+00:00",
+  "artifacts_root": "artifacts",
+  "policy": {
+    "schema_version": "flaggems_artifact_retention_policy_v1",
+    "mode": "minimal_baseline",
+    "keep_runs": [
+      "full196_validated",
+      "gpu_perf_validated",
+      "latest_mlir_wave"
+    ],
+    "keep_dirs": [
+      "artifacts/toolchains"
+    ],
+    "purge_patterns": [
+      "_triton_cache",
+      "_triton_dump",
+      "tmp*",
+      "_tmp*",
+      "torch_extensions/*"
+    ]
+  },
+  "preserve_roots": [
+    "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3",
+    "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix",
+    "artifacts/toolchains"
+  ],
+  "preserve_meta": [
+    {
+      "kind": "keep_run",
+      "token": "full196_validated",
+      "ok": true,
+      "run_summary": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
+      "run_dir": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3",
+      "run_summary_exists": true
+    },
+    {
+      "kind": "keep_run",
+      "token": "gpu_perf_validated",
+      "ok": true,
+      "run_summary": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/run_summary.json",
+      "run_dir": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix",
+      "run_summary_exists": true
+    },
+    {
+      "kind": "keep_run",
+      "token": "latest_mlir_wave",
+      "ok": true,
+      "run_summary": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/run_summary.json",
+      "run_dir": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix",
+      "run_summary_exists": true
+    },
+    {
+      "kind": "keep_dir",
+      "token": "artifacts/toolchains",
+      "ok": true,
+      "run_dir": "artifacts/toolchains",
+      "exists": true
+    }
+  ],
+  "delete_candidates_count": 168,
+  "delete_candidates": [
+    {
+      "path": "/home/kingdom/intentir/artifacts/_tmp_cuda_fact_check",
+      "relpath": "artifacts/_tmp_cuda_fact_check",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/_tmp_fig_view",
+      "relpath": "artifacts/_tmp_fig_view",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/_tmp_llm_cache_e1e3_barrier",
+      "relpath": "artifacts/_tmp_llm_cache_e1e3_barrier",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/_tmp_llm_cache_e1e3_barrier2",
+      "relpath": "artifacts/_tmp_llm_cache_e1e3_barrier2",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/_tmp_llm_cache_e1e3_barrier3",
+      "relpath": "artifacts/_tmp_llm_cache_e1e3_barrier3",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/_tmp_llm_cache_e1e3_cold",
+      "relpath": "artifacts/_tmp_llm_cache_e1e3_cold",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/_tmp_llm_cache_e1e3_cold2",
+      "relpath": "artifacts/_tmp_llm_cache_e1e3_cold2",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/_tmp_llm_cache_e1e3_cuda_cov_cold",
+      "relpath": "artifacts/_tmp_llm_cache_e1e3_cuda_cov_cold",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/_tmp_llm_cache_e1e3_cuda_cov_cold_o6",
+      "relpath": "artifacts/_tmp_llm_cache_e1e3_cuda_cov_cold_o6",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/_tmp_llm_cache_e3_cuda_compare",
+      "relpath": "artifacts/_tmp_llm_cache_e3_cuda_compare",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/_tmp_tilelang",
+      "relpath": "artifacts/_tmp_tilelang",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/cuda_full_pipeline",
+      "relpath": "artifacts/cuda_full_pipeline",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/experiments",
+      "relpath": "artifacts/experiments",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_coverage",
+      "relpath": "artifacts/flaggems_coverage",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/batch_gate.json",
+      "relpath": "artifacts/flaggems_matrix/batch_gate.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/batch_gate_ci.json",
+      "relpath": "artifacts/flaggems_matrix/batch_gate_ci.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/catalog_validation.json",
+      "relpath": "artifacts/flaggems_matrix/catalog_validation.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/catalog_validation_latest.json",
+      "relpath": "artifacts/flaggems_matrix/catalog_validation_latest.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/catalog_validation_local.json",
+      "relpath": "artifacts/flaggems_matrix/catalog_validation_local.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/ci_gate.json",
+      "relpath": "artifacts/flaggems_matrix/ci_gate.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260213",
+      "relpath": "artifacts/flaggems_matrix/daily/20260213",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260214",
+      "relpath": "artifacts/flaggems_matrix/daily/20260214",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260215",
+      "relpath": "artifacts/flaggems_matrix/daily/20260215",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260216",
+      "relpath": "artifacts/flaggems_matrix/daily/20260216",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260217",
+      "relpath": "artifacts/flaggems_matrix/daily/20260217",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260218",
+      "relpath": "artifacts/flaggems_matrix/daily/20260218",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260219",
+      "relpath": "artifacts/flaggems_matrix/daily/20260219",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260220",
+      "relpath": "artifacts/flaggems_matrix/daily/20260220",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260221",
+      "relpath": "artifacts/flaggems_matrix/daily/20260221",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260222",
+      "relpath": "artifacts/flaggems_matrix/daily/20260222",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260223",
+      "relpath": "artifacts/flaggems_matrix/daily/20260223",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260224",
+      "relpath": "artifacts/flaggems_matrix/daily/20260224",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260225",
+      "relpath": "artifacts/flaggems_matrix/daily/20260225",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/cast2d_fix_probe_v1",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/cast2d_fix_probe_v1",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/debug_gpu_perf_attention_baseline",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/debug_gpu_perf_attention_baseline",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/debug_gpu_perf_attention_opt1",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/debug_gpu_perf_attention_opt1",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/debug_gpu_perf_attention_opt2",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/debug_gpu_perf_attention_opt2",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/debug_gpu_perf_attention_opt2_repeat",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/debug_gpu_perf_attention_opt2_repeat",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/debug_gpu_perf_attention_opt3",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/debug_gpu_perf_attention_opt3",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/debug_gpu_perf_elementwise_opt3",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/debug_gpu_perf_elementwise_opt3",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/debug_gpu_perf_elementwise_opt4",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/debug_gpu_perf_elementwise_opt4",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/debug_gpu_perf_elementwise_opt5",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/debug_gpu_perf_elementwise_opt5",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/debug_gpu_perf_elementwise_opt6",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/debug_gpu_perf_elementwise_opt6",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/debug_gpu_perf_reduction_opt3",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/debug_gpu_perf_reduction_opt3",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/debug_normed_cumsum_fix",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/debug_normed_cumsum_fix",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/debug_normed_cumsum_fix2",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/debug_normed_cumsum_fix2",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/debug_unique_fix",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/debug_unique_fix",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/debug_unique_fix2",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/debug_unique_fix2",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/debug_unique_n1",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/debug_unique_n1",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v22_strict_o3",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v22_strict_o3",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v23_strict_o3",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_attention_sequence/pipeline_reports/_triton_cache",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_attention_sequence/pipeline_reports/_triton_cache",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_attention_sequence/pipeline_reports/_triton_dump",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_attention_sequence/pipeline_reports/_triton_dump",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_conv_pool_interp/pipeline_reports/_triton_cache",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_conv_pool_interp/pipeline_reports/_triton_cache",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_conv_pool_interp/pipeline_reports/_triton_dump",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_conv_pool_interp/pipeline_reports/_triton_dump",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_001/pipeline_reports/_triton_cache",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_001/pipeline_reports/_triton_cache",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_001/pipeline_reports/_triton_dump",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_001/pipeline_reports/_triton_dump",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_002/pipeline_reports/_triton_cache",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_002/pipeline_reports/_triton_cache",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_002/pipeline_reports/_triton_dump",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_002/pipeline_reports/_triton_dump",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_003/pipeline_reports/_triton_cache",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_003/pipeline_reports/_triton_cache",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_003/pipeline_reports/_triton_dump",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_003/pipeline_reports/_triton_dump",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_004/pipeline_reports/_triton_cache",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_004/pipeline_reports/_triton_cache",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_004/pipeline_reports/_triton_dump",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_004/pipeline_reports/_triton_dump",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_005/pipeline_reports/_triton_cache",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_005/pipeline_reports/_triton_cache",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_005/pipeline_reports/_triton_dump",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_005/pipeline_reports/_triton_dump",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_006/pipeline_reports/_triton_cache",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_006/pipeline_reports/_triton_cache",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_006/pipeline_reports/_triton_dump",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_006/pipeline_reports/_triton_dump",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_007/pipeline_reports/_triton_cache",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_007/pipeline_reports/_triton_cache",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_007/pipeline_reports/_triton_dump",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_007/pipeline_reports/_triton_dump",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_008/pipeline_reports/_triton_cache",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_008/pipeline_reports/_triton_cache",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_008/pipeline_reports/_triton_dump",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_008/pipeline_reports/_triton_dump",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_009/pipeline_reports/_triton_cache",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_009/pipeline_reports/_triton_cache",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_009/pipeline_reports/_triton_dump",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_elementwise_broadcast/chunk_009/pipeline_reports/_triton_dump",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_index_scatter_gather/pipeline_reports/_triton_cache",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_index_scatter_gather/pipeline_reports/_triton_cache",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_index_scatter_gather/pipeline_reports/_triton_dump",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_index_scatter_gather/pipeline_reports/_triton_dump",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_matmul_linear/pipeline_reports/_triton_cache",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_matmul_linear/pipeline_reports/_triton_cache",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_matmul_linear/pipeline_reports/_triton_dump",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_matmul_linear/pipeline_reports/_triton_dump",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_norm_activation/chunk_001/pipeline_reports/_triton_cache",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_norm_activation/chunk_001/pipeline_reports/_triton_cache",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_norm_activation/chunk_001/pipeline_reports/_triton_dump",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_norm_activation/chunk_001/pipeline_reports/_triton_dump",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_norm_activation/chunk_002/pipeline_reports/_triton_cache",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_norm_activation/chunk_002/pipeline_reports/_triton_cache",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_norm_activation/chunk_002/pipeline_reports/_triton_dump",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_norm_activation/chunk_002/pipeline_reports/_triton_dump",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_reduction/chunk_001/pipeline_reports/_triton_cache",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_reduction/chunk_001/pipeline_reports/_triton_cache",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_reduction/chunk_001/pipeline_reports/_triton_dump",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_reduction/chunk_001/pipeline_reports/_triton_dump",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_reduction/chunk_002/pipeline_reports/_triton_cache",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_reduction/chunk_002/pipeline_reports/_triton_cache",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_reduction/chunk_002/pipeline_reports/_triton_dump",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/family_reduction/chunk_002/pipeline_reports/_triton_dump",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/gpu_perf_debug_norm_activation_v1",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_debug_norm_activation_v1",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v11_strict_rebuild1",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v11_strict_rebuild1",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v12_strict_rebuild2",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v12_strict_rebuild2",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v13_strict_rebuild3_o3",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v13_strict_rebuild3_o3",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v14_strict_policy_refresh",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v14_strict_policy_refresh",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v14_strict_policy_refresh2",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v14_strict_policy_refresh2",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v14_strict_policy_refresh3",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v14_strict_policy_refresh3",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v14_strict_policy_refresh4",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v14_strict_policy_refresh4",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v15_strict_policy_refresh5",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v15_strict_policy_refresh5",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v16_strict_policy_fix_native_callable",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v16_strict_policy_fix_native_callable",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/mlir_contract_wave_v8_strict",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/daily/20260226/rvv_fallback_probe_v1",
+      "relpath": "artifacts/flaggems_matrix/daily/20260226/rvv_fallback_probe_v1",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/debug_addmv2d",
+      "relpath": "artifacts/flaggems_matrix/debug_addmv2d",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/gather_index_batch_v1",
+      "relpath": "artifacts/flaggems_matrix/gather_index_batch_v1",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/gather_index_batch_v2_cuda",
+      "relpath": "artifacts/flaggems_matrix/gather_index_batch_v2_cuda",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/isfinite_batch_v1",
+      "relpath": "artifacts/flaggems_matrix/isfinite_batch_v1",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/isfinite_batch_v2",
+      "relpath": "artifacts/flaggems_matrix/isfinite_batch_v2",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/nightly_logs",
+      "relpath": "artifacts/flaggems_matrix/nightly_logs",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/norm_lerp_batch",
+      "relpath": "artifacts/flaggems_matrix/norm_lerp_batch",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/norm_lerp_batch_v2",
+      "relpath": "artifacts/flaggems_matrix/norm_lerp_batch_v2",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/ops_batch_v3",
+      "relpath": "artifacts/flaggems_matrix/ops_batch_v3",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/run_summary.json",
+      "relpath": "artifacts/flaggems_matrix/run_summary.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/rvv_local.json",
+      "relpath": "artifacts/flaggems_matrix/rvv_local.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/rvv_local_extended.json",
+      "relpath": "artifacts/flaggems_matrix/rvv_local_extended.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/rvv_where2d.json",
+      "relpath": "artifacts/flaggems_matrix/rvv_where2d.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/smoke_mlir_default_v1",
+      "relpath": "artifacts/flaggems_matrix/smoke_mlir_default_v1",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/status_converged.json",
+      "relpath": "artifacts/flaggems_matrix/status_converged.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/status_converged_extended.json",
+      "relpath": "artifacts/flaggems_matrix/status_converged_extended.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_matrix/tmp_mlir_shm_fix_probe",
+      "relpath": "artifacts/flaggems_matrix/tmp_mlir_shm_fix_probe",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_seed_cache",
+      "relpath": "artifacts/flaggems_seed_cache",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline",
+      "relpath": "artifacts/flaggems_triton_full_pipeline",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_conv_family_v2",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_conv_family_v2",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_qr4_batch_v3",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_qr4_batch_v3",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_qr4_quantile_v1",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_qr4_quantile_v1",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_qr4_quantile_v2",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_qr4_quantile_v2",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_qr4_repeat_v3",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_qr4_repeat_v3",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_qr4_repeat_v4",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_qr4_repeat_v4",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_qr4_repeat_v5",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_qr4_repeat_v5",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_qr4_repeat_v6",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_qr4_repeat_v6",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_qr4_v4_nvrtc",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_qr4_v4_nvrtc",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_qr5_v1_nvrtc",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_qr5_v1_nvrtc",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_qr5_v2_nvrtc",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_qr5_v2_nvrtc",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_qr5_v3_nvrtc",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_qr5_v3_nvrtc",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_qr6_v1_nvrtc",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_qr6_v1_nvrtc",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_qr6_v2_nvrtc",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_qr6_v2_nvrtc",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_qr6_v3_nvrtc",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_qr6_v3_nvrtc",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_qr6_v4_nvrtc",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_qr6_v4_nvrtc",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_tanfix_v1_nvrtc",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_tanfix_v1_nvrtc",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_twave_p0check_nvrtc",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_twave_p0check_nvrtc",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_twave_v1_nvrtc",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_twave_v1_nvrtc",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_twave_v2_nvrtc",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_twave_v2_nvrtc",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_twave_v3_nvrtc",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_twave_v3_nvrtc",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_twave_v4_nvrtc",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_twave_v4_nvrtc",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_twave_v5_nvrtc",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_twave_v5_nvrtc",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_unique2d_v5_nvrtc",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_unique2d_v5_nvrtc",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/flaggems_triton_full_pipeline_unique2d_v6_nvrtc",
+      "relpath": "artifacts/flaggems_triton_full_pipeline_unique2d_v6_nvrtc",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/full_pipeline_verify",
+      "relpath": "artifacts/full_pipeline_verify",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/intentir",
+      "relpath": "artifacts/intentir",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/intentir_kernel",
+      "relpath": "artifacts/intentir_kernel",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/intentir_suite",
+      "relpath": "artifacts/intentir_suite",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/llm_cache",
+      "relpath": "artifacts/llm_cache",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/llm_raw",
+      "relpath": "artifacts/llm_raw",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/llm_regression_group_norm_kernel.json",
+      "relpath": "artifacts/llm_regression_group_norm_kernel.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/llm_regression_suite_coverage_latest.json",
+      "relpath": "artifacts/llm_regression_suite_coverage_latest.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/llm_regression_suite_cuda_masked_attention2d.json",
+      "relpath": "artifacts/llm_regression_suite_cuda_masked_attention2d.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/llm_regression_suite_smoke_latest.json",
+      "relpath": "artifacts/llm_regression_suite_smoke_latest.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/llm_regression_suite_smoke_triton_any.json",
+      "relpath": "artifacts/llm_regression_suite_smoke_triton_any.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/llm_regression_suite_tilelang_fixcheck.json",
+      "relpath": "artifacts/llm_regression_suite_tilelang_fixcheck.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/perf_latest.json",
+      "relpath": "artifacts/perf_latest.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/perf_latest.raw.json",
+      "relpath": "artifacts/perf_latest.raw.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/perf_latest.summary.json",
+      "relpath": "artifacts/perf_latest.summary.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/remote",
+      "relpath": "artifacts/remote",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/rvv_cost_model_validate_M128N128K128.csv",
+      "relpath": "artifacts/rvv_cost_model_validate_M128N128K128.csv",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/rvv_profiles",
+      "relpath": "artifacts/rvv_profiles",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/rvv_remote_suite.json",
+      "relpath": "artifacts/rvv_remote_suite.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/rvv_remote_suite_latest.json",
+      "relpath": "artifacts/rvv_remote_suite_latest.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/rvv_remote_suite_smoke_latest.json",
+      "relpath": "artifacts/rvv_remote_suite_smoke_latest.json",
+      "is_dir": false,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/tilelang_cuda_export_tmp",
+      "relpath": "artifacts/tilelang_cuda_export_tmp",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/tilelang_full_pipeline",
+      "relpath": "artifacts/tilelang_full_pipeline",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/tmp",
+      "relpath": "artifacts/tmp",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/tmp_matrix_original_test",
+      "relpath": "artifacts/tmp_matrix_original_test",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/tmp_matrix_original_test2",
+      "relpath": "artifacts/tmp_matrix_original_test2",
+      "is_dir": true,
+      "reason": "purge_pattern"
+    },
+    {
+      "path": "/home/kingdom/intentir/artifacts/torch_extensions",
+      "relpath": "artifacts/torch_extensions",
+      "is_dir": true,
+      "reason": "prune_not_kept"
+    }
+  ],
+  "mode": "execute",
+  "bytes_before": 21006689322
+}

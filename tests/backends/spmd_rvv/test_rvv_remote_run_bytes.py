@@ -133,6 +133,22 @@ def test_rvv_execution_plan_requires_hardcut_evidence_when_compat_disabled(tmp_p
         raise AssertionError("expected hard-cut resolution failure")
 
 
+def test_execution_mode_from_plan_requires_explicit_mode() -> None:
+    mod = _load_module()
+    try:
+        _ = mod._execution_mode_from_plan({})
+    except RuntimeError as e:
+        assert "missing mode" in str(e)
+    else:
+        raise AssertionError("expected missing mode failure")
+
+
+def test_execution_mode_from_plan_accepts_strict_modes() -> None:
+    mod = _load_module()
+    assert mod._execution_mode_from_plan({"mode": "prebuilt_elf"}) == "prebuilt_elf"
+    assert mod._execution_mode_from_plan({"mode": "remote_llvm"}) == "remote_llvm"
+
+
 def test_rvv_execution_plan_allows_explicit_compat_fallback(tmp_path: Path) -> None:
     mod = _load_module()
     contract_path, payload = _write_contract(

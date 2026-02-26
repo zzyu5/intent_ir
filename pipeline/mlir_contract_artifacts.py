@@ -944,8 +944,6 @@ def _materialize_executable(
             return executable, artifacts
 
     if backend == "rvv":
-        from backends.spmd_rvv.codegen.cpp_driver import lower_intent_to_c_with_files_cpp  # noqa: PLC0415
-
         module_text = str(module.module_text or "")
         if not _looks_like_llvm_ir(module_text):
             raise RuntimeError(
@@ -985,6 +983,8 @@ def _materialize_executable(
         # Hard-cut default: keep RVV executable path contract-first and do not emit
         # compatibility C source unless explicitly requested.
         if _env_flag("INTENTIR_RVV_EMIT_COMPAT_C_SRC", default=False):
+            from backends.spmd_rvv.codegen.cpp_driver import lower_intent_to_c_with_files_cpp  # noqa: PLC0415
+
             try:
                 if recovered_intent is None:
                     recovered_intent = _recover_intent()

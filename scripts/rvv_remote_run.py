@@ -751,6 +751,13 @@ def _resolve_rvv_execution_plan(
     )
 
 
+def _execution_mode_from_plan(execution_plan: dict[str, Any]) -> str:
+    mode = str((execution_plan or {}).get("mode") or "").strip()
+    if not mode:
+        raise RuntimeError("rvv execution plan missing mode")
+    return mode
+
+
 def _synthesize_intent_from_contract(contract: MlirBackendContract) -> dict[str, Any]:
     io_spec = _runtime_io_spec_from_contract(contract)
     tensors_in = io_spec.get("tensors")
@@ -1101,7 +1108,7 @@ def run_remote(
         contract_artifact_path=str(contract_artifact_path),
         compat_c_allowed=bool(compat_c_allowed),
     )
-    execution_mode = str(execution_plan.get("mode") or "compat_c_src")
+    execution_mode = _execution_mode_from_plan(execution_plan)
     _log(
         f"[{frontend}:{kernel}] execution plan: mode={execution_mode} "
         f"reason={execution_plan.get('reason') or ''}"

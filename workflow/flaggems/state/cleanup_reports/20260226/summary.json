@@ -1,0 +1,16 @@
+{
+  "schema_version": "flaggems_cleanup_summary_v1",
+  "generated_at": "2026-02-26T05:31:59.056329+00:00",
+  "mode": "execute",
+  "artifacts_root": "artifacts",
+  "policy_path": "workflow/flaggems/state/artifact_retention_policy.json",
+  "current_status_path": "workflow/flaggems/state/current_status.json",
+  "progress_log_path": "workflow/flaggems/state/progress_log.jsonl",
+  "plan_path": "workflow/flaggems/state/cleanup_reports/20260226/plan.json",
+  "deleted_log_path": "workflow/flaggems/state/cleanup_reports/20260226/deleted.jsonl",
+  "bytes_before": 21006689322,
+  "bytes_after": 120985167,
+  "bytes_delta": -20885704155,
+  "deleted_paths_count": 168,
+  "purge_toolchains": false
+}
