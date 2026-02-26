@@ -21,6 +21,39 @@ def _load_module():
     return mod
 
 
+def test_lower_intent_to_c_with_files_requires_explicit_compat_for_non_contract(monkeypatch) -> None:
+    mod = _load_module()
+    monkeypatch.delenv("INTENTIR_RVV_ALLOW_COMPAT_C_SRC", raising=False)
+    try:
+        _ = mod.lower_intent_to_c_with_files(
+            {"name": "k", "tensors": {}, "ops": [], "outputs": []},
+            shape_bindings={},
+        )
+    except RuntimeError as e:
+        msg = str(e)
+        assert "strict hard-cut" in msg
+        assert "INTENTIR_RVV_ALLOW_COMPAT_C_SRC=1" in msg
+    else:
+        raise AssertionError("expected explicit compat requirement")
+
+
+def test_lower_intent_to_c_with_files_accepts_contract_without_compat(monkeypatch) -> None:
+    mod = _load_module()
+    monkeypatch.delenv("INTENTIR_RVV_ALLOW_COMPAT_C_SRC", raising=False)
+    monkeypatch.setattr(mod, "lower_rvv_contract_to_c_src", lambda *_a, **_k: "ok")
+    out = mod.lower_intent_to_c_with_files(
+        {
+            "schema_version": "intent_mlir_backend_contract_v2",
+            "backend": "rvv",
+            "kernel_name": "k",
+            "executable": {"format": "rvv_elf", "path": "x", "entry": "k", "target": "rvv"},
+            "artifacts": {},
+        },
+        shape_bindings={},
+    )
+    assert out == "ok"
+
+
 def test_run_one_compile_failure_contains_timing_fields(monkeypatch, tmp_path: Path) -> None:
     mod = _load_module()
 

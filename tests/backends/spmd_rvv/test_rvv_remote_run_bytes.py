@@ -39,6 +39,39 @@ def test_rvv_remote_run_avoids_direct_intentfunction_json_rehydration() -> None:
     assert "IntentFunction.from_json_dict" not in src
 
 
+def test_lower_intent_to_c_with_files_requires_explicit_compat_for_non_contract(monkeypatch) -> None:
+    mod = _load_module()
+    monkeypatch.delenv("INTENTIR_RVV_REMOTE_ALLOW_COMPAT_C", raising=False)
+    try:
+        _ = mod.lower_intent_to_c_with_files(
+            {"name": "k", "tensors": {}, "ops": [], "outputs": []},
+            shape_bindings={},
+        )
+    except RuntimeError as e:
+        msg = str(e)
+        assert "strict hard-cut" in msg
+        assert "INTENTIR_RVV_REMOTE_ALLOW_COMPAT_C=1" in msg
+    else:
+        raise AssertionError("expected explicit compat requirement")
+
+
+def test_lower_intent_to_c_with_files_accepts_contract_without_compat(monkeypatch) -> None:
+    mod = _load_module()
+    monkeypatch.delenv("INTENTIR_RVV_REMOTE_ALLOW_COMPAT_C", raising=False)
+    monkeypatch.setattr(mod, "lower_rvv_contract_to_c_src", lambda *_a, **_k: "ok")
+    out = mod.lower_intent_to_c_with_files(
+        {
+            "schema_version": "intent_mlir_backend_contract_v2",
+            "backend": "rvv",
+            "kernel_name": "k",
+            "executable": {"format": "rvv_elf", "path": "x", "entry": "k", "target": "rvv"},
+            "artifacts": {},
+        },
+        shape_bindings={},
+    )
+    assert out == "ok"
+
+
 def test_rvv_remote_llvm_compile_uses_two_step_clang_ir_then_link() -> None:
     src = (ROOT / "scripts" / "rvv_remote_run.py").read_text(encoding="utf-8")
     assert "clang -O3 -x ir {q_remote_target} -c -o {q_remote_obj} {q_remote_ll} && " in src

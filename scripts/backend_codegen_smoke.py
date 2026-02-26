@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import re
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -73,6 +74,13 @@ def lower_intent_to_c_with_files(
     if isinstance(intent_or_json, dict) and str(intent_or_json.get("schema_version") or "").startswith("intent_mlir_backend_contract_"):
         payload: dict[str, Any] = dict(intent_or_json)
     else:
+        compat_raw = str(os.getenv("INTENTIR_RVV_ALLOW_COMPAT_C_SRC", "")).strip().lower()
+        compat_enabled = compat_raw in {"1", "true", "yes", "y", "on"}
+        if not compat_enabled:
+            raise RuntimeError(
+                "rvv strict hard-cut: backend_codegen_smoke lower_intent_to_c_with_files accepts non-contract input "
+                "only in explicit compat mode (set INTENTIR_RVV_ALLOW_COMPAT_C_SRC=1)"
+            )
         if isinstance(intent_or_json, dict):
             intent_json = dict(intent_or_json)
         elif hasattr(intent_or_json, "to_json_dict"):

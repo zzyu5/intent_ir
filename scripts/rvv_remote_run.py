@@ -77,6 +77,11 @@ def lower_intent_to_c_with_files(
     if isinstance(intent_or_json, dict) and str(intent_or_json.get("schema_version") or "").startswith("intent_mlir_backend_contract_"):
         payload: dict[str, Any] = dict(intent_or_json)
     else:
+        if not _env_flag("INTENTIR_RVV_REMOTE_ALLOW_COMPAT_C", default=False):
+            raise RuntimeError(
+                "rvv strict hard-cut: lower_intent_to_c_with_files accepts non-contract input only in explicit "
+                "compat mode (set INTENTIR_RVV_REMOTE_ALLOW_COMPAT_C=1)"
+            )
         if isinstance(intent_or_json, dict):
             intent_json = dict(intent_or_json)
         elif hasattr(intent_or_json, "to_json_dict"):
