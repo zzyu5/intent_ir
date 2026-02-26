@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-26T15:17:39+00:00",
+  "updated_at": "2026-02-26T16:24:55+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,104 +13,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "60b5018 fix(phase1): close failset clusters on strict cuda path\n50959eb workflow(phase0): freeze refactor context at current head\nbd45c78 fix(cuda): synthesize ptx launch defaults and repair pad scalar tails\n7af6b8c fix(cuda): recover launch/io contract parity for ptx strict path\n6d7f8ac fix(cuda): prioritize output-only symbols when appending ptx scalar args\nd843379 workflow: record mlir migration reduction wave 4/4 evidence\n3448055 workflow: refresh state after cuda launch-grid inference fix\n0d28634 fix(cuda): infer grid-x from ptx ctaid bound parameter\neb104d4 workflow: refresh state after cuda ptx invocation alignment\n9899ae9 fix(cuda): align ptx invocation args with entry signature\n73752fc workflow: refresh state after llvm cache and cuda io-spec fixes\neeea46a fix(mlir): harden cached llvm selection and synthesize cuda invocation io spec\n89aa8a3 workflow: refresh state after cached llvm discovery integration\nbcc13e7 refactor(mlir): reuse cached downstream llvm artifacts across frontends\n159661e workflow: refresh state after flaggems import compatibility fixes\nf52857c fix(flaggems): repair import path and legacy use_gems compatibility\nee3c0be workflow: sync state after cached-llvm strict pipeline support\n48e5381 refactor(phase1): support cached llvm reuse for strict downstream llvm pipelines\nbca24ad workflow: sync state after backend docs and hard-cut cleanup progression\nfae806f docs: align backend READMEs with strict contract-first MLIR architecture",
+  "git_log_short": "6896e63 fix(phase3): disable gpu perf contract rebuild defaults in strict\ne297bad workflow(phase1): refresh state after cuda failset closure\n60b5018 fix(phase1): close failset clusters on strict cuda path\n50959eb workflow(phase0): freeze refactor context at current head\nbd45c78 fix(cuda): synthesize ptx launch defaults and repair pad scalar tails\n7af6b8c fix(cuda): recover launch/io contract parity for ptx strict path\n6d7f8ac fix(cuda): prioritize output-only symbols when appending ptx scalar args\nd843379 workflow: record mlir migration reduction wave 4/4 evidence\n3448055 workflow: refresh state after cuda launch-grid inference fix\n0d28634 fix(cuda): infer grid-x from ptx ctaid bound parameter\neb104d4 workflow: refresh state after cuda ptx invocation alignment\n9899ae9 fix(cuda): align ptx invocation args with entry signature\n73752fc workflow: refresh state after llvm cache and cuda io-spec fixes\neeea46a fix(mlir): harden cached llvm selection and synthesize cuda invocation io spec\n89aa8a3 workflow: refresh state after cached llvm discovery integration\nbcc13e7 refactor(mlir): reuse cached downstream llvm artifacts across frontends\n159661e workflow: refresh state after flaggems import compatibility fixes\nf52857c fix(flaggems): repair import path and legacy use_gems compatibility\nee3c0be workflow: sync state after cached-llvm strict pipeline support\n48e5381 refactor(phase1): support cached llvm reuse for strict downstream llvm pipelines",
   "progress_tail": [
-    {
-      "ts": "2026-02-26T06:26:48+00:00",
-      "commit": "d9c8513e82274af9e22852633edd9bddb9fe50fb",
-      "lane": "coverage",
-      "summary": "coverage gate alignment on HEAD d9 (7/7, dual_pass=196)",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json",
-      "next_focus": "Continue RVV strict compat-path shrink and multi-frontend strict schema alignment.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/coverage_integrity.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
-    {
-      "ts": "2026-02-26T06:31:39+00:00",
-      "commit": "716dad1ac5482a0094aef4d8ffaa1f0792eb6086",
-      "lane": "coverage",
-      "summary": "full196 strict refreshed on HEAD 716 (7/7, dual_pass=196, fallback=0)",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json",
-      "next_focus": "Refresh gpu_perf strict on same HEAD and keep strict gate green.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/coverage_integrity.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
-    {
-      "ts": "2026-02-26T06:31:39+00:00",
-      "commit": "716dad1ac5482a0094aef4d8ffaa1f0792eb6086",
-      "lane": "backend_compiler",
-      "summary": "gpu_perf strict refreshed on HEAD 716 (159/159, blocked=0, fallback=0)",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/status_converged.json",
-      "next_focus": "Proceed RVV strict compat-path shrink and multi-frontend strict schema alignment.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/gpu_perf_graph.json",
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/stage_timing_breakdown.json",
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
-    {
-      "ts": "2026-02-26T06:32:03+00:00",
-      "commit": "716dad1ac5482a0094aef4d8ffaa1f0792eb6086",
-      "lane": "coverage",
-      "summary": "coverage gate alignment on HEAD 716 (7/7, dual_pass=196)",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json",
-      "next_focus": "Proceed RVV strict compat-path shrink and multi-frontend strict schema alignment.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/coverage_integrity.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
-    {
-      "ts": "2026-02-26T06:44:47+00:00",
-      "commit": "aeacf5b3ff3b7c7f02fbfdd76929ece5d1c9ce34",
-      "lane": "coverage",
-      "summary": "full196 strict refreshed on HEAD aeac (7/7, dual_pass=196, strict fields present)",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json",
-      "next_focus": "Refresh gpu_perf strict on same HEAD and keep strict gate green.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/coverage_integrity.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
     {
       "ts": "2026-02-26T06:44:48+00:00",
       "commit": "aeacf5b3ff3b7c7f02fbfdd76929ece5d1c9ce34",
@@ -170,18 +74,111 @@
       "counts_by_status": {
         "cuda_only": 6
       }
+    },
+    {
+      "ts": "2026-02-26T16:14:06+00:00",
+      "commit": "e297bad86e86209007fe1f29e91cc1682ca64bb1",
+      "lane": "coverage",
+      "summary": "full196 v30 strict refreshed on HEAD (196/196, fallback=0)",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/status_converged.json",
+      "next_focus": "Run gpu_perf v18 strict and validate min>=0.80, p50>=0.90.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/coverage_integrity.json",
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-26T16:21:38+00:00",
+      "commit": "e297bad86e86209007fe1f29e91cc1682ca64bb1",
+      "lane": "backend_compiler",
+      "summary": "gpu_perf v18 strict refreshed on HEAD (159/159, fallback=0, min>=0.80, p50>=0.90)",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/status_converged.json",
+      "next_focus": "Unify perf ratio fields into run_summary/current_status and prepare expansion wave planning.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/gpu_perf_graph.json",
+        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/stage_timing_breakdown.json",
+        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-26T16:24:00+00:00",
+      "commit": "6896e63b23497cb74b7d1720807daceaa8d1d9b7",
+      "lane": "coverage",
+      "summary": "full196 v30 strict refreshed on HEAD 6896e63 (196/196, fallback=0)",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/status_converged.json",
+      "next_focus": "Finalize gpu_perf strict refresh and gates on same HEAD.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/coverage_integrity.json",
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-26T16:24:00+00:00",
+      "commit": "6896e63b23497cb74b7d1720807daceaa8d1d9b7",
+      "lane": "backend_compiler",
+      "summary": "gpu_perf v18 strict refreshed on HEAD 6896e63 (159/159, min=0.817, p50=0.905, fallback=0)",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/status_converged.json",
+      "next_focus": "Commit workflow/evidence and continue denominator expansion planning.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/gpu_perf_graph.json",
+        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/stage_timing_breakdown.json",
+        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-26T16:24:36+00:00",
+      "commit": "6896e63b23497cb74b7d1720807daceaa8d1d9b7",
+      "lane": "coverage",
+      "summary": "full196 v30 strict finalized on HEAD 6896e63 for coverage gate alignment",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/status_converged.json",
+      "next_focus": "Keep gpu_perf strict evidence aligned and finalize workflow commit.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/coverage_integrity.json",
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
     }
   ],
-  "next_focus": "Expand strict MLIR wave to more kernels/families and refresh full196+gpu_perf on current HEAD.",
+  "next_focus": "Keep gpu_perf strict evidence aligned and finalize workflow commit.",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
-  "active_lanes": [
-    "backend_compiler",
-    "coverage",
-    "mlir_migration"
-  ],
+  "active_lanes": [],
   "next_focus_by_lane": {
-    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
-    "backend_compiler": "Continue RVV strict compat-path shrink and multi-frontend strict schema alignment.",
+    "backend_compiler": "Commit workflow/evidence and continue denominator expansion planning.",
+    "coverage": "Keep gpu_perf strict evidence aligned and finalize workflow commit.",
     "mlir_migration": "Expand strict MLIR wave to more kernels/families and refresh full196+gpu_perf on current HEAD."
   },
   "known_risks": []
