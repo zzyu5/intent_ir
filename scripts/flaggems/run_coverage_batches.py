@@ -17,6 +17,10 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from pipeline.common.strict_policy import CONTRACT_SCHEMA_VERSION, strict_fallback_enabled  # noqa: E402
 
 try:  # Optional dependency; plain progress remains available without tqdm.
     from tqdm import tqdm  # type: ignore
@@ -303,6 +307,8 @@ def _materialize_family_outputs(
     family_out: Path,
     chunk_rows: list[dict[str, Any]],
 ) -> tuple[bool, Path, Path]:
+    strict_mode = bool(strict_fallback_enabled())
+    fallback_policy = "strict" if strict_mode else "legacy_compatible"
     semantic_set = set(semantics)
     merged_by_semantic: dict[str, dict[str, Any]] = {}
     chunk_run_meta: dict[str, dict[str, Any]] = {}
@@ -408,6 +414,9 @@ def _materialize_family_outputs(
         "ok": bool(family_ok),
         "suite": "coverage",
         "requested_suite": "coverage",
+        "strict_mode": bool(strict_mode),
+        "fallback_policy": str(fallback_policy),
+        "contract_schema_version": str(CONTRACT_SCHEMA_VERSION),
         "kernel_filter": list(kernels),
         "scope_kernels": list(kernels),
         "coverage_mode": "category_batches",
@@ -420,6 +429,11 @@ def _materialize_family_outputs(
         "runtime_fallback_kernel_count": int(runtime_fallback_kernel_count),
         "runtime_fallback_kernels": list(runtime_fallback_kernel_list),
         "status_converged_path": str(status_path),
+        "invocation": {
+            "strict_mode": bool(strict_mode),
+            "fallback_policy": str(fallback_policy),
+            "contract_schema_version": str(CONTRACT_SCHEMA_VERSION),
+        },
         "chunk_runs": [
             {
                 "chunk": str(r.get("chunk") or ""),
@@ -984,6 +998,8 @@ def main() -> None:
         progress_bar.close()
 
     failures_path = out_root / "errors.json"
+    strict_mode = bool(strict_fallback_enabled())
+    fallback_policy = "strict" if strict_mode else "legacy_compatible"
     failure_payload = {
         "schema_version": "flaggems_coverage_batch_errors_v1",
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
@@ -995,6 +1011,9 @@ def main() -> None:
     runs_payload = {
         "schema_version": "flaggems_coverage_batch_runs_v1",
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "strict_mode": bool(strict_mode),
+        "fallback_policy": str(fallback_policy),
+        "contract_schema_version": str(CONTRACT_SCHEMA_VERSION),
         "coverage_batches_path": str(args.coverage_batches),
         "out_root": str(out_root),
         "seed_cache_dir": str(seed_cache_dir),

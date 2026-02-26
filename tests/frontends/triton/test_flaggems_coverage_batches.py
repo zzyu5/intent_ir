@@ -201,6 +201,9 @@ def test_run_coverage_batches_dry_run_uses_family_pipeline_dirs(tmp_path: Path) 
 
     runs_payload = json.loads((out_root / "coverage_batch_runs.json").read_text(encoding="utf-8"))
     assert runs_payload["ok"] is True
+    assert isinstance(runs_payload.get("strict_mode"), bool)
+    assert str(runs_payload.get("fallback_policy") or "") in {"strict", "legacy_compatible"}
+    assert str(runs_payload.get("contract_schema_version") or "").startswith("intent_mlir_backend_contract_")
     seed_cache_dir_s = str(seed_cache_dir)
     rows = {str(row["family"]): row for row in runs_payload["families"]}
     assert set(rows) == {"f1", "f2"}
@@ -268,6 +271,8 @@ def test_run_coverage_batches_dry_run_supports_family_chunking(tmp_path: Path) -
     assert p.returncode == 0, p.stderr
     runs_payload = json.loads((out_root / "coverage_batch_runs.json").read_text(encoding="utf-8"))
     assert runs_payload["ok"] is True
+    assert isinstance(runs_payload.get("strict_mode"), bool)
+    assert str(runs_payload.get("fallback_policy") or "") in {"strict", "legacy_compatible"}
     assert len(runs_payload["families"]) == 1
     row = runs_payload["families"][0]
     assert row["chunk_enabled"] is True
@@ -440,6 +445,10 @@ def test_materialize_family_outputs_scopes_single_chunk_semantics(tmp_path: Path
     assert family_ok is True
     assert run_summary_path == family_out / "run_summary.json"
     assert status_path == family_out / "status_converged.json"
+    run_summary_payload = json.loads(run_summary_path.read_text(encoding="utf-8"))
+    assert isinstance(run_summary_payload.get("strict_mode"), bool)
+    assert str(run_summary_payload.get("fallback_policy") or "") in {"strict", "legacy_compatible"}
+    assert str(run_summary_payload.get("contract_schema_version") or "").startswith("intent_mlir_backend_contract_")
     status_payload = json.loads(status_path.read_text(encoding="utf-8"))
     entries = list(status_payload["entries"])
     assert len(entries) == 1
