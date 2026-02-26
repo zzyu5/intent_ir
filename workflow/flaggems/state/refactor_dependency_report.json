@@ -1,34 +1,25 @@
 {
   "schema_version": "refactor_dependency_report_v1",
-  "generated_at": "2026-02-26T10:10:38+00:00",
-  "head_commit": "cf39f8b1c720e6cd89a8f7bfe6ca372d5e54f8c1",
+  "generated_at": "2026-02-26T10:17:52+00:00",
+  "head_commit": "ba56cf4b697d80e12e9a77f587a488c4c38bcb07",
   "branch": "compiler-cleanup-v1",
   "legacy_dependency_refs": {
     "cuda_cpp_codegen_refs": {
-      "pattern": "backends/cuda/cpp_codegen|lower_intent_to_cuda_kernel_cpp|lower_intent_json_to_cuda_kernel_cpp|INTENTIR_CUDA_CPP_CODEGEN",
-      "count": 12,
+      "pattern": "backends/cuda/cpp_codegen|backends\\.cuda\\.codegen|lower_intent_to_cuda_kernel_cpp|lower_intent_json_to_cuda_kernel_cpp|INTENTIR_CUDA_CPP_CODEGEN",
+      "count": 5,
       "matches": [
-        "tests/backends/cuda/test_cuda_pipeline_driver.py:8:from backends.cuda.codegen.cpp_driver import lower_intent_json_to_cuda_kernel_cpp, lower_intent_to_cuda_kernel_cpp",
-        "tests/backends/cuda/test_cuda_pipeline_driver.py:213:        _ = lower_intent_json_to_cuda_kernel_cpp(intent.to_json_dict(), bindings={\"M\": 4, \"N\": 64})",
-        "tests/backends/cuda/test_cuda_pipeline_driver.py:215:        _ = lower_intent_to_cuda_kernel_cpp(intent, bindings={\"M\": 4, \"N\": 64})",
+        "tests/backends/cuda/test_cuda_pipeline_driver.py:212:        _ = importlib.import_module(\"backends.cuda.codegen\")",
+        "tests/backends/cuda/test_cuda_pipeline_driver.py:214:        _ = importlib.import_module(\"backends.cuda.codegen.cpp_driver\")",
         "scripts/flaggems/check_batch_gate.py:461:        \"INTENTIR_CUDA_CPP_CODEGEN_ENGINE\",",
-        "backends/cuda/codegen/cpp_driver.py:39:def lower_intent_to_cuda_kernel_cpp(",
-        "backends/cuda/codegen/cpp_driver.py:48:def lower_intent_json_to_cuda_kernel_cpp(",
-        "backends/cuda/codegen/cpp_driver.py:80:    \"lower_intent_to_cuda_kernel_cpp\",",
-        "backends/cuda/codegen/cpp_driver.py:82:    \"lower_intent_json_to_cuda_kernel_cpp\",",
-        "backends/cuda/codegen/__init__.py:6:from .cpp_driver import lower_intent_json_to_cuda_kernel, lower_intent_json_to_cuda_kernel_cpp  # noqa: F401",
-        "backends/cuda/codegen/__init__.py:11:    \"lower_intent_json_to_cuda_kernel_cpp\",",
         "scripts/cuda_backend_smoke.py:797:    os.environ.pop(\"INTENTIR_CUDA_CPP_CODEGEN_ENGINE\", None)",
         "scripts/cuda_backend_smoke.py:798:    os.environ.pop(\"INTENTIR_CUDA_CPP_CODEGEN_ENGINE_STRICT\", None)"
       ]
     },
     "rvv_compat_refs": {
-      "pattern": "lower_intent_to_c_with_files_cpp|compat_c_src|INTENTIR_RVV_.*COMPAT|INTENTIR_RVV_EMIT_COMPAT_C_SRC",
-      "count": 3,
+      "pattern": "backends\\.spmd_rvv\\.codegen|lower_intent_to_c_with_files_cpp|compat_c_src|INTENTIR_RVV_.*COMPAT|INTENTIR_RVV_EMIT_COMPAT_C_SRC",
+      "count": 1,
       "matches": [
-        "tests/backends/spmd_rvv/test_rvv_remote_run_bytes.py:40:    assert \"compat_c_src\" not in src",
-        "backends/spmd_rvv/codegen/__init__.py:25:def lower_intent_to_c_with_files_cpp(",
-        "backends/spmd_rvv/codegen/__init__.py:59:    \"lower_intent_to_c_with_files_cpp\","
+        "tests/backends/spmd_rvv/test_rvv_remote_run_bytes.py:40:    assert \"compat_c_src\" not in src"
       ]
     }
   }
