@@ -203,6 +203,7 @@ def lower_rvv_contract_to_c_src(
     atol: float = 1e-3,
     rtol: float = 1e-3,
     mode: str = "verify",
+    allow_compat_c_src: bool | None = None,
 ) -> str:
     contract, _ = _resolve_rvv_contract(intent_payload, shape_bindings=shape_bindings)
     bindings = normalize_bindings(shape_bindings or contract.reason_context.get("shape_bindings") or {})
@@ -214,17 +215,19 @@ def lower_rvv_contract_to_c_src(
         return str(c_src)
     # Compatibility path: when execution is hard-cut to prebuilt ELF, scripts may
     # still need C text for remote packaging and dtype parsing.
-    allow_compat_c_src = str(os.getenv("INTENTIR_RVV_ALLOW_COMPAT_C_SRC", "")).strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "y",
-        "on",
-    }
+    if allow_compat_c_src is None:
+        allow_compat_c_src = str(os.getenv("INTENTIR_RVV_ALLOW_COMPAT_C_SRC", "")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "y",
+            "on",
+        }
     if not allow_compat_c_src:
         raise ValueError(
-            "rvv contract C-source compatibility access is disabled by default in hard-cut mode; "
-            "set INTENTIR_RVV_ALLOW_COMPAT_C_SRC=1 to enable explicit compatibility fallback"
+            "rvv contract C-source compatibility access is disabled by default in strict hard-cut mode; "
+            "set INTENTIR_RVV_ALLOW_COMPAT_C_SRC=1 or pass allow_compat_c_src=True "
+            "to enable explicit compatibility fallback"
         )
     art_src = str((contract.artifacts or {}).get("rvv_kernel_src_path") or "").strip()
     if art_src:

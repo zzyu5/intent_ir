@@ -1,0 +1,14 @@
+{
+  "schema_version": "flaggems_refactor_context_v1",
+  "generated_at": "2026-02-26T03:35:01+00:00",
+  "branch": "compiler-cleanup-v1",
+  "head_commit": "2f3e26f9d6b04d001f8eec27f6acf40d14f9d955",
+  "plan_version": "intentir_mlir_engineering_v1",
+  "strict_defaults": {
+    "execution_ir": "mlir",
+    "fallback_policy": "strict",
+    "strict_mode": true,
+    "artifact_retention_mode": "minimal_baseline",
+    "backend_sequence": "cuda_then_rvv"
+  }
+}

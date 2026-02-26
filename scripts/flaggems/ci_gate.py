@@ -468,6 +468,7 @@ def _validate_mlir_native_execution(
     run_summary: dict[str, Any],
     status_converged: dict[str, Any],
 ) -> tuple[bool, str]:
+    head_commit = _git_head_commit()
     execution_engine = str(
         run_summary.get("execution_engine")
         or (run_summary.get("invocation") or {}).get("execution_engine")
@@ -502,6 +503,12 @@ def _validate_mlir_native_execution(
             f"status_converged.contract_schema_version={status_contract!r} "
             "(expected 'intent_mlir_backend_contract_v2')"
         )
+    run_repo_head = str(((run_summary.get("repo") or {}).get("head_commit") or "")).strip()
+    if run_repo_head and head_commit and run_repo_head != head_commit:
+        return False, f"run_summary.repo.head_commit={run_repo_head!r} (expected {head_commit!r})"
+    status_repo_head = str(((status_converged.get("repo") or {}).get("head_commit") or "")).strip()
+    if status_repo_head and head_commit and status_repo_head != head_commit:
+        return False, f"status_converged.repo.head_commit={status_repo_head!r} (expected {head_commit!r})"
     entries = [e for e in list(status_converged.get("entries") or []) if isinstance(e, dict)]
     fallback_rows: list[str] = []
     for row in entries:

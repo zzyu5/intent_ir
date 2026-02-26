@@ -1478,3 +1478,71 @@ def test_check_batch_gate_gpu_perf_profile_fails_when_ratio_below_threshold(tmp_
         text=True,
     )
     assert p.returncode != 0
+
+
+def test_check_batch_gate_mlir_native_execution_fails_when_repo_commit_mismatches_head(tmp_path: Path) -> None:
+    active = tmp_path / "active_batch_workflow.json"
+    run_summary = tmp_path / "run_summary_workflow.json"
+    status_converged = tmp_path / "status_converged_workflow.json"
+    progress = tmp_path / "progress_log_workflow.jsonl"
+    handoff = tmp_path / "handoff_workflow.md"
+    out = tmp_path / "batch_gate_workflow.json"
+
+    active.write_text(
+        json.dumps({"schema_version": "flaggems_active_batch_v2", "lane": "workflow", "items": []}),
+        encoding="utf-8",
+    )
+    run_summary.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "execution_engine": "mlir_native",
+                "contract_schema_version": "intent_mlir_backend_contract_v2",
+                "repo": {"head_commit": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"},
+                "stages": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    status_converged.write_text(
+        json.dumps(
+            {
+                "execution_engine": "mlir_native",
+                "contract_schema_version": "intent_mlir_backend_contract_v2",
+                "repo": {"head_commit": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"},
+                "entries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    progress.write_text(
+        json.dumps({"run_summary_path": str(run_summary), "status_converged_path": str(status_converged)}) + "\n",
+        encoding="utf-8",
+    )
+    handoff.write_text("# FlagGems Session Handoff\n- Next Focus: workflow\n", encoding="utf-8")
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/check_batch_gate.py",
+            "--profile",
+            "workflow",
+            "--active-batch",
+            str(active),
+            "--run-summary",
+            str(run_summary),
+            "--status-converged",
+            str(status_converged),
+            "--progress-log",
+            str(progress),
+            "--handoff",
+            str(handoff),
+            "--require-mlir-native-execution",
+            "--out",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode != 0

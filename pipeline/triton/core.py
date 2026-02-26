@@ -40,6 +40,7 @@ from frontends.triton.contract import evaluate_contract_v2
 from verify.metamorphic import run_bounded_exhaustive, run_metamorphic_suite
 from verify.mutation import run_mutation_kill
 from verify.tolerances import infer_tolerances
+from pipeline.common.strict_policy import enrich_frontend_report_with_strict_fields
 from pipeline.triton.execution_policy import ExecutionPathPolicy, make_policy_from_legacy_flags
 from pipeline.triton.providers import get_provider_plugin
 from pipeline.mlir_contract_artifacts import emit_backend_contract_artifacts
@@ -3818,6 +3819,7 @@ def run_pipeline_for_spec(
         baseline_io_raw=baseline_io_raw,
         intent_for_alias=cand.intent,
     )
+    enrich_frontend_report_with_strict_fields(report, mlir_report=(report.get("mlir") if isinstance(report.get("mlir"), dict) else None))
     return report
 
 

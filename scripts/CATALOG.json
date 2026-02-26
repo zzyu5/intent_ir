@@ -1,6 +1,6 @@
 {
   "schema_version": "intentir_scripts_catalog_v1",
-  "updated_at": "2026-02-15T00:00:00+00:00",
+  "updated_at": "2026-02-26T00:00:00+00:00",
   "entries": [
     {
       "path": "scripts/validate_catalog.py",
@@ -171,6 +171,24 @@
       "status": "active",
       "replacement": "",
       "tests": ["tests/frontends/triton/test_flaggems_nightly_maintenance.py"]
+    },
+    {
+      "path": "scripts/flaggems/cleanup_artifacts.py",
+      "owner_lane": "workflow",
+      "purpose": "apply artifact retention policy and emit auditable cleanup reports",
+      "inputs": [
+        "workflow/flaggems/state/artifact_retention_policy.json",
+        "workflow/flaggems/state/current_status.json",
+        "workflow/flaggems/state/progress_log.jsonl"
+      ],
+      "outputs": [
+        "workflow/flaggems/state/cleanup_reports/*/plan.json",
+        "workflow/flaggems/state/cleanup_reports/*/deleted.jsonl",
+        "workflow/flaggems/state/cleanup_reports/*/summary.json"
+      ],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_artifact_cleanup_policy.py"]
     },
     {
       "path": "scripts/flaggems/run_backend_compiler_batch.py",

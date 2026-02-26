@@ -653,6 +653,53 @@ def test_ci_gate_mlir_profile_fails_when_runtime_fallback_marked(tmp_path: Path)
     assert p2.returncode != 0
 
 
+def test_ci_gate_mlir_profile_fails_when_repo_commit_mismatches_head(tmp_path: Path) -> None:
+    p = _run_ci_gate_mlir(tmp_path, mlir_commit=_head_commit(), validated_execution_ir="mlir")
+    assert p.returncode == 0, p.stderr
+
+    run_summary = tmp_path / "run_summary.json"
+    status_converged = tmp_path / "status_converged.json"
+    run_payload = json.loads(run_summary.read_text(encoding="utf-8"))
+    status_payload = json.loads(status_converged.read_text(encoding="utf-8"))
+    run_payload["repo"] = {"head_commit": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}
+    status_payload["repo"] = {"head_commit": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}
+    run_summary.write_text(json.dumps(run_payload), encoding="utf-8")
+    status_converged.write_text(json.dumps(status_payload), encoding="utf-8")
+
+    p2 = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/ci_gate.py",
+            "--registry",
+            str(tmp_path / "registry.json"),
+            "--feature-list",
+            str(tmp_path / "feature_list.json"),
+            "--active-batch-coverage",
+            str(tmp_path / "active_batch_cov.json"),
+            "--active-batch-mlir-migration",
+            str(tmp_path / "active_batch_mlir.json"),
+            "--profiles",
+            "mlir_migration",
+            "--run-summary",
+            str(run_summary),
+            "--status-converged",
+            str(status_converged),
+            "--current-status",
+            str(tmp_path / "current_status.json"),
+            "--progress-log",
+            str(tmp_path / "progress_log.jsonl"),
+            "--handoff",
+            str(tmp_path / "handoff.md"),
+            "--out",
+            str(tmp_path / "ci_gate_mlir_commit_mismatch.json"),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p2.returncode != 0
+
+
 def test_ci_gate_coverage_requires_mlir_stage_timing_when_execution_ir_mlir(tmp_path: Path) -> None:
     registry = tmp_path / "registry.json"
     feature = tmp_path / "feature_list.json"

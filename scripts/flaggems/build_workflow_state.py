@@ -5,6 +5,7 @@ Build current workflow state snapshots for long-running sessions.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import os
 import subprocess
@@ -24,6 +25,7 @@ from pipeline.triton.providers.flaggems.workflow import (
     read_git_log,
 )
 from intent_ir.mlir import detect_mlir_toolchain  # noqa: E402
+from pipeline.common.strict_policy import strict_fallback_enabled  # noqa: E402
 
 
 FULL196_VALIDATED_SCOPE = "coverage_158_kernels_to_196_semantics"
@@ -39,6 +41,10 @@ def _to_repo_rel(path: Path) -> str:
         return str(path.resolve().relative_to(ROOT))
     except Exception:
         return str(path)
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def _git(cmd: list[str]) -> str:
@@ -273,6 +279,12 @@ def _mlir_backend_contract_ready() -> bool:
         if needle in text:
             return False
     return True
+
+
+def _artifact_retention_mode(policy_path: Path) -> str:
+    payload = _load_json_if_exists(policy_path)
+    mode = str(payload.get("mode") or "").strip()
+    return mode if mode else "unknown"
 
 
 def _mlir_llvm_chain_ok(run_summary_path: Path | None) -> bool:
@@ -636,6 +648,21 @@ def main() -> None:
     )
     ap.add_argument("--current-status-out", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "current_status.json"))
     ap.add_argument("--session-context-out", type=Path, default=(ROOT / "workflow" / "flaggems" / "state" / "session_context.json"))
+    ap.add_argument(
+        "--refactor-context-out",
+        type=Path,
+        default=(ROOT / "workflow" / "flaggems" / "state" / "refactor_context.json"),
+    )
+    ap.add_argument(
+        "--artifact-retention-policy",
+        type=Path,
+        default=(ROOT / "workflow" / "flaggems" / "state" / "artifact_retention_policy.json"),
+    )
+    ap.add_argument(
+        "--refactor-plan-version",
+        type=str,
+        default="intentir_mlir_engineering_v1",
+    )
     ap.add_argument("--scripts-catalog", type=Path, default=(ROOT / "scripts" / "CATALOG.json"))
     ap.add_argument("--git-log-lines", type=int, default=20)
     args = ap.parse_args()
@@ -939,11 +966,28 @@ def main() -> None:
         next_focus_by_lane=next_focus_by_lane,
         full196_coverage_rule=FULL196_COVERAGE_RULE,
     )
+    strict_mode = bool(strict_fallback_enabled())
+    refactor_context = {
+        "schema_version": "flaggems_refactor_context_v1",
+        "generated_at": _utc_now_iso(),
+        "branch": str(branch),
+        "head_commit": str(head_commit),
+        "plan_version": str(args.refactor_plan_version),
+        "strict_defaults": {
+            "execution_ir": "mlir",
+            "fallback_policy": ("strict" if strict_mode else "legacy_compatible"),
+            "strict_mode": bool(strict_mode),
+            "artifact_retention_mode": _artifact_retention_mode(args.artifact_retention_policy),
+            "backend_sequence": "cuda_then_rvv",
+        },
+    }
 
     out_status = dump_json(args.current_status_out, current_status)
     out_context = dump_json(args.session_context_out, session_context)
+    out_refactor = dump_json(args.refactor_context_out, refactor_context)
     print(f"Current status updated: {out_status}")
     print(f"Session context updated: {out_context}")
+    print(f"Refactor context updated: {out_refactor}")
 
 
 if __name__ == "__main__":

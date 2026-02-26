@@ -31,6 +31,7 @@ from intent_ir.ir import ScheduleSketch
 from pipeline import registry as pipeline_registry
 from pipeline.interfaces import FrontendConstraints
 from pipeline.mlir_contract_artifacts import emit_backend_contract_artifacts
+from pipeline.common.strict_policy import enrich_frontend_report_with_strict_fields
 from verify.diff_runner import run_diff
 from verify.gen_cases import TestCase, generate_cases_split
 from verify.metamorphic import run_bounded_exhaustive, run_metamorphic_suite
@@ -1902,6 +1903,7 @@ def run_pipeline_for_spec(
         report["mlir"]["ok"] = False
         report["mlir"]["error"] = f"{type(e).__name__}: {e}"
 
+    enrich_frontend_report_with_strict_fields(report, mlir_report=(report.get("mlir") if isinstance(report.get("mlir"), dict) else None))
     return report
 
 

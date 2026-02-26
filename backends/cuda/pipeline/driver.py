@@ -37,6 +37,7 @@ from backends.common.pipeline_utils import (
 )
 from intent_ir.mlir.module import IntentMLIRModule
 from intent_ir.mlir.passes.emit_cuda_contract import build_cuda_contract
+from pipeline.common.strict_policy import cuda_require_llvm_ptx
 
 from .stages import CUDA_PIPELINE_STAGES, CudaPipelineResult, CudaPipelineStage
 
@@ -294,7 +295,7 @@ def _lower_cuda_mlir_module_contract_to_ptx_payload(
     if not output_names and isinstance(io_spec, Mapping):
         output_names = list(io_spec.get("outputs") or [])
     merged_bindings = _augment_scalar_bindings_from_io_spec(bindings=bindings, io_spec=io_spec)
-    strict_llvm_ptx = _env_flag("INTENTIR_CUDA_REQUIRE_LLVM_PTX", default=False)
+    strict_llvm_ptx = bool(cuda_require_llvm_ptx())
     try:
         ptx, ptx_origin = _compile_cuda_src_to_ptx_via_llvm_llc(kernel_name=kernel_name, cuda_src=cuda_src)
     except Exception as llc_err:
@@ -315,6 +316,12 @@ def _lower_cuda_mlir_module_contract_to_ptx_payload(
         "execution_engine": "mlir_native",
         "contract_schema_version": str(contract.schema_version or ""),
         "cuda_ptx_origin": str(ptx_origin),
+        "runtime_fallback": bool(str(ptx_origin).strip().lower() != "llvm_llc"),
+        "runtime_fallback_detail": (
+            f"cuda_ptx_origin={str(ptx_origin).strip().lower()}"
+            if str(ptx_origin).strip()
+            else ""
+        ),
     }
 
 
@@ -416,7 +423,7 @@ def lower_cuda_contract_to_kernel(
     exe_target = str(executable.target or contract.backend or "cuda").strip().lower()
     if exe_target and exe_target != "cuda":
         raise ValueError(f"cuda contract executable target mismatch: {exe_target!r}")
-    strict_llvm_ptx = _env_flag("INTENTIR_CUDA_REQUIRE_LLVM_PTX", default=False)
+    strict_llvm_ptx = bool(cuda_require_llvm_ptx())
     if exe_format in {"cuda_ptx", "ptx"}:
         exe_path_raw = str(executable.path or "").strip()
         if not exe_path_raw:
@@ -469,6 +476,8 @@ def lower_cuda_contract_to_kernel(
             "execution_engine": "mlir_native",
             "contract_schema_version": str(contract.schema_version or ""),
             "cuda_ptx_origin": ptx_origin,
+            "runtime_fallback": bool(ptx_origin and ptx_origin != "llvm_llc"),
+            "runtime_fallback_detail": (f"cuda_ptx_origin={ptx_origin}" if ptx_origin and ptx_origin != "llvm_llc" else ""),
         }
     if exe_format in {"cuda_mlir_module", "mlir_module"} or (not exe_format):
         lowered = _lower_cuda_mlir_module_contract_to_ptx_payload(contract=contract, bindings=bindings)

@@ -165,6 +165,20 @@ def test_build_workflow_state_writes_current_and_context(tmp_path: Path) -> None
     handoff = tmp_path / "handoff.md"
     current = tmp_path / "current_status.json"
     context = tmp_path / "session_context.json"
+    refactor = tmp_path / "refactor_context.json"
+    retention_policy = tmp_path / "artifact_retention_policy.json"
+    retention_policy.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_artifact_retention_policy_v1",
+                "mode": "minimal_baseline",
+                "keep_runs": ["full196_validated", "gpu_perf_validated", "latest_mlir_wave"],
+                "keep_dirs": ["artifacts/toolchains"],
+                "purge_patterns": ["tmp*"],
+            }
+        ),
+        encoding="utf-8",
+    )
     feature.write_text(
         json.dumps(
             {
@@ -212,6 +226,10 @@ def test_build_workflow_state_writes_current_and_context(tmp_path: Path) -> None
             str(current),
             "--session-context-out",
             str(context),
+            "--refactor-context-out",
+            str(refactor),
+            "--artifact-retention-policy",
+            str(retention_policy),
         ],
         cwd=str(ROOT),
         capture_output=True,
@@ -220,6 +238,7 @@ def test_build_workflow_state_writes_current_and_context(tmp_path: Path) -> None
     assert p.returncode == 0, p.stderr
     status_payload = json.loads(current.read_text(encoding="utf-8"))
     context_payload = json.loads(context.read_text(encoding="utf-8"))
+    refactor_payload = json.loads(refactor.read_text(encoding="utf-8"))
     assert status_payload["schema_version"] == "flaggems_current_status_v1"
     assert status_payload["mode"] == "mixed_development"
     assert "coverage_integrity_phase" in status_payload
@@ -255,6 +274,9 @@ def test_build_workflow_state_writes_current_and_context(tmp_path: Path) -> None
     assert context_payload["must_read_scripts_catalog"].endswith("scripts/CATALOG.json")
     assert "full196_coverage_rule" in context_payload
     assert "ir_arch" in list(context_payload.get("active_lanes") or [])
+    assert refactor_payload["schema_version"] == "flaggems_refactor_context_v1"
+    assert refactor_payload["strict_defaults"]["execution_ir"] == "mlir"
+    assert refactor_payload["strict_defaults"]["artifact_retention_mode"] == "minimal_baseline"
 
 
 def test_build_workflow_state_activates_ir_arch_lane_when_mapping_quality_breaches(tmp_path: Path) -> None:

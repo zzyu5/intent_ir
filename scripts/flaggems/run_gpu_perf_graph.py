@@ -42,6 +42,7 @@ if str(ROOT) not in sys.path:
 from backends.cuda.pipeline.driver import lower_cuda_contract_to_kernel
 from backends.cuda.runtime import compile_cuda_extension, load_cuda_ptx_module
 from intent_ir.utils.repo_state import repo_state
+from pipeline.common.strict_policy import strict_fallback_enabled
 from pipeline.triton.core import coverage_kernel_specs
 from scripts.cuda_backend_smoke import (
     _build_inputs_np,
@@ -1096,8 +1097,12 @@ def _build_intentir_launch_fn(
         mod.launch(*args)
 
     cuda_ptx_origin = str(lowered.get("cuda_ptx_origin") or "").strip()
-    runtime_fallback = bool(cuda_ptx_origin and cuda_ptx_origin != "llvm_llc")
-    runtime_fallback_detail = (f"cuda_ptx_origin={cuda_ptx_origin}" if runtime_fallback else "")
+    runtime_fallback = bool(lowered.get("runtime_fallback"))
+    runtime_fallback_detail = str(lowered.get("runtime_fallback_detail") or "")
+    if not runtime_fallback:
+        runtime_fallback = bool(cuda_ptx_origin and cuda_ptx_origin != "llvm_llc")
+    if not runtime_fallback_detail and runtime_fallback:
+        runtime_fallback_detail = f"cuda_ptx_origin={cuda_ptx_origin}" if cuda_ptx_origin else "runtime_fallback"
     meta = {
         "compile_ms": float(compile_ms),
         "kernel_name": str(lowered.get("kernel_name") or ""),
@@ -1105,10 +1110,12 @@ def _build_intentir_launch_fn(
         "tensor_arg_count": int(len(launch_tensors)),
         "executable_format": str(lowered.get("executable_format") or ""),
         "execution_engine": "mlir_native",
-        "contract_schema_version": "intent_mlir_backend_contract_v2",
+        "contract_schema_version": str(lowered.get("contract_schema_version") or "intent_mlir_backend_contract_v2"),
         "cuda_ptx_origin": cuda_ptx_origin,
         "runtime_fallback": bool(runtime_fallback),
         "runtime_fallback_detail": str(runtime_fallback_detail),
+        "strict_mode": bool(strict_fallback_enabled()),
+        "fallback_policy": ("strict" if bool(strict_fallback_enabled()) else "legacy_compatible"),
         "intent_binding_overrides": dict(applied_binding_overrides),
         "intent_contract_rebuild": dict(rebuild_meta),
     }

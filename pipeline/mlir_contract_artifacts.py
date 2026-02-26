@@ -13,6 +13,7 @@ from intent_ir.mlir.passes.emit_cuda_contract import build_cuda_contract
 from intent_ir.mlir.passes.emit_rvv_contract import build_rvv_contract
 from intent_ir.mlir.convert_to_intent import to_intent
 from intent_ir.mlir.toolchain import detect_mlir_toolchain
+from pipeline.common.strict_policy import cuda_require_llvm_ptx
 
 
 def _dump_json(path: Path, payload: dict[str, Any]) -> str:
@@ -866,7 +867,7 @@ def _materialize_executable(
                 artifacts["cuda_ptx_entry_resolved"] = str(resolved_entry)
             return executable, artifacts
         except Exception as llc_err:
-            if _env_flag("INTENTIR_CUDA_REQUIRE_LLVM_PTX", default=False):
+            if bool(cuda_require_llvm_ptx()):
                 raise RuntimeError(
                     "cuda llvm->ptx materialization failed under strict LLVM PTX mode: "
                     f"{type(llc_err).__name__}: {llc_err}"

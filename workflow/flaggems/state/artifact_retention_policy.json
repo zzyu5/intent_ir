@@ -1,0 +1,19 @@
+{
+  "schema_version": "flaggems_artifact_retention_policy_v1",
+  "mode": "minimal_baseline",
+  "keep_runs": [
+    "full196_validated",
+    "gpu_perf_validated",
+    "latest_mlir_wave"
+  ],
+  "keep_dirs": [
+    "artifacts/toolchains"
+  ],
+  "purge_patterns": [
+    "_triton_cache",
+    "_triton_dump",
+    "tmp*",
+    "_tmp*",
+    "torch_extensions/*"
+  ]
+}

@@ -180,6 +180,24 @@ def main() -> None:
         default=True,
         help="Update current_status/session_context snapshots after nightly run.",
     )
+    ap.add_argument(
+        "--cleanup-artifacts-after-gate",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Run artifact retention cleanup after gate/workflow updates (default: false).",
+    )
+    ap.add_argument(
+        "--cleanup-policy",
+        type=Path,
+        default=(ROOT / "workflow" / "flaggems" / "state" / "artifact_retention_policy.json"),
+        help="Artifact cleanup policy JSON path.",
+    )
+    ap.add_argument(
+        "--cleanup-purge-toolchains",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Allow cleanup stage to remove artifacts/toolchains (default: false).",
+    )
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
     miss_policy = str(args.intentir_miss_policy)
@@ -577,6 +595,43 @@ def main() -> None:
         }
         payload["commands"]["workflow_state"] = workflow_state_cmd
         payload["ok"] = bool(payload.get("ok")) and bool(workflow_state_rc == 0) and bool(progress_rc == 0)
+        summary_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    cleanup_cmd = [
+        sys.executable,
+        "scripts/flaggems/cleanup_artifacts.py",
+        "--policy",
+        str(args.cleanup_policy),
+    ]
+    if bool(args.cleanup_purge_toolchains):
+        cleanup_cmd.append("--purge-toolchains")
+    if bool(args.dry_run):
+        cleanup_cmd.append("--dry-run")
+    else:
+        cleanup_cmd.append("--execute")
+    cleanup_rc = 0
+    cleanup_out = ""
+    cleanup_err = ""
+    cleanup_skipped = True
+    if bool(args.cleanup_artifacts_after_gate):
+        cleanup_skipped = False
+        cleanup_rc, cleanup_out, cleanup_err = _run(cleanup_cmd, cwd=ROOT, dry_run=False)
+        payload["results"]["cleanup_artifacts"] = {
+            "skipped": False,
+            "rc": int(cleanup_rc),
+            "stdout": str(cleanup_out).strip(),
+            "stderr": str(cleanup_err).strip(),
+        }
+        payload["commands"]["cleanup_artifacts"] = cleanup_cmd
+        payload["ok"] = bool(payload.get("ok")) and bool(cleanup_rc == 0)
+        summary_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    if cleanup_skipped:
+        payload["results"]["cleanup_artifacts"] = {
+            "skipped": True,
+            "rc": int(cleanup_rc),
+            "stdout": str(cleanup_out).strip(),
+            "stderr": str(cleanup_err).strip(),
+        }
         summary_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"Nightly maintenance summary written: {summary_path}")
     raise SystemExit(0 if bool(payload.get("ok")) else 1)
