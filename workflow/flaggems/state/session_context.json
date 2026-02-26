@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-26T11:16:21+00:00",
+  "updated_at": "2026-02-26T11:17:03+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,28 +13,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "0d28634 fix(cuda): infer grid-x from ptx ctaid bound parameter\neb104d4 workflow: refresh state after cuda ptx invocation alignment\n9899ae9 fix(cuda): align ptx invocation args with entry signature\n73752fc workflow: refresh state after llvm cache and cuda io-spec fixes\neeea46a fix(mlir): harden cached llvm selection and synthesize cuda invocation io spec\n89aa8a3 workflow: refresh state after cached llvm discovery integration\nbcc13e7 refactor(mlir): reuse cached downstream llvm artifacts across frontends\n159661e workflow: refresh state after flaggems import compatibility fixes\nf52857c fix(flaggems): repair import path and legacy use_gems compatibility\nee3c0be workflow: sync state after cached-llvm strict pipeline support\n48e5381 refactor(phase1): support cached llvm reuse for strict downstream llvm pipelines\nbca24ad workflow: sync state after backend docs and hard-cut cleanup progression\nfae806f docs: align backend READMEs with strict contract-first MLIR architecture\n073b0e0 workflow: resync state and dependency report after gate cleanup\n80299af cleanup(phase3): drop cuda cpp_codegen env knobs from smoke and gate checks\n41ea82c workflow: refresh state after strict lowering pass cleanup\nca39855 cleanup(phase3): shrink llvm lowering pass to strict hard-cut core\nd7ca306 workflow: resync state and dependency report after codegen package removal\nba56cf4 cleanup(phase3): remove cuda/rvv codegen shim packages and enforce hard removal\n9c16f57 workflow: gate mlir_llvm_chain_ok on fresh validated evidence",
+  "git_log_short": "3448055 workflow: refresh state after cuda launch-grid inference fix\n0d28634 fix(cuda): infer grid-x from ptx ctaid bound parameter\neb104d4 workflow: refresh state after cuda ptx invocation alignment\n9899ae9 fix(cuda): align ptx invocation args with entry signature\n73752fc workflow: refresh state after llvm cache and cuda io-spec fixes\neeea46a fix(mlir): harden cached llvm selection and synthesize cuda invocation io spec\n89aa8a3 workflow: refresh state after cached llvm discovery integration\nbcc13e7 refactor(mlir): reuse cached downstream llvm artifacts across frontends\n159661e workflow: refresh state after flaggems import compatibility fixes\nf52857c fix(flaggems): repair import path and legacy use_gems compatibility\nee3c0be workflow: sync state after cached-llvm strict pipeline support\n48e5381 refactor(phase1): support cached llvm reuse for strict downstream llvm pipelines\nbca24ad workflow: sync state after backend docs and hard-cut cleanup progression\nfae806f docs: align backend READMEs with strict contract-first MLIR architecture\n073b0e0 workflow: resync state and dependency report after gate cleanup\n80299af cleanup(phase3): drop cuda cpp_codegen env knobs from smoke and gate checks\n41ea82c workflow: refresh state after strict lowering pass cleanup\nca39855 cleanup(phase3): shrink llvm lowering pass to strict hard-cut core\nd7ca306 workflow: resync state and dependency report after codegen package removal\nba56cf4 cleanup(phase3): remove cuda/rvv codegen shim packages and enforce hard removal",
   "progress_tail": [
-    {
-      "ts": "2026-02-26T06:26:19+00:00",
-      "commit": "d9c8513e82274af9e22852633edd9bddb9fe50fb",
-      "lane": "backend_compiler",
-      "summary": "gpu_perf strict refreshed on HEAD d9 (159/159, blocked=0, fallback=0)",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/status_converged.json",
-      "next_focus": "Continue RVV strict compat-path shrink and multi-frontend strict schema alignment.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/gpu_perf_graph.json",
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/stage_timing_breakdown.json",
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
     {
       "ts": "2026-02-26T06:26:48+00:00",
       "commit": "d9c8513e82274af9e22852633edd9bddb9fe50fb",
@@ -169,9 +149,30 @@
       "run_ok": true,
       "run_out_dir": null,
       "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-26T11:17:02+00:00",
+      "commit": "3448055dc64c33b3101376067f8737ce1e1078fe",
+      "lane": "mlir_migration",
+      "summary": "CUDA strict MLIR reduction wave (row_max/row_all/argmax2d/log_softmax2d) passed 4/4.",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_mlir_migration.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/_debug_reduction_wave_fix3/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/_debug_reduction_wave_fix3/status_converged.json",
+      "next_focus": "Expand strict MLIR wave to more kernels/families and refresh full196+gpu_perf on current HEAD.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260226/_debug_reduction_wave_fix3/mlir_llvm_artifacts.json",
+        "artifacts/flaggems_matrix/daily/20260226/_debug_reduction_wave_fix3/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260226/_debug_reduction_wave_fix3/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": "artifacts/flaggems_matrix/daily/20260226/_debug_reduction_wave_fix3",
+      "counts_by_status": {
+        "cuda_only": 6
+      }
     }
   ],
-  "next_focus": "Continue RVV strict compat-path shrink and multi-frontend strict schema alignment.",
+  "next_focus": "Expand strict MLIR wave to more kernels/families and refresh full196+gpu_perf on current HEAD.",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
   "active_lanes": [
     "backend_compiler",
@@ -179,9 +180,9 @@
     "mlir_migration"
   ],
   "next_focus_by_lane": {
-    "backend_compiler": "Continue RVV strict compat-path shrink and multi-frontend strict schema alignment.",
     "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
-    "mlir_migration": "Enable MLIR cutover prerequisites (toolchain + backend contract + LLVM artifact chain)."
+    "backend_compiler": "Continue RVV strict compat-path shrink and multi-frontend strict schema alignment.",
+    "mlir_migration": "Expand strict MLIR wave to more kernels/families and refresh full196+gpu_perf on current HEAD."
   },
   "known_risks": []
 }

@@ -1,16 +1,16 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-26T11:16:21+00:00",
+  "updated_at": "2026-02-26T11:17:03+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "0d28634328a806c2d9d19c21732140882d6428b0",
+  "head_commit": "3448055dc64c33b3101376067f8737ce1e1078fe",
   "mode": "maintenance",
   "coverage_integrity_phase": "recompute_stale",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
   "full196_last_ok": true,
   "full196_validated_commit": "aeacf5b3ff3b7c7f02fbfdd76929ece5d1c9ce34",
   "full196_validated_commit_source": "run_summary.repo.head_commit",
-  "full196_commits_since_validated": 35,
-  "full196_commits_since_validated_total": 35,
+  "full196_commits_since_validated": 36,
+  "full196_commits_since_validated_total": 36,
   "full196_lifted_to_head": false,
   "full196_validated_mode": "force_compile",
   "full196_validated_execution_ir": "mlir",
@@ -36,7 +36,7 @@
   "gpu_perf_last_run": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/run_summary.json",
   "gpu_perf_last_ok": true,
   "gpu_perf_validated_commit": "aeacf5b3ff3b7c7f02fbfdd76929ece5d1c9ce34",
-  "gpu_perf_commits_since_validated": 35,
+  "gpu_perf_commits_since_validated": 36,
   "gpu_perf_mode": "graph_only",
   "gpu_perf_threshold": 0.8,
   "gpu_perf_devices": [
@@ -131,13 +131,13 @@
     "mlir_migration"
   ],
   "next_focus_by_lane": {
-    "backend_compiler": "Continue RVV strict compat-path shrink and multi-frontend strict schema alignment.",
     "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
-    "mlir_migration": "Enable MLIR cutover prerequisites (toolchain + backend contract + LLVM artifact chain)."
+    "backend_compiler": "Continue RVV strict compat-path shrink and multi-frontend strict schema alignment.",
+    "mlir_migration": "Expand strict MLIR wave to more kernels/families and refresh full196+gpu_perf on current HEAD."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260226/_debug_reduction_wave_fix3/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260226/_debug_reduction_wave_fix3/status_converged.json"
   },
   "lanes": {
     "coverage": {
