@@ -2,12 +2,12 @@
 
 Backends lower IntentIR into executable target code.
 
-Today:
+Current backend paths:
 
-- `backends/spmd_rvv/`: SPMD-style RVV C backend (Task6)
+- `backends/cuda/`: strict MLIR backend-contract path for CUDA execution
+- `backends/spmd_rvv/`: strict MLIR backend-contract path for RVV execution
 
-Planned:
+Notes:
 
-- CUDA backend
-- CPU vector backends (x86/NEON) as needed
-
+- backend implementation stays split by target (CUDA/RVV)
+- compatibility C/C++ codegen fallbacks are removed from mainline strict path

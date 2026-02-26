@@ -1,12 +1,15 @@
-# `backends/cuda/` (planned)
+# `backends/cuda/`
 
-CUDA backend for lowering (expanded) IntentIR into runnable GPU code.
+CUDA strict backend components.
 
-Design goals:
-- Consume `intent_ir.ir.IntentFunction` (same IR as RVV backend).
-- Produce CUDA kernels that can be benchmarked on a local NVIDIA GPU.
-- Reuse the existing Torch CUDA extension runner (`frontends/cuda/runtime.py`) for
-  compilation + launch in the MVP.
+## Execution model
 
-Status: under active development (MVP: AI-Bench8 kernels for paper E5.2-on-CUDA).
+- Mainline execution is contract-first and strict:
+  - MLIR backend contract with executable payload (`cuda_ptx`/`ptx`)
+  - runtime launch through `backends/cuda/pipeline/driver.py`
+- Legacy IntentIR->CUDA C/C++ codegen path is removed from the main repo path.
 
+## Directory layout
+
+- `backends/cuda/pipeline/`: strict MLIR backend-contract pipeline and runtime stages
+- `backends/cuda/runtime/`: CUDA runtime helpers and kernel launch glue
