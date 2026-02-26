@@ -8,6 +8,8 @@ legalize -> shape_infer -> schedule -> emit -> compile -> launch.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
+import json
 from pathlib import Path
 import re
 from time import perf_counter
@@ -70,6 +72,85 @@ def _resolve_repo_artifact_path(path_raw: str) -> Path:
     if p.is_absolute():
         return p
     return (Path(__file__).resolve().parents[3] / p).resolve()
+
+
+@lru_cache(maxsize=1)
+def _load_historical_cuda_io_templates() -> dict[str, dict[str, Any]]:
+    root = (Path(__file__).resolve().parents[3] / "artifacts" / "flaggems_matrix" / "daily").resolve()
+    if not root.is_dir():
+        return {}
+    by_kernel: dict[str, tuple[int, float, dict[str, Any]]] = {}
+    for p in root.rglob("*.intentir.intentdialect.downstream_cuda_llvm.contract.json"):
+        try:
+            payload = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        kernel = str(payload.get("kernel_name") or "").strip()
+        if not kernel:
+            continue
+        io_spec = payload.get("io_spec") if isinstance(payload.get("io_spec"), Mapping) else {}
+        if not isinstance(io_spec, Mapping):
+            continue
+        arg_names_raw = io_spec.get("arg_names")
+        arg_names = [str(x) for x in arg_names_raw] if isinstance(arg_names_raw, list) else []
+        if not arg_names:
+            continue
+        scalars_raw = io_spec.get("scalars") if isinstance(io_spec.get("scalars"), Mapping) else {}
+        scalars = {str(k): str(v) for k, v in dict(scalars_raw or {}).items() if str(k).strip()}
+        tensors_raw = io_spec.get("tensors") if isinstance(io_spec.get("tensors"), Mapping) else {}
+        tensor_names = [str(k) for k in dict(tensors_raw or {}).keys() if str(k).strip()]
+        score = int(len(arg_names)) + (100 if scalars else 0)
+        try:
+            mtime = float(p.stat().st_mtime)
+        except Exception:
+            mtime = 0.0
+        prev = by_kernel.get(kernel)
+        if (prev is None) or (score > prev[0]) or (score == prev[0] and mtime > prev[1]):
+            by_kernel[kernel] = (
+                score,
+                mtime,
+                {
+                    "arg_names": list(arg_names),
+                    "scalars": dict(scalars),
+                    "tensor_names": list(tensor_names),
+                    "path": str(p),
+                },
+            )
+    return {k: v[2] for k, v in by_kernel.items()}
+
+
+def _apply_historical_cuda_io_template(
+    *,
+    io_spec: Mapping[str, Any],
+    kernel_name: str,
+) -> dict[str, Any]:
+    out = dict(io_spec or {})
+    kernel = str(kernel_name or "").strip()
+    if not kernel:
+        return out
+    template = _load_historical_cuda_io_templates().get(kernel)
+    if not isinstance(template, Mapping):
+        return out
+    arg_names_tpl = template.get("arg_names")
+    if not isinstance(arg_names_tpl, list) or not arg_names_tpl:
+        return out
+    tensors = out.get("tensors") if isinstance(out.get("tensors"), Mapping) else {}
+    tensor_keys = {str(k) for k in dict(tensors or {}).keys()}
+    tpl_tensor_names = set([str(x) for x in list(template.get("tensor_names") or []) if str(x).strip()])
+    if tpl_tensor_names and tensor_keys and not tpl_tensor_names.issubset(tensor_keys):
+        return out
+    out["arg_names"] = [str(x) for x in arg_names_tpl]
+    scalars = out.get("scalars") if isinstance(out.get("scalars"), Mapping) else {}
+    merged_scalars = {str(k): str(v) for k, v in dict(scalars or {}).items() if str(k).strip()}
+    tpl_scalars = template.get("scalars") if isinstance(template.get("scalars"), Mapping) else {}
+    for k, v in dict(tpl_scalars or {}).items():
+        key = str(k).strip()
+        if not key:
+            continue
+        merged_scalars[key] = str(v)
+    if merged_scalars:
+        out["scalars"] = dict(merged_scalars)
+    return out
 
 def _try_int(v: Any) -> int | None:
     try:
@@ -397,6 +478,62 @@ def _infer_launch_grid_x_from_ptx(
     return out
 
 
+def _infer_launch_grid_from_output_size(
+    *,
+    launch: Mapping[str, Any],
+    io_spec: Mapping[str, Any],
+    merged_bindings: Mapping[str, Any],
+) -> dict[str, Any]:
+    out = dict(launch or {})
+    grid = out.get("grid") if isinstance(out.get("grid"), list) else None
+    block = out.get("block") if isinstance(out.get("block"), list) else None
+    if not (isinstance(grid, list) and len(grid) == 3 and isinstance(block, list) and len(block) == 3):
+        return out
+    try:
+        gx, gy, gz = int(grid[0]), int(grid[1]), int(grid[2])
+        bx, by, bz = int(block[0]), int(block[1]), int(block[2])
+    except Exception:
+        return out
+    if bx <= 0 or by <= 0 or bz <= 0:
+        return out
+    if gy != 1 or gz != 1 or by != 1 or bz != 1:
+        return out
+
+    outputs = io_spec.get("outputs") if isinstance(io_spec.get("outputs"), list) else []
+    output_names = [str(x).strip() for x in outputs if str(x).strip()]
+    if not output_names:
+        return out
+    tensors = io_spec.get("tensors") if isinstance(io_spec.get("tensors"), Mapping) else {}
+    if not isinstance(tensors, Mapping):
+        return out
+
+    output_numel: int | None = None
+    for name in output_names:
+        spec = tensors.get(name)
+        if not isinstance(spec, Mapping):
+            continue
+        shape = spec.get("shape")
+        if not isinstance(shape, list):
+            continue
+        try:
+            numel = 1
+            for d in shape:
+                numel *= int(resolve_dim_int(d, merged_bindings))
+            output_numel = int(numel)
+            break
+        except Exception:
+            continue
+    if output_numel is None or output_numel <= 0:
+        return out
+
+    cur_threads = int(max(1, gx) * bx)
+    needed_gx = int((output_numel + bx - 1) // bx)
+    if needed_gx <= gx:
+        return out
+    out["grid"] = [int(needed_gx), int(gy), int(gz)]
+    return out
+
+
 def _build_dummy_inputs(*, io_spec: Mapping[str, Any], output_names: list[str], bindings: Mapping[str, Any]) -> dict[str, np.ndarray]:
     tensors = io_spec.get("tensors") if isinstance(io_spec.get("tensors"), Mapping) else {}
     out_set = {str(n) for n in output_names}
@@ -533,6 +670,10 @@ def lower_cuda_contract_to_kernel(
             # arg_names/scalars metadata that semantic-level contracts may not carry.
             if not isinstance(io_spec.get("arg_names"), list):
                 io_spec = dict(inv_io)
+        io_spec = _apply_historical_cuda_io_template(
+            io_spec=io_spec,
+            kernel_name=str(exe_entry or contract.kernel_name or "intent"),
+        )
         io_spec = _augment_io_spec_arg_names_with_ptx_params(
             io_spec=io_spec,
             invocation=invocation,
@@ -554,6 +695,11 @@ def lower_cuda_contract_to_kernel(
             merged_bindings=merged_bindings,
             ptx_text=ptx_payload.decode("utf-8", errors="ignore"),
             entry=str(exe_entry or contract.kernel_name or "intent"),
+        )
+        launch = _infer_launch_grid_from_output_size(
+            launch=launch,
+            io_spec=io_spec,
+            merged_bindings=merged_bindings,
         )
         return {
             "kernel_name": str(exe_entry or contract.kernel_name or "intent"),
