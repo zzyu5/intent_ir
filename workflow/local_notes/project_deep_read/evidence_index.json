@@ -1,89 +1,67 @@
 {
   "schema_version": "intentir_evidence_index_v1",
-  "generated_at": "2026-02-26T05:38:29Z",
+  "generated_at": "2026-02-26T06:46:35Z",
   "evidence_priority": "run_summary+status_converged_same_commit > current_status > text",
-  "head_commit": "4d90df5f4ea47440ce94b35c57923f2bbe296590",
+  "head_commit": "aeacf5b3ff3b7c7f02fbfdd76929ece5d1c9ce34",
   "claims": [
     {
       "claim_id": "C001",
-      "claim_text": "workflow current_status 与 git HEAD 对齐，full196/gpu_perf freshness 均为 fresh（commit gap=0，phase=recomputed_ok）。",
+      "claim_text": "workflow current_status 与 artifact 证据对齐，full196/gpu_perf freshness 均为 fresh（commit gap=0）。",
       "source_path": [
         "workflow/flaggems/state/current_status.json"
       ],
       "source_type": "workflow_state",
-      "commit": "4d90df5f4ea47440ce94b35c57923f2bbe296590",
+      "commit": "aeacf5b3ff3b7c7f02fbfdd76929ece5d1c9ce34",
       "freshness_scope": "repo_head",
       "confidence": "high"
     },
     {
       "claim_id": "C002",
-      "claim_text": "full196 strict HEAD 证据完成：run_summary.ok=true，coverage_batches=7/7，mlir_llvm_artifact_complete=true，runtime_fallback_kernel_count=0。",
+      "claim_text": "full196 strict 证据完成：coverage=7/7，dual_pass=196，mlir_llvm_artifact_complete=true，runtime_fallback_kernel_count=0。",
       "source_path": [
         "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
         "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json"
       ],
       "source_type": "artifact",
-      "commit": "4d90df5f4ea47440ce94b35c57923f2bbe296590",
+      "commit": "aeacf5b3ff3b7c7f02fbfdd76929ece5d1c9ce34",
       "freshness_scope": "head_validated",
       "confidence": "high"
     },
     {
       "claim_id": "C003",
-      "claim_text": "gpu_perf strict HEAD 证据通过：kernel_measured=159，dual_pass=159，blocked_backend=0，runtime_fallback=0，min_ratio=0.827596>=0.80。",
+      "claim_text": "gpu_perf strict 证据通过：kernel_measured=159，dual_pass=159，blocked_backend=0，runtime_fallback=0，min_ratio>=0.8。",
       "source_path": [
         "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/run_summary.json",
         "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/gpu_perf_graph.json",
         "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/status_converged.json"
       ],
       "source_type": "artifact",
-      "commit": "4d90df5f4ea47440ce94b35c57923f2bbe296590",
+      "commit": "aeacf5b3ff3b7c7f02fbfdd76929ece5d1c9ce34",
       "freshness_scope": "head_validated",
       "confidence": "high"
     },
     {
       "claim_id": "C004",
-      "claim_text": "RVV strict 收口新增 execution mode 显式校验，缺失 mode 时不再隐式走 compat。",
+      "claim_text": "coverage family/full196 两层 summary strict 字段已对齐（strict_mode/fallback_policy/contract_schema_version）。",
       "source_path": [
-        "scripts/rvv_remote_run.py",
-        "tests/backends/spmd_rvv/test_rvv_remote_run_bytes.py"
+        "scripts/flaggems/run_coverage_batches.py",
+        "scripts/flaggems/aggregate_coverage_batches.py",
+        "tests/frontends/triton/test_flaggems_coverage_batches.py"
       ],
       "source_type": "source_code+test",
-      "commit": "cfaa7eeb2a369f2ec064217eb01b429d40b888ec",
-      "freshness_scope": "repo_history",
+      "commit": "aeacf5b3ff3b7c7f02fbfdd76929ece5d1c9ce34",
+      "freshness_scope": "repo_head",
       "confidence": "high"
     },
     {
       "claim_id": "C005",
-      "claim_text": "RVV compat C++ codegen 导入已收紧为显式开关路径，不再默认导入。",
-      "source_path": [
-        "pipeline/mlir_contract_artifacts.py"
-      ],
-      "source_type": "source_code",
-      "commit": "cfaa7eeb2a369f2ec064217eb01b429d40b888ec",
-      "freshness_scope": "repo_history",
-      "confidence": "high"
-    },
-    {
-      "claim_id": "C006",
-      "claim_text": "artifacts 生命周期清理已执行，删除 168 项，保留 validated 证据与 toolchains。",
-      "source_path": [
-        "workflow/flaggems/state/cleanup_reports/20260226/summary.json",
-        "workflow/flaggems/state/cleanup_reports/20260226/plan.json"
-      ],
-      "source_type": "maintenance_artifact",
-      "commit": "cfaa7eeb2a369f2ec064217eb01b429d40b888ec",
-      "freshness_scope": "repo_history",
-      "confidence": "high"
-    },
-    {
-      "claim_id": "C007",
-      "claim_text": "coverage 与 gpu_perf profile 的 ci_gate 在当前证据上均通过。",
+      "claim_text": "coverage 与 gpu_perf 两条 profile gate 均为 green。",
       "source_path": [
         "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/ci_gate.json",
         "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/ci_gate.json"
       ],
       "source_type": "gate_artifact",
-      "commit": "4d90df5f4ea47440ce94b35c57923f2bbe296590",
+      "commit": "aeacf5b3ff3b7c7f02fbfdd76929ece5d1c9ce34",
       "freshness_scope": "head_gate",
       "confidence": "high"
     }

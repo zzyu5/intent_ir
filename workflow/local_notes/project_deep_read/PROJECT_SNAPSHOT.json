@@ -1,10 +1,10 @@
 {
   "schema_version": "intentir_project_snapshot_v1",
-  "generated_at": "2026-02-26T05:38:29Z",
+  "generated_at": "2026-02-26T06:46:35Z",
   "repo": {
     "branch": "compiler-cleanup-v1",
-    "head_commit": "4d90df5f4ea47440ce94b35c57923f2bbe296590",
-    "head_short": "4d90df5",
+    "head_commit": "aeacf5b3ff3b7c7f02fbfdd76929ece5d1c9ce34",
+    "head_short": "aeacf5b",
     "dirty": true
   },
   "workflow": {
@@ -12,16 +12,16 @@
     "session_context_path": "workflow/flaggems/state/session_context.json",
     "progress_log_path": "workflow/flaggems/state/progress_log.jsonl",
     "current_status": {
-      "head_commit": "4d90df5f4ea47440ce94b35c57923f2bbe296590",
+      "head_commit": "aeacf5b3ff3b7c7f02fbfdd76929ece5d1c9ce34",
       "coverage_integrity_phase": "recomputed_ok",
       "full196_last_run": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
       "full196_last_ok": true,
-      "full196_validated_commit": "4d90df5f4ea47440ce94b35c57923f2bbe296590",
+      "full196_validated_commit": "aeacf5b3ff3b7c7f02fbfdd76929ece5d1c9ce34",
       "full196_commits_since_validated": 0,
       "gpu_perf_phase": "recomputed_ok",
       "gpu_perf_last_run": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/run_summary.json",
       "gpu_perf_last_ok": true,
-      "gpu_perf_validated_commit": "4d90df5f4ea47440ce94b35c57923f2bbe296590",
+      "gpu_perf_validated_commit": "aeacf5b3ff3b7c7f02fbfdd76929ece5d1c9ce34",
       "gpu_perf_commits_since_validated": 0,
       "gpu_perf_mode": "graph_only",
       "gpu_perf_threshold": 0.8,
@@ -31,7 +31,7 @@
       "active_lanes": []
     },
     "session_context": {
-      "next_focus": "Continue RVV strict hard-cut cleanup and deep_read/workflow truth sync.",
+      "next_focus": "Continue RVV strict compat-path shrink and multi-frontend strict schema alignment.",
       "active_lanes": [],
       "must_read_scripts_catalog": "scripts/CATALOG.json"
     }
@@ -50,17 +50,12 @@
       "stage_timing_breakdown": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/stage_timing_breakdown.json",
       "ci_gate": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/ci_gate.json",
       "policy_json": "workflow/flaggems/state/gpu_perf_policy.json"
-    },
-    "cleanup": {
-      "summary": "workflow/flaggems/state/cleanup_reports/20260226/summary.json",
-      "plan": "workflow/flaggems/state/cleanup_reports/20260226/plan.json",
-      "deleted_log": "workflow/flaggems/state/cleanup_reports/20260226/deleted.jsonl"
     }
   },
   "notes": [
     "证据优先级遵循 run_summary+status_converged（同 commit） > current_status > 文本描述。",
-    "full196/gpu_perf freshness 已在 HEAD=4d90df5... 归零（validated_commit=HEAD, commits_since_validated=0）。",
+    "full196/gpu_perf 在 aeac HEAD freshness 归零，phase 均为 recomputed_ok。",
     "coverage 与 gpu_perf 两个 profile 的 ci_gate 均为通过（ok=true）。",
-    "本轮新增 RVV strict execution_mode 显式校验，并把 compat C 导入收紧为显式开关路径。"
+    "coverage family/full196 两层 summary strict 字段已对齐。"
   ]
 }

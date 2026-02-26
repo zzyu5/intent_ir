@@ -1,7 +1,7 @@
 {
   "schema_version": "intentir_handoff_manifest_v1",
-  "generated_at": "2026-02-26T05:38:29Z",
-  "snapshot_commit": "4d90df5f4ea47440ce94b35c57923f2bbe296590",
+  "generated_at": "2026-02-26T06:46:35Z",
+  "snapshot_commit": "aeacf5b3ff3b7c7f02fbfdd76929ece5d1c9ce34",
   "docs": [
     "workflow/local_notes/project_deep_read/INTENTIR_MASTER_BRIEF.md",
     "workflow/local_notes/project_deep_read/DIRECTORY_ATLAS.md",
@@ -19,8 +19,8 @@
     "workflow/local_notes/project_deep_read/evidence_index.json"
   ],
   "unresolved_questions": [
-    "RVV strict 下 compat C 执行链是否可以完全下线为仅单元测试路径（默认生产链不可达）。",
-    "多前端统一 strict report schema 的最小兼容窗口如何定义（旧 JSON 读者兼容策略）。",
-    "是否需要为 cleanup baseline 引入自动轮换机制，避免 key-kernel baseline 路径被清理后 gate 失配。"
+    "RVV strict 下 compat C 执行链是否继续收口到仅测试/调试路径。",
+    "多前端 strict report 字段统一时，旧产物读取器的兼容策略如何最小代价落地。",
+    "coverage gate 的 progress tail 对齐是否要改为 lane-aware，减少重复 end_session 对齐动作。"
   ]
 }
