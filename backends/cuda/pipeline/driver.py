@@ -189,6 +189,29 @@ def _ptx_entry_param_types(*, ptx_text: str, entry: str) -> list[str]:
     return out
 
 
+def _ptx_entry_param_names(*, ptx_text: str, entry: str) -> list[str]:
+    text = str(ptx_text or "")
+    if not text.strip():
+        return []
+    wanted = str(entry or "").strip()
+    entry_pat = re.compile(r"\.visible\s+\.entry\s+([A-Za-z_.$][\w.$]*)\s*\((.*?)\)\s*(?:\.\w+[^\n]*\n)*\{", re.S)
+    fallback_sig: str | None = None
+    for m in entry_pat.finditer(text):
+        name = str(m.group(1) or "").strip()
+        sig = str(m.group(2) or "")
+        if sig and fallback_sig is None:
+            fallback_sig = sig
+        if wanted and name == wanted:
+            fallback_sig = sig
+            break
+    if not fallback_sig:
+        return []
+    out: list[str] = []
+    for m in re.finditer(r"\.param\s+\.[A-Za-z0-9_]+\s+([A-Za-z_.$][\w.$]*)", fallback_sig):
+        out.append(str(m.group(1)))
+    return out
+
+
 def _infer_symbol_order_from_io_spec(io_spec: Mapping[str, Any]) -> list[str]:
     tensors = io_spec.get("tensors") if isinstance(io_spec.get("tensors"), Mapping) else {}
     if not isinstance(tensors, Mapping):
@@ -286,6 +309,71 @@ def _augment_io_spec_arg_names_with_ptx_params(
     out["arg_names"] = list(arg_names)
     if scalars:
         out["scalars"] = dict(scalars)
+    return out
+
+
+def _infer_launch_grid_x_from_ptx(
+    *,
+    launch: Mapping[str, Any],
+    io_spec: Mapping[str, Any],
+    merged_bindings: Mapping[str, Any],
+    ptx_text: str,
+    entry: str,
+) -> dict[str, Any]:
+    out = dict(launch or {})
+    grid = out.get("grid") if isinstance(out.get("grid"), list) else None
+    if not isinstance(grid, list) or len(grid) != 3:
+        return out
+    try:
+        grid_vals = [int(grid[0]), int(grid[1]), int(grid[2])]
+    except Exception:
+        return out
+    if not (grid_vals[0] == 1 and grid_vals[1] == 1 and grid_vals[2] == 1):
+        return out
+
+    arg_names = io_spec.get("arg_names") if isinstance(io_spec.get("arg_names"), list) else []
+    if not isinstance(arg_names, list) or not arg_names:
+        return out
+
+    param_names = _ptx_entry_param_names(ptx_text=ptx_text, entry=entry)
+    if not param_names:
+        return out
+    param_to_index = {str(name): idx for idx, name in enumerate(param_names)}
+
+    reg_to_param_index: dict[str, int] = {}
+    for m in re.finditer(r"ld\.param\.u32\s+(%r\d+),\s+\[([A-Za-z_.$][\w.$]*)\];", str(ptx_text or "")):
+        reg = str(m.group(1))
+        pname = str(m.group(2))
+        if pname in param_to_index:
+            reg_to_param_index[reg] = int(param_to_index[pname])
+
+    ctaid_x_regs = {str(m.group(1)) for m in re.finditer(r"mov\.u32\s+(%r\d+),\s+%ctaid\.x\s*;", str(ptx_text or ""))}
+    if not ctaid_x_regs or not reg_to_param_index:
+        return out
+
+    bound_param_index: int | None = None
+    for m in re.finditer(r"setp\.[A-Za-z0-9_.]+\s+%p\d+,\s*(%r\d+),\s*(%r\d+)\s*;", str(ptx_text or "")):
+        lhs = str(m.group(1))
+        rhs = str(m.group(2))
+        if lhs in ctaid_x_regs and rhs in reg_to_param_index:
+            bound_param_index = int(reg_to_param_index[rhs])
+            break
+        if rhs in ctaid_x_regs and lhs in reg_to_param_index:
+            bound_param_index = int(reg_to_param_index[lhs])
+            break
+    if bound_param_index is None:
+        return out
+    if bound_param_index < 0 or bound_param_index >= len(arg_names):
+        return out
+
+    dim_name = str(arg_names[bound_param_index]).strip()
+    if not dim_name:
+        return out
+    dim_value = _try_int(merged_bindings.get(dim_name))
+    if dim_value is None or dim_value <= 0:
+        return out
+
+    out["grid"] = [int(dim_value), int(grid_vals[1]), int(grid_vals[2])]
     return out
 
 
@@ -440,6 +528,13 @@ def lower_cuda_contract_to_kernel(
         launch = dict(contract.launch or {})
         if (not launch) and isinstance(invocation.get("launch"), Mapping):
             launch = dict(invocation.get("launch") or {})
+        launch = _infer_launch_grid_x_from_ptx(
+            launch=launch,
+            io_spec=io_spec,
+            merged_bindings=merged_bindings,
+            ptx_text=ptx_payload.decode("utf-8", errors="ignore"),
+            entry=str(exe_entry or contract.kernel_name or "intent"),
+        )
         return {
             "kernel_name": str(exe_entry or contract.kernel_name or "intent"),
             "io_spec": io_spec,

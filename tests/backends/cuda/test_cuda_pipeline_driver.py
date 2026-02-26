@@ -379,6 +379,53 @@ def test_lower_cuda_contract_to_kernel_augments_ptx_invocation_arg_names_from_si
     assert scalars.get("N") == "i32"
 
 
+def test_lower_cuda_contract_to_kernel_infers_grid_x_from_ptx_ctaid_bound(tmp_path: Path) -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_ptx_grid_infer"))
+    contract = build_cuda_contract(mod)
+    ptx_path = tmp_path / "k.ptx"
+    ptx_path.write_text(
+        (
+            "// fake ptx\n"
+            ".visible .entry k(\n"
+            "    .param .u64 k_param_0,\n"
+            "    .param .u64 k_param_1,\n"
+            "    .param .u32 k_param_2,\n"
+            "    .param .u32 k_param_3\n"
+            ")\n"
+            "{\n"
+            "  .reg .pred %p<2>;\n"
+            "  .reg .b32 %r<8>;\n"
+            "  ld.param.u32 %r7, [k_param_2];\n"
+            "  mov.u32 %r1, %ctaid.x;\n"
+            "  setp.ge.s32 %p1, %r1, %r7;\n"
+            "  ret;\n"
+            "}\n"
+        ),
+        encoding="utf-8",
+    )
+    contract.executable.format = "cuda_ptx"
+    contract.executable.path = str(ptx_path)
+    contract.executable.entry = "k"
+    contract.executable.target = "cuda"
+    contract.executable.invocation = {
+        "shape_bindings": {"M": 4, "N": 8},
+        "io_spec": {
+            "arg_names": ["A", "C"],
+            "tensors": {
+                "A": {"dtype": "f32", "shape": ["M", "N"]},
+                "C": {"dtype": "f32", "shape": ["M", "N"]},
+            },
+            "outputs": ["C"],
+            "scalars": {},
+        },
+        "output_names": ["C"],
+    }
+    contract.launch = {"grid": [1, 1, 1], "block": [256, 1, 1], "shared_mem": 0}
+    lowered = lower_cuda_contract_to_kernel(contract.to_json_dict(), shape_bindings={"M": 4, "N": 8})
+    launch = dict(lowered.get("launch") or {})
+    assert launch.get("grid") == [4, 1, 1]
+
+
 def test_lower_cuda_contract_to_kernel_ptx_augments_scalar_aliases_from_shape_bindings(tmp_path: Path) -> None:
     mod = to_mlir(_add_intent("cuda_pipeline_ptx_alias_augment"))
     contract = build_cuda_contract(mod)
