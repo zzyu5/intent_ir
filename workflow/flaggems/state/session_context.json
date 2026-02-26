@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-26T06:45:10+00:00",
+  "updated_at": "2026-02-26T08:33:21+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,27 +13,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "aeacf5b coverage: add strict policy fields to family batch summaries\n03a1fdd workflow: refresh strict evidence and gates on head 716\n716dad1 coverage: add strict policy fields to full196 aggregate summary\nd9c8513 tests: lock rvv strict compat-entry behavior and refresh workflow state\n93f0154 rvv-strict: require explicit compat opt-in for non-contract c-src lowering\ne792b81 workflow: refresh strict evidence, gates, and deep_read truth pack\n4d90df5 workflow: resync state after rvv strict checkpoint\ncfaa7ee rvv-strict: require explicit execution mode and apply artifact cleanup\nc547957 workflow: refresh head evidence and sync deep_read truth pack\n8f597ef gpu-perf: fix normed_cumsum native adapter and refresh strict state\n9a4e6b1 workflow: refresh full196 strict v24 on head\n8cd717a workflow: refresh state snapshots after strict-policy wave\n677c6a7 flaggems: add strict policy, artifact cleanup, and workflow context outputs\n2f3e26f docs: expand MLIR entry flow with flaggems/triton/tilelang details\nff9f049 docs(deep_read): add mlir entry flow truth map\n71ab942 feat(mlir): advance strict cutover and refresh workflow truth state\n34e8396 chore(workflow): record llvm-dialect bridge progress and matrix evidence\n253af53 feat(mlir): add llvm-dialect lowering pass before mlir-translate\n649ba86 chore(workflow): record contract-first rvv run and llvm readiness tightening\n6a1deb1 refactor(mlir): tighten llvm readiness and contract-first rvv remote path",
+  "git_log_short": "0715ae5 cleanup: require distinct mlir wave retention in artifact policy\n3037744 flaggems: unify strict status schema and enforce forbidden fallback blocking\nca40c5b rvv-strict: remove compat execution paths and hard-cut scripts\nb9d5f51 docs(deep_read): sync truth pack to aeac strict evidence\n852b24d workflow: refresh strict evidence and gates on head aeac\naeacf5b coverage: add strict policy fields to family batch summaries\n03a1fdd workflow: refresh strict evidence and gates on head 716\n716dad1 coverage: add strict policy fields to full196 aggregate summary\nd9c8513 tests: lock rvv strict compat-entry behavior and refresh workflow state\n93f0154 rvv-strict: require explicit compat opt-in for non-contract c-src lowering\ne792b81 workflow: refresh strict evidence, gates, and deep_read truth pack\n4d90df5 workflow: resync state after rvv strict checkpoint\ncfaa7ee rvv-strict: require explicit execution mode and apply artifact cleanup\nc547957 workflow: refresh head evidence and sync deep_read truth pack\n8f597ef gpu-perf: fix normed_cumsum native adapter and refresh strict state\n9a4e6b1 workflow: refresh full196 strict v24 on head\n8cd717a workflow: refresh state snapshots after strict-policy wave\n677c6a7 flaggems: add strict policy, artifact cleanup, and workflow context outputs\n2f3e26f docs: expand MLIR entry flow with flaggems/triton/tilelang details\nff9f049 docs(deep_read): add mlir entry flow truth map",
   "progress_tail": [
-    {
-      "ts": "2026-02-26T06:26:19+00:00",
-      "commit": "d9c8513e82274af9e22852633edd9bddb9fe50fb",
-      "lane": "coverage",
-      "summary": "full196 strict refreshed on HEAD d9 (7/7, dual_pass=196, fallback=0)",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json",
-      "next_focus": "Refresh gpu_perf strict on same HEAD and keep strict gate green.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/coverage_integrity.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
     {
       "ts": "2026-02-26T06:26:19+00:00",
       "commit": "d9c8513e82274af9e22852633edd9bddb9fe50fb",
@@ -169,14 +150,38 @@
       "run_ok": true,
       "run_out_dir": null,
       "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-26T06:45:32+00:00",
+      "commit": "aeacf5b3ff3b7c7f02fbfdd76929ece5d1c9ce34",
+      "lane": "coverage",
+      "summary": "coverage gate alignment on HEAD aeac (7/7, dual_pass=196)",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json",
+      "next_focus": "Continue RVV strict compat-path shrink and multi-frontend strict schema alignment.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/coverage_integrity.json",
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
     }
   ],
   "next_focus": "Continue RVV strict compat-path shrink and multi-frontend strict schema alignment.",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
-  "active_lanes": [],
+  "active_lanes": [
+    "backend_compiler",
+    "coverage",
+    "mlir_migration"
+  ],
   "next_focus_by_lane": {
-    "coverage": "Refresh gpu_perf strict on same HEAD and keep strict gate green.",
-    "backend_compiler": "Continue RVV strict compat-path shrink and multi-frontend strict schema alignment."
+    "backend_compiler": "Continue RVV strict compat-path shrink and multi-frontend strict schema alignment.",
+    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
+    "mlir_migration": "Enable MLIR cutover prerequisites (toolchain + backend contract + LLVM artifact chain)."
   },
   "known_risks": []
 }
