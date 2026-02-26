@@ -577,6 +577,109 @@ def test_lower_cuda_contract_to_kernel_infers_grid_x_from_output_numel_when_ptx_
     assert launch.get("grid") == [2, 1, 1]
 
 
+def test_lower_cuda_contract_to_kernel_synthesizes_launch_defaults_when_missing(
+    tmp_path: Path,
+) -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_ptx_missing_launch_defaults"))
+    contract = build_cuda_contract(mod)
+    ptx_path = tmp_path / "k.ptx"
+    ptx_path.write_text(
+        (
+            "// fake ptx\n"
+            ".visible .entry k(\n"
+            "    .param .u64 k_param_0,\n"
+            "    .param .u64 k_param_1,\n"
+            "    .param .u64 k_param_2,\n"
+            "    .param .u64 k_param_3,\n"
+            "    .param .u32 k_param_4,\n"
+            "    .param .u32 k_param_5\n"
+            ")\n"
+            "{\n"
+            "  .reqntid 64, 1, 1;\n"
+            "  ret;\n"
+            "}\n"
+        ),
+        encoding="utf-8",
+    )
+    contract.executable.format = "cuda_ptx"
+    contract.executable.path = str(ptx_path)
+    contract.executable.entry = "k"
+    contract.executable.target = "cuda"
+    contract.executable.invocation = {
+        "shape_bindings": {"M": 8, "N": 128},
+        "io_spec": {
+            "arg_names": ["alpha", "x", "y", "out"],
+            "tensors": {
+                "alpha": {"dtype": "f32", "shape": []},
+                "x": {"dtype": "f32", "shape": ["M", "N"]},
+                "y": {"dtype": "f32", "shape": ["M", "N"]},
+                "out": {"dtype": "f32", "shape": ["M", "N"]},
+            },
+            "outputs": ["out"],
+            "scalars": {},
+        },
+        "output_names": ["out"],
+    }
+    contract.launch = {}
+    lowered = lower_cuda_contract_to_kernel(contract.to_json_dict(), shape_bindings={"M": 8, "N": 128})
+    launch = dict(lowered.get("launch") or {})
+    assert launch.get("block") == [64, 1, 1]
+    assert launch.get("grid") == [16, 1, 1]
+
+
+def test_lower_cuda_contract_to_kernel_repairs_pad_tail_scalars_to_output_extents(
+    tmp_path: Path,
+) -> None:
+    mod = to_mlir(_add_intent("cuda_pipeline_ptx_pad_tail_repair"))
+    contract = build_cuda_contract(mod)
+    ptx_path = tmp_path / "k.ptx"
+    ptx_path.write_text(
+        (
+            "// fake ptx\n"
+            ".visible .entry intentir_pad2d_const_f32(\n"
+            "    .param .u64 p0,\n"
+            "    .param .u64 p1,\n"
+            "    .param .u32 p2,\n"
+            "    .param .u32 p3,\n"
+            "    .param .u32 p4,\n"
+            "    .param .u32 p5\n"
+            ")\n"
+            "{\n"
+            "  ret;\n"
+            "}\n"
+        ),
+        encoding="utf-8",
+    )
+    contract.executable.format = "cuda_ptx"
+    contract.executable.path = str(ptx_path)
+    contract.executable.entry = "intentir_pad2d_const_f32"
+    contract.executable.target = "cuda"
+    contract.launch = {}
+    contract.io_spec = {
+        "arg_names": ["in0", "out", "M", "N", "PAD_LEFT", "PAD_RIGHT"],
+        "tensors": {
+            "in0": {"dtype": "f32", "shape": ["M", "N"]},
+            "out": {"dtype": "f32", "shape": ["M + 1", "N + 3"]},
+        },
+        "scalars": {
+            "M": "i32",
+            "N": "i32",
+            "PAD_LEFT": "i32",
+            "PAD_RIGHT": "i32",
+        },
+        "outputs": ["out"],
+    }
+    lowered = lower_cuda_contract_to_kernel(
+        contract.to_json_dict(),
+        shape_bindings={"M": 4, "N": 64, "PAD_LEFT": 1, "PAD_RIGHT": 2, "M + 1": 5, "N + 3": 67},
+    )
+    io_spec = dict(lowered.get("io_spec") or {})
+    assert io_spec.get("arg_names") == ["in0", "out", "M", "N", "M_OUT", "N_OUT"]
+    bindings = dict(lowered.get("bindings") or {})
+    assert bindings.get("M_OUT") == 5
+    assert bindings.get("N_OUT") == 67
+
+
 def test_lower_cuda_contract_to_kernel_ptx_augments_scalar_aliases_from_shape_bindings(tmp_path: Path) -> None:
     mod = to_mlir(_add_intent("cuda_pipeline_ptx_alias_augment"))
     contract = build_cuda_contract(mod)

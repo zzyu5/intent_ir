@@ -478,6 +478,47 @@ def _infer_launch_grid_x_from_ptx(
     return out
 
 
+def _ensure_launch_grid_block_defaults(
+    *,
+    launch: Mapping[str, Any],
+    ptx_text: str,
+) -> dict[str, Any]:
+    out = dict(launch or {})
+    grid = out.get("grid") if isinstance(out.get("grid"), list) else None
+    block = out.get("block") if isinstance(out.get("block"), list) else None
+
+    def _normalize_triplet(vals: list[Any] | None, fallback: list[int]) -> list[int]:
+        if not (isinstance(vals, list) and len(vals) == 3):
+            return list(fallback)
+        out_vals: list[int] = []
+        try:
+            out_vals = [int(vals[0]), int(vals[1]), int(vals[2])]
+        except Exception:
+            return list(fallback)
+        if any(v <= 0 for v in out_vals):
+            return list(fallback)
+        return out_vals
+
+    ptx_reqntid: list[int] | None = None
+    m = re.search(
+        r"\.reqntid\s+([0-9]+)(?:\s*,\s*([0-9]+))?(?:\s*,\s*([0-9]+))?",
+        str(ptx_text or ""),
+    )
+    if m:
+        try:
+            bx = int(m.group(1))
+            by = int(m.group(2) or 1)
+            bz = int(m.group(3) or 1)
+            if bx > 0 and by > 0 and bz > 0:
+                ptx_reqntid = [bx, by, bz]
+        except Exception:
+            ptx_reqntid = None
+
+    out["grid"] = _normalize_triplet(grid, fallback=[1, 1, 1])
+    out["block"] = _normalize_triplet(block, fallback=(ptx_reqntid or [256, 1, 1]))
+    return out
+
+
 def _infer_launch_grid_from_output_size(
     *,
     launch: Mapping[str, Any],
@@ -531,6 +572,46 @@ def _infer_launch_grid_from_output_size(
     if needed_gx <= gx:
         return out
     out["grid"] = [int(needed_gx), int(gy), int(gz)]
+    return out
+
+
+def _repair_pad_scalar_arg_names(
+    *,
+    io_spec: Mapping[str, Any],
+    merged_bindings: Mapping[str, Any],
+    kernel_name: str,
+) -> dict[str, Any]:
+    out = dict(io_spec or {})
+    kname = str(kernel_name or "").strip().lower()
+    if "pad" not in kname:
+        return out
+    if ("M_OUT" not in merged_bindings) or ("N_OUT" not in merged_bindings):
+        return out
+    arg_names = out.get("arg_names") if isinstance(out.get("arg_names"), list) else None
+    if not (isinstance(arg_names, list) and len(arg_names) >= 2):
+        return out
+    scalars = out.get("scalars") if isinstance(out.get("scalars"), Mapping) else {}
+    scalars_out = {str(k): str(v) for k, v in dict(scalars or {}).items() if str(k).strip()}
+    tensors = out.get("tensors") if isinstance(out.get("tensors"), Mapping) else {}
+    tensor_names = {str(k) for k in dict(tensors or {}).keys() if str(k).strip()}
+    tail0 = str(arg_names[-2]).strip()
+    tail1 = str(arg_names[-1]).strip()
+    if tail0 in tensor_names or tail1 in tensor_names:
+        return out
+    if not (
+        tail0.startswith("PAD_")
+        or tail1.startswith("PAD_")
+        or tail0.startswith("pad_")
+        or tail1.startswith("pad_")
+    ):
+        return out
+    new_arg_names = [str(x) for x in arg_names]
+    new_arg_names[-2] = "M_OUT"
+    new_arg_names[-1] = "N_OUT"
+    scalars_out["M_OUT"] = "i32"
+    scalars_out["N_OUT"] = "i32"
+    out["arg_names"] = new_arg_names
+    out["scalars"] = scalars_out
     return out
 
 
@@ -682,6 +763,11 @@ def lower_cuda_contract_to_kernel(
             entry=str(exe_entry or contract.kernel_name or "intent"),
         )
         merged_bindings = _augment_scalar_bindings_from_io_spec(bindings=merged_bindings, io_spec=io_spec)
+        io_spec = _repair_pad_scalar_arg_names(
+            io_spec=io_spec,
+            merged_bindings=merged_bindings,
+            kernel_name=str(exe_entry or contract.kernel_name or ""),
+        )
         output_names = list((io_spec.get("outputs") if isinstance(io_spec, Mapping) else []) or [])
         inv_outputs = invocation.get("output_names")
         if (not output_names) and isinstance(inv_outputs, list):
@@ -689,6 +775,10 @@ def lower_cuda_contract_to_kernel(
         launch = dict(contract.launch or {})
         if (not launch) and isinstance(invocation.get("launch"), Mapping):
             launch = dict(invocation.get("launch") or {})
+        launch = _ensure_launch_grid_block_defaults(
+            launch=launch,
+            ptx_text=ptx_payload.decode("utf-8", errors="ignore"),
+        )
         launch = _infer_launch_grid_x_from_ptx(
             launch=launch,
             io_spec=io_spec,
