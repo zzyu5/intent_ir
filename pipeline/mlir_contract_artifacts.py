@@ -65,6 +65,25 @@ def _runtime_io_spec_from_intent_json(intent_json: dict[str, Any]) -> dict[str, 
     }
 
 
+def _recover_intent_json(
+    *,
+    module: IntentMLIRModule,
+    fallback_intent_module: IntentMLIRModule | None = None,
+) -> dict[str, Any] | None:
+    candidates: list[dict[str, Any]] = []
+    if isinstance(module.intent_json, dict):
+        candidates.append(dict(module.intent_json))
+    if fallback_intent_module is not None and isinstance(fallback_intent_module.intent_json, dict):
+        candidates.append(dict(fallback_intent_module.intent_json))
+    meta_intent = (module.meta or {}).get("intent_json") if isinstance(module.meta, dict) else None
+    if isinstance(meta_intent, dict):
+        candidates.append(dict(meta_intent))
+    for cand in candidates:
+        if isinstance(cand.get("tensors"), dict):
+            return cand
+    return None
+
+
 def _looks_like_llvm_ir(text: str) -> bool:
     s = str(text or "")
     return ("; ModuleID" in s) or ("define " in s and "{" in s and "}" in s)
@@ -803,6 +822,10 @@ def _materialize_executable(
     shape_bindings: dict[str, int],
     fallback_intent_module: IntentMLIRModule | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    recovered_intent_json = _recover_intent_json(
+        module=module,
+        fallback_intent_module=fallback_intent_module,
+    )
     if backend == "cuda":
         module_text = str(module.module_text or "")
         if not _looks_like_llvm_ir(module_text):
@@ -838,6 +861,15 @@ def _materialize_executable(
                 "cuda_llvm_target_triple": str(llvm_target_triple),
                 "cuda_llvm_origin": str(llvm_origin),
             }
+            if isinstance(recovered_intent_json, dict):
+                try:
+                    inv = dict(executable.get("invocation") or {})
+                    runtime_io = _runtime_io_spec_from_intent_json(recovered_intent_json)
+                    inv["io_spec"] = dict(runtime_io)
+                    inv["output_names"] = [str(x) for x in list(runtime_io.get("outputs") or [])]
+                    executable["invocation"] = inv
+                except Exception as e:
+                    artifacts["cuda_io_spec_synth_error"] = f"{type(e).__name__}: {e}"
             if discovered_entries:
                 artifacts["cuda_ptx_entries"] = [str(x) for x in discovered_entries]
             if str(resolved_entry) != str(entry):
@@ -886,14 +918,6 @@ def _materialize_executable(
         if host_retarget_fallback:
             artifacts["rvv_elf_host_retarget_fallback"] = True
             artifacts["rvv_elf_host_triple"] = str(fingerprint).split(host_fallback_tag, 1)[1]
-        recovered_intent = None
-        recovered_intent_json: dict[str, Any] | None = None
-        try:
-            recovered_intent = _recover_intent()
-            if recovered_intent is not None:
-                recovered_intent_json = dict(recovered_intent.to_json_dict())
-        except Exception as e:
-            artifacts["rvv_io_spec_recover_error"] = f"{type(e).__name__}: {e}"
         # Hard-cut: RVV compatibility C-source artifacts are fully removed from
         # default pipeline outputs; strict path keeps executable-only contracts.
         artifacts["rvv_compat_removed"] = True

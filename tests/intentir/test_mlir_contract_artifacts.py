@@ -120,6 +120,10 @@ def test_emit_backend_contract_artifacts_materializes_cuda_executable_from_downs
     payload = json.loads(llvm_contract_path.read_text(encoding="utf-8"))
     exe = dict(payload.get("executable") or {})
     assert str(exe.get("format") or "") == "cuda_ptx"
+    inv = dict(exe.get("invocation") or {})
+    io_spec = dict(inv.get("io_spec") or {})
+    assert [str(x) for x in list(io_spec.get("arg_names") or [])] == ["A", "B", "C"]
+    assert [str(x) for x in list(inv.get("output_names") or [])] == ["C"]
     ptx_path = Path(str(exe.get("path") or ""))
     assert ptx_path.is_file()
     assert "fake llc ptx" in ptx_path.read_text(encoding="utf-8")
@@ -224,6 +228,10 @@ def test_emit_backend_contract_artifacts_materializes_rvv_executable_from_downst
     payload = json.loads(llvm_contract_path.read_text(encoding="utf-8"))
     exe = dict(payload.get("executable") or {})
     assert str(exe.get("format") or "") == "rvv_elf"
+    inv = dict(exe.get("invocation") or {})
+    io_spec = dict(inv.get("io_spec") or {})
+    assert [str(x) for x in list(io_spec.get("arg_names") or [])] == ["A", "B", "C"]
+    assert [str(x) for x in list(inv.get("output_names") or [])] == ["C"]
     elf_path = Path(str(exe.get("path") or ""))
     assert elf_path.is_file()
     assert elf_path.read_bytes().startswith(b"\x7fELF")

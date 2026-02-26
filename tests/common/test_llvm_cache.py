@@ -64,3 +64,40 @@ def test_discover_cached_downstream_llvm_uses_latest_indexed_artifact(monkeypatc
         current_out_dir=(tmp_path / "empty"),
     )
     assert resolved == str(newer)
+
+
+def test_discover_cached_downstream_llvm_skips_newest_invalid_triple(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(llvm_cache, "ROOT", tmp_path)
+    llvm_cache._reset_llvm_cache_index_for_tests()
+
+    valid = (
+        tmp_path
+        / "artifacts"
+        / "flaggems_matrix"
+        / "daily"
+        / "20260225"
+        / "wave_ok"
+        / "pipeline_reports"
+        / "prod_dim2d.intentir.intentdialect.downstream_cuda_llvm.mlir"
+    )
+    invalid_new = (
+        tmp_path
+        / "artifacts"
+        / "flaggems_matrix"
+        / "daily"
+        / "20260226"
+        / "wave_bad"
+        / "pipeline_reports"
+        / "prod_dim2d.intentir.intentdialect.downstream_cuda_llvm.mlir"
+    )
+    _write_llvm(valid, triple="nvptx64-nvidia-cuda")
+    _write_llvm(invalid_new, triple="riscv64-unknown-linux-gnu")
+    os.utime(valid, (1, 1))
+    os.utime(invalid_new, (2, 2))
+
+    resolved = llvm_cache.discover_cached_downstream_llvm_module_path(
+        spec_name="prod_dim2d",
+        llvm_pipeline="downstream_cuda_llvm",
+        current_out_dir=(tmp_path / "empty"),
+    )
+    assert resolved == str(valid)
