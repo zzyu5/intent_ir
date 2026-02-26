@@ -50,6 +50,7 @@ def test_build_cleanup_plan_keeps_baseline_and_purges_patterns(tmp_path: Path) -
         "mode": "minimal_baseline",
         "keep_runs": ["full196_validated", "gpu_perf_validated", "latest_mlir_wave"],
         "keep_dirs": [str(toolchains)],
+        "require_distinct_latest_mlir_wave": True,
         "purge_patterns": ["_triton_cache", "_triton_dump", "tmp*", "_tmp*", "torch_extensions/*"],
     }
     plan = mod.build_cleanup_plan(
@@ -74,6 +75,7 @@ def test_build_cleanup_plan_keeps_baseline_and_purges_patterns(tmp_path: Path) -
     assert str(full_run) not in delete_paths
     assert str(gpu_run) not in delete_paths
     assert str(toolchains) not in delete_paths
+    assert list(plan.get("strict_errors") or []) == []
 
 
 def test_cleanup_artifacts_execute_removes_unkept_paths(tmp_path: Path) -> None:
@@ -98,6 +100,7 @@ def test_cleanup_artifacts_execute_removes_unkept_paths(tmp_path: Path) -> None:
                 "mode": "minimal_baseline",
                 "keep_runs": ["full196_validated", "gpu_perf_validated", "latest_mlir_wave"],
                 "keep_dirs": [],
+                "require_distinct_latest_mlir_wave": True,
                 "purge_patterns": ["_triton_cache", "_triton_dump", "tmp*", "_tmp*", "torch_extensions/*"],
             },
             ensure_ascii=False,
@@ -153,3 +156,69 @@ def test_cleanup_artifacts_execute_removes_unkept_paths(tmp_path: Path) -> None:
     assert (latest / "plan.json").is_file()
     assert (latest / "deleted.jsonl").is_file()
     assert (latest / "summary.json").is_file()
+
+
+def test_cleanup_artifacts_fails_when_latest_mlir_wave_falls_back_to_gpu_run(tmp_path: Path) -> None:
+    artifacts = tmp_path / "artifacts"
+    reports_root = tmp_path / "reports"
+    full_run = artifacts / "flaggems_matrix" / "daily" / "20260226" / "full196_head_refresh_v23_strict_o3"
+    gpu_run = artifacts / "flaggems_matrix" / "daily" / "20260226" / "gpu_perf_head_refresh_v14_strict_policy_refresh4"
+    _touch(full_run / "run_summary.json", "{}")
+    _touch(gpu_run / "run_summary.json", "{}")
+
+    policy_path = tmp_path / "policy.json"
+    status_path = tmp_path / "current_status.json"
+    progress_path = tmp_path / "progress_log.jsonl"
+    policy_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "flaggems_artifact_retention_policy_v1",
+                "mode": "minimal_baseline",
+                "keep_runs": ["full196_validated", "gpu_perf_validated", "latest_mlir_wave"],
+                "keep_dirs": [],
+                "require_distinct_latest_mlir_wave": True,
+                "purge_patterns": ["_triton_cache", "_triton_dump", "tmp*", "_tmp*", "torch_extensions/*"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    status_path.write_text(
+        json.dumps(
+            {
+                "full196_last_run": str(full_run / "run_summary.json"),
+                "gpu_perf_last_run": str(gpu_run / "run_summary.json"),
+                "latest_artifacts": {"run_summary": str(gpu_run / "run_summary.json")},
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    progress_path.write_text("", encoding="utf-8")
+
+    p = subprocess.run(
+        [
+            sys.executable,
+            "scripts/flaggems/cleanup_artifacts.py",
+            "--policy",
+            str(policy_path),
+            "--current-status",
+            str(status_path),
+            "--progress-log",
+            str(progress_path),
+            "--artifacts-root",
+            str(artifacts),
+            "--reports-root",
+            str(reports_root),
+            "--execute",
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode != 0
+    msg = f"{p.stdout}\n{p.stderr}"
+    assert "strict validation failed" in msg
+    assert "latest_mlir_wave" in msg

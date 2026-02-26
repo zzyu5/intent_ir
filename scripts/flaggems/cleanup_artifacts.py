@@ -165,6 +165,14 @@ def _latest_mlir_wave_run_summary_from_progress(progress_rows: list[dict[str, An
     return ""
 
 
+def _looks_like_mlir_wave_run_dir(run_dir: Path) -> bool:
+    parts = [str(x).strip().lower() for x in run_dir.parts]
+    for token in parts:
+        if "mlir_contract_wave" in token:
+            return True
+    return False
+
+
 def _resolve_preserve_roots(
     *,
     artifacts_root: Path,
@@ -175,6 +183,7 @@ def _resolve_preserve_roots(
 ) -> dict[str, Any]:
     keep_run_tokens = [str(x) for x in list(policy.get("keep_runs") or []) if str(x).strip()]
     keep_dirs_raw = [str(x) for x in list(policy.get("keep_dirs") or []) if str(x).strip()]
+    require_distinct_mlir_wave = bool(policy.get("require_distinct_latest_mlir_wave"))
     if purge_toolchains:
         keep_dirs_raw = [x for x in keep_dirs_raw if not str(x).startswith("artifacts/toolchains")]
 
@@ -189,6 +198,7 @@ def _resolve_preserve_roots(
 
     preserve_roots: list[Path] = []
     preserve_meta: list[dict[str, Any]] = []
+    strict_errors: list[str] = []
 
     for token in keep_run_tokens:
         run_summary_raw = str(run_summary_by_token.get(token) or "").strip()
@@ -224,6 +234,22 @@ def _resolve_preserve_roots(
                     "reason": "run_dir_outside_artifacts_root",
                     "run_summary": _to_repo_rel(run_summary_path),
                 }
+            )
+            continue
+        if token == "latest_mlir_wave" and require_distinct_mlir_wave and (not _looks_like_mlir_wave_run_dir(run_dir)):
+            preserve_meta.append(
+                {
+                    "kind": "keep_run",
+                    "token": str(token),
+                    "ok": False,
+                    "reason": "latest_mlir_wave_not_distinct_mlir_contract_wave",
+                    "run_summary": _to_repo_rel(run_summary_path),
+                    "run_dir": _to_repo_rel(run_dir),
+                }
+            )
+            strict_errors.append(
+                "policy requires distinct latest_mlir_wave, but resolved path is not under mlir_contract_wave*: "
+                f"{_to_repo_rel(run_dir)}"
             )
             continue
         preserve_roots.append(run_dir)
@@ -262,6 +288,7 @@ def _resolve_preserve_roots(
     return {
         "preserve_roots": keep,
         "preserve_meta": preserve_meta,
+        "strict_errors": strict_errors,
     }
 
 
@@ -367,9 +394,11 @@ def build_cleanup_plan(
             "keep_runs": [str(x) for x in list(policy.get("keep_runs") or [])],
             "keep_dirs": [str(x) for x in list(policy.get("keep_dirs") or [])],
             "purge_patterns": list(purge_patterns),
+            "require_distinct_latest_mlir_wave": bool(policy.get("require_distinct_latest_mlir_wave")),
         },
         "preserve_roots": [_to_repo_rel(Path(p)) for p in preserve_roots],
         "preserve_meta": list(keep_info.get("preserve_meta") or []),
+        "strict_errors": list(keep_info.get("strict_errors") or []),
         "delete_candidates_count": int(len(ops)),
         "delete_candidates": list(ops),
     }
@@ -429,6 +458,10 @@ def main() -> None:
         progress_rows=progress_rows,
         purge_toolchains=bool(args.purge_toolchains),
     )
+    strict_errors = [str(x) for x in list(plan.get("strict_errors") or []) if str(x).strip()]
+    if strict_errors:
+        detail = "; ".join(strict_errors)
+        raise SystemExit(f"cleanup policy strict validation failed: {detail}")
     plan["mode"] = "execute" if execute else "dry_run"
     plan["bytes_before"] = int(bytes_before)
 

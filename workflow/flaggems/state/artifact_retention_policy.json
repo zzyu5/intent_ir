@@ -9,6 +9,7 @@
   "keep_dirs": [
     "artifacts/toolchains"
   ],
+  "require_distinct_latest_mlir_wave": true,
   "purge_patterns": [
     "_triton_cache",
     "_triton_dump",
