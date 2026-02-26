@@ -18,6 +18,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from intent_ir.utils.repo_state import repo_state  # noqa: E402
+from pipeline.common.strict_policy import CONTRACT_SCHEMA_VERSION, strict_fallback_enabled  # noqa: E402
 
 
 def _utc_now_iso() -> str:
@@ -1028,17 +1029,25 @@ def main() -> None:
 
     runtime_fallback_kernel_list = sorted(runtime_fallback_kernels)
     runtime_fallback_kernel_count = int(len(runtime_fallback_kernel_list))
+    strict_mode = bool(strict_fallback_enabled())
+    fallback_policy = "strict" if strict_mode else "legacy_compatible"
     run_summary_payload = {
         "ok": bool(coverage_integrity_ok),
         "suite": "coverage",
         "requested_suite": "coverage",
         "repo": repo_state(root=ROOT),
+        "strict_mode": bool(strict_mode),
+        "fallback_policy": str(fallback_policy),
+        "contract_schema_version": str(CONTRACT_SCHEMA_VERSION),
         "invocation": {
             "intentir_mode": str(args.intentir_mode),
             "miss_policy": str(args.intentir_miss_policy),
             "execution_ir": str(args.execution_ir),
             "rvv_remote": bool(args.run_rvv_remote),
             "cuda_runtime_backend": str(args.cuda_runtime_backend),
+            "strict_mode": bool(strict_mode),
+            "fallback_policy": str(fallback_policy),
+            "contract_schema_version": str(CONTRACT_SCHEMA_VERSION),
         },
         "coverage": {
             "mode": "category_batches",

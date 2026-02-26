@@ -141,6 +141,9 @@ def test_aggregate_coverage_batches_passes_on_complete_two_family_fixture(tmp_pa
     assert run_summary["ok"] is True
     assert run_summary["full196_evidence_kind"] == "batch_aggregate"
     assert run_summary["coverage_mode"] == "category_batches"
+    assert isinstance(run_summary.get("strict_mode"), bool)
+    assert str(run_summary.get("fallback_policy") or "") in {"strict", "legacy_compatible"}
+    assert str(run_summary.get("contract_schema_version") or "").startswith("intent_mlir_backend_contract_")
     assert run_summary["coverage_batches_completed"] == 2
     assert status_converged["counts_global"]["dual_pass"] == 2
     assert coverage_integrity["coverage_integrity_ok"] is True
