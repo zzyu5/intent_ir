@@ -1,12 +1,13 @@
 {
   "schema_version": "intentir_handoff_manifest_v1",
-  "generated_at": "2026-02-26T05:19:01Z",
-  "snapshot_commit": "8f597ef3a669a9dbe6dc07af5574e2f6d1b09ff3",
+  "generated_at": "2026-02-26T05:38:29Z",
+  "snapshot_commit": "4d90df5f4ea47440ce94b35c57923f2bbe296590",
   "docs": [
     "workflow/local_notes/project_deep_read/INTENTIR_MASTER_BRIEF.md",
     "workflow/local_notes/project_deep_read/DIRECTORY_ATLAS.md",
     "workflow/local_notes/project_deep_read/CODE_OWNERSHIP_MAP.md",
     "workflow/local_notes/project_deep_read/MLIR_POSITION_REPORT.md",
+    "workflow/local_notes/project_deep_read/MLIR_ENTRY_FLOW_TRUTH.md",
     "workflow/local_notes/project_deep_read/WORKFLOW_TRUTH_AUDIT.md",
     "workflow/local_notes/project_deep_read/SCRIPTS_TESTS_GOVERNANCE.md",
     "workflow/local_notes/project_deep_read/NEXT_AGENT_RUNBOOK.md"
@@ -18,8 +19,8 @@
     "workflow/local_notes/project_deep_read/evidence_index.json"
   ],
   "unresolved_questions": [
-    "RVV strict 路径何时将 compat_cpp_codegen 完全降级为 debug-only 并默认 hard-fail。",
-    "是否在当前 HEAD 追加一轮 mlir_migration strict wave（更新 matrix_wave64 到 HEAD 级证据）。",
-    "是否将 deep_read 真相包回写流程脚本化，避免人工回写漂移。"
+    "RVV strict 下 compat C 执行链是否可以完全下线为仅单元测试路径（默认生产链不可达）。",
+    "多前端统一 strict report schema 的最小兼容窗口如何定义（旧 JSON 读者兼容策略）。",
+    "是否需要为 cleanup baseline 引入自动轮换机制，避免 key-kernel baseline 路径被清理后 gate 失配。"
   ]
 }

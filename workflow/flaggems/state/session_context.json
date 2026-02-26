@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-26T05:34:41+00:00",
+  "updated_at": "2026-02-26T05:37:00+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,67 +13,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "cfaa7ee rvv-strict: require explicit execution mode and apply artifact cleanup\nc547957 workflow: refresh head evidence and sync deep_read truth pack\n8f597ef gpu-perf: fix normed_cumsum native adapter and refresh strict state\n9a4e6b1 workflow: refresh full196 strict v24 on head\n8cd717a workflow: refresh state snapshots after strict-policy wave\n677c6a7 flaggems: add strict policy, artifact cleanup, and workflow context outputs\n2f3e26f docs: expand MLIR entry flow with flaggems/triton/tilelang details\nff9f049 docs(deep_read): add mlir entry flow truth map\n71ab942 feat(mlir): advance strict cutover and refresh workflow truth state\n34e8396 chore(workflow): record llvm-dialect bridge progress and matrix evidence\n253af53 feat(mlir): add llvm-dialect lowering pass before mlir-translate\n649ba86 chore(workflow): record contract-first rvv run and llvm readiness tightening\n6a1deb1 refactor(mlir): tighten llvm readiness and contract-first rvv remote path\nfc00dad chore(workflow): refresh head-aligned status snapshot\n47af79f chore(workflow): log matrix validation for rvv remote contract-first path\n0bacb6e chore(workflow): log rvv remote contract-first progress\nc9e4a25 refactor(rvv-remote): contract-first io/binding materialization\n7d34ec3 chore(workflow): update progress after contract-first smoke refactors\neb9339b refactor(rvv-smoke): use mlir contract intent_json as primary input\ncca8f9e chore(workflow): record contract-first cuda smoke session",
+  "git_log_short": "4d90df5 workflow: resync state after rvv strict checkpoint\ncfaa7ee rvv-strict: require explicit execution mode and apply artifact cleanup\nc547957 workflow: refresh head evidence and sync deep_read truth pack\n8f597ef gpu-perf: fix normed_cumsum native adapter and refresh strict state\n9a4e6b1 workflow: refresh full196 strict v24 on head\n8cd717a workflow: refresh state snapshots after strict-policy wave\n677c6a7 flaggems: add strict policy, artifact cleanup, and workflow context outputs\n2f3e26f docs: expand MLIR entry flow with flaggems/triton/tilelang details\nff9f049 docs(deep_read): add mlir entry flow truth map\n71ab942 feat(mlir): advance strict cutover and refresh workflow truth state\n34e8396 chore(workflow): record llvm-dialect bridge progress and matrix evidence\n253af53 feat(mlir): add llvm-dialect lowering pass before mlir-translate\n649ba86 chore(workflow): record contract-first rvv run and llvm readiness tightening\n6a1deb1 refactor(mlir): tighten llvm readiness and contract-first rvv remote path\nfc00dad chore(workflow): refresh head-aligned status snapshot\n47af79f chore(workflow): log matrix validation for rvv remote contract-first path\n0bacb6e chore(workflow): log rvv remote contract-first progress\nc9e4a25 refactor(rvv-remote): contract-first io/binding materialization\n7d34ec3 chore(workflow): update progress after contract-first smoke refactors\neb9339b refactor(rvv-smoke): use mlir contract intent_json as primary input",
   "progress_tail": [
-    {
-      "ts": "2026-02-26T05:12:09+00:00",
-      "commit": "9a4e6b1d322b450a2f885596369e8df9bba665a8",
-      "lane": "backend_compiler",
-      "summary": "gpu_perf strict refreshed on HEAD (7/7, dual_pass=159, threshold=0.8)",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/status_converged.json",
-      "next_focus": "Proceed RVV strict cutover and deep_read truth sync.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/gpu_perf_graph.json",
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/stage_timing_breakdown.json",
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
-    {
-      "ts": "2026-02-26T05:15:44+00:00",
-      "commit": "8f597ef3a669a9dbe6dc07af5574e2f6d1b09ff3",
-      "lane": "coverage",
-      "summary": "full196 strict refreshed on current HEAD via resume (7/7, dual_pass=196)",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json",
-      "next_focus": "Refresh gpu_perf strict evidence on current HEAD.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/coverage_integrity.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
-    {
-      "ts": "2026-02-26T05:16:17+00:00",
-      "commit": "8f597ef3a669a9dbe6dc07af5574e2f6d1b09ff3",
-      "lane": "backend_compiler",
-      "summary": "gpu_perf strict refreshed on current HEAD via resume (7/7, dual_pass=159, threshold=0.8)",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/status_converged.json",
-      "next_focus": "Sync deep_read truth package to current strict evidence.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/gpu_perf_graph.json",
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/stage_timing_breakdown.json",
-        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
     {
       "ts": "2026-02-26T05:18:43+00:00",
       "commit": "8f597ef3a669a9dbe6dc07af5574e2f6d1b09ff3",
@@ -169,18 +110,72 @@
       "run_ok": true,
       "run_out_dir": null,
       "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-26T05:35:39+00:00",
+      "commit": "4d90df5f4ea47440ce94b35c57923f2bbe296590",
+      "lane": "coverage",
+      "summary": "full196 strict refreshed on HEAD after RVV strict checkpoint (7/7, dual_pass=196)",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json",
+      "next_focus": "Refresh gpu_perf strict evidence and keep runtime_fallback=0 on same HEAD.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/coverage_integrity.json",
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-26T05:35:46+00:00",
+      "commit": "4d90df5f4ea47440ce94b35c57923f2bbe296590",
+      "lane": "backend_compiler",
+      "summary": "gpu_perf strict refreshed on HEAD after RVV strict checkpoint (159/159, fallback=0)",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/status_converged.json",
+      "next_focus": "Continue RVV strict cutover cleanup and deep_read/workflow truth sync.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/gpu_perf_graph.json",
+        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/stage_timing_breakdown.json",
+        "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-26T05:36:34+00:00",
+      "commit": "4d90df5f4ea47440ce94b35c57923f2bbe296590",
+      "lane": "coverage",
+      "summary": "full196 strict refreshed on HEAD after RVV strict checkpoint (7/7, dual_pass=196)",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json",
+      "next_focus": "Refresh gpu_perf strict evidence and keep runtime_fallback=0 on same HEAD.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/coverage_integrity.json",
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
     }
   ],
-  "next_focus": "Run full196/gpu_perf strict refresh on post-change HEAD to revalidate freshness and strict evidence.",
+  "next_focus": "Refresh gpu_perf strict evidence and keep runtime_fallback=0 on same HEAD.",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
-  "active_lanes": [
-    "backend_compiler",
-    "coverage",
-    "mlir_migration"
-  ],
+  "active_lanes": [],
   "next_focus_by_lane": {
-    "backend_compiler": "Proceed RVV strict hard-cut cleanup and remove implicit compat path.",
-    "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
+    "coverage": "Refresh gpu_perf strict evidence and keep runtime_fallback=0 on same HEAD.",
+    "backend_compiler": "Continue RVV strict cutover cleanup and deep_read/workflow truth sync.",
     "mlir_migration": "Run full196/gpu_perf strict refresh on post-change HEAD to revalidate freshness and strict evidence."
   },
   "known_risks": []
