@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
 
 import pytest
 
-from backends.cuda.codegen.cpp_driver import lower_intent_json_to_cuda_kernel_cpp, lower_intent_to_cuda_kernel_cpp
 from backends.cuda.pipeline.driver import lower_cuda_contract_to_kernel, run_cuda_pipeline
 from backends.cuda.pipeline.stages import CUDA_PIPELINE_STAGES
 from intent_ir.ir import IntentFunction
@@ -208,11 +208,10 @@ def test_run_cuda_pipeline_accepts_contract_json_mapping() -> None:
 
 
 def test_cuda_cpp_codegen_entrypoints_are_removed_for_hard_cut() -> None:
-    intent = _add_intent("cuda_pipeline_json_lower_removed")
-    with pytest.raises(RuntimeError, match="removed from strict hard-cut path"):
-        _ = lower_intent_json_to_cuda_kernel_cpp(intent.to_json_dict(), bindings={"M": 4, "N": 64})
-    with pytest.raises(RuntimeError, match="removed from strict hard-cut path"):
-        _ = lower_intent_to_cuda_kernel_cpp(intent, bindings={"M": 4, "N": 64})
+    with pytest.raises(ModuleNotFoundError):
+        _ = importlib.import_module("backends.cuda.codegen")
+    with pytest.raises(ModuleNotFoundError):
+        _ = importlib.import_module("backends.cuda.codegen.cpp_driver")
 
 
 def test_lower_cuda_contract_to_kernel_rejects_cuda_kernel_json_executable(tmp_path: Path) -> None:
