@@ -1,13 +1,13 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-26T06:31:45+00:00",
+  "updated_at": "2026-02-26T06:45:10+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "716dad1ac5482a0094aef4d8ffaa1f0792eb6086",
+  "head_commit": "aeacf5b3ff3b7c7f02fbfdd76929ece5d1c9ce34",
   "mode": "maintenance",
   "coverage_integrity_phase": "recomputed_ok",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v24_strict_o3/run_summary.json",
   "full196_last_ok": true,
-  "full196_validated_commit": "716dad1ac5482a0094aef4d8ffaa1f0792eb6086",
+  "full196_validated_commit": "aeacf5b3ff3b7c7f02fbfdd76929ece5d1c9ce34",
   "full196_validated_commit_source": "run_summary.repo.head_commit",
   "full196_commits_since_validated": 0,
   "full196_commits_since_validated_total": 0,
@@ -21,7 +21,7 @@
   "coverage_batches_completed": 7,
   "coverage_batches_failed": [],
   "full196_evidence_kind": "batch_aggregate",
-  "full196_last_run_repo_head_commit": "716dad1ac5482a0094aef4d8ffaa1f0792eb6086",
+  "full196_last_run_repo_head_commit": "aeacf5b3ff3b7c7f02fbfdd76929ece5d1c9ce34",
   "full196_last_run_repo_branch": "compiler-cleanup-v1",
   "full196_last_run_dirty": false,
   "full196_artifact_repo_stamp_ok": true,
@@ -31,11 +31,11 @@
   "mlir_toolchain_ok": true,
   "mlir_backend_contract_ready": true,
   "mlir_llvm_chain_ok": true,
-  "mlir_full196_validated_commit": "716dad1ac5482a0094aef4d8ffaa1f0792eb6086",
+  "mlir_full196_validated_commit": "aeacf5b3ff3b7c7f02fbfdd76929ece5d1c9ce34",
   "gpu_perf_phase": "recomputed_ok",
   "gpu_perf_last_run": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/run_summary.json",
   "gpu_perf_last_ok": true,
-  "gpu_perf_validated_commit": "716dad1ac5482a0094aef4d8ffaa1f0792eb6086",
+  "gpu_perf_validated_commit": "aeacf5b3ff3b7c7f02fbfdd76929ece5d1c9ce34",
   "gpu_perf_commits_since_validated": 0,
   "gpu_perf_mode": "graph_only",
   "gpu_perf_threshold": 0.8,
@@ -128,7 +128,7 @@
   "active_lanes": [],
   "next_focus_by_lane": {
     "coverage": "Refresh gpu_perf strict on same HEAD and keep strict gate green.",
-    "backend_compiler": "Proceed RVV strict compat-path shrink and multi-frontend strict schema alignment."
+    "backend_compiler": "Continue RVV strict compat-path shrink and multi-frontend strict schema alignment."
   },
   "latest_artifacts": {
     "run_summary": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v17_strict_normed_fix/run_summary.json",
