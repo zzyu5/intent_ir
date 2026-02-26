@@ -216,21 +216,41 @@ def _infer_symbol_order_from_io_spec(io_spec: Mapping[str, Any]) -> list[str]:
     tensors = io_spec.get("tensors") if isinstance(io_spec.get("tensors"), Mapping) else {}
     if not isinstance(tensors, Mapping):
         return []
-    out: list[str] = []
-    seen: set[str] = set()
-    for spec in tensors.values():
-        shape = spec.get("shape") if isinstance(spec, Mapping) else None
-        if not isinstance(shape, list):
-            continue
-        for d in shape:
-            if not isinstance(d, str):
+    outputs = io_spec.get("outputs") if isinstance(io_spec.get("outputs"), list) else []
+    output_names = [str(x).strip() for x in outputs if str(x).strip()]
+    output_set = set(output_names)
+    input_names = [str(k).strip() for k in tensors.keys() if str(k).strip() and str(k).strip() not in output_set]
+
+    def _dims_for(names: list[str]) -> list[str]:
+        out_dims: list[str] = []
+        seen_dims: set[str] = set()
+        for name in names:
+            spec = tensors.get(name)
+            shape = spec.get("shape") if isinstance(spec, Mapping) else None
+            if not isinstance(shape, list):
                 continue
-            dim = d.strip()
-            if not dim or dim in seen:
-                continue
-            seen.add(dim)
-            out.append(dim)
-    return out
+            for d in shape:
+                if not isinstance(d, str):
+                    continue
+                dim = d.strip()
+                if not dim or dim in seen_dims:
+                    continue
+                seen_dims.add(dim)
+                out_dims.append(dim)
+        return out_dims
+
+    output_dims = _dims_for(output_names)
+    input_dims = _dims_for(input_names)
+    if not output_dims and not input_dims:
+        # Fallback for older contracts without explicit outputs metadata.
+        return _dims_for([str(k) for k in tensors.keys()])
+
+    input_set = set(input_dims)
+    output_set_dims = set(output_dims)
+    output_only = [d for d in output_dims if d not in input_set]
+    shared = [d for d in output_dims if d in input_set]
+    input_only = [d for d in input_dims if d not in output_set_dims]
+    return output_only + shared + input_only
 
 
 def _augment_io_spec_arg_names_with_ptx_params(
