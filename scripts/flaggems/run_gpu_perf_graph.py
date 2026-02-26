@@ -2014,6 +2014,7 @@ def main() -> None:
         "runtime_fallback_kernel_count": int(len(status_runtime_fallback_kernels)),
         "runtime_fallback_kernels": list(status_runtime_fallback_kernels),
         "runtime_fallback_forbidden_kernel_count": int(len(status_runtime_fallback_forbidden_kernels)),
+        "runtime_fallback_forbidden_kernels": list(status_runtime_fallback_forbidden_kernels),
     }
     status_path = _dump_json(out_root / "status_converged.json", status_payload)
 
@@ -2026,6 +2027,8 @@ def main() -> None:
         "requested_suite": "gpu_perf_graph",
         "repo": repo_meta,
         "execution_engine": "mlir_native",
+        "strict_mode": bool(strict_mode),
+        "fallback_policy": str(fallback_policy),
         "contract_schema_version": "intent_mlir_backend_contract_v2",
         "coverage_mode": "category_batches",
         "full196_evidence_kind": "batch_aggregate",

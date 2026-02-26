@@ -398,10 +398,12 @@ def _materialize_family_outputs(
     status_payload = {
         "schema_version": "flaggems_status_converged_v3",
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "execution_engine": "mlir_native",
         "strict_mode": bool(strict_mode),
         "fallback_policy": str(fallback_policy),
         "contract_schema_version": str(CONTRACT_SCHEMA_VERSION),
         "invocation": {
+            "execution_engine": "mlir_native",
             "strict_mode": bool(strict_mode),
             "fallback_policy": str(fallback_policy),
             "contract_schema_version": str(CONTRACT_SCHEMA_VERSION),
@@ -419,12 +421,14 @@ def _materialize_family_outputs(
         "runtime_fallback_kernel_count": int(runtime_fallback_kernel_count),
         "runtime_fallback_kernels": list(runtime_fallback_kernel_list),
         "runtime_fallback_forbidden_kernel_count": 0,
+        "runtime_fallback_forbidden_kernels": [],
     }
     status_path.write_text(json.dumps(status_payload, indent=2, ensure_ascii=False), encoding="utf-8")
     run_payload = {
         "ok": bool(family_ok),
         "suite": "coverage",
         "requested_suite": "coverage",
+        "execution_engine": "mlir_native",
         "strict_mode": bool(strict_mode),
         "fallback_policy": str(fallback_policy),
         "contract_schema_version": str(CONTRACT_SCHEMA_VERSION),
@@ -441,6 +445,7 @@ def _materialize_family_outputs(
         "runtime_fallback_kernels": list(runtime_fallback_kernel_list),
         "status_converged_path": str(status_path),
         "invocation": {
+            "execution_engine": "mlir_native",
             "strict_mode": bool(strict_mode),
             "fallback_policy": str(fallback_policy),
             "contract_schema_version": str(CONTRACT_SCHEMA_VERSION),

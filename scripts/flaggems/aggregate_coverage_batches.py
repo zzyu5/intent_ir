@@ -942,6 +942,7 @@ def main() -> None:
         "schema_version": "flaggems_status_converged_v3",
         "generated_at": _utc_now_iso(),
         "repo": repo_state(root=ROOT),
+        "execution_engine": "mlir_native",
         "strict_mode": bool(strict_mode),
         "fallback_policy": str(fallback_policy),
         "contract_schema_version": str(CONTRACT_SCHEMA_VERSION),
@@ -949,6 +950,7 @@ def main() -> None:
             "intentir_mode": str(args.intentir_mode),
             "miss_policy": str(args.intentir_miss_policy),
             "execution_ir": str(args.execution_ir),
+            "execution_engine": "mlir_native",
             "rvv_remote": bool(args.run_rvv_remote),
             "cuda_runtime_backend": str(args.cuda_runtime_backend),
             "strict_mode": bool(strict_mode),
@@ -976,6 +978,7 @@ def main() -> None:
         "runtime_fallback_kernel_count": int(len(status_runtime_fallback_kernels)),
         "runtime_fallback_kernels": list(status_runtime_fallback_kernels),
         "runtime_fallback_forbidden_kernel_count": int(len(status_runtime_fallback_forbidden_kernels)),
+        "runtime_fallback_forbidden_kernels": list(status_runtime_fallback_forbidden_kernels),
     }
     _dump_json(out_status, status_payload)
 
@@ -1062,6 +1065,7 @@ def main() -> None:
         "suite": "coverage",
         "requested_suite": "coverage",
         "repo": repo_state(root=ROOT),
+        "execution_engine": "mlir_native",
         "strict_mode": bool(strict_mode),
         "fallback_policy": str(fallback_policy),
         "contract_schema_version": str(CONTRACT_SCHEMA_VERSION),
@@ -1069,6 +1073,7 @@ def main() -> None:
             "intentir_mode": str(args.intentir_mode),
             "miss_policy": str(args.intentir_miss_policy),
             "execution_ir": str(args.execution_ir),
+            "execution_engine": "mlir_native",
             "rvv_remote": bool(args.run_rvv_remote),
             "cuda_runtime_backend": str(args.cuda_runtime_backend),
             "strict_mode": bool(strict_mode),

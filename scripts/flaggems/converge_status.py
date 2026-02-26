@@ -21,6 +21,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from intent_ir.utils.repo_state import repo_state  # noqa: E402
+from pipeline.common.strict_policy import CONTRACT_SCHEMA_VERSION, strict_fallback_enabled  # noqa: E402
 
 
 def _parse_scope_values(raw_values: list[str] | None) -> tuple[str, ...]:
@@ -503,11 +504,17 @@ def main() -> None:
             contract_schema_version = next(iter(observed_contract_schemas))
         elif len(observed_contract_schemas) > 1:
             contract_schema_version = "mixed"
+    if not contract_schema_version:
+        contract_schema_version = str(CONTRACT_SCHEMA_VERSION)
+    strict_mode = bool(strict_fallback_enabled())
+    fallback_policy = "strict" if strict_mode else "legacy_compatible"
 
     result = {
         "schema_version": "flaggems_registry_converged_v3",
         "repo": repo_state(root=ROOT),
         "execution_engine": execution_engine,
+        "strict_mode": bool(strict_mode),
+        "fallback_policy": str(fallback_policy),
         "contract_schema_version": contract_schema_version,
         "invocation": {
             "intentir_mode": str(args.intentir_mode),
@@ -515,6 +522,8 @@ def main() -> None:
             "rvv_remote": (None if args.rvv_remote is None else bool(args.rvv_remote)),
             "cuda_runtime_backend": str(args.cuda_runtime_backend),
             "execution_engine": execution_engine,
+            "strict_mode": bool(strict_mode),
+            "fallback_policy": str(fallback_policy),
             "contract_schema_version": contract_schema_version,
             "scope_enabled": bool(scope_enabled),
             "scope_mode": scope_mode,
