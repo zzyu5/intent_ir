@@ -790,12 +790,9 @@ def _build_inputs_np(
 
 
 def _set_codegen_mode_env() -> None:
-    # Pure-compiler mode: CUDA lowering is always C++ pybind.
-    # Keep environment neutral to avoid reviving deprecated fallback knobs.
+    # Pure-compiler mode: keep environment neutral and avoid deprecated knobs.
     os.environ.pop("INTENTIR_CUDA_CODEGEN", None)
     os.environ.pop("INTENTIR_CUDA_CODEGEN_STRICT", None)
-    os.environ.pop("INTENTIR_CUDA_CPP_CODEGEN_ENGINE", None)
-    os.environ.pop("INTENTIR_CUDA_CPP_CODEGEN_ENGINE_STRICT", None)
 
 
 def _set_runtime_backend_env(runtime_backend: str) -> None:

@@ -458,7 +458,6 @@ def _validate_codegen_purity(stage_map: dict[str, dict[str, Any]]) -> tuple[bool
     }
     forbidden_env_prefixes = (
         "INTENTIR_CUDA_CODEGEN",
-        "INTENTIR_CUDA_CPP_CODEGEN_ENGINE",
     )
     violations: list[str] = []
     for stage_name, row in stage_map.items():
