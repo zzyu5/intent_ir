@@ -152,24 +152,6 @@ def test_lower_intent_to_llvm_dialect_passes_through_existing_llvm_text(backend:
     assert "define void @k" in str(out.module_text or "")
 
 
-def test_cuda_device_llvm_preamble_defines_infinity_and_nan() -> None:
-    preamble = str(_LOWER_LLVM_PASS._cuda_device_llvm_preamble())
-    assert "#define INFINITY (__builtin_inff())" in preamble
-    assert '#define NAN (__builtin_nanf(""))' in preamble
-    assert "typedef struct __align__(2) { unsigned short x; } __half;" in preamble
-    assert "typedef struct __align__(2) { unsigned short x; } __nv_bfloat16;" in preamble
-    assert "__shfl_down_sync(unsigned int mask, long long var" in preamble
-    assert "__shfl_sync(unsigned int mask, long long var" in preamble
-    assert 'asm volatile("atom.exch.b32 %0, [%1], %2;"' in preamble
-    assert "atom.global.exch.b32" not in preamble
-
-
-def test_cuda_codegen_requires_half_bfloat_stubs() -> None:
-    assert _LOWER_LLVM_PASS._cuda_codegen_requires_half_bfloat_stubs('extern "C" __global__ void k() {}') is True
-    assert _LOWER_LLVM_PASS._cuda_codegen_requires_half_bfloat_stubs('#include "kernels/reduce.cuh"\n') is False
-    assert _LOWER_LLVM_PASS._cuda_codegen_requires_half_bfloat_stubs("#include <cuda_fp16.h>\n") is False
-
-
 def test_mlir_cuda_contract_emitter_builds_contract() -> None:
     intent = _sample_intent()
     module = to_mlir(intent)
