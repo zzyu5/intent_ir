@@ -318,6 +318,13 @@ def _emit_mlir_shadow_artifacts(
                         }
                     except Exception:
                         pass
+                try:
+                    mid_mod.meta = dict(mid_mod.meta or {})
+                    mid_mod.meta["prelowered_llvm_ir_path"] = str(
+                        out_dir / f"{spec_name}.intentir.intentdialect.{llvm_pipeline}.mlir"
+                    )
+                except Exception:
+                    pass
                 llvm_mod, llvm_trace = run_mlir_pipeline(
                     mid_mod,
                     str(llvm_pipeline),
@@ -426,6 +433,13 @@ def _emit_mlir_shadow_artifacts(
                 if str(extra_pipeline) == str(llvm_pipeline):
                     continue
                 try:
+                    try:
+                        mid_mod.meta = dict(mid_mod.meta or {})
+                        mid_mod.meta["prelowered_llvm_ir_path"] = str(
+                            out_dir / f"{spec_name}.intentir.intentdialect.{extra_pipeline}.mlir"
+                        )
+                    except Exception:
+                        pass
                     extra_mod, extra_trace = run_mlir_pipeline(
                         mid_mod,
                         str(extra_pipeline),

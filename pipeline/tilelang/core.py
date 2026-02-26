@@ -2768,6 +2768,9 @@ def run_pipeline_for_spec(
                         for k, v in dict(baseline_case.shapes).items()
                         if str(k).strip()
                     }
+                    mid_mod.meta["prelowered_llvm_ir_path"] = str(
+                        out_dir / f"{spec.name}.intentir.intentdialect.{llvm_pipeline}.mlir"
+                    )
                     llvm_mod, llvm_trace = run_mlir_pipeline(
                         mid_mod,
                         str(llvm_pipeline),

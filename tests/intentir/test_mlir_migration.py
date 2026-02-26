@@ -152,6 +152,32 @@ def test_lower_intent_to_llvm_dialect_passes_through_existing_llvm_text(backend:
     assert "define void @k" in str(out.module_text or "")
 
 
+def test_lower_intent_to_llvm_dialect_uses_cached_llvm_from_meta_path(tmp_path: Path) -> None:
+    module = to_mlir(_sample_intent())
+    cached = tmp_path / "cached.ll"
+    cached.write_text(
+        '; ModuleID = "cached"\n'
+        'target triple = "nvptx64-nvidia-cuda"\n'
+        "define void @k_cached() { ret void }\n",
+        encoding="utf-8",
+    )
+    module.meta = dict(module.meta or {})
+    module.meta["prelowered_llvm_ir_path"] = str(cached)
+    out = _LOWER_LLVM_PASS.lower_intent_to_llvm_dialect(module, backend="cuda")
+    assert str(out.meta.get("llvm_dialect_origin") or "") == "cached_llvm_ir"
+    assert "define void @k_cached" in str(out.module_text or "")
+
+
+def test_lower_intent_to_llvm_dialect_rejects_non_llvm_cached_payload(tmp_path: Path) -> None:
+    module = to_mlir(_sample_intent())
+    cached = tmp_path / "not_llvm.mlir"
+    cached.write_text("module { func.func @k() -> () { return } }", encoding="utf-8")
+    module.meta = dict(module.meta or {})
+    module.meta["prelowered_llvm_ir_path"] = str(cached)
+    with pytest.raises(RuntimeError, match="requires textual LLVM IR input"):
+        _ = _LOWER_LLVM_PASS.lower_intent_to_llvm_dialect(module, backend="rvv")
+
+
 def test_mlir_cuda_contract_emitter_builds_contract() -> None:
     intent = _sample_intent()
     module = to_mlir(intent)
