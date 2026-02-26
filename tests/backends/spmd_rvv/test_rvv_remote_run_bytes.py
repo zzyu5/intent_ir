@@ -89,6 +89,37 @@ def test_rvv_staging_dtype_promotes_half_for_strict_modes() -> None:
     assert mod._rvv_staging_dtype("f32", execution_mode="remote_llvm") == "f32"
 
 
+def test_lower_intent_to_c_with_files_requires_explicit_compat_for_non_contract(monkeypatch) -> None:
+    mod = _load_module()
+    monkeypatch.delenv("INTENTIR_RVV_REMOTE_ALLOW_COMPAT_C", raising=False)
+    try:
+        _ = mod.lower_intent_to_c_with_files(
+            {"name": "k", "tensors": {}, "ops": [], "outputs": []},
+            shape_bindings={"M": 1},
+        )
+    except RuntimeError as e:
+        assert "explicit compat mode" in str(e)
+    else:
+        raise AssertionError("expected strict-mode rejection for non-contract payload")
+
+
+def test_lower_intent_to_c_with_files_accepts_contract_without_compat(monkeypatch) -> None:
+    mod = _load_module()
+    monkeypatch.delenv("INTENTIR_RVV_REMOTE_ALLOW_COMPAT_C", raising=False)
+    monkeypatch.setattr(mod, "lower_rvv_contract_to_c_src", lambda *_a, **_k: "ok")
+    out = mod.lower_intent_to_c_with_files(
+        {
+            "schema_version": "intent_mlir_backend_contract_v2",
+            "backend": "rvv",
+            "kernel_name": "k",
+            "executable": {"format": "rvv_elf", "path": "x", "entry": "k", "target": "rvv"},
+            "artifacts": {},
+        },
+        shape_bindings={},
+    )
+    assert out == "ok"
+
+
 def _fake_elf(path: Path, *, e_machine: int) -> None:
     data = bytearray(64)
     data[0:4] = b"\x7fELF"

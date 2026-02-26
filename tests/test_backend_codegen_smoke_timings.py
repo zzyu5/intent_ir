@@ -54,6 +54,46 @@ def test_lower_intent_to_c_with_files_accepts_contract_without_compat(monkeypatc
     assert out == "ok"
 
 
+def test_lower_intent_to_c_with_files_allows_non_contract_with_explicit_compat(monkeypatch) -> None:
+    mod = _load_module()
+    monkeypatch.setenv("INTENTIR_RVV_ALLOW_COMPAT_C_SRC", "1")
+
+    class _Intent:
+        pass
+
+    class _Mlir:
+        module_text = "module @k {}"
+
+    class _Contract:
+        def __init__(self) -> None:
+            self.artifacts = {}
+
+        def to_json_dict(self) -> dict:
+            return {
+                "schema_version": "intent_mlir_backend_contract_v2",
+                "backend": "rvv",
+                "kernel_name": "k",
+                "executable": {
+                    "format": "rvv_elf",
+                    "path": "artifacts/fake.elf",
+                    "entry": "k",
+                    "target": "rvv",
+                },
+                "artifacts": dict(self.artifacts or {}),
+            }
+
+    monkeypatch.setattr(mod, "_intent_from_json_payload", lambda _x: _Intent())
+    monkeypatch.setattr(mod, "to_mlir", lambda _x: _Mlir())
+    monkeypatch.setattr(mod, "build_rvv_contract", lambda *_a, **_k: _Contract())
+    monkeypatch.setattr(mod, "lower_rvv_contract_to_c_src", lambda *_a, **_k: "int main(void){return 0;}\n")
+
+    out = mod.lower_intent_to_c_with_files(
+        {"name": "k", "tensors": {}, "ops": [], "outputs": []},
+        shape_bindings={"M": 1},
+    )
+    assert "int main" in out
+
+
 def test_run_one_compile_failure_contains_timing_fields(monkeypatch, tmp_path: Path) -> None:
     mod = _load_module()
 
