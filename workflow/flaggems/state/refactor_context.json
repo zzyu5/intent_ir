@@ -1,14 +1,22 @@
 {
   "schema_version": "flaggems_refactor_context_v1",
-  "generated_at": "2026-02-26T11:17:03+00:00",
+  "generated_at": "2026-02-26T14:41:59.322685+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "3448055dc64c33b3101376067f8737ce1e1078fe",
-  "plan_version": "intentir_mlir_engineering_v1",
+  "head_commit": "bd45c78b745faec6fa8e14a9969cea90d615cf4a",
+  "plan_version": "intentir_deep_progress_v1_196_first",
   "strict_defaults": {
     "execution_ir": "mlir",
     "fallback_policy": "strict",
     "strict_mode": true,
     "artifact_retention_mode": "minimal_baseline",
     "backend_sequence": "cuda_then_rvv"
+  },
+  "cutover_scope": {
+    "phase": "phase0_truth_freeze",
+    "target_denominator_semantic_ops": 196,
+    "performance_slo": {
+      "min_ratio": 0.8,
+      "p50_ratio": 0.9
+    }
   }
 }
