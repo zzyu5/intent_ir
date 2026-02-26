@@ -98,7 +98,8 @@ def _load_historical_cuda_io_templates() -> dict[str, dict[str, Any]]:
         scalars_raw = io_spec.get("scalars") if isinstance(io_spec.get("scalars"), Mapping) else {}
         scalars = {str(k): str(v) for k, v in dict(scalars_raw or {}).items() if str(k).strip()}
         tensors_raw = io_spec.get("tensors") if isinstance(io_spec.get("tensors"), Mapping) else {}
-        tensor_names = [str(k) for k in dict(tensors_raw or {}).keys() if str(k).strip()]
+        tensors = {str(k): dict(v) for k, v in dict(tensors_raw or {}).items() if str(k).strip() and isinstance(v, Mapping)}
+        tensor_names = [str(k) for k in dict(tensors).keys() if str(k).strip()]
         score = int(len(arg_names)) + (100 if scalars else 0)
         try:
             mtime = float(p.stat().st_mtime)
@@ -112,6 +113,7 @@ def _load_historical_cuda_io_templates() -> dict[str, dict[str, Any]]:
                 {
                     "arg_names": list(arg_names),
                     "scalars": dict(scalars),
+                    "tensors": dict(tensors),
                     "tensor_names": list(tensor_names),
                     "path": str(p),
                 },
@@ -137,9 +139,21 @@ def _apply_historical_cuda_io_template(
     tensors = out.get("tensors") if isinstance(out.get("tensors"), Mapping) else {}
     tensor_keys = {str(k) for k in dict(tensors or {}).keys()}
     tpl_tensor_names = set([str(x) for x in list(template.get("tensor_names") or []) if str(x).strip()])
-    if tpl_tensor_names and tensor_keys and not tpl_tensor_names.issubset(tensor_keys):
+    if tpl_tensor_names and tensor_keys and not (
+        tpl_tensor_names.issubset(tensor_keys) or tensor_keys.issubset(tpl_tensor_names)
+    ):
         return out
     out["arg_names"] = [str(x) for x in arg_names_tpl]
+    tpl_tensors = template.get("tensors") if isinstance(template.get("tensors"), Mapping) else {}
+    if isinstance(tpl_tensors, Mapping):
+        merged_tensors = {str(k): dict(v) for k, v in dict(tensors or {}).items() if str(k).strip() and isinstance(v, Mapping)}
+        for k, v in dict(tpl_tensors or {}).items():
+            key = str(k).strip()
+            if not key or not isinstance(v, Mapping):
+                continue
+            merged_tensors.setdefault(key, dict(v))
+        if merged_tensors:
+            out["tensors"] = merged_tensors
     scalars = out.get("scalars") if isinstance(out.get("scalars"), Mapping) else {}
     merged_scalars = {str(k): str(v) for k, v in dict(scalars or {}).items() if str(k).strip()}
     tpl_scalars = template.get("scalars") if isinstance(template.get("scalars"), Mapping) else {}
@@ -184,8 +198,12 @@ def _augment_scalar_bindings_from_io_spec(
 ) -> dict[str, Any]:
     out = dict(bindings or {})
     scalars = io_spec.get("scalars") if isinstance(io_spec.get("scalars"), Mapping) else {}
-    if not isinstance(scalars, Mapping) or not scalars:
-        return out
+    if not isinstance(scalars, Mapping):
+        scalars = {}
+    tensors = io_spec.get("tensors") if isinstance(io_spec.get("tensors"), Mapping) else {}
+    tensor_specs = {str(k): dict(v) for k, v in dict(tensors or {}).items() if str(k).strip() and isinstance(v, Mapping)}
+    tensor_names = set(tensor_specs.keys())
+    arg_names = [str(x) for x in list(io_spec.get("arg_names") or []) if str(x).strip()]
 
     def _has_binding(name: str) -> bool:
         if name not in out:
@@ -244,6 +262,27 @@ def _augment_scalar_bindings_from_io_spec(
             base = str(m.group(1))
             if base in out:
                 _set_if_missing(name, out.get(base))
+
+    for name in arg_names:
+        if name in tensor_names:
+            continue
+        if _has_binding(name):
+            continue
+        m = re.match(r"^([A-Za-z_]+)\d+$", name)
+        if m is not None:
+            base = str(m.group(1))
+            if base in out:
+                _set_if_missing(name, out.get(base))
+
+    for name, spec in tensor_specs.items():
+        if _has_binding(name):
+            continue
+        shape = spec.get("shape") if isinstance(spec.get("shape"), list) else None
+        if shape != []:
+            continue
+        lname = str(name).strip().lower()
+        if lname in {"eps", "epsilon"}:
+            out[name] = float(1.0e-5)
     return out
 
 
@@ -449,7 +488,7 @@ def _infer_launch_grid_x_from_ptx(
             reg_to_param_index[reg] = int(param_to_index[pname])
 
     ctaid_x_regs = {str(m.group(1)) for m in re.finditer(r"mov\.u32\s+(%r\d+),\s+%ctaid\.x\s*;", str(ptx_text or ""))}
-    if not ctaid_x_regs or not reg_to_param_index:
+    if not ctaid_x_regs:
         return out
 
     bound_param_index: int | None = None
@@ -463,6 +502,47 @@ def _infer_launch_grid_x_from_ptx(
             bound_param_index = int(reg_to_param_index[lhs])
             break
     if bound_param_index is None:
+        immediate_bound: int | None = None
+
+        def _bound_from_pred(pred: str, imm: int) -> int:
+            p = str(pred).lower()
+            iv = int(imm)
+            if p.startswith("setp.gt"):
+                return int(iv + 1)
+            if p.startswith("setp.ge"):
+                return int(iv)
+            if p.startswith("setp.lt"):
+                return int(iv)
+            if p.startswith("setp.le"):
+                return int(iv + 1)
+            return int(iv + 1)
+
+        for m in re.finditer(
+            r"(setp\.[A-Za-z0-9_.]+)\s+%p\d+,\s*(%r\d+),\s*(-?[0-9]+)\s*;",
+            str(ptx_text or ""),
+        ):
+            pred = str(m.group(1))
+            lhs = str(m.group(2))
+            imm = _try_int(m.group(3))
+            if lhs not in ctaid_x_regs or imm is None:
+                continue
+            immediate_bound = _bound_from_pred(pred, int(imm))
+            break
+        if immediate_bound is None:
+            for m in re.finditer(
+                r"(setp\.[A-Za-z0-9_.]+)\s+%p\d+,\s*(-?[0-9]+),\s*(%r\d+)\s*;",
+                str(ptx_text or ""),
+            ):
+                pred = str(m.group(1))
+                imm = _try_int(m.group(2))
+                rhs = str(m.group(3))
+                if rhs not in ctaid_x_regs or imm is None:
+                    continue
+                immediate_bound = _bound_from_pred(pred, int(imm))
+                break
+        if immediate_bound is None or immediate_bound <= 0:
+            return out
+        out["grid"] = [int(immediate_bound), int(grid_vals[1]), int(grid_vals[2])]
         return out
     if bound_param_index < 0 or bound_param_index >= len(arg_names):
         return out
@@ -499,9 +579,58 @@ def _ensure_launch_grid_block_defaults(
             return list(fallback)
         return out_vals
 
-    ptx_reqntid: list[int] | None = None
+    def _bound_from_pred(pred: str, imm: int) -> int:
+        p = str(pred).lower()
+        iv = int(imm)
+        if p.startswith("setp.gt"):
+            return int(iv + 1)
+        if p.startswith("setp.ge"):
+            return int(iv)
+        if p.startswith("setp.lt"):
+            return int(iv)
+        if p.startswith("setp.le"):
+            return int(iv + 1)
+        return int(iv + 1)
+
+    def _infer_tid_bound(ptx: str, *, axis: str) -> int | None:
+        axis_key = str(axis).strip().lower()
+        if axis_key not in {"x", "y", "z"}:
+            return None
+        regs = {str(m.group(1)) for m in re.finditer(rf"mov\.u32\s+(%r\d+),\s+%tid\.{axis_key}\s*;", ptx)}
+        if not regs:
+            return None
+        candidates: list[int] = []
+        for m in re.finditer(
+            r"(setp\.[A-Za-z0-9_.]+)\s+%p\d+,\s*(%r\d+),\s*(-?[0-9]+)\s*;",
+            ptx,
+        ):
+            pred = str(m.group(1))
+            reg = str(m.group(2))
+            imm = _try_int(m.group(3))
+            if reg not in regs or imm is None:
+                continue
+            b = _bound_from_pred(pred, int(imm))
+            if b > 0:
+                candidates.append(int(b))
+        for m in re.finditer(
+            r"(setp\.[A-Za-z0-9_.]+)\s+%p\d+,\s*(-?[0-9]+),\s*(%r\d+)\s*;",
+            ptx,
+        ):
+            pred = str(m.group(1))
+            reg = str(m.group(3))
+            imm = _try_int(m.group(2))
+            if reg not in regs or imm is None:
+                continue
+            b = _bound_from_pred(pred, int(imm))
+            if b > 0:
+                candidates.append(int(b))
+        if not candidates:
+            return None
+        return int(min(candidates))
+
+    ptx_block_hint: list[int] | None = None
     m = re.search(
-        r"\.reqntid\s+([0-9]+)(?:\s*,\s*([0-9]+))?(?:\s*,\s*([0-9]+))?",
+        r"\.(?:reqntid|maxntid)\s+([0-9]+)(?:\s*,\s*([0-9]+))?(?:\s*,\s*([0-9]+))?",
         str(ptx_text or ""),
     )
     if m:
@@ -510,12 +639,30 @@ def _ensure_launch_grid_block_defaults(
             by = int(m.group(2) or 1)
             bz = int(m.group(3) or 1)
             if bx > 0 and by > 0 and bz > 0:
-                ptx_reqntid = [bx, by, bz]
+                ptx_block_hint = [bx, by, bz]
         except Exception:
-            ptx_reqntid = None
+            ptx_block_hint = None
 
     out["grid"] = _normalize_triplet(grid, fallback=[1, 1, 1])
-    out["block"] = _normalize_triplet(block, fallback=(ptx_reqntid or [256, 1, 1]))
+    block_triplet = _normalize_triplet(block, fallback=(ptx_block_hint or [256, 1, 1]))
+    if ptx_block_hint is not None:
+        flattened_hint = int(ptx_block_hint[0] * ptx_block_hint[1] * ptx_block_hint[2])
+        if (
+            block_triplet[1] == 1
+            and block_triplet[2] == 1
+            and block_triplet[0] == flattened_hint
+            and (ptx_block_hint[1] > 1 or ptx_block_hint[2] > 1)
+        ):
+            block_triplet = list(ptx_block_hint)
+    if block_triplet[1] == 1 and block_triplet[2] == 1:
+        text = str(ptx_text or "")
+        bx = _infer_tid_bound(text, axis="x")
+        by = _infer_tid_bound(text, axis="y")
+        if bx is not None and by is not None and bx > 0 and by > 1:
+            flat = int(bx * by)
+            if int(block_triplet[0]) == flat:
+                block_triplet = [int(bx), int(by), 1]
+    out["block"] = block_triplet
     return out
 
 
@@ -753,8 +900,13 @@ def lower_cuda_contract_to_kernel(
                 io_spec = dict(inv_io)
         io_spec = _apply_historical_cuda_io_template(
             io_spec=io_spec,
+            kernel_name=str(contract.kernel_name or ""),
+        )
+        io_spec = _apply_historical_cuda_io_template(
+            io_spec=io_spec,
             kernel_name=str(exe_entry or contract.kernel_name or "intent"),
         )
+        merged_bindings = _augment_scalar_bindings_from_io_spec(bindings=merged_bindings, io_spec=io_spec)
         io_spec = _augment_io_spec_arg_names_with_ptx_params(
             io_spec=io_spec,
             invocation=invocation,

@@ -1158,6 +1158,27 @@ def _shutdown_persistent_workers() -> None:
         _PERSISTENT_WORKERS.pop(stage, None)
 
 
+def _reset_persistent_worker(stage: str) -> None:
+    stage_key = str(stage).strip().lower()
+    handle = _PERSISTENT_WORKERS.get(stage_key)
+    if handle is None:
+        return
+    proc = handle.get("proc")
+    in_q = handle.get("in_q")
+    try:
+        if in_q is not None:
+            in_q.put_nowait(None)
+    except Exception:
+        pass
+    try:
+        if proc is not None and proc.is_alive():
+            proc.terminate()
+            proc.join(timeout=2.0)
+    except Exception:
+        pass
+    _PERSISTENT_WORKERS.pop(stage_key, None)
+
+
 atexit.register(_shutdown_persistent_workers)
 
 
@@ -1451,6 +1472,19 @@ def _run_one_with_stage_timeouts(
         }
     if not bool(launch_res.get("ok")):
         err = launch_res.get("error") if isinstance(launch_res.get("error"), dict) else {}
+        msg = str(err.get("message") or "")
+        msg_l = msg.lower()
+        _reset_persistent_worker("launch")
+        if any(
+            token in msg_l
+            for token in (
+                "illegal memory access",
+                "cumoduleloaddata failed",
+                "cuda error",
+                "device-side assert",
+            )
+        ):
+            _reset_persistent_worker("compile")
         return {
             "kernel": str(kernel),
             "ok": False,
