@@ -1,0 +1,537 @@
+{
+  "schema_version": "intentir_kernel_denominators_v1",
+  "generated_at_utc": "2026-02-27T09:52:39+00:00",
+  "repo": {
+    "head_commit": "b805720ce4c9babec4ed111c3caf2220aa66b90b",
+    "branch": "compiler-cleanup-v1",
+    "dirty": true,
+    "git_describe": "b805720-dirty"
+  },
+  "sources": {
+    "coverage_batches": "workflow/flaggems/state/coverage_batches.json",
+    "perf_missing_kernel_report_v1": "artifacts/validation_rounds/20260227/perf_missing_kernel_report_v1.json",
+    "perf_missing_kernel_report_v3_triton_native": "artifacts/validation_rounds/20260227/perf_missing_kernel_report_v3_triton_native.json"
+  },
+  "coverage_batches": {
+    "schema_version": "flaggems_coverage_batches_v1",
+    "generated_at": "2026-02-18T01:31:57+00:00",
+    "families": [
+      "attention_sequence",
+      "conv_pool_interp",
+      "elementwise_broadcast",
+      "index_scatter_gather",
+      "matmul_linear",
+      "norm_activation",
+      "reduction"
+    ],
+    "families_count": 7,
+    "family_order": [
+      "elementwise_broadcast",
+      "reduction",
+      "norm_activation",
+      "index_scatter_gather",
+      "matmul_linear",
+      "conv_pool_interp",
+      "attention_sequence"
+    ],
+    "semantic_ops_total": 196,
+    "kernels_total": 159
+  },
+  "perf_missing_semantic_ops_in_gpu_perf": {
+    "schema_version": "intentir_perf_missing_kernel_report_v1",
+    "generated_at_utc": "2026-02-27T03:35:26Z",
+    "counts": {
+      "semantic_ops_total": 196,
+      "gpu_perf_entry_count": 159,
+      "gpu_perf_unique_kernel_count": 158,
+      "missing_semantic_ops_in_perf_count": 57
+    },
+    "registry_counts": {
+      "source_all_ops": 302,
+      "source_filtered_ops": 212,
+      "semantic_ops": 196
+    },
+    "missing_reason_counts": {
+      "no_perf_spec_in_current_graph": 15,
+      "semantic_alias_mismatch_with_existing_perf_kernel": 24,
+      "scalar_variant_not_separately_benchmarked": 10,
+      "view_copy_semantics_not_benchmarked": 5,
+      "factory_like_ops_not_in_perf_graph": 3
+    },
+    "missing_semantic_ops": [
+      {
+        "semantic_op": "ScaleDotProductAttention",
+        "normalized_key": "scaledotproductattention",
+        "reason": "no_perf_spec_in_current_graph",
+        "related_perf_kernels": []
+      },
+      {
+        "semantic_op": "all",
+        "normalized_key": "all",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "allclose2d"
+        ]
+      },
+      {
+        "semantic_op": "amax",
+        "normalized_key": "amax",
+        "reason": "no_perf_spec_in_current_graph",
+        "related_perf_kernels": []
+      },
+      {
+        "semantic_op": "any",
+        "normalized_key": "any",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "any_kernel_dim"
+        ]
+      },
+      {
+        "semantic_op": "bitwise_and_scalar",
+        "normalized_key": "bitwiseandscalar",
+        "reason": "scalar_variant_not_separately_benchmarked",
+        "related_perf_kernels": [
+          "bitwise_and2d"
+        ]
+      },
+      {
+        "semantic_op": "bitwise_and_scalar_tensor",
+        "normalized_key": "bitwiseandscalartensor",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "bitwise_and2d"
+        ]
+      },
+      {
+        "semantic_op": "bitwise_and_tensor",
+        "normalized_key": "bitwiseandtensor",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "bitwise_and2d"
+        ]
+      },
+      {
+        "semantic_op": "bitwise_or_scalar",
+        "normalized_key": "bitwiseorscalar",
+        "reason": "scalar_variant_not_separately_benchmarked",
+        "related_perf_kernels": [
+          "bitwise_or2d"
+        ]
+      },
+      {
+        "semantic_op": "bitwise_or_scalar_tensor",
+        "normalized_key": "bitwiseorscalartensor",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "bitwise_or2d"
+        ]
+      },
+      {
+        "semantic_op": "bitwise_or_tensor",
+        "normalized_key": "bitwiseortensor",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "bitwise_or2d"
+        ]
+      },
+      {
+        "semantic_op": "clamp_min",
+        "normalized_key": "clampmin",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "clamp2d"
+        ]
+      },
+      {
+        "semantic_op": "clamp_tensor",
+        "normalized_key": "clamptensor",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "clamp2d"
+        ]
+      },
+      {
+        "semantic_op": "contiguous",
+        "normalized_key": "contiguous",
+        "reason": "view_copy_semantics_not_benchmarked",
+        "related_perf_kernels": []
+      },
+      {
+        "semantic_op": "copy",
+        "normalized_key": "copy",
+        "reason": "view_copy_semantics_not_benchmarked",
+        "related_perf_kernels": []
+      },
+      {
+        "semantic_op": "div_mode",
+        "normalized_key": "divmode",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "div2d"
+        ]
+      },
+      {
+        "semantic_op": "eq_scalar",
+        "normalized_key": "eqscalar",
+        "reason": "scalar_variant_not_separately_benchmarked",
+        "related_perf_kernels": [
+          "eq2d"
+        ]
+      },
+      {
+        "semantic_op": "equal",
+        "normalized_key": "equal",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "eq2d"
+        ]
+      },
+      {
+        "semantic_op": "exp2",
+        "normalized_key": "exp2",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "exp22d",
+          "exp2d"
+        ]
+      },
+      {
+        "semantic_op": "fill_scalar",
+        "normalized_key": "fillscalar",
+        "reason": "scalar_variant_not_separately_benchmarked",
+        "related_perf_kernels": []
+      },
+      {
+        "semantic_op": "fill_tensor",
+        "normalized_key": "filltensor",
+        "reason": "no_perf_spec_in_current_graph",
+        "related_perf_kernels": []
+      },
+      {
+        "semantic_op": "flash_attention_forward",
+        "normalized_key": "flashattentionforward",
+        "reason": "no_perf_spec_in_current_graph",
+        "related_perf_kernels": []
+      },
+      {
+        "semantic_op": "flash_attn_varlen_func",
+        "normalized_key": "flashattnvarlenfunc",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "flash_attn_varlen_func_bhsd"
+        ]
+      },
+      {
+        "semantic_op": "floor_divide",
+        "normalized_key": "floordivide",
+        "reason": "no_perf_spec_in_current_graph",
+        "related_perf_kernels": []
+      },
+      {
+        "semantic_op": "full_like",
+        "normalized_key": "fulllike",
+        "reason": "factory_like_ops_not_in_perf_graph",
+        "related_perf_kernels": [
+          "full2d"
+        ]
+      },
+      {
+        "semantic_op": "ge_scalar",
+        "normalized_key": "gescalar",
+        "reason": "scalar_variant_not_separately_benchmarked",
+        "related_perf_kernels": [
+          "ge2d"
+        ]
+      },
+      {
+        "semantic_op": "group_norm",
+        "normalized_key": "groupnorm",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "group_norm_kernel"
+        ]
+      },
+      {
+        "semantic_op": "gt_scalar",
+        "normalized_key": "gtscalar",
+        "reason": "scalar_variant_not_separately_benchmarked",
+        "related_perf_kernels": [
+          "gt2d"
+        ]
+      },
+      {
+        "semantic_op": "index",
+        "normalized_key": "index",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "index_add2d",
+          "index_put2d",
+          "index_select2d"
+        ]
+      },
+      {
+        "semantic_op": "layer_norm",
+        "normalized_key": "layernorm",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "layer_norm_persistent"
+        ]
+      },
+      {
+        "semantic_op": "le_scalar",
+        "normalized_key": "lescalar",
+        "reason": "scalar_variant_not_separately_benchmarked",
+        "related_perf_kernels": [
+          "le2d"
+        ]
+      },
+      {
+        "semantic_op": "lerp_scalar",
+        "normalized_key": "lerpscalar",
+        "reason": "scalar_variant_not_separately_benchmarked",
+        "related_perf_kernels": [
+          "le2d",
+          "lerp2d"
+        ]
+      },
+      {
+        "semantic_op": "lerp_tensor",
+        "normalized_key": "lerptensor",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "le2d",
+          "lerp2d"
+        ]
+      },
+      {
+        "semantic_op": "lt_scalar",
+        "normalized_key": "ltscalar",
+        "reason": "scalar_variant_not_separately_benchmarked",
+        "related_perf_kernels": [
+          "lt2d"
+        ]
+      },
+      {
+        "semantic_op": "max",
+        "normalized_key": "max",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "max_pool2d_with_indices_nchw",
+          "maximum2d"
+        ]
+      },
+      {
+        "semantic_op": "max_dim",
+        "normalized_key": "maxdim",
+        "reason": "no_perf_spec_in_current_graph",
+        "related_perf_kernels": []
+      },
+      {
+        "semantic_op": "mean",
+        "normalized_key": "mean",
+        "reason": "no_perf_spec_in_current_graph",
+        "related_perf_kernels": []
+      },
+      {
+        "semantic_op": "mean_dim",
+        "normalized_key": "meandim",
+        "reason": "no_perf_spec_in_current_graph",
+        "related_perf_kernels": []
+      },
+      {
+        "semantic_op": "ne_scalar",
+        "normalized_key": "nescalar",
+        "reason": "scalar_variant_not_separately_benchmarked",
+        "related_perf_kernels": [
+          "ne2d"
+        ]
+      },
+      {
+        "semantic_op": "ones",
+        "normalized_key": "ones",
+        "reason": "no_perf_spec_in_current_graph",
+        "related_perf_kernels": []
+      },
+      {
+        "semantic_op": "ones_like",
+        "normalized_key": "oneslike",
+        "reason": "factory_like_ops_not_in_perf_graph",
+        "related_perf_kernels": []
+      },
+      {
+        "semantic_op": "resolve_conj",
+        "normalized_key": "resolveconj",
+        "reason": "view_copy_semantics_not_benchmarked",
+        "related_perf_kernels": []
+      },
+      {
+        "semantic_op": "resolve_neg",
+        "normalized_key": "resolveneg",
+        "reason": "view_copy_semantics_not_benchmarked",
+        "related_perf_kernels": []
+      },
+      {
+        "semantic_op": "rms_norm_forward",
+        "normalized_key": "rmsnormforward",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "rms_norm2d"
+        ]
+      },
+      {
+        "semantic_op": "scaled_dot_product_attention",
+        "normalized_key": "scaleddotproductattention",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "scaled_dot_product_attention_bhsd"
+        ]
+      },
+      {
+        "semantic_op": "scaled_dot_product_attention_forward",
+        "normalized_key": "scaleddotproductattentionforward",
+        "reason": "no_perf_spec_in_current_graph",
+        "related_perf_kernels": []
+      },
+      {
+        "semantic_op": "scaled_softmax_forward",
+        "normalized_key": "scaledsoftmaxforward",
+        "reason": "no_perf_spec_in_current_graph",
+        "related_perf_kernels": []
+      },
+      {
+        "semantic_op": "sum",
+        "normalized_key": "sum",
+        "reason": "no_perf_spec_in_current_graph",
+        "related_perf_kernels": []
+      },
+      {
+        "semantic_op": "sum_dim",
+        "normalized_key": "sumdim",
+        "reason": "no_perf_spec_in_current_graph",
+        "related_perf_kernels": []
+      },
+      {
+        "semantic_op": "to_copy",
+        "normalized_key": "tocopy",
+        "reason": "view_copy_semantics_not_benchmarked",
+        "related_perf_kernels": []
+      },
+      {
+        "semantic_op": "true_divide",
+        "normalized_key": "truedivide",
+        "reason": "no_perf_spec_in_current_graph",
+        "related_perf_kernels": []
+      },
+      {
+        "semantic_op": "unique2",
+        "normalized_key": "unique2",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "unique2d"
+        ]
+      },
+      {
+        "semantic_op": "weight_norm_interface",
+        "normalized_key": "weightnorminterface",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "weight_norm2d"
+        ]
+      },
+      {
+        "semantic_op": "where_scalar_other",
+        "normalized_key": "wherescalarother",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "where2d"
+        ]
+      },
+      {
+        "semantic_op": "where_scalar_self",
+        "normalized_key": "wherescalarself",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "where2d"
+        ]
+      },
+      {
+        "semantic_op": "where_self",
+        "normalized_key": "whereself",
+        "reason": "semantic_alias_mismatch_with_existing_perf_kernel",
+        "related_perf_kernels": [
+          "where2d"
+        ]
+      },
+      {
+        "semantic_op": "zeros",
+        "normalized_key": "zeros",
+        "reason": "no_perf_spec_in_current_graph",
+        "related_perf_kernels": []
+      },
+      {
+        "semantic_op": "zeros_like",
+        "normalized_key": "zeroslike",
+        "reason": "factory_like_ops_not_in_perf_graph",
+        "related_perf_kernels": []
+      }
+    ],
+    "gpu_perf_policy": {
+      "mode": "policy_scoped_gate",
+      "key_kernels_count": 10,
+      "gate_exclude_kernels_count": 0
+    },
+    "sources": {
+      "full196_status_converged": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/status_converged.json",
+      "gpu_perf_graph": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/gpu_perf_graph.json",
+      "gpu_perf_policy": "workflow/flaggems/state/gpu_perf_policy.json",
+      "registry_gap_report": "artifacts/flaggems_matrix/daily/20260227/registry_gap_report_v1.json"
+    }
+  },
+  "triton_native_perf_gap": {
+    "generated_at": "2026-02-27",
+    "triton_native_expected_kernels": 38,
+    "triton_native_pass_count": 38,
+    "triton_native_fail_count": 0,
+    "triton_native_missing_in_gpu_perf_count": 24,
+    "triton_native_missing_in_gpu_perf": [
+      "_attn_fwd",
+      "add_bias2d",
+      "ai_bench_correlation",
+      "ai_bench_dropout",
+      "ai_bench_layernorm",
+      "ai_bench_matmul",
+      "ai_bench_resize",
+      "ai_bench_rope",
+      "ai_bench_softmax",
+      "ai_bench_warp",
+      "copy2d_divmod",
+      "flash_attention2d",
+      "floor2d",
+      "grouped_row_sum2d",
+      "layer_norm_residual2d",
+      "masked_attention2d",
+      "masked_softmax2d",
+      "matmul_bias_relu2d",
+      "matmul_fused_epilogue2d",
+      "matmul_relu2d",
+      "mlp2d",
+      "rms_norm_residual2d",
+      "rowmask_where2d",
+      "transpose2d"
+    ],
+    "sources": {
+      "triton_native_round_dir": "artifacts/validation_rounds/20260227/round6_triton_native_coverage_full",
+      "gpu_perf_graph": "artifacts/flaggems_matrix/daily/20260227/gpu_perf_head_refresh_v19_local_compare/gpu_perf_graph.json",
+      "status_v4": "artifacts/validation_rounds/20260227/triton_native_coverage_status_v4.json"
+    },
+    "notes": {
+      "where2d": "run now completes with stage_c/mutation disabled by CLI + kernel-bounded case generation",
+      "layer_norm_residual2d": "verification bounded to canonical case in this lane"
+    }
+  },
+  "notes": {
+    "semantic_ops_total": "Semantic-op denominator (196) is not equal to executable kernel specs denominator (159).",
+    "gpu_perf_denominator": "gpu_perf graph is based on executable kernel specs (coverage_batches.kernels)."
+  }
+}

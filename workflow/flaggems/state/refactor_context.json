@@ -1,13 +1,14 @@
 {
   "schema_version": "flaggems_refactor_context_v1",
-  "generated_at": "2026-02-27T06:24:05+00:00",
+  "generated_at": "2026-02-27T09:52:13+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "83d68333c3506144f628bded6d65be5b58c3baef",
-  "plan_version": "intentir_mlir_engineering_v1",
+  "head_commit": "b805720ce4c9babec4ed111c3caf2220aa66b90b",
+  "plan_version": "mlir_real_cutover_v1",
   "strict_defaults": {
     "execution_ir": "mlir",
     "fallback_policy": "strict",
     "strict_mode": true,
+    "cuda_require_llvm_ptx": true,
     "artifact_retention_mode": "minimal_baseline",
     "backend_sequence": "cuda_then_rvv"
   }
