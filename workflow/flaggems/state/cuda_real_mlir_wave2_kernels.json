@@ -22,7 +22,6 @@
     "le2d",
     "log2d",
     "lt2d",
-    "min2d",
     "mul2d",
     "ne2d",
     "neg2d",
@@ -38,4 +37,3 @@
     "where2d"
   ]
 }
-
