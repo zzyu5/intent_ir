@@ -736,6 +736,23 @@ def _build_native_launch_adapter(
 
             return _run, {"launch_source": "kernel_adapter:where2d", "arg_count": 2}
 
+    if kernel_key == "maskedsoftmax2d":
+        # Avoid calling the high-level wrapper in graphs: it performs a runtime
+        # `torch.any(mask)` check that triggers GPU->CPU sync during capture.
+        kernel_fn = _pick_callable("masked_softmax2d_kernel")
+        if kernel_fn is not None:
+            inp = _pick_tensor("inp", "input", "x", "A")
+            mask = _pick_tensor("mask", "row_mask", "m")
+            m = int(getattr(inp, "shape", [1, 1])[0])
+            n = int(getattr(inp, "shape", [1, 1])[1])
+            out = torch.empty((m, n), device=inp.device, dtype=torch.float32)
+            grid = (m, (n + 256 - 1) // 256)
+
+            def _run() -> None:
+                kernel_fn[grid](inp, mask, out, m, n, BLOCK_N=256)
+
+            return _run, {"launch_source": "kernel_adapter:masked_softmax2d", "arg_count": 3}
+
     if kernel_key == "upsamplebicubic2daa":
         callee = _pick_callable("_upsample_bicubic2d_aa", "upsample_bicubic2d_aa")
         if callee is not None:
