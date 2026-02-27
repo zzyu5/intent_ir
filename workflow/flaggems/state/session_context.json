@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-27T21:00:59+00:00",
+  "updated_at": "2026-02-27T21:07:36+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,7 +13,7 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "9741501 perf(native): fix heuristic arg binding for mask-like params\n7494d27 backend(cuda-real-mlir): accept int masks in where lowering\nd4b9366 mlir(cuda): include rowmask_where2d in real-mlir wave8\nd99e2f1 workflow: rebuild state after wave8 copy2d_divmod\n401422d mlir(cuda): include copy2d_divmod in real-mlir wave8\n960e60f workflow: rebuild state after transpose real-mlir lowering\ne24d568 backend(cuda-real-mlir): support transpose(perm=[1,0]) lowering\nc016d6c workflow: rebuild state after adding cuda wave8 list\n48fc43e mlir(cuda): add real-mlir wave8 kernel list (add_bias2d/floor2d/transpose2d)\n66773f3 workflow: rebuild state after gpu-perf baseline synth\n37aff61 perf: allow gpu-perf to run without baseline npz; synthesize inputs deterministically\n0ddfab1 workflow: rebuild state after triton-native perf artifact-dir support\ndffa100 perf: allow gpu-perf-triton-native to use explicit intent artifact dir\n9e2bc67 workflow: rebuild state after validation matrix fast flags\n2dc279b validation: add stage-c/mutation-kill flags; matrix defaults fast\n28755b1 workflow: rebuild state after cuda real-mlir nvptx fix\naab6350 fix(cuda-real-mlir): shared global buffer + avoid opt O3 on nvptx\n9894c69 workflow: refresh state + cuda real-mlir wave7 report\nd163bf6 fix(workflow): tolerate missing reduce_any output shapes in support report\nb18310c backend(cuda-real-mlir): row-reduce any(axis=1) kernels",
+  "git_log_short": "1a20f2c mlir(cuda): include softmax_inner in real-mlir wave8\n9a6003c backend(cuda-real-mlir): add row-wise softmax(axis=1) lowering\n0508f7a workflow: rebuild state after rowmask_where2d real-mlir perf\n9741501 perf(native): fix heuristic arg binding for mask-like params\n7494d27 backend(cuda-real-mlir): accept int masks in where lowering\nd4b9366 mlir(cuda): include rowmask_where2d in real-mlir wave8\nd99e2f1 workflow: rebuild state after wave8 copy2d_divmod\n401422d mlir(cuda): include copy2d_divmod in real-mlir wave8\n960e60f workflow: rebuild state after transpose real-mlir lowering\ne24d568 backend(cuda-real-mlir): support transpose(perm=[1,0]) lowering\nc016d6c workflow: rebuild state after adding cuda wave8 list\n48fc43e mlir(cuda): add real-mlir wave8 kernel list (add_bias2d/floor2d/transpose2d)\n66773f3 workflow: rebuild state after gpu-perf baseline synth\n37aff61 perf: allow gpu-perf to run without baseline npz; synthesize inputs deterministically\n0ddfab1 workflow: rebuild state after triton-native perf artifact-dir support\ndffa100 perf: allow gpu-perf-triton-native to use explicit intent artifact dir\n9e2bc67 workflow: rebuild state after validation matrix fast flags\n2dc279b validation: add stage-c/mutation-kill flags; matrix defaults fast\n28755b1 workflow: rebuild state after cuda real-mlir nvptx fix\naab6350 fix(cuda-real-mlir): shared global buffer + avoid opt O3 on nvptx",
   "progress_tail": [
     {
       "ts": "2026-02-26T16:26:31+00:00",
