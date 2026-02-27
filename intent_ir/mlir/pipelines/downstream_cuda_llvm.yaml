@@ -4,4 +4,4 @@ passes:
   - python:lower_intent_to_llvm_dialect
   - python:ensure_llvm_ir_text
   - "llvm-as:"
-  - "opt:-O2"
+  - "opt:-O3"

@@ -7,5 +7,4 @@ passes:
   - mlir-translate:mlir-to-llvmir
   - python:ensure_llvm_ir_text
   - "llvm-as:"
-  - "opt:-O2"
-
+  - "opt:-O3"
