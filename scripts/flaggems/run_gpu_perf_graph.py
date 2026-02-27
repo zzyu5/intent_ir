@@ -699,6 +699,27 @@ def _build_native_launch_adapter(
 
             return _run, {"launch_source": "kernel_adapter:layer_norm_persistent", "arg_count": 5}
 
+    if kernel_key == "aibenchlayernorm":
+        callee = getattr(module, "ai_bench_layernorm_fwd_kernel", None)
+        if callable(callee):
+            x = _pick_tensor("X", "x", "inp", "input")
+            w = _pick_tensor("W", "w", "weight")
+            b = _pick_tensor("B", "b", "bias")
+            m = int(_pick_scalar("M", default=int(getattr(x, "shape", [1])[0])))
+            n = int(_pick_scalar("N", default=int(getattr(x, "shape", [1, 1])[1])))
+            eps = float(_pick_scalar("eps", default=1e-5))
+
+            # Stable output buffers are required for CUDA graph capture.
+            y = torch.empty((m, n), device=x.device, dtype=torch.float32)
+            mean = torch.empty((m,), device=x.device, dtype=torch.float32)
+            rstd = torch.empty((m,), device=x.device, dtype=torch.float32)
+            block = 16
+
+            def _run() -> None:
+                callee[(m,)](x, y, w, b, mean, rstd, m, n, eps, BLOCK_SIZE=block)
+
+            return _run, {"launch_source": "kernel_adapter:ai_bench_layernorm", "arg_count": 9}
+
     if kernel_key == "rmsnorm2d":
         callee = _pick_callable("rms_norm2d")
         if callee is not None:
