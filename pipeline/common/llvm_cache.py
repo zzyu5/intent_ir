@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import re
 from threading import Lock
+
+from pipeline.common.strict_policy import strict_fallback_enabled
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -95,6 +98,16 @@ def discover_cached_downstream_llvm_module_path(
     llvm_pipeline: str,
     current_out_dir: Path,
 ) -> str | None:
+    # Real-MLIR mode forbids using historical downstream LLVM IR caches in strict mode.
+    if strict_fallback_enabled() and str(os.getenv("INTENTIR_REAL_MLIR", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+        "on",
+    }:
+        return None
+
     prefix = f"{str(spec_name)}.intentir.intentdialect.{str(llvm_pipeline)}"
     local_candidates = [
         Path(current_out_dir) / f"{prefix}.mlir",

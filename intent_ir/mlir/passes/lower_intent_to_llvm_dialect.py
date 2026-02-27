@@ -1,8 +1,30 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from ..module import IntentMLIRModule
+
+
+def _env_flag(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(str(name), "")
+    if raw is None:
+        return bool(default)
+    s = str(raw).strip().lower()
+    if not s:
+        return bool(default)
+    return s in {"1", "true", "yes", "y", "on"}
+
+
+def _strict_fallback_enabled() -> bool:
+    policy = str(os.getenv("INTENTIR_FALLBACK_POLICY", "strict")).strip().lower()
+    if policy in {"legacy", "compat", "deterministic"}:
+        return False
+    return True
+
+
+def _real_mlir_enabled() -> bool:
+    return _env_flag("INTENTIR_REAL_MLIR", default=False)
 
 
 def lower_intent_to_llvm_dialect(module: IntentMLIRModule, *, backend: str | None = None) -> IntentMLIRModule:
@@ -21,6 +43,12 @@ def lower_intent_to_llvm_dialect(module: IntentMLIRModule, *, backend: str | Non
 
     cached = _load_cached_llvm_ir(module)
     if cached is not None:
+        if _real_mlir_enabled() and _strict_fallback_enabled():
+            backend_tag = str(backend or "").strip().lower() or "generic"
+            raise RuntimeError(
+                "lower_intent_to_llvm_dialect: cached LLVM IR is forbidden under INTENTIR_REAL_MLIR strict mode; "
+                f"backend={backend_tag}"
+            )
         out = _clone(module, module_text=cached)
         out.meta["llvm_dialect_origin"] = "cached_llvm_ir"
         if backend:
