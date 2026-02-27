@@ -315,6 +315,10 @@ def lower_intent_to_cuda_gpu_kernel(
     # alignment-assumed aliases to unlock aligned vector memory ops downstream.
     arg_ssa: dict[str, str] = {str(name): f"%{_mlir_ident(name)}" for name in arg_specs}
 
+    raw_fast_math = os.getenv("INTENTIR_CUDA_USE_FAST_MATH", "0").strip().lower()
+    use_fast_math = raw_fast_math in {"1", "true", "yes", "y", "on"}
+    fm = " fastmath<fast>" if use_fast_math else ""
+
     def _as_f32_const(v: Any) -> str:
         try:
             return repr(float(v))
@@ -421,7 +425,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 if len(in_ssa) != 1 or in_ty[0] != vec_ty:
                     raise RuntimeError("abs vectorize expects vector<f32>")
                 dst = _fresh("abs")
-                out_lines.append(f"        {dst} = math.absf {in_ssa[0]} : {vec_ty}")
+                out_lines.append(f"        {dst} = math.absf {in_ssa[0]}{fm} : {vec_ty}")
                 computed[outv] = dst
                 computed_ty[outv] = str(vec_ty)
                 continue
@@ -430,7 +434,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 if len(in_ssa) != 1 or in_ty[0] != vec_ty:
                     raise RuntimeError("floor vectorize expects vector<f32>")
                 dst = _fresh("floor")
-                out_lines.append(f"        {dst} = math.floor {in_ssa[0]} : {vec_ty}")
+                out_lines.append(f"        {dst} = math.floor {in_ssa[0]}{fm} : {vec_ty}")
                 computed[outv] = dst
                 computed_ty[outv] = str(vec_ty)
                 continue
@@ -439,7 +443,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 if len(in_ssa) != 1 or in_ty[0] != vec_ty:
                     raise RuntimeError("ceil vectorize expects vector<f32>")
                 dst = _fresh("ceil")
-                out_lines.append(f"        {dst} = math.ceil {in_ssa[0]} : {vec_ty}")
+                out_lines.append(f"        {dst} = math.ceil {in_ssa[0]}{fm} : {vec_ty}")
                 computed[outv] = dst
                 computed_ty[outv] = str(vec_ty)
                 continue
@@ -448,7 +452,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 if len(in_ssa) != 1 or in_ty[0] != vec_ty:
                     raise RuntimeError("neg vectorize expects vector<f32>")
                 dst = _fresh("neg")
-                out_lines.append(f"        {dst} = arith.negf {in_ssa[0]} : {vec_ty}")
+                out_lines.append(f"        {dst} = arith.negf {in_ssa[0]}{fm} : {vec_ty}")
                 computed[outv] = dst
                 computed_ty[outv] = str(vec_ty)
                 continue
@@ -458,7 +462,7 @@ def lower_intent_to_cuda_gpu_kernel(
                     raise RuntimeError(f"{op_name} vectorize expects vector<f32> binary")
                 dst = _fresh(op_name)
                 arith = {"add": "arith.addf", "sub": "arith.subf", "mul": "arith.mulf", "div": "arith.divf"}[op_name]
-                out_lines.append(f"        {dst} = {arith} {in_ssa[0]}, {in_ssa[1]} : {vec_ty}")
+                out_lines.append(f"        {dst} = {arith} {in_ssa[0]}, {in_ssa[1]}{fm} : {vec_ty}")
                 computed[outv] = dst
                 computed_ty[outv] = str(vec_ty)
                 continue
@@ -468,7 +472,7 @@ def lower_intent_to_cuda_gpu_kernel(
                     raise RuntimeError(f"{op_name} vectorize expects vector<f32> binary")
                 dst = _fresh(op_name)
                 arith = {"max": "arith.maximumf", "min": "arith.minimumf"}[op_name]
-                out_lines.append(f"        {dst} = {arith} {in_ssa[0]}, {in_ssa[1]} : {vec_ty}")
+                out_lines.append(f"        {dst} = {arith} {in_ssa[0]}, {in_ssa[1]}{fm} : {vec_ty}")
                 computed[outv] = dst
                 computed_ty[outv] = str(vec_ty)
                 continue
@@ -481,7 +485,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 dst = _fresh("relu")
                 out_lines.append(f"        {c0s} = arith.constant 0.0 : f32")
                 out_lines.append(f"        {c0v} = vector.splat {c0s} : {vec_ty}")
-                out_lines.append(f"        {dst} = arith.maximumf {in_ssa[0]}, {c0v} : {vec_ty}")
+                out_lines.append(f"        {dst} = arith.maximumf {in_ssa[0]}, {c0v}{fm} : {vec_ty}")
                 computed[outv] = dst
                 computed_ty[outv] = str(vec_ty)
                 continue
@@ -490,7 +494,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 if len(in_ssa) != 1 or in_ty[0] != vec_ty:
                     raise RuntimeError("exp vectorize expects vector<f32>")
                 dst = _fresh("exp")
-                out_lines.append(f"        {dst} = math.exp {in_ssa[0]} : {vec_ty}")
+                out_lines.append(f"        {dst} = math.exp {in_ssa[0]}{fm} : {vec_ty}")
                 computed[outv] = dst
                 computed_ty[outv] = str(vec_ty)
                 continue
@@ -499,7 +503,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 if len(in_ssa) != 1 or in_ty[0] != vec_ty:
                     raise RuntimeError("exp2 vectorize expects vector<f32>")
                 dst = _fresh("exp2")
-                out_lines.append(f"        {dst} = math.exp2 {in_ssa[0]} : {vec_ty}")
+                out_lines.append(f"        {dst} = math.exp2 {in_ssa[0]}{fm} : {vec_ty}")
                 computed[outv] = dst
                 computed_ty[outv] = str(vec_ty)
                 continue
@@ -508,7 +512,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 if len(in_ssa) != 1 or in_ty[0] != vec_ty:
                     raise RuntimeError("log vectorize expects vector<f32>")
                 dst = _fresh("log")
-                out_lines.append(f"        {dst} = math.log {in_ssa[0]} : {vec_ty}")
+                out_lines.append(f"        {dst} = math.log {in_ssa[0]}{fm} : {vec_ty}")
                 computed[outv] = dst
                 computed_ty[outv] = str(vec_ty)
                 continue
@@ -517,7 +521,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 if len(in_ssa) != 1 or in_ty[0] != vec_ty:
                     raise RuntimeError("sqrt vectorize expects vector<f32>")
                 dst = _fresh("sqrt")
-                out_lines.append(f"        {dst} = math.sqrt {in_ssa[0]} : {vec_ty}")
+                out_lines.append(f"        {dst} = math.sqrt {in_ssa[0]}{fm} : {vec_ty}")
                 computed[outv] = dst
                 computed_ty[outv] = str(vec_ty)
                 continue
@@ -526,7 +530,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 if len(in_ssa) != 1 or in_ty[0] != vec_ty:
                     raise RuntimeError("rsqrt vectorize expects vector<f32>")
                 dst = _fresh("rsqrt")
-                out_lines.append(f"        {dst} = math.rsqrt {in_ssa[0]} : {vec_ty}")
+                out_lines.append(f"        {dst} = math.rsqrt {in_ssa[0]}{fm} : {vec_ty}")
                 computed[outv] = dst
                 computed_ty[outv] = str(vec_ty)
                 continue
@@ -535,7 +539,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 if len(in_ssa) != 1 or in_ty[0] != vec_ty:
                     raise RuntimeError("erf vectorize expects vector<f32>")
                 dst = _fresh("erf")
-                out_lines.append(f"        {dst} = math.erf {in_ssa[0]} : {vec_ty}")
+                out_lines.append(f"        {dst} = math.erf {in_ssa[0]}{fm} : {vec_ty}")
                 computed[outv] = dst
                 computed_ty[outv] = str(vec_ty)
                 continue
@@ -545,7 +549,7 @@ def lower_intent_to_cuda_gpu_kernel(
                     raise RuntimeError(f"{op_name} vectorize expects vector<f32>")
                 dst = _fresh(op_name)
                 mop = {"sin": "math.sin", "cos": "math.cos", "tan": "math.tan"}[op_name]
-                out_lines.append(f"        {dst} = {mop} {in_ssa[0]} : {vec_ty}")
+                out_lines.append(f"        {dst} = {mop} {in_ssa[0]}{fm} : {vec_ty}")
                 computed[outv] = dst
                 computed_ty[outv] = str(vec_ty)
                 continue
@@ -710,7 +714,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 if len(in_ssa) != 1 or in_ty[0] != "f32":
                     raise RuntimeError("abs currently supports f32 only")
                 dst = _fresh("abs")
-                out_lines.append(f"        {dst} = math.absf {in_ssa[0]} : f32")
+                out_lines.append(f"        {dst} = math.absf {in_ssa[0]}{fm} : f32")
                 computed[outv] = dst
                 computed_ty[outv] = "f32"
                 continue
@@ -719,7 +723,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 if len(in_ssa) != 1 or in_ty[0] != "f32":
                     raise RuntimeError("floor currently supports f32 only")
                 dst = _fresh("floor")
-                out_lines.append(f"        {dst} = math.floor {in_ssa[0]} : f32")
+                out_lines.append(f"        {dst} = math.floor {in_ssa[0]}{fm} : f32")
                 computed[outv] = dst
                 computed_ty[outv] = "f32"
                 continue
@@ -728,7 +732,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 if len(in_ssa) != 1 or in_ty[0] != "f32":
                     raise RuntimeError("ceil currently supports f32 only")
                 dst = _fresh("ceil")
-                out_lines.append(f"        {dst} = math.ceil {in_ssa[0]} : f32")
+                out_lines.append(f"        {dst} = math.ceil {in_ssa[0]}{fm} : f32")
                 computed[outv] = dst
                 computed_ty[outv] = "f32"
                 continue
@@ -737,7 +741,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 if len(in_ssa) != 1 or in_ty[0] != "f32":
                     raise RuntimeError("neg currently supports f32 only")
                 dst = _fresh("neg")
-                out_lines.append(f"        {dst} = arith.negf {in_ssa[0]} : f32")
+                out_lines.append(f"        {dst} = arith.negf {in_ssa[0]}{fm} : f32")
                 computed[outv] = dst
                 computed_ty[outv] = "f32"
                 continue
@@ -747,7 +751,7 @@ def lower_intent_to_cuda_gpu_kernel(
                     raise RuntimeError(f"{op_name} currently supports f32 binary only")
                 dst = _fresh(op_name)
                 arith = {"add": "arith.addf", "sub": "arith.subf", "mul": "arith.mulf", "div": "arith.divf"}[op_name]
-                out_lines.append(f"        {dst} = {arith} {in_ssa[0]}, {in_ssa[1]} : f32")
+                out_lines.append(f"        {dst} = {arith} {in_ssa[0]}, {in_ssa[1]}{fm} : f32")
                 computed[outv] = dst
                 computed_ty[outv] = "f32"
                 continue
@@ -757,7 +761,7 @@ def lower_intent_to_cuda_gpu_kernel(
                     raise RuntimeError(f"{op_name} currently supports f32 binary only")
                 dst = _fresh(op_name)
                 arith = {"max": "arith.maximumf", "min": "arith.minimumf"}[op_name]
-                out_lines.append(f"        {dst} = {arith} {in_ssa[0]}, {in_ssa[1]} : f32")
+                out_lines.append(f"        {dst} = {arith} {in_ssa[0]}, {in_ssa[1]}{fm} : f32")
                 computed[outv] = dst
                 computed_ty[outv] = "f32"
                 continue
@@ -785,7 +789,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 c0f = _fresh("c0f")
                 dst = _fresh("relu")
                 out_lines.append(f"        {c0f} = arith.constant 0.0 : f32")
-                out_lines.append(f"        {dst} = arith.maximumf {in_ssa[0]}, {c0f} : f32")
+                out_lines.append(f"        {dst} = arith.maximumf {in_ssa[0]}, {c0f}{fm} : f32")
                 computed[outv] = dst
                 computed_ty[outv] = "f32"
                 continue
@@ -794,7 +798,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 if len(in_ssa) != 1 or in_ty[0] != "f32":
                     raise RuntimeError("exp currently supports f32 only")
                 dst = _fresh("exp")
-                out_lines.append(f"        {dst} = math.exp {in_ssa[0]} : f32")
+                out_lines.append(f"        {dst} = math.exp {in_ssa[0]}{fm} : f32")
                 computed[outv] = dst
                 computed_ty[outv] = "f32"
                 continue
@@ -803,7 +807,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 if len(in_ssa) != 1 or in_ty[0] != "f32":
                     raise RuntimeError("exp2 currently supports f32 only")
                 dst = _fresh("exp2")
-                out_lines.append(f"        {dst} = math.exp2 {in_ssa[0]} : f32")
+                out_lines.append(f"        {dst} = math.exp2 {in_ssa[0]}{fm} : f32")
                 computed[outv] = dst
                 computed_ty[outv] = "f32"
                 continue
@@ -812,7 +816,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 if len(in_ssa) != 1 or in_ty[0] != "f32":
                     raise RuntimeError("log currently supports f32 only")
                 dst = _fresh("log")
-                out_lines.append(f"        {dst} = math.log {in_ssa[0]} : f32")
+                out_lines.append(f"        {dst} = math.log {in_ssa[0]}{fm} : f32")
                 computed[outv] = dst
                 computed_ty[outv] = "f32"
                 continue
@@ -821,7 +825,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 if len(in_ssa) != 1 or in_ty[0] != "f32":
                     raise RuntimeError("sqrt currently supports f32 only")
                 dst = _fresh("sqrt")
-                out_lines.append(f"        {dst} = math.sqrt {in_ssa[0]} : f32")
+                out_lines.append(f"        {dst} = math.sqrt {in_ssa[0]}{fm} : f32")
                 computed[outv] = dst
                 computed_ty[outv] = "f32"
                 continue
@@ -830,7 +834,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 if len(in_ssa) != 1 or in_ty[0] != "f32":
                     raise RuntimeError("rsqrt currently supports f32 only")
                 dst = _fresh("rsqrt")
-                out_lines.append(f"        {dst} = math.rsqrt {in_ssa[0]} : f32")
+                out_lines.append(f"        {dst} = math.rsqrt {in_ssa[0]}{fm} : f32")
                 computed[outv] = dst
                 computed_ty[outv] = "f32"
                 continue
@@ -839,7 +843,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 if len(in_ssa) != 1 or in_ty[0] != "f32":
                     raise RuntimeError("erf currently supports f32 only")
                 dst = _fresh("erf")
-                out_lines.append(f"        {dst} = math.erf {in_ssa[0]} : f32")
+                out_lines.append(f"        {dst} = math.erf {in_ssa[0]}{fm} : f32")
                 computed[outv] = dst
                 computed_ty[outv] = "f32"
                 continue
@@ -849,7 +853,7 @@ def lower_intent_to_cuda_gpu_kernel(
                     raise RuntimeError(f"{op_name} currently supports f32 only")
                 dst = _fresh(op_name)
                 mop = {"sin": "math.sin", "cos": "math.cos", "tan": "math.tan"}[op_name]
-                out_lines.append(f"        {dst} = {mop} {in_ssa[0]} : f32")
+                out_lines.append(f"        {dst} = {mop} {in_ssa[0]}{fm} : f32")
                 computed[outv] = dst
                 computed_ty[outv] = "f32"
                 continue
