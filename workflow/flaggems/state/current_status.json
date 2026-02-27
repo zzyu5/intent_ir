@@ -1,16 +1,16 @@
 {
   "schema_version": "flaggems_current_status_v1",
-  "updated_at": "2026-02-27T04:02:20+00:00",
+  "updated_at": "2026-02-27T04:03:00+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "f5853869f25791dbc11ce657088943815c9e04b9",
+  "head_commit": "73ab97ab3f7c9c917e6a22cdad423e98d09734b0",
   "mode": "maintenance",
   "coverage_integrity_phase": "recompute_stale",
   "full196_last_run": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/run_summary.json",
   "full196_last_ok": true,
   "full196_validated_commit": "84a0aca4ed94968713480a740955f891b1000ac8",
   "full196_validated_commit_source": "run_summary.repo.head_commit",
-  "full196_commits_since_validated": 4,
-  "full196_commits_since_validated_total": 4,
+  "full196_commits_since_validated": 5,
+  "full196_commits_since_validated_total": 5,
   "full196_lifted_to_head": false,
   "full196_validated_mode": "auto",
   "full196_validated_execution_ir": "mlir",
@@ -33,10 +33,10 @@
   "mlir_llvm_chain_ok": false,
   "mlir_full196_validated_commit": "",
   "gpu_perf_phase": "recompute_stale",
-  "gpu_perf_last_run": "artifacts/flaggems_matrix/daily/20260226/gpu_perf_head_refresh_v18_strict_postfix/run_summary.json",
+  "gpu_perf_last_run": "artifacts/flaggems_matrix/daily/20260227/gpu_perf_head_refresh_v19_local_compare/run_summary.json",
   "gpu_perf_last_ok": true,
-  "gpu_perf_validated_commit": "84a0aca4ed94968713480a740955f891b1000ac8",
-  "gpu_perf_commits_since_validated": 4,
+  "gpu_perf_validated_commit": "19dcc8ff048dc48ca37a9b52cca71f693e20127f",
+  "gpu_perf_commits_since_validated": 2,
   "gpu_perf_mode": "graph_only",
   "gpu_perf_threshold": 0.8,
   "gpu_perf_devices": [
@@ -47,7 +47,7 @@
       "kernel_pass": 159,
       "kernel_fail": 0,
       "ok": true,
-      "min_ratio": 0.8173812494935464
+      "min_ratio": 0.8282032639744109
     }
   ],
   "gpu_perf_failures_by_family": {},
@@ -131,13 +131,13 @@
     "mlir_migration"
   ],
   "next_focus_by_lane": {
+    "backend_compiler": "Refresh full196 on current HEAD for freshness and extend perf denominator from 159 toward semantic 196 mapping.",
     "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
-    "backend_compiler": "Coverage tail sync then continue expansion plan.",
     "mlir_migration": "Enable MLIR cutover prerequisites (toolchain + backend contract + LLVM artifact chain)."
   },
   "latest_artifacts": {
-    "run_summary": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/run_summary.json",
-    "status_converged": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/status_converged.json"
+    "run_summary": "artifacts/flaggems_matrix/daily/20260227/gpu_perf_head_refresh_v19_local_compare/run_summary.json",
+    "status_converged": "artifacts/flaggems_matrix/daily/20260227/gpu_perf_head_refresh_v19_local_compare/status_converged.json"
   },
   "lanes": {
     "coverage": {

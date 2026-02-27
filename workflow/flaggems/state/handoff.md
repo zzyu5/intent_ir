@@ -1,11 +1,11 @@
 # FlagGems Session Handoff
 
-- Timestamp: 2026-02-27T02:05:27+00:00
-- Commit: `84a0aca4ed94968713480a740955f891b1000ac8`
-- Lane: `coverage`
-- Summary: full196 v30 strict refreshed on HEAD 84a0aca (196/196, fallback=0)
+- Timestamp: 2026-02-27T04:02:59+00:00
+- Commit: `73ab97ab3f7c9c917e6a22cdad423e98d09734b0`
+- Lane: `backend_compiler`
+- Summary: gpu_perf v19 local compare on HEAD (159/159, min=0.828, p50=0.911, fallback=0)
 - Batch Ops (0): (none)
-- Run Summary: `artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/run_summary.json`
-- Status Converged: `artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/status_converged.json`
-- Evidence Paths: artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/coverage_integrity.json, artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/run_summary.json, artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/status_converged.json
-- Next Focus: Use registry gap report to plan 212 wave while keeping strict gates green.
+- Run Summary: `artifacts/flaggems_matrix/daily/20260227/gpu_perf_head_refresh_v19_local_compare/run_summary.json`
+- Status Converged: `artifacts/flaggems_matrix/daily/20260227/gpu_perf_head_refresh_v19_local_compare/status_converged.json`
+- Evidence Paths: artifacts/flaggems_matrix/daily/20260227/gpu_perf_head_refresh_v19_local_compare/gpu_perf_graph.json, artifacts/flaggems_matrix/daily/20260227/gpu_perf_head_refresh_v19_local_compare/run_summary.json, artifacts/flaggems_matrix/daily/20260227/gpu_perf_head_refresh_v19_local_compare/stage_timing_breakdown.json, artifacts/flaggems_matrix/daily/20260227/gpu_perf_head_refresh_v19_local_compare/status_converged.json
+- Next Focus: Refresh full196 on current HEAD for freshness and extend perf denominator from 159 toward semantic 196 mapping.

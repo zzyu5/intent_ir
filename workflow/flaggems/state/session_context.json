@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-27T04:02:20+00:00",
+  "updated_at": "2026-02-27T04:03:00+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,27 +13,8 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "f585386 fix(cuda): stabilize layer_norm_persistent fallback broadcast and deterministic rescue\n19dcc8f workflow: resync state to latest strict-cleanup commit\n6780646 cleanup(strict): harden ptx-only perf/smoke paths and refresh workflow state\nb04112b docs: add mlir cutover runtime/static truth report (2026-02-27)\n84a0aca workflow(phase5): register registry gap report script in catalog\nd84b1ca workflow(phase5): add registry denominator gap report generator\nf0ea3ed evidence(phase6): refresh full196+gpu_perf gates on current head\n6896e63 fix(phase3): disable gpu perf contract rebuild defaults in strict\ne297bad workflow(phase1): refresh state after cuda failset closure\n60b5018 fix(phase1): close failset clusters on strict cuda path\n50959eb workflow(phase0): freeze refactor context at current head\nbd45c78 fix(cuda): synthesize ptx launch defaults and repair pad scalar tails\n7af6b8c fix(cuda): recover launch/io contract parity for ptx strict path\n6d7f8ac fix(cuda): prioritize output-only symbols when appending ptx scalar args\nd843379 workflow: record mlir migration reduction wave 4/4 evidence\n3448055 workflow: refresh state after cuda launch-grid inference fix\n0d28634 fix(cuda): infer grid-x from ptx ctaid bound parameter\neb104d4 workflow: refresh state after cuda ptx invocation alignment\n9899ae9 fix(cuda): align ptx invocation args with entry signature\n73752fc workflow: refresh state after llvm cache and cuda io-spec fixes",
+  "git_log_short": "73ab97a workflow: refresh state after cuda layernorm fallback fix\nf585386 fix(cuda): stabilize layer_norm_persistent fallback broadcast and deterministic rescue\n19dcc8f workflow: resync state to latest strict-cleanup commit\n6780646 cleanup(strict): harden ptx-only perf/smoke paths and refresh workflow state\nb04112b docs: add mlir cutover runtime/static truth report (2026-02-27)\n84a0aca workflow(phase5): register registry gap report script in catalog\nd84b1ca workflow(phase5): add registry denominator gap report generator\nf0ea3ed evidence(phase6): refresh full196+gpu_perf gates on current head\n6896e63 fix(phase3): disable gpu perf contract rebuild defaults in strict\ne297bad workflow(phase1): refresh state after cuda failset closure\n60b5018 fix(phase1): close failset clusters on strict cuda path\n50959eb workflow(phase0): freeze refactor context at current head\nbd45c78 fix(cuda): synthesize ptx launch defaults and repair pad scalar tails\n7af6b8c fix(cuda): recover launch/io contract parity for ptx strict path\n6d7f8ac fix(cuda): prioritize output-only symbols when appending ptx scalar args\nd843379 workflow: record mlir migration reduction wave 4/4 evidence\n3448055 workflow: refresh state after cuda launch-grid inference fix\n0d28634 fix(cuda): infer grid-x from ptx ctaid bound parameter\neb104d4 workflow: refresh state after cuda ptx invocation alignment\n9899ae9 fix(cuda): align ptx invocation args with entry signature",
   "progress_tail": [
-    {
-      "ts": "2026-02-26T16:24:36+00:00",
-      "commit": "6896e63b23497cb74b7d1720807daceaa8d1d9b7",
-      "lane": "coverage",
-      "summary": "full196 v30 strict finalized on HEAD 6896e63 for coverage gate alignment",
-      "batch_ops": [],
-      "active_batch_path": "workflow/flaggems/state/active_batch_coverage.json",
-      "run_summary_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/run_summary.json",
-      "status_converged_path": "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/status_converged.json",
-      "next_focus": "Keep gpu_perf strict evidence aligned and finalize workflow commit.",
-      "evidence_paths": [
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/coverage_integrity.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/run_summary.json",
-        "artifacts/flaggems_matrix/daily/20260226/full196_head_refresh_v30_strict_cache_o3_auto_h2/status_converged.json"
-      ],
-      "run_ok": true,
-      "run_out_dir": null,
-      "counts_by_status": null
-    },
     {
       "ts": "2026-02-26T16:26:31+00:00",
       "commit": "f0ea3ed5766c5ed1254cd8a6d0aa571738b79d1b",
@@ -169,9 +150,29 @@
       "run_ok": true,
       "run_out_dir": null,
       "counts_by_status": null
+    },
+    {
+      "ts": "2026-02-27T04:02:59+00:00",
+      "commit": "73ab97ab3f7c9c917e6a22cdad423e98d09734b0",
+      "lane": "backend_compiler",
+      "summary": "gpu_perf v19 local compare on HEAD (159/159, min=0.828, p50=0.911, fallback=0)",
+      "batch_ops": [],
+      "active_batch_path": "workflow/flaggems/state/active_batch_backend_compiler.json",
+      "run_summary_path": "artifacts/flaggems_matrix/daily/20260227/gpu_perf_head_refresh_v19_local_compare/run_summary.json",
+      "status_converged_path": "artifacts/flaggems_matrix/daily/20260227/gpu_perf_head_refresh_v19_local_compare/status_converged.json",
+      "next_focus": "Refresh full196 on current HEAD for freshness and extend perf denominator from 159 toward semantic 196 mapping.",
+      "evidence_paths": [
+        "artifacts/flaggems_matrix/daily/20260227/gpu_perf_head_refresh_v19_local_compare/gpu_perf_graph.json",
+        "artifacts/flaggems_matrix/daily/20260227/gpu_perf_head_refresh_v19_local_compare/run_summary.json",
+        "artifacts/flaggems_matrix/daily/20260227/gpu_perf_head_refresh_v19_local_compare/stage_timing_breakdown.json",
+        "artifacts/flaggems_matrix/daily/20260227/gpu_perf_head_refresh_v19_local_compare/status_converged.json"
+      ],
+      "run_ok": true,
+      "run_out_dir": null,
+      "counts_by_status": null
     }
   ],
-  "next_focus": "Use registry gap report to plan 212 wave while keeping strict gates green.",
+  "next_focus": "Refresh full196 on current HEAD for freshness and extend perf denominator from 159 toward semantic 196 mapping.",
   "full196_coverage_rule": "full196 is valid only when all coverage categories complete and aggregate coverage integrity passes on current HEAD",
   "active_lanes": [
     "backend_compiler",
@@ -179,8 +180,8 @@
     "mlir_migration"
   ],
   "next_focus_by_lane": {
+    "backend_compiler": "Refresh full196 on current HEAD for freshness and extend perf denominator from 159 toward semantic 196 mapping.",
     "coverage": "Run coverage categories (7/7) with force_compile and aggregate full196 evidence on HEAD.",
-    "backend_compiler": "Coverage tail sync then continue expansion plan.",
     "mlir_migration": "Enable MLIR cutover prerequisites (toolchain + backend contract + LLVM artifact chain)."
   },
   "known_risks": []
