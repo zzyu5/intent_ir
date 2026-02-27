@@ -1553,9 +1553,41 @@ def lower_intent_to_cuda_gpu_kernel(
                                     "reduce_n": int(n0),
                                 }
 
+        if len(red_any_ops) == 1:
+            red_op_idx, red_op = red_any_ops[0]
+            red_out = str(getattr(red_op, "output", "")).strip()
+            red_inputs = [str(x) for x in list(getattr(red_op, "inputs", []) or []) if str(x).strip()]
+            red_attrs = dict(getattr(red_op, "attrs", {}) or {})
+            dims = red_attrs.get("dims")
+            dims_list = list(dims) if isinstance(dims, list) else []
+            if dims_list == [1] and red_out and len(red_inputs) == 1:
+                red_in = str(red_inputs[0])
+                red_in_tt = (intent.tensors or {}).get(red_in)
+                red_out_tt = (intent.tensors or {}).get(red_out)
+                if red_in_tt is not None and red_out_tt is not None:
+                    red_in_shape = list(getattr(red_in_tt, "shape", []) or [])
+                    red_out_shape = list(getattr(red_out_tt, "shape", []) or [])
+                    # Support both [M] and keepdims [M,1] outputs.
+                    out_ok = len(red_out_shape) == 1 or (len(red_out_shape) == 2 and _resolve_dim_int(red_out_shape[1], bindings) == 1)
+                    if len(red_in_shape) == 2 and out_ok:
+                        m0 = _resolve_dim_int(red_in_shape[0], bindings)
+                        n0 = _resolve_dim_int(red_in_shape[1], bindings)
+                        if m0 == int(out_total) and n0 is not None and int(n0) > 0:
+                            red_out_ty = _dtype_to_mlir(str(getattr(red_out_tt, "dtype", "bool")))
+                            red_in_ty = _dtype_to_mlir(str(getattr(red_in_tt, "dtype", "bool")))
+                            if red_out_ty == "i1" and red_in_ty == "i1":
+                                row_reduce_any_axis1 = {
+                                    "op_index": int(red_op_idx),
+                                    "red_in": str(red_in),
+                                    "red_out": str(red_out),
+                                    "reduce_n": int(n0),
+                                }
+
     # Assemble module text.
     launch_override: dict[str, Any] | None = None
     kernel_kind = "elementwise_v1"
+    shared_global_sym: str | None = None
+    shared_global_memref_ty: str | None = None
     lines: list[str] = []
     lines.append("module attributes {")
     lines.append("  gpu.container_module,")
@@ -1566,12 +1598,15 @@ def lower_intent_to_cuda_gpu_kernel(
     lines.append('  llvm.target_triple = "nvptx64-nvidia-cuda"')
     lines.append("} {")
     lines.append("  gpu.module @kernels {")
+    gpu_module_sym_insert = len(lines)
     lines.append(f"    gpu.func @{kernel_name}({arg_sig}) kernel {{")
     if row_reduce_sum_axis1 is not None:
         kernel_kind = "row_reduce_sum_axis1_v1"
         # One block per output row; let each block reduce across the N dimension.
         # This keeps global loads coalesced (threads iterate columns).
         launch_override = {"block": [256, 1, 1], "grid": [int(out_total), 1, 1]}
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+        shared_global_memref_ty = "memref<256xf32, 3>"
 
         red_in = str(row_reduce_sum_axis1["red_in"])
         red_out = str(row_reduce_sum_axis1["red_out"])
@@ -1758,7 +1793,9 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("        }")
 
         # Shared-memory reduce across threads in the block (assume block.x==256).
-        lines.append("        %sh = memref.alloca() : memref<256xf32, 3>")
+        assert shared_global_sym is not None
+        assert shared_global_memref_ty == "memref<256xf32, 3>"
+        lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
         lines.append("        memref.store %partial, %sh[%tid] : memref<256xf32, 3>")
         lines.append("        gpu.barrier")
         for stride in (128, 64, 32, 16, 8, 4, 2, 1):
@@ -1795,6 +1832,8 @@ def lower_intent_to_cuda_gpu_kernel(
         kernel_kind = "row_reduce_max_axis1_v1"
         # One block per output row; let each block reduce across the N dimension.
         launch_override = {"block": [256, 1, 1], "grid": [int(out_total), 1, 1]}
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
+        shared_global_memref_ty = "memref<256xf32, 3>"
 
         red_in = str(row_reduce_max_axis1["red_in"])
         red_out = str(row_reduce_max_axis1["red_out"])
@@ -1982,7 +2021,9 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("        }")
 
         # Shared-memory reduce across threads in the block (assume block.x==256).
-        lines.append("        %sh = memref.alloca() : memref<256xf32, 3>")
+        assert shared_global_sym is not None
+        assert shared_global_memref_ty == "memref<256xf32, 3>"
+        lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
         lines.append("        memref.store %partial, %sh[%tid] : memref<256xf32, 3>")
         lines.append("        gpu.barrier")
         for stride in (128, 64, 32, 16, 8, 4, 2, 1):
@@ -2019,6 +2060,8 @@ def lower_intent_to_cuda_gpu_kernel(
         kernel_kind = "row_reduce_any_axis1_v1"
         # One block per output row; reduce across the N dimension to a single bool.
         launch_override = {"block": [256, 1, 1], "grid": [int(out_total), 1, 1]}
+        shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_i32"
+        shared_global_memref_ty = "memref<256xi32, 3>"
 
         red_in = str(row_reduce_any_axis1["red_in"])
         red_out = str(row_reduce_any_axis1["red_out"])
@@ -2283,8 +2326,15 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("        }")
 
         # Shared-memory reduce across threads in the block (assume block.x==256).
-        lines.append("        %sh = memref.alloca() : memref<256xi1, 3>")
-        lines.append("        memref.store %partial, %sh[%tid] : memref<256xi1, 3>")
+        #
+        # Note: keep the shared-memory element type >= i32 for NVPTX/llc
+        # robustness (smaller integer element types have triggered verifier
+        # issues in practice).
+        assert shared_global_sym is not None
+        assert shared_global_memref_ty == "memref<256xi32, 3>"
+        lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        lines.append("        %partial_i32 = arith.extui %partial : i1 to i32")
+        lines.append("        memref.store %partial_i32, %sh[%tid] : memref<256xi32, 3>")
         lines.append("        gpu.barrier")
         for stride in (128, 64, 32, 16, 8, 4, 2, 1):
             cS = f"%cS_{stride}"
@@ -2297,16 +2347,18 @@ def lower_intent_to_cuda_gpu_kernel(
             lines.append(f"        {pS} = arith.cmpi ult, %tid, {cS} : index")
             lines.append(f"        scf.if {pS} {{")
             lines.append(f"          {tid2} = arith.addi %tid, {cS} : index")
-            lines.append(f"          {a} = memref.load %sh[%tid] : memref<256xi1, 3>")
-            lines.append(f"          {b} = memref.load %sh[{tid2}] : memref<256xi1, 3>")
-            lines.append(f"          {s} = arith.ori {a}, {b} : i1")
-            lines.append(f"          memref.store {s}, %sh[%tid] : memref<256xi1, 3>")
+            lines.append(f"          {a} = memref.load %sh[%tid] : memref<256xi32, 3>")
+            lines.append(f"          {b} = memref.load %sh[{tid2}] : memref<256xi32, 3>")
+            lines.append(f"          {s} = arith.ori {a}, {b} : i32")
+            lines.append(f"          memref.store {s}, %sh[%tid] : memref<256xi32, 3>")
             lines.append("        }")
             lines.append("        gpu.barrier")
 
         lines.append("        %is0 = arith.cmpi eq, %tid, %c0 : index")
         lines.append("        scf.if %is0 {")
-        lines.append("          %any0 = memref.load %sh[%c0] : memref<256xi1, 3>")
+        lines.append("          %any0_i32 = memref.load %sh[%c0] : memref<256xi32, 3>")
+        lines.append("          %c0i32 = arith.constant 0 : i32")
+        lines.append("          %any0 = arith.cmpi ne, %any0_i32, %c0i32 : i32")
         body_lines = _emit_elementwise_for_index(
             "%bid",
             precomputed={red_out: ("%any0", "i1")},
@@ -2362,6 +2414,11 @@ def lower_intent_to_cuda_gpu_kernel(
                     lines.append(f"      scf.if {lane_p} {{")
                     lines.extend(_emit_elementwise_for_index(lane_i))
                     lines.append("      }")
+    if shared_global_sym and shared_global_memref_ty:
+        lines.insert(
+            gpu_module_sym_insert,
+            f'    memref.global "private" @{shared_global_sym} : {shared_global_memref_ty}',
+        )
     lines.append("      gpu.return")
     lines.append("    }")
     lines.append("  }")

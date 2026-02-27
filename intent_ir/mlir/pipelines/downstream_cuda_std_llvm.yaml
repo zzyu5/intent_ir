@@ -7,4 +7,7 @@ passes:
   - mlir-translate:mlir-to-llvmir
   - python:ensure_llvm_ir_text
   - "llvm-as:"
-  - "opt:-O3"
+  # Do not run aggressive target-independent opt passes on NVPTX device IR:
+  # they can break cross-thread shared-memory semantics (barrier+workgroup).
+  # Let llc own the optimization pipeline.
+  - "opt:-O0"
