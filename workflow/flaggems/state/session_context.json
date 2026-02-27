@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-27T22:38:37+00:00",
+  "updated_at": "2026-02-27T22:48:00+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,7 +13,7 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "31d17c4 backend(cuda): add grouped_row_sum2d real-mlir lowering\n8c28a0d workflow: rebuild state after cuda wave8 norms lowering\n2a39f48 backend(cuda): extend real-mlir wave8 norms + robust unary casts\nf70f97a workflow: rebuild state after masked_softmax2d real-mlir perf\n47c4f3f perf(native): add masked_softmax2d adapter for cuda-graph capture\n2241cc0 mlir(cuda): include masked_softmax2d in real-mlir wave8\n50625f5 backend(cuda-real-mlir): add masked_softmax2d lowering\nf2b6824 workflow: rebuild state after softmax_inner real-mlir perf\n1a20f2c mlir(cuda): include softmax_inner in real-mlir wave8\n9a6003c backend(cuda-real-mlir): add row-wise softmax(axis=1) lowering\n0508f7a workflow: rebuild state after rowmask_where2d real-mlir perf\n9741501 perf(native): fix heuristic arg binding for mask-like params\n7494d27 backend(cuda-real-mlir): accept int masks in where lowering\nd4b9366 mlir(cuda): include rowmask_where2d in real-mlir wave8\nd99e2f1 workflow: rebuild state after wave8 copy2d_divmod\n401422d mlir(cuda): include copy2d_divmod in real-mlir wave8\n960e60f workflow: rebuild state after transpose real-mlir lowering\ne24d568 backend(cuda-real-mlir): support transpose(perm=[1,0]) lowering\nc016d6c workflow: rebuild state after adding cuda wave8 list\n48fc43e mlir(cuda): add real-mlir wave8 kernel list (add_bias2d/floor2d/transpose2d)",
+  "git_log_short": "450dd3d backend(cuda): enable ai_bench_layernorm in real-mlir wave8\n4a284f7 workflow: rebuild state after grouped_row_sum2d real-mlir\n31d17c4 backend(cuda): add grouped_row_sum2d real-mlir lowering\n8c28a0d workflow: rebuild state after cuda wave8 norms lowering\n2a39f48 backend(cuda): extend real-mlir wave8 norms + robust unary casts\nf70f97a workflow: rebuild state after masked_softmax2d real-mlir perf\n47c4f3f perf(native): add masked_softmax2d adapter for cuda-graph capture\n2241cc0 mlir(cuda): include masked_softmax2d in real-mlir wave8\n50625f5 backend(cuda-real-mlir): add masked_softmax2d lowering\nf2b6824 workflow: rebuild state after softmax_inner real-mlir perf\n1a20f2c mlir(cuda): include softmax_inner in real-mlir wave8\n9a6003c backend(cuda-real-mlir): add row-wise softmax(axis=1) lowering\n0508f7a workflow: rebuild state after rowmask_where2d real-mlir perf\n9741501 perf(native): fix heuristic arg binding for mask-like params\n7494d27 backend(cuda-real-mlir): accept int masks in where lowering\nd4b9366 mlir(cuda): include rowmask_where2d in real-mlir wave8\nd99e2f1 workflow: rebuild state after wave8 copy2d_divmod\n401422d mlir(cuda): include copy2d_divmod in real-mlir wave8\n960e60f workflow: rebuild state after transpose real-mlir lowering\ne24d568 backend(cuda-real-mlir): support transpose(perm=[1,0]) lowering",
   "progress_tail": [
     {
       "ts": "2026-02-26T16:26:31+00:00",
