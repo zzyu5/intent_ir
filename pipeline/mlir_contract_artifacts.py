@@ -181,6 +181,17 @@ def _cuda_llc_target() -> str:
         return raw
     if raw.isdigit():
         return f"sm_{raw}"
+    # Best-effort auto-detect from torch when available so local dev runs (and
+    # perf evidence) compile for the actual GPU arch without extra knobs.
+    try:  # pragma: no cover - depends on CUDA env
+        import torch  # type: ignore
+
+        if torch.cuda.is_available():
+            major, minor = torch.cuda.get_device_capability(0)
+            if isinstance(major, int) and isinstance(minor, int) and major > 0 and minor >= 0:
+                return f"sm_{major}{minor}"
+    except Exception:
+        pass
     return "sm_80"
 
 
@@ -932,6 +943,7 @@ def _materialize_executable(
                 "cuda_ptx_origin": "llvm_llc",
                 "cuda_llvm_target_triple": str(llvm_target_triple),
                 "cuda_llvm_origin": str(llvm_origin),
+                "cuda_sm": str(_cuda_llc_target()),
             }
             if isinstance(recovered_intent_json, dict):
                 try:
