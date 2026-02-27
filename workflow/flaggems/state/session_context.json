@@ -1,6 +1,6 @@
 {
   "schema_version": "flaggems_session_context_v1",
-  "updated_at": "2026-02-27T18:09:13+00:00",
+  "updated_at": "2026-02-27T18:19:08+00:00",
   "read_order": [
     "workflow/flaggems/state/current_status.json",
     "workflow/flaggems/state/session_context.json",
@@ -13,7 +13,7 @@
     "workflow/flaggems/state/handoff.md"
   ],
   "must_read_scripts_catalog": "scripts/CATALOG.json",
-  "git_log_short": "b84ae8a backend(cuda-real-mlir): row-reduce sum(axis=1) kernels\n87a616f workflow: refresh state + cuda real-mlir wave4 report\n2712326 refactor(cuda-real-mlir): repair intent tensors + support iota/int ops\n34e894e workflow: refresh state\n16fb954 tuning(cuda-real-mlir): auto-select elems_per_thread from access witness\n06adfc8 workflow: refresh state + wave3 support report\nb1c6557 fix(workflow): relax gather output rank in real-mlir support report\n612e245 workflow: record cuda real-mlir wave3 readiness\n844d38a refactor(cuda-real-mlir): expand lowering ops (concat/pad/gather/bitwise)\ndb46fc8 workflow: refresh state\nbc39aa5 fix(perf): use real flaggems baseline callable for cuda graph bench\n65ca8b3 workflow: refresh state\nd6a4842 bench: capture cuda graphs on current stream (avoid empty side-stream)\n9678a6a workflow: refresh state\nab09cc4 bench: capture cuda graphs on explicit stream\n699eaf5 workflow: refresh state\n81505c3 perf(cuda): optional fastmath for real-mlir kernel lowering\n03f0164 workflow: refresh state\nfb8f0d3 perf(cuda): assume memref alignment for vectorized real-mlir\n2db003d workflow: refresh state",
+  "git_log_short": "18b4133 backend(cuda-real-mlir): row-reduce max(axis=1) kernels\nb640cde workflow: refresh state + cuda real-mlir wave5 report\nb84ae8a backend(cuda-real-mlir): row-reduce sum(axis=1) kernels\n87a616f workflow: refresh state + cuda real-mlir wave4 report\n2712326 refactor(cuda-real-mlir): repair intent tensors + support iota/int ops\n34e894e workflow: refresh state\n16fb954 tuning(cuda-real-mlir): auto-select elems_per_thread from access witness\n06adfc8 workflow: refresh state + wave3 support report\nb1c6557 fix(workflow): relax gather output rank in real-mlir support report\n612e245 workflow: record cuda real-mlir wave3 readiness\n844d38a refactor(cuda-real-mlir): expand lowering ops (concat/pad/gather/bitwise)\ndb46fc8 workflow: refresh state\nbc39aa5 fix(perf): use real flaggems baseline callable for cuda graph bench\n65ca8b3 workflow: refresh state\nd6a4842 bench: capture cuda graphs on current stream (avoid empty side-stream)\n9678a6a workflow: refresh state\nab09cc4 bench: capture cuda graphs on explicit stream\n699eaf5 workflow: refresh state\n81505c3 perf(cuda): optional fastmath for real-mlir kernel lowering\n03f0164 workflow: refresh state",
   "progress_tail": [
     {
       "ts": "2026-02-26T16:26:31+00:00",

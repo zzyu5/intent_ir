@@ -1,11 +1,11 @@
 {
   "schema_version": "intentir_cuda_real_mlir_support_report_v1",
-  "generated_at_utc": "2026-02-27T18:09:06+00:00",
+  "generated_at_utc": "2026-02-27T18:19:04+00:00",
   "repo": {
-    "head_commit": "b84ae8af5956da73a79f2118673d6fbbd3610369",
+    "head_commit": "18b4133b23e4fbcbad4bd7d0d09fb85023729f95",
     "branch": "compiler-cleanup-v1",
     "dirty": false,
-    "git_describe": "b84ae8a"
+    "git_describe": "18b4133"
   },
   "sources": {
     "coverage_batches": "workflow/flaggems/state/coverage_batches.json",
@@ -50,6 +50,7 @@
     "not",
     "pad",
     "pow",
+    "reduce_max",
     "reduce_sum",
     "relu",
     "remainder",
@@ -62,8 +63,8 @@
     "where"
   ],
   "kernels_total": 158,
-  "kernels_supported": 92,
-  "kernels_unsupported": 66,
+  "kernels_supported": 93,
+  "kernels_unsupported": 65,
   "supported_kernels": [
     "abs2d",
     "acos2d",
@@ -133,6 +134,7 @@
     "repeat_interleave_self_int1d",
     "repeat_interleave_self_tensor1d",
     "repeat_interleave_tensor1d",
+    "row_max",
     "rsqrt2d",
     "sin2d",
     "sqrt2d",
@@ -271,15 +273,6 @@
       ],
       "unsupported_ops": [
         "quantile"
-      ]
-    },
-    {
-      "kernel": "row_max",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "reduce_max"
       ]
     },
     {
@@ -426,10 +419,8 @@
     {
       "kernel": "softmax_inner",
       "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "reduce_max"
+        "reduce_max_requires_rank1_final_output",
+        "reduce_sum_requires_rank1_final_output"
       ]
     },
     {
