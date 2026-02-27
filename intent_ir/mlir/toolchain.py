@@ -90,7 +90,8 @@ def _candidate_names(base: str, env_var: str) -> list[str]:
 
 def _probe_tool(base: str, *, env_var: str) -> dict[str, Any]:
     candidates = _candidate_names(base, env_var)
-    extra_bindirs = _llvm_bindirs() + _intentir_local_bindirs()
+    # Prefer repo-local toolchains (artifacts/toolchains/mlir-current) over system PATH.
+    extra_bindirs = _intentir_local_bindirs() + _llvm_bindirs()
     checked: list[str] = []
     chosen_path = ""
     chosen_name = ""
@@ -101,13 +102,7 @@ def _probe_tool(base: str, *, env_var: str) -> dict[str, Any]:
             chosen_name = cand
             checked.append(cand)
             break
-        w = shutil.which(cand)
-        if w:
-            chosen_path = str(w)
-            chosen_name = cand
-            checked.append(cand)
-            break
-        # Try llvm-config discovered bindirs for versioned binary layouts.
+        # Prefer known bindirs first (local toolchains, then llvm-config bindirs).
         found = ""
         for bindir in extra_bindirs:
             p = bindir / cand
@@ -117,6 +112,11 @@ def _probe_tool(base: str, *, env_var: str) -> dict[str, Any]:
         checked.append(cand)
         if found:
             chosen_path = found
+            chosen_name = cand
+            break
+        w = shutil.which(cand)
+        if w:
+            chosen_path = str(w)
             chosen_name = cand
             break
     if not chosen_path:
