@@ -10,6 +10,7 @@ from intent_ir.utils.repo_state import repo_state
 
 from .dialect_intent import intent_dialect_op_name, op_meta
 from .module import IntentMLIRModule
+from .std_emitter import emit_std_mlir
 from .types import attrs_to_mlir_dict, tensor_type_to_mlir
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -20,6 +21,25 @@ def to_mlir(
     *,
     provenance: dict[str, Any] | None = None,
     include_json_payload: bool = True,
+    format: str = "std_mlir_v1",
+) -> IntentMLIRModule:
+    fmt = str(format or "").strip().lower()
+    if fmt in {"std_mlir_v1", "std"}:
+        return emit_std_mlir(intent, provenance=provenance, include_json_payload=include_json_payload)
+    if fmt in {"legacy_intent_bridge_v1", "intent_dialect_v0", "legacy"}:
+        return _emit_legacy_intent_bridge(
+            intent,
+            provenance=provenance,
+            include_json_payload=include_json_payload,
+        )
+    raise ValueError(f"unknown to_mlir format: {format}")
+
+
+def _emit_legacy_intent_bridge(
+    intent: IntentFunction,
+    *,
+    provenance: dict[str, Any] | None,
+    include_json_payload: bool,
 ) -> IntentMLIRModule:
     payload = intent.to_json_dict()
     symbols = _collect_symbols(payload)
@@ -69,7 +89,7 @@ def to_mlir(
         dialect_version="intent_dialect_v0",
         provenance=prov,
         symbols=symbols,
-        meta={"bridge_format": "intent_json_base64_comment_v1"},
+        meta={"bridge_format": "legacy_intent_bridge_v1"},
         intent_json=(payload if include_json_payload else None),
     )
 
@@ -90,4 +110,3 @@ def _collect_symbols(intent_json: dict[str, Any]) -> list[str]:
             if isinstance(d, str) and d.strip() and d.strip() not in out:
                 out.append(d.strip())
     return out
-
