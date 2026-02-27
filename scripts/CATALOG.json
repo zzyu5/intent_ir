@@ -251,6 +251,16 @@
       "tests": ["tests/frontends/triton/test_flaggems_registry.py"]
     },
     {
+      "path": "scripts/flaggems/build_registry_gap_report.py",
+      "owner_lane": "coverage_integrity",
+      "purpose": "build denominator gap report for source_all/source_filtered/semantic sets",
+      "inputs": ["pipeline/triton/flaggems_registry.json", "python:flag_gems (installed)"],
+      "outputs": ["artifacts/flaggems_matrix/daily/*/registry_gap_report_v1.json"],
+      "status": "active",
+      "replacement": "",
+      "tests": ["tests/frontends/triton/test_flaggems_registry_gap_report.py"]
+    },
+    {
       "path": "scripts/flaggems/install_systemd_nightly.py",
       "owner_lane": "workflow",
       "purpose": "install/render systemd nightly templates",
