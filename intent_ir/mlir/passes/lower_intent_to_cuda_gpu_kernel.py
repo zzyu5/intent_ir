@@ -256,72 +256,11 @@ def lower_intent_to_cuda_gpu_kernel(
     arg_list = [f"%{_mlir_ident(n)}: {arg_specs[n]['memref']}" for n in [*ext_inputs, *out_names]]
     arg_sig = ", ".join(arg_list)
 
-    # Per-element SSA mapping.
-    loaded: dict[str, str] = {}
-    loaded_ty: dict[str, str] = {}
-    computed: dict[str, str] = {}
-    computed_ty: dict[str, str] = {}
-
     need_row = any(str(spec.get("broadcast") or "") == "broadcast_m" for spec in arg_specs.values())
     need_col = any(str(spec.get("broadcast") or "") == "broadcast_n" for spec in arg_specs.values())
     need_rowcol = bool(need_row or need_col)
     if need_rowcol and out_rank != 2:
         raise RuntimeError("internal error: broadcast patterns require rank-2 output")
-
-    def _infer_value_ty(name: str) -> str:
-        if name in computed_ty:
-            return str(computed_ty[name])
-        if name in loaded_ty:
-            return str(loaded_ty[name])
-        tt = (intent.tensors or {}).get(name)
-        if tt is None:
-            return "f32"
-        return _dtype_to_mlir(str(getattr(tt, "dtype", "f32")))
-
-    def _load_tensor(name: str) -> list[str]:
-        if name in computed:
-            return []
-        if name in loaded:
-            return []
-        spec = arg_specs.get(name)
-        if spec is None:
-            raise RuntimeError(f"unknown tensor referenced: {name}")
-        memref = str(spec["memref"])
-        memref_elem_ty = str(spec.get("memref_elem_ty") or "")
-        scalar_ty = str(spec.get("scalar_ty") or "")
-        ssa_loaded = f"%{_mlir_ident(name)}_loaded"
-        ssa_value = f"%{_mlir_ident(name)}_v"
-        bcast = str(spec.get("broadcast") or "")
-        idx = "%i"
-        if bcast == "scalar":
-            idx = "%c0"
-        elif bcast == "elementwise":
-            idx = "%i"
-        elif bcast == "broadcast_n":
-            idx = "%col"
-        elif bcast == "broadcast_m":
-            idx = "%row"
-        else:
-            raise RuntimeError(f"unsupported broadcast kind in cuda real-mlir wave: {bcast}")
-
-        lines = [f"        {ssa_loaded} = memref.load %{_mlir_ident(name)}[{idx}] : {memref}"]
-        if scalar_ty and memref_elem_ty and scalar_ty != memref_elem_ty:
-            # ABI-facing bool tensors use i8 elements; convert to i1 in registers.
-            if scalar_ty == "i1" and memref_elem_ty == "i8":
-                c0 = _fresh("c0i8")
-                lines.append(f"        {c0} = arith.constant 0 : i8")
-                lines.append(f"        {ssa_value} = arith.cmpi ne, {ssa_loaded}, {c0} : i8")
-            else:
-                raise RuntimeError(
-                    "unsupported memref->scalar conversion in cuda real-mlir wave: "
-                    f"{memref_elem_ty} -> {scalar_ty} for tensor={name}"
-                )
-        else:
-            ssa_value = ssa_loaded
-
-        loaded[name] = ssa_value
-        loaded_ty[name] = scalar_ty or memref_elem_ty or "f32"
-        return lines
 
     tmp_idx = 0
 
@@ -330,15 +269,21 @@ def lower_intent_to_cuda_gpu_kernel(
         tmp_idx += 1
         return f"%{_mlir_ident(prefix)}_{tmp_idx}"
 
-    if_lines: list[str] = []
-    if_lines.append("        %c0 = arith.constant 0 : index")
-    if need_rowcol:
-        assert out_n is not None
-        if_lines.append(f"        %cN = arith.constant {int(out_n)} : index")
-        if need_row:
-            if_lines.append("        %row = arith.divui %i, %cN : index")
-        if need_col:
-            if_lines.append("        %col = arith.remui %i, %cN : index")
+    elems_per_thread = 1
+    raw_elems = str(os.getenv("INTENTIR_CUDA_REAL_MLIR_ELEMS_PER_THREAD", "") or "").strip()
+    if raw_elems:
+        try:
+            elems_per_thread = int(raw_elems)
+        except Exception:
+            raise RuntimeError(
+                "invalid INTENTIR_CUDA_REAL_MLIR_ELEMS_PER_THREAD; expected int, got "
+                f"{raw_elems!r}"
+            )
+    if elems_per_thread not in {1, 2, 4}:
+        raise RuntimeError(
+            "unsupported cuda real-mlir elems_per_thread; expected one of {1,2,4}, got "
+            f"{elems_per_thread}"
+        )
 
     def _as_f32_const(v: Any) -> str:
         try:
@@ -346,255 +291,335 @@ def lower_intent_to_cuda_gpu_kernel(
         except Exception:
             return repr(float(str(v)))
 
-    # Emit ops (single-thread elementwise evaluation).
-    for op in list(intent.ops or []):
-        op_name = str(getattr(op, "op", "")).strip()
-        inputs = [str(x) for x in list(getattr(op, "inputs", []) or []) if str(x).strip()]
-        outv = str(getattr(op, "output", "")).strip()
-        attrs = dict(getattr(op, "attrs", {}) or {})
-        if not op_name or not outv:
-            raise RuntimeError("invalid op in intent")
-
-        # Materialize inputs.
-        in_ssa: list[str] = []
-        in_ty: list[str] = []
-        for inp in inputs:
-            if inp in computed:
-                in_ssa.append(computed[inp])
-            else:
-                if_lines.extend(_load_tensor(inp))
-                in_ssa.append(loaded[inp])
-            in_ty.append(_infer_value_ty(inp))
-
-        out_ty = _infer_value_ty(outv)
-
-        if op_name == "const":
-            if inputs:
-                raise RuntimeError("const expects 0 inputs")
-            if out_ty != "f32":
-                raise RuntimeError(f"const currently supports f32 only (out_ty={out_ty})")
-            dst = _fresh("const")
-            if_lines.append(f"        {dst} = arith.constant {_as_f32_const(attrs.get('value'))} : f32")
-            computed[outv] = dst
-            computed_ty[outv] = "f32"
-            continue
-
-        if op_name == "cast":
-            if len(in_ssa) != 1:
-                raise RuntimeError("cast expects 1 input")
-            to_ty = _dtype_to_mlir(str(attrs.get("to") or out_ty or "f32"))
-            src_ty = in_ty[0]
-            if src_ty == to_ty:
-                computed[outv] = in_ssa[0]
-                computed_ty[outv] = str(to_ty)
-                continue
-            dst = _fresh("cast")
-            if src_ty in {"f16", "bf16"} and to_ty == "f32":
-                if_lines.append(f"        {dst} = arith.extf {in_ssa[0]} : {src_ty} to {to_ty}")
-            elif src_ty == "f32" and to_ty in {"f16", "bf16"}:
-                if_lines.append(f"        {dst} = arith.truncf {in_ssa[0]} : {src_ty} to {to_ty}")
-            elif src_ty == "i1" and to_ty == "i32":
-                # FlagGems comparison ops often cast bool -> i32 for output.
-                if_lines.append(f"        {dst} = arith.extui {in_ssa[0]} : i1 to i32")
-            else:
-                raise RuntimeError(f"unsupported cast: {src_ty} -> {to_ty}")
-            computed[outv] = dst
-            computed_ty[outv] = str(to_ty)
-            continue
-
-        if op_name == "identity":
-            if len(in_ssa) != 1:
-                raise RuntimeError("identity expects 1 input")
-            computed[outv] = in_ssa[0]
-            computed_ty[outv] = in_ty[0]
-            continue
-
-        if op_name == "abs":
-            if len(in_ssa) != 1 or in_ty[0] != "f32":
-                raise RuntimeError("abs currently supports f32 only")
-            dst = _fresh("abs")
-            if_lines.append(f"        {dst} = math.absf {in_ssa[0]} : f32")
-            computed[outv] = dst
-            computed_ty[outv] = "f32"
-            continue
-
-        if op_name == "floor":
-            if len(in_ssa) != 1 or in_ty[0] != "f32":
-                raise RuntimeError("floor currently supports f32 only")
-            dst = _fresh("floor")
-            if_lines.append(f"        {dst} = math.floor {in_ssa[0]} : f32")
-            computed[outv] = dst
-            computed_ty[outv] = "f32"
-            continue
-
-        if op_name == "ceil":
-            if len(in_ssa) != 1 or in_ty[0] != "f32":
-                raise RuntimeError("ceil currently supports f32 only")
-            dst = _fresh("ceil")
-            if_lines.append(f"        {dst} = math.ceil {in_ssa[0]} : f32")
-            computed[outv] = dst
-            computed_ty[outv] = "f32"
-            continue
-
-        if op_name == "neg":
-            if len(in_ssa) != 1 or in_ty[0] != "f32":
-                raise RuntimeError("neg currently supports f32 only")
-            dst = _fresh("neg")
-            if_lines.append(f"        {dst} = arith.negf {in_ssa[0]} : f32")
-            computed[outv] = dst
-            computed_ty[outv] = "f32"
-            continue
-
-        if op_name in {"add", "sub", "mul", "div"}:
-            if len(in_ssa) != 2 or in_ty[0] != "f32" or in_ty[1] != "f32":
-                raise RuntimeError(f"{op_name} currently supports f32 binary only")
-            dst = _fresh(op_name)
-            arith = {"add": "arith.addf", "sub": "arith.subf", "mul": "arith.mulf", "div": "arith.divf"}[op_name]
-            if_lines.append(f"        {dst} = {arith} {in_ssa[0]}, {in_ssa[1]} : f32")
-            computed[outv] = dst
-            computed_ty[outv] = "f32"
-            continue
-
-        if op_name in {"max", "min"}:
-            if len(in_ssa) != 2 or in_ty[0] != "f32" or in_ty[1] != "f32":
-                raise RuntimeError(f"{op_name} currently supports f32 binary only")
-            dst = _fresh(op_name)
-            arith = {"max": "arith.maximumf", "min": "arith.minimumf"}[op_name]
-            if_lines.append(f"        {dst} = {arith} {in_ssa[0]}, {in_ssa[1]} : f32")
-            computed[outv] = dst
-            computed_ty[outv] = "f32"
-            continue
-
-        if op_name in {"eq", "ne", "lt", "le", "gt", "ge"}:
-            if len(in_ssa) != 2 or in_ty[0] != "f32" or in_ty[1] != "f32":
-                raise RuntimeError(f"{op_name} currently supports f32 binary only")
-            dst = _fresh(op_name)
-            pred = {
-                "eq": "oeq",
-                "ne": "one",
-                "lt": "olt",
-                "le": "ole",
-                "gt": "ogt",
-                "ge": "oge",
-            }[op_name]
-            if_lines.append(f"        {dst} = arith.cmpf {pred}, {in_ssa[0]}, {in_ssa[1]} : f32")
-            computed[outv] = dst
-            computed_ty[outv] = "i1"
-            continue
-
-        if op_name == "relu":
-            if len(in_ssa) != 1 or in_ty[0] != "f32":
-                raise RuntimeError("relu currently supports f32 only")
-            c0 = _fresh("c0f")
-            dst = _fresh("relu")
-            if_lines.append(f"        {c0} = arith.constant 0.0 : f32")
-            if_lines.append(f"        {dst} = arith.maximumf {in_ssa[0]}, {c0} : f32")
-            computed[outv] = dst
-            computed_ty[outv] = "f32"
-            continue
-
-        if op_name == "exp":
-            if len(in_ssa) != 1 or in_ty[0] != "f32":
-                raise RuntimeError("exp currently supports f32 only")
-            dst = _fresh("exp")
-            if_lines.append(f"        {dst} = math.exp {in_ssa[0]} : f32")
-            computed[outv] = dst
-            computed_ty[outv] = "f32"
-            continue
-
-        if op_name == "exp2":
-            if len(in_ssa) != 1 or in_ty[0] != "f32":
-                raise RuntimeError("exp2 currently supports f32 only")
-            dst = _fresh("exp2")
-            if_lines.append(f"        {dst} = math.exp2 {in_ssa[0]} : f32")
-            computed[outv] = dst
-            computed_ty[outv] = "f32"
-            continue
-
-        if op_name == "log":
-            if len(in_ssa) != 1 or in_ty[0] != "f32":
-                raise RuntimeError("log currently supports f32 only")
-            dst = _fresh("log")
-            if_lines.append(f"        {dst} = math.log {in_ssa[0]} : f32")
-            computed[outv] = dst
-            computed_ty[outv] = "f32"
-            continue
-
-        if op_name == "sqrt":
-            if len(in_ssa) != 1 or in_ty[0] != "f32":
-                raise RuntimeError("sqrt currently supports f32 only")
-            dst = _fresh("sqrt")
-            if_lines.append(f"        {dst} = math.sqrt {in_ssa[0]} : f32")
-            computed[outv] = dst
-            computed_ty[outv] = "f32"
-            continue
-
-        if op_name == "rsqrt":
-            if len(in_ssa) != 1 or in_ty[0] != "f32":
-                raise RuntimeError("rsqrt currently supports f32 only")
-            dst = _fresh("rsqrt")
-            if_lines.append(f"        {dst} = math.rsqrt {in_ssa[0]} : f32")
-            computed[outv] = dst
-            computed_ty[outv] = "f32"
-            continue
-
-        if op_name == "erf":
-            if len(in_ssa) != 1 or in_ty[0] != "f32":
-                raise RuntimeError("erf currently supports f32 only")
-            dst = _fresh("erf")
-            if_lines.append(f"        {dst} = math.erf {in_ssa[0]} : f32")
-            computed[outv] = dst
-            computed_ty[outv] = "f32"
-            continue
-
-        if op_name in {"sin", "cos", "tan"}:
-            if len(in_ssa) != 1 or in_ty[0] != "f32":
-                raise RuntimeError(f"{op_name} currently supports f32 only")
-            dst = _fresh(op_name)
-            mop = {"sin": "math.sin", "cos": "math.cos", "tan": "math.tan"}[op_name]
-            if_lines.append(f"        {dst} = {mop} {in_ssa[0]} : f32")
-            computed[outv] = dst
-            computed_ty[outv] = "f32"
-            continue
-
-        if op_name == "where":
-            if len(in_ssa) != 3:
-                raise RuntimeError("where expects 3 inputs")
-            if in_ty[0] != "i1":
-                raise RuntimeError(f"where condition must be bool/i1, got {in_ty[0]}")
-            if in_ty[1] != "f32" or in_ty[2] != "f32":
-                raise RuntimeError("where currently supports f32 branches only")
-            dst = _fresh("where")
-            if_lines.append(f"        {dst} = arith.select {in_ssa[0]}, {in_ssa[1]}, {in_ssa[2]} : f32")
-            computed[outv] = dst
-            computed_ty[outv] = "f32"
-            continue
-
-        raise RuntimeError(f"unsupported op in cuda real-mlir wave: {op_name}")
-
-    # Store final output element.
-    final_ssa = computed.get(out_name)
-    if final_ssa is None:
-        last_out = str(getattr(list(intent.ops or [])[-1], "output", "")).strip() if intent.ops else ""
-        final_ssa = computed.get(last_out)
-    if not final_ssa:
-        raise RuntimeError(f"no computed value for output tensor: {out_name}")
     out_spec = arg_specs[out_name]
     out_memref = str(out_spec["memref"])
     out_memref_elem_ty = str(out_spec.get("memref_elem_ty") or "")
-    out_val_ty = _infer_value_ty(out_name)
-    store_ssa = str(final_ssa)
-    if out_memref_elem_ty and out_val_ty and out_memref_elem_ty != out_val_ty:
-        if out_memref_elem_ty == "i8" and out_val_ty == "i1":
-            tmp = _fresh("out_i8")
-            if_lines.append(f"        {tmp} = arith.extui {store_ssa} : i1 to i8")
-            store_ssa = tmp
-        else:
-            raise RuntimeError(
-                "unsupported scalar->memref conversion in cuda real-mlir wave: "
-                f"{out_val_ty} -> {out_memref_elem_ty} for output={out_name}"
-            )
-    if_lines.append(f"        memref.store {store_ssa}, %{_mlir_ident(out_name)}[%i] : {out_memref}")
+
+    def _emit_elementwise_for_index(idx_ssa: str) -> list[str]:
+        loaded: dict[str, str] = {}
+        loaded_ty: dict[str, str] = {}
+        computed: dict[str, str] = {}
+        computed_ty: dict[str, str] = {}
+
+        row_ssa = ""
+        col_ssa = ""
+        out_lines: list[str] = []
+        if need_rowcol:
+            assert out_n is not None
+            if need_row:
+                row_ssa = _fresh("row")
+                out_lines.append(f"        {row_ssa} = arith.divui {idx_ssa}, %cN : index")
+            if need_col:
+                col_ssa = _fresh("col")
+                out_lines.append(f"        {col_ssa} = arith.remui {idx_ssa}, %cN : index")
+
+        def _infer_value_ty(name: str) -> str:
+            if name in computed_ty:
+                return str(computed_ty[name])
+            if name in loaded_ty:
+                return str(loaded_ty[name])
+            tt = (intent.tensors or {}).get(name)
+            if tt is None:
+                return "f32"
+            return _dtype_to_mlir(str(getattr(tt, "dtype", "f32")))
+
+        def _load_tensor(name: str) -> list[str]:
+            if name in computed:
+                return []
+            if name in loaded:
+                return []
+            spec = arg_specs.get(name)
+            if spec is None:
+                raise RuntimeError(f"unknown tensor referenced: {name}")
+            memref = str(spec["memref"])
+            memref_elem_ty = str(spec.get("memref_elem_ty") or "")
+            scalar_ty = str(spec.get("scalar_ty") or "")
+            ssa_loaded = _fresh(f"{name}_loaded")
+            ssa_value = _fresh(f"{name}_v")
+            bcast = str(spec.get("broadcast") or "")
+            idx = str(idx_ssa)
+            if bcast == "scalar":
+                idx = "%c0"
+            elif bcast == "elementwise":
+                idx = str(idx_ssa)
+            elif bcast == "broadcast_n":
+                if not col_ssa:
+                    raise RuntimeError("internal error: broadcast_n requires col SSA")
+                idx = str(col_ssa)
+            elif bcast == "broadcast_m":
+                if not row_ssa:
+                    raise RuntimeError("internal error: broadcast_m requires row SSA")
+                idx = str(row_ssa)
+            else:
+                raise RuntimeError(f"unsupported broadcast kind in cuda real-mlir wave: {bcast}")
+
+            lines = [f"        {ssa_loaded} = memref.load %{_mlir_ident(name)}[{idx}] : {memref}"]
+            if scalar_ty and memref_elem_ty and scalar_ty != memref_elem_ty:
+                # ABI-facing bool tensors use i8 elements; convert to i1 in registers.
+                if scalar_ty == "i1" and memref_elem_ty == "i8":
+                    c0i8 = _fresh("c0i8")
+                    lines.append(f"        {c0i8} = arith.constant 0 : i8")
+                    lines.append(f"        {ssa_value} = arith.cmpi ne, {ssa_loaded}, {c0i8} : i8")
+                else:
+                    raise RuntimeError(
+                        "unsupported memref->scalar conversion in cuda real-mlir wave: "
+                        f"{memref_elem_ty} -> {scalar_ty} for tensor={name}"
+                    )
+            else:
+                ssa_value = ssa_loaded
+
+            loaded[name] = ssa_value
+            loaded_ty[name] = scalar_ty or memref_elem_ty or "f32"
+            return lines
+
+        # Emit ops (single-thread elementwise evaluation).
+        for op in list(intent.ops or []):
+            op_name = str(getattr(op, "op", "")).strip()
+            inputs = [str(x) for x in list(getattr(op, "inputs", []) or []) if str(x).strip()]
+            outv = str(getattr(op, "output", "")).strip()
+            attrs = dict(getattr(op, "attrs", {}) or {})
+            if not op_name or not outv:
+                raise RuntimeError("invalid op in intent")
+
+            # Materialize inputs.
+            in_ssa: list[str] = []
+            in_ty: list[str] = []
+            for inp in inputs:
+                if inp in computed:
+                    in_ssa.append(computed[inp])
+                else:
+                    out_lines.extend(_load_tensor(inp))
+                    in_ssa.append(loaded[inp])
+                in_ty.append(_infer_value_ty(inp))
+
+            out_ty = _infer_value_ty(outv)
+
+            if op_name == "const":
+                if inputs:
+                    raise RuntimeError("const expects 0 inputs")
+                if out_ty != "f32":
+                    raise RuntimeError(f"const currently supports f32 only (out_ty={out_ty})")
+                dst = _fresh("const")
+                out_lines.append(f"        {dst} = arith.constant {_as_f32_const(attrs.get('value'))} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "f32"
+                continue
+
+            if op_name == "cast":
+                if len(in_ssa) != 1:
+                    raise RuntimeError("cast expects 1 input")
+                to_ty = _dtype_to_mlir(str(attrs.get("to") or out_ty or "f32"))
+                src_ty = in_ty[0]
+                if src_ty == to_ty:
+                    computed[outv] = in_ssa[0]
+                    computed_ty[outv] = str(to_ty)
+                    continue
+                dst = _fresh("cast")
+                if src_ty in {"f16", "bf16"} and to_ty == "f32":
+                    out_lines.append(f"        {dst} = arith.extf {in_ssa[0]} : {src_ty} to {to_ty}")
+                elif src_ty == "f32" and to_ty in {"f16", "bf16"}:
+                    out_lines.append(f"        {dst} = arith.truncf {in_ssa[0]} : {src_ty} to {to_ty}")
+                elif src_ty == "i1" and to_ty == "i32":
+                    # FlagGems comparison ops often cast bool -> i32 for output.
+                    out_lines.append(f"        {dst} = arith.extui {in_ssa[0]} : i1 to i32")
+                else:
+                    raise RuntimeError(f"unsupported cast: {src_ty} -> {to_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = str(to_ty)
+                continue
+
+            if op_name == "identity":
+                if len(in_ssa) != 1:
+                    raise RuntimeError("identity expects 1 input")
+                computed[outv] = in_ssa[0]
+                computed_ty[outv] = in_ty[0]
+                continue
+
+            if op_name == "abs":
+                if len(in_ssa) != 1 or in_ty[0] != "f32":
+                    raise RuntimeError("abs currently supports f32 only")
+                dst = _fresh("abs")
+                out_lines.append(f"        {dst} = math.absf {in_ssa[0]} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "f32"
+                continue
+
+            if op_name == "floor":
+                if len(in_ssa) != 1 or in_ty[0] != "f32":
+                    raise RuntimeError("floor currently supports f32 only")
+                dst = _fresh("floor")
+                out_lines.append(f"        {dst} = math.floor {in_ssa[0]} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "f32"
+                continue
+
+            if op_name == "ceil":
+                if len(in_ssa) != 1 or in_ty[0] != "f32":
+                    raise RuntimeError("ceil currently supports f32 only")
+                dst = _fresh("ceil")
+                out_lines.append(f"        {dst} = math.ceil {in_ssa[0]} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "f32"
+                continue
+
+            if op_name == "neg":
+                if len(in_ssa) != 1 or in_ty[0] != "f32":
+                    raise RuntimeError("neg currently supports f32 only")
+                dst = _fresh("neg")
+                out_lines.append(f"        {dst} = arith.negf {in_ssa[0]} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "f32"
+                continue
+
+            if op_name in {"add", "sub", "mul", "div"}:
+                if len(in_ssa) != 2 or in_ty[0] != "f32" or in_ty[1] != "f32":
+                    raise RuntimeError(f"{op_name} currently supports f32 binary only")
+                dst = _fresh(op_name)
+                arith = {"add": "arith.addf", "sub": "arith.subf", "mul": "arith.mulf", "div": "arith.divf"}[op_name]
+                out_lines.append(f"        {dst} = {arith} {in_ssa[0]}, {in_ssa[1]} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "f32"
+                continue
+
+            if op_name in {"max", "min"}:
+                if len(in_ssa) != 2 or in_ty[0] != "f32" or in_ty[1] != "f32":
+                    raise RuntimeError(f"{op_name} currently supports f32 binary only")
+                dst = _fresh(op_name)
+                arith = {"max": "arith.maximumf", "min": "arith.minimumf"}[op_name]
+                out_lines.append(f"        {dst} = {arith} {in_ssa[0]}, {in_ssa[1]} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "f32"
+                continue
+
+            if op_name in {"eq", "ne", "lt", "le", "gt", "ge"}:
+                if len(in_ssa) != 2 or in_ty[0] != "f32" or in_ty[1] != "f32":
+                    raise RuntimeError(f"{op_name} currently supports f32 binary only")
+                dst = _fresh(op_name)
+                pred = {
+                    "eq": "oeq",
+                    "ne": "one",
+                    "lt": "olt",
+                    "le": "ole",
+                    "gt": "ogt",
+                    "ge": "oge",
+                }[op_name]
+                out_lines.append(f"        {dst} = arith.cmpf {pred}, {in_ssa[0]}, {in_ssa[1]} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "i1"
+                continue
+
+            if op_name == "relu":
+                if len(in_ssa) != 1 or in_ty[0] != "f32":
+                    raise RuntimeError("relu currently supports f32 only")
+                c0f = _fresh("c0f")
+                dst = _fresh("relu")
+                out_lines.append(f"        {c0f} = arith.constant 0.0 : f32")
+                out_lines.append(f"        {dst} = arith.maximumf {in_ssa[0]}, {c0f} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "f32"
+                continue
+
+            if op_name == "exp":
+                if len(in_ssa) != 1 or in_ty[0] != "f32":
+                    raise RuntimeError("exp currently supports f32 only")
+                dst = _fresh("exp")
+                out_lines.append(f"        {dst} = math.exp {in_ssa[0]} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "f32"
+                continue
+
+            if op_name == "exp2":
+                if len(in_ssa) != 1 or in_ty[0] != "f32":
+                    raise RuntimeError("exp2 currently supports f32 only")
+                dst = _fresh("exp2")
+                out_lines.append(f"        {dst} = math.exp2 {in_ssa[0]} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "f32"
+                continue
+
+            if op_name == "log":
+                if len(in_ssa) != 1 or in_ty[0] != "f32":
+                    raise RuntimeError("log currently supports f32 only")
+                dst = _fresh("log")
+                out_lines.append(f"        {dst} = math.log {in_ssa[0]} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "f32"
+                continue
+
+            if op_name == "sqrt":
+                if len(in_ssa) != 1 or in_ty[0] != "f32":
+                    raise RuntimeError("sqrt currently supports f32 only")
+                dst = _fresh("sqrt")
+                out_lines.append(f"        {dst} = math.sqrt {in_ssa[0]} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "f32"
+                continue
+
+            if op_name == "rsqrt":
+                if len(in_ssa) != 1 or in_ty[0] != "f32":
+                    raise RuntimeError("rsqrt currently supports f32 only")
+                dst = _fresh("rsqrt")
+                out_lines.append(f"        {dst} = math.rsqrt {in_ssa[0]} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "f32"
+                continue
+
+            if op_name == "erf":
+                if len(in_ssa) != 1 or in_ty[0] != "f32":
+                    raise RuntimeError("erf currently supports f32 only")
+                dst = _fresh("erf")
+                out_lines.append(f"        {dst} = math.erf {in_ssa[0]} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "f32"
+                continue
+
+            if op_name in {"sin", "cos", "tan"}:
+                if len(in_ssa) != 1 or in_ty[0] != "f32":
+                    raise RuntimeError(f"{op_name} currently supports f32 only")
+                dst = _fresh(op_name)
+                mop = {"sin": "math.sin", "cos": "math.cos", "tan": "math.tan"}[op_name]
+                out_lines.append(f"        {dst} = {mop} {in_ssa[0]} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "f32"
+                continue
+
+            if op_name == "where":
+                if len(in_ssa) != 3:
+                    raise RuntimeError("where expects 3 inputs")
+                if in_ty[0] != "i1":
+                    raise RuntimeError(f"where condition must be bool/i1, got {in_ty[0]}")
+                if in_ty[1] != "f32" or in_ty[2] != "f32":
+                    raise RuntimeError("where currently supports f32 branches only")
+                dst = _fresh("where")
+                out_lines.append(f"        {dst} = arith.select {in_ssa[0]}, {in_ssa[1]}, {in_ssa[2]} : f32")
+                computed[outv] = dst
+                computed_ty[outv] = "f32"
+                continue
+
+            raise RuntimeError(f"unsupported op in cuda real-mlir wave: {op_name}")
+
+        # Store final output element.
+        final_ssa = computed.get(out_name)
+        if final_ssa is None:
+            last_out = str(getattr(list(intent.ops or [])[-1], "output", "")).strip() if intent.ops else ""
+            final_ssa = computed.get(last_out)
+        if not final_ssa:
+            raise RuntimeError(f"no computed value for output tensor: {out_name}")
+
+        out_val_ty = _infer_value_ty(out_name)
+        store_ssa = str(final_ssa)
+        if out_memref_elem_ty and out_val_ty and out_memref_elem_ty != out_val_ty:
+            if out_memref_elem_ty == "i8" and out_val_ty == "i1":
+                tmp = _fresh("out_i8")
+                out_lines.append(f"        {tmp} = arith.extui {store_ssa} : i1 to i8")
+                store_ssa = tmp
+            else:
+                raise RuntimeError(
+                    "unsupported scalar->memref conversion in cuda real-mlir wave: "
+                    f"{out_val_ty} -> {out_memref_elem_ty} for output={out_name}"
+                )
+        out_lines.append(f"        memref.store {store_ssa}, %{_mlir_ident(out_name)}[{idx_ssa}] : {out_memref}")
+        return out_lines
 
     # Assemble module text.
     lines: list[str] = []
@@ -612,12 +637,31 @@ def lower_intent_to_cuda_gpu_kernel(
     lines.append("      %bid = gpu.block_id x")
     lines.append("      %bdim = gpu.block_dim x")
     lines.append("      %tmp = arith.muli %bid, %bdim : index")
-    lines.append("      %i = arith.addi %tmp, %tid : index")
+    lines.append("      %lin = arith.addi %tmp, %tid : index")
+    lines.append("      %c0 = arith.constant 0 : index")
+    if need_rowcol:
+        assert out_n is not None
+        lines.append(f"      %cN = arith.constant {int(out_n)} : index")
     lines.append(f"      %c_total = arith.constant {int(out_total)} : index")
-    lines.append("      %pred = arith.cmpi ult, %i, %c_total : index")
-    lines.append("      scf.if %pred {")
-    lines.extend(if_lines)
-    lines.append("      }")
+    if elems_per_thread == 1:
+        idx_ssa = "%lin"
+        lines.append(f"      %pred = arith.cmpi ult, {idx_ssa}, %c_total : index")
+        lines.append("      scf.if %pred {")
+        lines.extend(_emit_elementwise_for_index(idx_ssa))
+        lines.append("      }")
+    else:
+        lines.append(f"      %c_elems = arith.constant {int(elems_per_thread)} : index")
+        lines.append("      %base = arith.muli %lin, %c_elems : index")
+        for lane in range(int(elems_per_thread)):
+            lane_c = f"%c_lane_{lane}"
+            lane_i = f"%i_{lane}"
+            lane_p = f"%pred_{lane}"
+            lines.append(f"      {lane_c} = arith.constant {int(lane)} : index")
+            lines.append(f"      {lane_i} = arith.addi %base, {lane_c} : index")
+            lines.append(f"      {lane_p} = arith.cmpi ult, {lane_i}, %c_total : index")
+            lines.append(f"      scf.if {lane_p} {{")
+            lines.extend(_emit_elementwise_for_index(lane_i))
+            lines.append("      }")
     lines.append("      gpu.return")
     lines.append("    }")
     lines.append("  }")
@@ -637,6 +681,7 @@ def lower_intent_to_cuda_gpu_kernel(
     out.meta["cuda_real_mlir_kernel_emitted"] = True
     out.meta["kernel_name"] = str(kernel_name)
     out.meta["cuda_real_mlir_output_total"] = int(out_total)
+    out.meta["cuda_real_mlir_elems_per_thread"] = int(elems_per_thread)
     return out
 
 

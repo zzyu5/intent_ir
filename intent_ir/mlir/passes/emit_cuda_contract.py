@@ -8,6 +8,40 @@ from intent_ir.mlir.convert_to_intent import to_intent
 from intent_ir.mlir.module import IntentMLIRModule
 
 
+def _infer_cuda_launch_from_meta(meta: Mapping[str, Any]) -> dict[str, Any]:
+    """
+    Real-MLIR CUDA kernels are specialized to concrete shape bindings at compile time.
+
+    When present, use this info to set an explicit launch config so runtime doesn't
+    have to guess (and so per-thread element unrolling can reduce thread count).
+    """
+
+    if not isinstance(meta, Mapping):
+        return {}
+    if not bool(meta.get("cuda_real_mlir_kernel_emitted")):
+        return {}
+    try:
+        out_total = int(meta.get("cuda_real_mlir_output_total") or 0)
+    except Exception:
+        out_total = 0
+    try:
+        elems = int(meta.get("cuda_real_mlir_elems_per_thread") or 1)
+    except Exception:
+        elems = 1
+    if out_total <= 0 or elems <= 0:
+        return {}
+
+    threads_needed = int((out_total + elems - 1) // elems)
+    # Keep this conservative. The runtime wrapper supports any 1D block size,
+    # but power-of-two / warp-multiple tends to behave better.
+    block_x = int(min(256, max(32, threads_needed)))
+    if block_x % 32 != 0:
+        block_x = int(((block_x + 31) // 32) * 32)
+    block_x = int(min(256, max(32, block_x)))
+    grid_x = int(max(1, (threads_needed + block_x - 1) // block_x))
+    return {"block": [int(block_x), 1, 1], "grid": [int(grid_x), 1, 1]}
+
+
 def _dim_to_json(dim: Any) -> Any:
     kind = getattr(dim, "kind", None)
     if kind == "sym":
@@ -129,11 +163,12 @@ def build_cuda_contract_from_intent(
         artifact_module_path=artifact_module_path,
         executable=executable,
     )
+    launch = _infer_cuda_launch_from_meta(dict(source_module.meta or {}) if source_module is not None else {})
     return MlirBackendContract(
         backend="cuda",
         kernel_name=str(intent.name),
         io_spec={"tensors": _tensor_io_spec(intent.tensors), "outputs": [str(x) for x in list(intent.outputs or [])]},
-        launch={},
+        launch=dict(launch),
         schedule=_schedule_to_json(intent.schedule),
         artifacts=artifacts,
         reason_context={"source_kind": str(source_kind), "mlir_backend_contract_used": True},
