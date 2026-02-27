@@ -92,6 +92,7 @@
     "silu2d",
     "sin2d",
     "softplus2d",
+    "softmax_inner",
     "sqrt2d",
     "sub2d",
     "tan2d",
