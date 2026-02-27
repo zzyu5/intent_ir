@@ -898,14 +898,18 @@ def lower_cuda_contract_to_kernel(
             # arg_names/scalars metadata that semantic-level contracts may not carry.
             if not isinstance(io_spec.get("arg_names"), list):
                 io_spec = dict(inv_io)
-        io_spec = _apply_historical_cuda_io_template(
-            io_spec=io_spec,
-            kernel_name=str(contract.kernel_name or ""),
-        )
-        io_spec = _apply_historical_cuda_io_template(
-            io_spec=io_spec,
-            kernel_name=str(exe_entry or contract.kernel_name or "intent"),
-        )
+        # Historical templates are a last-resort compatibility fallback. Do not
+        # override an explicit arg_names list, otherwise we can silently
+        # corrupt PTX param ordering (which is positional).
+        if not (isinstance(io_spec.get("arg_names"), list) and list(io_spec.get("arg_names") or [])):
+            io_spec = _apply_historical_cuda_io_template(
+                io_spec=io_spec,
+                kernel_name=str(contract.kernel_name or ""),
+            )
+            io_spec = _apply_historical_cuda_io_template(
+                io_spec=io_spec,
+                kernel_name=str(exe_entry or contract.kernel_name or "intent"),
+            )
         merged_bindings = _augment_scalar_bindings_from_io_spec(bindings=merged_bindings, io_spec=io_spec)
         io_spec = _augment_io_spec_arg_names_with_ptx_params(
             io_spec=io_spec,

@@ -393,6 +393,9 @@ def lower_intent_to_cuda_gpu_kernel(
                 if_lines.append(f"        {dst} = arith.extf {in_ssa[0]} : {src_ty} to {to_ty}")
             elif src_ty == "f32" and to_ty in {"f16", "bf16"}:
                 if_lines.append(f"        {dst} = arith.truncf {in_ssa[0]} : {src_ty} to {to_ty}")
+            elif src_ty == "i1" and to_ty == "i32":
+                # FlagGems comparison ops often cast bool -> i32 for output.
+                if_lines.append(f"        {dst} = arith.extui {in_ssa[0]} : i1 to i32")
             else:
                 raise RuntimeError(f"unsupported cast: {src_ty} -> {to_ty}")
             computed[outv] = dst
