@@ -1740,8 +1740,7 @@ def lower_intent_to_cuda_gpu_kernel(
                         and len(op4_in) == 2
                         and dims0 == [1]
                         and dims3 == [1]
-                        and keep0
-                        and keep3
+                        and (keep0 == keep3)
                     ):
                         in_name = str(op0_in[0])
                         if (
@@ -1758,11 +1757,25 @@ def lower_intent_to_cuda_gpu_kernel(
                             out_tt = (intent.tensors or {}).get(str(out_name))
                             max_tt = (intent.tensors or {}).get(max_out)
                             sum_tt = (intent.tensors or {}).get(sum_out)
-                            if in_tt is not None and out_tt is not None and max_tt is not None and sum_tt is not None:
+                            if in_tt is not None and out_tt is not None:
                                 in_shape = list(getattr(in_tt, "shape", []) or [])
                                 out_shape = list(getattr(out_tt, "shape", []) or [])
-                                max_shape = list(getattr(max_tt, "shape", []) or [])
-                                sum_shape = list(getattr(sum_tt, "shape", []) or [])
+                                max_ok = True
+                                sum_ok = True
+                                if max_tt is not None:
+                                    max_shape = list(getattr(max_tt, "shape", []) or [])
+                                    if len(max_shape) == 2:
+                                        m0 = _resolve_dim_int(max_shape[0], bindings)
+                                        n0 = _resolve_dim_int(max_shape[1], bindings)
+                                        if m0 is not None and n0 is not None:
+                                            max_ok = (int(m0) == int(out_m)) and (int(n0) == 1)
+                                if sum_tt is not None:
+                                    sum_shape = list(getattr(sum_tt, "shape", []) or [])
+                                    if len(sum_shape) == 2:
+                                        m0 = _resolve_dim_int(sum_shape[0], bindings)
+                                        n0 = _resolve_dim_int(sum_shape[1], bindings)
+                                        if m0 is not None and n0 is not None:
+                                            sum_ok = (int(m0) == int(out_m)) and (int(n0) == 1)
                                 if (
                                     len(in_shape) == 2
                                     and len(out_shape) == 2
@@ -1770,12 +1783,8 @@ def lower_intent_to_cuda_gpu_kernel(
                                     and _resolve_dim_int(in_shape[1], bindings) == int(out_n)
                                     and _resolve_dim_int(out_shape[0], bindings) == int(out_m)
                                     and _resolve_dim_int(out_shape[1], bindings) == int(out_n)
-                                    and len(max_shape) == 2
-                                    and len(sum_shape) == 2
-                                    and _resolve_dim_int(max_shape[0], bindings) == int(out_m)
-                                    and _resolve_dim_int(max_shape[1], bindings) == 1
-                                    and _resolve_dim_int(sum_shape[0], bindings) == int(out_m)
-                                    and _resolve_dim_int(sum_shape[1], bindings) == 1
+                                    and max_ok
+                                    and sum_ok
                                 ):
                                     in_ty = _dtype_to_mlir(str(getattr(in_tt, "dtype", "f32")))
                                     out_ty = _dtype_to_mlir(str(getattr(out_tt, "dtype", "f32")))
@@ -2231,9 +2240,13 @@ def lower_intent_to_cuda_gpu_kernel(
         out_memref = str(arg_specs[out_name2]["memref"])
 
         # One block per output row; compute max/sum reductions in shared memory.
-        launch_override = {"block": [256, 1, 1], "grid": [int(out_m), 1, 1]}
+        block_threads = 256
+        # Cache exp(x-max) in shared memory to avoid recomputing exp in the final store loop.
+        use_exp_shmem_cache = bool(red_n > 0 and red_n <= 2048)
+        sh_elems = int(block_threads + red_n) if use_exp_shmem_cache else int(block_threads)
+        launch_override = {"block": [int(block_threads), 1, 1], "grid": [int(out_m), 1, 1]}
         shared_global_sym = f"__intentir_sh_{_mlir_ident(kernel_name)}_f32"
-        shared_global_memref_ty = "memref<256xf32, 3>"
+        shared_global_memref_ty = f"memref<{int(sh_elems)}xf32, 3>"
 
         lines.append("      %tid = gpu.thread_id x")
         lines.append("      %bid = gpu.block_id x")
@@ -2244,6 +2257,10 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("      %pred_row = arith.cmpi ult, %bid, %cM : index")
         lines.append("      scf.if %pred_row {")
         lines.append("        %base = arith.muli %bid, %cN : index")
+        assert shared_global_sym is not None
+        lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
+        if use_exp_shmem_cache:
+            lines.append(f"        %cShOff = arith.constant {int(block_threads)} : index")
 
         # partial max
         lines.append("        %init_max = arith.constant -3.402823466e+38 : f32")
@@ -2254,12 +2271,10 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append("          scf.yield %acc_next : f32")
         lines.append("        }")
 
-        assert shared_global_sym is not None
-        assert shared_global_memref_ty == "memref<256xf32, 3>"
-        lines.append(f"        %sh = memref.get_global @{shared_global_sym} : {shared_global_memref_ty}")
-        lines.append("        memref.store %partial_max, %sh[%tid] : memref<256xf32, 3>")
+        lines.append(f"        memref.store %partial_max, %sh[%tid] : {shared_global_memref_ty}")
         lines.append("        gpu.barrier")
-        for stride in (128, 64, 32, 16, 8, 4, 2, 1):
+        stride = int(block_threads // 2)
+        while stride >= 1:
             cS = f"%cS_max_{stride}"
             pS = f"%pS_max_{stride}"
             tid2 = f"%tid_max_{stride}"
@@ -2270,13 +2285,15 @@ def lower_intent_to_cuda_gpu_kernel(
             lines.append(f"        {pS} = arith.cmpi ult, %tid, {cS} : index")
             lines.append(f"        scf.if {pS} {{")
             lines.append(f"          {tid2} = arith.addi %tid, {cS} : index")
-            lines.append(f"          {a} = memref.load %sh[%tid] : memref<256xf32, 3>")
-            lines.append(f"          {b} = memref.load %sh[{tid2}] : memref<256xf32, 3>")
+            lines.append(f"          {a} = memref.load %sh[%tid] : {shared_global_memref_ty}")
+            lines.append(f"          {b} = memref.load %sh[{tid2}] : {shared_global_memref_ty}")
             lines.append(f"          {s} = arith.maximumf {a}, {b}{fm} : f32")
-            lines.append(f"          memref.store {s}, %sh[%tid] : memref<256xf32, 3>")
+            lines.append(f"          memref.store {s}, %sh[%tid] : {shared_global_memref_ty}")
             lines.append("        }")
-            lines.append("        gpu.barrier")
-        lines.append("        %maxv = memref.load %sh[%c0] : memref<256xf32, 3>")
+            if int(stride) > 32:
+                lines.append("        gpu.barrier")
+            stride //= 2
+        lines.append(f"        %maxv = memref.load %sh[%c0] : {shared_global_memref_ty}")
 
         # partial sum(exp(x - max))
         lines.append("        %c0f = arith.constant 0.0 : f32")
@@ -2285,13 +2302,17 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"          %x = memref.load {arg_ssa[inp_name]}[%idx] : {in_memref}")
         lines.append(f"          %xc = arith.subf %x, %maxv{fm} : f32")
         lines.append(f"          %e = math.exp %xc{fm} : f32")
+        if use_exp_shmem_cache:
+            lines.append("          %sh_i = arith.addi %cShOff, %j : index")
+            lines.append(f"          memref.store %e, %sh[%sh_i] : {shared_global_memref_ty}")
         lines.append(f"          %acc_next = arith.addf %acc, %e{fm} : f32")
         lines.append("          scf.yield %acc_next : f32")
         lines.append("        }")
 
-        lines.append("        memref.store %partial_sum, %sh[%tid] : memref<256xf32, 3>")
+        lines.append(f"        memref.store %partial_sum, %sh[%tid] : {shared_global_memref_ty}")
         lines.append("        gpu.barrier")
-        for stride in (128, 64, 32, 16, 8, 4, 2, 1):
+        stride = int(block_threads // 2)
+        while stride >= 1:
             cS = f"%cS_sum_{stride}"
             pS = f"%pS_sum_{stride}"
             tid2 = f"%tid_sum_{stride}"
@@ -2302,21 +2323,28 @@ def lower_intent_to_cuda_gpu_kernel(
             lines.append(f"        {pS} = arith.cmpi ult, %tid, {cS} : index")
             lines.append(f"        scf.if {pS} {{")
             lines.append(f"          {tid2} = arith.addi %tid, {cS} : index")
-            lines.append(f"          {a} = memref.load %sh[%tid] : memref<256xf32, 3>")
-            lines.append(f"          {b} = memref.load %sh[{tid2}] : memref<256xf32, 3>")
+            lines.append(f"          {a} = memref.load %sh[%tid] : {shared_global_memref_ty}")
+            lines.append(f"          {b} = memref.load %sh[{tid2}] : {shared_global_memref_ty}")
             lines.append(f"          {s} = arith.addf {a}, {b}{fm} : f32")
-            lines.append(f"          memref.store {s}, %sh[%tid] : memref<256xf32, 3>")
+            lines.append(f"          memref.store {s}, %sh[%tid] : {shared_global_memref_ty}")
             lines.append("        }")
-            lines.append("        gpu.barrier")
-        lines.append("        %sumv = memref.load %sh[%c0] : memref<256xf32, 3>")
+            if int(stride) > 32:
+                lines.append("        gpu.barrier")
+            stride //= 2
+        lines.append(f"        %sumv = memref.load %sh[%c0] : {shared_global_memref_ty}")
 
         # final output
         lines.append("        scf.for %j = %tid to %cN step %bdim {")
         lines.append("          %idx = arith.addi %base, %j : index")
-        lines.append(f"          %x = memref.load {arg_ssa[inp_name]}[%idx] : {in_memref}")
-        lines.append(f"          %xc = arith.subf %x, %maxv{fm} : f32")
-        lines.append(f"          %e = math.exp %xc{fm} : f32")
-        lines.append(f"          %o = arith.divf %e, %sumv{fm} : f32")
+        if use_exp_shmem_cache:
+            lines.append("          %sh_i = arith.addi %cShOff, %j : index")
+            lines.append(f"          %e = memref.load %sh[%sh_i] : {shared_global_memref_ty}")
+            lines.append(f"          %o = arith.divf %e, %sumv{fm} : f32")
+        else:
+            lines.append(f"          %x = memref.load {arg_ssa[inp_name]}[%idx] : {in_memref}")
+            lines.append(f"          %xc = arith.subf %x, %maxv{fm} : f32")
+            lines.append(f"          %e = math.exp %xc{fm} : f32")
+            lines.append(f"          %o = arith.divf %e, %sumv{fm} : f32")
         lines.append(f"          memref.store %o, {arg_ssa[out_name2]}[%idx] : {out_memref}")
         lines.append("        }")
         lines.append("      }")

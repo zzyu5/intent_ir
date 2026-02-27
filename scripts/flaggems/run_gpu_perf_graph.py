@@ -720,6 +720,24 @@ def _build_native_launch_adapter(
 
             return _run, {"launch_source": "kernel_adapter:ai_bench_layernorm", "arg_count": 9}
 
+    if kernel_key == "aibenchsoftmax":
+        callee = getattr(module, "ai_bench_softmax_kernel", None)
+        if callable(callee):
+            inp = _pick_tensor("input", "in_ptr", "inp", "x", "X")
+            r = int(_pick_scalar("R", default=int(getattr(inp, "shape", [1, 1])[0])))
+            c = int(_pick_scalar("C", default=int(getattr(inp, "shape", [1, 1])[1])))
+
+            # Stable output buffers are required for CUDA graph capture.
+            out = torch.empty((r, c), device=inp.device, dtype=torch.float32)
+            block = 1 << (int(c) - 1).bit_length()
+            if block > 1024:
+                block = 1024
+
+            def _run() -> None:
+                callee[(r,)](out, inp, r, c, BLOCK_SIZE=block)
+
+            return _run, {"launch_source": "kernel_adapter:ai_bench_softmax", "arg_count": 4}
+
     if kernel_key == "rmsnorm2d":
         callee = _pick_callable("rms_norm2d")
         if callee is not None:

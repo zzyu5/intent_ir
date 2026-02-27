@@ -11,6 +11,7 @@
     "addmv2d",
     "addr2d",
     "ai_bench_layernorm",
+    "ai_bench_softmax",
     "angle2d",
     "any_kernel_dim",
     "arange1d",
