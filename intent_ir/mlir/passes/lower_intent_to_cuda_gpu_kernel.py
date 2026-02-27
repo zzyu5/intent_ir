@@ -356,7 +356,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 ssa_vec = _fresh(f"{name}_splat")
                 lines = [
                     f"        {ssa_scalar} = memref.load %{_mlir_ident(name)}[%c0] : {memref}",
-                    f"        {ssa_vec} = vector.splat {ssa_scalar} : f32 to {vec_ty}",
+                    f"        {ssa_vec} = vector.splat {ssa_scalar} : {vec_ty}",
                 ]
                 loaded[name] = ssa_vec
                 loaded_ty[name] = str(vec_ty)
@@ -401,7 +401,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 ssa_scalar = _fresh("const_scalar")
                 dst = _fresh("const")
                 out_lines.append(f"        {ssa_scalar} = arith.constant {_as_f32_const(attrs.get('value'))} : f32")
-                out_lines.append(f"        {dst} = vector.splat {ssa_scalar} : f32 to {vec_ty}")
+                out_lines.append(f"        {dst} = vector.splat {ssa_scalar} : {vec_ty}")
                 computed[outv] = dst
                 computed_ty[outv] = str(vec_ty)
                 continue
@@ -476,7 +476,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 c0v = _fresh("c0v")
                 dst = _fresh("relu")
                 out_lines.append(f"        {c0s} = arith.constant 0.0 : f32")
-                out_lines.append(f"        {c0v} = vector.splat {c0s} : f32 to {vec_ty}")
+                out_lines.append(f"        {c0v} = vector.splat {c0s} : {vec_ty}")
                 out_lines.append(f"        {dst} = arith.maximumf {in_ssa[0]}, {c0v} : {vec_ty}")
                 computed[outv] = dst
                 computed_ty[outv] = str(vec_ty)
