@@ -568,8 +568,26 @@ def _layer_norm_persistent_fallback_intent():
         )
     )
     ops.append(Op(op="mul", inputs=["centered", "rstd_2d"], output="norm", attrs={}))
-    ops.append(Op(op="mul", inputs=["norm", "weight_ptr"], output="scaled", attrs={}))
-    ops.append(Op(op="add", inputs=["scaled", "bias_ptr"], output="out_ptr", attrs={}))
+    ops.append(
+        Op(
+            op="broadcast_in_dim",
+            inputs=["weight_ptr"],
+            output="weight_2d",
+            attrs={"out_shape": ["M", "N"], "broadcast_dims": [1]},
+        )
+    )
+    tensors["weight_2d"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(
+        Op(
+            op="broadcast_in_dim",
+            inputs=["bias_ptr"],
+            output="bias_2d",
+            attrs={"out_shape": ["M", "N"], "broadcast_dims": [1]},
+        )
+    )
+    tensors["bias_2d"] = TensorType(dtype="f32", shape=[Dim("sym", "M"), Dim("sym", "N")], layout=rm)
+    ops.append(Op(op="mul", inputs=["norm", "weight_2d"], output="scaled", attrs={}))
+    ops.append(Op(op="add", inputs=["scaled", "bias_2d"], output="out_ptr", attrs={}))
     schedule = ScheduleSketch(tile_m=None, tile_n=None, tile_k=None, vec_width=1, pipeline_depth=1)
     return IntentFunction(
         name="layer_norm_persistent",
@@ -1589,13 +1607,15 @@ def run_pipeline_for_spec(
         except Exception as e:
             report["diff_repair"] = {"attempted": True, "ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    # Safety-net: if groupnorm still fails diff, fall back to a deterministic
-    # compiler-style IntentIR so downstream (remote RVV/codegen) remains usable.
-    if (not diff_ok) and spec.name == "group_norm_kernel":
+    # Safety-net: if specific complex kernels still fail diff, fall back to a
+    # deterministic compiler-style IntentIR so downstream paths remain usable.
+    if (not diff_ok) and spec.name in {"group_norm_kernel", "layer_norm_persistent"}:
         try:
             report.setdefault("intent_llm", report.get("intent"))
             report.setdefault("intent_expanded_llm", report.get("intent_expanded"))
-            fb_intent = _group_norm_fallback_intent()
+            fb_intent = _deterministic_fallback_intent_for(spec.name)
+            if fb_intent is None:
+                raise RuntimeError(f"missing deterministic fallback intent for kernel={spec.name}")
             _ensure_schedule_cuda(fb_intent, spec=spec)
             fb_exp = expand_macros(fb_intent)
             (out_dir / f"{spec.name}.intentir.fallback.mlir").write_text(_intent_to_mlir_text(fb_intent), encoding="utf-8")
@@ -1641,8 +1661,8 @@ def run_pipeline_for_spec(
             if diff_ok:
                 report["intent"] = fb_intent.to_json_dict()
                 report["intent_expanded"] = fb_exp.to_json_dict()
-                cand_for_run = CandidateIntent(intent=fb_exp, llm_trace={"provider": "fallback_group_norm"})
-                report["intent_fallback"] = {"used": True, "kind": "group_norm_deterministic"}
+                cand_for_run = CandidateIntent(intent=fb_exp, llm_trace={"provider": f"fallback_{spec.name}"})
+                report["intent_fallback"] = {"used": True, "kind": f"{spec.name}_deterministic"}
         except Exception as e:
             report["intent_fallback"] = {"used": False, "error": f"{type(e).__name__}: {e}"}
 
