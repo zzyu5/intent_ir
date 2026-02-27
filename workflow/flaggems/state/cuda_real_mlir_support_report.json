@@ -1,0 +1,905 @@
+{
+  "schema_version": "intentir_cuda_real_mlir_support_report_v1",
+  "generated_at_utc": "2026-02-27T17:16:56+00:00",
+  "repo": {
+    "head_commit": "844d38adf037cd2ed9d9e7f603621e6c8ce13c2e",
+    "branch": "compiler-cleanup-v1",
+    "dirty": true,
+    "git_describe": "844d38a"
+  },
+  "sources": {
+    "coverage_batches": "workflow/flaggems/state/coverage_batches.json",
+    "seed_dir": "artifacts/flaggems_seed_cache"
+  },
+  "supported_ops": [
+    "abs",
+    "acos",
+    "add",
+    "and",
+    "atan",
+    "bitwise_and",
+    "bitwise_left_shift",
+    "bitwise_not",
+    "bitwise_or",
+    "bitwise_right_shift",
+    "broadcast_in_dim",
+    "cast",
+    "ceil",
+    "concat",
+    "const",
+    "cos",
+    "div",
+    "eq",
+    "erf",
+    "exp",
+    "exp2",
+    "floor",
+    "gather",
+    "ge",
+    "gt",
+    "identity",
+    "le",
+    "log",
+    "lt",
+    "max",
+    "min",
+    "mul",
+    "ne",
+    "neg",
+    "not",
+    "pad",
+    "pow",
+    "relu",
+    "remainder",
+    "reshape",
+    "rsqrt",
+    "sin",
+    "sqrt",
+    "sub",
+    "tan",
+    "where"
+  ],
+  "kernels_total": 158,
+  "kernels_supported": 74,
+  "kernels_unsupported": 84,
+  "supported_kernels": [
+    "abs2d",
+    "acos2d",
+    "add2d",
+    "addcdiv2d",
+    "addcmul2d",
+    "angle2d",
+    "atan2d",
+    "bitwise_and2d",
+    "bitwise_left_shift2d",
+    "bitwise_not2d",
+    "bitwise_or2d",
+    "bitwise_right_shift2d",
+    "cast2d",
+    "cat2d",
+    "ceil2d",
+    "celu2d",
+    "clamp2d",
+    "constant_pad_nd2d",
+    "cos2d",
+    "div2d",
+    "elu2d",
+    "eq2d",
+    "erf2d",
+    "exp22d",
+    "exp2d",
+    "full2d",
+    "ge2d",
+    "gt2d",
+    "hstack2d",
+    "identity2d",
+    "isclose2d",
+    "isfinite2d",
+    "isinf2d",
+    "isnan2d",
+    "le2d",
+    "lerp2d",
+    "log2d",
+    "logical_and2d",
+    "logical_not2d",
+    "logical_or2d",
+    "logical_xor2d",
+    "lt2d",
+    "masked_fill2d",
+    "maximum2d",
+    "minimum2d",
+    "mul2d",
+    "nan_to_num2d",
+    "ne2d",
+    "neg2d",
+    "pad2d",
+    "pow_scalar2d",
+    "pow_tensor_scalar2d",
+    "pow_tensor_tensor2d",
+    "reciprocal2d",
+    "remainder2d",
+    "repeat2d",
+    "rsqrt2d",
+    "sin2d",
+    "sqrt2d",
+    "sub2d",
+    "tan2d",
+    "threshold2d",
+    "tile2d",
+    "vstack2d",
+    "gelu2d",
+    "log_sigmoid2d",
+    "relu2d",
+    "sigmoid2d",
+    "silu2d",
+    "softplus2d",
+    "tanh2d",
+    "flip2d",
+    "index_select2d",
+    "where2d"
+  ],
+  "unsupported_kernels": [
+    {
+      "kernel": "addmv2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "reduce_sum"
+      ]
+    },
+    {
+      "kernel": "addr2d",
+      "reasons": [
+        "broadcast_in_dim_non_scalar_input"
+      ]
+    },
+    {
+      "kernel": "arange1d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "iota"
+      ]
+    },
+    {
+      "kernel": "diag2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "iota"
+      ]
+    },
+    {
+      "kernel": "diag_embed2d",
+      "reasons": [
+        "output_rank_gt2:3"
+      ]
+    },
+    {
+      "kernel": "eye2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "iota"
+      ]
+    },
+    {
+      "kernel": "eye_m2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "iota"
+      ]
+    },
+    {
+      "kernel": "glu2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "glu"
+      ]
+    },
+    {
+      "kernel": "isin1d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "reduce_any"
+      ]
+    },
+    {
+      "kernel": "kron2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "kron"
+      ]
+    },
+    {
+      "kernel": "linspace1d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "iota"
+      ]
+    },
+    {
+      "kernel": "logspace1d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "iota"
+      ]
+    },
+    {
+      "kernel": "min2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "reduce_min"
+      ]
+    },
+    {
+      "kernel": "min_dim2d",
+      "reasons": [
+        "multi_output"
+      ]
+    },
+    {
+      "kernel": "mse_loss2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "mse_loss"
+      ]
+    },
+    {
+      "kernel": "mv2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "matmul"
+      ]
+    },
+    {
+      "kernel": "nll_loss2d_forward",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "nll_loss2d_forward"
+      ]
+    },
+    {
+      "kernel": "nll_loss_forward",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "nll_loss_forward"
+      ]
+    },
+    {
+      "kernel": "nonzero2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "nonzero"
+      ]
+    },
+    {
+      "kernel": "one_hot2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "iota"
+      ]
+    },
+    {
+      "kernel": "per_token_group_quant_fp8_2d",
+      "reasons": [
+        "multi_output"
+      ]
+    },
+    {
+      "kernel": "polar2d",
+      "reasons": [
+        "output_rank_gt2:3"
+      ]
+    },
+    {
+      "kernel": "quantile2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "quantile"
+      ]
+    },
+    {
+      "kernel": "repeat_interleave_self_int1d",
+      "reasons": [
+        "gather_requires_2d_output"
+      ]
+    },
+    {
+      "kernel": "repeat_interleave_self_tensor1d",
+      "reasons": [
+        "gather_requires_2d_output"
+      ]
+    },
+    {
+      "kernel": "repeat_interleave_tensor1d",
+      "reasons": [
+        "gather_requires_2d_output"
+      ]
+    },
+    {
+      "kernel": "row_max",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "reduce_max"
+      ]
+    },
+    {
+      "kernel": "sort2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "sort"
+      ]
+    },
+    {
+      "kernel": "sort_stable2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "sort"
+      ]
+    },
+    {
+      "kernel": "stack2d",
+      "reasons": [
+        "output_rank_gt2:3"
+      ]
+    },
+    {
+      "kernel": "topk2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "iota",
+        "sort"
+      ]
+    },
+    {
+      "kernel": "trace2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "iota",
+        "reduce_sum"
+      ]
+    },
+    {
+      "kernel": "triu2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "iota"
+      ]
+    },
+    {
+      "kernel": "unique2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "unique"
+      ]
+    },
+    {
+      "kernel": "allclose2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "reduce_any"
+      ]
+    },
+    {
+      "kernel": "any_kernel_dim",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "reduce_any"
+      ]
+    },
+    {
+      "kernel": "argmax2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "argmax"
+      ]
+    },
+    {
+      "kernel": "argmin2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "argmin"
+      ]
+    },
+    {
+      "kernel": "count_nonzero2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "reduce_sum"
+      ]
+    },
+    {
+      "kernel": "cumsum2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "cumsum",
+        "iota"
+      ]
+    },
+    {
+      "kernel": "flash_attn_varlen_func_bhsd",
+      "reasons": [
+        "output_rank_gt2:4"
+      ]
+    },
+    {
+      "kernel": "log_softmax2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "softmax"
+      ]
+    },
+    {
+      "kernel": "prod2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "reduce_prod"
+      ]
+    },
+    {
+      "kernel": "prod_dim2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "reduce_prod"
+      ]
+    },
+    {
+      "kernel": "row_all",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "reduce_any"
+      ]
+    },
+    {
+      "kernel": "row_mean",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "reduce_sum"
+      ]
+    },
+    {
+      "kernel": "row_sum",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "reduce_sum"
+      ]
+    },
+    {
+      "kernel": "softmax_inner",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "reduce_max",
+        "reduce_sum"
+      ]
+    },
+    {
+      "kernel": "std2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "std"
+      ]
+    },
+    {
+      "kernel": "var_mean2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "std"
+      ]
+    },
+    {
+      "kernel": "batch_norm2d",
+      "reasons": [
+        "multi_output"
+      ]
+    },
+    {
+      "kernel": "group_norm_kernel",
+      "reasons": [
+        "multi_output"
+      ]
+    },
+    {
+      "kernel": "layer_norm_persistent",
+      "reasons": [
+        "multi_output"
+      ]
+    },
+    {
+      "kernel": "normed_cumsum2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "cumsum",
+        "reduce_sum"
+      ]
+    },
+    {
+      "kernel": "rms_norm2d",
+      "reasons": [
+        "multi_output"
+      ]
+    },
+    {
+      "kernel": "vector_norm2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "reduce_sum"
+      ]
+    },
+    {
+      "kernel": "weight_norm2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "reduce_sum"
+      ]
+    },
+    {
+      "kernel": "gather2d",
+      "reasons": [
+        "gather_requires_2d_output"
+      ]
+    },
+    {
+      "kernel": "index_add2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "index_add"
+      ]
+    },
+    {
+      "kernel": "index_put2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "index_put"
+      ]
+    },
+    {
+      "kernel": "masked_scatter2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "masked_scatter"
+      ]
+    },
+    {
+      "kernel": "masked_select2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "masked_select"
+      ]
+    },
+    {
+      "kernel": "scatter2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "scatter"
+      ]
+    },
+    {
+      "kernel": "select_scatter2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "select_scatter"
+      ]
+    },
+    {
+      "kernel": "slice_scatter2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "slice_scatter"
+      ]
+    },
+    {
+      "kernel": "addmm2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "matmul"
+      ]
+    },
+    {
+      "kernel": "baddbmm3d",
+      "reasons": [
+        "output_rank_gt2:3"
+      ]
+    },
+    {
+      "kernel": "bmm3d",
+      "reasons": [
+        "output_rank_gt2:3"
+      ]
+    },
+    {
+      "kernel": "cummax1d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "cummax"
+      ]
+    },
+    {
+      "kernel": "cummin1d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "cummin"
+      ]
+    },
+    {
+      "kernel": "dot1d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "reduce_sum"
+      ]
+    },
+    {
+      "kernel": "mm2d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "matmul"
+      ]
+    },
+    {
+      "kernel": "vdot1d",
+      "reasons": [
+        "unsupported_ops"
+      ],
+      "unsupported_ops": [
+        "reduce_sum"
+      ]
+    },
+    {
+      "kernel": "avg_pool2d_nchw",
+      "reasons": [
+        "output_rank_gt2:4"
+      ]
+    },
+    {
+      "kernel": "conv1d_ncl",
+      "reasons": [
+        "output_rank_gt2:3"
+      ]
+    },
+    {
+      "kernel": "conv2d_nchw",
+      "reasons": [
+        "output_rank_gt2:4"
+      ]
+    },
+    {
+      "kernel": "conv3d_ncdhw",
+      "reasons": [
+        "output_rank_gt2:5"
+      ]
+    },
+    {
+      "kernel": "conv_depthwise2d_nchw",
+      "reasons": [
+        "output_rank_gt2:4"
+      ]
+    },
+    {
+      "kernel": "max_pool2d_with_indices_nchw",
+      "reasons": [
+        "multi_output"
+      ]
+    },
+    {
+      "kernel": "upsample_bicubic2d_aa",
+      "reasons": [
+        "output_rank_gt2:4"
+      ]
+    },
+    {
+      "kernel": "upsample_nearest1d_ncl",
+      "reasons": [
+        "output_rank_gt2:3"
+      ]
+    },
+    {
+      "kernel": "upsample_nearest2d_nchw",
+      "reasons": [
+        "output_rank_gt2:4"
+      ]
+    },
+    {
+      "kernel": "embedding2d",
+      "reasons": [
+        "gather_requires_2d_output"
+      ]
+    },
+    {
+      "kernel": "scaled_dot_product_attention_bhsd",
+      "reasons": [
+        "output_rank_gt2:4"
+      ]
+    }
+  ],
+  "op_freq": {
+    "const": 185,
+    "add": 167,
+    "mul": 161,
+    "where": 81,
+    "cast": 70,
+    "lt": 42,
+    "gather": 36,
+    "div": 33,
+    "broadcast_in_dim": 30,
+    "and": 26,
+    "iota": 22,
+    "sub": 21,
+    "abs": 20,
+    "reduce_sum": 18,
+    "ne": 12,
+    "exp": 11,
+    "identity": 10,
+    "gt": 8,
+    "not": 8,
+    "max": 7,
+    "reshape": 7,
+    "min": 6,
+    "le": 5,
+    "matmul": 5,
+    "rsqrt": 5,
+    "eq": 4,
+    "log": 4,
+    "reduce_any": 4,
+    "concat": 3,
+    "pow": 3,
+    "reduce_max": 3,
+    "sort": 3,
+    "sqrt": 3,
+    "argmin": 2,
+    "cumsum": 2,
+    "erf": 2,
+    "ge": 2,
+    "max_pool2d_with_indices": 2,
+    "pad": 2,
+    "reduce_min": 2,
+    "reduce_prod": 2,
+    "scaled_dot_product_attention": 2,
+    "std": 2,
+    "acos": 1,
+    "argmax": 1,
+    "atan": 1,
+    "avg_pool2d": 1,
+    "bitwise_and": 1,
+    "bitwise_left_shift": 1,
+    "bitwise_not": 1,
+    "bitwise_or": 1,
+    "bitwise_right_shift": 1,
+    "ceil": 1,
+    "conv1d": 1,
+    "conv2d": 1,
+    "conv3d": 1,
+    "conv_depthwise2d": 1,
+    "cos": 1,
+    "cummax": 1,
+    "cummin": 1,
+    "glu": 1,
+    "index_add": 1,
+    "index_put": 1,
+    "kron": 1,
+    "masked_scatter": 1,
+    "masked_select": 1,
+    "mse_loss": 1,
+    "nll_loss2d_forward": 1,
+    "nll_loss_forward": 1,
+    "nonzero": 1,
+    "polar": 1,
+    "quantile": 1,
+    "remainder": 1,
+    "scatter": 1,
+    "select_scatter": 1,
+    "sin": 1,
+    "slice_scatter": 1,
+    "softmax": 1,
+    "stack": 1,
+    "tan": 1,
+    "unique": 1,
+    "upsample_nearest1d": 1,
+    "upsample_nearest2d": 1
+  }
+}
