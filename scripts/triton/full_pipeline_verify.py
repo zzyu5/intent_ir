@@ -28,6 +28,30 @@ def main() -> None:
     ap.add_argument("--list", action="store_true", help="List available kernels and exit")
     ap.add_argument("--cases-limit", type=int, default=8)
     ap.add_argument("--backend-target", choices=["rvv", "cuda_h100", "cuda_5090d"], default=None)
+    ap.add_argument(
+        "--stage-c",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable Stage C verification (metamorphic/bounded/numerical stability).",
+    )
+    ap.add_argument(
+        "--stage-c-max-cases",
+        type=int,
+        default=None,
+        help="Max cases for bounded exhaustive Stage C (None uses kernel spec default).",
+    )
+    ap.add_argument(
+        "--mutation-kill",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable mutation-kill verification (very expensive).",
+    )
+    ap.add_argument(
+        "--mutation-bounded-max-cases",
+        type=int,
+        default=None,
+        help="Max bounded cases inside mutation-kill (None uses stage-c-max-cases).",
+    )
     ap.add_argument("--out-dir", type=str, default=None)
     args = ap.parse_args()
 
@@ -56,6 +80,10 @@ def main() -> None:
                 out_dir=out_dir,
                 cases_limit=int(args.cases_limit),
                 backend_target=(str(args.backend_target) if args.backend_target else None),
+                enable_stage_c=bool(args.stage_c),
+                stage_c_max_cases=args.stage_c_max_cases,
+                enable_mutation_kill=bool(args.mutation_kill),
+                mutation_bounded_max_cases=args.mutation_bounded_max_cases,
             )
         except Exception as e:
             print("Pipeline failed:", e)
@@ -69,4 +97,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

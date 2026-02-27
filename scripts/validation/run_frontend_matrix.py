@@ -107,6 +107,18 @@ def main() -> None:
     ap.add_argument("--backend-target", choices=["rvv", "cuda_h100", "cuda_5090d"], default="cuda_5090d")
     ap.add_argument("--cases-limit", type=int, default=8)
     ap.add_argument("--stream", action=argparse.BooleanOptionalAction, default=True)
+    ap.add_argument(
+        "--stage-c",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Enable Stage C verification in all suites (slow). Default off for matrix runs.",
+    )
+    ap.add_argument(
+        "--mutation-kill",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Enable mutation-kill verification in all suites (very slow). Default off for matrix runs.",
+    )
     ap.add_argument("--with-perf", action=argparse.BooleanOptionalAction, default=False)
     ap.add_argument("--perf-out-dir", default="", help="Optional perf out dir (default: <round-dir>/perf)")
     args = ap.parse_args()
@@ -141,6 +153,8 @@ def main() -> None:
                 str(int(args.cases_limit)),
                 "--backend-target",
                 backend_target,
+                ("--stage-c" if bool(args.stage_c) else "--no-stage-c"),
+                ("--mutation-kill" if bool(args.mutation_kill) else "--no-mutation-kill"),
                 "--out-dir",
                 str(suite_dirs["triton_native_coverage_full"]),
             ],
@@ -162,6 +176,8 @@ def main() -> None:
                 "strict",
                 "--backend-target",
                 backend_target,
+                ("--stage-c" if bool(args.stage_c) else "--no-stage-c"),
+                ("--mutation-kill" if bool(args.mutation_kill) else "--no-mutation-kill"),
                 "--out-dir",
                 str(suite_dirs["triton_flaggems_coverage_full"]),
             ],
@@ -177,6 +193,8 @@ def main() -> None:
                 str(int(args.cases_limit)),
                 "--backend-target",
                 backend_target,
+                ("--stage-c" if bool(args.stage_c) else "--no-stage-c"),
+                ("--mutation-kill" if bool(args.mutation_kill) else "--no-mutation-kill"),
                 "--out-dir",
                 str(suite_dirs["tilelang_coverage_full"]),
             ],
@@ -192,6 +210,8 @@ def main() -> None:
                 str(int(args.cases_limit)),
                 "--backend-target",
                 backend_target,
+                ("--stage-c" if bool(args.stage_c) else "--no-stage-c"),
+                ("--mutation-kill" if bool(args.mutation_kill) else "--no-mutation-kill"),
                 "--out-dir",
                 str(suite_dirs["cuda_coverage_full"]),
             ],
@@ -251,6 +271,7 @@ def main() -> None:
         "date_tag": str(date_tag),
         "backend_target": str(backend_target),
         "cases_limit": int(args.cases_limit),
+        "verification_config": {"stage_c": bool(args.stage_c), "mutation_kill": bool(args.mutation_kill)},
         "round_dir": str(round_dir),
         "stages": stages,
         "perf": perf_rows,
@@ -265,4 +286,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

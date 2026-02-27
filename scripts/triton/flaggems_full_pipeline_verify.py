@@ -92,6 +92,30 @@ def main() -> None:
         help="Backend preflight target for IntentIR capability checks (default: rvv).",
     )
     ap.add_argument(
+        "--stage-c",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable Stage C verification (metamorphic/bounded/numerical stability).",
+    )
+    ap.add_argument(
+        "--stage-c-max-cases",
+        type=int,
+        default=None,
+        help="Max cases for bounded exhaustive Stage C (None uses kernel spec default).",
+    )
+    ap.add_argument(
+        "--mutation-kill",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable mutation-kill verification (very expensive).",
+    )
+    ap.add_argument(
+        "--mutation-bounded-max-cases",
+        type=int,
+        default=None,
+        help="Max bounded cases inside mutation-kill (None uses stage-c-max-cases).",
+    )
+    ap.add_argument(
         "--strict-kernel-failure",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -205,6 +229,10 @@ def main() -> None:
                 execution_policy=config.execution_policy,
                 triton_provider="flaggems",
                 backend_target=str(args.backend_target),
+                enable_stage_c=bool(args.stage_c),
+                stage_c_max_cases=args.stage_c_max_cases,
+                enable_mutation_kill=bool(args.mutation_kill),
+                mutation_bounded_max_cases=args.mutation_bounded_max_cases,
             )
         except Exception as e:
             elapsed = time.time() - start_ts
