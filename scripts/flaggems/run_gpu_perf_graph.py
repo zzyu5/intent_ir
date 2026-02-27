@@ -274,35 +274,35 @@ def _bench_graph(
 ) -> dict[str, float]:
     if int(iters) <= 0:
         raise RuntimeError("iters must be > 0")
-    # Capture/replay on an explicit stream to avoid "empty graph" captures when
-    # a callee launches work on a non-default stream (common for custom wrappers).
-    stream = torch.cuda.Stream()
+    # Capture/replay on the current stream.
+    # `torch.cuda.graph()` uses an internal side-stream by default, which can
+    # produce empty captures if a callee (e.g. a custom C++/driver wrapper)
+    # launches work on the default/current stream instead of the side-stream.
+    capture_stream = torch.cuda.current_stream()
 
     torch.cuda.synchronize()
     fn()
     torch.cuda.synchronize()
 
-    with torch.cuda.stream(stream):
-        for _ in range(max(0, int(warmup))):
-            fn()
-    stream.synchronize()
+    for _ in range(max(0, int(warmup))):
+        fn()
+    torch.cuda.synchronize()
 
     t_capture0 = time.perf_counter()
     graph = torch.cuda.CUDAGraph()
-    with torch.cuda.graph(graph, stream=stream):
+    with torch.cuda.graph(graph, stream=capture_stream):
         fn()
-    stream.synchronize()
+    torch.cuda.synchronize()
     capture_ms = (time.perf_counter() - t_capture0) * 1000.0
 
     replay_total_ms: list[float] = []
     replay_iter_ms: list[float] = []
     for _ in range(max(1, int(repeats))):
-        stream.synchronize()
+        torch.cuda.synchronize()
         t0 = time.perf_counter()
-        with torch.cuda.stream(stream):
-            for _j in range(int(iters)):
-                graph.replay()
-        stream.synchronize()
+        for _j in range(int(iters)):
+            graph.replay()
+        torch.cuda.synchronize()
         total_ms = (time.perf_counter() - t0) * 1000.0
         replay_total_ms.append(total_ms)
         replay_iter_ms.append(total_ms / float(iters))
