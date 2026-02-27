@@ -98,6 +98,150 @@ CASES = [
         ),
         {"M": 4, "N": 8},
     ),
+    (
+        "sigmoid2d",
+        _intent(
+            {
+                "name": "sigmoid2d",
+                "tensors": {
+                    "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                    "output": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                },
+                "ops": [
+                    {"op": "const", "inputs": [], "output": "one_const", "attrs": {"value": 1}},
+                    {"op": "const", "inputs": [], "output": "neg_one_const", "attrs": {"value": -1}},
+                    {"op": "mul", "inputs": ["x", "neg_one_const"], "output": "neg_x", "attrs": {}},
+                    {"op": "exp", "inputs": ["neg_x"], "output": "exp_neg_x", "attrs": {}},
+                    {"op": "add", "inputs": ["one_const", "exp_neg_x"], "output": "denominator", "attrs": {}},
+                    {"op": "div", "inputs": ["one_const", "denominator"], "output": "output", "attrs": {}},
+                ],
+                "outputs": ["output"],
+            }
+        ),
+        {"M": 4, "N": 8},
+    ),
+    (
+        "tanh2d",
+        _intent(
+            {
+                "name": "tanh2d",
+                "tensors": {
+                    "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                    "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                },
+                "ops": [
+                    {"op": "const", "inputs": [], "output": "one_const", "attrs": {"value": 1}},
+                    {"op": "const", "inputs": [], "output": "two_const", "attrs": {"value": 2}},
+                    {"op": "mul", "inputs": ["two_const", "x"], "output": "two_x", "attrs": {}},
+                    {"op": "exp", "inputs": ["two_x"], "output": "exp_two_x", "attrs": {}},
+                    {"op": "sub", "inputs": ["exp_two_x", "one_const"], "output": "numer", "attrs": {}},
+                    {"op": "add", "inputs": ["exp_two_x", "one_const"], "output": "denom", "attrs": {}},
+                    {"op": "div", "inputs": ["numer", "denom"], "output": "out", "attrs": {}},
+                ],
+                "outputs": ["out"],
+            }
+        ),
+        {"M": 4, "N": 8},
+    ),
+    (
+        "sqrt2d",
+        _intent(
+            {
+                "name": "sqrt2d",
+                "tensors": {
+                    "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                    "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                },
+                "ops": [{"op": "sqrt", "inputs": ["A"], "output": "out", "attrs": {}}],
+                "outputs": ["out"],
+            }
+        ),
+        {"M": 4, "N": 8},
+    ),
+    (
+        "log2d",
+        _intent(
+            {
+                "name": "log2d",
+                "tensors": {
+                    "inp": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                    "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                },
+                "ops": [{"op": "log", "inputs": ["inp"], "output": "out", "attrs": {}}],
+                "outputs": ["out"],
+            }
+        ),
+        {"M": 4, "N": 8},
+    ),
+    (
+        "rsqrt2d",
+        _intent(
+            {
+                "name": "rsqrt2d",
+                "tensors": {
+                    "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                    "A_f32": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                    "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                },
+                "ops": [
+                    {"op": "cast", "inputs": ["A"], "output": "A_f32", "attrs": {"to": "f32"}},
+                    {"op": "rsqrt", "inputs": ["A_f32"], "output": "out", "attrs": {}},
+                ],
+                "outputs": ["out"],
+            }
+        ),
+        {"M": 4, "N": 8},
+    ),
+    (
+        "erf2d",
+        _intent(
+            {
+                "name": "erf2d",
+                "tensors": {
+                    "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                    "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                },
+                "ops": [{"op": "erf", "inputs": ["x"], "output": "out", "attrs": {}}],
+                "outputs": ["out"],
+            }
+        ),
+        {"M": 4, "N": 8},
+    ),
+    (
+        "exp22d",
+        _intent(
+            {
+                "name": "exp22d",
+                "tensors": {
+                    "A": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                    "out": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                },
+                "ops": [
+                    {"op": "const", "inputs": [], "output": "ln2", "attrs": {"value": 0.6931471805599453}},
+                    {"op": "mul", "inputs": ["A", "ln2"], "output": "scaled", "attrs": {}},
+                    {"op": "exp", "inputs": ["scaled"], "output": "out", "attrs": {}},
+                ],
+                "outputs": ["out"],
+            }
+        ),
+        {"M": 4, "N": 8},
+    ),
+    (
+        "eq2d",
+        _intent(
+            {
+                "name": "eq2d",
+                "tensors": {
+                    "x": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                    "y": {"dtype": "f32", "shape": ["M", "N"], "layout": "row_major"},
+                    "out": {"dtype": "bool", "shape": ["M", "N"], "layout": "row_major"},
+                },
+                "ops": [{"op": "eq", "inputs": ["x", "y"], "output": "out", "attrs": {}}],
+                "outputs": ["out"],
+            }
+        ),
+        {"M": 4, "N": 8},
+    ),
 ]
 
 

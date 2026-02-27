@@ -93,11 +93,26 @@ def _dtype_to_mlir(dtype: str) -> str:
         return "bf16"
     if dt in {"i1", "bool"}:
         return "i1"
+    if dt == "i8":
+        return "i8"
     if dt == "i32":
         return "i32"
     if dt == "i64":
         return "i64"
     raise RuntimeError(f"unsupported dtype for cuda real-mlir wave: {dtype}")
+
+
+def _dtype_to_mlir_memref_elem(dtype: str) -> str:
+    """
+    Memory element type for tensors passed across the ABI boundary.
+
+    Note: torch bool tensors are byte-addressed; keep memrefs as i8 and convert
+    to i1 for control-flow and comparisons.
+    """
+    dt = str(dtype or "").strip().lower()
+    if dt in {"i1", "bool"}:
+        return "i8"
+    return _dtype_to_mlir(dt)
 
 
 def _collect_io_arg_order(intent: IntentFunction) -> tuple[list[str], list[str]]:
@@ -185,7 +200,9 @@ def lower_intent_to_cuda_gpu_kernel(
         tt = (intent.tensors or {}).get(name)
         if tt is None:
             raise RuntimeError(f"missing tensor spec: {name}")
-        elem = _dtype_to_mlir(str(getattr(tt, "dtype", "f32")))
+        dtype = str(getattr(tt, "dtype", "f32"))
+        scalar_ty = _dtype_to_mlir(dtype)
+        memref_elem_ty = _dtype_to_mlir_memref_elem(dtype)
         shape = list(getattr(tt, "shape", []) or [])
         dims: list[int] = []
         for d in shape:
@@ -221,8 +238,10 @@ def lower_intent_to_cuda_gpu_kernel(
 
         memref_n = 1 if is_scalar else int(numel)
         arg_specs[str(name)] = {
-            "elem": str(elem),
-            "memref": f"memref<{memref_n}x{elem}, 1>",
+            "dtype": str(dtype),
+            "scalar_ty": str(scalar_ty),
+            "memref_elem_ty": str(memref_elem_ty),
+            "memref": f"memref<{memref_n}x{memref_elem_ty}, 1>",
             "scalar": bool(is_scalar),
             "broadcast": str(broadcast),
             "dims": list(dims),
@@ -239,13 +258,25 @@ def lower_intent_to_cuda_gpu_kernel(
 
     # Per-element SSA mapping.
     loaded: dict[str, str] = {}
+    loaded_ty: dict[str, str] = {}
     computed: dict[str, str] = {}
+    computed_ty: dict[str, str] = {}
 
     need_row = any(str(spec.get("broadcast") or "") == "broadcast_m" for spec in arg_specs.values())
     need_col = any(str(spec.get("broadcast") or "") == "broadcast_n" for spec in arg_specs.values())
     need_rowcol = bool(need_row or need_col)
     if need_rowcol and out_rank != 2:
         raise RuntimeError("internal error: broadcast patterns require rank-2 output")
+
+    def _infer_value_ty(name: str) -> str:
+        if name in computed_ty:
+            return str(computed_ty[name])
+        if name in loaded_ty:
+            return str(loaded_ty[name])
+        tt = (intent.tensors or {}).get(name)
+        if tt is None:
+            return "f32"
+        return _dtype_to_mlir(str(getattr(tt, "dtype", "f32")))
 
     def _load_tensor(name: str) -> list[str]:
         if name in computed:
@@ -255,8 +286,11 @@ def lower_intent_to_cuda_gpu_kernel(
         spec = arg_specs.get(name)
         if spec is None:
             raise RuntimeError(f"unknown tensor referenced: {name}")
-        ssa = f"%{_mlir_ident(name)}_v"
         memref = str(spec["memref"])
+        memref_elem_ty = str(spec.get("memref_elem_ty") or "")
+        scalar_ty = str(spec.get("scalar_ty") or "")
+        ssa_loaded = f"%{_mlir_ident(name)}_loaded"
+        ssa_value = f"%{_mlir_ident(name)}_v"
         bcast = str(spec.get("broadcast") or "")
         idx = "%i"
         if bcast == "scalar":
@@ -269,8 +303,25 @@ def lower_intent_to_cuda_gpu_kernel(
             idx = "%row"
         else:
             raise RuntimeError(f"unsupported broadcast kind in cuda real-mlir wave: {bcast}")
-        loaded[name] = ssa
-        return [f"        {ssa} = memref.load %{_mlir_ident(name)}[{idx}] : {memref}"]
+
+        lines = [f"        {ssa_loaded} = memref.load %{_mlir_ident(name)}[{idx}] : {memref}"]
+        if scalar_ty and memref_elem_ty and scalar_ty != memref_elem_ty:
+            # ABI-facing bool tensors use i8 elements; convert to i1 in registers.
+            if scalar_ty == "i1" and memref_elem_ty == "i8":
+                c0 = _fresh("c0i8")
+                lines.append(f"        {c0} = arith.constant 0 : i8")
+                lines.append(f"        {ssa_value} = arith.cmpi ne, {ssa_loaded}, {c0} : i8")
+            else:
+                raise RuntimeError(
+                    "unsupported memref->scalar conversion in cuda real-mlir wave: "
+                    f"{memref_elem_ty} -> {scalar_ty} for tensor={name}"
+                )
+        else:
+            ssa_value = ssa_loaded
+
+        loaded[name] = ssa_value
+        loaded_ty[name] = scalar_ty or memref_elem_ty or "f32"
+        return lines
 
     tmp_idx = 0
 
@@ -288,6 +339,12 @@ def lower_intent_to_cuda_gpu_kernel(
             if_lines.append("        %row = arith.divui %i, %cN : index")
         if need_col:
             if_lines.append("        %col = arith.remui %i, %cN : index")
+
+    def _as_f32_const(v: Any) -> str:
+        try:
+            return repr(float(v))
+        except Exception:
+            return repr(float(str(v)))
 
     # Emit ops (single-thread elementwise evaluation).
     for op in list(intent.ops or []):
@@ -307,13 +364,20 @@ def lower_intent_to_cuda_gpu_kernel(
             else:
                 if_lines.extend(_load_tensor(inp))
                 in_ssa.append(loaded[inp])
-            tt = (intent.tensors or {}).get(inp)
-            if tt is None:
-                raise RuntimeError(f"missing tensor spec: {inp}")
-            in_ty.append(_dtype_to_mlir(str(getattr(tt, "dtype", "f32"))))
+            in_ty.append(_infer_value_ty(inp))
 
-        out_tt2 = (intent.tensors or {}).get(outv)
-        out_ty = _dtype_to_mlir(str(getattr(out_tt2, "dtype", "f32"))) if out_tt2 is not None else ""
+        out_ty = _infer_value_ty(outv)
+
+        if op_name == "const":
+            if inputs:
+                raise RuntimeError("const expects 0 inputs")
+            if out_ty != "f32":
+                raise RuntimeError(f"const currently supports f32 only (out_ty={out_ty})")
+            dst = _fresh("const")
+            if_lines.append(f"        {dst} = arith.constant {_as_f32_const(attrs.get('value'))} : f32")
+            computed[outv] = dst
+            computed_ty[outv] = "f32"
+            continue
 
         if op_name == "cast":
             if len(in_ssa) != 1:
@@ -322,6 +386,7 @@ def lower_intent_to_cuda_gpu_kernel(
             src_ty = in_ty[0]
             if src_ty == to_ty:
                 computed[outv] = in_ssa[0]
+                computed_ty[outv] = str(to_ty)
                 continue
             dst = _fresh("cast")
             if src_ty in {"f16", "bf16"} and to_ty == "f32":
@@ -331,12 +396,14 @@ def lower_intent_to_cuda_gpu_kernel(
             else:
                 raise RuntimeError(f"unsupported cast: {src_ty} -> {to_ty}")
             computed[outv] = dst
+            computed_ty[outv] = str(to_ty)
             continue
 
         if op_name == "identity":
             if len(in_ssa) != 1:
                 raise RuntimeError("identity expects 1 input")
             computed[outv] = in_ssa[0]
+            computed_ty[outv] = in_ty[0]
             continue
 
         if op_name == "abs":
@@ -345,6 +412,7 @@ def lower_intent_to_cuda_gpu_kernel(
             dst = _fresh("abs")
             if_lines.append(f"        {dst} = math.absf {in_ssa[0]} : f32")
             computed[outv] = dst
+            computed_ty[outv] = "f32"
             continue
 
         if op_name == "floor":
@@ -353,6 +421,25 @@ def lower_intent_to_cuda_gpu_kernel(
             dst = _fresh("floor")
             if_lines.append(f"        {dst} = math.floor {in_ssa[0]} : f32")
             computed[outv] = dst
+            computed_ty[outv] = "f32"
+            continue
+
+        if op_name == "ceil":
+            if len(in_ssa) != 1 or in_ty[0] != "f32":
+                raise RuntimeError("ceil currently supports f32 only")
+            dst = _fresh("ceil")
+            if_lines.append(f"        {dst} = math.ceil {in_ssa[0]} : f32")
+            computed[outv] = dst
+            computed_ty[outv] = "f32"
+            continue
+
+        if op_name == "neg":
+            if len(in_ssa) != 1 or in_ty[0] != "f32":
+                raise RuntimeError("neg currently supports f32 only")
+            dst = _fresh("neg")
+            if_lines.append(f"        {dst} = arith.negf {in_ssa[0]} : f32")
+            computed[outv] = dst
+            computed_ty[outv] = "f32"
             continue
 
         if op_name in {"add", "sub", "mul", "div"}:
@@ -362,6 +449,7 @@ def lower_intent_to_cuda_gpu_kernel(
             arith = {"add": "arith.addf", "sub": "arith.subf", "mul": "arith.mulf", "div": "arith.divf"}[op_name]
             if_lines.append(f"        {dst} = {arith} {in_ssa[0]}, {in_ssa[1]} : f32")
             computed[outv] = dst
+            computed_ty[outv] = "f32"
             continue
 
         if op_name in {"max", "min"}:
@@ -371,6 +459,24 @@ def lower_intent_to_cuda_gpu_kernel(
             arith = {"max": "arith.maximumf", "min": "arith.minimumf"}[op_name]
             if_lines.append(f"        {dst} = {arith} {in_ssa[0]}, {in_ssa[1]} : f32")
             computed[outv] = dst
+            computed_ty[outv] = "f32"
+            continue
+
+        if op_name in {"eq", "ne", "lt", "le", "gt", "ge"}:
+            if len(in_ssa) != 2 or in_ty[0] != "f32" or in_ty[1] != "f32":
+                raise RuntimeError(f"{op_name} currently supports f32 binary only")
+            dst = _fresh(op_name)
+            pred = {
+                "eq": "oeq",
+                "ne": "one",
+                "lt": "olt",
+                "le": "ole",
+                "gt": "ogt",
+                "ge": "oge",
+            }[op_name]
+            if_lines.append(f"        {dst} = arith.cmpf {pred}, {in_ssa[0]}, {in_ssa[1]} : f32")
+            computed[outv] = dst
+            computed_ty[outv] = "i1"
             continue
 
         if op_name == "relu":
@@ -381,6 +487,7 @@ def lower_intent_to_cuda_gpu_kernel(
             if_lines.append(f"        {c0} = arith.constant 0.0 : f32")
             if_lines.append(f"        {dst} = arith.maximumf {in_ssa[0]}, {c0} : f32")
             computed[outv] = dst
+            computed_ty[outv] = "f32"
             continue
 
         if op_name == "exp":
@@ -389,6 +496,62 @@ def lower_intent_to_cuda_gpu_kernel(
             dst = _fresh("exp")
             if_lines.append(f"        {dst} = math.exp {in_ssa[0]} : f32")
             computed[outv] = dst
+            computed_ty[outv] = "f32"
+            continue
+
+        if op_name == "exp2":
+            if len(in_ssa) != 1 or in_ty[0] != "f32":
+                raise RuntimeError("exp2 currently supports f32 only")
+            dst = _fresh("exp2")
+            if_lines.append(f"        {dst} = math.exp2 {in_ssa[0]} : f32")
+            computed[outv] = dst
+            computed_ty[outv] = "f32"
+            continue
+
+        if op_name == "log":
+            if len(in_ssa) != 1 or in_ty[0] != "f32":
+                raise RuntimeError("log currently supports f32 only")
+            dst = _fresh("log")
+            if_lines.append(f"        {dst} = math.log {in_ssa[0]} : f32")
+            computed[outv] = dst
+            computed_ty[outv] = "f32"
+            continue
+
+        if op_name == "sqrt":
+            if len(in_ssa) != 1 or in_ty[0] != "f32":
+                raise RuntimeError("sqrt currently supports f32 only")
+            dst = _fresh("sqrt")
+            if_lines.append(f"        {dst} = math.sqrt {in_ssa[0]} : f32")
+            computed[outv] = dst
+            computed_ty[outv] = "f32"
+            continue
+
+        if op_name == "rsqrt":
+            if len(in_ssa) != 1 or in_ty[0] != "f32":
+                raise RuntimeError("rsqrt currently supports f32 only")
+            dst = _fresh("rsqrt")
+            if_lines.append(f"        {dst} = math.rsqrt {in_ssa[0]} : f32")
+            computed[outv] = dst
+            computed_ty[outv] = "f32"
+            continue
+
+        if op_name == "erf":
+            if len(in_ssa) != 1 or in_ty[0] != "f32":
+                raise RuntimeError("erf currently supports f32 only")
+            dst = _fresh("erf")
+            if_lines.append(f"        {dst} = math.erf {in_ssa[0]} : f32")
+            computed[outv] = dst
+            computed_ty[outv] = "f32"
+            continue
+
+        if op_name in {"sin", "cos", "tan"}:
+            if len(in_ssa) != 1 or in_ty[0] != "f32":
+                raise RuntimeError(f"{op_name} currently supports f32 only")
+            dst = _fresh(op_name)
+            mop = {"sin": "math.sin", "cos": "math.cos", "tan": "math.tan"}[op_name]
+            if_lines.append(f"        {dst} = {mop} {in_ssa[0]} : f32")
+            computed[outv] = dst
+            computed_ty[outv] = "f32"
             continue
 
         if op_name == "where":
@@ -401,6 +564,7 @@ def lower_intent_to_cuda_gpu_kernel(
             dst = _fresh("where")
             if_lines.append(f"        {dst} = arith.select {in_ssa[0]}, {in_ssa[1]}, {in_ssa[2]} : f32")
             computed[outv] = dst
+            computed_ty[outv] = "f32"
             continue
 
         raise RuntimeError(f"unsupported op in cuda real-mlir wave: {op_name}")
@@ -412,7 +576,22 @@ def lower_intent_to_cuda_gpu_kernel(
         final_ssa = computed.get(last_out)
     if not final_ssa:
         raise RuntimeError(f"no computed value for output tensor: {out_name}")
-    if_lines.append(f"        memref.store {final_ssa}, %{_mlir_ident(out_name)}[%i] : {arg_specs[out_name]['memref']}")
+    out_spec = arg_specs[out_name]
+    out_memref = str(out_spec["memref"])
+    out_memref_elem_ty = str(out_spec.get("memref_elem_ty") or "")
+    out_val_ty = _infer_value_ty(out_name)
+    store_ssa = str(final_ssa)
+    if out_memref_elem_ty and out_val_ty and out_memref_elem_ty != out_val_ty:
+        if out_memref_elem_ty == "i8" and out_val_ty == "i1":
+            tmp = _fresh("out_i8")
+            if_lines.append(f"        {tmp} = arith.extui {store_ssa} : i1 to i8")
+            store_ssa = tmp
+        else:
+            raise RuntimeError(
+                "unsupported scalar->memref conversion in cuda real-mlir wave: "
+                f"{out_val_ty} -> {out_memref_elem_ty} for output={out_name}"
+            )
+    if_lines.append(f"        memref.store {store_ssa}, %{_mlir_ident(out_name)}[%i] : {out_memref}")
 
     # Assemble module text.
     lines: list[str] = []
