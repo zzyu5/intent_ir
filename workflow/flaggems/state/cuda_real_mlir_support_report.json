@@ -1,11 +1,11 @@
 {
   "schema_version": "intentir_cuda_real_mlir_support_report_v1",
-  "generated_at_utc": "2026-02-27T17:20:30+00:00",
+  "generated_at_utc": "2026-02-27T17:44:44+00:00",
   "repo": {
-    "head_commit": "b1c6557bb9272ee823ab730c772d6fc2a0043a73",
+    "head_commit": "2712326c418200d6e17c4806c82bf5282f8fec1f",
     "branch": "compiler-cleanup-v1",
-    "dirty": true,
-    "git_describe": "b1c6557-dirty"
+    "dirty": false,
+    "git_describe": "2712326"
   },
   "sources": {
     "coverage_batches": "workflow/flaggems/state/coverage_batches.json",
@@ -38,6 +38,7 @@
     "ge",
     "gt",
     "identity",
+    "iota",
     "le",
     "log",
     "lt",
@@ -60,15 +61,17 @@
     "where"
   ],
   "kernels_total": 158,
-  "kernels_supported": 79,
-  "kernels_unsupported": 79,
+  "kernels_supported": 88,
+  "kernels_unsupported": 70,
   "supported_kernels": [
     "abs2d",
     "acos2d",
     "add2d",
     "addcdiv2d",
     "addcmul2d",
+    "addr2d",
     "angle2d",
+    "arange1d",
     "atan2d",
     "bitwise_and2d",
     "bitwise_left_shift2d",
@@ -82,12 +85,15 @@
     "clamp2d",
     "constant_pad_nd2d",
     "cos2d",
+    "diag2d",
     "div2d",
     "elu2d",
     "eq2d",
     "erf2d",
     "exp22d",
     "exp2d",
+    "eye2d",
+    "eye_m2d",
     "full2d",
     "ge2d",
     "gt2d",
@@ -99,11 +105,13 @@
     "isnan2d",
     "le2d",
     "lerp2d",
+    "linspace1d",
     "log2d",
     "logical_and2d",
     "logical_not2d",
     "logical_or2d",
     "logical_xor2d",
+    "logspace1d",
     "lt2d",
     "masked_fill2d",
     "maximum2d",
@@ -112,6 +120,7 @@
     "nan_to_num2d",
     "ne2d",
     "neg2d",
+    "one_hot2d",
     "pad2d",
     "pow_scalar2d",
     "pow_tensor_scalar2d",
@@ -129,6 +138,7 @@
     "tan2d",
     "threshold2d",
     "tile2d",
+    "triu2d",
     "vstack2d",
     "gelu2d",
     "log_sigmoid2d",
@@ -154,51 +164,9 @@
       ]
     },
     {
-      "kernel": "addr2d",
-      "reasons": [
-        "broadcast_in_dim_non_scalar_input"
-      ]
-    },
-    {
-      "kernel": "arange1d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "iota"
-      ]
-    },
-    {
-      "kernel": "diag2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "iota"
-      ]
-    },
-    {
       "kernel": "diag_embed2d",
       "reasons": [
         "output_rank_gt2:3"
-      ]
-    },
-    {
-      "kernel": "eye2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "iota"
-      ]
-    },
-    {
-      "kernel": "eye_m2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "iota"
       ]
     },
     {
@@ -226,24 +194,6 @@
       ],
       "unsupported_ops": [
         "kron"
-      ]
-    },
-    {
-      "kernel": "linspace1d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "iota"
-      ]
-    },
-    {
-      "kernel": "logspace1d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "iota"
       ]
     },
     {
@@ -307,15 +257,6 @@
       ]
     },
     {
-      "kernel": "one_hot2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "iota"
-      ]
-    },
-    {
       "kernel": "per_token_group_quant_fp8_2d",
       "reasons": [
         "multi_output"
@@ -375,7 +316,6 @@
         "unsupported_ops"
       ],
       "unsupported_ops": [
-        "iota",
         "sort"
       ]
     },
@@ -385,17 +325,7 @@
         "unsupported_ops"
       ],
       "unsupported_ops": [
-        "iota",
         "reduce_sum"
-      ]
-    },
-    {
-      "kernel": "triu2d",
-      "reasons": [
-        "unsupported_ops"
-      ],
-      "unsupported_ops": [
-        "iota"
       ]
     },
     {
@@ -458,8 +388,7 @@
         "unsupported_ops"
       ],
       "unsupported_ops": [
-        "cumsum",
-        "iota"
+        "cumsum"
       ]
     },
     {
