@@ -171,34 +171,61 @@ def lower_intent_to_cuda_gpu_kernel(
 
     # Build flattened, static-shape memref args so `convert-gpu-to-nvvm` can use
     # bare-ptr calling convention.
+    #
+    # This pass is intentionally small-scope. We support:
+    # - elementwise tensors matching the output numel
+    # - scalar tensors (shape=[])
+    # - simple broadcast (rank-2 output, rank-1 input) for bias-style patterns
+    #   (shape=[N] or shape=[M]).
     arg_specs: dict[str, dict[str, Any]] = {}
+    out_rank = int(len(out_dims))
+    out_m = int(out_dims[0]) if out_rank == 2 else None
+    out_n = int(out_dims[1]) if out_rank == 2 else None
     for name in [*ext_inputs, *out_names]:
         tt = (intent.tensors or {}).get(name)
         if tt is None:
             raise RuntimeError(f"missing tensor spec: {name}")
         elem = _dtype_to_mlir(str(getattr(tt, "dtype", "f32")))
         shape = list(getattr(tt, "shape", []) or [])
-        is_scalar = len(shape) == 0
-        if is_scalar:
-            numel = 1
-        else:
-            dims: list[int] = []
-            for d in shape:
-                iv = _resolve_dim_int(d, bindings)
-                if iv is None or iv <= 0:
-                    raise RuntimeError(f"unbound tensor dim: tensor={name} dim={d}")
-                dims.append(int(iv))
-            numel = int(math.prod(dims)) if dims else 1
-            if int(numel) != int(out_total):
+        dims: list[int] = []
+        for d in shape:
+            iv = _resolve_dim_int(d, bindings)
+            if iv is None or iv <= 0:
+                raise RuntimeError(f"unbound tensor dim: tensor={name} dim={d}")
+            dims.append(int(iv))
+
+        is_scalar = len(dims) == 0
+        numel = 1 if is_scalar else int(math.prod(dims))
+        if numel <= 0:
+            raise RuntimeError(f"invalid tensor numel: tensor={name} numel={numel}")
+
+        broadcast = "scalar" if is_scalar else ""
+        if not is_scalar:
+            if int(numel) == int(out_total):
+                broadcast = "elementwise"
+            elif out_rank == 2 and len(dims) == 1 and out_m is not None and out_n is not None:
+                if int(numel) == int(out_n):
+                    broadcast = "broadcast_n"
+                elif int(numel) == int(out_m):
+                    broadcast = "broadcast_m"
+                else:
+                    raise RuntimeError(
+                        "cuda real-mlir wave supports only elementwise tensors + 1D bias broadcast; "
+                        f"tensor={name} shape={dims} numel={numel} expected_out=[{out_m},{out_n}]"
+                    )
+            else:
                 raise RuntimeError(
-                    "cuda real-mlir wave currently supports elementwise tensors only; "
-                    f"tensor={name} numel={numel} expected={out_total}"
+                    "cuda real-mlir wave supports only elementwise tensors + 1D bias broadcast; "
+                    f"tensor={name} shape={dims} numel={numel} expected_out_rank={out_rank} out_total={out_total}"
                 )
+
         memref_n = 1 if is_scalar else int(numel)
         arg_specs[str(name)] = {
             "elem": str(elem),
             "memref": f"memref<{memref_n}x{elem}, 1>",
             "scalar": bool(is_scalar),
+            "broadcast": str(broadcast),
+            "dims": list(dims),
         }
 
     kernel_name = _mlir_ident(str(intent.name or out_name or "kernel"))
@@ -214,6 +241,12 @@ def lower_intent_to_cuda_gpu_kernel(
     loaded: dict[str, str] = {}
     computed: dict[str, str] = {}
 
+    need_row = any(str(spec.get("broadcast") or "") == "broadcast_m" for spec in arg_specs.values())
+    need_col = any(str(spec.get("broadcast") or "") == "broadcast_n" for spec in arg_specs.values())
+    need_rowcol = bool(need_row or need_col)
+    if need_rowcol and out_rank != 2:
+        raise RuntimeError("internal error: broadcast patterns require rank-2 output")
+
     def _load_tensor(name: str) -> list[str]:
         if name in computed:
             return []
@@ -224,11 +257,20 @@ def lower_intent_to_cuda_gpu_kernel(
             raise RuntimeError(f"unknown tensor referenced: {name}")
         ssa = f"%{_mlir_ident(name)}_v"
         memref = str(spec["memref"])
-        if bool(spec["scalar"]):
-            loaded[name] = ssa
-            return [f"        {ssa} = memref.load %{_mlir_ident(name)}[%c0] : {memref}"]
+        bcast = str(spec.get("broadcast") or "")
+        idx = "%i"
+        if bcast == "scalar":
+            idx = "%c0"
+        elif bcast == "elementwise":
+            idx = "%i"
+        elif bcast == "broadcast_n":
+            idx = "%col"
+        elif bcast == "broadcast_m":
+            idx = "%row"
+        else:
+            raise RuntimeError(f"unsupported broadcast kind in cuda real-mlir wave: {bcast}")
         loaded[name] = ssa
-        return [f"        {ssa} = memref.load %{_mlir_ident(name)}[%i] : {memref}"]
+        return [f"        {ssa} = memref.load %{_mlir_ident(name)}[{idx}] : {memref}"]
 
     tmp_idx = 0
 
@@ -239,6 +281,13 @@ def lower_intent_to_cuda_gpu_kernel(
 
     if_lines: list[str] = []
     if_lines.append("        %c0 = arith.constant 0 : index")
+    if need_rowcol:
+        assert out_n is not None
+        if_lines.append(f"        %cN = arith.constant {int(out_n)} : index")
+        if need_row:
+            if_lines.append("        %row = arith.divui %i, %cN : index")
+        if need_col:
+            if_lines.append("        %col = arith.remui %i, %cN : index")
 
     # Emit ops (single-thread elementwise evaluation).
     for op in list(intent.ops or []):
@@ -281,6 +330,28 @@ def lower_intent_to_cuda_gpu_kernel(
                 if_lines.append(f"        {dst} = arith.truncf {in_ssa[0]} : {src_ty} to {to_ty}")
             else:
                 raise RuntimeError(f"unsupported cast: {src_ty} -> {to_ty}")
+            computed[outv] = dst
+            continue
+
+        if op_name == "identity":
+            if len(in_ssa) != 1:
+                raise RuntimeError("identity expects 1 input")
+            computed[outv] = in_ssa[0]
+            continue
+
+        if op_name == "abs":
+            if len(in_ssa) != 1 or in_ty[0] != "f32":
+                raise RuntimeError("abs currently supports f32 only")
+            dst = _fresh("abs")
+            if_lines.append(f"        {dst} = math.absf {in_ssa[0]} : f32")
+            computed[outv] = dst
+            continue
+
+        if op_name == "floor":
+            if len(in_ssa) != 1 or in_ty[0] != "f32":
+                raise RuntimeError("floor currently supports f32 only")
+            dst = _fresh("floor")
+            if_lines.append(f"        {dst} = math.floor {in_ssa[0]} : f32")
             computed[outv] = dst
             continue
 
@@ -388,4 +459,3 @@ def lower_intent_to_cuda_gpu_kernel(
 
 
 __all__ = ["lower_intent_to_cuda_gpu_kernel"]
-

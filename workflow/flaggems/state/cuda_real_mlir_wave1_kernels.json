@@ -2,7 +2,11 @@
   "schema_version": "intentir_cuda_real_mlir_wave_v1",
   "wave": "wave1",
   "kernels": [
+    "abs2d",
     "add2d",
+    "add_bias2d",
+    "clamp2d",
+    "floor2d",
     "mul2d",
     "relu2d",
     "exp2d",
@@ -10,4 +14,3 @@
     "cast2d"
   ]
 }
-
