@@ -1163,6 +1163,7 @@ def _build_intentir_launch_fn(
         frontend="triton",
         triton_provider="flaggems",
         artifact_dir=artifact_dir,
+        require_baseline_npz=False,
     )
     intent_bindings, applied_binding_overrides = _apply_intentir_perf_binding_overrides(
         kernel=str(kernel),
@@ -1401,6 +1402,7 @@ def _bench_kernel(
             frontend="triton",
             triton_provider="flaggems",
             artifact_dir=intent_artifact_dir,
+            require_baseline_npz=False,
         )
         tensor_specs = dict(ctx.get("tensor_specs") or {})
         if not tensor_specs:

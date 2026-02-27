@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import atexit
 import argparse
+import hashlib
 import json
 import math
 import multiprocessing as mp
@@ -696,6 +697,7 @@ def _prepare_kernel_context(
     triton_provider: str,
     artifact_dir: str | None,
     require_mlir_artifacts: bool = False,
+    require_baseline_npz: bool = True,
 ) -> dict[str, Any]:
     artifact_rel = _artifact_dir_for_frontend(frontend, triton_provider=str(triton_provider))
     artifact_root = (Path(artifact_dir) if artifact_dir else (ROOT / "artifacts" / artifact_rel)).resolve()
@@ -719,8 +721,6 @@ def _prepare_kernel_context(
                 baseline_npz_path = sibling
     if not report_path.exists():
         raise FileNotFoundError(f"missing artifact report: {report_path}")
-    if not baseline_npz_path.exists():
-        raise FileNotFoundError(f"missing baseline npz: {baseline_npz_path}")
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
     intent_json, io_spec, mlir_contract = _load_intent_and_contract(
@@ -731,7 +731,13 @@ def _prepare_kernel_context(
     tensor_specs = _tensor_specs_from_io_spec(io_spec) or _tensor_specs_from_intent_json(intent_json)
     if not tensor_specs:
         raise RuntimeError("invalid intent payload: missing tensor specs")
-    baseline = dict(np.load(baseline_npz_path, allow_pickle=False))
+    baseline: dict[str, np.ndarray] = {}
+    baseline_source = "missing"
+    if baseline_npz_path.exists():
+        baseline = dict(np.load(baseline_npz_path, allow_pickle=False))
+        baseline_source = "npz"
+    elif bool(require_baseline_npz):
+        raise FileNotFoundError(f"missing baseline npz: {baseline_npz_path}")
     wanted_aliases = sorted(set(list(tensor_specs.keys()) + _outputs_from_io_spec(io_spec) + _intent_outputs(intent_json)))
     baseline = _with_io_aliases_for_names(wanted_aliases, baseline)
     external_inputs, outputs = _external_inputs(intent_json)
@@ -753,6 +759,7 @@ def _prepare_kernel_context(
         "io_spec": dict(io_spec),
         "tensor_specs": dict(tensor_specs),
         "baseline": baseline,
+        "baseline_source": str(baseline_source),
         "external_inputs": external_inputs,
         "outputs": outputs,
         "bindings": bindings,
@@ -769,6 +776,23 @@ def _build_inputs_np(
     external_inputs: list[str],
     bindings: dict[str, Any],
 ) -> dict[str, np.ndarray]:
+    def _stable_seed(key: str) -> int:
+        # Deterministic (unlike Python's hash()) and cheap enough for perf tooling.
+        h = hashlib.sha256(str(key).encode("utf-8")).hexdigest()[:8]
+        return int(h, 16)
+
+    def _random_tensor(*, key: str, shape: tuple[int, ...], dtype: str) -> np.ndarray:
+        rng = np.random.default_rng(_stable_seed(str(key)))
+        dt = str(dtype).strip().lower()
+        if dt in {"i1", "bool"}:
+            return rng.integers(0, 2, size=shape, dtype=np.int8).astype(np.bool_)
+        if dt.startswith("i") or dt.startswith("u"):
+            np_dt = _np_dtype(dt)
+            # Small integer range is sufficient for perf and avoids overflow in kernels.
+            return rng.integers(0, 4, size=shape, dtype=np_dt)
+        np_dt = _np_dtype(dt)
+        return (rng.standard_normal(size=shape) * 0.5).astype(np_dt)
+
     inputs_np: dict[str, np.ndarray] = {}
     for name in external_inputs:
         if name in baseline:
@@ -780,9 +804,17 @@ def _build_inputs_np(
         shape_spec = _tensor_shape_spec(spec)
         if shape_spec:
             derived_t = _derive_optional_tensor_input(name, tensor_spec=spec, bindings=bindings)
-            if derived_t is None:
-                raise RuntimeError(f"baseline missing input {name} for {kernel}")
-            inputs_np[name] = derived_t
+            if derived_t is not None:
+                inputs_np[name] = derived_t
+                continue
+            shape = _resolve_tensor_shape(shape_spec, bindings)
+            if shape is None:
+                raise RuntimeError(f"missing input {name} for {kernel} (unresolved shape)")
+            inputs_np[name] = _random_tensor(
+                key=f"{kernel}:{name}",
+                shape=shape,
+                dtype=_tensor_dtype(spec),
+            )
             continue
         derived_s = _derive_scalar_input(name, dtype=_tensor_dtype(spec), bindings=bindings)
         if derived_s is None:
