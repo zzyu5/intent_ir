@@ -6,6 +6,8 @@ from .emit_cuda_contract import emit_cuda_contract
 from .emit_rvv_contract import emit_rvv_contract
 from .ensure_llvm_ir_text import ensure_llvm_ir_text
 from .expand_macros_intent import expand_macros_intent
+from .extract_gpu_module_llvm import extract_gpu_module_llvm
+from .lower_intent_to_cuda_gpu_kernel import lower_intent_to_cuda_gpu_kernel
 from .lower_intent_to_llvm_dialect import lower_intent_to_llvm_dialect
 from .normalize_symbols import normalize_symbols
 from .set_llvm_target_triple import set_llvm_target_triple
@@ -17,9 +19,11 @@ PASS_REGISTRY = {
     "canonicalize_intent": canonicalize_intent,
     "cse_like": cse_like,
     "backend_legalize": backend_legalize,
+    "lower_intent_to_cuda_gpu_kernel": lower_intent_to_cuda_gpu_kernel,
     "lower_intent_to_llvm_dialect": lower_intent_to_llvm_dialect,
     "ensure_llvm_ir_text": ensure_llvm_ir_text,
     "set_llvm_target_triple": set_llvm_target_triple,
+    "extract_gpu_module_llvm": extract_gpu_module_llvm,
     "emit_cuda_contract": emit_cuda_contract,
     "emit_rvv_contract": emit_rvv_contract,
 }

@@ -204,6 +204,42 @@ def _execution_ir_mode() -> str:
     return "mlir"
 
 
+def _real_mlir_enabled() -> bool:
+    return str(os.getenv("INTENTIR_REAL_MLIR", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+_CUDA_REAL_MLIR_WAVE_KERNELS: dict[str, set[str]] = {}
+
+
+def _cuda_real_mlir_wave_name() -> str:
+    return str(os.getenv("INTENTIR_CUDA_REAL_MLIR_WAVE", "")).strip().lower()
+
+
+def _load_cuda_real_mlir_wave_kernels(wave: str) -> set[str]:
+    wave_name = str(wave or "").strip().lower()
+    if not wave_name:
+        return set()
+    cached = _CUDA_REAL_MLIR_WAVE_KERNELS.get(wave_name)
+    if cached is not None:
+        return cached
+
+    path = ROOT / "workflow" / "flaggems" / "state" / f"cuda_real_mlir_{wave_name}_kernels.json"
+    kernels: set[str] = set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            rows = payload.get("kernels")
+            if isinstance(rows, list):
+                for x in rows:
+                    name = str(x).strip()
+                    if name:
+                        kernels.add(name)
+    except Exception:
+        kernels = set()
+    _CUDA_REAL_MLIR_WAVE_KERNELS[wave_name] = kernels
+    return kernels
+
+
 def _downstream_pipeline_name(backend_target: str | None) -> str | None:
     target = str(backend_target or "").strip().lower()
     if not target:
@@ -215,11 +251,20 @@ def _downstream_pipeline_name(backend_target: str | None) -> str | None:
     return None
 
 
-def _downstream_llvm_pipeline(backend_target: str | None) -> tuple[str | None, str | None]:
+def _downstream_llvm_pipeline(
+    backend_target: str | None, *, spec_name: str | None = None
+) -> tuple[str | None, str | None]:
     target = str(backend_target or "").strip().lower()
     if not target:
         return None, None
     if target.startswith("cuda"):
+        wave = _cuda_real_mlir_wave_name()
+        if wave and _real_mlir_enabled():
+            kernels = _load_cuda_real_mlir_wave_kernels(wave)
+            if spec_name and str(spec_name) in kernels:
+                return "downstream_cuda_std_llvm", "cuda"
+            # In real-MLIR mode, do not fall back to cached LLVM IR implicitly.
+            return None, None
         return "downstream_cuda_llvm", "cuda"
     if target.startswith("rvv"):
         return "downstream_rvv_llvm", "rvv"
@@ -227,6 +272,9 @@ def _downstream_llvm_pipeline(backend_target: str | None) -> tuple[str | None, s
 
 
 def _downstream_llvm_extra_pipelines(backend_target: str | None) -> list[tuple[str, str]]:
+    if _real_mlir_enabled():
+        # Avoid triggering legacy cached-LLVM pipelines as "extras" under real-MLIR runs.
+        return []
     target = str(backend_target or "").strip().lower()
     if not target:
         return []
@@ -300,11 +348,16 @@ def _emit_mlir_shadow_artifacts(
 
         llvm_mod = None
         llvm_variants: list[tuple[str, IntentMLIRModule]] = []
-        llvm_pipeline, llvm_backend = _downstream_llvm_pipeline(backend_target)
+        llvm_pipeline, llvm_backend = _downstream_llvm_pipeline(backend_target, spec_name=str(spec_name))
         if llvm_pipeline is None:
             mlir_report["llvm_emit_ok"] = False
             mlir_report["llvm_ir_path"] = ""
-            mlir_report["llvm_skip_reason"] = "llvm_pipeline_not_configured"
+            if _cuda_real_mlir_wave_name() and _real_mlir_enabled() and str(backend_target or "").strip().lower().startswith(
+                "cuda"
+            ):
+                mlir_report["llvm_skip_reason"] = "cuda_real_mlir_wave_excludes_kernel"
+            else:
+                mlir_report["llvm_skip_reason"] = "llvm_pipeline_not_configured"
         else:
             mlir_report["llvm_pipeline"] = str(llvm_pipeline)
             mlir_report["llvm_backend"] = str(llvm_backend or "")
@@ -321,13 +374,16 @@ def _emit_mlir_shadow_artifacts(
                         pass
                 try:
                     mid_mod.meta = dict(mid_mod.meta or {})
-                    cached_llvm_path = discover_cached_downstream_llvm_module_path(
-                        spec_name=str(spec_name),
-                        llvm_pipeline=str(llvm_pipeline),
-                        current_out_dir=out_dir,
-                    )
-                    if cached_llvm_path:
-                        mid_mod.meta["prelowered_llvm_ir_path"] = str(cached_llvm_path)
+                    # Only legacy LLVM pipelines consult cache. Real-MLIR pipelines must
+                    # be self-contained and avoid stale artifacts.
+                    if str(llvm_pipeline) in {"downstream_cuda_llvm", "downstream_rvv_llvm"}:
+                        cached_llvm_path = discover_cached_downstream_llvm_module_path(
+                            spec_name=str(spec_name),
+                            llvm_pipeline=str(llvm_pipeline),
+                            current_out_dir=out_dir,
+                        )
+                        if cached_llvm_path:
+                            mid_mod.meta["prelowered_llvm_ir_path"] = str(cached_llvm_path)
                 except Exception:
                     pass
                 llvm_mod, llvm_trace = run_mlir_pipeline(

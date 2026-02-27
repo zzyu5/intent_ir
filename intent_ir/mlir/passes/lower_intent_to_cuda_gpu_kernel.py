@@ -1,0 +1,391 @@
+from __future__ import annotations
+
+import base64
+import json
+import math
+import os
+import re
+from typing import Any, Mapping
+
+from intent_ir.ir import IntentFunction
+from intent_ir.mlir.convert_to_intent import to_intent
+from intent_ir.mlir.module import IntentMLIRModule
+
+
+def _env_flag(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(str(name), "")
+    if raw is None:
+        return bool(default)
+    s = str(raw).strip().lower()
+    if not s:
+        return bool(default)
+    return s in {"1", "true", "yes", "y", "on"}
+
+
+def _resolve_dim_int(dim: Any, bindings: Mapping[str, Any]) -> int | None:
+    if dim is None:
+        return None
+    kind = getattr(dim, "kind", None)
+    raw = getattr(dim, "value", dim) if kind in {"sym", "const"} else dim
+    if isinstance(raw, int):
+        return int(raw)
+    key = str(raw).strip()
+    if not key:
+        return None
+    if key in bindings:
+        try:
+            return int(bindings[key])
+        except Exception:
+            return None
+    # Minimal support for legacy dims like "M + 1".
+    m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*\+\s*(\d+)$", key)
+    if m:
+        base = str(m.group(1))
+        delta = int(m.group(2))
+        if base in bindings:
+            try:
+                return int(bindings[base]) + int(delta)
+            except Exception:
+                return None
+    try:
+        return int(key)
+    except Exception:
+        return None
+
+
+def _mlir_ident(raw: str) -> str:
+    s = str(raw or "").strip()
+    if not s:
+        return "v"
+    out = "".join(ch if (ch.isalnum() or ch == "_") else "_" for ch in s)
+    if out and out[0].isdigit():
+        out = f"v_{out}"
+    return out or "v"
+
+
+def _b64_json(payload: dict[str, Any]) -> str:
+    text = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+    return base64.b64encode(text.encode("utf-8")).decode("ascii")
+
+
+def _symbols_from_intent(intent: IntentFunction) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for t in dict(intent.tensors or {}).values():
+        for d in list(getattr(t, "shape", []) or []):
+            if getattr(d, "kind", None) != "sym":
+                continue
+            name = str(getattr(d, "value", "")).strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            out.append(name)
+    return out
+
+
+def _dtype_to_mlir(dtype: str) -> str:
+    dt = str(dtype or "").strip().lower()
+    if dt == "f32":
+        return "f32"
+    if dt == "f16":
+        return "f16"
+    if dt == "bf16":
+        return "bf16"
+    if dt in {"i1", "bool"}:
+        return "i1"
+    if dt == "i32":
+        return "i32"
+    if dt == "i64":
+        return "i64"
+    raise RuntimeError(f"unsupported dtype for cuda real-mlir wave: {dtype}")
+
+
+def _collect_io_arg_order(intent: IntentFunction) -> tuple[list[str], list[str]]:
+    tensors = dict(intent.tensors or {})
+    ops = list(intent.ops or [])
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    produced = {str(getattr(op, "output", "")).strip() for op in ops if str(getattr(op, "output", "")).strip()}
+    used: set[str] = set()
+    for op in ops:
+        for inp in list(getattr(op, "inputs", []) or []):
+            name = str(inp).strip()
+            if name:
+                used.add(name)
+    external_inputs = sorted([n for n in used if n in tensors and n not in produced])
+    out_names = [n for n in outputs if n in tensors and n not in set(external_inputs)]
+    return external_inputs, out_names
+
+
+def lower_intent_to_cuda_gpu_kernel(
+    module: IntentMLIRModule,
+    *,
+    backend: str | None = None,
+    **_: object,
+) -> IntentMLIRModule:
+    """
+    Phase3B (CUDA wave): emit a minimal GPU-dialect kernel for simple elementwise intent graphs.
+
+    The output is a *parseable* MLIR module (gpu+scf+arith+math), specialized to the
+    concrete `shape_bindings` provided in `module.meta`. Downstream pipeline lowers it
+    to NVVM/LLVM and then `mlir-translate` emits textual LLVM IR.
+
+    This pass is gated by `INTENTIR_REAL_MLIR=1` to avoid perturbing legacy runs.
+    """
+    b = str(backend or "").strip().lower()
+    if b and not b.startswith("cuda"):
+        return module
+    if not _env_flag("INTENTIR_REAL_MLIR", default=False):
+        return module
+
+    intent = to_intent(module)
+    if not isinstance(intent, IntentFunction):
+        raise RuntimeError("to_intent did not return IntentFunction")
+
+    bindings_raw = (module.meta or {}).get("shape_bindings") if isinstance(module.meta, dict) else None
+    if not isinstance(bindings_raw, Mapping) or not dict(bindings_raw):
+        raise RuntimeError("cuda real-mlir lowering requires module.meta.shape_bindings")
+    bindings: dict[str, Any] = {str(k): v for k, v in dict(bindings_raw).items() if str(k).strip()}
+
+    outputs = [str(x) for x in list(intent.outputs or []) if str(x).strip()]
+    if len(outputs) != 1:
+        raise RuntimeError(f"cuda real-mlir wave supports single-output intents only; outputs={outputs}")
+    out_name = outputs[0]
+    out_tt = (intent.tensors or {}).get(out_name)
+    if out_tt is None:
+        raise RuntimeError(f"missing output tensor spec: {out_name}")
+
+    out_shape = list(getattr(out_tt, "shape", []) or [])
+    out_dims: list[int] = []
+    for d in out_shape:
+        iv = _resolve_dim_int(d, bindings)
+        if iv is None or iv <= 0:
+            raise RuntimeError(f"unbound output dim: tensor={out_name} dim={d}")
+        out_dims.append(int(iv))
+    out_total = int(math.prod(out_dims)) if out_dims else 1
+    if out_total <= 0:
+        raise RuntimeError("invalid output numel for cuda real-mlir wave")
+
+    ext_inputs, out_names = _collect_io_arg_order(intent)
+    if out_name not in out_names:
+        raise RuntimeError(f"output tensor not in io arg order: {out_name}")
+
+    # Build flattened, static-shape memref args so `convert-gpu-to-nvvm` can use
+    # bare-ptr calling convention.
+    arg_specs: dict[str, dict[str, Any]] = {}
+    for name in [*ext_inputs, *out_names]:
+        tt = (intent.tensors or {}).get(name)
+        if tt is None:
+            raise RuntimeError(f"missing tensor spec: {name}")
+        elem = _dtype_to_mlir(str(getattr(tt, "dtype", "f32")))
+        shape = list(getattr(tt, "shape", []) or [])
+        is_scalar = len(shape) == 0
+        if is_scalar:
+            numel = 1
+        else:
+            dims: list[int] = []
+            for d in shape:
+                iv = _resolve_dim_int(d, bindings)
+                if iv is None or iv <= 0:
+                    raise RuntimeError(f"unbound tensor dim: tensor={name} dim={d}")
+                dims.append(int(iv))
+            numel = int(math.prod(dims)) if dims else 1
+            if int(numel) != int(out_total):
+                raise RuntimeError(
+                    "cuda real-mlir wave currently supports elementwise tensors only; "
+                    f"tensor={name} numel={numel} expected={out_total}"
+                )
+        memref_n = 1 if is_scalar else int(numel)
+        arg_specs[str(name)] = {
+            "elem": str(elem),
+            "memref": f"memref<{memref_n}x{elem}, 1>",
+            "scalar": bool(is_scalar),
+        }
+
+    kernel_name = _mlir_ident(str(intent.name or out_name or "kernel"))
+    intent_json = intent.to_json_dict()
+    b64 = _b64_json(intent_json)
+    symbols_attr = "[" + ", ".join([f"\"{s}\"" for s in _symbols_from_intent(intent)]) + "]"
+
+    # Build kernel args in runtime_io_spec order.
+    arg_list = [f"%{_mlir_ident(n)}: {arg_specs[n]['memref']}" for n in [*ext_inputs, *out_names]]
+    arg_sig = ", ".join(arg_list)
+
+    # Per-element SSA mapping.
+    loaded: dict[str, str] = {}
+    computed: dict[str, str] = {}
+
+    def _load_tensor(name: str) -> list[str]:
+        if name in computed:
+            return []
+        if name in loaded:
+            return []
+        spec = arg_specs.get(name)
+        if spec is None:
+            raise RuntimeError(f"unknown tensor referenced: {name}")
+        ssa = f"%{_mlir_ident(name)}_v"
+        memref = str(spec["memref"])
+        if bool(spec["scalar"]):
+            loaded[name] = ssa
+            return [f"        {ssa} = memref.load %{_mlir_ident(name)}[%c0] : {memref}"]
+        loaded[name] = ssa
+        return [f"        {ssa} = memref.load %{_mlir_ident(name)}[%i] : {memref}"]
+
+    tmp_idx = 0
+
+    def _fresh(prefix: str) -> str:
+        nonlocal tmp_idx
+        tmp_idx += 1
+        return f"%{_mlir_ident(prefix)}_{tmp_idx}"
+
+    if_lines: list[str] = []
+    if_lines.append("        %c0 = arith.constant 0 : index")
+
+    # Emit ops (single-thread elementwise evaluation).
+    for op in list(intent.ops or []):
+        op_name = str(getattr(op, "op", "")).strip()
+        inputs = [str(x) for x in list(getattr(op, "inputs", []) or []) if str(x).strip()]
+        outv = str(getattr(op, "output", "")).strip()
+        attrs = dict(getattr(op, "attrs", {}) or {})
+        if not op_name or not outv:
+            raise RuntimeError("invalid op in intent")
+
+        # Materialize inputs.
+        in_ssa: list[str] = []
+        in_ty: list[str] = []
+        for inp in inputs:
+            if inp in computed:
+                in_ssa.append(computed[inp])
+            else:
+                if_lines.extend(_load_tensor(inp))
+                in_ssa.append(loaded[inp])
+            tt = (intent.tensors or {}).get(inp)
+            if tt is None:
+                raise RuntimeError(f"missing tensor spec: {inp}")
+            in_ty.append(_dtype_to_mlir(str(getattr(tt, "dtype", "f32"))))
+
+        out_tt2 = (intent.tensors or {}).get(outv)
+        out_ty = _dtype_to_mlir(str(getattr(out_tt2, "dtype", "f32"))) if out_tt2 is not None else ""
+
+        if op_name == "cast":
+            if len(in_ssa) != 1:
+                raise RuntimeError("cast expects 1 input")
+            to_ty = _dtype_to_mlir(str(attrs.get("to") or out_ty or "f32"))
+            src_ty = in_ty[0]
+            if src_ty == to_ty:
+                computed[outv] = in_ssa[0]
+                continue
+            dst = _fresh("cast")
+            if src_ty in {"f16", "bf16"} and to_ty == "f32":
+                if_lines.append(f"        {dst} = arith.extf {in_ssa[0]} : {src_ty} to {to_ty}")
+            elif src_ty == "f32" and to_ty in {"f16", "bf16"}:
+                if_lines.append(f"        {dst} = arith.truncf {in_ssa[0]} : {src_ty} to {to_ty}")
+            else:
+                raise RuntimeError(f"unsupported cast: {src_ty} -> {to_ty}")
+            computed[outv] = dst
+            continue
+
+        if op_name in {"add", "sub", "mul", "div"}:
+            if len(in_ssa) != 2 or in_ty[0] != "f32" or in_ty[1] != "f32":
+                raise RuntimeError(f"{op_name} currently supports f32 binary only")
+            dst = _fresh(op_name)
+            arith = {"add": "arith.addf", "sub": "arith.subf", "mul": "arith.mulf", "div": "arith.divf"}[op_name]
+            if_lines.append(f"        {dst} = {arith} {in_ssa[0]}, {in_ssa[1]} : f32")
+            computed[outv] = dst
+            continue
+
+        if op_name in {"max", "min"}:
+            if len(in_ssa) != 2 or in_ty[0] != "f32" or in_ty[1] != "f32":
+                raise RuntimeError(f"{op_name} currently supports f32 binary only")
+            dst = _fresh(op_name)
+            arith = {"max": "arith.maximumf", "min": "arith.minimumf"}[op_name]
+            if_lines.append(f"        {dst} = {arith} {in_ssa[0]}, {in_ssa[1]} : f32")
+            computed[outv] = dst
+            continue
+
+        if op_name == "relu":
+            if len(in_ssa) != 1 or in_ty[0] != "f32":
+                raise RuntimeError("relu currently supports f32 only")
+            c0 = _fresh("c0f")
+            dst = _fresh("relu")
+            if_lines.append(f"        {c0} = arith.constant 0.0 : f32")
+            if_lines.append(f"        {dst} = arith.maximumf {in_ssa[0]}, {c0} : f32")
+            computed[outv] = dst
+            continue
+
+        if op_name == "exp":
+            if len(in_ssa) != 1 or in_ty[0] != "f32":
+                raise RuntimeError("exp currently supports f32 only")
+            dst = _fresh("exp")
+            if_lines.append(f"        {dst} = math.exp {in_ssa[0]} : f32")
+            computed[outv] = dst
+            continue
+
+        if op_name == "where":
+            if len(in_ssa) != 3:
+                raise RuntimeError("where expects 3 inputs")
+            if in_ty[0] != "i1":
+                raise RuntimeError(f"where condition must be bool/i1, got {in_ty[0]}")
+            if in_ty[1] != "f32" or in_ty[2] != "f32":
+                raise RuntimeError("where currently supports f32 branches only")
+            dst = _fresh("where")
+            if_lines.append(f"        {dst} = arith.select {in_ssa[0]}, {in_ssa[1]}, {in_ssa[2]} : f32")
+            computed[outv] = dst
+            continue
+
+        raise RuntimeError(f"unsupported op in cuda real-mlir wave: {op_name}")
+
+    # Store final output element.
+    final_ssa = computed.get(out_name)
+    if final_ssa is None:
+        last_out = str(getattr(list(intent.ops or [])[-1], "output", "")).strip() if intent.ops else ""
+        final_ssa = computed.get(last_out)
+    if not final_ssa:
+        raise RuntimeError(f"no computed value for output tensor: {out_name}")
+    if_lines.append(f"        memref.store {final_ssa}, %{_mlir_ident(out_name)}[%i] : {arg_specs[out_name]['memref']}")
+
+    # Assemble module text.
+    lines: list[str] = []
+    lines.append("module attributes {")
+    lines.append("  gpu.container_module,")
+    lines.append('  intentir.format = "std_mlir_v1",')
+    lines.append(f'  intentir.intent_name = "{kernel_name}",')
+    lines.append(f'  intentir.intent_json_b64 = "{b64}",')
+    lines.append(f"  intentir.symbols = {symbols_attr},")
+    lines.append('  llvm.target_triple = "nvptx64-nvidia-cuda"')
+    lines.append("} {")
+    lines.append("  gpu.module @kernels {")
+    lines.append(f"    gpu.func @{kernel_name}({arg_sig}) kernel {{")
+    lines.append("      %tid = gpu.thread_id x")
+    lines.append("      %bid = gpu.block_id x")
+    lines.append("      %bdim = gpu.block_dim x")
+    lines.append("      %tmp = arith.muli %bid, %bdim : index")
+    lines.append("      %i = arith.addi %tmp, %tid : index")
+    lines.append(f"      %c_total = arith.constant {int(out_total)} : index")
+    lines.append("      %pred = arith.cmpi ult, %i, %c_total : index")
+    lines.append("      scf.if %pred {")
+    lines.extend(if_lines)
+    lines.append("      }")
+    lines.append("      gpu.return")
+    lines.append("    }")
+    lines.append("  }")
+    lines.append("  // intentir_json_begin")
+    lines.append(f"  // {b64}")
+    lines.append("  // intentir_json_end")
+    lines.append("}")
+
+    out = IntentMLIRModule(
+        module_text="\n".join(lines) + "\n",
+        dialect_version=str(module.dialect_version),
+        provenance=dict(module.provenance or {}),
+        symbols=list(module.symbols or []),
+        meta=dict(module.meta or {}),
+        intent_json=dict(intent_json),
+    )
+    out.meta["cuda_real_mlir_kernel_emitted"] = True
+    out.meta["kernel_name"] = str(kernel_name)
+    out.meta["cuda_real_mlir_output_total"] = int(out_total)
+    return out
+
+
+__all__ = ["lower_intent_to_cuda_gpu_kernel"]
+
