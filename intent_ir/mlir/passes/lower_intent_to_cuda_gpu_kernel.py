@@ -8,6 +8,7 @@ import re
 from typing import Any, Mapping
 
 from intent_ir.ir import IntentFunction
+from intent_ir.ir.repair import materialize_missing_op_output_tensors
 from intent_ir.mlir.convert_to_intent import to_intent
 from intent_ir.mlir.module import IntentMLIRModule
 
@@ -155,6 +156,7 @@ def lower_intent_to_cuda_gpu_kernel(
     intent = to_intent(module)
     if not isinstance(intent, IntentFunction):
         raise RuntimeError("to_intent did not return IntentFunction")
+    repair_actions = materialize_missing_op_output_tensors(intent)
 
     bindings_raw = (module.meta or {}).get("shape_bindings") if isinstance(module.meta, dict) else None
     if not isinstance(bindings_raw, Mapping) or not dict(bindings_raw):
@@ -386,6 +388,12 @@ def lower_intent_to_cuda_gpu_kernel(
             return repr(float(v))
         except Exception:
             return repr(float(str(v)))
+
+    def _resolve_symbolic_int(v: Any) -> int:
+        iv = _resolve_dim_int(v, bindings)
+        if iv is None:
+            raise RuntimeError(f"unable to resolve int const: {v!r}")
+        return int(iv)
 
     out_spec = arg_specs[out_name]
     out_memref = str(out_spec["memref"])
@@ -744,6 +752,52 @@ def lower_intent_to_cuda_gpu_kernel(
             out_lines.append(f"        {out} = arith.index_cast {ssa} : {ty} to index")
             return out
 
+        def _coerce_scalar(ssa: str, src_ty: str, dst_ty: str) -> str:
+            if src_ty == dst_ty:
+                return ssa
+            out = _fresh("cast")
+            # float widen/narrow
+            if src_ty in {"f16", "bf16"} and dst_ty == "f32":
+                out_lines.append(f"        {out} = arith.extf {ssa} : {src_ty} to f32")
+                return out
+            if src_ty == "f32" and dst_ty in {"f16", "bf16"}:
+                out_lines.append(f"        {out} = arith.truncf {ssa} : f32 to {dst_ty}")
+                return out
+            # bool <-> int
+            if src_ty == "i1" and dst_ty in {"i32", "i64"}:
+                out_lines.append(f"        {out} = arith.extui {ssa} : i1 to {dst_ty}")
+                return out
+            if src_ty in {"i32", "i64"} and dst_ty == "i1":
+                c0 = _fresh("c0")
+                out_lines.append(f"        {c0} = arith.constant 0 : {src_ty}")
+                out_lines.append(f"        {out} = arith.cmpi ne, {ssa}, {c0} : {src_ty}")
+                return out
+            # int widen/narrow
+            if src_ty == "i32" and dst_ty == "i64":
+                out_lines.append(f"        {out} = arith.extsi {ssa} : i32 to i64")
+                return out
+            if src_ty == "i64" and dst_ty == "i32":
+                out_lines.append(f"        {out} = arith.trunci {ssa} : i64 to i32")
+                return out
+            # int <-> float (signed)
+            if src_ty in {"i32", "i64"} and dst_ty == "f32":
+                out_lines.append(f"        {out} = arith.sitofp {ssa} : {src_ty} to f32")
+                return out
+            if src_ty == "f32" and dst_ty in {"i32", "i64"}:
+                out_lines.append(f"        {out} = arith.fptosi {ssa} : f32 to {dst_ty}")
+                return out
+            if src_ty == "i1" and dst_ty == "f32":
+                tmp_i32 = _fresh("b_i32")
+                out_lines.append(f"        {tmp_i32} = arith.extui {ssa} : i1 to i32")
+                out_lines.append(f"        {out} = arith.uitofp {tmp_i32} : i32 to f32")
+                return out
+            if src_ty == "f32" and dst_ty == "i1":
+                c0 = _fresh("c0f")
+                out_lines.append(f"        {c0} = arith.constant 0.0 : f32")
+                out_lines.append(f"        {out} = arith.cmpf one, {ssa}, {c0} : f32")
+                return out
+            raise RuntimeError(f"unsupported cast: {src_ty} -> {dst_ty}")
+
         def _value(name: str) -> tuple[str, str]:
             if name in computed:
                 return computed[name], str(computed_ty[name])
@@ -761,6 +815,58 @@ def lower_intent_to_cuda_gpu_kernel(
 
             # Non-elementwise ops: handle explicit indexing first so we don't try to
             # load broadcast="none" tensors with elementwise rules.
+            if op_name == "iota":
+                if inputs:
+                    raise RuntimeError("iota expects 0 inputs")
+                tt = (intent.tensors or {}).get(outv)
+                if tt is None:
+                    raise RuntimeError(f"missing iota output tensor spec: {outv}")
+                dims_raw = list(getattr(tt, "shape", []) or [])
+                dims: list[int] = []
+                for d in dims_raw:
+                    iv = _resolve_dim_int(d, bindings)
+                    if iv is None or iv <= 0:
+                        raise RuntimeError(f"unbound iota dim: tensor={outv} dim={d}")
+                    dims.append(int(iv))
+                rank = int(len(dims))
+                axis_raw = attrs.get("axis", 0)
+                try:
+                    axis = int(axis_raw)
+                except Exception:
+                    axis = 0
+
+                idx_axis = str(idx_ssa)
+                if rank == 0:
+                    idx_axis = "%c0"
+                elif rank == 1:
+                    if axis != 0:
+                        raise RuntimeError(f"iota rank-1 expects axis=0, got {axis}")
+                    idx_axis = str(idx_ssa)
+                elif rank == 2:
+                    if axis not in {0, 1}:
+                        raise RuntimeError(f"iota rank-2 expects axis in {{0,1}}, got {axis}")
+                    cN = _fresh("cN_iota")
+                    out_lines.append(f"        {cN} = arith.constant {int(dims[1])} : index")
+                    if axis == 0:
+                        row_i = _fresh("row_iota")
+                        out_lines.append(f"        {row_i} = arith.divui {idx_ssa}, {cN} : index")
+                        idx_axis = row_i
+                    else:
+                        col_i = _fresh("col_iota")
+                        out_lines.append(f"        {col_i} = arith.remui {idx_ssa}, {cN} : index")
+                        idx_axis = col_i
+                else:
+                    raise RuntimeError(f"iota unsupported rank: {rank}")
+
+                out_ty = _infer_value_ty(outv)
+                if out_ty not in {"i32", "i64"}:
+                    raise RuntimeError(f"iota unsupported dtype: {out_ty}")
+                dst = _fresh("iota")
+                out_lines.append(f"        {dst} = arith.index_cast {idx_axis} : index to {out_ty}")
+                computed[outv] = dst
+                computed_ty[outv] = str(out_ty)
+                continue
+
             if op_name == "concat":
                 if len(inputs) != 2:
                     raise RuntimeError("concat currently supports exactly 2 inputs")
@@ -965,13 +1071,24 @@ def lower_intent_to_cuda_gpu_kernel(
             if op_name == "const":
                 if inputs:
                     raise RuntimeError("const expects 0 inputs")
-                if out_ty != "f32":
-                    raise RuntimeError(f"const currently supports f32 only (out_ty={out_ty})")
                 dst = _fresh("const")
-                out_lines.append(f"        {dst} = arith.constant {_as_f32_const(attrs.get('value'))} : f32")
-                computed[outv] = dst
-                computed_ty[outv] = "f32"
-                continue
+                if out_ty in {"i32", "i64"}:
+                    iv = _resolve_symbolic_int(attrs.get("value"))
+                    out_lines.append(f"        {dst} = arith.constant {int(iv)} : {out_ty}")
+                    computed[outv] = dst
+                    computed_ty[outv] = str(out_ty)
+                    continue
+                if out_ty == "f32":
+                    raw = attrs.get("value")
+                    # Some seeds encode symbol refs as strings (e.g. "N").
+                    sym_iv = _resolve_dim_int(raw, bindings)
+                    if sym_iv is not None:
+                        raw = float(sym_iv)
+                    out_lines.append(f"        {dst} = arith.constant {_as_f32_const(raw)} : f32")
+                    computed[outv] = dst
+                    computed_ty[outv] = "f32"
+                    continue
+                raise RuntimeError(f"const unsupported output dtype: {out_ty}")
 
             if op_name == "cast":
                 if len(in_ssa) != 1:
@@ -982,16 +1099,7 @@ def lower_intent_to_cuda_gpu_kernel(
                     computed[outv] = in_ssa[0]
                     computed_ty[outv] = str(to_ty)
                     continue
-                dst = _fresh("cast")
-                if src_ty in {"f16", "bf16"} and to_ty == "f32":
-                    out_lines.append(f"        {dst} = arith.extf {in_ssa[0]} : {src_ty} to {to_ty}")
-                elif src_ty == "f32" and to_ty in {"f16", "bf16"}:
-                    out_lines.append(f"        {dst} = arith.truncf {in_ssa[0]} : {src_ty} to {to_ty}")
-                elif src_ty == "i1" and to_ty == "i32":
-                    # FlagGems comparison ops often cast bool -> i32 for output.
-                    out_lines.append(f"        {dst} = arith.extui {in_ssa[0]} : i1 to i32")
-                else:
-                    raise RuntimeError(f"unsupported cast: {src_ty} -> {to_ty}")
+                dst = _coerce_scalar(in_ssa[0], src_ty, str(to_ty))
                 computed[outv] = dst
                 computed_ty[outv] = str(to_ty)
                 continue
@@ -1049,14 +1157,31 @@ def lower_intent_to_cuda_gpu_kernel(
                 continue
 
             if op_name in {"add", "sub", "mul", "div"}:
-                if len(in_ssa) != 2 or in_ty[0] != "f32" or in_ty[1] != "f32":
-                    raise RuntimeError(f"{op_name} currently supports f32 binary only")
-                dst = _fresh(op_name)
-                arith = {"add": "arith.addf", "sub": "arith.subf", "mul": "arith.mulf", "div": "arith.divf"}[op_name]
-                out_lines.append(f"        {dst} = {arith} {in_ssa[0]}, {in_ssa[1]}{fm} : f32")
-                computed[outv] = dst
-                computed_ty[outv] = "f32"
-                continue
+                if len(in_ssa) != 2:
+                    raise RuntimeError(f"{op_name} expects 2 inputs")
+                if out_ty == "f32":
+                    lhs = _coerce_scalar(in_ssa[0], in_ty[0], "f32")
+                    rhs = _coerce_scalar(in_ssa[1], in_ty[1], "f32")
+                    dst = _fresh(op_name)
+                    arith = {"add": "arith.addf", "sub": "arith.subf", "mul": "arith.mulf", "div": "arith.divf"}[
+                        op_name
+                    ]
+                    out_lines.append(f"        {dst} = {arith} {lhs}, {rhs}{fm} : f32")
+                    computed[outv] = dst
+                    computed_ty[outv] = "f32"
+                    continue
+                if out_ty in {"i32", "i64"}:
+                    lhs = _coerce_scalar(in_ssa[0], in_ty[0], str(out_ty))
+                    rhs = _coerce_scalar(in_ssa[1], in_ty[1], str(out_ty))
+                    dst = _fresh(op_name)
+                    arith = {"add": "arith.addi", "sub": "arith.subi", "mul": "arith.muli", "div": "arith.divsi"}[
+                        op_name
+                    ]
+                    out_lines.append(f"        {dst} = {arith} {lhs}, {rhs} : {out_ty}")
+                    computed[outv] = dst
+                    computed_ty[outv] = str(out_ty)
+                    continue
+                raise RuntimeError(f"{op_name} unsupported output dtype: {out_ty}")
 
             if op_name in {"max", "min"}:
                 if len(in_ssa) != 2 or in_ty[0] != "f32" or in_ty[1] != "f32":
@@ -1069,18 +1194,38 @@ def lower_intent_to_cuda_gpu_kernel(
                 continue
 
             if op_name in {"eq", "ne", "lt", "le", "gt", "ge"}:
-                if len(in_ssa) != 2 or in_ty[0] != "f32" or in_ty[1] != "f32":
-                    raise RuntimeError(f"{op_name} currently supports f32 binary only")
+                if len(in_ssa) != 2:
+                    raise RuntimeError(f"{op_name} expects 2 inputs")
                 dst = _fresh(op_name)
-                pred = {
-                    "eq": "oeq",
-                    "ne": "one",
-                    "lt": "olt",
-                    "le": "ole",
-                    "gt": "ogt",
-                    "ge": "oge",
-                }[op_name]
-                out_lines.append(f"        {dst} = arith.cmpf {pred}, {in_ssa[0]}, {in_ssa[1]} : f32")
+                float_tys = {"f16", "bf16", "f32"}
+                int_tys = {"i1", "i32", "i64"}
+                if in_ty[0] in float_tys or in_ty[1] in float_tys:
+                    lhs = _coerce_scalar(in_ssa[0], in_ty[0], "f32")
+                    rhs = _coerce_scalar(in_ssa[1], in_ty[1], "f32")
+                    pred = {
+                        "eq": "oeq",
+                        "ne": "one",
+                        "lt": "olt",
+                        "le": "ole",
+                        "gt": "ogt",
+                        "ge": "oge",
+                    }[op_name]
+                    out_lines.append(f"        {dst} = arith.cmpf {pred}, {lhs}, {rhs} : f32")
+                elif in_ty[0] in int_tys and in_ty[1] in int_tys:
+                    cmp_ty = "i64" if ("i64" in {in_ty[0], in_ty[1]}) else ("i32" if ("i32" in {in_ty[0], in_ty[1]}) else "i1")
+                    lhs = _coerce_scalar(in_ssa[0], in_ty[0], cmp_ty)
+                    rhs = _coerce_scalar(in_ssa[1], in_ty[1], cmp_ty)
+                    pred = {
+                        "eq": "eq",
+                        "ne": "ne",
+                        "lt": "slt",
+                        "le": "sle",
+                        "gt": "sgt",
+                        "ge": "sge",
+                    }[op_name]
+                    out_lines.append(f"        {dst} = arith.cmpi {pred}, {lhs}, {rhs} : {cmp_ty}")
+                else:
+                    raise RuntimeError(f"{op_name} unsupported input dtypes: {in_ty[0]} vs {in_ty[1]}")
                 computed[outv] = dst
                 computed_ty[outv] = "i1"
                 continue
@@ -1380,6 +1525,8 @@ def lower_intent_to_cuda_gpu_kernel(
     out.meta["cuda_real_mlir_output_total"] = int(out_total)
     out.meta["cuda_real_mlir_elems_per_thread"] = int(elems_per_thread)
     out.meta["cuda_real_mlir_elems_per_thread_source"] = str(elems_per_thread_source)
+    if repair_actions:
+        out.meta["cuda_real_mlir_intent_repair_actions"] = list(repair_actions)
     return out
 
 

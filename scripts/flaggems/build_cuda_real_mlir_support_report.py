@@ -145,6 +145,7 @@ SUPPORTED_OPS = {
     "concat",
     "pad",
     "gather",
+    "iota",
 }
 
 
@@ -164,13 +165,27 @@ def _tensor_shape(intent: dict[str, Any], name: str) -> list[Any]:
 
 
 def _check_broadcast_in_dim(intent: dict[str, Any], op: dict[str, Any]) -> list[str]:
-    # Current lowering only treats broadcast_in_dim as shape-only for scalar input.
     ins = [str(x) for x in list(op.get("inputs") or []) if str(x).strip()]
     if len(ins) != 1:
         return ["broadcast_in_dim_invalid_inputs"]
     in_shape = _tensor_shape(intent, ins[0])
-    if len(in_shape) != 0:
-        return ["broadcast_in_dim_non_scalar_input"]
+    if len(in_shape) == 0:
+        return []
+    attrs = op.get("attrs") if isinstance(op.get("attrs"), dict) else {}
+    out_shape = attrs.get("out_shape")
+    bcast_dims = attrs.get("broadcast_dims")
+    # CUDA real-MLIR lowering treats broadcast_in_dim as shape-only and relies on
+    # IO-spec broadcast classification. Accept common 1D->2D patterns.
+    if (
+        isinstance(out_shape, list)
+        and len(out_shape) == 2
+        and len(in_shape) == 1
+        and isinstance(bcast_dims, list)
+        and len(bcast_dims) == 1
+        and int(bcast_dims[0]) in {0, 1}
+    ):
+        return []
+    return ["broadcast_in_dim_unsupported_pattern"]
     return []
 
 
