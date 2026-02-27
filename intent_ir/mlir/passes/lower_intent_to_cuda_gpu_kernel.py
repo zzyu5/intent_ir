@@ -311,6 +311,10 @@ def lower_intent_to_cuda_gpu_kernel(
 
     vectorize = _eligible_for_vectorization()
 
+    # SSA names for memref arguments. In vectorize mode we may introduce
+    # alignment-assumed aliases to unlock aligned vector memory ops downstream.
+    arg_ssa: dict[str, str] = {str(name): f"%{_mlir_ident(name)}" for name in arg_specs}
+
     def _as_f32_const(v: Any) -> str:
         try:
             return repr(float(v))
@@ -355,7 +359,7 @@ def lower_intent_to_cuda_gpu_kernel(
                 ssa_scalar = _fresh(f"{name}_scalar")
                 ssa_vec = _fresh(f"{name}_splat")
                 lines = [
-                    f"        {ssa_scalar} = memref.load %{_mlir_ident(name)}[%c0] : {memref}",
+                    f"        {ssa_scalar} = memref.load {arg_ssa[str(name)]}[%c0] : {memref}",
                     f"        {ssa_vec} = vector.splat {ssa_scalar} : {vec_ty}",
                 ]
                 loaded[name] = ssa_vec
@@ -364,7 +368,7 @@ def lower_intent_to_cuda_gpu_kernel(
             if bcast == "elementwise":
                 ssa_vec = _fresh(f"{name}_vec")
                 lines = [
-                    f"        {ssa_vec} = vector.load %{_mlir_ident(name)}[{base_idx_ssa}] : {memref}, {vec_ty}",
+                    f"        {ssa_vec} = vector.load {arg_ssa[str(name)]}[{base_idx_ssa}] : {memref}, {vec_ty}",
                 ]
                 loaded[name] = ssa_vec
                 loaded_ty[name] = str(vec_ty)
@@ -558,7 +562,7 @@ def lower_intent_to_cuda_gpu_kernel(
         if out_memref_elem_ty != "f32" or out_val_ty != vec_ty:
             raise RuntimeError("vectorize mode supports only f32 outputs")
         out_lines.append(
-            f"        vector.store {final_ssa}, %{_mlir_ident(out_name)}[{base_idx_ssa}] : {out_memref}, {vec_ty}"
+            f"        vector.store {final_ssa}, {arg_ssa[str(out_name)]}[{base_idx_ssa}] : {out_memref}, {vec_ty}"
         )
         return out_lines
 
@@ -620,7 +624,7 @@ def lower_intent_to_cuda_gpu_kernel(
             else:
                 raise RuntimeError(f"unsupported broadcast kind in cuda real-mlir wave: {bcast}")
 
-            lines = [f"        {ssa_loaded} = memref.load %{_mlir_ident(name)}[{idx}] : {memref}"]
+            lines = [f"        {ssa_loaded} = memref.load {arg_ssa[str(name)]}[{idx}] : {memref}"]
             if scalar_ty and memref_elem_ty and scalar_ty != memref_elem_ty:
                 # ABI-facing bool tensors use i8 elements; convert to i1 in registers.
                 if scalar_ty == "i1" and memref_elem_ty == "i8":
@@ -885,7 +889,7 @@ def lower_intent_to_cuda_gpu_kernel(
                     "unsupported scalar->memref conversion in cuda real-mlir wave: "
                     f"{out_val_ty} -> {out_memref_elem_ty} for output={out_name}"
                 )
-        out_lines.append(f"        memref.store {store_ssa}, %{_mlir_ident(out_name)}[{idx_ssa}] : {out_memref}")
+        out_lines.append(f"        memref.store {store_ssa}, {arg_ssa[str(out_name)]}[{idx_ssa}] : {out_memref}")
         return out_lines
 
     # Assemble module text.
@@ -920,6 +924,16 @@ def lower_intent_to_cuda_gpu_kernel(
         lines.append(f"      %c_elems = arith.constant {int(elems_per_thread)} : index")
         lines.append("      %base = arith.muli %lin, %c_elems : index")
         if vectorize:
+            # Assume base pointer alignment to unlock aligned vector memory ops
+            # downstream (load/store <N x f32>). Since %base is a multiple of
+            # elems_per_thread, this is safe for contiguous tensors.
+            align_bytes = int(elems_per_thread) * 4
+            for name, spec in arg_specs.items():
+                aligned = f"%{_mlir_ident(name)}_aligned"
+                original = f"%{_mlir_ident(name)}"
+                memref_ty = str(spec["memref"])
+                lines.append(f"      {aligned} = memref.assume_alignment {original}, {align_bytes} : {memref_ty}")
+                arg_ssa[str(name)] = str(aligned)
             lines.append("      %pred_vec = arith.cmpi ult, %base, %c_total : index")
             lines.append("      scf.if %pred_vec {")
             lines.extend(_emit_elementwise_vector_for_base("%base"))
