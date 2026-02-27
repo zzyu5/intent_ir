@@ -1520,6 +1520,13 @@ def _apply_gate_exclude_policy(row: dict[str, Any], *, excluded_kernels: set[str
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument(
+        "--kernel-source",
+        choices=["coverage_batches", "triton_native"],
+        default="coverage_batches",
+        help="Kernel denominator source. coverage_batches uses workflow/flaggems/state/coverage_batches.json; "
+        "triton_native uses pipeline.triton.core.coverage_kernel_specs() (38 kernels).",
+    )
+    ap.add_argument(
         "--coverage-batches",
         type=Path,
         default=(ROOT / "workflow" / "flaggems" / "state" / "coverage_batches.json"),
@@ -1533,6 +1540,12 @@ def main() -> None:
     ap.add_argument("--resume", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--family-kernel-chunk-size", type=int, default=12)
     ap.add_argument("--threshold", type=float, default=0.80)
+    ap.add_argument(
+        "--p50-threshold",
+        type=float,
+        default=0.0,
+        help="Optional median perf ratio gate. 0 disables the p50 gate.",
+    )
     ap.add_argument("--warmup", type=int, default=20)
     ap.add_argument("--iters", type=int, default=200)
     ap.add_argument("--repeats", type=int, default=5)
@@ -1557,6 +1570,11 @@ def main() -> None:
     ap.add_argument("--cuda-runtime-backend", choices=["auto", "nvcc", "nvrtc"], default="nvrtc")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument(
+        "--monitor-only",
+        action="store_true",
+        help="Write full evidence but always exit 0 (does not gate CI). run_summary.ok still reflects gate result.",
+    )
+    ap.add_argument(
         "--gate-exclude-kernel",
         action="append",
         default=[],
@@ -1564,15 +1582,26 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    if not args.coverage_batches.is_file():
-        raise SystemExit(f"missing coverage batches: {args.coverage_batches}")
-    payload = _load_json(args.coverage_batches)
-    family_order = [str(x).strip() for x in list(payload.get("family_order") or []) if str(x).strip()]
-    by_family = {
-        str(b.get("family") or "").strip(): b
-        for b in list(payload.get("batches") or [])
-        if isinstance(b, dict) and str(b.get("family") or "").strip()
-    }
+    kernel_source = str(args.kernel_source).strip().lower()
+    family_order: list[str] = []
+    by_family: dict[str, dict[str, Any]] = {}
+    if kernel_source == "coverage_batches":
+        if not args.coverage_batches.is_file():
+            raise SystemExit(f"missing coverage batches: {args.coverage_batches}")
+        payload = _load_json(args.coverage_batches)
+        family_order = [str(x).strip() for x in list(payload.get("family_order") or []) if str(x).strip()]
+        by_family = {
+            str(b.get("family") or "").strip(): b
+            for b in list(payload.get("batches") or [])
+            if isinstance(b, dict) and str(b.get("family") or "").strip()
+        }
+    elif kernel_source == "triton_native":
+        kernels = [str(s.name).strip() for s in coverage_kernel_specs() if str(s.name).strip()]
+        family_order = ["triton_native"]
+        by_family = {"triton_native": {"family": "triton_native", "kernels": kernels}}
+    else:  # pragma: no cover - argparse constrains choices
+        raise SystemExit(f"unknown kernel_source: {kernel_source}")
+
     requested = [str(x).strip() for x in list(args.family or []) if str(x).strip()]
     families = requested if requested else [f for f in family_order if f in by_family]
     unknown = [f for f in families if f not in by_family]
@@ -1615,9 +1644,11 @@ def main() -> None:
 
     family_plan: list[dict[str, Any]] = []
     total_chunks = 0
+    kernel_expected_count = 0
     for family in families:
         b = by_family[family]
         kernels = [str(k).strip() for k in list(b.get("kernels") or []) if str(k).strip()]
+        kernel_expected_count += int(len(kernels))
         chunks = _chunk_kernels(kernels, int(args.family_kernel_chunk_size))
         total_chunks += len(chunks)
         family_plan.append(
@@ -1841,17 +1872,30 @@ def main() -> None:
         "rvv_remote": False,
         "cuda_runtime_backend": str(args.cuda_runtime_backend),
         "bench_mode": "graph",
+        "kernel_source": str(kernel_source),
+        "kernel_expected_count": int(kernel_expected_count),
         "chunk_size": int(args.family_kernel_chunk_size),
         "policy_json": (_to_repo_rel(Path(args.policy_json)) if args.policy_json is not None else ""),
         "policy_loaded": bool(policy_loaded),
         "gate_exclude_kernels": sorted(excluded_gate_kernels),
+        "p50_threshold": float(args.p50_threshold),
+        "monitor_only": bool(args.monitor_only),
     }
+
+    ratios_for_stats = [float(r.get("ratio") or 0.0) for r in measured_rows if isinstance(r, dict)]
+    perf_min_ratio = (min(ratios_for_stats) if ratios_for_stats else None)
+    perf_p50_ratio = (float(statistics.median(ratios_for_stats)) if ratios_for_stats else None)
+    p50_threshold = float(args.p50_threshold)
+    p50_ok = bool((p50_threshold <= 0.0) or (perf_p50_ratio is not None and float(perf_p50_ratio) >= p50_threshold))
     aggregate_ok = bool(
         categories_completed == categories_expected
         and len(categories_failed) == 0
         and len(measured_rows) > 0
         and device_ok
+        and p50_ok
     )
+
+    coverage_mode = ("category_batches" if str(kernel_source) == "coverage_batches" else "triton_native_specs")
 
     gpu_perf_json = out_root / "gpu_perf_graph.json"
     gpu_perf_payload = {
@@ -1862,10 +1906,17 @@ def main() -> None:
         "contract_schema_version": "intent_mlir_backend_contract_v2",
         "mode": "graph_only",
         "threshold": float(args.threshold),
+        "p50_threshold": float(args.p50_threshold),
+        "kernel_source": str(kernel_source),
+        "kernel_expected_count": int(kernel_expected_count),
+        "kernel_measured_count": int(len(measured_rows)),
+        "perf_min_ratio": (None if perf_min_ratio is None else float(perf_min_ratio)),
+        "perf_p50_ratio": (None if perf_p50_ratio is None else float(perf_p50_ratio)),
+        "monitor_only": bool(args.monitor_only),
         "warmup": int(args.warmup),
         "iters": int(args.iters),
         "repeats": int(args.repeats),
-        "coverage_mode": "category_batches",
+        "coverage_mode": str(coverage_mode),
         "coverage_batches_expected": int(categories_expected),
         "coverage_batches_completed": int(categories_completed),
         "coverage_batches_failed": list(categories_failed),
@@ -1915,6 +1966,9 @@ def main() -> None:
         "strict_mode": bool(strict_mode),
         "fallback_policy": str(fallback_policy),
         "contract_schema_version": "intent_mlir_backend_contract_v2",
+        "kernel_source": str(kernel_source),
+        "perf_min_ratio": (None if perf_min_ratio is None else float(perf_min_ratio)),
+        "perf_p50_ratio": (None if perf_p50_ratio is None else float(perf_p50_ratio)),
         "invocation": {
             **dict(invocation_meta),
             "strict_mode": bool(strict_mode),
@@ -1950,15 +2004,21 @@ def main() -> None:
         "strict_mode": bool(strict_mode),
         "fallback_policy": str(fallback_policy),
         "contract_schema_version": "intent_mlir_backend_contract_v2",
-        "coverage_mode": "category_batches",
-        "full196_evidence_kind": "batch_aggregate",
+        "monitor_only": bool(args.monitor_only),
+        "coverage_mode": str(coverage_mode),
+        "full196_evidence_kind": ("batch_aggregate" if str(kernel_source) == "coverage_batches" else "triton_native"),
         "coverage_batches_expected": int(categories_expected),
         "coverage_batches_completed": int(categories_completed),
         "coverage_batches_failed": list(categories_failed),
         "gpu_perf_mode": "graph_only",
+        "gpu_perf_kernel_source": str(kernel_source),
         "gpu_perf_threshold": float(args.threshold),
+        "gpu_perf_p50_threshold": float(args.p50_threshold),
         "gpu_perf_categories_complete": bool(categories_completed == categories_expected and len(categories_failed) == 0),
         "gpu_perf_per_device_ok": bool(device_ok),
+        "gpu_perf_min_ratio": (None if perf_min_ratio is None else float(perf_min_ratio)),
+        "gpu_perf_p50_ratio": (None if perf_p50_ratio is None else float(perf_p50_ratio)),
+        "gpu_perf_kernel_expected": int(kernel_expected_count),
         "gpu_perf_kernel_measured": int(len(measured_rows)),
         "gpu_perf_kernel_excluded": int(len(excluded_rows)),
         "gpu_perf_policy_json_path": (_to_repo_rel(Path(args.policy_json)) if args.policy_json is not None else ""),
@@ -1976,7 +2036,10 @@ def main() -> None:
                 "reason_detail": (
                     "all measured kernels meet threshold"
                     if aggregate_ok
-                    else f"device_ok={device_ok} categories_failed={categories_failed}"
+                    else (
+                        f"device_ok={device_ok} categories_failed={categories_failed} "
+                        f"perf_p50_ratio={perf_p50_ratio} p50_threshold={p50_threshold}"
+                    )
                 ),
             },
             {
@@ -2011,6 +2074,8 @@ def main() -> None:
         measured=int(len(measured_rows)),
         failures=int(len([r for r in measured_rows if not bool(r.get("ok"))])),
     )
+    if bool(args.monitor_only):
+        raise SystemExit(0)
     raise SystemExit(0 if bool(aggregate_ok) else 1)
 
 

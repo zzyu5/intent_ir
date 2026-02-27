@@ -154,6 +154,8 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             str(int(args.family_kernel_chunk_size)),
             "--threshold",
             str(float(args.gpu_perf_threshold)),
+            "--p50-threshold",
+            str(float(args.gpu_perf_p50_threshold)),
             "--warmup",
             str(int(args.perf_warmup)),
             "--iters",
@@ -174,6 +176,44 @@ def _cmd_suite(args: argparse.Namespace) -> int:
             intent_artifact_dir = _infer_full196_artifact_dir()
         if intent_artifact_dir:
             cmd.extend(["--intent-artifact-dir", str(intent_artifact_dir)])
+        if str(args.gpu_perf_policy_json).strip():
+            cmd.extend(["--policy-json", str(args.gpu_perf_policy_json)])
+        for kernel in list(args.gpu_perf_gate_exclude_kernel or []):
+            if str(kernel).strip():
+                cmd.extend(["--gate-exclude-kernel", str(kernel)])
+        for fam in list(args.family or []):
+            cmd.extend(["--family", str(fam)])
+        return _run(cmd, stream=bool(args.stream), dry_run=bool(args.dry_run), env_overrides=env_overrides)
+
+    if args.suite == "gpu-perf-triton-native":
+        cmd = _python_cmd(
+            "scripts/flaggems/run_gpu_perf_graph.py",
+            "--kernel-source",
+            "triton_native",
+            "--monitor-only",
+            "--out-root",
+            str(out_root),
+            "--family-kernel-chunk-size",
+            str(int(args.family_kernel_chunk_size)),
+            "--threshold",
+            str(float(args.gpu_perf_threshold)),
+            "--p50-threshold",
+            str(float(args.gpu_perf_p50_threshold)),
+            "--warmup",
+            str(int(args.perf_warmup)),
+            "--iters",
+            str(int(args.perf_iters)),
+            "--repeats",
+            str(int(args.perf_repeats)),
+            "--cuda-runtime-backend",
+            str(args.cuda_runtime_backend),
+            "--progress-style",
+            str(args.progress_style),
+            "--progress-file",
+            str(progress_file),
+            "--resume" if args.resume else "--no-resume",
+            "--stream" if args.stream else "--no-stream",
+        )
         if str(args.gpu_perf_policy_json).strip():
             cmd.extend(["--policy-json", str(args.gpu_perf_policy_json)])
         for kernel in list(args.gpu_perf_gate_exclude_kernel or []):
@@ -596,6 +636,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=[
             "flaggems-full196",
             "gpu-perf-graph",
+            "gpu-perf-triton-native",
             "flaggems-coverage-single",
             "triton-smoke",
             "tilelang-smoke",
@@ -610,6 +651,7 @@ def _build_parser() -> argparse.ArgumentParser:
     suite.add_argument("--execution-ir", choices=["mlir"], default=_execution_ir_default())
     suite.add_argument("--family-kernel-chunk-size", type=int, default=12)
     suite.add_argument("--gpu-perf-threshold", type=float, default=0.80)
+    suite.add_argument("--gpu-perf-p50-threshold", type=float, default=0.90)
     suite.add_argument("--perf-warmup", type=int, default=20)
     suite.add_argument("--perf-iters", type=int, default=200)
     suite.add_argument("--perf-repeats", type=int, default=5)
