@@ -1,11 +1,11 @@
 {
   "schema_version": "intentir_cuda_real_mlir_support_report_v1",
-  "generated_at_utc": "2026-02-27T17:16:56+00:00",
+  "generated_at_utc": "2026-02-27T17:20:30+00:00",
   "repo": {
-    "head_commit": "844d38adf037cd2ed9d9e7f603621e6c8ce13c2e",
+    "head_commit": "b1c6557bb9272ee823ab730c772d6fc2a0043a73",
     "branch": "compiler-cleanup-v1",
     "dirty": true,
-    "git_describe": "844d38a"
+    "git_describe": "b1c6557-dirty"
   },
   "sources": {
     "coverage_batches": "workflow/flaggems/state/coverage_batches.json",
@@ -60,8 +60,8 @@
     "where"
   ],
   "kernels_total": 158,
-  "kernels_supported": 74,
-  "kernels_unsupported": 84,
+  "kernels_supported": 79,
+  "kernels_unsupported": 79,
   "supported_kernels": [
     "abs2d",
     "acos2d",
@@ -119,6 +119,9 @@
     "reciprocal2d",
     "remainder2d",
     "repeat2d",
+    "repeat_interleave_self_int1d",
+    "repeat_interleave_self_tensor1d",
+    "repeat_interleave_tensor1d",
     "rsqrt2d",
     "sin2d",
     "sqrt2d",
@@ -135,8 +138,10 @@
     "softplus2d",
     "tanh2d",
     "flip2d",
+    "gather2d",
     "index_select2d",
-    "where2d"
+    "where2d",
+    "embedding2d"
   ],
   "unsupported_kernels": [
     {
@@ -329,24 +334,6 @@
       ],
       "unsupported_ops": [
         "quantile"
-      ]
-    },
-    {
-      "kernel": "repeat_interleave_self_int1d",
-      "reasons": [
-        "gather_requires_2d_output"
-      ]
-    },
-    {
-      "kernel": "repeat_interleave_self_tensor1d",
-      "reasons": [
-        "gather_requires_2d_output"
-      ]
-    },
-    {
-      "kernel": "repeat_interleave_tensor1d",
-      "reasons": [
-        "gather_requires_2d_output"
       ]
     },
     {
@@ -616,12 +603,6 @@
       ]
     },
     {
-      "kernel": "gather2d",
-      "reasons": [
-        "gather_requires_2d_output"
-      ]
-    },
-    {
       "kernel": "index_add2d",
       "reasons": [
         "unsupported_ops"
@@ -802,12 +783,6 @@
       "kernel": "upsample_nearest2d_nchw",
       "reasons": [
         "output_rank_gt2:4"
-      ]
-    },
-    {
-      "kernel": "embedding2d",
-      "reasons": [
-        "gather_requires_2d_output"
       ]
     },
     {

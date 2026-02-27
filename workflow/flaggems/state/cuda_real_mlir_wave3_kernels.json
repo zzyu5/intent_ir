@@ -58,6 +58,9 @@
     "reciprocal2d",
     "remainder2d",
     "repeat2d",
+    "repeat_interleave_self_int1d",
+    "repeat_interleave_self_tensor1d",
+    "repeat_interleave_tensor1d",
     "rsqrt2d",
     "sin2d",
     "sqrt2d",
@@ -74,7 +77,9 @@
     "softplus2d",
     "tanh2d",
     "flip2d",
+    "gather2d",
     "index_select2d",
-    "where2d"
+    "where2d",
+    "embedding2d"
   ]
 }
