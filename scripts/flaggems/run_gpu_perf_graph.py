@@ -274,35 +274,37 @@ def _bench_graph(
 ) -> dict[str, float]:
     if int(iters) <= 0:
         raise RuntimeError("iters must be > 0")
-    # Capture/replay on the current stream.
-    # `torch.cuda.graph()` uses an internal side-stream by default, which can
-    # produce empty captures if a callee (e.g. a custom C++/driver wrapper)
-    # launches work on the default/current stream instead of the side-stream.
-    capture_stream = torch.cuda.current_stream()
+    # Capture on a non-default stream (PyTorch requirement) and make it the current
+    # stream during capture/replay so any custom launchers that consult
+    # `torch.cuda.current_stream()` enqueue work into the captured stream.
+    capture_stream = torch.cuda.Stream()
 
-    torch.cuda.synchronize()
-    fn()
-    torch.cuda.synchronize()
-
-    for _ in range(max(0, int(warmup))):
+    # Allocate/initialize outside graph capture (CUDA Graph requirement).
+    with torch.cuda.stream(capture_stream):
+        capture_stream.synchronize()
         fn()
-    torch.cuda.synchronize()
+        capture_stream.synchronize()
+        for _ in range(max(0, int(warmup))):
+            fn()
+        capture_stream.synchronize()
 
     t_capture0 = time.perf_counter()
     graph = torch.cuda.CUDAGraph()
-    with torch.cuda.graph(graph, stream=capture_stream):
-        fn()
-    torch.cuda.synchronize()
+    with torch.cuda.stream(capture_stream):
+        with torch.cuda.graph(graph, stream=capture_stream):
+            fn()
+    capture_stream.synchronize()
     capture_ms = (time.perf_counter() - t_capture0) * 1000.0
 
     replay_total_ms: list[float] = []
     replay_iter_ms: list[float] = []
     for _ in range(max(1, int(repeats))):
-        torch.cuda.synchronize()
+        capture_stream.synchronize()
         t0 = time.perf_counter()
-        for _j in range(int(iters)):
-            graph.replay()
-        torch.cuda.synchronize()
+        with torch.cuda.stream(capture_stream):
+            for _j in range(int(iters)):
+                graph.replay()
+        capture_stream.synchronize()
         total_ms = (time.perf_counter() - t0) * 1000.0
         replay_total_ms.append(total_ms)
         replay_iter_ms.append(total_ms / float(iters))
@@ -826,6 +828,13 @@ def _build_native_launch_fn(
                 scalar_map[str(name)] = arr.item()
             except Exception:
                 pass
+    # Common scalar aliases across providers.
+    if "lo" in scalar_map and "mini" not in scalar_map:
+        scalar_map["mini"] = scalar_map["lo"]
+    if "hi" in scalar_map and "maxi" not in scalar_map:
+        scalar_map["maxi"] = scalar_map["hi"]
+    if "axis" in scalar_map and "dim" not in scalar_map:
+        scalar_map["dim"] = scalar_map["axis"]
 
     by_param_tensor: dict[str, tuple[str, torch.Tensor]] = {}
     for name, tensor in tensor_map.items():
@@ -837,6 +846,172 @@ def _build_native_launch_fn(
         key = _kernel_param_key(name)
         if key and key not in by_param_scalar:
             by_param_scalar[key] = (str(name), value)
+
+    if source == "flaggems_native":
+        semantic = str(getattr(spec, "source_op", "") or kernel).strip()
+        # Some registry entries map identity2d to alias ops like `contiguous`, which can
+        # become a no-op on already-contiguous inputs and yield empty CUDA graph captures.
+        # For perf, force a real copy baseline.
+        if str(kernel) == "identity2d":
+            semantic = "copy"
+        flaggems_ops = getattr(module, "flag_gems_ops", None)
+        if flaggems_ops is None:
+            raise RuntimeError("flaggems_native baseline requires pipeline.triton.providers.flaggems.specs.flag_gems_ops")
+
+        obj = getattr(flaggems_ops, semantic, None)
+        callee: Callable[..., Any] | None = obj if callable(obj) else None
+        callee_tag = f"flag_gems_ops.{semantic}"
+        if callee is None and inspect.ismodule(obj):
+            preferred: list[str] = []
+            if semantic == "div":
+                preferred = ["true_divide", "div_mode", "floor_divide", "remainder"]
+            for cand in preferred:
+                sub = getattr(obj, cand, None)
+                if callable(sub):
+                    callee = sub
+                    callee_tag = f"flag_gems_ops.{semantic}.{cand}"
+                    break
+        if callee is None:
+            raise RuntimeError(f"no flag_gems callable for semantic_op={semantic!r}")
+
+        # For copy-like ops, keep a stable output buffer so CUDA graph capture is valid.
+        if semantic == "copy":
+            src = None
+            for key in ("src", "inp", "input", "A", "x"):
+                t = tensor_map.get(key)
+                if isinstance(t, torch.Tensor):
+                    src = t
+                    break
+            if src is None and tensor_map:
+                src = next(iter(tensor_map.values()))
+            if not isinstance(src, torch.Tensor):
+                raise RuntimeError("copy baseline missing src tensor")
+            template = torch.empty_like(src)
+
+            def _run() -> None:
+                _ = callee(template, src)
+
+            return _run, str(getattr(module, "__name__", "")), {
+                "arg_count": int(2),
+                "spec_source": source,
+                "launch_source": f"{callee_tag}:copy_with_template",
+            }
+
+        used_tensor_names: set[str] = set()
+        used_scalar_names: set[str] = set()
+        unresolved_required: list[tuple[str, str]] = []
+        sig = inspect.signature(callee)
+        kwargs: dict[str, Any] = {}
+        for pname, p in sig.parameters.items():
+            if p.kind == inspect.Parameter.POSITIONAL_ONLY:
+                raise RuntimeError(f"positional-only native signature unsupported ({pname})")
+            if p.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
+                continue
+            key = _kernel_param_key(pname)
+            if key in by_param_scalar:
+                src_name, v = by_param_scalar[key]
+                kwargs[pname] = v
+                used_scalar_names.add(src_name)
+                continue
+            if key in by_param_tensor:
+                src_name, t = by_param_tensor[key]
+                kwargs[pname] = t
+                used_tensor_names.add(src_name)
+                continue
+            if p.default is not inspect._empty:
+                continue
+            unresolved_required.append((str(pname), str(key)))
+
+        # Heuristic fallback: bind unresolved parameters from remaining scalars/tensors.
+        scalar_hint_tokens = (
+            "dim",
+            "axis",
+            "eps",
+            "k",
+            "largest",
+            "sorted",
+            "descending",
+            "diag",
+            "diagonal",
+            "threshold",
+            "value",
+            "alpha",
+            "beta",
+            "cond",
+            "condition",
+            "mask",
+        )
+        tensor_hint_tokens = (
+            "x",
+            "y",
+            "z",
+            "input",
+            "self",
+            "other",
+            "condition",
+            "mask",
+            "tensor",
+            "lhs",
+            "rhs",
+            "src",
+            "query",
+            "key",
+            "value",
+            "a",
+            "b",
+        )
+        unused_scalars = [(n, v) for n, v in scalar_map.items() if str(n) not in used_scalar_names]
+        unused_tensors = [
+            (n, t)
+            for n, t in tensor_map.items()
+            if str(n) not in used_tensor_names and (not isinstance(t, torch.Tensor) or int(t.ndim) > 0)
+        ]
+
+        still_unresolved: list[tuple[str, str]] = []
+        for pname, key in unresolved_required:
+            pnorm = _kernel_param_key(pname)
+            if any(tok in pnorm for tok in scalar_hint_tokens) and unused_scalars:
+                src_name, v = unused_scalars.pop(0)
+                kwargs[pname] = v
+                used_scalar_names.add(str(src_name))
+                continue
+            if any(tok in pnorm for tok in tensor_hint_tokens) and unused_tensors:
+                src_name, t = unused_tensors.pop(0)
+                kwargs[pname] = t
+                used_tensor_names.add(str(src_name))
+                continue
+            still_unresolved.append((pname, key))
+
+        unresolved_required = still_unresolved
+        still_unresolved = []
+        for pname, key in unresolved_required:
+            if unused_tensors:
+                src_name, t = unused_tensors.pop(0)
+                kwargs[pname] = t
+                used_tensor_names.add(str(src_name))
+                continue
+            if unused_scalars:
+                src_name, v = unused_scalars.pop(0)
+                kwargs[pname] = v
+                used_scalar_names.add(str(src_name))
+                continue
+            still_unresolved.append((pname, key))
+
+        if semantic == "to_copy" and "dtype" in sig.parameters and "dtype" not in kwargs:
+            kwargs["dtype"] = torch.float32
+
+        if still_unresolved:
+            unresolved_names = ", ".join(str(x[0]) for x in still_unresolved)
+            raise RuntimeError(f"missing native arg mapping for parameter={unresolved_names}")
+
+        def _run() -> None:
+            _ = callee(**kwargs)
+
+        return _run, str(getattr(module, "__name__", "")), {
+            "arg_count": len(kwargs),
+            "spec_source": source,
+            "launch_source": callee_tag,
+        }
 
     adapter = _build_native_launch_adapter(
         kernel=str(kernel),
@@ -874,15 +1049,15 @@ def _build_native_launch_fn(
         if p.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
             continue
         key = _kernel_param_key(pname)
-        if key in by_param_tensor:
-            src_name, t = by_param_tensor[key]
-            kwargs[pname] = t
-            used_tensor_names.add(src_name)
-            continue
         if key in by_param_scalar:
             src_name, v = by_param_scalar[key]
             kwargs[pname] = v
             used_scalar_names.add(src_name)
+            continue
+        if key in by_param_tensor:
+            src_name, t = by_param_tensor[key]
+            kwargs[pname] = t
+            used_tensor_names.add(src_name)
             continue
         if p.default is not inspect._empty:
             continue
@@ -903,6 +1078,9 @@ def _build_native_launch_fn(
         "value",
         "alpha",
         "beta",
+        "cond",
+        "condition",
+        "mask",
     )
     tensor_hint_tokens = (
         "x",
@@ -910,6 +1088,9 @@ def _build_native_launch_fn(
         "z",
         "input",
         "self",
+        "other",
+        "condition",
+        "mask",
         "tensor",
         "lhs",
         "rhs",
@@ -921,7 +1102,11 @@ def _build_native_launch_fn(
         "b",
     )
     unused_scalars = [(n, v) for n, v in scalar_map.items() if str(n) not in used_scalar_names]
-    unused_tensors = [(n, t) for n, t in tensor_map.items() if str(n) not in used_tensor_names]
+    unused_tensors = [
+        (n, t)
+        for n, t in tensor_map.items()
+        if str(n) not in used_tensor_names and (not isinstance(t, torch.Tensor) or int(t.ndim) > 0)
+    ]
 
     still_unresolved: list[tuple[str, str]] = []
     for pname, key in unresolved_required:
