@@ -510,7 +510,7 @@ def test_apply_intentir_perf_binding_overrides_respects_existing_and_disable_fla
     assert applied2 == {}
 
 
-def test_perf_rebuild_kernel_set_disabled_by_default_in_strict(
+def test_perf_rebuild_kernel_set_is_removed_under_hard_cut(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mod = _load_module()
@@ -520,91 +520,33 @@ def test_perf_rebuild_kernel_set_disabled_by_default_in_strict(
     assert mod._perf_rebuild_kernel_set() == set()
 
 
-def test_perf_rebuild_kernel_set_respects_explicit_list_in_strict(
+def test_perf_rebuild_kernel_set_ignores_legacy_env_flags(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mod = _load_module()
     monkeypatch.setenv("INTENTIR_FALLBACK_POLICY", "strict")
     monkeypatch.delenv("INTENTIR_GPU_PERF_DISABLE_CONTRACT_REBUILD", raising=False)
     monkeypatch.setenv("INTENTIR_GPU_PERF_REBUILD_KERNELS", "batch_norm2d, mm2d")
-    assert mod._perf_rebuild_kernel_set() == {"batch_norm2d", "mm2d"}
+    assert mod._perf_rebuild_kernel_set() == set()
 
 
-def test_maybe_rewrite_contract_for_perf_rebuild_uses_intent_seed_fallback(
+def test_maybe_rewrite_contract_for_perf_rebuild_is_noop_in_hard_cut(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mod = _load_module()
-    monkeypatch.setenv("INTENTIR_GPU_PERF_REBUILD_KERNELS", "batch_norm2d")
-    monkeypatch.delenv("INTENTIR_GPU_PERF_DISABLE_CONTRACT_REBUILD", raising=False)
-
-    mlir_path = tmp_path / "batch_norm2d.intentir.intentdialect.downstream_cuda_llvm.module.mlir"
-    mlir_path.write_text("module {}", encoding="utf-8")
-    seed_path = tmp_path / "batch_norm2d.intent_seed.json"
-    seed_path.write_text(
-        '{"intent_expanded": {"name": "batch_norm2d", "ops": [], "tensors": {}, "outputs": []}}',
-        encoding="utf-8",
-    )
-    payload = {
-        "kernel_name": "batch_norm2d",
-        "artifacts": {"mlir_module_path": str(mlir_path)},
-        "executable": {"format": "cuda_ptx", "path": "k.ptx", "target": "cuda", "entry": "batch_norm2d"},
-        "reason_context": {},
-    }
-    out, meta = mod._maybe_rewrite_contract_for_perf_rebuild(kernel="batch_norm2d", contract_payload=dict(payload))
-    assert bool(meta.get("enabled")) is True
-    assert bool(meta.get("applied")) is True
-    exe = dict(out.get("executable") or {})
-    assert str(exe.get("format") or "") == "cuda_mlir_module"
-    assert str(exe.get("path") or "") == str(mlir_path)
-    assert isinstance(dict(out.get("reason_context") or {}).get("fallback_intent_json"), dict)
-
-
-def test_maybe_rewrite_contract_for_perf_rebuild_no_seed_keeps_original(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    mod = _load_module()
-    monkeypatch.setenv("INTENTIR_GPU_PERF_REBUILD_KERNELS", "batch_norm2d")
-    monkeypatch.delenv("INTENTIR_GPU_PERF_DISABLE_CONTRACT_REBUILD", raising=False)
-
     mlir_path = tmp_path / "batch_norm2d.intentir.intentdialect.downstream_cuda_llvm.module.mlir"
     mlir_path.write_text("module {}", encoding="utf-8")
     payload = {
         "kernel_name": "batch_norm2d",
         "artifacts": {"mlir_module_path": str(mlir_path)},
         "executable": {"format": "cuda_ptx", "path": "k.ptx", "target": "cuda", "entry": "batch_norm2d"},
-        "reason_context": {},
+        "reason_context": {"fallback_intent_json": {"name": "keep_original"}},
     }
     out, meta = mod._maybe_rewrite_contract_for_perf_rebuild(kernel="batch_norm2d", contract_payload=dict(payload))
-    assert bool(meta.get("enabled")) is True
+    assert bool(meta.get("enabled")) is False
     assert bool(meta.get("applied")) is False
+    assert str(meta.get("reason") or "") == "removed_in_strict_hard_cut"
     exe = dict(out.get("executable") or {})
     assert str(exe.get("format") or "") == "cuda_ptx"
-
-
-def test_maybe_rewrite_contract_for_perf_rebuild_prefers_seed_over_existing_reason_context(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    mod = _load_module()
-    monkeypatch.setenv("INTENTIR_GPU_PERF_REBUILD_KERNELS", "batch_norm2d")
-    monkeypatch.delenv("INTENTIR_GPU_PERF_DISABLE_CONTRACT_REBUILD", raising=False)
-
-    mlir_path = tmp_path / "batch_norm2d.intentir.intentdialect.downstream_cuda_llvm.module.mlir"
-    mlir_path.write_text("module {}", encoding="utf-8")
-    seed_path = tmp_path / "batch_norm2d.intent_seed.json"
-    seed_path.write_text(
-        '{"intent_expanded": {"name": "from_seed", "ops": [], "tensors": {}, "outputs": []}}',
-        encoding="utf-8",
-    )
-    payload = {
-        "kernel_name": "batch_norm2d",
-        "artifacts": {"mlir_module_path": str(mlir_path)},
-        "executable": {"format": "cuda_ptx", "path": "k.ptx", "target": "cuda", "entry": "batch_norm2d"},
-        "reason_context": {"fallback_intent_json": {"name": "from_reason_ctx"}},
-    }
-    out, meta = mod._maybe_rewrite_contract_for_perf_rebuild(kernel="batch_norm2d", contract_payload=dict(payload))
-    assert bool(meta.get("applied")) is True
     selected = dict(dict(out.get("reason_context") or {}).get("fallback_intent_json") or {})
-    assert str(selected.get("name") or "") == "from_seed"
+    assert str(selected.get("name") or "") == "keep_original"

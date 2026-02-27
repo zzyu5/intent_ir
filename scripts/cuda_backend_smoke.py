@@ -35,10 +35,7 @@ from backends.cuda.pipeline.driver import lower_cuda_contract_to_kernel  # noqa:
 from backends.cuda.runtime import (  # noqa: E402
     CudaLaunch,
     CudaRuntimeError,
-    compile_cuda_extension,
-    cuda_extension_cache_info,
     load_cuda_ptx_module,
-    run_cuda_kernel,
     run_cuda_kernel_ptx,
 )
 from backends.common.mlir_contract import MlirBackendContract  # noqa: E402
@@ -845,29 +842,17 @@ def _run_compile_stage(
     lower_ms = (time.perf_counter() - t_lower) * 1000.0
     kernel_name = str(lowered.get("kernel_name") or "")
     io_spec = dict(lowered.get("io_spec") or {})
-    is_ptx = lowered.get("cuda_ptx") is not None
-    cache_info = (
-        {
-            "artifact_exists": False,
-            "module_name": f"intentir_cuda_ptx_{kernel_name}",
-            "build_dir": "",
-        }
-        if is_ptx
-        else cuda_extension_cache_info(
-            kernel_name=kernel_name,
-            cuda_src=str(lowered.get("cuda_src") or ""),
-        )
-    )
+    ptx_payload = lowered.get("cuda_ptx")
+    if ptx_payload is None:
+        raise RuntimeError("strict hard-cut requires executable.format=cuda_ptx in compile stage")
+    cache_info = {
+        "artifact_exists": False,
+        "module_name": f"intentir_cuda_ptx_{kernel_name}",
+        "build_dir": "",
+    }
 
     t_compile = time.perf_counter()
-    if is_ptx:
-        _ = load_cuda_ptx_module(kernel_name=kernel_name, ptx=lowered.get("cuda_ptx"), io_spec=io_spec)
-    else:
-        _ = compile_cuda_extension(
-            kernel_name=kernel_name,
-            cuda_src=str(lowered.get("cuda_src") or ""),
-            io_spec=io_spec,
-        )
+    _ = load_cuda_ptx_module(kernel_name=kernel_name, ptx=ptx_payload, io_spec=io_spec)
     compile_ms = (time.perf_counter() - t_compile) * 1000.0
 
     return {
@@ -907,30 +892,17 @@ def _run_launch_stage(
     lower_ms = (time.perf_counter() - t_lower) * 1000.0
     kernel_name = str(lowered.get("kernel_name") or "")
     io_spec = dict(lowered.get("io_spec") or {})
-    is_ptx = lowered.get("cuda_ptx") is not None
-    cache_info = (
-        {
-            "artifact_exists": False,
-            "module_name": f"intentir_cuda_ptx_{kernel_name}",
-            "build_dir": "",
-        }
-        if is_ptx
-        else cuda_extension_cache_info(
-            kernel_name=kernel_name,
-            cuda_src=str(lowered.get("cuda_src") or ""),
-        )
-    )
+    ptx_payload = lowered.get("cuda_ptx")
+    if ptx_payload is None:
+        raise RuntimeError("strict hard-cut requires executable.format=cuda_ptx in launch stage")
+    cache_info = {
+        "artifact_exists": False,
+        "module_name": f"intentir_cuda_ptx_{kernel_name}",
+        "build_dir": "",
+    }
 
     t_compile = time.perf_counter()
-    compiled_mod = (
-        load_cuda_ptx_module(kernel_name=kernel_name, ptx=lowered.get("cuda_ptx"), io_spec=io_spec)
-        if is_ptx
-        else compile_cuda_extension(
-            kernel_name=kernel_name,
-            cuda_src=str(lowered.get("cuda_src") or ""),
-            io_spec=io_spec,
-        )
-    )
+    compiled_mod = load_cuda_ptx_module(kernel_name=kernel_name, ptx=ptx_payload, io_spec=io_spec)
     compile_ms = (time.perf_counter() - t_compile) * 1000.0
 
     inputs_np = _build_inputs_np(
@@ -942,28 +914,16 @@ def _run_launch_stage(
     )
 
     t_launch = time.perf_counter()
-    if is_ptx:
-        out = run_cuda_kernel_ptx(
-            kernel_name=kernel_name,
-            ptx=lowered.get("cuda_ptx"),
-            io_spec=io_spec,
-            launch=_parse_launch_dict(lowered.get("launch")),
-            bindings=dict(lowered.get("bindings") or {}),
-            inputs_np=inputs_np,
-            output_names=list(lowered.get("output_names") or ctx["outputs"]),
-            compiled_module=compiled_mod,
-        )
-    else:
-        out = run_cuda_kernel(
-            kernel_name=kernel_name,
-            cuda_src=str(lowered.get("cuda_src") or ""),
-            io_spec=io_spec,
-            launch=_parse_launch_dict(lowered.get("launch")),
-            bindings=dict(lowered.get("bindings") or {}),
-            inputs_np=inputs_np,
-            output_names=list(lowered.get("output_names") or ctx["outputs"]),
-            compiled_module=compiled_mod,
-        )
+    out = run_cuda_kernel_ptx(
+        kernel_name=kernel_name,
+        ptx=ptx_payload,
+        io_spec=io_spec,
+        launch=_parse_launch_dict(lowered.get("launch")),
+        bindings=dict(lowered.get("bindings") or {}),
+        inputs_np=inputs_np,
+        output_names=list(lowered.get("output_names") or ctx["outputs"]),
+        compiled_module=compiled_mod,
+    )
     out = _with_io_aliases_for_names(
         sorted(set(list(ctx["outputs"]) + list(dict(ctx["tensor_specs"]).keys()))),
         out,

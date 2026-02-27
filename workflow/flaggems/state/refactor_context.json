@@ -1,8 +1,8 @@
 {
   "schema_version": "flaggems_refactor_context_v1",
-  "generated_at": "2026-02-26T16:24:55+00:00",
+  "generated_at": "2026-02-27T03:20:53+00:00",
   "branch": "compiler-cleanup-v1",
-  "head_commit": "6896e63b23497cb74b7d1720807daceaa8d1d9b7",
+  "head_commit": "b04112b7fd9e8419d929d1f505286b06814a433e",
   "plan_version": "intentir_mlir_engineering_v1",
   "strict_defaults": {
     "execution_ir": "mlir",

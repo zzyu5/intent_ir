@@ -1,7 +1,7 @@
 """
 CUDA backend supported op set (WIP).
 
-This reflects currently implemented lowering paths in `cpp_driver.py`
+This reflects current strict MLIR backend contract execution coverage
 (direct kernels + fused patterns + generic fused elementwise).
 """
 

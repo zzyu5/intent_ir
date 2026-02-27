@@ -40,7 +40,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backends.cuda.pipeline.driver import lower_cuda_contract_to_kernel
-from backends.cuda.runtime import compile_cuda_extension, load_cuda_ptx_module
+from backends.cuda.runtime import load_cuda_ptx_module
 from intent_ir.utils.repo_state import repo_state
 from pipeline.common.strict_policy import strict_fallback_enabled
 from pipeline.triton.core import coverage_kernel_specs
@@ -195,63 +195,8 @@ def _kernel_param_key(name: str) -> str:
 
 
 def _perf_rebuild_kernel_set() -> set[str]:
-    defaults = {
-        "sort_stable2d",
-        "flash_attn_varlen_func_bhsd",
-        "batch_norm2d",
-        "layer_norm_persistent",
-        "rms_norm2d",
-        "select_scatter2d",
-        "conv3d_ncdhw",
-        "scaled_dot_product_attention_bhsd",
-        "count_nonzero2d",
-        "masked_scatter2d",
-        "addmm2d",
-        "bitwise_or2d",
-        "mm2d",
-    }
-    raw_disable = str(os.getenv("INTENTIR_GPU_PERF_DISABLE_CONTRACT_REBUILD", "")).strip().lower()
-    if raw_disable in {"1", "true", "yes", "y"}:
-        return set()
-    raw = str(os.getenv("INTENTIR_GPU_PERF_REBUILD_KERNELS", "")).strip()
-    # In strict hard-cut mode, default rebuild kernels force executable.format
-    # to cuda_mlir_module and would violate strict PTX-only execution.
-    # Keep explicit opt-in available through INTENTIR_GPU_PERF_REBUILD_KERNELS.
-    if not raw:
-        if bool(strict_fallback_enabled()):
-            return set()
-        return defaults
-    out: set[str] = set()
-    for part in raw.split(","):
-        k = str(part).strip()
-        if k:
-            out.add(k)
-    return out
-
-
-def _intent_seed_path_from_mlir_module_path(path: str) -> Path | None:
-    p = Path(str(path or "").strip())
-    if not str(p):
-        return None
-    suffix = ".intentir.intentdialect.downstream_cuda_llvm.module.mlir"
-    text = str(p)
-    if text.endswith(suffix):
-        return Path(text[: -len(suffix)] + ".intent_seed.json")
-    return None
-
-
-def _load_fallback_intent_json_from_seed(seed_path: Path | None) -> dict[str, Any] | None:
-    if seed_path is None or (not seed_path.is_file()):
-        return None
-    try:
-        payload = _load_json(seed_path)
-    except Exception:
-        return None
-    for key in ("intent_expanded", "intent", "raw_json"):
-        value = payload.get(key)
-        if isinstance(value, dict):
-            return dict(value)
-    return None
+    # Legacy contract rebuild path has been removed under strict hard-cut.
+    return set()
 
 
 def _maybe_rewrite_contract_for_perf_rebuild(
@@ -259,37 +204,11 @@ def _maybe_rewrite_contract_for_perf_rebuild(
     kernel: str,
     contract_payload: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    if str(kernel) not in _perf_rebuild_kernel_set():
-        return contract_payload, {"enabled": False, "applied": False, "reason": "kernel_not_selected"}
-
-    out = dict(contract_payload or {})
-    artifacts = dict(out.get("artifacts") or {})
-    mlir_module_path = str(artifacts.get("mlir_module_path") or "").strip()
-    if not mlir_module_path:
-        return contract_payload, {"enabled": True, "applied": False, "reason": "missing_mlir_module_path"}
-
-    reason_ctx = dict(out.get("reason_context") or {})
-    seed_fallback = _load_fallback_intent_json_from_seed(
-        _intent_seed_path_from_mlir_module_path(mlir_module_path),
-    )
-    fallback = seed_fallback if isinstance(seed_fallback, dict) else reason_ctx.get("fallback_intent_json")
-    if not isinstance(fallback, dict):
-        return contract_payload, {"enabled": True, "applied": False, "reason": "missing_fallback_intent_json"}
-
-    reason_ctx["fallback_intent_json"] = dict(fallback)
-    out["reason_context"] = reason_ctx
-
-    executable = dict(out.get("executable") or {})
-    executable["format"] = "cuda_mlir_module"
-    executable["path"] = str(mlir_module_path)
-    executable["target"] = "cuda"
-    executable["entry"] = str(out.get("kernel_name") or executable.get("entry") or str(kernel))
-    out["executable"] = executable
-    return out, {
-        "enabled": True,
-        "applied": True,
-        "reason": "kernel_selected",
-        "mlir_module_path": str(mlir_module_path),
+    _ = str(kernel)
+    return dict(contract_payload or {}), {
+        "enabled": False,
+        "applied": False,
+        "reason": "removed_in_strict_hard_cut",
     }
 
 
@@ -1071,18 +990,14 @@ def _build_intentir_launch_fn(
     t_compile0 = time.perf_counter()
     kernel_name = str(lowered.get("kernel_name") or "")
     io_spec = dict(lowered.get("io_spec") or {})
-    if lowered.get("cuda_ptx") is not None:
-        mod = load_cuda_ptx_module(
-            kernel_name=kernel_name,
-            ptx=lowered.get("cuda_ptx"),
-            io_spec=io_spec,
-        )
-    else:
-        mod = compile_cuda_extension(
-            kernel_name=kernel_name,
-            cuda_src=str(lowered.get("cuda_src") or ""),
-            io_spec=io_spec,
-        )
+    ptx_payload = lowered.get("cuda_ptx")
+    if ptx_payload is None:
+        raise RuntimeError("strict hard-cut requires executable.format=cuda_ptx in gpu perf path")
+    mod = load_cuda_ptx_module(
+        kernel_name=kernel_name,
+        ptx=ptx_payload,
+        io_spec=io_spec,
+    )
     compile_ms = (time.perf_counter() - t_compile0) * 1000.0
 
     inputs_np = _build_inputs_np(
