@@ -179,6 +179,11 @@ def _contract_report_paths(report: dict, *, artifact_root: Path) -> list[Path]:
         return []
     preferred = [
         # CUDA path must prefer CUDA-specific contracts first.
+        # NOTE: std_llvm is the real-MLIR path that already materializes an
+        # executable PTX payload (executable.format=cuda_ptx). The older
+        # downstream_cuda contract is often a non-executable mlir_module wrapper
+        # and is not runnable under strict hard-cut execution.
+        "downstream_cuda_std_llvm_contract_path",
         "downstream_cuda_llvm_contract_path",
         "downstream_cuda_contract_path",
         "downstream_llvm_contract_path",

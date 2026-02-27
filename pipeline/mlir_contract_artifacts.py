@@ -712,7 +712,10 @@ def _compile_llvm_ir_to_cuda_ptx(
         if llvm_as_path:
             llvm_link_path = str(Path(llvm_as_path).with_name("llvm-link"))
         libdevice_bc = _find_libdevice_bc()
-        link_libdevice = str(os.getenv("INTENTIR_CUDA_LINK_LIBDEVICE", "")).strip().lower() in {"1", "true", "yes", "on"}
+        # Default: link libdevice when available. Without it, LLVM's NVPTX
+        # backend can emit unresolved extern calls like __nv_expf/__nv_erff,
+        # which the CUDA driver rejects at module-load time.
+        link_libdevice = _env_flag("INTENTIR_CUDA_LINK_LIBDEVICE", default=True)
         if (
             link_libdevice
             and llvm_as_path
@@ -728,7 +731,18 @@ def _compile_llvm_ir_to_cuda_ptx(
                     f"llvm-as failed rc={as_cp.returncode}: {as_cp.stderr or as_cp.stdout}"
                 )
             link_cp = subprocess.run(
-                [llvm_link_path, str(bc_path), str(libdevice_bc), "-o", str(linked_bc)],
+                [
+                    llvm_link_path,
+                    str(bc_path),
+                    str(libdevice_bc),
+                    # libdevice contains a huge amount of bitcode (including
+                    # intrinsics our NVPTX backend may not lower). Keep the
+                    # link minimal so we only pull in what this kernel needs.
+                    "--only-needed",
+                    "--internalize",
+                    "-o",
+                    str(linked_bc),
+                ],
                 capture_output=True,
                 text=True,
             )
