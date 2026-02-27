@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 
-_LLVM_VERSIONS = (19, 18, 17, 16, 15, 14, 13)
+_LLVM_VERSIONS = (21, 20, 19, 18, 17, 16, 15, 14, 13)
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_TOOLCHAIN_ROOT = _REPO_ROOT / "artifacts" / "toolchains"
 
