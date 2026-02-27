@@ -25,6 +25,7 @@
     "celu2d",
     "clamp2d",
     "constant_pad_nd2d",
+    "copy2d_divmod",
     "cos2d",
     "diag2d",
     "div2d",
