@@ -328,6 +328,15 @@ def _run_mlir_translate_pass(module: IntentMLIRModule, *, pass_arg: str, tool: s
         intent_json=(dict(module.intent_json) if isinstance(module.intent_json, dict) else None),
     )
     out.meta["last_mlir_translate"] = str(pass_arg)
+    # When mlir-translate produces textual LLVM IR, annotate provenance so
+    # downstream contracts can distinguish "real translate" from cached IR.
+    if str(pass_arg or "").strip().lower().replace("-", "_") in {
+        "mlir_to_llvmir",
+        "--mlir_to_llvmir",
+        "mlir_to_llvmir",  # defensive duplicates
+    } or "mlir-to-llvmir" in str(pass_arg or ""):
+        out.meta.setdefault("llvm_text_origin", "mlir_translate")
+        out.meta.setdefault("llvm_dialect_origin", "mlir_translate")
     return out
 
 
@@ -436,7 +445,15 @@ def _parse_yaml_pass_list(text: str) -> list[str]:
 
 
 def _safe(name: str) -> str:
-    return "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in str(name))
+    safe = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in str(name))
+    # Keep filenames bounded for long pass strings (e.g. large mlir-opt pipelines).
+    # We preserve prefix for readability and include a stable-ish suffix hash.
+    if len(safe) <= 80:
+        return safe
+    import hashlib  # local import to keep module load small
+
+    h = hashlib.sha1(safe.encode("utf-8")).hexdigest()[:10]
+    return f"{safe[:60]}__{h}"
 
 
 def _module_stats(module: IntentMLIRModule) -> dict[str, Any]:

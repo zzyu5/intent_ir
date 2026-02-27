@@ -8,6 +8,7 @@ from .ensure_llvm_ir_text import ensure_llvm_ir_text
 from .expand_macros_intent import expand_macros_intent
 from .lower_intent_to_llvm_dialect import lower_intent_to_llvm_dialect
 from .normalize_symbols import normalize_symbols
+from .set_llvm_target_triple import set_llvm_target_triple
 
 PASS_REGISTRY = {
     "normalize_symbols": normalize_symbols,
@@ -18,6 +19,7 @@ PASS_REGISTRY = {
     "backend_legalize": backend_legalize,
     "lower_intent_to_llvm_dialect": lower_intent_to_llvm_dialect,
     "ensure_llvm_ir_text": ensure_llvm_ir_text,
+    "set_llvm_target_triple": set_llvm_target_triple,
     "emit_cuda_contract": emit_cuda_contract,
     "emit_rvv_contract": emit_rvv_contract,
 }

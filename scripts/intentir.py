@@ -472,7 +472,11 @@ def _cmd_mlir_emit_llvm(args: argparse.Namespace) -> int:
     out_dir = Path(args.out_dir) if args.out_dir else (ROOT / "artifacts" / "intentir_mlir_emit_llvm")
     out_dir.mkdir(parents=True, exist_ok=True)
     backend = str(args.backend)
-    pipeline = "downstream_cuda_llvm" if backend == "cuda" else "downstream_rvv_llvm"
+    pipeline_choice = str(getattr(args, "pipeline", "auto") or "auto").strip()
+    if pipeline_choice != "auto":
+        pipeline = pipeline_choice
+    else:
+        pipeline = "downstream_cuda_llvm" if backend == "cuda" else "downstream_rvv_llvm"
     module = to_mlir(intent)
     upstream_mod, upstream_trace = run_pipeline(
         module,
@@ -735,6 +739,9 @@ def _build_parser() -> argparse.ArgumentParser:
             "downstream_rvv",
             "downstream_cuda_llvm",
             "downstream_rvv_llvm",
+            "upstream_std",
+            "midend_std",
+            "downstream_rvv_std_llvm",
         ],
     )
     mlir_pass.add_argument("--backend", default=None, help="Optional backend hint (cuda/rvv)")
@@ -745,6 +752,18 @@ def _build_parser() -> argparse.ArgumentParser:
     mlir_emit = mlir_sub.add_parser("emit-llvm", help="Emit LLVM IR (.ll) and optional bitcode (.bc)")
     mlir_emit.add_argument("--intent-json", required=True, help="Path to intent JSON (or report with `intent` field)")
     mlir_emit.add_argument("--backend", choices=["cuda", "rvv"], default="cuda")
+    mlir_emit.add_argument(
+        "--pipeline",
+        choices=[
+            "auto",
+            "downstream_cuda_llvm",
+            "downstream_rvv_llvm",
+            "downstream_rvv_std_llvm",
+        ],
+        default="auto",
+        help="Downstream LLVM pipeline selector for emit-llvm. "
+        "Use downstream_rvv_std_llvm for real-MLIR RVV proof runs.",
+    )
     mlir_emit.add_argument("--out-dir", default=None, help="Output directory for LLVM artifacts")
     mlir_emit.add_argument("--emit-bc", action=argparse.BooleanOptionalAction, default=True)
     mlir_emit.add_argument("--fail-on-error", action=argparse.BooleanOptionalAction, default=False)

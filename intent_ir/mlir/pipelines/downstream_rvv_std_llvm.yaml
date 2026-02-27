@@ -1,0 +1,8 @@
+passes:
+  - python:set_llvm_target_triple
+  - mlir-opt:verify-each canonicalize cse
+  - mlir-opt:one-shot-bufferize convert-linalg-to-loops lower-affine convert-scf-to-cf convert-arith-to-llvm convert-math-to-llvm convert-index-to-llvm convert-func-to-llvm convert-cf-to-llvm finalize-memref-to-llvm reconcile-unrealized-casts
+  - mlir-translate:mlir-to-llvmir
+  - "llvm-as:"
+  - "opt:-O2"
+
