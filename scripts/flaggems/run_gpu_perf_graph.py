@@ -194,6 +194,29 @@ def _kernel_param_key(name: str) -> str:
     return "".join(ch for ch in str(name).strip().lower() if ch.isalnum())
 
 
+def _param_key_matches_any_hint(param_key: str, hint_tokens: tuple[str, ...]) -> bool:
+    """
+    Heuristic arg binding for native baselines.
+
+    NOTE: We intentionally avoid substring matching for 1-char hint tokens like "k"/"x"/"a"
+    because that would match almost any parameter name (e.g. row_mask contains "k").
+    """
+    p = str(param_key or "")
+    if not p:
+        return False
+    for tok in hint_tokens:
+        t = str(tok or "")
+        if not t:
+            continue
+        if len(t) == 1:
+            if p == t:
+                return True
+            continue
+        if t in p:
+            return True
+    return False
+
+
 def _perf_rebuild_kernel_set() -> set[str]:
     # Legacy contract rebuild path has been removed under strict hard-cut.
     return set()
@@ -938,8 +961,6 @@ def _build_native_launch_fn(
             "alpha",
             "beta",
             "cond",
-            "condition",
-            "mask",
         )
         tensor_hint_tokens = (
             "x",
@@ -970,12 +991,12 @@ def _build_native_launch_fn(
         still_unresolved: list[tuple[str, str]] = []
         for pname, key in unresolved_required:
             pnorm = _kernel_param_key(pname)
-            if any(tok in pnorm for tok in scalar_hint_tokens) and unused_scalars:
+            if _param_key_matches_any_hint(pnorm, scalar_hint_tokens) and unused_scalars:
                 src_name, v = unused_scalars.pop(0)
                 kwargs[pname] = v
                 used_scalar_names.add(str(src_name))
                 continue
-            if any(tok in pnorm for tok in tensor_hint_tokens) and unused_tensors:
+            if _param_key_matches_any_hint(pnorm, tensor_hint_tokens) and unused_tensors:
                 src_name, t = unused_tensors.pop(0)
                 kwargs[pname] = t
                 used_tensor_names.add(str(src_name))
@@ -1079,8 +1100,6 @@ def _build_native_launch_fn(
         "alpha",
         "beta",
         "cond",
-        "condition",
-        "mask",
     )
     tensor_hint_tokens = (
         "x",
@@ -1111,12 +1130,12 @@ def _build_native_launch_fn(
     still_unresolved: list[tuple[str, str]] = []
     for pname, key in unresolved_required:
         pnorm = _kernel_param_key(pname)
-        if any(tok in pnorm for tok in scalar_hint_tokens) and unused_scalars:
+        if _param_key_matches_any_hint(pnorm, scalar_hint_tokens) and unused_scalars:
             src_name, v = unused_scalars.pop(0)
             kwargs[pname] = v
             used_scalar_names.add(str(src_name))
             continue
-        if any(tok in pnorm for tok in tensor_hint_tokens) and unused_tensors:
+        if _param_key_matches_any_hint(pnorm, tensor_hint_tokens) and unused_tensors:
             src_name, t = unused_tensors.pop(0)
             kwargs[pname] = t
             used_tensor_names.add(str(src_name))
